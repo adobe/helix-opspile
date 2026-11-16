@@ -152,10 +152,18 @@ const slackHost = (domain) => (domain ? `${domain}.slack.com` : null);
 /**
  * The row of `candidates` (one channel id, perhaps in more than one workspace) that the link
  * `ref` is to: the workspace the link names, else the one its host is, else the open thread's.
+ * A Slack app link names a workspace (`T…`), and under Enterprise Grid a channel's tenant is
+ * its org (`E…`): the workspace is then the channel's own (`group_id`), or one of its org's
+ * (`orgs`, the tenants whose channels live in each workspace opspile knows of). A workspace no
+ * tenant has is nobody's channel.
  */
-function rowFor(ref, candidates, { source, tenant }) {
+function rowFor(ref, candidates, { source, tenant }, orgs) {
   if (ref.tenant) {
-    return candidates.find((r) => String(r.tenant) === ref.tenant) || null;
+    const inOrg = orgs.get(ref.tenant) || new Set();
+    return candidates.find((r) => String(r.tenant) === ref.tenant)
+      || (ref.source === 'slack' && (candidates.find((r) => r.group_id === ref.tenant)
+        || candidates.find((r) => inOrg.has(String(r.tenant)))))
+      || null;
   }
   return candidates.find((r) => ref.host && slackHost(r.domain) === ref.host)
     || candidates.find((r) => r.source === source && String(r.tenant) === String(tenant))
@@ -163,12 +171,33 @@ function rowFor(ref, candidates, { source, tenant }) {
 }
 
 /**
+ * The tenants of the Slack workspaces the links name (`T…`, of app links): `Map<workspace,
+ * Set<tenant>>`, from the workspaces of the channels opspile knows (`channels.group_id`). Under
+ * Enterprise Grid a workspace's tenant is its org.
+ */
+async function slackOrgs(env, refs) {
+  const teams = [...new Set(refs.filter((r) => r.source === 'slack' && /^T/.test(r.tenant || ''))
+    .map((r) => r.tenant))];
+  if (!teams.length) {
+    return new Map();
+  }
+  const { results } = await env.DB.prepare(`SELECT DISTINCT group_id, tenant FROM channels
+    WHERE source = 'slack' AND group_id IN (SELECT value FROM json_each(?))`)
+    .bind(JSON.stringify(teams)).all();
+  const orgs = new Map();
+  for (const r of results || []) {
+    orgs.set(r.group_id, (orgs.get(r.group_id) || new Set()).add(String(r.tenant)));
+  }
+  return orgs;
+}
+
+/**
  * The channels that links in the texts of a thread in `{ source, tenant }` are to
  * (src/channelurl.js), on any platform: a Teams channel's link in a Slack message, a Slack
  * channel's in a Teams post. As channelRefs: `[{ id, source, name, org, teams, personal,
  * url }]`, channels opspile does not know left out. A link names its workspace (Teams and
- * Discord always, Slack by its host, if at all); one that does not is to the channel in the
- * open thread's workspace, if it has one by that id.
+ * Discord always, Slack by its host or its app link's workspace, if at all); one that does
+ * not is to the channel in the open thread's workspace, if it has one by that id.
  *
  * @param {object} env bindings
  * @param {{ source: string, tenant: string }} where the thread's platform and workspace
@@ -180,15 +209,15 @@ export async function channelLinks(env, where, texts, me) {
   if (!env.DB || !refs.length) {
     return [];
   }
-  const { results } = await env.DB.prepare(`${CHANNEL_ROWS}
+  const [{ results }, orgs] = await Promise.all([env.DB.prepare(`${CHANNEL_ROWS}
     WHERE c.source IN (SELECT value FROM json_each(?1))
       AND c.channel_id IN (SELECT value FROM json_each(?2))`)
     .bind(
       JSON.stringify([...new Set(refs.map((r) => r.source))]),
       JSON.stringify([...new Set(refs.map((r) => r.channel))]),
-    ).all();
+    ).all(), slackOrgs(env, refs)]);
   const rows = refs.map((ref) => rowFor(ref, (results || [])
-    .filter((r) => r.source === ref.source && String(r.channel_id) === ref.channel), where))
+    .filter((r) => r.source === ref.source && String(r.channel_id) === ref.channel), where, orgs))
     .filter(Boolean);
   return placed(env, rows, me);
 }

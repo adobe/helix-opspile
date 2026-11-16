@@ -139,6 +139,30 @@ describe('channel references', () => {
     ], me), []);
   });
 
+  it('resolves Slack app links by the workspace they name, within its Enterprise Grid org', async () => {
+    const DB = fresh();
+    // Under Enterprise Grid, a channel's tenant is the org (E…) and its group the workspace
+    // (T…); an app link names the workspace. The same channel id in another org, too.
+    DB.sqlite.exec(`UPDATE channels SET group_id = 'T0WORKSPC1' WHERE channel_id = 'C0AAAAAAAA1';
+      UPDATE channels SET group_id = 'T0WORKSPC2' WHERE channel_id = 'C0BBBBBBBB2';
+      INSERT INTO channels (source, tenant, channel_id, name, group_id, fetched_at, domain) VALUES
+        ('slack', 'E2', 'C0AAAAAAAA1', 'acme-ops-e2', 'T0WORKSPC9', '2026-10-01', 'other-ws')`);
+    const link = (team) => `https://app.slack.com/client/${team}/C0AAAAAAAA1`;
+    const names = async (where, text) => (await channelLinks({ DB }, where, [text], me))
+      .map((r) => r.name);
+    const inE1 = { source: 'slack', tenant: 'E1' };
+    // The archives link and the app link to one channel are the same channel.
+    assert.deepEqual(await names(inE1, 'https://acme-ws.slack.com/archives/C0AAAAAAAA1'), ['acme-ops']);
+    assert.deepEqual(await names(inE1, link('T0WORKSPC1')), ['acme-ops']);
+    // Opened in another workspace of its org (a channel shared between them).
+    assert.deepEqual(await names(inE1, link('T0WORKSPC2')), ['acme-ops']);
+    // A workspace of the other org is that org's channel, from wherever the link is.
+    assert.deepEqual(await names(inE1, link('T0WORKSPC9')), ['acme-ops-e2']);
+    assert.deepEqual(await names({ source: 'teams', tenant: 'TN1' }, link('T0WORKSPC1')), ['acme-ops']);
+    // A workspace opspile does not know is no org's: the link stays a link.
+    assert.deepEqual(await names(inE1, link('T0UNKNOWN7')), []);
+  });
+
   it('asks nothing for texts that name no channel, or on Teams', async () => {
     const DB = {
       prepare() {
