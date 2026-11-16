@@ -89,16 +89,36 @@ describe('the drawer', () => {
     assert.match(rules, /\.linestab \{ flex-basis: 100%; display: flex;/);
     assert.match(rules, /\.linestab\[hidden\] \{ display: none; \}/);
     // Closed, the lines take no room; open, a sheet at the screen's bottom edge, the rest dimmed.
-    assert.match(rules, /\n {2}\.linesdrawer \{ display: none; \}/);
-    assert.match(rules, /\.linesdrawer\.open \{ position: fixed; inset: 0; z-index: 9; display: flex; flex-direction: column; justify-content: flex-end; \}/);
+    assert.match(rules, /\n {2}\.linesdrawer \{ position: fixed; inset: 0; z-index: 9; display: none; flex-direction: column; justify-content: flex-end; pointer-events: none;/);
+    assert.match(rules, /\.linesdrawer\.open \{ display: flex; pointer-events: auto;/);
     assert.match(rules, /\.linesdrawer \.sheet \{ display: flex; flex-direction: column;[^}]*max-height: 85dvh; overflow: hidden auto;/);
-    assert.match(css, /\.spectrum \.linesdrawer\.open \{ background: var\(--spectrum-transparent-black-500\); \}/);
+    assert.match(css, /\.spectrum \.linesdrawer\.open \{ background-color: var\(--spectrum-transparent-black-500\); \}/);
     // Under a toast: Undo of a discarded draft is in one.
     const toast = Number(css.match(/\n\.toast \{[^}]*z-index: (\d+)/)[1]);
     assert.ok(toast > 9);
     // The sheet scrolls, not the cards in it.
     assert.match(rules, /\.linesdrawer \.bashbar \{ flex: none; max-height: none; overflow: visible; \}/);
     assert.match(rules, /\.linesdrawer \.bashbar \.acts \{ position: static; \}/);
+  });
+
+  it('rises from the bottom edge as a Dialog arrives, and drops back faster', () => {
+    const phone = css.slice(css.indexOf('.linesdrawer, .linesdrawer .sheet { display: contents; }'));
+    const rules = phone.slice(phone.indexOf('@media (max-width: 699px) {'), phone.indexOf('/* A source beside the draft'));
+    // Displayed until the sheet is gone, and no longer in the way of a tap.
+    assert.match(rules, /\.linesdrawer \{[^}]*transition: background-color var\(--s2-out\), display var\(--s2-out\) allow-discrete; \}/);
+    assert.match(rules, /\.linesdrawer\.open \{[^}]*transition: background-color var\(--s2-dialog-in\), display var\(--s2-dialog-in\) allow-discrete; \}/);
+    assert.match(rules, /\.linesdrawer \.sheet \{[^}]*translate: 0px 100%; transition: translate var\(--s2-out\); \}/);
+    assert.match(rules, /\.linesdrawer\.open \.sheet \{ translate: 0px 0px; transition: translate var\(--s2-dialog-in\); \}/);
+    assert.match(rules, /@starting-style \{\s+\.linesdrawer\.open \.sheet \{ translate: 0px 100%; \}\s+\}/);
+    assert.match(css, /@starting-style \{\s+\.spectrum \.linesdrawer\.open \{ background-color: transparent; \}\s+\}/);
+    // The sheet keeps its look while it leaves.
+    assert.match(css, /\n\.spectrum \.linesdrawer \.sheet \{\s+background: var\(--pane\);/);
+    // Drawn again while open (the composer replaced), it does not rise again.
+    assert.match(rules, /\.linesdrawer\.still, \.linesdrawer\.still \.sheet \{ transition: none; \}/);
+    const render = js.slice(js.indexOf('function renderLines(key)'), js.indexOf('/** Opens or closes the drawer'));
+    assert.match(render, /if \(!open\) el\.classList\.remove\('still'\);\n {2}else if \(!el\.__wired\) el\.classList\.add\('still'\);\n {2}el\.classList\.toggle\('open', open\);/);
+    // No motion for those who ask for less.
+    assert.match(css, /@media \(max-width: 1099px\) and \(prefers-reduced-motion: reduce\) \{[^}]*\}\n {2}\.linesdrawer, \.linesdrawer\.open, \.linesdrawer \.sheet, \.linesdrawer\.open \.sheet \{ transition: none; \}/);
   });
 
   it('marks its tab as a command\'s card is marked, while one waits for a decision', () => {

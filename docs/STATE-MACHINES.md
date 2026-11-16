@@ -411,7 +411,9 @@ open. What the tab says is worked out from the thread's requests and the draft i
 again the drawer stays as it is, open or closed. Only the stylesheet knows whether it is a
 drawer at all: on a wider screen `linesDrawer.key` changes nothing that shows, and a screen that
 grows past the phone's breakpoint closes it. Open, the sheet is a modal dialog: Tab goes round in
-it.
+it. Opening and closing are motion only (the stylesheet's transitions): the state is the class
+at once, so focus, Escape and the next tap never wait for the sheet. A drawer drawn again while
+open (its composer replaced) is `still`, open without rising again, until it closes.
 
 **Earlier commands.** latest only ↔ all that ended (`bashEarlier`, by thread, `ui/inbox.js`). Of
 the requests that ended within the hour only the latest shows, until its button shows the rest;

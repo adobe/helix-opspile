@@ -4365,6 +4365,9 @@ function renderLines(key) {
     $('lines-title').textContent = linesTitle(chips);
   }
   tab.setAttribute('aria-expanded', String(open));
+  // Drawn again while open (the composer was replaced): it is there, it does not rise again.
+  if (!open) el.classList.remove('still');
+  else if (!el.__wired) el.classList.add('still');
   el.classList.toggle('open', open);
   // A modal dialog only while it is one: on a wider screen the drawer is no box.
   const sheet = el.firstElementChild;
