@@ -545,6 +545,102 @@ export async function askClefConversation(env, text, at, convs, opts = {}) {
   return { p: best.p, ...(threaded ? { threaded } : {}) };
 }
 
+/**
+ * The rest of a split of `thread` out of `group`, once it is decided: each step can be done again,
+ * and `split_from` is cleared after all of them.
+ */
+async function splitOut(env, thread, group) {
+  const key = thread.thread;
+  const now = new Date().toISOString();
+  await markRootFile(env, thread, null);
+  // The roots its author posted right after it, each within minutes of the one before, with
+  // nobody else's root between them: the burst re-threading folded into the group with it.
+  const author = await env.DB.prepare(`SELECT author_key FROM messages
+    WHERE thread = ? AND id = ? AND counted = 1`).bind(key, thread.root_id).first();
+  const split = [key];
+  let last = thread;
+  let lastBody = (await rootBody(env, thread))?.parsed.body;
+  while (author && author.author_key) {
+    // eslint-disable-next-line no-await-in-loop
+    const next = await env.DB.prepare(`SELECT t.*, m.author_key FROM threads t
+      JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
+      WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
+        AND t.root_at > ? AND t.root_at <= ? ORDER BY t.root_at LIMIT 1`)
+      .bind(
+        thread.source,
+        thread.tenant,
+        thread.channel_id,
+        last.thread,
+        last.root_at,
+        new Date(Date.parse(last.root_at) + GREETING_MS).toISOString(),
+      ).first();
+    // One a try before moved already (to this root) is moved again: its file may not be.
+    if (!next || next.author_key !== author.author_key
+      || (next.logical_thread !== group && next.logical_thread !== key)
+      || next.logical_via !== 'burst' || next.routed_at) {
+      break;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const nextBody = (await rootBody(env, next))?.parsed.body;
+    if (!continues(last, lastBody, next, nextBody)) {
+      break;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await env.DB.prepare('UPDATE threads SET logical_thread = ?, rethreaded_at = ? WHERE thread = ?')
+      .bind(key, now, next.thread).run();
+    // eslint-disable-next-line no-await-in-loop
+    await markRootFile(env, next, key);
+    split.push(next.thread);
+    last = next;
+    lastBody = nextBody;
+  }
+  // Open inboxes reload the group, which has these no more, and list them on their own.
+  const rooms = env.ROOMS ? await teamsOf(env, thread) : [];
+  await notifyRoom(env, rooms, { type: 'thread', thread: group, split });
+  await env.DB.prepare('UPDATE threads SET split_from = NULL WHERE thread = ? AND split_from = ?')
+    .bind(key, group).run();
+  return { result: 'split', group, split };
+}
+
+/**
+ * De-threading: a conversation's root that was folded into an earlier conversation, and then
+ * gets replies in its own platform thread, is split back out into an inbox entry of its own
+ * (see answered()). Called for every reply a person posts; only a folded root changes, once:
+ * `logical_via` becomes SPLIT, which re-threading leaves alone. The roots that followed it in a
+ * burst go with it. A burst member itself, a reply that landed top-level (REPLY) and alerts stay
+ * in their group: a burst is one request in pieces, somebody answering one of a series of alerts
+ * answers all of them, and a reply's platform thread is where the conversation went on, so those
+ * who answer it there answer the group. So does a root the inbox sent a reply of its group to
+ * (`routed_at`, src/post.js routeReply): the group's conversation goes on in its platform thread,
+ * and those who answer there answer the group.
+ * `rethreaded_at` moves to now, so the export sweep writes the threads again.
+ *
+ * The split is written first, since it is conditional on the group the root is in, and
+ * `split_from` (that group) with it: the rest (the root file, the burst, the open inboxes) is
+ * what a retry, a later reply or `sweepRethreads` finishes while it is set, and it is cleared
+ * last.
+ */
+export async function dethread(env, key) {
+  const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
+  if (thread && thread.logical_via === SPLIT && thread.split_from) {
+    return splitOut(env, thread, thread.split_from);
+  }
+  if (!thread || thread.kind !== 'channel' || !thread.logical_thread || thread.logical_via === 'burst'
+    || thread.logical_via === REPLY
+    || thread.routed_at || !thread.root_id || !await answered(env, thread)) {
+    return { result: 'unchanged' };
+  }
+  const group = thread.logical_thread;
+  // Only from the group it is in now: a job that decided otherwise meanwhile wins.
+  const { meta } = await env.DB.prepare(`UPDATE threads SET logical_thread = NULL, logical_via = ?,
+      logical_p = NULL, rethreaded_at = ?, split_from = ? WHERE thread = ? AND logical_thread = ?`)
+    .bind(SPLIT, new Date().toISOString(), group, key, group).run();
+  if (!meta || !meta.changes) {
+    return { result: 'unchanged' };
+  }
+  return splitOut(env, thread, group);
+}
+
 // Longer than a job's retries take.
 const SWEEP_AFTER_MS = 60 * 60 * 1000;
 const SWEEP_LIMIT = 100;
@@ -560,7 +656,14 @@ export async function rethread(env, key, { force = false } = {}) {
     return { result: 'skip', reason: 'no root' };
   }
   if (thread.logical_via === SPLIT) {
-    return { result: 'unchanged', logical: null, reason: 'split' };
+    // A split that stopped half way (`split_from`, dethread()) is finished first.
+    const resumed = thread.split_from ? await dethread(env, key) : {};
+    return {
+      result: 'unchanged',
+      logical: null,
+      reason: 'split',
+      ...(resumed.split ? { group: resumed.group, split: resumed.split } : {}),
+    };
   }
   // The inbox replied for its group in its platform thread: that is where the group goes on.
   if (thread.routed_at && thread.logical_thread) {
@@ -842,85 +945,11 @@ export async function rethread(env, key, { force = false } = {}) {
 }
 
 /**
- * De-threading: a conversation's root that was folded into an earlier conversation, and then
- * gets replies in its own platform thread, is split back out into an inbox entry of its own
- * (see answered()). Called for every reply a person posts; only a folded root changes, once:
- * `logical_via` becomes SPLIT, which re-threading leaves alone. The roots that followed it in a
- * burst go with it. A burst member itself, a reply that landed top-level (REPLY) and alerts stay
- * in their group: a burst is one request in pieces, somebody answering one of a series of alerts
- * answers all of them, and a reply's platform thread is where the conversation went on, so those
- * who answer it there answer the group. So does a root the inbox sent a reply of its group to
- * (`routed_at`, src/post.js routeReply): the group's conversation goes on in its platform thread,
- * and those who answer there answer the group.
- * `rethreaded_at` moves to now, so the export sweep writes the threads again.
- */
-export async function dethread(env, key) {
-  const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
-  if (!thread || thread.kind !== 'channel' || !thread.logical_thread || thread.logical_via === 'burst'
-    || thread.logical_via === REPLY
-    || thread.routed_at || !thread.root_id || !await answered(env, thread)) {
-    return { result: 'unchanged' };
-  }
-  const group = thread.logical_thread;
-  const now = new Date().toISOString();
-  // Only from the group it is in now: a job that decided otherwise meanwhile wins.
-  const { meta } = await env.DB.prepare(`UPDATE threads SET logical_thread = NULL, logical_via = ?,
-      logical_p = NULL, rethreaded_at = ? WHERE thread = ? AND logical_thread = ?`)
-    .bind(SPLIT, now, key, group).run();
-  if (!meta || !meta.changes) {
-    return { result: 'unchanged' };
-  }
-  await markRootFile(env, thread, null);
-  // The roots its author posted right after it, each within minutes of the one before, with
-  // nobody else's root between them: the burst re-threading folded into the group with it.
-  const author = await env.DB.prepare(`SELECT author_key FROM messages
-    WHERE thread = ? AND id = ? AND counted = 1`).bind(key, thread.root_id).first();
-  const split = [key];
-  let last = thread;
-  let lastBody = (await rootBody(env, thread))?.parsed.body;
-  while (author && author.author_key) {
-    // eslint-disable-next-line no-await-in-loop
-    const next = await env.DB.prepare(`SELECT t.*, m.author_key FROM threads t
-      JOIN messages m ON m.thread = t.thread AND m.id = t.root_id
-      WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.thread != ?
-        AND t.root_at > ? AND t.root_at <= ? ORDER BY t.root_at LIMIT 1`)
-      .bind(
-        thread.source,
-        thread.tenant,
-        thread.channel_id,
-        last.thread,
-        last.root_at,
-        new Date(Date.parse(last.root_at) + GREETING_MS).toISOString(),
-      ).first();
-    if (!next || next.author_key !== author.author_key || next.logical_thread !== group
-      || next.logical_via !== 'burst' || next.routed_at) {
-      break;
-    }
-    // eslint-disable-next-line no-await-in-loop
-    const nextBody = (await rootBody(env, next))?.parsed.body;
-    if (!continues(last, lastBody, next, nextBody)) {
-      break;
-    }
-    // eslint-disable-next-line no-await-in-loop
-    await env.DB.prepare('UPDATE threads SET logical_thread = ?, rethreaded_at = ? WHERE thread = ?')
-      .bind(key, now, next.thread).run();
-    // eslint-disable-next-line no-await-in-loop
-    await markRootFile(env, next, key);
-    split.push(next.thread);
-    last = next;
-    lastBody = nextBody;
-  }
-  // Open inboxes reload the group, which has these no more, and list them on their own.
-  const rooms = env.ROOMS ? await teamsOf(env, thread) : [];
-  await notifyRoom(env, rooms, { type: 'thread', thread: group, split });
-  return { result: 'split', group, split };
-}
-
-/**
  * Cron: the roots whose job died (their hash is written before the work that can fail, and
  * `rethreaded_at` after it) go out again, within the window re-threading looks back. A root that
  * was skipped on purpose (a system notice, an empty one) has no hash, or, when a job had died on
- * it before, a decision.
+ * it before, a decision. So do the roots whose split stopped half way (`split_from`, which the
+ * split clears last), however old: re-threading finishes it.
  */
 export async function sweepRethreads(env, now = new Date()) {
   if (!env.VECTORS || !env.AI || !env.NORMALIZE) {
@@ -943,9 +972,21 @@ export async function sweepRethreads(env, now = new Date()) {
       new Date(now.getTime() - 86400 * 1000).toISOString(),
       SWEEP_LIMIT,
     ).all();
-  for (const [i, { thread }] of (results || []).entries()) {
+  // A split's `rethreaded_at` is when it was decided: one under way now is left to its job.
+  const { results: splits } = await env.DB.prepare(`SELECT t.thread FROM threads t
+    WHERE t.split_from IS NOT NULL AND t.logical_via = ? AND t.rethreaded_at < ?
+      AND NOT EXISTS (SELECT 1 FROM dead_jobs d WHERE d.job = 'rethread:' || t.thread AND d.at > ?)
+    ORDER BY t.rethreaded_at LIMIT ?`)
+    .bind(
+      SPLIT,
+      new Date(now.getTime() - SWEEP_AFTER_MS).toISOString(),
+      new Date(now.getTime() - 86400 * 1000).toISOString(),
+      SWEEP_LIMIT,
+    ).all();
+  const queued = [...(results || []), ...(splits || [])];
+  for (const [i, { thread }] of queued.entries()) {
     // eslint-disable-next-line no-await-in-loop
     await env.NORMALIZE.send({ rethread: thread }, sweepDelay(i));
   }
-  return { queued: (results || []).length };
+  return { queued: queued.length };
 }

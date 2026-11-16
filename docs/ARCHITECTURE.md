@@ -341,7 +341,8 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   was folded is split back out (`dethread`, on that reply): its row loses `logical_thread`
   and gets `logical_via = 'split'`, which re-threading (forced, or a burst before it) leaves
   alone for good, its root file loses `logicalThread`, the roots that followed it in a burst go
-  with it, and the open inboxes reload the group (`split` in the room's `thread` event). So the
+  with it, and the open inboxes reload the group (`split` in the room's `thread` event); until
+  all of that is done, `split_from` names the group it left, so a retry finishes it. So the
   group's entry stops interleaving the two platform threads, and its replies go to its own
   platform thread again (src/post.js `target`, the entry's latest). A burst member, an addressed
   reply (`logical_via = 'reply'`, above) and alerts stay in their group.
