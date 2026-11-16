@@ -19,9 +19,12 @@
  * line joins a topic to the others, and a person to a customer; without them any two kinds. One
  * kind alone is joined to itself: people, tags and products by the threads they share, topics
  * and customers (one to a thread, so never two in one) by the people they share, `min` people
- * each with `min` threads in both. A node without a line is not drawn, but a topic is.
+ * each with `min` threads in both. A node without a line is not drawn, but a topic is. The people,
+ * customers and products of most threads drawn have a name on the graph; the rest on pointing.
  */
 globalThis.TopicGraph = (() => {
+  /** People, customers and products with a name on the graph, the most threads first. */
+  const NAMED = 14;
   const isCustomer = (map, slug) => Boolean(slug) && !slug.startsWith('_')
     && map.orgs[slug]?.type !== 'internal';
   /** The map's products (maps from before them have none). */
@@ -56,6 +59,7 @@ globalThis.TopicGraph = (() => {
    * The graph of `map` for `team` (all teams when empty), the kinds `shown` and the threads a
    * line needs (`min`): every node of the team's threads (`all`, by id), those drawn (`nodes`),
    * the lines (`edges`: `{ a, b, w }`), who is joined to whom (`neighbors`) and the threads.
+   * The people, customers and products of most threads drawn are `named`.
    */
   function build(map, { team = '', shown, min = 1 }) {
     const threads = map.threads.filter((t) => !team || t.team === team);
@@ -125,6 +129,10 @@ globalThis.TopicGraph = (() => {
     }
     const nodes = [...all.values()].filter((n) => shown.includes(n.type)
       && (neighbors.has(n.id) || n.type === 'topic'));
+    for (const type of ['person', 'org', 'product']) {
+      nodes.filter((n) => n.type === type).sort((a, b) => b.threads.length - a.threads.length)
+        .slice(0, NAMED).forEach((n) => { n.named = true; });
+    }
     return {
       all, nodes, edges, neighbors, threads,
     };
