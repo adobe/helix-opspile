@@ -235,7 +235,9 @@ Spectrum 2's workflow icons as masks, in the color of the text: an empty
 `s2-cross`, not a `▾`, `✓` or `✕` in the text. A checkbox is Spectrum 2's, drawn by
 `ui/spectrum.css`. Popovers and dialogs arrive as Spectrum 2's do (a popover over 190ms from
 4px away, a dialog over 250ms from 20px, both gone in 130ms), and nothing moves for someone
-who asked the browser for less motion.
+who asked the browser for less motion. A page takes a closed dialog out with
+`Dialog.remove(dlg)` (`ui/app.js`), which waits for it to have left; whoever waits for its
+answer does not.
 
 Every page is framed as Spectrum 2's [app frame](https://spectrum.adobe.com/foundations/app-frame)
 is: the header and what navigates (the inbox's filters, a list of teams or knowledge bases)

@@ -121,3 +121,30 @@ if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').m
     throw new Error('Signed out: sign in again');
   };
 })();
+
+// A closed <dialog> leaves as it came (ui/spectrum.css: it fades out as it sinks, its underlay
+// with it), so it stays in the page until its exit is over. Meanwhile it is inert, which lets
+// the page under it take the next click, and its ids are gone, so a dialog opened while it
+// leaves is the only one they name. Whoever waits for the answer does not wait for the exit.
+window.Dialog = (() => {
+  /** Takes the closed `dlg` out of the page once it has left (right away if it has no exit). */
+  function remove(dlg) {
+    if (!dlg.isConnected) return;
+    dlg.inert = true;
+    for (const n of dlg.querySelectorAll('[id]')) n.removeAttribute('id');
+    // Asking for its animations starts the transitions its closing set off.
+    const exit = dlg.getAnimations();
+    let done = false;
+    const gone = () => {
+      if (done) return;
+      done = true;
+      if (!dlg.open) dlg.remove();
+    };
+    if (!exit.length) { gone(); return; }
+    Promise.allSettled(exit.map((a) => a.finished)).then(gone);
+    // A page in the background draws no frames, and its animations do not finish.
+    const end = Math.max(...exit.map((a) => a.effect?.getComputedTiming().endTime || 0));
+    setTimeout(gone, end + 100);
+  }
+  return { remove };
+})();

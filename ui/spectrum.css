@@ -741,7 +741,8 @@ header .note { white-space: nowrap; }
   .spectrum input[type="checkbox"]:disabled { border-color: GrayText; }
 }
 
-/* Motion: none for those who ask the browser for less. */
+/* Motion: none for those who ask the browser for less, a dialog's underlay included (`*` does
+   not match it; popovers draw no underlay). */
 @media (prefers-reduced-motion: reduce) {
-  .spectrum *, .spectrum *::before, .spectrum *::after { transition-duration: var(--spectrum-animation-duration-0) !important; }
+  .spectrum *, .spectrum *::before, .spectrum *::after, .spectrum dialog::backdrop { transition-duration: var(--spectrum-animation-duration-0) !important; }
 }

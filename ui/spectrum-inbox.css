@@ -1997,7 +1997,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .fv-request .fv-text { border: 0; border-radius: var(--spectrum-corner-radius-100); background: var(--spectrum-background-layer-1-color); }
 /* The preview's dialog: S2's Dialog, full-size (a Takeover's proportions), its header plain. */
 .spectrum dialog.file-dialog { border: 0; border-radius: var(--spectrum-corner-radius-extra-large-default); box-shadow: var(--s2-elevated); font-size: var(--spectrum-font-size-100); }
-.spectrum dialog.file-dialog::backdrop { background: var(--spectrum-overlay-color); opacity: var(--spectrum-overlay-opacity); }
+/* Its opacity is ui/spectrum.css's, which fades it in and out with the dialog. */
+.spectrum dialog.file-dialog::backdrop { background: var(--spectrum-overlay-color); }
 .spectrum .file-dialog .fv-head { gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-400); border-bottom-color: var(--spectrum-gray-200); }
 .spectrum .file-dialog .fv-title { font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-heading-color); }
 .spectrum .file-dialog .fv-link { color: var(--spectrum-accent-content-color-default); }
@@ -2411,7 +2412,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border-radius: var(--spectrum-corner-radius-extra-large-default);
   box-shadow: var(--s2-elevated);
 }
-.spectrum dialog.confirm::backdrop { background: var(--spectrum-overlay-color); opacity: var(--spectrum-overlay-opacity); }
+/* Its opacity is ui/spectrum.css's, which fades it in and out with the dialog. */
+.spectrum dialog.confirm::backdrop { background: var(--spectrum-overlay-color); }
 .spectrum dialog.confirm p { margin-bottom: var(--spectrum-spacing-200); }
 .spectrum dialog.confirm .apply { margin-top: var(--spectrum-spacing-400); }
 

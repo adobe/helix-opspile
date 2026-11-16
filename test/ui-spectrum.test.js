@@ -190,6 +190,18 @@ describe('Spectrum 2', () => {
     assert.match(shared, /@starting-style \{\s*\.spectrum \[popover\]:popover-open \{ opacity: 0;/);
     assert.match(shared, /@starting-style \{\s*\.spectrum dialog:not\(\.lightbox\)\[open\] \{ opacity: 0;/);
     assert.match(shared, /prefers-reduced-motion: reduce\) \{\s*\.spectrum \*, [^{]*\{ transition-duration: var\(--spectrum-animation-duration-0\) !important; \}/);
+    assert.match(shared, /prefers-reduced-motion: reduce\) \{\s*[^{]*\.spectrum dialog::backdrop \{ transition-duration: var\(--spectrum-animation-duration-0\) !important; \}/);
+    // A closed dialog stays until it has left (ui/app.js), and its underlay leaves with it: no
+    // page pins the underlay's opacity (but the lightbox's, which animates itself), which would
+    // keep it dark until the dialog is gone.
+    assert.match(SCRIPTS['app.js'], /window\.Dialog = /);
+    for (const name of ['admin.js', 'kb.js', 'inbox.js', 'table.js']) {
+      assert.match(SCRIPTS[name], /Dialog\.remove\(dlg\)/, name);
+    }
+    const pageCss = Object.entries(SCRIPTS).filter(([n]) => /^spectrum-.*\.css$/.test(n));
+    for (const [name, css] of pageCss) {
+      assert.doesNotMatch(css, /dialog(?!\.lightbox)[^{},]*::backdrop \{[^}]*[\s;]opacity:/, name);
+    }
     // New rows and messages do not slide in for reduced motion either.
     assert.match(SCRIPTS['spectrum-inbox.css'], /prefers-reduced-motion: reduce\) \{ \.t\.enter, \.msg\.enter, \.sys\.enter \{ animation: none; \} \}/);
   });
