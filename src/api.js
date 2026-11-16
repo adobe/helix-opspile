@@ -415,17 +415,29 @@ export async function inbox(env, me, team, {
   roomsP.catch(() => {});
   // The latest groups (a re-threaded group counts once), then for each group its first
   // thread (title, link) and its five most recent members (activity, read state).
-  const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
-      COUNT(*) AS n, SUM(messages) AS total, MAX(COALESCE(last_at, any_at)) AS latest
-    -- The team's own channels, and the channels shared with it (migration 0024).
-    FROM threads WHERE ${inInbox('threads', personal, '?5')} AND kind != 'ignore'
+  const shown = (t) => `${t}.kind != 'ignore'
       -- Threads of nothing but system events ("has joined the channel", a member was added)
       -- are not shown: no person posted, and no message has an author account (bots do).
-      AND NOT (kind = 'channel' AND last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
-        WHERE m.thread = threads.thread AND m.author_key IS NOT NULL AND m.deleted = 0))
-      ${only ? 'AND COALESCE(logical_thread, thread) IN (SELECT value FROM json_each(?6))' : ''}
-    GROUP BY g
-    HAVING ?2 IS NULL OR latest < ?2 OR (latest = ?2 AND g < ?3)
+      AND NOT (${t}.kind = 'channel' AND ${t}.last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
+        WHERE m.thread = ${t}.thread AND m.author_key IS NOT NULL AND m.deleted = 0))
+      ${only ? `AND COALESCE(${t}.logical_thread, ${t}.thread) IN (SELECT value FROM json_each(?6))` : ''}`;
+  const sums = `COALESCE(t.logical_thread, t.thread) AS g, COUNT(*) AS n, SUM(t.messages) AS total,
+      MAX(COALESCE(t.last_at, t.any_at)) AS latest`;
+  // A team's inbox: the team's own channels' threads group by group from `threads_inbox`
+  // (migration 0069), which has all this needs, then those of the channels shared with it
+  // (migration 0024). An alert channel files tens of thousands of threads under its team: as
+  // one `team = ? OR <shared channel>`, every one of them was read from the table and sorted.
+  const grouped = personal
+    ? `SELECT ${sums} FROM threads t WHERE ${inInbox('t', personal, '?5')} AND ${shown('t')}
+      GROUP BY g`
+    : `SELECT g, SUM(n) AS n, SUM(total) AS total, MAX(latest) AS latest FROM (
+        SELECT ${sums} FROM threads t WHERE t.team = ?1 AND ${shown('t')}
+          GROUP BY COALESCE(t.logical_thread, t.thread)
+        UNION ALL SELECT ${sums} FROM threads t
+          WHERE t.team != ?1 AND ${sharedWith('t', '?1')} AND ${shown('t')} GROUP BY 1)
+      GROUP BY g`;
+  const { results: groups } = await env.DB.prepare(`SELECT g, n, total, latest FROM (${grouped})
+    WHERE ?2 IS NULL OR latest < ?2 OR (latest = ?2 AND g < ?3)
     ORDER BY latest DESC, g DESC LIMIT ?4`)
     .bind(...[scope.value, only ? null : beforeAt, beforeG, only ? only.length + 1 : size + 1]
       .concat(personal || only ? [personal ? me.id : null] : [])
