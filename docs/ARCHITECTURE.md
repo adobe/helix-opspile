@@ -631,7 +631,7 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   stack dropdown has a link to the same.
   Besides its cards it has one switch, **Mentions** (the @ at the top right of the
   customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
-  the thread's mentions, has you); with unread only, the ones the red badge counts. The
+  the thread's mentions, has you); with unread only, the ones with mentions of you you have not read. The
   customers without such a thread leave the column while it is on. Team views do not have it:
   their Involves card has Me (you posted or were mentioned). Its live updates come from the rooms of your teams and of the teams those channels are
   filed under; in the rooms of other teams, only about those channels (scoped sockets,
@@ -646,8 +646,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   you (mentioned you, you posted, 🛟 or 👀 by a colleague). Opening a thread by clicking it in
   the list records the pick, with the threads on screen and their features, in `rank_events`
   (`POST /api/rank/pick`, migration 0040), for that training. A facet value with threads
-  you have not read has its label in bold, and a red badge counts the messages that mention
-  you and that you have not read yet (Slack's and Teams' mention count); a thread's
+  you have not read has its label in bold, and a red badge counts the messages for you that you
+  have not read yet, as Slack's badge does: those that mention you, and in a thread you posted or
+  were mentioned in (any member of a re-threaded group), the messages of other people since
+  you first were in it, each message once (`unreadForYou`, `unreadInYours` in `src/threads.js`).
+  The same count is on the customers of the personal view and on its rows, which it marks red;
+  a thread's
   "N replies" is bold and blue while it has replies you have not read.
 - **Channels a message names** (`#name`, or `#C…` where Slack sent the id without the name, as
   it does for bots) are resolved when the thread is read (`src/channelrefs.js`, the `channels`
@@ -697,6 +701,18 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   whose inbox this is and leaves it in one click), the notifications, the keyboard shortcuts, and **Log out**,
   which is Access's `/cdn-cgi/access/logout`. Live updates are not shown while they work; the
   toolbar says "Reconnecting…" when a WebSocket has been down for a few seconds.
+- The inbox's keyboard follows Slack's where the inbox has the same thing (`SHORTCUTS` in
+  `ui/inbox.js`, shown by ⌘/, `?` or "All keyboard shortcuts" in the menu; Ctrl and Alt for ⌘
+  and ⌥ off a Mac): ⌘K searches, ⌥↑/⌥↓ (with ⇧, the unread ones) go through the list, also
+  from the reply box, ⌘⇧A is unread only, ⌘⇧M mentions of you (not in Chrome, whose key it is, as in Slack), ⌘⇧K a new thread (⌘N is the
+  browser's), ⌘. shows or hides the sidebar, ⇧Esc reads every thread in the list, F6 moves between
+  the filters, the list, the thread's messages, its reply box and the sidebar (⌘F6 too, as F6 is
+  the browser's), ⌃1…9 (Ctrl+Shift+1…9 off a Mac) picks a view, ↑ or ⌘↑ in an empty reply box
+  edits your last message (without one, puts the last message in focus) and ⌘⇧\ reacts to the
+  last one. On a message in focus ↑/↓ move, `e` edits it, `r` reacts and Esc goes back to the reply
+  box. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
+  ⌘⇧7/8/9 write (or take off) markdown, and a link pasted over words becomes theirs. The inbox's
+  own keys stay: `/`, `j`/`k`, `e` (resolve), `a` (the Thread Agent).
 
 ### 5. Stats (klickhaus)
 

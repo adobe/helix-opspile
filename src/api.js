@@ -57,7 +57,7 @@ import {
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { claimPost, settlePost } from './postkeys.js';
 import {
-  ATTENTION, latestMember, readState, waitingOn,
+  ATTENTION, latestMember, readState, unreadInYours, waitingOn,
 } from './threads.js';
 import { find, MAX_RESULTS, withSnippets } from './search.js';
 import { Timing, withTiming } from './timing.js';
@@ -335,6 +335,7 @@ export function fold(threads) {
       seenByOthers: ms.some((m) => m.seenByOthers),
       mentionedMe: ms.some((m) => m.mentionedMe),
       unreadMentions: ms.reduce((n, m) => n + (m.unreadMentions || 0), 0),
+      unreadForYou: ms.reduce((n, m) => n + (m.unreadForYou || 0), 0),
       mentionedTeam: [...new Set(ms.flatMap((m) => m.mentionedTeam || []))],
       readers: latest.readers,
       reactions: Object.values(ms.flatMap((m) => m.reactions || []).reduce((acc, r) => {
@@ -494,7 +495,7 @@ export async function inbox(env, me, team, {
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
-    { results: techRows }, techVocab, elsewhere,
+    { results: techRows }, techVocab, elsewhere, yours,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
     // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
@@ -556,6 +557,8 @@ export async function inbox(env, me, team, {
     vocab(env, personal ? null : team),
     // Only once the personal view has been loaded to the end: the list says so then.
     personal && !only && !more ? unreadElsewhere(env, me) : null,
+    // What the red badge counts: unread mentions, and what is new in the viewer's threads.
+    unreadInYours(env.DB, threadKeys, me.id),
   ]);
   const by = (rows, f) => {
     const m = new Map();
@@ -590,6 +593,7 @@ export async function inbox(env, me, team, {
   // Profile cards of everyone in the avatar stacks, once per person.
   const cards = await profiles(env, [...people.values()]
     .flatMap((t) => t.participants.map((p) => p.key)));
+  const states = readState(threads, marks || [], mentions || [], me.id, yours);
   return {
     team: personal ? null : team,
     personal,
@@ -607,7 +611,7 @@ export async function inbox(env, me, team, {
     stacks,
     ...(elsewhere ? { elsewhere } : {}),
     // Channel ids Slack sent without the name, in titles and last texts, as the names.
-    threads: await nameChannelIds(env, fold(readState(threads, marks || [], mentions || [], me.id)
+    threads: await nameChannelIds(env, fold(states
       .map((t) => {
         const label = labelBy.get(t.thread) || null;
         return {

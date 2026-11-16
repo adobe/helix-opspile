@@ -1035,8 +1035,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     ];
   }
 
-  // Two messages mention the viewer since she last read it, one before: the customer card
-  // shows 2 unread mentions on ACME, and the personal view has ACME's channel.
+  // Two messages mention the viewer since she last read it, one before: the red badge counts 2
+  // of this thread on ACME, and the personal view has ACME's channel.
   seed({
     ch: CHANNELS.aemAcme,
     messages: [
@@ -1287,8 +1287,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     reads: { dana: 3990 },
   });
 
-  // Three unread mentions of the viewer: in the personal view's customer column, opspile comes
-  // first, before ACME (two) and the customers with one, whatever their names.
+  // Three unread mentions of the viewer: the red badge in the personal view's customer column,
+  // where the customers with the most for her come first, whatever their names.
   seed({
     ch: CHANNELS.edgeQ,
     messages: [
@@ -1299,6 +1299,21 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     ],
     reads: { dana: 300 },
     mentioned: [['dana', 240], ['dana', 120], ['dana', 30]],
+  });
+
+  // No mention, but Dana asked: the two replies since she read it are hers to read, and the red
+  // badge counts them, as Slack's does (src/threads.js unreadInYours).
+  seed({
+    ch: CHANNELS.aemUmbrella,
+    messages: [
+      ['dana', 95, 'Can you send the request ids of the failed uploads?'],
+      ['ola', 60, 'Here are three of them, all from this morning.'],
+      ['ola', 20, 'More came in since, same error each time.'],
+    ],
+    reads: { dana: 95 },
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 1.1, resolved_p: 0.1,
+    },
   });
 
   // Read and unread side by side, for the thread list: critical and

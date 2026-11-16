@@ -1008,7 +1008,8 @@ const single = (id) => personal() && id === 'customer';
  * Mentions (`state.mentions`, `mentions=1` in the address): the personal view's one switch past
  * the customers, beside unread only. It keeps the threads that mention you, read or not (a
  * mention you have read, too: `mentioned` has everyone ever mentioned in the thread); with
- * unread only, the ones the red badge counts. It is not a card, and team views do not have it
+ * unread only, the ones with unread mentions of you (the red badge also counts what is new in
+ * the threads you are in, which this does not keep). It is not a card, and team views do not have it
  * (their Involves card has "me"), so it filters nothing there.
  */
 const mentionsOn = () => personal() && state.mentions;
@@ -1098,12 +1099,13 @@ function facetRows(f) {
   const counts = new Map();
   const mix = new Map(); // value -> { red, yellow, green, none }
   const unread = new Set(); // values with threads the viewer has not read
-  const mentions = new Map(); // value -> messages mentioning the viewer they have not read
+  const mentions = new Map(); // value -> messages for the viewer they have not read (youCount)
   for (const t of pool) {
     for (const v of valuesOf(f, t)) {
       counts.set(v, (counts.get(v) || 0) + 1);
       if (t.unread) unread.add(v);
-      if (t.unreadMentions) mentions.set(v, (mentions.get(v) || 0) + t.unreadMentions);
+      const you = youCount(t);
+      if (you) mentions.set(v, (mentions.get(v) || 0) + you);
       const m = mix.get(v) || {};
       m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
       mix.set(v, m);
@@ -1143,30 +1145,38 @@ function facetRows(f) {
   }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>';
 }
 
-/** How many messages mention the viewer that they have not read, as Slack and Teams show it. */
-const mentionBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'mention' : 'mentions'} of you">${n > 99 ? '99+' : n}</b>` : '');
+/** How many messages for the viewer they have not read (youCount), as Slack's badge shows it. */
+const mentionBadge = (n) => (n ? `<b class="men" title="${esc(youTitle(n))}">${n > 99 ? '99+' : n}</b>` : '');
 
 const cardFacets = (id) => viewFacets().filter((f) => f.id === id || f.into === id);
 
 /*
  * The simple personal view: a column of customers beside the list, and the list by customer
- * until one is picked. Its one mark is red: the badge counts the messages that mention you
- * and that you have not read, beside a customer, and the threads it counts are marked in the
+ * until one is picked. Its one mark is red: the badge counts the messages for you that you have
+ * not read (youCount: those that mention you, and what is new in the threads you are in),
+ * beside a customer, and the threads it counts are marked in the
  * same red. Unread is bold. GROUPS says how the list by customer goes:
  * - `fold`: what a customer shows of its threads: 'three' (its unread ones, and its latest up
  *   to three), 'all', or 'new' (its unread ones; customers with none are named at the end);
- * - `mark`: a thread that mentions you has a red 'dot' before its title, or the red 'badge';
+ * - `mark`: a thread the badge counts has a red 'dot' before its title, or the red 'badge';
  * - `headBadge`: whether a customer's heading carries the badge too;
  * - `sticky`: whether the heading stays at the top while its threads scroll under it.
  */
 const GROUPS = {
   fold: 'all', mark: 'badge', headBadge: false, sticky: true,
 };
-const youBadge = (n) => (n ? `<b class="men" title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you">${n > 99 ? '99+' : n}</b>` : '');
+/** The red badge's tooltip: `n` messages for you (youCount). */
+const youTitle = (n) => `${n} unread ${n === 1 ? 'message' : 'messages'} for you: mentions, and replies in threads you are in`;
+const youBadge = (n) => (n ? `<b class="men" title="${esc(youTitle(n))}">${n > 99 ? '99+' : n}</b>` : '');
 /** Mentions (see mentionsOn): an @ at the top right of the customers, filled while it filters. */
 const atButton = () => `<button class="atme" type="button" data-atme aria-pressed="${state.mentions}" title="${state.mentions ? 'Showing only threads that mention you' : 'Show only threads that mention you'}" aria-label="Mentions of me">${AT}</button>`;
-/** A thread's unread mentions of you, as the badge counts them. */
-const youCount = (t) => (mentionsMe(t) ? (t.unreadMentions || 1) : 0);
+/**
+ * What the red badge counts of a thread you have not read, as Slack's does: the messages that
+ * mention you, and in a thread you posted or were mentioned in, the others' since
+ * (`unreadForYou`, src/threads.js unreadInYours); at least one while it mentions you.
+ */
+const youCount = (t) => (t.unread
+  ? Math.max(t.unreadForYou || 0, mentionsMe(t) ? (t.unreadMentions || 1) : 0) : 0);
 /**
  * A customer's logo: its icon (the admin team's, else its mail domain's favicon) over its
  * initial on its colour, which shows where there is no icon or it does not load (see wireLogos).
@@ -1181,7 +1191,7 @@ function wireLogos() {
   addEventListener('error', (e) => { if (e.target.matches?.('.logo img')) e.target.remove(); }, true);
 }
 /**
- * The customers' order in the column: those with unread mentions of you first, most mentions
+ * The customers' order in the column: those the red badge counts first (youCount), most
  * first, then those with unread threads, then the rest, then the excluded ones; by name within
  * each. `c.name` is looked up once per customer, not in every comparison.
  */
@@ -1281,14 +1291,15 @@ function moods(t) {
   return out.length ? `<span class="moods">${out.join('')}</span>` : '';
 }
 
-// What a row sets apart, in its classes: resolved, an unread mention of you, critical or hot.
+// What a row sets apart, in its classes: resolved, something unread for you (the red badge's,
+// youCount), critical or hot.
 const isResolved = (t) => checked(t) || resolvedOf(t) === 'resolved';
 const mentionsMe = (t) => t.unread && (t.unreadMentions > 0 || t.mentionedMe);
 function flags(t) {
   const status = statusOf(t);
   let out = '';
   if (isResolved(t)) out += ' resolved';
-  if (mentionsMe(t)) out += ' mention';
+  if (youCount(t)) out += ' mention';
   if (status === 'critical' || status === 'hot') out += ' urgent';
   return out;
 }
@@ -1336,8 +1347,12 @@ function row(t, hit = null) {
   let count = '';
   if (n > 1) count = `${n}×`;
   else if (replies) count = `${replies} ${replies === 1 ? 'reply' : 'replies'}`;
-  const m = mentionsMe(t) ? (t.unreadMentions || 1) : 0;
-  const mentions = m ? `<b class="men" title="Unread mentions of you">${count ? ', ' : ''}${m} ${m === 1 ? 'mention' : 'mentions'}</b>` : '';
+  // The red badge's count: mentions of you, or with replies in a thread of yours, what is new.
+  const m = youCount(t);
+  const only = m && mentionsMe(t) && m <= (t.unreadMentions || 1);
+  let what = 'new';
+  if (only) what = m === 1 ? 'mention' : 'mentions';
+  const mentions = m ? `<b class="men" title="${esc(only ? 'Unread mentions of you' : youTitle(m))}">${count ? ', ' : ''}${m} ${what}</b>` : '';
   // The latest reply: the inbox sends it (see `preview`). Not for a thread without replies (its
   // latest message is its title) or a search result (it shows the message that matched).
   const p = replies && !hit ? preview(t) : null;
@@ -1362,7 +1377,7 @@ function row(t, hit = null) {
 const grouped = () => simple() && !searching();
 /**
  * A thread's row in the simple personal view: its title (bold while unread) and how long ago,
- * then the latest reply, and the red mark (GROUPS.mark) when it mentions you. The
+ * then the latest reply, and the red mark (GROUPS.mark) when it has something for you. The
  * customer is its heading, or picked; only a search result names it. No status, drafts, people,
  * counts or reactions: the expert view has them.
  */
@@ -1371,7 +1386,7 @@ function simpleRow(t, hit = null) {
   const p = !hit && Math.max(0, (t.messages || 1) - 1) ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '<span class="snip"></span>';
   const cust = hit && !oneCustomer() ? `<span class="cust">${esc(orgName(t))}</span>` : '';
-  const dot = GROUPS.mark === 'dot' ? `<span class="you"${n ? ` title="${n} unread ${n === 1 ? 'message mentions' : 'messages mention'} you"` : ''}></span>` : '';
+  const dot = GROUPS.mark === 'dot' ? `<span class="you"${n ? ` title="${esc(youTitle(n))}"` : ''}></span>` : '';
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
@@ -1978,7 +1993,7 @@ function listHead(box) {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); runSearch(input.value); }
     if (e.key === 'Escape') { e.preventDefault(); if (input.value || searching()) clearSearch(); else input.blur(); }
-    if (e.key === 'ArrowDown' && state.order.length) { e.preventDefault(); input.blur(); (searching() ? openHit : openThread)(state.order[0]); }
+    if (e.key === 'ArrowDown' && !e.altKey && state.order.length) { e.preventDefault(); input.blur(); (searching() ? openHit : openThread)(state.order[0]); }
   });
 }
 /** Teams that still have unread threads: fewest members first, the admin team last. */
@@ -3856,6 +3871,11 @@ async function openThread(key, { live = false, cached = false } = {}) {
     if (found) markFound(found);
   }
   wireEditor(key);
+  // The message in focus, drawn again (a live update): in focus again.
+  if (msgFocus.key === key && (!document.activeElement || document.activeElement === document.body)) {
+    const el = scroller.querySelector(`.msg[data-id="${CSS.escape(msgFocus.id)}"]`);
+    if (el) focusMessage(el, false);
+  }
   const box = $('reply');
   if (box) {
     const c = composerFor(key, data.draft);
@@ -3873,6 +3893,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
     grow();
     box.onkeydown = (e) => {
       if (mentionKey(e, key)) return;
+      // ↑ or ⌘↑ (Ctrl+↑) in the empty box: your last message, to edit (see editLast).
+      if (e.key === 'ArrowUp' && !box.value && !e.shiftKey && !e.altKey && !(e.metaKey && e.ctrlKey) && editLast(key)) { e.preventDefault(); return; }
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); send(key, thread); }
       if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.altKey) { e.preventDefault(); saveDraft(key, box.value, undefined, { fromBox: true }); }
     };
@@ -4338,6 +4360,11 @@ function renderDraftBar(key, force = false) {
     // A change in the open thread's line grows or folds it; a line that comes with the thread
     // is there at once. On a phone the line is in the drawer, and the drawer is what moves.
     const animate = el.__html !== undefined && el.__key === key && !LINES_DRAWER.matches;
+    // Opening or closing the draft grows or shrinks its text (`resizeDraft`), not the line.
+    const was = el.__key === key && !el.hidden ? el.querySelector('.pv') : null;
+    const from = was && {
+      height: was.getBoundingClientRect().height, open: el.classList.contains('open'), md: was.firstElementChild, top: was.scrollTop,
+    };
     el.__html = html;
     foldRow(el, Boolean(d), {
       animate,
@@ -4353,11 +4380,52 @@ function renderDraftBar(key, force = false) {
         el.classList.toggle('open', draftOpen.has(key));
       },
     });
+    if (from && d && !el.__fold) resizeDraft(el, from);
   }
   if (sourcePop.url && !d?.sources?.some((s) => s.url === sourcePop.url)) hideSource();
   el.__key = key;
   if (!el.__wired) wireDraftBar(el);
   renderLines(key);
+}
+
+/**
+ * The draft line, opened or closed (`from`: how its text was, re-rendered), grows to all of the
+ * draft or shrinks back to its line instead of jumping: opening, it settles (ease-out), and it
+ * closes faster (ease-in), with all of the draft shown as it goes; the timings are the
+ * stylesheet's (`--draft-open`, `--draft-close`). A line re-rendered as it moves goes on from
+ * where it is; one re-rendered otherwise (a live update) does not move. Its bottom edge stays, so
+ * opening only grows the line around a pointer on it.
+ */
+function resizeDraft(el, from) {
+  const pv = el.querySelector('.pv');
+  const open = el.classList.contains('open');
+  const moving = el.__resize?.playState === 'running';
+  el.__resize?.cancel();
+  el.__resize = null;
+  if (!pv || (open === from.open && !moving) || REDUCED_MOTION.matches) return;
+  const to = pv.getBoundingClientRect().height;
+  if (Math.abs(to - from.height) < 1) return;
+  const css = getComputedStyle(el);
+  const timing = (name) => ({
+    duration: parseFloat(css.getPropertyValue(`--draft-${name}`)) || 0,
+    easing: css.getPropertyValue(`--draft-${name}-ease`).trim() || 'ease',
+  });
+  const line = pv.firstElementChild;
+  // Closing, the line keeps showing all of the draft, scrolled as it was, until it is one line.
+  const shut = !open && from.md && !from.md.classList.contains('line');
+  if (shut) {
+    pv.replaceChildren(from.md);
+    pv.scrollTop = from.top;
+  }
+  pv.classList.add('resizing');
+  const anim = pv.animate([{ height: `${from.height}px` }, { height: `${to}px` }], timing(open ? 'open' : 'close'));
+  el.__resize = anim;
+  settled(anim, () => {
+    if (el.__resize !== anim) return;
+    el.__resize = null;
+    pv.classList.remove('resizing');
+    if (shut && pv.firstElementChild === from.md) pv.replaceChildren(line);
+  });
 }
 
 /**
@@ -6625,7 +6693,7 @@ function readHere(ev) {
   const at = memberLast(m, t.kind);
   return Boolean(at) && ev.at >= at;
 }
-function markRead(t) {
+function markRead(t, { quiet = false } = {}) {
   if (!t || !t.thread || state.data?.me?.readonly) return;
   // A folded entry is several platform threads: each one is read up to its own end.
   for (const m of t.members || [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }]) {
@@ -6640,7 +6708,7 @@ function markRead(t) {
     readsSent.set(m.thread, { at, until: Date.now() + READ_HOLD_MS });
   }
   seeRead(t);
-  render();
+  if (!quiet) render();
 }
 /**
  * Your reads this page sent, by platform thread, until the inbox has them. The room writes a read
@@ -6654,7 +6722,7 @@ const readsSent = new Map();
 function seeRead(t) {
   if (!t.readers.includes(state.me.id)) t.readers.push(state.me.id);
   Object.assign(t, {
-    unread: false, unseen: false, mentionedMe: false, unreadMentions: 0,
+    unread: false, unseen: false, mentionedMe: false, unreadMentions: 0, unreadForYou: 0,
   });
   if (lastOf(t)) t.unseenByAdobe = false;
   const applies = { 'mentioned-team': t.mentionedTeam.length > 0 };
@@ -7070,8 +7138,11 @@ function listen(team, live, { again = false } = {}) {
     // The open thread keeps what it shows until it is fetched again: its cards say what a
     // click just did, and the fetch replaces them.
     if (ev.type === 'bash') { if (ev.thread !== state.open) state.cache.delete(ev.thread); reloadSoon(ev.thread); }
-    // Someone talked to the agent in the sidebar, or it answered there.
-    if (ev.type === 'sidebar') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
+    // Someone talked to the agent in the sidebar, or it answered there. The open thread keeps
+    // what it shows until it is fetched again, as with `bash`: your own message arrives here
+    // before the inbox answers its POST, which shows it as sent in the thread it has (askSide),
+    // and a tab in the background does not fetch it again until it is shown.
+    if (ev.type === 'sidebar') { if (ev.thread !== state.open) state.cache.delete(ev.thread); reloadSoon(ev.thread); }
     if (ev.type === 'experts') { state.experts.delete(ev.thread); if (state.open === ev.thread) loadExperts(ev.thread); }
   };
 }
@@ -7678,8 +7749,13 @@ function followLink(e) {
 // Under 700px the list and the open thread take turns (`main.reading` while one is open), and
 // under 1100px the filter cards are in a drawer (`main.filtering` while it is open).
 const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>';
+const reading = () => Boolean(state.open || state.compose || state.awaiting);
+// The pane sliding away (`emptyPane`): its turn, to tell a later one apart.
+let paneLeave = 0;
 const syncReading = () => {
-  document.querySelector('main').classList.toggle('reading', Boolean(state.open || state.compose || state.awaiting));
+  document.querySelector('main').classList.toggle('reading', reading());
+  // Back in view before it was emptied: what opens there takes it over.
+  if (reading() && $('pane').inert) { paneLeave += 1; $('pane').inert = false; }
   // The sidebar's panel is beside the thread it is about, and only there.
   if (!sidePaneled(state.open)) hideSidePanel();
 };
@@ -7692,8 +7768,29 @@ function closeThread() {
   closeMentions();
   syncReading();
   renderThreads();
-  $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
+  emptyPane();
   toUrl();
+}
+/**
+ * "Pick a thread." in the pane, once nothing is open (after `syncReading`). On a phone the pane
+ * slides away first (see the styles): until it is out it keeps what it showed, inert, as it
+ * was (what renders into it renders the open thread's only, and there is none); with reduced
+ * motion or `main.instant` there is no slide, and it is emptied at once. Something opened
+ * again meanwhile takes the pane over (`syncReading`).
+ */
+function emptyPane() {
+  const pane = $('pane');
+  const turn = ++paneLeave;
+  const empty = () => {
+    if (turn !== paneLeave || reading()) return;
+    pane.inert = false;
+    pane.innerHTML = '<div class="empty pick">Pick a thread.</div>';
+  };
+  const slides = pane.getAnimations().filter((a) => a instanceof CSSTransition);
+  if (!slides.length) { empty(); return; }
+  pane.inert = true;
+  // Turned back (the thread opened again) cancels them, and the pane is the thread's again.
+  Promise.all(slides.map((a) => a.finished)).then(empty, () => {});
 }
 function setFiltering(on) {
   state.filtering = on;
@@ -7890,6 +7987,392 @@ function wireHeadAway() {
   }, true);
 }
 
+// ---------------------------------------------------------------- keyboard
+// Slack's shortcuts where the inbox has the same thing (see SHORTCUTS, which ⌘/ shows), its
+// own one-key ones (/, j, k, e, a) beside them. They are written for a Mac; elsewhere ⌘ is Ctrl
+// and ⌥ Alt, and the sheet and your menu say so.
+const MAC = /mac|iphone|ipad/i.test(globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || '');
+// Chrome's own ⌘⇧M (switching people) comes first: there, as in Slack's web app, it is not ours.
+const CHROME = /Chrome\//.test(globalThis.navigator?.userAgent || '');
+/** A shortcut as this computer's keyboard names it: `⌘⇧K`, or `Ctrl+Shift+K`. */
+const keyLabel = (s, mac = MAC) => (mac ? s : s.replace(/[⌘⌥⇧]/g, (c) => `${{ '⌘': 'Ctrl', '⌥': 'Alt', '⇧': 'Shift' }[c]}+`).replace(/\+$/, ''));
+/**
+ * The shortcuts, by what they are for: what each does, then its keys, one or more ways to
+ * press it (keys pressed one after the other are apart; `click` is the pointer's).
+ */
+const SHORTCUTS = [
+  ['Move around', [
+    ['Search, on every platform', '/', '⌘K'],
+    ['Next / previous thread', 'j k', '⌥↓ ⌥↑'],
+    ['Next / previous unread thread', '⌥⇧↓ ⌥⇧↑'],
+    ['Back / forward', MAC ? '⌘[ ⌘]' : '⌥← ⌥→'],
+    ['Next / previous part of the page', 'F6 ⇧F6', '⌘F6 ⌘⇧F6', ...(MAC ? ['⌃⌘→ ⌃⌘←'] : [])],
+    ['These shortcuts', '⌘/', '?'],
+  ]],
+  ['Views', [
+    ['Personal, then your teams, as they are listed', MAC ? '⌃1…9' : '⌘⇧1…9'],
+    ['Unread threads only, or all again', '⌘⇧A'],
+    ...(CHROME ? [] : [['Only threads that mention you (your own view)', '⌘⇧M']]),
+    ['Start a new thread', '⌘⇧K'],
+    ['Exclude a filter value', '⇧ click'],
+    ['Mark every thread in the list read', '⇧Esc'],
+  ]],
+  ['The open thread', [
+    ['Resolve it, or take your ✅ off again', 'e'],
+    ['Ask the Thread Agent, in the sidebar', 'a'],
+    ['Show or hide the sidebar', '⌘.'],
+    ['React to the last message, or the one in focus', '⌘⇧\\'],
+    ['Edit your last message (from an empty reply box)', '↑', '⌘↑'],
+  ]],
+  ['A message (↑ from an empty reply box, or F6)', [
+    ['Previous / next message', '↑ ↓'],
+    ['Edit it (one of yours)', 'e'],
+    ['React to it', 'r'],
+    ['Back to the reply box', 'Esc'],
+  ]],
+  ['Writing', [
+    ['Send / new line', 'Enter ⇧Enter'],
+    ['Save the reply as the thread\'s draft', '⌘S'],
+    ['Bold / italic', '⌘B ⌘I'],
+    ['Strikethrough', '⌘⇧X'],
+    ['Code / code block', '⌘⇧C ⌘⌥⇧C'],
+    ['Link (or paste a link over the text)', '⌘⇧U'],
+    ['Quote', '⌘⇧9'],
+    ['Bulleted / numbered list', '⌘⇧8 ⌘⇧7'],
+  ]],
+];
+const keysHtml = (ways) => ways.map((w) => w.split(' ')
+  .map((k) => (k === 'click' ? 'click' : `<kbd>${esc(keyLabel(k))}</kbd>`)).join(' ')).join(' or ');
+const sheetHtml = () => SHORTCUTS.map(([group, rows]) => `<section><h3>${esc(group)}</h3><dl class="keys">${rows
+  .map(([what, ...ways]) => `<dt>${esc(what)}</dt><dd>${keysHtml(ways)}</dd>`).join('')}</dl></section>`).join('');
+
+/** The sheet of every shortcut, as Slack's ⌘/ shows it; ⌘/ again or Escape closes it. */
+function toggleShortcuts() {
+  const open = document.querySelector('dialog.keysheet[open]');
+  if (open) { open.close(); return; }
+  $('menu')?.hidePopover?.();
+  const dlg = toNode(`<dialog class="keysheet" aria-labelledby="keysheet-title"><form method="dialog">
+    <div class="top"><h2 id="keysheet-title">Keyboard shortcuts</h2><button class="close" aria-label="Close" title="Close (Esc)"><span class="s2-cross" aria-hidden="true"></span></button></div>
+    <div class="groups">${sheetHtml()}</div></form></dialog>`);
+  dlg.addEventListener('keydown', (e) => {
+    if (e.key === '/' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); dlg.close(); }
+  });
+  dlg.addEventListener('close', () => Dialog.remove(dlg));
+  document.body.append(dlg);
+  dlg.showModal();
+}
+
+/**
+ * Markdown formatting of the text between `start` and `end` of `value`, as Slack's ⌘B and the
+ * like do it: `kind` wraps the words (`bold`, `italic`, `strike`, `code`) or takes the marks off
+ * them again, makes them a `link` or a `block` of code, or starts their lines as a `quote`, a
+ * `bullet` or a `number`ed list (or stops). The replacement of `from`…`to` with `insert`, and
+ * the selection after it.
+ */
+function formatText(value, selStart, selEnd, kind) {
+  const sel = value.slice(selStart, selEnd);
+  const WRAP = {
+    bold: '**', italic: '_', strike: '~~', code: '`',
+  };
+  const mark = WRAP[kind];
+  if (mark) {
+    const n = mark.length;
+    // Already marked, inside the selection or around it: the marks come off.
+    if (sel.length >= 2 * n && sel.startsWith(mark) && sel.endsWith(mark)) {
+      const inner = sel.slice(n, -n);
+      return {
+        from: selStart, to: selEnd, insert: inner, start: selStart, end: selStart + inner.length,
+      };
+    }
+    if (value.slice(selStart - n, selStart) === mark && value.slice(selEnd, selEnd + n) === mark) {
+      return {
+        from: selStart - n, to: selEnd + n, insert: sel, start: selStart - n, end: selEnd - n,
+      };
+    }
+    // Markdown wants the marks next to the words: spaces at the ends stay outside.
+    const lead = /^\s*/.exec(sel)[0].length;
+    const trail = sel.length > lead ? /\s*$/.exec(sel)[0].length : 0;
+    const a = selStart + lead;
+    const b = selEnd - trail;
+    return {
+      from: a, to: b, insert: `${mark}${value.slice(a, b)}${mark}`, start: a + n, end: b + n,
+    };
+  }
+  if (kind === 'link') {
+    const url = /^(?:https?:\/\/|mailto:)\S+$/.test(sel.trim());
+    const insert = url ? `[](${sel.trim()})` : `[${sel}]()`;
+    // The caret where the missing part goes: the label for a URL, the URL for words.
+    const at = url || !sel ? selStart + 1 : selStart + insert.length - 1;
+    return {
+      from: selStart, to: selEnd, insert, start: at, end: at,
+    };
+  }
+  if (kind === 'block') {
+    const before = selStart > 0 && value[selStart - 1] !== '\n' ? '\n' : '';
+    const after = selEnd < value.length && value[selEnd] !== '\n' ? '\n' : '';
+    const body = sel.replace(/\n$/, '');
+    const at = selStart + before.length + 4;
+    return {
+      from: selStart, to: selEnd, insert: `${before}\`\`\`\n${body}\n\`\`\`${after}`, start: at, end: at + body.length,
+    };
+  }
+  // Lines: from the selStart of the first one selected to the selEnd of the last.
+  const from = value.lastIndexOf('\n', selStart - 1) + 1;
+  const last = selEnd > selStart && value[selEnd - 1] === '\n' ? selEnd - 1 : selEnd;
+  const to = value.indexOf('\n', last) < 0 ? value.length : value.indexOf('\n', last);
+  const lines = value.slice(from, to).split('\n');
+  const PREFIX = { quote: /^> ?/, bullet: /^[-*+] /, number: /^\d+\. / };
+  const has = PREFIX[kind];
+  const filled = lines.filter((l) => l.trim());
+  const off = filled.length > 0 && filled.every((l) => has.test(l));
+  let i = 0;
+  const out = lines.map((l) => {
+    if (off) return l.replace(has, '');
+    if (!l.trim() && lines.length > 1) return l;
+    i += 1;
+    // A list of the other kind becomes this one.
+    const bare = kind === 'quote' ? l : l.replace(/^(?:[-*+]|\d+\.) /, '');
+    return `${{ quote: '> ', bullet: '- ', number: `${i}. ` }[kind]}${bare}`;
+  });
+  const insert = out.join('\n');
+  if (selStart === selEnd) {
+    const at = Math.max(from, selStart + out[0].length - lines[0].length);
+    return {
+      from, to, insert, start: at, end: at,
+    };
+  }
+  return {
+    from, to, insert, start: from, end: from + insert.length,
+  };
+}
+
+/** What a formatting shortcut in a text box is (`formatText`'s kind), else null. */
+function formatKind(e) {
+  if (!(e.metaKey || e.ctrlKey) || (e.metaKey && e.ctrlKey)) return null;
+  // Letters as the layout names them (⌥ changes them on a Mac), digits as on the keyboard (⇧
+  // changes those).
+  const letter = !e.altKey && /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() : '';
+  const k = letter || (/^(?:Key|Digit)(.)$/.exec(e.code || '')?.[1] || '').toLowerCase();
+  if (e.altKey) return e.shiftKey && k === 'c' ? 'block' : null;
+  if (!e.shiftKey) return { b: 'bold', i: 'italic' }[k] || null;
+  return {
+    x: 'strike', c: 'code', u: 'link', 9: 'quote', 8: 'bullet', 7: 'number',
+  }[k] || null;
+}
+
+/** The text boxes formatting works in: replies, a new thread, an edit, the sidebar. */
+const writable = (el) => el?.tagName === 'TEXTAREA' && Boolean(el.closest('#pane, #side'));
+
+/** Replaces what `r` (formatText) says in `box`, so Undo takes it back, and selects as it says. */
+function applyText(box, r) {
+  box.focus();
+  box.setSelectionRange(r.from, r.to);
+  // The browser's own edit keeps Undo; where there is none, the text is set (and said so).
+  if (!document.execCommand?.('insertText', false, r.insert)) {
+    box.setRangeText(r.insert, r.from, r.to, 'end');
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  box.setSelectionRange(r.start, r.end);
+}
+
+function wireFormatting() {
+  document.addEventListener('focusin', (e) => {
+    if (!e.target.matches?.('#pane .msg[data-id]')) Object.assign(msgFocus, { key: null, id: null });
+  });
+  // Your menu's shortcuts, as this keyboard names them.
+  for (const k of document.querySelectorAll('#menu kbd')) k.textContent = keyLabel(k.textContent);
+  $('keysAll')?.addEventListener('click', toggleShortcuts);
+  document.addEventListener('keydown', (e) => {
+    if (!writable(e.target) || e.isComposing) return;
+    const kind = formatKind(e);
+    if (!kind) return;
+    e.preventDefault();
+    const box = e.target;
+    applyText(box, formatText(box.value, box.selectionStart, box.selectionEnd, kind));
+  });
+  // A link pasted over words makes them its label, as in Slack.
+  document.addEventListener('paste', (e) => {
+    const box = e.target;
+    if (e.defaultPrevented || !writable(box) || box.selectionStart === box.selectionEnd) return;
+    if (e.clipboardData?.files?.length) return;
+    const url = (e.clipboardData?.getData('text/plain') || '').trim();
+    const sel = box.value.slice(box.selectionStart, box.selectionEnd);
+    if (!/^https?:\/\/\S+$/.test(url) || /\n/.test(sel) || /^\s*https?:\/\//.test(sel)) return;
+    e.preventDefault();
+    const insert = `[${sel}](${url})`;
+    const at = box.selectionStart + insert.length;
+    applyText(box, {
+      from: box.selectionStart, to: box.selectionEnd, insert, start: at, end: at,
+    });
+  });
+}
+
+/** The next (`step` 1) or previous (-1) unread thread in the list, as Slack's ⌥⇧↓ and ⌥⇧↑. */
+function moveUnread(step) {
+  const i = state.order.indexOf(state.open);
+  for (let j = (i < 0 && step < 0 ? state.order.length : i) + step; j >= 0 && j < state.order.length; j += step) {
+    const key = state.order[j];
+    if (key !== state.open && searchEntry(key)?.unread) {
+      if (searching()) openHit(key); else openThread(key);
+      document.querySelector(`#threads .t[data-thread="${CSS.escape(key)}"]:not(.leaving)`)?.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+  }
+  toast(step > 0 ? 'No unread threads below this one.' : 'No unread threads above this one.');
+}
+
+/** Every thread in the list read, as Slack's ⇧Esc: the list as it is, its filters and all. */
+function markAllRead() {
+  if (state.as || state.data?.me?.readonly) return;
+  const unread = state.order.map(searchEntry).filter((t) => t?.unread);
+  if (!unread.length) { toast('Nothing unread in this list.'); return; }
+  for (const t of unread) markRead(t, { quiet: true });
+  render();
+  toast(`Marked ${unread.length} ${unread.length === 1 ? 'thread' : 'threads'} read.`);
+}
+
+/** The open thread's messages one can move through, top to bottom. */
+const paneMessages = () => [...($('pane').querySelector(':scope > .scroller')?.querySelectorAll('.msg[data-id]') || [])]
+  .filter((m) => m.getClientRects().length);
+/** The message in focus (the message itself, not a button in it), and where it goes back to. */
+const msgFocus = { key: null, id: null };
+const focusedMessage = () => {
+  const a = document.activeElement;
+  return a?.matches?.('#pane .msg[data-id]') ? a : null;
+};
+function focusMessage(el, scroll = true) {
+  el.tabIndex = -1;
+  el.focus({ preventScroll: true });
+  Object.assign(msgFocus, { key: state.open, id: el.dataset.id });
+  if (scroll) el.scrollIntoView({ block: 'nearest' });
+}
+
+/**
+ * Focus to the next (`step` 1) or previous (-1) part of the page that shows, as F6 in Slack: the
+ * filters, the threads (where j and k go on), the open thread's messages (its last one), its reply
+ * box, the sidebar's.
+ */
+function cycleSection(step) {
+  const shows = (s) => s && !s.hidden && s.getClientRects().length && getComputedStyle(s).visibility !== 'hidden';
+  const scroller = $('pane').querySelector(':scope > .scroller');
+  const into = (el, sel) => () => {
+    const to = (sel && el.querySelector(sel)) || el;
+    if (to === el) el.tabIndex = -1;
+    to.focus();
+  };
+  const parts = [
+    { el: $('filters'), sel: 'button, [tabindex="0"]' },
+    { el: $('threads') },
+    { el: paneMessages().length ? scroller : null, go: () => focusMessage(paneMessages().at(-1)) },
+    { el: $('pane'), sel: '#reply' },
+    { el: $('side'), sel: '#side-reply' },
+  ].filter((x) => shows(x.el));
+  if (!parts.length) return;
+  // The messages are in the pane: the first part that has the focus is where it is.
+  const i = parts.findIndex((x) => x.el.contains(document.activeElement));
+  const to = parts[(i + step + parts.length) % parts.length] || parts[0];
+  (to.go || into(to.el, to.sel))();
+}
+
+/**
+ * Keys on the message in focus, as Slack's: ↑ and ↓ move to the one before or after (↓ from the
+ * last one is the reply box), e edits it (yours), r reacts, Esc goes back to the reply box.
+ * Whether `e` was one.
+ */
+function messageKey(e) {
+  const msg = focusedMessage();
+  if (!msg || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return false;
+  const run = (fn) => { e.preventDefault(); fn(); return true; };
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    const list = paneMessages();
+    const next = list[list.indexOf(msg) + (e.key === 'ArrowDown' ? 1 : -1)];
+    return run(() => {
+      if (next) focusMessage(next);
+      else if (e.key === 'ArrowDown') $('reply')?.focus();
+    });
+  }
+  if (e.key === 'Escape') return run(() => $('reply')?.focus());
+  if (e.key === 'e' && !e.shiftKey) {
+    const m = messageOf(state.open, msg.dataset.id);
+    return run(() => { if (m && canEdit(m)) startEdit(msg.dataset.id); });
+  }
+  if (e.key === 'r' && !e.shiftKey) {
+    const button = msg.querySelector('[data-picker]');
+    return run(() => { if (button) openPicker(button); });
+  }
+  return false;
+}
+
+/** Slack's ⌘⇧\: the emoji picker of the message in focus, else of the last one may react to. */
+function reactLast() {
+  const buttons = $('pane').querySelectorAll('.msg [data-picker]');
+  const button = focusedMessage()?.querySelector('[data-picker]') || buttons[buttons.length - 1];
+  if (button) openPicker(button);
+}
+
+/**
+ * ↑ in an empty reply box, as in Slack: your last message in the thread, to edit; without one
+ * (or with ⌥), the last message, in focus.
+ */
+function editLast(key, { focus = false } = {}) {
+  const m = !focus && [...(state.cache.get(key)?.data?.messages || [])].reverse().find(canEdit);
+  if (!m) {
+    const last = paneMessages().at(-1);
+    if (last) focusMessage(last);
+    return Boolean(last);
+  }
+  // The editor takes the focus: the reply box, drawn again with it, would take it back.
+  $('reply')?.blur();
+  startEdit(`${m.thread}|${m.id}`);
+  return true;
+}
+
+/**
+ * The shortcuts that work in text boxes too, as they do in Slack, and those with ⌘ or F6:
+ * whether `e` was one.
+ */
+function globalKey(e) {
+  if (e.defaultPrevented || document.querySelector('dialog[open]') || e.isComposing) return false;
+  const field = /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName);
+  const mod = (e.metaKey || e.ctrlKey) && !(e.metaKey && e.ctrlKey);
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  const run = (fn) => { e.preventDefault(); fn(); return true; };
+  // F6 is the browser's too (its address bar): ⌘F6, and ⌃⌘← ⌃⌘→ on a Mac, as Slack's web app.
+  if (e.key === 'F6' && !e.altKey && !(e.metaKey && e.ctrlKey)) return run(() => cycleSection(e.shiftKey ? -1 : 1));
+  if (MAC && e.metaKey && e.ctrlKey && !e.altKey && /^Arrow(Left|Right)$/.test(e.key)) {
+    return run(() => cycleSection(e.key === 'ArrowRight' ? 1 : -1));
+  }
+  // The views, as Slack's ⌃1…: ⌃1 on a Mac, Ctrl+Shift+1 elsewhere (Ctrl+1 is the browser's).
+  // Off a Mac, Ctrl+Shift+7…9 in a text box are its lists and quote (formatKind): not views there.
+  const digit = /^Digit([1-9])$/.exec(e.code || '')?.[1];
+  if (digit && !e.altKey && !e.metaKey && e.ctrlKey && e.shiftKey !== MAC && !(writable(e.target) && formatKind(e))) {
+    const views = document.querySelectorAll('#threads .order [data-view]');
+    const view = views[Number(digit) - 1];
+    if (view) return run(() => view.click());
+  }
+  // ⌥↑ ⌥↓: from the thread's reply box too, which keeps what was typed; not from a new thread,
+  // an edit or a menu.
+  if (e.altKey && !mod && /^Arrow(Up|Down)$/.test(e.key)) {
+    const here = !field || ['reply', 'side-reply', 'q'].includes(e.target.id);
+    if (!here || state.compose || state.awaiting) return false;
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    return run(() => (e.shiftKey ? moveUnread(step) : move(step)));
+  }
+  if (!mod || e.altKey) return false;
+  if (k === '/' && !e.shiftKey) return run(toggleShortcuts);
+  if (k === 'k' && !e.shiftKey && $('q')) {
+    return run(() => { if (TAKING_TURNS.matches && state.open) closeThread(); $('q').focus(); $('q').select(); });
+  }
+  if (k === 'k' && e.shiftKey && !state.as) return run(() => { if (!state.compose) openCompose(); });
+  if (k === 'a' && e.shiftKey) return run(() => { setUnread(!state.unread); render(); toUrl(); });
+  if (k === 'm' && e.shiftKey && personal() && !CHROME) return run(() => { state.mentions = !state.mentions; render(); toUrl(); });
+  if (k === '.' && !e.shiftKey && state.open) {
+    return run(() => { if (side.key === state.open) exitSide(); else enterSide(); });
+  }
+  if (e.shiftKey && e.code === 'Backslash' && state.open) return run(reactLast);
+  return false;
+}
+
 // ---------------------------------------------------------------- wiring
 function move(step) {
   if (!state.order.length) return;
@@ -7914,7 +8397,7 @@ async function switchView(slug) {
   syncReading();
   renderUser();
   render();
-  $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
+  emptyPane();
   toUrl(); await loadInbox(); connect();
   // The search goes on in the other view.
   if (searching()) { state.search.data = null; const q = state.search.q; state.search.q = ''; runSearch(q); }
@@ -8107,11 +8590,17 @@ async function start() {
       const button = openedPicker().closest('.col')?.querySelector('[data-picker]');
       closePicker();
       button?.focus();
+      // Its ☺ shows while the message is pointed at or in focus: else the message takes it.
+      if (button && document.activeElement !== button) focusMessage(button.closest('.msg'), false);
       return;
     }
+    if (messageKey(e)) return;
+    if (globalKey(e)) return;
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
     if (document.querySelector('dialog[open]')) return;
     if (e.key === '/' && $('q')) { e.preventDefault(); if (TAKING_TURNS.matches && state.open) closeThread(); $('q').focus(); $('q').select(); return; }
+    if (e.key === '?') { e.preventDefault(); toggleShortcuts(); return; }
+    if (e.key === 'Escape' && e.shiftKey) { e.preventDefault(); markAllRead(); return; }
     if (e.key === 'j') { e.preventDefault(); move(1); }
     if (e.key === 'k') { e.preventDefault(); move(-1); }
     if (e.key === 'e') { e.preventDefault(); toggleResolve(); }
@@ -8123,6 +8612,7 @@ async function start() {
   // The Send button's menu closes on a tap or click anywhere else.
   document.addEventListener('pointerdown', (e) => { if ($('hold') && !e.target.closest('.sendwrap')) $('hold').hidden = true; });
   wireLightbox();
+  wireFormatting();
   wireFiles();
   wireDrop();
   window.addEventListener('popstate', async (e) => {
@@ -8139,8 +8629,9 @@ async function start() {
     if (query !== state.search.q || !state.search.data) runSearch(query);
     showReview(review);
     render();
-    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>'; }
+    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; }
     syncReading();
+    if (!compose && !open) emptyPane();
     // The styles are applied without transitions before they come back.
     main.getBoundingClientRect();
     main.classList.remove('instant');
@@ -8178,7 +8669,7 @@ async function start() {
       state.prevKeys = null;
       Object.assign(state, { open: null, compose: null, awaiting: null });
       syncReading();
-      $('pane').innerHTML = '<div class="empty pick">Pick a thread.</div>';
+      emptyPane();
       await loadWho();
       renderNotify();
       renderExpert();

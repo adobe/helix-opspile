@@ -142,7 +142,9 @@ when the platform refused it, or after a minute. A second click on the same emoj
 all of the draft on its line, rendered; a mouse resting on the line for `HOVER_DELAY_MS` opens it
 too (`draftPeek` names the thread it opened), and leaving closes only what it opened. Hide draft and
 Escape close either; a new line not under the pointer, or another thread's, drops the pointer's. The
-open line grows upwards from the pane's bottom edge, so it stays under the pointer. The reply box
+open line grows upwards from the pane's bottom edge, so it stays under the pointer. The state changes
+at once; only the line's height follows, growing or shrinking (`resizeDraft`), and a re-render while
+it moves goes on from where it is. The reply box
 only ever holds what you typed or took in: a source shown beside the draft leaves it alone (it used
 to show the draft too, a second copy next to an opened line).
 
@@ -412,6 +414,14 @@ thread the list no longer shows folds away before it is removed; until then it i
 `state.order` and not counted as seen, and it stays in `state.rowNodes` as any hidden row does, so a
 thread that shows again takes its node back (`stopLeave`). A new list, a search, a hidden page or
 reduced motion removes it at once.
+
+**Thread pane (phones).** the thread → leaving → "Pick a thread.", or the thread again (`inert` on
+`#pane`, `paneLeave`, `emptyPane` in `ui/inbox.js`). Under 700px, closing the open thread (‹, Back, another
+view) slides the pane away; until its slide ends it shows what it showed, inert, and is emptied
+once it is out. Nothing renders into it meanwhile: what renders the thread renders the open one
+(`state.open`), and there is none. Opening something before then (`syncReading`) takes the pane
+over, and `paneLeave` tells the slide that ended it is not the latest. No slide (reduced motion,
+`main.instant`, a wider screen): emptied at once.
 
 **Search.** idle → loading → results or error (`state.search`). `seq` drops the answer to anything but
 the latest question.

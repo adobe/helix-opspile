@@ -490,6 +490,41 @@ function elsewhereCounts() {
 const channelTech = (entry) => (entry.ch.tech || [])
   .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
 
+/**
+ * As src/threads.js's `unreadInYours`: what the red badge counts, per thread, for the viewer:
+ * unread messages that mention them, and in a thread they posted or were mentioned in (a
+ * re-threaded group being one), the people's messages from someone else since they first were.
+ */
+function unreadInYours(rows) {
+  const { name } = store.people.get(ME);
+  const groupOf = (r) => r.logical_thread || r.thread;
+  const live = (r) => store.threads.get(r.thread).messages.filter((m) => !m.deletedAt);
+  const mentioned = (r) => store.mentions.filter((m) => m.thread === r.thread && m.person === ME)
+    .map((m) => m.at);
+  const since = new Map();
+  for (const r of rows) {
+    const ats = [...live(r).filter((m) => m.author.name === name).map((m) => m.at)]
+      .concat(mentioned(r));
+    for (const at of ats) {
+      if (!since.has(groupOf(r)) || at < since.get(groupOf(r))) {
+        since.set(groupOf(r), at);
+      }
+    }
+  }
+  const out = new Map();
+  for (const r of rows) {
+    const from = since.get(groupOf(r));
+    const read = store.watermarks.get(`${ME}|${r.thread}`)?.read_at;
+    const mine = new Set(mentioned(r));
+    const n = from ? live(r).filter((m) => m.at >= from && (!read || m.at > read)
+      && (mine.has(m.at) || (m.author.kind === 'person' && m.author.name !== name))).length : 0;
+    if (n) {
+      out.set(r.thread, n);
+    }
+  }
+  return out;
+}
+
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
 function inbox(team, before = null, personal = false, only = null) {
   const latest = (r) => r.last_at || r.any_at || '';
@@ -536,7 +571,7 @@ function inbox(team, before = null, personal = false, only = null) {
   const mentions = store.mentions.filter((m) => keys.has(m.thread) && teamIds.has(m.person));
   const byName = new Map([...store.people.values()].map((p) => [p.name, p]));
   // A re-threaded group is one entry, as src/api.js folds it.
-  const threads = fold(readState(rows, marks, mentions, ME)
+  const threads = fold(readState(rows, marks, mentions, ME, unreadInYours(rows))
     .map((t) => ({
       ...t,
       label: store.labels.get(t.thread) || null,

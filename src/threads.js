@@ -257,9 +257,11 @@ function group(rows) {
  *   - `mentionedMe` / `mentionedTeam`: I / these teammates were mentioned after they
  *     last read the thread
  *   - `unreadMentions`: how many messages mention me after I last read the thread
+ *   - `unreadForYou`: what the red badge counts, as Slack's: the messages I have not read that
+ *     mention me or are in a thread of mine (`yours`, see unreadInYours), at least the mentions
  *   - `attention`: the most pressing of ATTENTION that applies, or null
  */
-export function readState(threads, marks, mentions, me) {
+export function readState(threads, marks, mentions, me, yours = new Map()) {
   const marksBy = group(marks);
   const mentionsBy = group(mentions);
   return threads.map((t) => {
@@ -284,6 +286,7 @@ export function readState(threads, marks, mentions, me) {
       unseenByAdobe: !alert && Boolean(last) && !ws.some((w) => w.staff && caughtUp(w)),
       mentionedMe,
       unreadMentions,
+      unreadForYou: Math.max(unreadMentions, yours.get(t.thread) || 0),
       mentionedTeam,
     };
     const applies = {
@@ -295,6 +298,41 @@ export function readState(threads, marks, mentions, me) {
     };
     return { ...t, ...state, attention: ATTENTION.find((a) => applies[a]) || null };
   });
+}
+
+/**
+ * What the red badge counts of `threads` for person `me`, as Slack counts its badge: the
+ * messages they have not read (after their watermark on the message's thread) that mention them,
+ * and in a thread of theirs (one they posted or were mentioned in; a re-threaded group's members
+ * among `threads` are one thread) the people's messages from someone else since they first were
+ * in it. A message counts once. Bots' and deleted messages do not, but a bot's mention does.
+ *
+ * @returns {Promise<Map<string, number>>} thread to count, without the threads of none
+ */
+export async function unreadInYours(db, threads, me) {
+  if (!threads.length) {
+    return new Map();
+  }
+  const { results } = await db.prepare(`WITH k AS (SELECT value AS thread FROM json_each(?1)),
+    g AS (SELECT t.thread, COALESCE(t.logical_thread, t.thread) AS g FROM threads t
+      WHERE t.thread IN (SELECT thread FROM k)),
+    -- When the viewer was first in each group: posted in it or mentioned ('~' sorts last: never).
+    since AS (SELECT g.g, MIN(MIN(
+        COALESCE((SELECT MIN(a.at) FROM messages a WHERE a.thread = g.thread AND a.person = ?2
+          AND a.deleted = 0), '~'),
+        COALESCE((SELECT MIN(b.at) FROM mentions b WHERE b.thread = g.thread
+          AND +b.person = ?2), '~'))) AS at
+      FROM g GROUP BY g.g HAVING at < '~')
+    SELECT m.thread, COUNT(*) AS n
+    FROM g JOIN since s ON s.g = g.g
+      JOIN messages m ON m.thread = g.thread AND m.at >= s.at
+      LEFT JOIN watermarks w ON w.thread = g.thread AND w.person = ?2
+    WHERE m.deleted = 0 AND (w.read_at IS NULL OR m.at > w.read_at)
+      AND ((m.counted = 1 AND m.person IS NOT ?2) OR EXISTS (SELECT 1 FROM mentions n
+        WHERE n.thread = m.thread AND n.person = ?2
+          AND n.message = m.source || ':' || m.tenant || ':' || m.channel_id || ':' || m.id))
+    GROUP BY m.thread`).bind(JSON.stringify(threads), me).all();
+  return new Map((results || []).map((r) => [r.thread, r.n]));
 }
 
 /**
