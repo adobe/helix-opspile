@@ -88,15 +88,19 @@ export function mentionScore(q, { name, aliases = [] }) {
 /**
  * Where an account goes in the suggestions, first to last: the people of the thread (who posted
  * in it; outside Adobe first, the people a reply answers), the members of the channel (or, on
- * Teams, the team), everyone else. Knowing what the thread is about (`affinity`,
- * src/expertise.js) orders people within one of these, never ahead of one: the vectors find
- * Adobe people anywhere, who may have nothing to do with the conversation.
+ * Teams, the team), the Adobe people who know what the thread is about (`affinity`,
+ * src/expertise.js), everyone else. The vectors find Adobe people anywhere, who may have nothing
+ * to do with the conversation, so knowing the topic puts nobody ahead of the thread or the
+ * channel; within those, it orders people.
  */
 function tier(a) {
   if (a.here) {
     return a.staff ? 1 : 0;
   }
-  return a.member ? 2 : 3;
+  if (a.member) {
+    return 2;
+  }
+  return a.staff && a.affinity > 0 ? 3 : 4;
 }
 
 /**

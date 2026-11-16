@@ -857,9 +857,9 @@ const poolAccount = (r) => ({
  * a reply, from the accounts in D1
  * for the thread's platform and workspace. Those who posted in the thread come first (people
  * outside Adobe before Adobe's), then the members of its channel (on Teams: of its team, or who
- * posted there), then everyone else; within each, with `me` given, the Adobe people who know
- * what the thread is about first (`expert`: their messages anywhere are close to it,
- * src/expertise.js), by that affinity, then by how well `q` matches (src/mention-match.js: the
+ * posted there), then, with `me` given, the other Adobe people who know what the thread is
+ * about (`expert`: their messages anywhere are close to it, src/expertise.js), then everyone
+ * else; within each, by that affinity, then by how well `q` matches (src/mention-match.js: the
  * start of any word of the name, the Slack login or display name, or the mail address, in any
  * case), staff first, by name. On Teams, the bots seen in the thread's Teams team are offered
  * as well.

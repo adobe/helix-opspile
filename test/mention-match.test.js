@@ -70,7 +70,7 @@ describe('mention matching', () => {
     assert.deepEqual(names('', 3), ['Lu Kent', 'Bo Kim', 'Anna Klein']);
   });
 
-  it('puts the thread, then the channel, then everyone else, whoever knows the topic', () => {
+  it('puts the thread, then the channel, then who knows the topic, then everyone else', () => {
     const people = [
       { name: 'Ann Cust', here: true },
       { name: 'Bea Here', staff: true, here: true },
@@ -93,9 +93,10 @@ describe('mention matching', () => {
       'Ann Cust', 'Hal Here', 'Bea Here',
       // The channel: who knows the topic first.
       'Ed Expert', 'Cy Member',
-      // Everyone else: an Adobe person who knows the topic but is in neither is not ahead of
-      // anyone in the thread or the channel.
-      'Di Expert', 'Flo Staff', 'Gus Cust',
+      // Who knows the topic but is in neither: not ahead of anyone in the thread or the channel.
+      'Di Expert',
+      // Everyone else.
+      'Flo Staff', 'Gus Cust',
     ]);
     // What is typed still has to match.
     assert.deepEqual(names('e'), ['Ed Expert', 'Di Expert']);
