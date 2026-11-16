@@ -20,6 +20,7 @@ import { fakeBucket } from './fakes.js';
 import { rollupCogs } from '../src/cogs/rollup.js';
 import { pruneExpertEvents } from '../src/expertevents.js';
 import { pruneRankEvents } from '../src/rankevents.js';
+import { teamOptions } from '../src/suggest.js';
 
 /** The plans of every query `fn` asks D1, as SQLite would run them. */
 async function plans(fn) {
@@ -142,6 +143,14 @@ describe('cron queries', () => {
       assert.deepEqual(ps.filter((p) => p.plan.some((d) => /^SCAN (expert_events|rank_events)\b/.test(d))), []);
       assert.ok(ps.some((p) => p.plan.some((d) => /USING (COVERING )?INDEX (expert_events|rank_events)_at/.test(d))), JSON.stringify(ps));
     }
+  });
+
+  it('search a team\'s channels by team and by share for the channel suggestions', async () => {
+    const ps = await plans((env) => teamOptions(env));
+    const [p] = ps.filter((q) => q.sql.startsWith('SELECT COALESCE(c.group_name'));
+    assert.ok(p, 'the channels query');
+    assert.ok(!p.plan.some((d) => /^SCAN t\b/.test(d)), p.plan.join('\n'));
+    assert.ok(p.plan.some((d) => /SEARCH t USING INDEX threads_team/.test(d)), p.plan.join('\n'));
   });
 
   it('look up each day of the COGS backfill by the primary key', async () => {
