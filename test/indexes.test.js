@@ -66,11 +66,25 @@ describe('inbox queries', () => {
     assert.deepEqual(threadScans, []);
   });
 
+  it('count a team inbox\'s entries from an index, in order, when loading the inbox', async () => {
+    // An alert channel files tens of thousands of threads under its team (migration 0069).
+    for (const asked of [
+      await plans((env) => inbox(env, me, 'helix')),
+      await plans((env) => inbox(env, me, 'helix', { groups: ['slack:E1:C1:1.1'] })),
+    ]) {
+      const [p] = asked.filter((q) => q.sql.startsWith('SELECT g, n, total, latest'));
+      assert.ok(p.plan.some((d) => /SEARCH t USING COVERING INDEX threads_inbox \(team=\?/.test(d)), p.plan.join('\n'));
+      // The team's own threads come grouped: no sort before the shared channels' (UNION ALL).
+      const own = p.plan.slice(p.plan.indexOf('LEFT-MOST SUBQUERY'), p.plan.indexOf('UNION ALL'));
+      assert.ok(own.length && !own.some((d) => /TEMP B-TREE/.test(d)), p.plan.join('\n'));
+    }
+  });
+
   it('search threads by team, and identities and messages by index, when searching', async () => {
     const asked = await plans((env) => searchInbox(env, me, 'helix', 'acme'));
     // The words (titles, facts), then the entries found, as the inbox has them.
     assert.ok(asked.some((p) => p.sql.startsWith('SELECT f.thread')));
-    assert.ok(asked.some((p) => p.sql.startsWith('SELECT COALESCE(logical_thread, thread) AS g')));
+    assert.ok(asked.some((p) => p.sql.startsWith('SELECT g, n, total, latest')));
     assert.deepEqual(scans(asked), []);
     assert.deepEqual(asked.filter((p) => p.plan.some((d) => /^SCAN (threads|t)\b/.test(d))), []);
   });
