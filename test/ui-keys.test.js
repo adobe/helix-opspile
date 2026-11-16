@@ -114,7 +114,7 @@ describe('the shortcut sheet', () => {
 
   it('lists Slack\'s shortcuts beside the inbox\'s own', () => {
     const html = sheetHtml();
-    for (const k of ['/', '⌘K', 'j', '⌥⇧↓', '⌘/', '⌘⇧A', '⌘⇧K', '⌘.', '⌘B', '⌘⇧X', '⌘⇧7', 'e', 'a', '⇧Esc']) {
+    for (const k of ['/', '⌘K', 'j', '⌥⇧↓', '⌘/', '⌘⇧A', '⌘⇧K', '⌘.', '⌘B', '⌘⇧X', '⌘⇧7', 'e', 'a', '⇧Esc', '⌘F6', '⌘↑', 'r', 'Esc']) {
       assert.ok(html.includes(`<kbd>${esc(keyLabel(k))}</kbd>`), k);
     }
     assert.ok(SHORTCUTS.every(([, rows]) => rows.every(([what, ...ways]) => what && ways.length)));

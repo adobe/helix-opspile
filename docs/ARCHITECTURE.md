@@ -677,8 +677,11 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   and ⌥ off a Mac): ⌘K searches, ⌥↑/⌥↓ (with ⇧, the unread ones) go through the list, also
   from the reply box, ⌘⇧A is unread only, ⌘⇧M mentions of you, ⌘⇧K a new thread (⌘N is the
   browser's), ⌘. shows or hides the sidebar, ⇧Esc reads every thread in the list, F6 moves between
-  the filters, the list, the thread and the sidebar, ↑ in an empty reply box edits your last
-  message and ⌘⇧\ reacts to the last one. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
+  the filters, the list, the thread's messages, its reply box and the sidebar (⌘F6 too, as F6 is
+  the browser's), ⌃1…9 (Ctrl+Shift+1…9 off a Mac) picks a view, ↑ or ⌘↑ in an empty reply box
+  edits your last message (without one, puts the last message in focus) and ⌘⇧\ reacts to the
+  last one. On a message in focus ↑/↓ move, `e` edits it, `r` reacts and Esc goes back to the reply
+  box. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
   ⌘⇧7/8/9 write (or take off) markdown, and a link pasted over words becomes theirs. The inbox's
   own keys stay: `/`, `j`/`k`, `e` (resolve), `a` (the Thread Agent).
 

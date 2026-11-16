@@ -3711,6 +3711,11 @@ async function openThread(key, { live = false, cached = false } = {}) {
     if (found) markFound(found);
   }
   wireEditor(key);
+  // The message in focus, drawn again (a live update): in focus again.
+  if (msgFocus.key === key && (!document.activeElement || document.activeElement === document.body)) {
+    const el = scroller.querySelector(`.msg[data-id="${CSS.escape(msgFocus.id)}"]`);
+    if (el) focusMessage(el, false);
+  }
   const box = $('reply');
   if (box) {
     const c = composerFor(key, data.draft);
@@ -3728,7 +3733,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
     grow();
     box.onkeydown = (e) => {
       if (mentionKey(e, key)) return;
-      if (e.key === 'ArrowUp' && !box.value && !(e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) && editLast(key)) { e.preventDefault(); return; }
+      // ↑ or ⌘↑ (Ctrl+↑) in the empty box: your last message, to edit (see editLast).
+      if (e.key === 'ArrowUp' && !box.value && !e.shiftKey && !e.altKey && !(e.metaKey && e.ctrlKey) && editLast(key)) { e.preventDefault(); return; }
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); send(key, thread); }
       if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.altKey) { e.preventDefault(); saveDraft(key, box.value, undefined, { fromBox: true }); }
     };
@@ -7761,10 +7767,11 @@ const SHORTCUTS = [
     ['Next / previous thread', 'j k', '⌥↓ ⌥↑'],
     ['Next / previous unread thread', '⌥⇧↓ ⌥⇧↑'],
     ['Back / forward', MAC ? '⌘[ ⌘]' : '⌥← ⌥→'],
-    ['Next / previous part of the page', 'F6 ⇧F6'],
+    ['Next / previous part of the page', 'F6 ⇧F6', '⌘F6 ⌘⇧F6', ...(MAC ? ['⌃⌘→ ⌃⌘←'] : [])],
     ['These shortcuts', '⌘/', '?'],
   ]],
   ['Views', [
+    ['Personal, then your teams, as they are listed', MAC ? '⌃1…9' : '⌘⇧1…9'],
     ['Unread threads only, or all again', '⌘⇧A'],
     ['Only threads that mention you (your own view)', '⌘⇧M'],
     ['Start a new thread', '⌘⇧K'],
@@ -7775,8 +7782,14 @@ const SHORTCUTS = [
     ['Resolve it, or take your ✅ off again', 'e'],
     ['Ask the Thread Agent, in the sidebar', 'a'],
     ['Show or hide the sidebar', '⌘.'],
-    ['React to the last message', '⌘⇧\\'],
-    ['Edit your last message (from an empty reply box)', '↑'],
+    ['React to the last message, or the one in focus', '⌘⇧\\'],
+    ['Edit your last message (from an empty reply box)', '↑', '⌘↑'],
+  ]],
+  ['A message (↑ from an empty reply box, or F6)', [
+    ['Previous / next message', '↑ ↓'],
+    ['Edit it (one of yours)', 'e'],
+    ['React to it', 'r'],
+    ['Back to the reply box', 'Esc'],
   ]],
   ['Writing', [
     ['Send / new line', 'Enter ⇧Enter'],
@@ -7924,6 +7937,9 @@ function applyText(box, r) {
 }
 
 function wireFormatting() {
+  document.addEventListener('focusin', (e) => {
+    if (!e.target.matches?.('#pane .msg[data-id]')) Object.assign(msgFocus, { key: null, id: null });
+  });
   // Your menu's shortcuts, as this keyboard names them.
   for (const k of document.querySelectorAll('#menu kbd')) k.textContent = keyLabel(k.textContent);
   $('keysAll')?.addEventListener('click', toggleShortcuts);
@@ -7976,33 +7992,96 @@ function markAllRead() {
   toast(`Marked ${unread.length} ${unread.length === 1 ? 'thread' : 'threads'} read.`);
 }
 
-/**
- * Focus to the next (`step` 1) or previous (-1) part of the page that shows, as F6 in Slack: the
- * filters, the threads (where j and k go on), the open thread's reply box, the sidebar's.
- */
-function cycleSection(step) {
-  const parts = ['filters', 'threads', 'pane', 'side'].map($)
-    .filter((s) => s && !s.hidden && s.getClientRects().length && getComputedStyle(s).visibility !== 'hidden');
-  if (!parts.length) return;
-  const i = parts.findIndex((s) => s.contains(document.activeElement));
-  const to = parts[(i + step + parts.length) % parts.length] || parts[0];
-  const into = { pane: '#reply', side: '#side-reply', filters: 'button, [tabindex="0"]' }[to.id];
-  const el = (into && to.querySelector(into)) || to;
-  if (el === to) to.tabIndex = -1;
-  el.focus();
+/** The open thread's messages one can move through, top to bottom. */
+const paneMessages = () => [...($('pane').querySelector(':scope > .scroller')?.querySelectorAll('.msg[data-id]') || [])]
+  .filter((m) => m.getClientRects().length);
+/** The message in focus (the message itself, not a button in it), and where it goes back to. */
+const msgFocus = { key: null, id: null };
+const focusedMessage = () => {
+  const a = document.activeElement;
+  return a?.matches?.('#pane .msg[data-id]') ? a : null;
+};
+function focusMessage(el, scroll = true) {
+  el.tabIndex = -1;
+  el.focus({ preventScroll: true });
+  Object.assign(msgFocus, { key: state.open, id: el.dataset.id });
+  if (scroll) el.scrollIntoView({ block: 'nearest' });
 }
 
-/** Slack's ⌘⇧\: the emoji picker of the open thread's last message one may react to. */
+/**
+ * Focus to the next (`step` 1) or previous (-1) part of the page that shows, as F6 in Slack: the
+ * filters, the threads (where j and k go on), the open thread's messages (its last one), its reply
+ * box, the sidebar's.
+ */
+function cycleSection(step) {
+  const shows = (s) => s && !s.hidden && s.getClientRects().length && getComputedStyle(s).visibility !== 'hidden';
+  const scroller = $('pane').querySelector(':scope > .scroller');
+  const into = (el, sel) => () => {
+    const to = (sel && el.querySelector(sel)) || el;
+    if (to === el) el.tabIndex = -1;
+    to.focus();
+  };
+  const parts = [
+    { el: $('filters'), sel: 'button, [tabindex="0"]' },
+    { el: $('threads') },
+    { el: paneMessages().length ? scroller : null, go: () => focusMessage(paneMessages().at(-1)) },
+    { el: $('pane'), sel: '#reply' },
+    { el: $('side'), sel: '#side-reply' },
+  ].filter((x) => shows(x.el));
+  if (!parts.length) return;
+  // The messages are in the pane: the first part that has the focus is where it is.
+  const i = parts.findIndex((x) => x.el.contains(document.activeElement));
+  const to = parts[(i + step + parts.length) % parts.length] || parts[0];
+  (to.go || into(to.el, to.sel))();
+}
+
+/**
+ * Keys on the message in focus, as Slack's: ↑ and ↓ move to the one before or after (↓ from the
+ * last one is the reply box), e edits it (yours), r reacts, Esc goes back to the reply box.
+ * Whether `e` was one.
+ */
+function messageKey(e) {
+  const msg = focusedMessage();
+  if (!msg || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return false;
+  const run = (fn) => { e.preventDefault(); fn(); return true; };
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    const list = paneMessages();
+    const next = list[list.indexOf(msg) + (e.key === 'ArrowDown' ? 1 : -1)];
+    return run(() => {
+      if (next) focusMessage(next);
+      else if (e.key === 'ArrowDown') $('reply')?.focus();
+    });
+  }
+  if (e.key === 'Escape') return run(() => $('reply')?.focus());
+  if (e.key === 'e' && !e.shiftKey) {
+    const m = messageOf(state.open, msg.dataset.id);
+    return run(() => { if (m && canEdit(m)) startEdit(msg.dataset.id); });
+  }
+  if (e.key === 'r' && !e.shiftKey) {
+    const button = msg.querySelector('[data-picker]');
+    return run(() => { if (button) openPicker(button); });
+  }
+  return false;
+}
+
+/** Slack's ⌘⇧\: the emoji picker of the message in focus, else of the last one may react to. */
 function reactLast() {
   const buttons = $('pane').querySelectorAll('.msg [data-picker]');
-  const button = buttons[buttons.length - 1];
+  const button = focusedMessage()?.querySelector('[data-picker]') || buttons[buttons.length - 1];
   if (button) openPicker(button);
 }
 
-/** ↑ in an empty reply box, as in Slack: your last message in the thread, to edit. */
-function editLast(key) {
-  const m = [...(state.cache.get(key)?.data?.messages || [])].reverse().find(canEdit);
-  if (!m) return false;
+/**
+ * ↑ in an empty reply box, as in Slack: your last message in the thread, to edit; without one
+ * (or with ⌥), the last message, in focus.
+ */
+function editLast(key, { focus = false } = {}) {
+  const m = !focus && [...(state.cache.get(key)?.data?.messages || [])].reverse().find(canEdit);
+  if (!m) {
+    const last = paneMessages().at(-1);
+    if (last) focusMessage(last);
+    return Boolean(last);
+  }
   // The editor takes the focus: the reply box, drawn again with it, would take it back.
   $('reply')?.blur();
   startEdit(`${m.thread}|${m.id}`);
@@ -8019,7 +8098,18 @@ function globalKey(e) {
   const mod = (e.metaKey || e.ctrlKey) && !(e.metaKey && e.ctrlKey);
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   const run = (fn) => { e.preventDefault(); fn(); return true; };
-  if (e.key === 'F6' && !mod && !e.altKey) return run(() => cycleSection(e.shiftKey ? -1 : 1));
+  // F6 is the browser's too (its address bar): ⌘F6, and ⌃⌘← ⌃⌘→ on a Mac, as Slack's web app.
+  if (e.key === 'F6' && !e.altKey && !(e.metaKey && e.ctrlKey)) return run(() => cycleSection(e.shiftKey ? -1 : 1));
+  if (MAC && e.metaKey && e.ctrlKey && !e.altKey && /^Arrow(Left|Right)$/.test(e.key)) {
+    return run(() => cycleSection(e.key === 'ArrowRight' ? 1 : -1));
+  }
+  // The views, as Slack's ⌃1…: ⌃1 on a Mac, Ctrl+Shift+1 elsewhere (Ctrl+1 is the browser's).
+  const digit = /^Digit([1-9])$/.exec(e.code || '')?.[1];
+  if (digit && !e.altKey && !e.metaKey && e.ctrlKey && e.shiftKey !== MAC) {
+    const views = document.querySelectorAll('#threads .order [data-view]');
+    const view = views[Number(digit) - 1];
+    if (view) return run(() => view.click());
+  }
   // ⌥↑ ⌥↓: from the thread's reply box too, which keeps what was typed; not from a new thread,
   // an edit or a menu.
   if (e.altKey && !mod && /^Arrow(Up|Down)$/.test(e.key)) {
@@ -8247,8 +8337,11 @@ async function start() {
       const button = openedPicker().closest('.col')?.querySelector('[data-picker]');
       closePicker();
       button?.focus();
+      // Its ☺ shows while the message is pointed at or in focus: else the message takes it.
+      if (button && document.activeElement !== button) focusMessage(button.closest('.msg'), false);
       return;
     }
+    if (messageKey(e)) return;
     if (globalKey(e)) return;
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
     if (document.querySelector('dialog[open]')) return;

@@ -1057,7 +1057,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .msg.cont .quick { top: var(--spectrum-spacing-300); }
 .msg:has(.bubble:hover) .quick { visibility: visible; opacity: 1; translate: none;
  transition: var(--s2-pop-in) var(--spectrum-animation-duration-600); transition-property: opacity, translate, visibility; }
-.msg .quick:hover, .msg .quick:focus-within, .msg .quick:has([aria-expanded="true"]) { visibility: visible; opacity: 1; translate: none;
+.msg:focus-visible .quick, .msg .quick:hover, .msg .quick:focus-within, .msg .quick:has([aria-expanded="true"]) { visibility: visible; opacity: 1; translate: none;
  transition: var(--s2-pop-in); transition-property: opacity, translate, visibility; }
 .msg .quick button { font-size: var(--spectrum-font-size-200); line-height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); }
 .msg .quick button:hover, .msg .quick button:focus-visible { background: var(--hover); }
@@ -1950,6 +1950,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .picker button:hover, .spectrum .picker button:focus-visible { background: var(--s2-down); }
 .spectrum .msg .quick button[aria-pressed="true"] { background: var(--spectrum-accent-subtle-background-color-default); }
 .spectrum .msg .quick .more { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* A message in focus (↑ from an empty reply box, or F6): S2's focus ring around it. */
+.spectrum #pane .msg[data-id]:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); border-radius: var(--s2-radius); }
 .spectrum .msg .quick .edit { color: var(--spectrum-neutral-content-color-default); }
 .spectrum .msg .quick .edit:not(:last-child) { border-radius: var(--spectrum-corner-radius-100) 0 0 var(--spectrum-corner-radius-100); box-shadow: var(--spectrum-border-width-100) 0 0 var(--spectrum-gray-200); }
 
