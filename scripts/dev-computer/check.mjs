@@ -122,6 +122,12 @@ const GITHUB_SESSION_OUTPUT = [
 ];
 
 export const CHECKS = [
+  // Graphviz's dot (the diagrams layer), in Base.
+  {
+    name: 'kernel: dot lays out a graph, as SVG and JSON',
+    command: "printf 'digraph { a -> b }' | dot -Tsvg | grep -c 'class=\"node\"'; printf 'digraph { a -> b }' | dot -Tjson | grep -c '\"name\": \"a\"'",
+    match: /^2\n1\n$/,
+  },
   { name: 'boots', command: 'uname -s; id -un', match: /^Linux\nroot\n$/ },
   {
     name: 'curl over https',
@@ -638,7 +644,10 @@ async function checkAll(origin, argv) {
     }
     return;
   }
-  const checks = [...CHECKS, ...rangeChecks(built), ...built.images.map(commandsCheck)];
+  // The images agents' computers boot: not the renderer Worker's (dot alone, no shell), which
+  // `npm run graphviz:check` checks.
+  const checks = [...CHECKS, ...rangeChecks(built),
+    ...built.images.filter((i) => !i.internal).map(commandsCheck)];
   const results = [];
   for (const check of checks) {
     // eslint-disable-next-line no-await-in-loop

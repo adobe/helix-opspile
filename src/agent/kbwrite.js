@@ -13,6 +13,7 @@
 import git from 'isomorphic-git';
 import http from 'isomorphic-git/http/web';
 import { memfs } from './memfs.js';
+import { checkDiagrams } from '../diagrams.js';
 import {
   addLogEntry, asSystemPrompt, checkConcept, checkLayout, dotInfo, isDiagram, isEntry, renderIndex,
   RESERVED,
@@ -285,7 +286,8 @@ const rejected = (e) => /PushRejected|not a simple fast-forward|non-fast-forward
 export async function writeKnowledge(env, artifact, changes, {
   message, by, at = new Date().toISOString(), logEntry, author, staff = false,
 }) {
-  const invalid = checkChanges(changes, { staff, kind: kindOf(artifact) });
+  const invalid = checkChanges(changes, { staff, kind: kindOf(artifact) })
+    || await checkDiagrams(env, changes);
   if (invalid) {
     return { error: invalid };
   }

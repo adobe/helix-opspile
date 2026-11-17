@@ -1,0 +1,9 @@
+{
+  "name": "opspile-dev-graphviz",
+  "main": "../../src/graphviz/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": { "DEV": "1" },
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "opspile-dev-graphviz-images" }]
+}

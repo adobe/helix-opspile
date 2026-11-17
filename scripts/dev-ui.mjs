@@ -24,6 +24,7 @@
  *   node scripts/dev-ui.mjs --no-team  # signed in on no team (no-team mode): Personal only
  *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
  *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
+ *   GRAPHVIZ_ORIGIN=http://localhost:8789 npm run ui:dev  # diagrams drawn by `npm run graphviz:dev`
  *   node scripts/dev-ui.mjs --send=4000    # a reply takes 4 s to send (default: 900 ms, as in
  *                                          # production), and arrives some 8 s after that
  *
@@ -1166,6 +1167,22 @@ async function api(req, res, url) {
   // As src/api.js: looking as someone else is read-only.
   if (as && req.method !== 'GET') {
     return json(res, { error: 'read-only while viewing as someone else' }, 403);
+  }
+  // A diagram drawn by the renderer Worker (src/diagrams.js): `npm run graphviz:dev`'s, with
+  // GRAPHVIZ_ORIGIN; without it, none here (503), and the page draws it itself.
+  if (url.pathname === '/api/diagram' && req.method === 'POST') {
+    if (!process.env.GRAPHVIZ_ORIGIN) {
+      return json(res, { error: 'no renderer here' }, 503);
+    }
+    const body = await readJson(req);
+    const drawn = await (await fetch(`${process.env.GRAPHVIZ_ORIGIN}/render`, {
+      method: 'POST', body: JSON.stringify({ dot: body.dot, title: body.title }),
+    })).json();
+    return drawn.ok
+      ? json(res, {
+        svg: drawn.svg, width: drawn.width, height: drawn.height, ms: drawn.ms,
+      })
+      : json(res, { error: drawn.error }, 422);
   }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
     return kbApi(req, res, url);

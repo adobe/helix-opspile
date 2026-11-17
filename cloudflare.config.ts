@@ -266,6 +266,12 @@ export default defineConfig(({ mode }) => {
         DISCORD: bindings.durableObject({ worker: name, exportName: 'DiscordPoller' }),
         // Dynamic Workers: the shells of the agents' computers (the `computer` tool).
         LOADER: bindings.workerLoader(),
+        // The renderer Worker (graphviz/cloudflare.config.ts, src/graphviz/worker.js): Graphviz
+        // on the server, for the diagrams of the knowledge bases (src/diagrams.js). Deployed
+        // first; without it (cf dev), those do without.
+        ...(deployed ? {
+          GRAPHVIZ: bindings.worker({ worker: `helix-opspile-graphviz${mode === 'prod' ? '' : `-${mode}`}`, exportName: 'Graphviz' }),
+        } : {}),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),
       },
     },

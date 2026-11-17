@@ -1941,15 +1941,28 @@ function renderEditor(note) {
 // ---- diagrams --------------------------------------------------------------------------
 
 /*
- * A `.dot` file is drawn beside its text, as the inbox draws a stack: by the FMC renderer
- * (/inbox/fmc.js, Graphviz, src/fmc.js), imported the first time one is opened, and drawn again a
- * moment after the text changes. What Graphviz cannot draw it says under the last drawing.
+ * A `.dot` file is drawn beside its text, a moment after the text changes: by the renderer
+ * Worker (POST /api/diagram, src/diagrams.js: Graphviz on the server, and the FMC drawing of
+ * src/fmc.js), or, where there is none (503), by the page itself, as the inbox draws a stack
+ * (/inbox/fmc.js, imported then). What Graphviz cannot draw it says under the last drawing.
  */
 const RENDERER = '/inbox/fmc.js';
 const DRAW_MS = 250;
 let renderer = null;
+let onServer = true;
+/** `{ svg, width, height, ms }` of `dot`, or throws what is wrong with it. */
+async function drawn(dot, title) {
+  if (onServer) {
+    const res = await call('/api/diagram', { method: 'POST', body: JSON.stringify({ dot, title }) });
+    if (res.ok) return res.body;
+    if (res.status !== 503 && res.status !== 404) throw new Error(res.body.error || `Drawing failed (${res.status}).`);
+    onServer = false;
+  }
+  renderer = renderer || import(RENDERER);
+  return (await renderer).render(dot, { title });
+}
 let drawTimer = 0;
-let drawn = 0;
+let drawTurn = 0;
 function drawSoon() {
   clearTimeout(drawTimer);
   drawTimer = setTimeout(drawDiagram, DRAW_MS);
@@ -1958,18 +1971,16 @@ async function drawDiagram() {
   const view = $('dotview');
   const text = editorText();
   if (!view || text === null) return;
-  const turn = ++drawn;
+  const turn = ++drawTurn;
   if (!view.firstChild) view.innerHTML = '<div class="dotnote">Drawing…</div>';
   try {
-    renderer = renderer || import(RENDERER);
-    const m = await renderer;
-    const r = await m.render(text, { title: state.file?.path || '' });
-    if (turn !== drawn || !$('dotview')) return;
+    const r = await drawn(text, state.file?.path || '');
+    if (turn !== drawTurn || !$('dotview')) return;
     view.innerHTML = `${r.svg}<div class="dotnote">Drawn in ${r.ms.toFixed(0)} ms</div>`;
     view.classList.remove('stale');
   } catch (e) {
-    if (turn !== drawn || !$('dotview')) return;
-    if (!renderer || String(e.message || e).includes('Failed to fetch')) renderer = null;
+    if (turn !== drawTurn || !$('dotview')) return;
+    if (String(e.message || e).includes('Failed to fetch')) renderer = null;
     const svg = view.querySelector('svg');
     view.classList.toggle('stale', Boolean(svg));
     const note = `<div class="dotnote err">${esc(String(e.message || e).split('\n')[0] || 'Graphviz cannot draw this.')}</div>`;

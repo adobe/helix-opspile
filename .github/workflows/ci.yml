@@ -98,6 +98,9 @@ jobs:
             if (!db) { console.error("database helix-opspile not found"); process.exit(1); }
             console.log(db.uuid);')
           npx cf d1 migrations apply "$id"
+      # The renderer Worker first (graphviz/cloudflare.config.ts): the inbox Worker binds it.
+      - name: Deploy the renderer
+        run: npm run deploy:graphviz:prod -- --message "ci ${GITHUB_SHA::7}"
       - name: Deploy
         run: npx cf deploy --mode prod --message "ci ${GITHUB_SHA::7}"
       # The images of the agents' computers on the SLICC kernel (scripts/computer-images.mjs),

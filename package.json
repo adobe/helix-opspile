@@ -8,6 +8,8 @@
     "dev": "cf dev",
     "deploy:prod": "cf deploy --mode prod",
     "deploy:stage": "cf deploy --mode stage",
+    "deploy:graphviz:prod": "ln -sfn ../node_modules graphviz/node_modules && cd graphviz && cf deploy --mode prod",
+    "deploy:graphviz:stage": "ln -sfn ../node_modules graphviz/node_modules && cd graphviz && cf deploy --mode stage",
     "lint": "eslint .",
     "test": "node --test",
     "ui:dev": "node --watch scripts/dev-ui.mjs",
@@ -15,6 +17,8 @@
     "computer:dev": "node scripts/dev-computer/dev.mjs",
     "computer:check": "node scripts/dev-computer/check.mjs",
     "computer:images": "node scripts/computer-images.mjs --upload",
+    "graphviz:dev": "node scripts/dev-graphviz/dev.mjs",
+    "graphviz:check": "node scripts/dev-graphviz/check.mjs",
     "rank": "node scripts/rank.mjs",
     "build": "node scripts/ui-markdown.mjs",
     "prelint": "npm run build --silent",
@@ -22,7 +26,8 @@
     "preui:dev": "npm run build --silent",
     "preui:session": "npm run build --silent",
     "precomputer:dev": "npm run build --silent",
-    "precomputer:check": "npm run build --silent"
+    "precomputer:check": "npm run build --silent",
+    "pregraphviz:dev": "npm run build --silent"
   },
   "devDependencies": {
     "@adobe/eslint-config-helix": "^3.0.33",
@@ -44,6 +49,7 @@
     "@ai-ecoverse/wasm-gawk": "5.4.1-6",
     "@ai-ecoverse/wasm-git": "2.55.0-22",
     "@ai-ecoverse/wasm-grep": "3.12.0-8",
+    "@ai-ecoverse/wasm-graphviz": "16.1.1-1",
     "@ai-ecoverse/wasm-gzip": "1.15.0-6",
     "@ai-ecoverse/wasm-jq": "1.8.2-6",
     "@ai-ecoverse/wasm-patch": "2.8.0-5",

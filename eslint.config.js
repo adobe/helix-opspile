@@ -14,7 +14,7 @@ import { recommended } from '@adobe/eslint-config-helix';
 
 export default [
   {
-    ignores: ['node_modules/**', '.wrangler/**', '.cloudflare/**', 'coverage/**', 'dist/**'],
+    ignores: ['node_modules/**', '**/.wrangler/**', '**/.cloudflare/**', 'coverage/**', 'dist/**', 'graphviz/node_modules'],
   },
   {
     ...recommended,
