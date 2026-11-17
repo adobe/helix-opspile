@@ -2957,6 +2957,8 @@ const side = {
   // The id of the message just asked in the panel: its conversation's line is joined to the panel
   // (placeSidePanel, joinLine).
   asked: null,
+  // Whether the line joined to the panel is still to come out of it (joinLine, drawJoin).
+  emerging: false,
 };
 const SIDE_ICON = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
 const SIDE_HINT = `Talk to ${AGENT_NAME} in the sidebar: only your team sees it, nothing is posted (A)`;
@@ -3076,7 +3078,7 @@ function sideGroup(key, run, { last, trailing }) {
   const body = open ? `<div class="sc-body">${sideRun(key, run, last).join('')}${more}</div>` : '';
   // What the line opens: its run under it, or the panel, which has every run.
   const shows = side.wide ? `aria-expanded="${paneled}" aria-controls="side"` : `aria-expanded="${open}"`;
-  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${paneled ? 'paneled' : ''} ${working ? 'working' : ''}${joined ? ' joined' : ''}${joined && sideBridge.p < BRIDGE_ACROSS ? ' emerging' : ''}" data-side="${esc(id)}">
+  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${paneled ? 'paneled' : ''} ${working ? 'working' : ''}${joined ? ' joined' : ''}${joined && side.emerging ? ' emerging' : ''}" data-side="${esc(id)}">
     <button type="button" class="sc-head" data-side-toggle="${esc(id)}" ${shows}${live ? ' aria-disabled="true"' : ''}>
       <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}${live ? '' : '<span class="chev s2-chevron right" aria-hidden="true"></span>'}</span>
     </button>${body}</div>`;
@@ -3172,6 +3174,7 @@ const sideBridge = { p: 1, raf: 0, waiting: false };
 function bridgeStill() {
   cancelAnimationFrame(sideBridge.raf);
   Object.assign(sideBridge, { p: 1, raf: 0, waiting: false });
+  side.emerging = false;
   for (const el of document.querySelectorAll('#pane .sidechat.emerging')) {
     el.classList.remove('emerging');
     el.style.removeProperty('clip-path');
@@ -3308,6 +3311,7 @@ function drawJoin() {
   // the panel's to its own (the line itself `emerging` until then, shown only where it is out).
   const emerge = across === null && sideBridge.p < BRIDGE_ACROSS
     ? easeInOut(sideBridge.p / BRIDGE_ACROSS) : null;
+  side.emerging = emerge !== null;
   line.el.classList.toggle('emerging', emerge !== null);
   if (emerge === null) line.el.style.removeProperty('clip-path');
   if (across !== null) {
@@ -3373,7 +3377,10 @@ function joinLine(run) {
   for (const el of $('pane').querySelectorAll('.sidechat.joined')) el.classList.remove('joined');
   bridgeStill();
   sideLine(run)?.el.classList.add('joined', ...(REDUCED_MOTION.matches ? [] : ['emerging']));
-  if (!REDUCED_MOTION.matches) Object.assign(sideBridge, { p: 0, waiting: true });
+  if (!REDUCED_MOTION.matches) {
+    Object.assign(sideBridge, { p: 0, waiting: true });
+    side.emerging = true;
+  }
   drawJoin();
 }
 
