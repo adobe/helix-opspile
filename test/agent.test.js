@@ -1138,11 +1138,15 @@ describe('the earlier conversations of the channel', () => {
         VALUES ('slack:E1:C9:1.000100', 'slack', 'E1', 'C9', '1.000100', 'acme', 'helix', 'ignore',
           'acme-bots', 'channels/z/', ?, ?, 1, ?)`).run(AT, AT, AT);
 
+      // C1 is shared with another team; a channel of another platform with its id is not.
+      sqlite.prepare("INSERT OR IGNORE INTO teams (slug, name) VALUES ('aso', 'ASO')").run();
+      sqlite.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_at)
+        VALUES ('slack', 'C1', 'aso', ?), ('discord', '19:abc@thread.tacv2', 'aso', ?)`).run(AT, AT);
       const named = await call('find_channels', { query: 'ACME TECHNOLOGIES - WWW' });
       assert.equal(named.error, false);
       const lines = named.text.split('\n');
       assert.equal(lines.length, 2);
-      assert.match(lines[0], /^- slack:E1:C1 \| Slack #aem-acme \| customer acme \(Acme Technologies\) \| ops team helix \| 3 conversations, latest 2026-[^|]+\| matched customer: acme; channel name: acme; acme\/www in 1 thread \| https:\/\/[^ ]*slack\.com\/archives\/C1$/);
+      assert.match(lines[0], /^- slack:E1:C1 \| Slack #aem-acme \| customer acme \(Acme Technologies\) \| ops team helix, shared with aso \| 3 conversations, latest 2026-[^|]+\| matched customer: acme; channel name: acme; acme\/www in 1 thread \| https:\/\/[^ ]*slack\.com\/archives\/C1$/);
       assert.match(lines[1], /^- teams:TN1:19:abc@thread\.tacv2 \| Microsoft Teams #General in the team Acme Corp - Adobe \| customer acme \(Acme Technologies\) \| ops team helix \| 1 conversation, latest 2026-10-19 \| matched customer: acme; channel name: acme \| https:\/\/teams\.microsoft\.com\/l\/channel\/19%3Aabc%40thread\.tacv2\/General\?groupId=G1&tenantId=TN1$/);
       // A host of the site, or a domain, finds the same channels; the internal ones never.
       const sited = await call('find_channels', { query: 'https://main--www--acme.aem.page/de/page' });

@@ -130,8 +130,11 @@ async function details(env, keys) {
         LEFT JOIN channels c ON c.source = l.source AND c.tenant = l.tenant
           AND c.channel_id = l.channel_id
         LEFT JOIN orgs o ON o.slug = t.org`).bind(JSON.stringify(keys)).all(),
+    // channel_teams is keyed by platform and channel id, without the tenant (as in
+    // src/channelrefs.js): a channel id is unique on its platform in practice.
     env.DB.prepare(`SELECT source, channel_id, team FROM channel_teams
-      WHERE channel_id IN (SELECT json_extract(value, '$[2]') FROM json_each(?1))
+      WHERE (source, channel_id) IN (SELECT json_extract(value, '$[0]'),
+        json_extract(value, '$[2]') FROM json_each(?1))
       ORDER BY added_at, team`).bind(JSON.stringify(keys)).all(),
   ]);
   return (results || []).filter((r) => r.kind !== 'ignore').map((r) => ({
