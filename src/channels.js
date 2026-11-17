@@ -32,7 +32,7 @@ export function channelPath({
 // back without a YAML parser.
 const FIELDS = [
   'source', 'thread', 'logicalThread', 'id', 'at', 'author', 'subject', 'editedAt',
-  'deletedAt', 'raw', 'permalink',
+  'deletedAt', 'dropped', 'raw', 'permalink',
 ];
 
 export function render(meta, body) {
@@ -68,8 +68,9 @@ const union = (a = [], b = []) => [...new Set([...a, ...b])].sort();
  * message differently (e.g. image sizes, Teams images attached as files): a replay then
  * rewrites files of the same version, which it otherwise leaves alone. Files from before it
  * have format 1. 4: Teams system notices say what happened (meetings, members), not nothing.
+ * 5: `dropped` says what a Teams message showed that its markdown cannot (colours, highlights).
  */
-export const FORMAT = 4;
+export const FORMAT = 5;
 
 /**
  * Merges an incoming operation with the file that is already there.
@@ -103,7 +104,9 @@ export function merge(existing, incoming) {
   }
   // A newer version, or the same version rendered by a newer normalizer.
   const rerendered = incoming.version === existing.version
-    && (incoming.format || FORMAT) > (existing.format || 1) && incoming.body !== existing.body;
+    && (incoming.format || FORMAT) > (existing.format || 1)
+    && (incoming.body !== existing.body
+      || String(incoming.meta.dropped || '') !== String(existing.meta.dropped || ''));
   if (incoming.version > existing.version || rerendered) {
     return {
       ...incoming,

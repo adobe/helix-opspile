@@ -27,6 +27,7 @@ const DOING = {
   read_any_thread: 'Reading another thread',
   get_draft: 'Reading the draft',
   read_file: 'Reading an attached file',
+  raw_message: 'Reading a message as it was sent',
   update_draft: 'Updating the draft',
   discard_draft: 'Discarding the draft',
   kb_write: 'Filing what it learned in the knowledge bases',
