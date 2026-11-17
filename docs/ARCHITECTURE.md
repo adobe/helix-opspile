@@ -532,7 +532,9 @@ booted with the first layout, its processes Dynamic Workers (`LOADER`). A layout
 render.js), after which the kernel is ended for the next one to boot. It has no public address:
 the inbox Worker's service binding (`GRAPHVIZ`, its `Graphviz` entrypoint) is its only way in,
 with `layout` (dot's output) and `render` (the FMC drawing of src/fmc.js, `drawLayout`, the same
-the page draws). It is deployed before the inbox Worker, which binds it; until its image is in
+the page draws, from `-Tjson0`: the layout without dot's drawing instructions, which src/fmc.js
+does not read, a third of `-Tjson`'s size; dot's output crosses the kernel's pipe, and its size,
+not the layout, is what a large diagram's time goes to). A write is checked with `-Tplain`. It is deployed before the inbox Worker, which binds it; until its image is in
 the bucket, or when it fails, writes are checked by src/dot.js alone and the editor draws in the
 page (`/inbox/fmc.js`). The editor asks it first (`POST /api/diagram`, for the members of a
 team), so the editor needs no Graphviz of its own where it is deployed. dot is in the agents'

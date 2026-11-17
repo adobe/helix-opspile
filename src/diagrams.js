@@ -33,8 +33,9 @@ export async function checkDiagrams(env, changes) {
     if (!c.delete && isDiagram(c.path)) {
       let res;
       try {
+        // Only whether dot can: its smallest output that is still the whole layout.
         // eslint-disable-next-line no-await-in-loop
-        res = await env.GRAPHVIZ.layout(String(c.content ?? ''), { format: 'json' });
+        res = await env.GRAPHVIZ.layout(String(c.content ?? ''), { format: 'plain' });
       } catch (e) {
         // The renderer is down: src/dot.js has checked it, which has to do.
         console.error(JSON.stringify({ route: 'graphviz', error: e.message }));
