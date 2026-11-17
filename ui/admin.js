@@ -323,11 +323,10 @@ function drawList() {
   const f = state.filter.toLowerCase();
   if (state.tab === 'teams') {
     const rows = state.teams.filter((t) => !f || `${t.name} ${t.slug}`.toLowerCase().includes(f)).map((t) => `
-      <div class="row${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}">
-        <span class="name">${esc(t.name)} <span class="sub">${esc(t.slug)}</span></span>
-        ${t.self_managed ? '<span class="tag manual" title="Every member is a team manager">self-managed</span>' : ''}
-        <span class="sub">${t.members} ${t.members === 1 ? 'person' : 'people'} · ${channelCount(t.channels)}${t.shared ? ` + ${t.shared} shared` : ''}</span></div>`).join('');
-    const un = state.unassigned && state.unassigned.channels ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
+      <div class="row two${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}" title="${esc(t.name)} (${esc(t.slug)})">
+        <span class="name">${esc(t.name)}</span>
+        <span class="sub">${t.self_managed ? '<span title="Every member is a team manager">Self-managed</span> · ' : ''}${t.members} ${t.members === 1 ? 'person' : 'people'} · ${channelCount(t.channels)}${t.shared ? ` + ${t.shared} shared` : ''} · ${esc(t.slug)}</span></div>`).join('');
+    const un = state.unassigned && state.unassigned.channels ? `<div class="row two${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
         <span class="name"><i>Unassigned</i></span><span class="sub">${channelCount(state.unassigned.channels)}</span></div>` : '';
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter teams" value="${esc(state.filter)}"></label>
       <h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}
