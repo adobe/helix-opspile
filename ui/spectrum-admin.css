@@ -48,10 +48,10 @@ main > section { overflow: auto; min-height: 0; }
 .row:hover { background: var(--hover); }
 
 .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* A team: its name on a line of its own, whole, and what it has (tag, counts) under it. */
+/* A team: two lines, every row alike. The name has the first to itself; what it has under it,
+   the slug last, as what gives way when the line is too short. */
 .row.two { flex-direction: column; align-items: stretch; }
-.row.two .name { white-space: normal; overflow-wrap: anywhere; }
-.row.two .facts { display: flex; flex-wrap: wrap; align-items: center; }
+.row.two > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .ico { flex: none; }
 
@@ -265,7 +265,6 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .row.on { background: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity)); }
 .spectrum .row.on:hover { background: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity-hover)); }
 .spectrum .row.two { gap: var(--spectrum-spacing-50); }
-.spectrum .row.two .facts { gap: var(--spectrum-text-to-visual-100); }
 .spectrum .row .name i { color: var(--spectrum-neutral-subdued-content-color-default); }
 /* An org's icon: a thumbnail, rounded as a nested object is. */
 .spectrum .ico { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); border-radius: var(--spectrum-corner-radius-75); }
