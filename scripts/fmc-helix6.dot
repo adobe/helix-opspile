@@ -1,0 +1,162 @@
+digraph helix6 {
+  graph [nodesep=0.22, ranksep=0.32, newrank=true, remincross=false, mclimit=0.01, fontsize=12];
+  node [shape=box, fixedsize=true, width=1.2, height=0.6];
+  edge [dir=none];
+
+  // The channels (FMC: a small circle on a connection; R where one asks and the other answers)
+  // are declared in the zone they sit in, so Graphviz keeps them there.
+  node [fmc=agent];
+
+  subgraph cluster_oversight { fmc=group; class="fmc-zone-oversight"; label="OVERSIGHT"; labeljust=l;
+    node [fmc=channel, label="", width=0.16, height=0.16, request=true]; c_dec; c_ox;
+    node [fmc=agent, request=false, label="\N", width=1.2, height=0.6];
+    decider [fmc=person, label="Decider", width=0.85, height=0.85];
+    explorer [label="Oversight Explorer", width=1.1, height=0.6];
+    bundler [label="RUM Bundler", width=1.75, height=0.58];
+    klickhaus [fmc=storage, style=rounded, label="Klickhaus", width=1.1, height=0.6];
+    databus [fmc=storage, style=rounded, label="Data Bus (S3)", width=1.35, height=0.78];
+    bigquery [fmc=storage, style=rounded, label="Google BigQuery", width=1.35, height=0.78];
+  }
+
+  subgraph cluster_edge { fmc=group; class="fmc-zone-edge"; label="EDGE"; labeljust=r;
+    node [fmc=channel, label="", width=0.16, height=0.16, request=true]; c_vis; c_sampled [class="fmc-dashed"]; c_byo; c_rum; c_med; c_cfg; c_pip; c_sta;
+    node [fmc=agent, request=false, label="\N", width=1.2, height=0.6];
+    visitor [fmc=person, label="Visitor", width=0.85, height=0.85];
+    dns [fmc=storage, style=rounded, label="Google Cloud DNS", width=1.2, height=0.6];
+    byocdn [label="BYO CDN", width=0.85, height=0.6];
+    byocache [fmc=storage, style=rounded, label="Cache", width=1.2, height=0.6];
+    outer [label="Outer CDN\n`*.aem.live`, `*.aem.page`", width=9.4, height=1.45];
+    outercache [fmc=storage, style=rounded, label="Cache", width=1.2, height=0.6];
+    rum [label="RUM\n`rum.aem.page`", width=2.15, height=0.58];
+    media [label="Media CDN\n`media.aem.page`", width=2.15, height=0.58];
+    cfgcdn [label="Config CDN\n`config.aem.page`", width=2.15, height=0.58];
+    pipcdn [label="Pipeline CDN\n`pipeline.aem.page`", width=2.15, height=0.58];
+    static [label="Static (Content and Code)\n`static.aem.page`", width=2.35, height=0.58];
+  }
+
+  subgraph cluster_pipe { fmc=group; class="fmc-zone-pipe"; label="PIPE"; labeljust=l;
+    node [fmc=channel, label="", width=0.16, height=0.16, request=true]; c_cfgs; c_pips;
+    node [fmc=agent, request=false, label="\N", width=1.2, height=0.6];
+    cfgsvc [label="Config Service", width=1.15, height=0.95];
+    subgraph cluster_pipeline { fmc=agent; label="Pipeline Service";
+      node [width=1.15, height=0.24];
+      p_html [label="`.html`"]; p_json [label="`.json`"]; p_sitemap [label="`sitemap.xml`"]; p_ext [label="Ext-Less"];
+    }
+    subgraph cluster_s3 { fmc=storage; label="AWS S3";
+      node [fmc=storage, style=rounded, width=0.92, height=0.22];
+      subgraph cluster_srcbus { fmc=storage; label="Source Bus"; s1 [label="<org-1>", width=0.9]; sd [fmc=dots, width=0.2, height=0.1]; sn [label="<n>", width=0.5]; }
+      subgraph cluster_medbus { fmc=storage; label="Media Bus"; m1 [label="<content-bus-id-1>", width=1.85]; md [fmc=dots, width=0.2, height=0.1]; mn [label="<n>", width=0.5]; }
+      subgraph cluster_cfgbus { fmc=storage; label="Config Bus"; g1 [label="<org-1>", width=0.9]; gd [fmc=dots, width=0.2, height=0.1]; gn [label="<n>", width=0.5]; }
+      subgraph cluster_codebus { fmc=storage; label="Code Bus"; k1 [label="<owner-repo-ref-1>", width=1.85]; kd [fmc=dots, width=0.2, height=0.1]; kn [label="<n>", width=0.5]; }
+      subgraph cluster_contentbus { fmc=storage; label="Content Bus"; n1 [label="<content-bus-id-1>", width=1.85]; n2 [label="<content-bus-id-2>", width=1.85]; nd [fmc=dots, width=0.2, height=0.1]; nn [label="<n>", width=0.5]; }
+    }
+  }
+
+  subgraph cluster_author { fmc=group; class="fmc-zone-author"; label="AUTHOR"; labeljust=l;
+    node [fmc=channel, label="", width=0.16, height=0.16, request=true]; c_sk_a [request=back]; c_da_a [request=back]; c_sk [request=back]; c_da [request=back]; c_gd; c_html; c_word; c_idx [request=back];
+    node [fmc=agent, request=false, label="\N", width=1.2, height=0.6];
+    subgraph cluster_api { fmc=agent; label="Helix API Service";
+      node [width=0.86, height=0.6];
+      a_source [label="Source"]; a_auth [label="Auth"]; a_config [label="Config"]; a_cache [label="Cache"];
+      a_content [label="Content"]; a_media [label="Media"]; a_lookup [label="Lookup"]; a_publish [label="Publish"];
+      a_preview [label="Preview"]; a_index [label="Index"]; a_codesync [label="Code Sync"]; a_logs [label="Logs"];
+    }
+    sidekick [label="AEM Sidekick", width=0.85, height=1.3];
+    subgraph cluster_da { fmc=agent; label="Document Authoring";
+      node [width=0.85, height=0.24]; da_preview [label="Preview"]; da_collab [label="Collab"]; da_editor [label="Editor"];
+    }
+    gdoc2md [label="Google Docs\nMarkdown Adapter", width=1.5, height=0.6];
+    html2md [label="HTML\nMarkdown Adapter", width=1.5, height=0.6];
+    word2md [label="Word\nMarkdown Adapter", width=1.5, height=0.6];
+    author [fmc=person, label="Author", width=1.9, height=0.85];
+    subgraph cluster_byo { fmc=storage; label="BYO Content"; labelloc=b;
+      node [fmc=storage, style=rounded, width=0.82, height=0.33];
+      subgraph cluster_gdrive { fmc=storage; label="Google Drive"; docs [label="Docs"]; sheets [label="Sheets"]; }
+      htmlprov [label="HTML\nProvider", width=1.1, height=0.72];
+      subgraph cluster_sp { fmc=storage; label="Sharepoint"; word [label="Word"]; excel [label="Excel"]; }
+    }
+    indexer [label="Indexer", width=0.95, height=0.6];
+    subgraph cluster_sqs { fmc=storage; label="AWS SQS"; labelloc=b;
+      queue [fmc=storage, style=rounded, label="Index Queue (1:1)", width=1.2, height=0.64];
+    }
+  }
+
+  subgraph cluster_dev { fmc=group; class="fmc-zone-dev"; label="DEV"; labeljust=r;
+    node [fmc=channel, label="", width=0.16, height=0.16, request=true]; c_cli_api [request=back]; c_cli_cdn [request=back]; c_dev [request=back]; c_bot [request=back];
+    node [fmc=agent, request=false, label="\N", width=1.2, height=0.6];
+    local [fmc=storage, style=rounded, label="Local Sync’d Content", width=1.75, height=0.6];
+    cli [label="AEM CLI", width=0.85, height=0.6];
+    github [fmc=storage, style=rounded, label="GitHub", width=1.75, height=0.6];
+    developer [fmc=person, label="Developer", width=1.05, height=0.85];
+    bot [label="GitHub Bot", width=1.4, height=0.6];
+  }
+
+  // What is in a structured node is in a row of its own, in the order the original has.
+  { rank=same; p_html; p_json; p_sitemap; p_ext; } p_html -> p_json -> p_sitemap -> p_ext [style=invis];
+  { rank=same; s1; sd; sn; m1; md; mn; g1; gd; gn; k1; kd; kn; n1; n2; nd; nn; }
+  s1 -> sd -> sn -> m1 -> md -> mn -> g1 -> gd -> gn -> k1 -> kd -> kn -> n1 -> n2 -> nd -> nn [style=invis];
+  { rank=same; a_source; a_auth; a_config; a_cache; a_content; a_media; a_lookup; a_publish; a_preview; a_index; a_codesync; a_logs; }
+  a_source -> a_auth -> a_config -> a_cache -> a_content -> a_media -> a_lookup -> a_publish -> a_preview -> a_index -> a_codesync -> a_logs [style=invis];
+  { rank=same; da_preview; da_collab; da_editor; } da_preview -> da_collab -> da_editor [style=invis];
+  { rank=same; docs; sheets; htmlprov; word; excel; } docs -> sheets -> htmlprov -> word -> excel [style=invis];
+  { rank=same; rum; media; cfgcdn; pipcdn; static; } rum -> media -> cfgcdn -> pipcdn -> static [style=invis];
+
+  // Channels sit on their connection, in the order of what they connect.
+  { rank=same; c_sampled; c_vis; } c_sampled -> c_vis [style=invis];
+  { rank=same; c_rum; c_med; c_cfg; c_pip; c_sta; } c_rum -> c_med -> c_cfg -> c_pip -> c_sta [style=invis, weight=8];
+  { rank=same; c_cfgs; c_pips; } c_cfgs -> c_pips [style=invis];
+  { rank=same; c_gd; c_html; c_word; } c_gd -> c_html -> c_word [style=invis, weight=8];
+
+  // The order, top to bottom, as the original reads.
+  { rank=same; decider; visitor; }
+  { rank=same; explorer; dns; byocdn; byocache; }
+  { rank=same; bundler; outer; outercache; klickhaus; }
+  { rank=same; databus; rum; media; cfgcdn; pipcdn; static; }
+  { rank=same; bigquery; cfgsvc; p_html; }
+  { rank=same; s1; local; cli; }
+  { rank=same; a_source; github; developer; }
+  { rank=same; sidekick; da_preview; gdoc2md; html2md; word2md; bot; }
+  { rank=same; author; docs; indexer; queue; }
+
+  // OVERSIGHT: who asks whom; the sampled data the bundler keeps.
+  decider -> c_dec -> explorer [weight=8]; explorer -> c_ox -> bundler [weight=8];
+  bundler -> databus [dir=both];
+  rum -> databus [dir=forward]; rum -> bigquery [dir=forward];
+  outer -> klickhaus [dir=forward];
+
+  // EDGE: the visitor asks their CDN, which asks ours, which asks the inner CDNs.
+  visitor -> c_vis -> byocdn [weight=8]; visitor -> c_sampled -> byocdn [style=dashed, weight=8];
+  dns -> byocdn [dir=forward]; byocdn -> byocache [dir=both];
+  byocdn -> c_byo -> outer [weight=8]; outer -> outercache [dir=both];
+  outer -> c_rum [weight=0]; c_rum -> rum [weight=20]; outer -> c_med [weight=0]; c_med -> media [weight=20]; outer -> c_cfg [weight=0]; c_cfg -> cfgcdn [weight=20]; outer -> c_pip [weight=0]; c_pip -> pipcdn [weight=20]; outer -> c_sta [weight=0]; c_sta -> static [weight=20];
+
+  // PIPE: the inner CDNs ask the services, which read the buses.
+  cfgcdn -> c_cfgs -> cfgsvc [weight=8]; pipcdn -> c_pips -> p_json [lhead=cluster_pipeline, weight=8];
+  cfgsvc -> g1 [dir=back, lhead=cluster_cfgbus];
+  p_html -> g1 [dir=back, ltail=cluster_pipeline, lhead=cluster_cfgbus];
+  p_sitemap -> k1 [dir=back, ltail=cluster_pipeline, lhead=cluster_codebus];
+  p_ext -> n1 [dir=back, ltail=cluster_pipeline, lhead=cluster_contentbus];
+  media -> m1 [dir=back, lhead=cluster_medbus];
+  static -> k1 [dir=back, lhead=cluster_codebus]; static -> n2 [dir=back, lhead=cluster_contentbus];
+
+  // AUTHOR: the API service changes every bus, and purges the caches.
+  s1 -> a_source [dir=both, ltail=cluster_srcbus, lhead=cluster_api];
+  m1 -> a_media [dir=both, ltail=cluster_medbus, lhead=cluster_api];
+  g1 -> a_config [dir=both, ltail=cluster_cfgbus, lhead=cluster_api];
+  k1 -> a_codesync [dir=both, ltail=cluster_codebus, lhead=cluster_api];
+  n1 -> a_content [dir=both, ltail=cluster_contentbus, lhead=cluster_api];
+  outercache -> a_cache [dir=back, lhead=cluster_api]; byocache -> a_cache [dir=back, lhead=cluster_api];
+  a_auth -> c_sk_a -> sidekick [request=back, weight=8]; a_auth -> c_da_a -> da_preview [lhead=cluster_da, weight=8];
+  sidekick -> c_sk -> author [weight=8]; da_editor -> c_da -> author [ltail=cluster_da, weight=8];
+  a_content -> c_gd -> gdoc2md [weight=8]; a_content -> c_html -> html2md [weight=8]; a_content -> c_word -> word2md [weight=8];
+  gdoc2md -> docs [dir=back]; html2md -> htmlprov [dir=back]; word2md -> word [dir=back];
+  author -> docs [dir=both, lhead=cluster_byo];
+  a_preview -> c_idx -> indexer [weight=8]; a_index -> queue [dir=forward]; indexer -> queue [dir=both];
+  indexer -> excel [dir=forward, lhead=cluster_byo];
+  a_codesync -> c_bot -> bot [weight=8];
+
+  // DEV
+  outer -> c_cli_cdn -> cli [weight=8]; a_logs -> c_cli_api [ltail=cluster_api, weight=0]; c_cli_api -> cli [weight=8]; cli -> local [dir=both];
+  cli -> c_dev -> developer [weight=8]; developer -> github [dir=both];
+  github -> a_logs [dir=forward, lhead=cluster_api]; github -> bot [dir=forward];
+}
