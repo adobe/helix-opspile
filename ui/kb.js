@@ -1345,9 +1345,10 @@ function bindExtraction() {
 
 // ---- global MCP servers ---------------------------------------------------------------
 //
-// opspile's own servers (src/agent/globals.js): the browser (Cloudflare Browser Run) and GitHub
-// (read-only, as the opspile GitHub App). Set up once; on or off for a team here (new teams
-// start with both on), or for one channel (a channel's switch wins over its team's).
+// opspile's own servers (src/agent/globals.js): the browser (Cloudflare Browser Run), GitHub
+// (read-only, as the opspile GitHub App) and FluffyJaws (as the person the admin team connected,
+// or a service app). Set up once; on or off for a team here (new teams start with the browser and
+// GitHub on), or for one channel (a channel's switch wins over its team's).
 
 const toolTags = (tools) => tools.map((t) => `<span class="src" title="${esc(t.description || '')}${t.readOnly ? ' (read-only)' : ''}">${esc(t.name)}</span>`).join('');
 
@@ -1386,6 +1387,25 @@ const perChannel = (g) => channelSwitches({
   kind: 'gch', id: g.server, title: g.server, switches: g.channels, team: g.team,
 });
 
+/**
+ * FluffyJaws' credential: whose identity the agents use there (everyone sees it, since turning it
+ * on gives a team's agents what that person sees), and for the admin team, Connect and Disconnect.
+ */
+function fluffySetup(g) {
+  const fj = g.fluffyjaws;
+  if (!fj || !fj.mode) return '';
+  if (fj.mode === 'service') {
+    return '<div class="setup"><span>Agents use opspile\'s FluffyJaws service app, as an automation: no person\'s identity.</span></div>';
+  }
+  const who = fj.actsAsName && fj.actsAs ? `${fj.actsAsName} (${fj.actsAs})` : fj.actsAs || 'the person who connected it';
+  const text = fj.connected
+    ? `Agents act as <b>${esc(who)}</b> at FluffyJaws, with what they may see there. Connected by ${esc(fj.by || 'someone')}, ${esc(ago(fj.at))}.`
+    : `Agents use FluffyJaws as the person a member of the admin team connects: one sign-in at FluffyJaws' Okta, for every team where it is on.${fj.mayConnect ? '' : ' Nobody connected it yet.'}`;
+  const acts = fj.mayConnect ? `<button type="button" data-fjconnect="${esc(g.server)}"${fj.connected ? '' : ' class="primary"'}>${fj.connected ? 'Connect again' : 'Connect as you'}</button>
+    ${fj.connected ? `<button type="button" class="danger" data-fjdisconnect="${esc(g.server)}">Disconnect</button>` : ''}` : '';
+  return `<div class="setup"><span${acts ? ' class="what"' : ''}>${text}</span>${acts}</div>`;
+}
+
 function globalRow(g) {
   const b = base();
   const first = g.instances[0];
@@ -1414,6 +1434,7 @@ function globalRow(g) {
       <div class="sub by">${[by, first && first.checkedAt && `checked ${esc(ago(first.checkedAt))}`].filter(Boolean).join(' · ')}</div>
     </div>
     ${githubSetup(g)}
+    ${fluffySetup(g)}
     ${perChannel(g)}
   </div>`;
 }
@@ -1456,6 +1477,13 @@ function flashNote() {
   state.flash = null;
   if (!f) return null;
   if (f.error) return { kind: 'err', text: `The sign-in did not work: ${f.error}` };
+  if (f.global) {
+    const g = (state.globals || []).find((x) => x.server === f.global);
+    if (!g || !g.fluffyjaws) return null;
+    const i = g.instances[0];
+    if (!i || i.checkError) return { kind: 'warn', text: `Connected ${g.title}, but it could not be reached${i ? `: ${i.checkError}` : '.'}` };
+    return { kind: 'ok', text: `Connected ${g.title}: agents where it is on act as ${g.fluffyjaws.actsAs || 'you'} there, with ${i.tools.length} tool${i.tools.length === 1 ? '' : 's'}.` };
+  }
   const s = (state.mcp || []).find((x) => String(x.id) === f.connected);
   if (!s) return null;
   if (s.checkError) return { kind: 'warn', text: `Connected ${s.name} as you, but it could not be reached: ${s.checkError}` };
@@ -1502,7 +1530,7 @@ function renderMcp(shownNote) {
     a script outputs reaches the model). Adding or changing a server connects to it and lists its tools. The admin team and the managers of ${b.kind === 'team' ? b.name : 'its ops teams'} manage them${mayEdit() ? '' : '; you see them read-only'}.`;
   const editing = state.editing && list ? list.find((x) => x.id === state.editing) : null;
   const globals = state.globals || [];
-  const globalNote = b.kind === 'team' ? `Built-in, set up once for every team: on or off for ${b.name}, or for one of its channels. New teams start with both on.`
+  const globalNote = b.kind === 'team' ? `Built-in, set up once for every team: on or off for ${b.name}, or for one of its channels. New teams start with the browser and GitHub on.`
     : `Built-in, set up once for every team: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
   holdList(() => {
     $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Tools and MCP servers for ${esc(whose)}</span></div>
@@ -1766,6 +1794,37 @@ function bindGlobals() {
       if (stale()) return;
       renderFiles();
       renderMcp({ kind: 'ok', text: allow ? `Agents can read what the app is installed on in ${inst.account}. Check lists the tools.` : `Agents no longer read ${inst.account}.` });
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-fjconnect]')) {
+    el.onclick = async () => {
+      const g = find(el.dataset.fjconnect);
+      const yes = await ask(
+        `Connect ${g.title} as you?`,
+        `You sign in at ${g.title}'s Okta, and the agents of every team and channel where it is on then act as you there, seeing what you see, until someone connects it again or disconnects it.`,
+        'Sign in',
+      );
+      if (!yes) return;
+      const { ok, body } = await call('/api/kb/mcp/global/connect', { method: 'POST', body: JSON.stringify({ server: g.server, repo }) });
+      if (stale()) return;
+      if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Could not start the sign-in.' }); return; }
+      location.href = body.authorizationUrl;
+    };
+  }
+  for (const el of $('editor').querySelectorAll('[data-fjdisconnect]')) {
+    el.onclick = async () => {
+      const g = find(el.dataset.fjdisconnect);
+      const yes = await ask(
+        `Disconnect ${g.title}?`,
+        `The sign-in of ${g.fluffyjaws.actsAs || 'its person'} is revoked at Okta, and agents stop using ${g.title} with their next message until someone connects it again.`,
+        'Disconnect',
+      );
+      if (!yes) return;
+      const { ok, body } = await call('/api/kb/mcp/global/disconnect', { method: 'POST', body: JSON.stringify({ server: g.server, repo }) });
+      if (stale()) return;
+      if (!ok) { renderMcp({ kind: 'err', text: body.error || 'That did not work.' }); return; }
+      if (body.global) state.globals = state.globals.map((x) => (x.server === g.server ? body.global : x));
+      renderMcp({ kind: 'ok', text: `${g.title} is disconnected.` });
     };
   }
   if ($('ghCreate')) {
@@ -2220,8 +2279,10 @@ async function popped() {
   // screen there, and the customer's knowledge base wins over the team's.
   const exact = state.bases.find((b) => b.repo === q.get('repo'));
   // Back from an MCP server's sign-in (src/mcpadmin.js): said once on the servers' page.
-  if (exact && (q.get('mcp_connected') || q.get('mcp_error'))) {
-    state.flash = q.get('mcp_error') ? { error: q.get('mcp_error') } : { connected: q.get('mcp_connected') };
+  if (exact && (q.get('mcp_connected') || q.get('mcp_error') || q.get('mcp_global_connected'))) {
+    if (q.get('mcp_error')) state.flash = { error: q.get('mcp_error') };
+    else if (q.get('mcp_global_connected')) state.flash = { global: q.get('mcp_global_connected') };
+    else state.flash = { connected: q.get('mcp_connected') };
   }
   const pick = exact
     || state.bases.find((b) => b.kind === 'org' && b.slug === q.get('org'))
@@ -2238,7 +2299,7 @@ async function popped() {
       nav: 'replace',
     });
     // A link to a file, the history or the agents opens it; a link to a knowledge base, its files.
-    if ((exact && q.get('path')) || ['history', 'agents', 'extraction'].includes(view) || (exact && (q.get('mcp_connected') || q.get('mcp_error')))) showPane('editor');
+    if ((exact && q.get('path')) || ['history', 'agents', 'extraction'].includes(view) || (exact && (q.get('mcp_connected') || q.get('mcp_error') || q.get('mcp_global_connected')))) showPane('editor');
     $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
   } else {
     toUrl('replace');

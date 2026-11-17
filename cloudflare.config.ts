@@ -103,6 +103,14 @@ const AGENT_VARS = [
 // MEMBERSHIP_SLACK_BOT (the relay's bot user id, which the post mentions).
 const MEMBERSHIP_VARS = ['MEMBERSHIP_SLACK_CHANNEL', 'MEMBERSHIP_SLACK_BOT'] as const;
 
+// The global fluffyjaws MCP server, optional (src/agent/fluffyjaws.js): FLUFFYJAWS_ISSUER, its
+// Okta authorization server; FLUFFYJAWS_CLIENT_ID, opspile's public Okta client there, which a
+// member of the admin team signs in with; or FLUFFYJAWS_SERVICE_CLIENT_ID and the secret
+// FLUFFYJAWS_SERVICE_SECRET, a FluffyJaws service app, which wins.
+const FLUFFYJAWS_VARS = [
+  'FLUFFYJAWS_ISSUER', 'FLUFFYJAWS_CLIENT_ID', 'FLUFFYJAWS_SERVICE_CLIENT_ID',
+] as const;
+
 function membershipBindings() {
   const bound = (binding: string, worker: string | undefined) => (worker
     ? { [binding]: bindings.worker({ worker, exportName: 'MembershipRequests' }) }
@@ -135,6 +143,8 @@ const SECRETS = [
   ...(process.env.DISCORD_CLIENT_ID ? ['DISCORD_CLIENT_SECRET'] : []),
   // The klickhaus export's ClickHouse password, where it is on.
   ...(process.env.CLICKHOUSE_URL ? ['CLICKHOUSE_PASSWORD'] : []),
+  // The FluffyJaws service app's client secret, where one is configured.
+  ...(process.env.FLUFFYJAWS_SERVICE_CLIENT_ID ? ['FLUFFYJAWS_SERVICE_SECRET'] : []),
 ];
 
 /** Per-environment resource names; `cf deploy` creates them if they are missing. */
@@ -214,7 +224,7 @@ function vars(deployed: boolean) {
   };
   return Object.fromEntries(
     [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...SIGNIN_VARS, ...MOVE_VARS, ...SLACK_VARS,
-      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS]
+      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS, ...FLUFFYJAWS_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );

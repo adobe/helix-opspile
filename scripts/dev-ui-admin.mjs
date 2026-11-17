@@ -13,6 +13,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { admin } from '../src/admin.js';
 import { BROWSER_MCP_URL, GITHUB_MCP_URL } from '../src/agent/globals.js';
+import { FLUFFYJAWS_MCP_URL } from '../src/agent/fluffyjaws.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
@@ -39,6 +40,9 @@ import { fakeMcpServers } from '../test/mcp-server.js';
  * The global servers: Cloudflare's Browser Run MCP server answers in memory (made up), and so
  * do GitHub's API and its MCP server for a made-up GitHub App, installed on one made-up
  * account, so the editor shows both set up. Start with `--no-github` to see the app missing.
+ * FluffyJaws' MCP server answers in memory too, connected as a made-up person; its Okta is the
+ * preview's `/__dev/okta` (its sign-in sends the browser straight back), so Connect again and
+ * Disconnect work. Start with `--no-fluffyjaws` to see it before anyone connected it.
  */
 
 const PREVIEW_TOKEN = 'preview-token';
@@ -189,6 +193,38 @@ const GLOBAL_MCP = fakeMcpServers([
   },
 ]);
 const NO_GITHUB = process.argv.includes('--no-github');
+const NO_FLUFFYJAWS = process.argv.includes('--no-fluffyjaws');
+const PREVIEW_FLUFFY_TOKEN = 'preview-fluffyjaws-token';
+const FLUFFY_OKTA = `${PREVIEW_ORIGIN}/__dev/okta`;
+const FLUFFY_MCP = fakeMcpServers([{
+  url: FLUFFYJAWS_MCP_URL,
+  name: 'FluffyJaws 3.0',
+  token: PREVIEW_FLUFFY_TOKEN,
+  tools: tools([
+    ['fluffyjaws_chat', 'Ask FluffyJaws a question', true],
+    ['search_fluffypack', 'Search the FluffyPack knowledge', true],
+    ['full_documentation_search', 'Search the product documentation', true],
+    ['slack_search', 'Search Slack', true],
+    ['wiki_documentation_search', 'Search the wiki', true],
+    ['jira_search', 'Search Jira', true],
+    ['github_code_search', 'Search code on GitHub', true],
+    ['dynamics_ticket_search', 'Search support tickets', true],
+    ['content_compass_recommend', 'Recommend content, and save the conversation', false],
+  ], 'query'),
+}]);
+/** FluffyJaws' Okta, made up: any code, one token; revoking does nothing. */
+async function fluffyOkta(request) {
+  if (new URL(request.url).pathname.endsWith('/v1/token')) {
+    return Response.json({
+      access_token: PREVIEW_FLUFFY_TOKEN,
+      token_type: 'Bearer',
+      expires_in: 3600,
+      refresh_token: 'preview-fluffyjaws-refresh',
+      id_token: `e30.${Buffer.from(JSON.stringify({ email: 'dana.ops@example.com', name: 'Dana Ops' })).toString('base64url')}.x`,
+    });
+  }
+  return new Response(null, { status: 200 });
+}
 const { privateKey: PREVIEW_KEY } = generateKeyPairSync('rsa', {
   modulusLength: 2048,
   privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
@@ -222,6 +258,12 @@ globalThis.fetch = (input, init) => {
   }
   if (GLOBAL_MCP.handles(url)) {
     return GLOBAL_MCP.fetch(input, init);
+  }
+  if (FLUFFY_MCP.handles(url)) {
+    return FLUFFY_MCP.fetch(input, init);
+  }
+  if (url.startsWith(`${FLUFFY_OKTA}/`)) {
+    return fluffyOkta(new Request(input, init));
   }
   if (url.startsWith('https://api.github.com/')) {
     return githubApi(new Request(input, init));
@@ -562,6 +604,9 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     PUBLIC_ORIGIN: PREVIEW_ORIGIN,
     // The global browser server's API token, made up.
     BROWSER_RUN_TOKEN: PREVIEW_TOKEN,
+    // FluffyJaws' Okta and opspile's client there, made up.
+    FLUFFYJAWS_ISSUER: FLUFFY_OKTA,
+    FLUFFYJAWS_CLIENT_ID: 'made-up-okta-client',
     // The agent tools (src/agent/agenttools.js) can run: a bot to post as, a Worker Loader,
     // which runs extraction scripts (src/extract.js) in this process, with network access: the
     // preview's scripts are your own.
@@ -612,6 +657,17 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     // Turned on for the platform team already.
     DB.sqlite.exec(`INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('github', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z')`);
+  });
+  // FluffyJaws, connected by Dana as her Okta self, and on in one of platform's channels.
+  const fluffyGrant = NO_FLUFFYJAWS ? Promise.resolve() : seal(env, JSON.stringify({
+    access_token: PREVIEW_FLUFFY_TOKEN, refresh_token: 'preview-fluffyjaws-refresh', token_type: 'Bearer',
+  })).then((tokens) => {
+    DB.sqlite.prepare(`INSERT INTO mcp_global_grants (server, tokens, acts_as, acts_as_name,
+        connected_by, connected_at, expires_at, refreshed_at) VALUES ('fluffyjaws', ?,
+        'dana.ops@example.com', 'Dana Ops', 'dana@example.com', '2026-10-26T09:00:00Z', ?,
+        '2026-10-26T09:00:00Z')`).run(tokens, new Date(Date.now() + 365 * 86400_000).toISOString());
+    DB.sqlite.exec(`INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
+      VALUES ('fluffyjaws', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-26T09:05:00Z')`);
   });
   // The computer is on for the platform team already, and posting in one of its channels: the
   // per-channel lists put the channels switched on their own first.
@@ -684,7 +740,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     env,
     mcpUrl,
     admins,
-  )), githubApp).then(() => {
+  )), Promise.all([githubApp, fluffyGrant])).then(() => {
     // The ticket tracker is off in one of platform's channels, on its own.
     DB.sqlite.exec(`INSERT INTO mcp_server_switches (server_id, channel, enabled, changed_by, changed_at)
       SELECT id, 'C0INITECH1', 0, 'Dana', '2026-10-26T09:00:00Z' FROM mcp_servers
@@ -695,7 +751,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     secretsUrl,
     admins,
   )), Promise.resolve()))
-    .then(() => Promise.all(['browser', 'github'].map((server) => kbAdmin(
+    .then(() => Promise.all(['browser', 'github', 'fluffyjaws'].map((server) => kbAdmin(
       toRequest({ method: 'POST' }, checkUrl, { server }),
       env,
       checkUrl,

@@ -2287,8 +2287,9 @@ const server = createServer(async (req, res) => {
       res.writeHead(204).end();
       return;
     }
-    if (url.pathname === '/__dev/oauth/authorize') {
-      // The made-up wiki's sign-in (scripts/dev-ui-admin.mjs): granted at once.
+    if (url.pathname === '/__dev/oauth/authorize' || url.pathname === '/__dev/okta/v1/authorize') {
+      // The made-up wiki's sign-in, and FluffyJaws' Okta (scripts/dev-ui-admin.mjs): granted at
+      // once.
       const back = new URL(url.searchParams.get('redirect_uri'));
       back.searchParams.set('code', 'preview-code');
       back.searchParams.set('state', url.searchParams.get('state') || '');
