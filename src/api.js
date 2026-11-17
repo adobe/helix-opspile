@@ -53,8 +53,11 @@ import {
   ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
 import {
-  inPersonalView, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
+  inPersonalInbox, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
 } from './shares.js';
+import {
+  followable, followedByTeam, followsOfTeams, personFollows, setPersonFollow,
+} from './follows.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { claimPost, settlePost } from './postkeys.js';
 import {
@@ -232,6 +235,18 @@ async function avatarOf(env, me) {
   return row?.avatar || await gravatar(me.email) || null;
 }
 
+/**
+ * What `me` follows (src/follows.js): `{ me: [tech], teams: { [slug]: [tech] } }`, theirs and
+ * their teams'.
+ */
+async function followsOf(env, me) {
+  const [mine, teams] = await Promise.all([
+    personFollows(env, me.id),
+    followsOfTeams(env, (me.teams || []).map((t) => t.slug)),
+  ]);
+  return { me: mine, teams };
+}
+
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
 const inTeam = (me, teams) => memberOf(me)(teams);
 
@@ -240,7 +255,7 @@ const inTeam = (me, teams) => memberOf(me)(teams);
  * or for someone on no team a channel of their personal view.
  */
 async function canSee(env, me, key) {
-  const row = await env.DB.prepare('SELECT team, source, channel_id FROM threads WHERE thread = ?')
+  const row = await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
     .bind(key).first();
   return Boolean(row) && (isAdmin(me) || mayWork(env, me)(await teamsOf(env, row), row));
 }
@@ -268,18 +283,19 @@ async function members(env, teams) {
 
 /**
  * SQL: the thread row `alias` is in the inbox, with `?1` bound to `inboxTeams(…).value`. A
- * team's inbox has its own channels and the channels shared with it. The personal view has
- * the conversations in the channels the viewer posted or was mentioned in (`me`: the parameter
- * bound to their id), whichever team they are filed under, on a team or not; alerts are not
- * in it.
+ * team's inbox has its own channels, the channels shared with it and the threads that show a
+ * technology it follows (src/follows.js). The personal view has the conversations in the
+ * channels the viewer posted or was mentioned in (`me`: the parameter bound to their id), and
+ * those that show a technology they follow, whichever team they are filed under, on a team or
+ * not; alerts are not in it.
  */
 function inInbox(alias, personal, me) {
   if (!personal) {
-    return `(${alias}.team = ?1 OR ${sharedWith(alias, '?1')})`;
+    return `(${alias}.team = ?1 OR ${sharedWith(alias, '?1')} OR ${followedByTeam(alias, '?1')})`;
   }
   // ?1 (the viewer's teams) is not needed here, but is bound: say so, so it stays numbered.
   return `?1 IS NOT NULL AND ${alias}.kind != 'alert'
-    AND ${inPersonalView(alias, me)}`;
+    AND ${inPersonalInbox(alias, me)}`;
 }
 
 const rank = (a) => (a ? ATTENTION.indexOf(a) : ATTENTION.length);
@@ -362,13 +378,14 @@ export function fold(threads) {
  * last.
  */
 async function unreadElsewhere(env, me) {
-  const outside = `NOT (t.kind != 'alert' AND ${inPersonalView('t', '?1')})`;
+  const outside = `NOT (t.kind != 'alert' AND ${inPersonalInbox('t', '?1')})`;
   const { results } = await env.DB.prepare(`WITH mine AS (
       SELECT m.team, t.name,
         (SELECT COUNT(*) FROM team_members c WHERE c.team = m.team) AS members
       FROM team_members m JOIN teams t ON t.slug = m.team WHERE m.person = ?1
     ), unread AS (
-      SELECT COALESCE(t.logical_thread, t.thread) AS g, t.team AS filed, t.source, t.channel_id
+      SELECT COALESCE(t.logical_thread, t.thread) AS g, t.team AS filed, t.source, t.channel_id,
+        t.thread, t.logical_thread
       FROM threads t LEFT JOIN watermarks w ON w.thread = t.thread AND w.person = ?1
       WHERE t.kind != 'ignore'
         AND CASE WHEN t.kind = 'alert' THEN t.any_at ELSE t.last_at END IS NOT NULL
@@ -380,6 +397,7 @@ async function unreadElsewhere(env, me) {
       SELECT COUNT(DISTINCT u.g) FROM unread u
       WHERE u.filed = m.team OR (u.source, u.channel_id) IN (
         SELECT c.source, c.channel_id FROM channel_teams c WHERE c.team = m.team)
+        OR ${followedByTeam('u', 'm.team')}
     ) AS unread
     FROM mine m`).bind(me.id).all();
   return (results || []).filter((r) => r.unread > 0).map((r) => ({
@@ -451,8 +469,9 @@ export async function inbox(env, me, team, {
       MAX(COALESCE(t.last_at, t.any_at)) AS latest`;
   // A team's inbox: the team's own channels' threads group by group from `threads_inbox`
   // (migration 0069), which has all this needs, then those of the channels shared with it
-  // (migration 0024). An alert channel files tens of thousands of threads under its team: as
-  // one `team = ? OR <shared channel>`, every one of them was read from the table and sorted.
+  // (migration 0024), then the other threads that show a technology it follows (migration
+  // 0072). An alert channel files tens of thousands of threads under its team: as one
+  // `team = ? OR <shared channel>`, every one of them was read from the table and sorted.
   const grouped = personal
     ? `SELECT ${sums} FROM threads t WHERE ${inInbox('t', personal, '?5')} AND ${shown('t')}
       GROUP BY g`
@@ -460,7 +479,10 @@ export async function inbox(env, me, team, {
         SELECT ${sums} FROM threads t WHERE t.team = ?1 AND ${shown('t')}
           GROUP BY COALESCE(t.logical_thread, t.thread)
         UNION ALL SELECT ${sums} FROM threads t
-          WHERE t.team != ?1 AND ${sharedWith('t', '?1')} AND ${shown('t')} GROUP BY 1)
+          WHERE t.team != ?1 AND ${sharedWith('t', '?1')} AND ${shown('t')} GROUP BY 1
+        UNION ALL SELECT ${sums} FROM threads t
+          WHERE t.team != ?1 AND NOT ${sharedWith('t', '?1')} AND ${followedByTeam('t', '?1')}
+            AND ${shown('t')} GROUP BY 1)
       GROUP BY g`;
   const { results: groups } = await env.DB.prepare(`SELECT g, n, total, latest FROM (${grouped})
     WHERE ?2 IS NULL OR latest < ?2 OR (latest = ?2 AND g < ?3)
@@ -1091,8 +1113,10 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       // Notifications (src/settings.js); someone else's are not shown to whoever views as them.
       settings: me.readonly ? DEFAULTS : await readSettings(env, me),
       // The rooms the inbox listens to (GET /api/live): the person's teams, and the teams of
-      // the channels in their personal view.
+      // the threads in their personal view.
       rooms: await roomsOf(env, me),
+      // The technologies they follow, and those their teams follow (src/follows.js).
+      follows: await followsOf(env, me),
     });
   }
   // Looking as someone else is read-only: no reads, replies, reviews or connections.
@@ -1106,6 +1130,23 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     if (request.method === 'PUT') {
       return saveSettings(env, me, await request.json().catch(() => null));
+    }
+    return json({ error: 'GET or PUT' }, 405);
+  }
+  if (url.pathname === '/api/follows') {
+    // The technologies the person follows, for their personal view (src/follows.js).
+    if (request.method === 'GET') {
+      return json({ ...await followsOf(env, me), tech: await followable(env) });
+    }
+    if (request.method === 'PUT') {
+      const body = await request.json().catch(() => ({}));
+      const res = await setPersonFollow(env, {
+        person: me.id, tech: body.tech, follow: body.follow !== false,
+      });
+      if (res.error) {
+        return json({ error: res.error }, res.status || 400);
+      }
+      return json({ ...await followsOf(env, me), changed: res.changed });
     }
     return json({ error: 'GET or PUT' }, 405);
   }
@@ -1384,7 +1425,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/read' && request.method === 'POST') {
     const { thread: key, at, team: from } = await request.json().catch(() => ({}));
-    const row = key && await env.DB.prepare('SELECT team, source, channel_id FROM threads WHERE thread = ?')
+    const row = key && await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
       .bind(key).first();
     const teams = await teamsOf(env, row);
     if (!row || typeof at !== 'string' || !await working(teams, row)) {

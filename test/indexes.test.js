@@ -15,6 +15,7 @@ import { describe, it } from 'node:test';
 import { keptAccounts } from '../src/accounts.js';
 import { inbox, searchInbox, thread } from '../src/api.js';
 import { inChannel } from '../src/shares.js';
+import { followersOf, followingTeams } from '../src/follows.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
 import { rollupCogs } from '../src/cogs/rollup.js';
@@ -123,6 +124,16 @@ describe('inbox queries', () => {
     const [p] = await plans((env) => inChannel(env, [1], { source: 'slack', channel_id: 'C1' }));
     assert.ok(p.plan.some((d) => /SEARCH n USING (COVERING )?INDEX mentions_person/.test(d)), p.plan.join('\n'));
     assert.ok(!p.plan.some((d) => /threads_channel/.test(d)), p.plan.join('\n'));
+  });
+
+  it('find who follows a thread by its entry\'s posts and what they show, by index', async () => {
+    // Asked whenever a thread is opened, worked or announced (src/follows.js).
+    for (const [p] of [
+      await plans((env) => followingTeams(env, 'slack:E1:C1:1.1')),
+      await plans((env) => followersOf(env, [1], 'slack:E1:C1:1.1')),
+    ]) {
+      assert.deepEqual(p.plan.filter((d) => /^SCAN (threads|thread_tech|team_follows|person_follows|x|g)\b/.test(d)), [], p.plan.join('\n'));
+    }
   });
 
   it('search the messages and channels of a person\'s accounts by index', async () => {

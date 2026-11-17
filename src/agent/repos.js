@@ -63,21 +63,28 @@ export async function listedRepos(env, { team, org }) {
 
 /**
  * The other ops teams' knowledge bases, the channel's own `shares` first (src/shares.js): the
- * teams `channelId` is shared with, which follow its threads and whose knowledge base its agent
- * writes too, then every other team, whose knowledge base it only reads. Only knowledge bases
- * that exist (`knowledge_bases`); `team` itself is `kb-team`.
+ * teams `channelId` is shared with and the teams that follow a technology the thread shows
+ * (`follows`, src/follows.js), which have its threads in their inboxes and whose knowledge base
+ * its agent writes too, then every other team, whose knowledge base it only reads. Only
+ * knowledge bases that exist (`knowledge_bases`); `team` itself is `kb-team`. `via` says why a
+ * team's is shared: `share` (the channel) or `follow` (the thread).
  */
-async function otherTeamKbs(env, { team, source, channelId }) {
+async function otherTeamKbs(env, {
+  team, source, channelId, follows = [],
+}) {
   if (!env.DB) {
     return [];
   }
-  const { results } = await env.DB.prepare(`SELECT t.slug, t.name, c.team IS NOT NULL AS shared
+  const { results } = await env.DB.prepare(`SELECT t.slug, t.name,
+      CASE WHEN c.team IS NOT NULL THEN 'share'
+        WHEN t.slug IN (SELECT value FROM json_each(?)) THEN 'follow' END AS via
     FROM teams t JOIN knowledge_bases k ON k.kind = 'team' AND k.slug = t.slug
     LEFT JOIN channel_teams c ON c.team = t.slug AND c.source = ? AND c.channel_id = ?
     WHERE t.slug != ?
-    ORDER BY shared DESC, t.slug`).bind(source || '', String(channelId || ''), team || '').all();
+    ORDER BY via IS NULL, via DESC, t.slug`)
+    .bind(JSON.stringify(follows || []), source || '', String(channelId || ''), team || '').all();
   return (results || []).filter((r) => repoName('team', r.slug)).map((r) => ({
-    slug: r.slug, name: r.name || r.slug, shared: Boolean(r.shared),
+    slug: r.slug, name: r.name || r.slug, shared: Boolean(r.via), via: r.via || null,
   }));
 }
 
@@ -88,7 +95,7 @@ async function otherTeamKbs(env, { team, source, channelId }) {
  * with (`scope` `own` or `shared`); the other teams' it only reads (`scope` `other`).
  */
 export async function accessibleRepos(env, {
-  team, org, source, channelId,
+  team, org, source, channelId, follows,
 }) {
   const repos = [];
   const teamKb = repoName('team', team);
@@ -103,7 +110,9 @@ export async function accessibleRepos(env, {
       id: 'kb-org', artifact: orgKb, writable: true, kind: 'kb', scope: 'own', what: `knowledge base of the customer ${org}`,
     });
   }
-  for (const t of await otherTeamKbs(env, { team, source, channelId })) {
+  for (const t of await otherTeamKbs(env, {
+    team, source, channelId, follows,
+  })) {
     const artifact = repoName('team', t.slug);
     repos.push({
       id: artifact,
@@ -112,9 +121,11 @@ export async function accessibleRepos(env, {
       writable: t.shared,
       kind: 'kb',
       scope: t.shared ? 'shared' : 'other',
-      what: t.shared
-        ? `knowledge base of the ops team ${t.slug} (${t.name}), which your channel is shared with`
-        : `knowledge base of the ops team ${t.slug} (${t.name})`,
+      what: {
+        share: `knowledge base of the ops team ${t.slug} (${t.name}), which your channel is shared with`,
+        follow: `knowledge base of the ops team ${t.slug} (${t.name}), which follows a technology your thread shows`,
+      }[t.via] || `knowledge base of the ops team ${t.slug} (${t.name})`,
+      via: t.via,
     });
   }
   for (const r of await listedRepos(env, { team, org })) {

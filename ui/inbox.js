@@ -2786,17 +2786,90 @@ function headMenu(name, { button, main = '', label, list }) {
 
 const hmSection = (title, rows) => (rows.length ? `<div class="hms"><div class="hmh">${esc(title)}</div>${rows.join('')}</div>` : '');
 
+/**
+ * A technology's follow switch, in the tech stack's dropdown: following one puts the threads that
+ * show it in your personal view (src/follows.js). Your teams' follows are said beside it.
+ */
+function followButton(id) {
+  if (state.as || !state.follows) return '';
+  const on = followsTech(id);
+  const teams = teamsFollowing(id);
+  const by = teams.length ? ` ${teams.join(', ')} ${teams.length === 1 ? 'follows' : 'follow'} it too.` : '';
+  const title = on ? `You follow it: threads that show it are in your personal view. Click to stop.${by}`
+    : `Follow it: threads that show it come into your personal view, in any channel.${by}`;
+  return `<button type="button" class="hmfollow" data-follow="${esc(id)}" aria-pressed="${on}" title="${esc(title)}">${on ? 'Following' : 'Follow'}</button>`;
+}
+const followsTech = (id) => (state.follows?.me || []).includes(id);
+/** The names of your teams that follow technology `id`. */
+const teamsFollowing = (id) => Object.entries(state.follows?.teams || {})
+  .filter(([, list]) => list.includes(id))
+  .map(([slug]) => state.teams?.find((t) => t.slug === slug)?.name || slug);
+
+/** Follows technology `id`, or no more: the switches show it at once, the personal view after. */
+async function toggleFollow(id) {
+  if (state.as || !state.follows) return;
+  const before = state.follows;
+  const follow = !followsTech(id);
+  // In place: the click that got here is still on its way to the page, and a button taken out of
+  // the dropdown would count as one outside it, which closes it.
+  const shown = () => {
+    const now = toNode(followButton(id));
+    for (const b of document.querySelectorAll(`[data-follow="${CSS.escape(id)}"]`)) {
+      b.setAttribute('aria-pressed', now.getAttribute('aria-pressed'));
+      b.title = now.title;
+      b.textContent = now.textContent;
+    }
+    renderFollowMenu();
+  };
+  state.follows = { ...before, me: follow ? [...before.me, id].sort() : before.me.filter((t) => t !== id) };
+  shown();
+  const res = await request('PUT', '/api/follows', { tech: id, follow }).catch((e) => ({ ok: false, data: { error: e.message } }));
+  if (!res.ok) {
+    state.follows = before;
+    shown();
+    toast(`Could not ${follow ? 'follow' : 'unfollow'} it: ${res.data.error || res.status}`);
+    return;
+  }
+  state.follows = { me: res.data.me, teams: res.data.teams };
+  shown();
+  const name = vocabName('tech', id);
+  toast(follow ? `Following ${name}: threads that show it are in your personal view.` : `No longer following ${name}.`);
+  if (personal()) reloadSoon();
+}
+
+/** The user menu's list of what you follow, each to unfollow, and what your teams follow. */
+function renderFollowMenu() {
+  const box = $('followBox');
+  if (!box) return;
+  box.hidden = Boolean(state.as) || !state.follows;
+  if (box.hidden) return;
+  const mine = state.follows.me || [];
+  $('followList').innerHTML = mine.map((id) => `<button class="item" data-unfollow="${esc(id)}" role="switch" aria-checked="true"><span class="ck s2-check" aria-hidden="true"></span>${esc(vocabName('tech', id))}</button>`).join('');
+  const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list[0]);
+  const teams = Object.entries(state.follows.teams || {}).filter(([, list]) => list.length)
+    .map(([slug, list]) => `${state.teams?.find((t) => t.slug === slug)?.name || slug} follows ${and(list.map((id) => vocabName('tech', id)))} in its inbox.`);
+  $('followHint').textContent = `${mine.length ? 'Threads that show these are in your personal view, in any channel. Click one to stop.' : 'Follow a technology from a thread\'s tech stack: the threads that show it come into your personal view, in any channel.'}${teams.length ? ` ${teams.join(' ')}` : ''}`;
+}
+function wireFollowMenu() {
+  $('followList').onclick = (e) => {
+    const b = e.target.closest('[data-unfollow]');
+    if (b) toggleFollow(b.dataset.unfollow);
+  };
+  renderFollowMenu();
+}
+
 function techMenu(data) {
   const { here, also, topics, label, count } = headTech(data);
   if (!count) return '';
-  const item = (t) => `<div class="hmi"><span>${esc(t.name)}</span>${t.p != null ? `<small>${pct(t.p)}</small>` : ''}</div>`;
+  const item = (t) => `<div class="hmi"><span>${esc(t.name)}</span>${t.p != null ? `<small>${pct(t.p)}</small>` : ''}${followButton(t.id)}</div>`;
+  const topic = (t) => `<div class="hmi"><span>${esc(t.name)}</span></div>`;
   const customer = orgName(data.thread) && !String(orgName(data.thread)).startsWith('_') ? orgName(data.thread) : 'the customer';
   const org = data.thread.org && !String(data.thread.org).startsWith('_') ? data.thread.org : null;
   // The customer's whole stack, drawn (showStack).
   const drawing = org ? `<div class="hms"><button type="button" class="hmi stk-open" data-stack="${esc(org)}"><span>${esc(customer)}'s stack drawing</span></button></div>` : '';
   const list = hmSection('In this thread', here.map(item))
     + hmSection(here.length ? `Also used by ${customer}` : `Used by ${customer}`, also.map(item))
-    + hmSection('Topics of the thread', topics.map(item)) + drawing;
+    + hmSection('Topics of the thread', topics.map(topic)) + drawing;
   const more = count > 1 ? `<span class="n">+${count - 1}</span>` : '';
   return headMenu('tech', { button: `<span class="lb">${esc(label)}</span>${more}`, label: 'Tech stack and topics', list });
 }
@@ -6999,6 +7072,8 @@ async function loadWho() {
   const who = state.as ? await get('/api/me') : state.me;
   state.teams = who.teams;
   state.rooms = roomsOf(who);
+  // What they and their teams follow (src/follows.js); viewing as someone shows theirs, unchanged.
+  state.follows = who.follows || null;
   if (!who.teams.some((t) => t.slug === state.team)) state.team = who.teams[0]?.slug;
   renderUser();
 }
@@ -7114,6 +7189,8 @@ async function loadInbox(early = null) {
   if (!state.as) checkBells(scopeKey(), first);
   mergeProfiles(state.data.profiles);
   renderUser();
+  // The technologies' names come with the inbox (`vocab`): the menu's Following names them now.
+  renderFollowMenu();
   state.coPeople = coParticipants();
   state.scores = inPass(() => new Map(state.data.threads.map((t) => [t.thread, smartScore(t)])));
   render();
@@ -8685,6 +8762,8 @@ async function start() {
       showStack(stk.dataset.stack, anchor);
       return;
     }
+    const follow = e.target.closest('[data-follow]');
+    if (follow) { toggleFollow(follow.dataset.follow); return; }
     const hm = e.target.closest('[data-hm-toggle]');
     if (hm) { toggleHeadMenu(hm.dataset.hmToggle); return; }
     // A link picked from a dropdown opens in a new tab; the dropdown closes.
@@ -8861,6 +8940,7 @@ async function start() {
   wireNotify();
   wireTraces();
   wireExpert();
+  wireFollowMenu();
   // A search in the address is asked for alongside the inbox.
   if (initial.q) runSearch(initial.q);
   await loadInbox(early);

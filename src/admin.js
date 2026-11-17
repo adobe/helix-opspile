@@ -37,6 +37,7 @@ import {
   reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
+import { followable, setTeamFollow, teamFollows } from './follows.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -660,10 +661,40 @@ async function team(env, slug, me) {
     channels: await channelList(env, rules, { team: slug }),
     // What the team's managers asked the admin team for, and what came of it.
     requests: t ? await listRequests(env, { teams: [slug], limit: 50 }) : [],
+    // The technologies it follows (src/follows.js), and what it may follow.
+    ...(t ? {
+      follows: await teamFollows(env, slug), followable: await followable(env, slug),
+    } : {}),
     // The admin team decides which channels a team gets: what it might want of the admin
     // team's channels.
     ...(isAdmin(me) && t && slug !== ADMIN_TEAM ? await suggestionsFor(env, slug) : {}),
   });
+}
+
+/**
+ * PUT /api/admin/follows `{ team, tech, follow }`: team `team` follows technology `tech` (or, with
+ * `follow: false`, no more), so that the threads that show it are in its inbox (src/follows.js).
+ * The team's managers and the admin team. Answers with what the team follows now.
+ */
+async function followTech(env, me, body) {
+  const slug = clean(body.team);
+  const t = slug && await env.DB.prepare('SELECT slug FROM teams WHERE slug = ?').bind(slug).first();
+  if (!t) {
+    return json({ error: 'no such team' }, 404);
+  }
+  const res = await setTeamFollow(env, {
+    team: slug,
+    tech: clean(body.tech),
+    follow: body.follow !== false,
+    by: me.email || String(me.id),
+  });
+  if (res.error) {
+    return bad(res.error);
+  }
+  console.log(JSON.stringify({
+    route: 'admin', follows: slug, tech: clean(body.tech), follow: body.follow !== false, by: me.id,
+  }));
+  return json({ ok: true, changed: res.changed, follows: await teamFollows(env, slug) });
 }
 
 /**
@@ -1044,7 +1075,7 @@ export async function admin(request, env, url, me) {
   // Team managers: their teams' members, the channel search, and requests for their teams.
   const teamOf = m === 'GET' ? q('team') || q('slug') : clean(body.team);
   const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members',
-    'GET channels', 'GET requests', 'POST requests', 'DELETE requests'];
+    'GET channels', 'GET requests', 'POST requests', 'DELETE requests', 'PUT follows'];
   // Every manager may search channels; the requests they see are their teams' (`requests`).
   const anyTeam = ['GET teams', 'GET channels', 'GET requests'];
   if (!isAdmin(me)) {
@@ -1072,6 +1103,7 @@ export async function admin(request, env, url, me) {
     case 'POST assign': return assign(env, me, body, false);
     case 'DELETE assign': return assign(env, me, body, true);
     case 'DELETE share': return unshareChannel(env, me, body);
+    case 'PUT follows': return followTech(env, me, body);
     case 'GET channels': return json({ channels: (await channelList(env, await loadRules(env), { q: q('q') })).slice(0, 100) });
     case 'GET requests': return requestList(env, me, { status: q('status'), count: q('count') });
     case 'POST requests': return createRequest(env, me, body);

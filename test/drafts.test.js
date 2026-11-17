@@ -109,7 +109,11 @@ describe('shared drafts', () => {
       source: 'slack',
       tenant: 'E1',
       channel_id: 'C1',
-      teams: await teamsOf(e, { team: 'helix', source: 'slack', channel_id: 'C1' }),
+      thread: FOLLOW,
+      teams: await teamsOf(e, {
+        team: 'helix', source: 'slack', channel_id: 'C1', thread: FOLLOW,
+      }),
+      follows: [],
       keys: [ROOT, FOLLOW],
     });
     assert.deepEqual(entry.teams, ['helix', 'other']);

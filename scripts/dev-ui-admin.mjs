@@ -538,6 +538,11 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       'lena@example.com', 'Lena Berg', ?, 1, ?)`)
     .run('Lena says Umbrella is an Edge ops customer: the channel is filed by the aem- rule, which every EDS channel matches.', ago(0.05), umbrella ? umbrella.row.thread : null);
 
+  // Edge ops follows Universal Editor and Experience Workspace (src/follows.js): its page lists
+  // them, and the inbox's tech stack dropdown says so.
+  DB.sqlite.prepare(`INSERT INTO team_follows (team, tech, added_by, added_at) VALUES
+    ('edge', 'ue', 'lena@example.com', ?), ('edge', 'xw', 'lena@example.com', ?)`).run(ago(3), ago(1));
+
   // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
   // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
   for (const b of bases) {

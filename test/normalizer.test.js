@@ -1044,6 +1044,11 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual(e.DB.rows('SELECT tech, p FROM channel_tech'), [{ tech: 'eds', p: 1 }]);
     // And the thread's own (labels.tech), for its header.
     assert.deepEqual(e.DB.rows('SELECT tech FROM labels'), [{ tech: '{"eds":1}' }]);
+    // By index too, for the teams and people who follow it (src/follows.js), and what changed.
+    assert.deepEqual(e.DB.rows('SELECT thread, tech, p FROM thread_tech'), [
+      { thread: 'slack:E1:C1:1.1', tech: 'eds', p: 1 },
+    ]);
+    assert.deepEqual(r.tech, { gained: ['eds'], lost: [] });
     assert.deepEqual(r.topics, ['cdn']);
     assert.deepEqual(e.DB.rows('SELECT topics FROM labels'), [{ topics: '{"cdn":0.9}' }]);
     assert.match(calls[0].input.state, /Cy \(customer, customer\.example\):\nsite down/);

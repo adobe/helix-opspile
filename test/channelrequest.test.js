@@ -116,6 +116,15 @@ describe('agent: the channel\'s assignment', () => {
     assert.match(text, /- without it: rule 4: channel name starts with shop-, priority 100 → edge \(Edge ops\); then rule 5:/);
     assert.match(text, /Shared with no other team\./);
     assert.match(text, /No open request for this channel\./);
+    assert.doesNotMatch(text, /in the inboxes of/);
+  });
+
+  it('says which teams follow a technology the thread shows', async () => {
+    const e = env();
+    e.DB.sqlite.exec(`INSERT INTO thread_tech (thread, tech, p) VALUES ('${KEY}', 'xw', 0.9), ('${KEY}', 'da', 1);
+      INSERT INTO team_follows (team, tech, added_at) VALUES ('edge', 'xw', '2026-10-22'), ('edge', 'da', '2026-10-22')`);
+    const { text } = await agentTools(e)('channel_assignment');
+    assert.match(text, /This thread is in the inboxes of edge \(Edge ops\) \(follows da, xw\) too: they follow a technology Clef tagged the thread with\./);
   });
 
   it('lists the teams, with their rules and members, and finds them', async () => {

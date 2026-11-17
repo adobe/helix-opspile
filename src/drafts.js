@@ -39,14 +39,19 @@ const PREVIEW = 140;
  * inbox has it (a shared channel's too), and every member thread.
  */
 /**
- * SQL, `?1` the thread: `WITH t AS (the thread, `k` its entry's key) SELECT t.*, shares` (the
- * teams its channel is shared with, as JSON, in `sharesOf`'s order), for `entryFields`; more
- * columns may follow, then `FROM t`.
+ * SQL, `?1` the thread: `WITH t AS (the thread, `k` its entry's key) SELECT t.*, shares, follows`
+ * (the teams its channel is shared with, as JSON, in `sharesOf`'s order, and the teams that
+ * follow a technology the entry shows, in `followingTeams`'), for `entryFields`; more columns
+ * may follow, then `FROM t`.
  */
 export const ENTRY_ROW = `WITH t AS (SELECT thread, org, team, logical_thread, source, tenant,
       channel_id, COALESCE(logical_thread, thread) AS k FROM threads WHERE thread = ?1)
   SELECT t.*, (SELECT json_group_array(c.team ORDER BY c.added_at, c.team) FROM channel_teams c
-      WHERE c.source = t.source AND c.channel_id = t.channel_id) AS shares`;
+      WHERE c.source = t.source AND c.channel_id = t.channel_id) AS shares,
+    (SELECT json_group_array(team) FROM (SELECT DISTINCT f.team FROM threads x
+      JOIN thread_tech g ON g.thread = x.thread JOIN team_follows f ON f.tech = g.tech
+      WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel' ORDER BY f.team))
+      AS follows`;
 
 /** An entry from an `ENTRY_ROW` row, without its members' keys. */
 export function entryFields(row) {
@@ -54,12 +59,18 @@ export function entryFields(row) {
     key: row.k,
     org: row.org,
     team: row.team,
-    // The channel, for who may work it (src/shares.js, `mayWork`).
+    // The channel and the thread, for who may work it (src/shares.js, `mayWork`).
     source: row.source,
     tenant: row.tenant,
     channel_id: row.channel_id,
-    // Every team whose inbox has it (`teamsOf`): the one it is filed under, then the shares.
-    teams: [...new Set([row.team, ...JSON.parse(row.shares || '[]')].filter(Boolean))],
+    thread: row.thread,
+    // Every team whose inbox has it (`teamsOf`): the one it is filed under, then the shares,
+    // then the teams that follow a technology it shows.
+    teams: [...new Set([row.team, ...JSON.parse(row.shares || '[]'),
+      ...JSON.parse(row.follows || '[]')].filter(Boolean))],
+    // The teams that follow a technology it shows (src/follows.js): its agent has their
+    // knowledge bases as a shared channel's.
+    follows: JSON.parse(row.follows || '[]'),
   };
 }
 
