@@ -8128,7 +8128,7 @@ const keysHtml = (ways) => ways.map((w) => w.split(' ')
 const sheetHtml = () => SHORTCUTS.map(([group, rows]) => `<section><h3>${esc(group)}</h3><dl class="keys">${rows
   .map(([what, ...ways]) => `<dt>${esc(what)}</dt><dd>${keysHtml(ways)}</dd>`).join('')}</dl></section>`).join('');
 
-/** The sheet of every shortcut, as Slack's ⌘/ shows it; ⌘/ again or Escape closes it. */
+/** The sheet of every shortcut, as Slack's ⌘/ shows it; ⌘/ or ? again, or Escape, closes it. */
 function toggleShortcuts() {
   const open = document.querySelector('dialog.keysheet[open]');
   if (open) { open.close(); return; }
@@ -8138,6 +8138,7 @@ function toggleShortcuts() {
     <div class="groups">${sheetHtml()}</div></form></dialog>`);
   dlg.addEventListener('keydown', (e) => {
     if (e.key === '/' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); dlg.close(); }
+    if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); dlg.close(); }
   });
   dlg.addEventListener('close', () => Dialog.remove(dlg));
   document.body.append(dlg);
@@ -8681,7 +8682,7 @@ async function start() {
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
     if (document.querySelector('dialog[open]')) return;
     if (e.key === '/' && $('q')) { e.preventDefault(); if (TAKING_TURNS.matches && state.open) closeThread(); $('q').focus(); $('q').select(); return; }
-    if (e.key === '?') { e.preventDefault(); toggleShortcuts(); return; }
+    if (e.key === '?' && !e.defaultPrevented) { e.preventDefault(); toggleShortcuts(); return; }
     if (e.key === 'Escape' && e.shiftKey) { e.preventDefault(); markAllRead(); return; }
     if (e.key === 'j') { e.preventDefault(); move(1); }
     if (e.key === 'k') { e.preventDefault(); move(-1); }
