@@ -1532,6 +1532,35 @@ describe('seeds with a chosen knowledge base', () => {
     }
   });
 
+  it('write diagrams as DOT directly, refused where the inbox could not draw them', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
+      key: null, team: 'helix', org: 'acme', orgName: 'ACME', threads: [],
+    });
+    const dot = '// How the shop is served.\ndigraph shop {\n  label="The shop";\n  cdn -> site [dir=back];\n}\n';
+    const shop = (content) => ({ kb: 'org', message: 'Draw the shop', changes: [{ path: 'sites/shop.dot', content }] });
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-org-acme');
+      await seed(h.agent, { by: 'Ada', text: 'Their CDN asks the shop for every page.' });
+      await h.run(
+        h.call('kb_write', shop('digraph shop { cdn -- site }')),
+        h.call('kb_write', shop(dot)),
+      );
+      const [refused, written] = h.results;
+      assert.match(refused, /sites\/shop\.dot: not a diagram the inbox can draw: line 1: a digraph joins nodes with ->, not --/);
+      assert.match(written, /^committed [0-9a-f]{12} to kb-org: sites\/shop\.dot/);
+      assert.equal(srv.show('kb-org-acme', 'sites/shop.dot'), dot);
+      assert.match(srv.show('kb-org-acme', 'sites/index.md'), /\[The shop\]\(shop\.dot\) \(Diagram\) - How the shop is served\./);
+      // It is told how to write them.
+      assert.match(h.system[0], /Diagrams: when a concept explains how something is put together/);
+      assert.match(h.system[0], /`fmc=storage, style=rounded`/);
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
+
   it('with no customer have no kb-org to reach at all', { skip: !hasGit() && 'git is not installed' }, async () => {
     const srv = await gitServer();
     const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {

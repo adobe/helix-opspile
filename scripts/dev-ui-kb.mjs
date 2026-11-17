@@ -104,12 +104,51 @@ export const ACME_STACK = {
 };
 
 const DIR = '/kb';
+/** A made-up delivery stack, as an FMC block diagram: requests down, content up. */
+const DELIVERY_DOT = `// The path of a visitor's request through the CDNs to the content, and how authors publish.
+digraph delivery {
+  label="How a page is delivered";
+  graph [nodesep=0.3, ranksep=0.35, newrank=true];
+  node [shape=box, fixedsize=true, width=1.3, height=0.6];
+  edge [dir=none];
+
+  visitor [fmc=person, label="Visitor", width=0.85, height=0.85];
+  author [fmc=person, label="Author", width=0.85, height=0.85];
+  // Defaults in braces hold for those only: the channels are small circles, the rest boxes.
+  { node [fmc=channel, label="", width=0.16, height=0.16, request=true]; c1; c2; c3; c4; }
+  subgraph cluster_edge { fmc=group; label="Edge";
+    byo [label="Customer CDN"];
+    outer [label="Outer CDN\\n\`*.example.live\`", width=2.8];
+    cache [fmc=storage, style=rounded, label="Cache"];
+  }
+  subgraph cluster_pipe { fmc=group; label="Pipeline";
+    pipeline [label="Pipeline"];
+    subgraph cluster_store { fmc=storage; label="Content store";
+      node [fmc=storage, style=rounded, width=0.9, height=0.26];
+      p1 [label="preview"]; p2 [label="live"];
+    }
+  }
+  editor [label="Editor"];
+  { rank=same; visitor; author; }
+  { rank=same; outer; cache; }
+  { rank=same; p1; p2; } p2 -> p1 [style=invis];
+
+  visitor -> c1 -> byo; byo -> c2 -> outer; outer -> cache [dir=both];
+  outer -> c3 -> pipeline; pipeline -> p2 [dir=back, lhead=cluster_store];
+  author -> c4 -> editor; editor -> p1 [dir=forward, lhead=cluster_store];
+}
+`;
 const SEED = {
   'kb-team-platform': {
     name: 'Platform ops',
     kind: 'team',
     files: {
       [SYSTEM_PROMPT]: '---\ntype: System Prompt\ntitle: Agent instructions for Platform ops\n---\n\nSign drafts with the team name, never a person\'s.\n',
+      // A diagram (src/dot.js), drawn beside its DOT in the editor, and the concept it belongs to.
+      'reference/delivery.md': '---\ntype: Reference\ntitle: How a page is delivered\ndescription: The path of a visitor\'s request through the CDNs to the content.\n---\n\n'
+        + 'The visitor\'s CDN asks ours, which asks the pipeline; authors publish to the content store. '
+        + 'See [the diagram](/reference/delivery.dot).\n',
+      'reference/delivery.dot': DELIVERY_DOT,
       // Frontmatter, folded when it opens, and Markdown, both highlighted (src/ui-editor.js).
       'playbooks/cdn-purge.md': [
         '---', 'type: Playbook', 'title: CDN purge takes long',

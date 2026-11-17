@@ -470,6 +470,20 @@ message shows it. A customer's knowledge base has everyone who works on its thre
 customer's, partners' and Adobe's people, with their role on that account; a team's has the
 colleagues and partners it works with across customers, and never a customer's people.
 
+**Diagrams.** Beside the concepts, a knowledge base holds diagrams: `.dot` files, Graphviz DOT
+with the FMC attributes of the stack drawing's renderer (src/fmc.js: `fmc` on nodes and clusters,
+`request` on channels), drawn as FMC block diagrams. A diagram goes beside the concept it belongs
+to, which links it (`reference/delivery.dot` beside `reference/delivery.md`); it has no
+frontmatter: its title is the graph's `label` and its description the `//` comment it starts
+with, as `index.md` lists it (`(Diagram)`), and its commit says who wrote it. Agents write them
+directly with `kb_write`, whole, as they write concepts (the prompt teaches them the notation),
+and people in the editor, which draws one beside its text as it is typed (the renderer,
+`/inbox/fmc.js`, imported the first time one is opened). Graphviz cannot run in a Worker (it is
+WebAssembly compiled from bytes, which Workers refuse), so every write of a `.dot` is checked by
+src/dot.js instead: the DOT grammar, the edge operator of the graph's kind, the FMC kinds, at most
+400 nodes and 64 KB. A write it refuses says which line; what passes, Graphviz lays out, and the
+editor shows Graphviz's error when it cannot.
+
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
 concept of type `System Prompt`). Every thread agent appends the bodies of those that apply
 to it, its team's first, then those of the teams its channel is shared with, then the customer's,

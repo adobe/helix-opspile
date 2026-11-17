@@ -802,3 +802,31 @@ header .note { white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) {
   .spectrum *, .spectrum *::before, .spectrum *::after, .spectrum dialog::backdrop { transition-duration: var(--spectrum-animation-duration-0) !important; }
 }
+
+/* FMC block diagrams (src/fmc.js): a customer's stack drawing in the inbox, a knowledge base's
+   diagrams in the editor. Agents, storages and channels on the card, edges half as thick as nodes,
+   groups in shades of grey; the colors are Spectrum 2's, so they follow the color scheme. */
+.fmc { display: block; max-width: 100%; height: auto; margin: 0px auto; overflow: visible; }
+.fmc text { font-family: var(--s2-font); fill: var(--ink); }
+.fmc .fmc-label, .fmc .fmc-flabel { font-size: var(--spectrum-font-size-75); }
+.fmc .fmc-flabel { fill: var(--mute); }
+.fmc .fmc-note, .fmc .fmc-clabel, .fmc .fmc-rlabel { font-size: var(--spectrum-font-size-50); }
+.fmc .fmc-note, .fmc .fmc-clabel { fill: var(--mute); }
+.fmc .fmc-code { font-family: var(--s2-code); }
+.fmc .fmc-node .fmc-shape { fill: var(--card); stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-200); }
+.fmc .fmc-figure { fill: none; stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-100); }
+.fmc .fmc-dot, .fmc .fmc-arrow, .fmc .fmc-rarrow { fill: var(--spectrum-gray-800); }
+.fmc .fmc-edge { fill: none; stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-100); }
+.fmc .fmc-frame .fmc-shape { fill: var(--spectrum-gray-100); stroke: none; }
+.fmc .fmc-frame.fmc-depth-1 .fmc-shape { fill: var(--spectrum-gray-200); }
+.fmc .fmc-frame.fmc-depth-2 .fmc-shape, .fmc .fmc-frame.fmc-depth-3 .fmc-shape { fill: var(--spectrum-gray-300); }
+.fmc .fmc-frame.fmc-white .fmc-shape { fill: var(--card); }
+.fmc .fmc-frame-agent .fmc-shape, .fmc .fmc-frame-storage .fmc-shape, .fmc .fmc-frame-ushape .fmc-shape,
+.fmc .fmc-frame.fmc-frame-agent .fmc-shape, .fmc .fmc-frame.fmc-frame-storage .fmc-shape, .fmc .fmc-frame.fmc-frame-ushape .fmc-shape { fill: var(--card); stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-200); }
+.fmc .fmc-frame.fmc-frame-set .fmc-shape, .fmc .fmc-frame-set .fmc-inner { fill: var(--card); stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-100); }
+.fmc .fmc-frame-set .fmc-inner { fill: none; }
+.fmc .fmc-frame.fmc-grey .fmc-shape { fill: var(--spectrum-gray-100); }
+.fmc .fmc-dashed .fmc-shape { stroke-dasharray: var(--spectrum-spacing-100) var(--spectrum-spacing-75); }
+.fmc [data-part] { cursor: default; outline: none; }
+.fmc [data-part]:focus-visible .fmc-shape { stroke: var(--accent); }
+.fmc .fmc-node, .fmc .fmc-edge, .fmc .fmc-arrow { transition: opacity var(--s2-ease); }

@@ -23,7 +23,7 @@ import {
 import { markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown';
 import { yamlFrontmatter } from '@codemirror/lang-yaml';
 import {
-  codeFolding, foldEffect, foldGutter, foldKeymap, foldService, HighlightStyle,
+  codeFolding, foldEffect, foldGutter, foldKeymap, foldService, HighlightStyle, StreamLanguage,
   syntaxHighlighting,
 } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
@@ -75,6 +75,7 @@ const style = HighlightStyle.define([
   { tag: [t.number, t.bool, t.null, t.atom], color: 'var(--yellow)' },
   { tag: [t.keyword, t.typeName, t.labelName], color: 'var(--accent)' },
   { tag: [t.punctuation, t.separator, t.squareBracket, t.brace], color: 'var(--mute)' },
+  { tag: t.operator, color: 'var(--accent)' },
   { tag: t.invalid, color: 'var(--red)' },
 ]);
 
@@ -133,6 +134,72 @@ const folding = codeFolding({
   },
 });
 
+const DOT_KEYWORDS = /^(strict|graph|digraph|subgraph|node|edge)\b/i;
+/**
+ * Graphviz DOT, for the knowledge bases' diagrams (src/dot.js): comments, strings, keywords, the
+ * edge operators, attribute names (the FMC ones among them) and numbers.
+ */
+/* eslint-disable no-param-reassign -- a stream parser carries its state along in place */
+/** A DOT token, from where `stream` is: its highlighting tag, or null. */
+function dotToken(stream, st) {
+  if (st.comment) {
+    if (stream.skipTo('*/')) {
+      stream.pos += 2;
+      st.comment = false;
+    } else {
+      stream.skipToEnd();
+    }
+    return 'comment';
+  }
+  if (st.string) {
+    while (!stream.eol()) {
+      const c = stream.next();
+      if (c === '\\') {
+        stream.next();
+      } else if (c === '"') {
+        st.string = false;
+        break;
+      }
+    }
+    return 'string';
+  }
+  if (stream.eatSpace()) {
+    return null;
+  }
+  if (stream.match('//') || (stream.sol() && stream.match('#'))) {
+    stream.skipToEnd();
+    return 'comment';
+  }
+  if (stream.match('/*')) {
+    st.comment = true;
+    return 'comment';
+  }
+  if (stream.eat('"')) {
+    st.string = true;
+    return dotToken(stream, st);
+  }
+  const tags = [
+    [/^(->|--)/, 'operator'], [DOT_KEYWORDS, 'keyword'], [/^-?(\.\d+|\d+(\.\d*)?)/, 'number'],
+    [/^[A-Za-z_\u0080-\uffff][\w\u0080-\uffff]*(?=\s*=)/, 'propertyName'],
+    [/^[A-Za-z_\u0080-\uffff][\w\u0080-\uffff]*/, null],
+  ];
+  for (const [re, tag] of tags) {
+    if (stream.match(re)) {
+      return tag;
+    }
+  }
+  stream.next();
+  return 'punctuation';
+}
+/* eslint-enable no-param-reassign */
+
+export const dotLanguage = StreamLanguage.define({
+  name: 'dot',
+  startState: () => ({ comment: false, string: false }),
+  token: dotToken,
+  languageData: { commentTokens: { line: '//', block: { open: '/*', close: '*/' } } },
+});
+
 /**
  * An editor in `parent`.
  *
@@ -143,10 +210,13 @@ const folding = codeFolding({
  * @param {string} [options.label] its accessible name
  * @param {() => void} [options.onInput] after every change
  * @param {() => void} [options.onBlur] when it loses the focus
+ * @param {'markdown'|'dot'} [options.language] what it holds: a concept (Markdown with
+ *   frontmatter) or a diagram (DOT)
  */
 export function create(parent, {
-  text, readonly = false, label = '', onInput = () => {}, onBlur = () => {},
+  text, readonly = false, label = '', onInput = () => {}, onBlur = () => {}, language = 'markdown',
 }) {
+  const dot = language === 'dot';
   const view = new EditorView({
     parent,
     state: EditorState.create({
@@ -157,10 +227,11 @@ export function create(parent, {
         foldGutter(),
         folds,
         keymap.of([
-          ...markdownKeymap, ...defaultKeymap, ...historyKeymap, ...foldKeymap, indentWithTab,
+          ...(dot ? [] : markdownKeymap), ...defaultKeymap, ...historyKeymap, ...foldKeymap,
+          indentWithTab,
         ]),
         // Not markdown(): it brings HTML, CSS and JavaScript along, for code blocks.
-        yamlFrontmatter({ content: markdownLanguage }),
+        dot ? dotLanguage : yamlFrontmatter({ content: markdownLanguage }),
         syntaxHighlighting(style),
         EditorView.lineWrapping,
         EditorState.tabSize.of(2),

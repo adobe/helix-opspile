@@ -43,6 +43,7 @@ on:
       - 'src/cogs/prices.js'
       - 'src/deadjobs.js'
       - 'src/discord.js'
+      - 'src/dot.js'
       - 'src/draftevents.js'
       - 'src/drafts.js'
       - 'src/emoji.js'

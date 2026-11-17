@@ -17,6 +17,7 @@
  * always complete and never contradict the files.
  */
 
+import { checkDot, dotInfo, isDiagram } from '../dot.js';
 import { checkStack, STACK_PATH } from '../stack.js';
 
 export const OKF_VERSION = '0.2';
@@ -197,13 +198,18 @@ export function checkLayout(path, content, kind) {
 }
 
 /**
- * Why a concept file is not acceptable, or null. Paths are bundle-relative, markdown only,
- * and never the reserved files, which code writes.
+ * Why a file of a knowledge base is not acceptable, or null: a concept (`.md`, with
+ * frontmatter) or a diagram (`.dot`, src/dot.js). Paths are bundle-relative and never the
+ * reserved files, which code writes.
  */
 export function checkConcept(path, content) {
   const p = String(path || '');
-  if (!/^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*\.md$/.test(p)) {
-    return 'paths are lowercase, relative, end in .md, and use only a-z, 0-9, ".", "_" and "-"';
+  if (!/^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*\.(md|dot)$/.test(p)) {
+    return 'paths are lowercase, relative, end in .md (a concept) or .dot (a diagram), and use only a-z, 0-9, ".", "_" and "-"';
+  }
+  if (isDiagram(p)) {
+    const why = checkDot(content);
+    return why ? `not a diagram the inbox can draw: ${why}` : null;
   }
   if (RESERVED.has(p.split('/').pop())) {
     return `${p.split('/').pop()} is maintained automatically; write concept files only`;
@@ -255,7 +261,8 @@ const titleOf = (path, yaml) => scalar(yaml, 'title')
 
 /**
  * `index.md` for one directory (OKF §8): its concepts and subdirectories, with the concepts'
- * titles and descriptions. `entries` are `{ name, dir?, yaml? }`.
+ * titles and descriptions, and its diagrams. `entries` are `{ name, dir?, yaml?, dot? }`, `dot`
+ * a diagram's `{ title, description }` (src/dot.js `dotInfo`).
  */
 export function renderIndex(dirPath, entries, { root = false } = {}) {
   const concepts = entries.filter((e) => !e.dir).sort((a, b) => a.name.localeCompare(b.name));
@@ -269,7 +276,11 @@ export function renderIndex(dirPath, entries, { root = false } = {}) {
     const yaml = c.yaml || '';
     const desc = scalar(yaml, 'description');
     const type = scalar(yaml, 'type');
-    lines.push(`* [${titleOf(c.name, yaml)}](${c.name})${type ? ` (${type})` : ''}${desc ? ` - ${desc}` : ''}`);
+    if (c.dot) {
+      lines.push(`* [${c.dot.title}](${c.name}) (Diagram)${c.dot.description ? ` - ${c.dot.description}` : ''}`);
+    } else {
+      lines.push(`* [${titleOf(c.name, yaml)}](${c.name})${type ? ` (${type})` : ''}${desc ? ` - ${desc}` : ''}`);
+    }
   }
   if (dirs.length) {
     if (concepts.length) {
@@ -308,3 +319,5 @@ export function addLogEntry(existing, date, entry) {
   }
   return `${lines.join('\n').replace(/\n+$/, '')}\n`;
 }
+
+export { dotInfo, isDiagram };
