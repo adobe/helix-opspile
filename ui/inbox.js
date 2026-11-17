@@ -7605,7 +7605,7 @@ function wireNotify() {
   };
   // A click on a notification, in an inbox already open: it opens the thread here.
   if (navigator.serviceWorker) {
-    navigator.serviceWorker.addEventListener('message', (e) => { if (e.data?.type === 'opspile:open') openFromNote(e.data.url); });
+    navigator.serviceWorker.addEventListener('message', (e) => { if (e.data?.type === 'opspile:open') openFromNote(e.data.url, e.data.views); });
     navigator.serviceWorker.startMessages?.();
   }
   renderNotify();
@@ -7633,6 +7633,21 @@ const noteUrl = (scope, thread) => {
   q.set('t', thread);
   return `/inbox?${q}`;
 };
+const yourView = (v) => v === PERSONAL_VIEW || (state.teams || []).some((t) => t.slug === v);
+/** Whether the inbox on screen has thread `key` (an entry, or a member of one) loaded. */
+const loadedHere = (key) => (state.data?.threads || []).some((t) => (t.thread === key
+  || t.members?.some((m) => m.thread === key)) && (!personal() || t.kind !== 'alert'));
+/**
+ * The view a notification opens its thread in. `views`: the views that can show it (`~personal`
+ * or a team's slug), the closest first. The view on screen, with its filters, if it is one of
+ * them or has the thread loaded: a click keeps you where you are. Else the first of them that
+ * is yours; none: the view on screen still.
+ */
+function noteView(views, key) {
+  const here = scopeKey();
+  if ((views || []).includes(here) || loadedHere(key)) return here;
+  return (views || []).find(yourView) || here;
+}
 /**
  * The notifications' sound: /notify.mp3 (src/sound.js), which the page plays, as browsers do
  * not play a notification's own (macOS plays Chrome's only now and then), so the notifications
@@ -7735,12 +7750,15 @@ async function noteFace(name, url) {
  * replaces the thread's notification, and alerts again (`renotify`).
  */
 async function showNote({
-  thread, at, title, body, url, author, avatar: face,
+  thread, at, title, body, views, author, avatar: face,
 }) {
   const id = `${thread}@${at}`;
   if (!notifying() || watch.noted.has(id)) return;
   if (document.hasFocus() && document.visibilityState === 'visible' && state.open === thread) return;
   watch.noted.add(id);
+  // The address is the view on screen, when it can show the thread, else the closest: what a new
+  // window opens. A click in an inbox open decides afresh, from `views` (openFromNote).
+  const url = noteUrl(noteView(views, thread), thread);
   const opts = {
     body,
     tag: `opspile:${thread}`,
@@ -7749,7 +7767,7 @@ async function showNote({
     badge: '/icon-192.png',
     timestamp: Date.parse(at) || Date.now(),
     silent: true,
-    data: { url },
+    data: { url, views },
   };
   playChime();
   try {
@@ -7759,16 +7777,22 @@ async function showNote({
     // no service worker: a plain one, below
   }
   const n = new Notification(title, opts);
-  n.onclick = () => { window.focus(); n.close(); openFromNote(url); };
+  n.onclick = () => { window.focus(); n.close(); openFromNote(url, views); };
 }
-/** The thread a notification is about, in the inbox it names. */
-async function openFromNote(url) {
+/**
+ * A click on a notification, in this inbox: its thread, in the view on screen if that can show
+ * it, else in the closest that can (noteView). `views`: as the notification was shown with; a
+ * notification without them names one view, in its address.
+ */
+async function openFromNote(url, views) {
   const q = new URL(url, location.href).searchParams;
-  const view = q.get('view') === 'personal' ? null : q.get('team');
-  if (view && !(state.teams || []).some((t) => t.slug === view)) return;
+  const key = q.get('t');
+  const asked = q.get('view') === 'personal' || !q.get('team') ? PERSONAL_VIEW : q.get('team');
+  const view = noteView(Array.isArray(views) ? views : [asked], key);
+  if (!yourView(view)) return;
   window.focus();
-  await switchView(view);
-  if (q.get('t')) openThread(q.get('t'));
+  if (view !== scopeKey()) await switchView(view === PERSONAL_VIEW ? null : view);
+  if (key) openThread(key);
 }
 
 /** Text for a notification: emoji as characters, without markup, on one line, clipped. */
@@ -7812,9 +7836,18 @@ async function noteMessage(ev, team) {
     }),
     author: author || '?',
     avatar: msg?.avatar || th?.participants?.find((p) => p.name === author)?.avatar,
-    // A room that is not one of your teams' (you are on none): the thread is in Personal.
-    url: noteUrl((state.teams || []).some((t) => t.slug === team) ? team : PERSONAL_VIEW, known?.thread || ev.thread),
+    views: noteViews(th, [team, ...(data?.thread?.teams || [])]),
   });
+}
+/**
+ * The views that can show thread `th` of a message that notified you, the closest first:
+ * Personal, which has the threads you posted or were mentioned in but not alerts, then the
+ * inboxes of yours among `teams` (the room's, and the others it is in: shared, followed). A room
+ * that is not one of your teams' (you are on none): the thread is in Personal.
+ */
+function noteViews(th, teams) {
+  const yours = [...new Set(teams)].filter((v) => v && v !== PERSONAL_VIEW && yourView(v));
+  return th?.kind === 'alert' && yours.length ? yours : [PERSONAL_VIEW, ...yours];
 }
 
 /**
@@ -7872,7 +7905,8 @@ function checkBells(scope, data) {
       }),
       author: author || orgName(t) || '?',
       avatar: (t.participants || []).find((x) => x.name === author)?.avatar,
-      url: noteUrl(scope, t.thread),
+      // The bell's view, then the inbox of the team it is filed under, if it is yours.
+      views: [...new Set([scope, ...(t.team && yourView(t.team) ? [t.team] : [])])],
     });
   }
 }

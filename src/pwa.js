@@ -66,7 +66,9 @@ button{border-color:#dadada;background:#e9e9e9}}</style></head><body><main><h1>Y
 /**
  * The service worker's source. Page loads go to the network; only a failed one is answered.
  * The inbox shows its notifications through it (ui/inbox.js); a click on one brings an open
- * inbox forward and has it open the thread (`opspile:open`), or opens the thread's inbox.
+ * inbox forward and has it open the thread (`opspile:open`, with the views that can show it: the
+ * inbox keeps the view on screen if it is one of them), or opens the address the notification
+ * was shown with (the view that inbox was on, when it could show the thread, else the closest).
  */
 export const SERVICE_WORKER = `// opspile service worker: no cache, only an offline page, and notification clicks.
 const OFFLINE = ${JSON.stringify(OFFLINE)};
@@ -80,7 +82,8 @@ self.addEventListener('fetch', (e) => {
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = new URL((e.notification.data && e.notification.data.url) || '/inbox', self.location.origin);
+  const data = e.notification.data || {};
+  const url = new URL(data.url || '/inbox', self.location.origin);
   if (url.origin !== self.location.origin) return;
   e.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
@@ -88,7 +91,7 @@ self.addEventListener('notificationclick', (e) => {
     const win = inboxes.find((c) => c.focused) || inboxes[0];
     if (win) {
       await win.focus();
-      win.postMessage({ type: 'opspile:open', url: url.href });
+      win.postMessage({ type: 'opspile:open', url: url.href, views: data.views });
       return;
     }
     await self.clients.openWindow(url.href);
