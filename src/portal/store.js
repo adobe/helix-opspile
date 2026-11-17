@@ -265,7 +265,11 @@ export async function invite(env, domain, user, body, now = Date.now()) {
   if (count >= MAX_MEMBERS) {
     return { error: `a lobby has at most ${MAX_MEMBERS} people`, status: 400 };
   }
-  const invited = await ensureUser(env, { email: mail, name: body.name }, now);
+  // The name a member gives is for someone the portal has not met: nobody renames a colleague
+  // who is here already by inviting them again.
+  const met = await env.DB.prepare('SELECT 1 FROM users WHERE id = ?')
+    .bind(await portalUserId(mail)).first();
+  const invited = await ensureUser(env, { email: mail, name: met ? undefined : body.name }, now);
   const { meta } = await env.DB.prepare(`INSERT INTO members (lobby, user, invited_by,
     invited_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`)
     .bind(domain, invited.id, user.id, iso(now)).run();

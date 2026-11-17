@@ -145,6 +145,9 @@ describe('the customer portal: the lobby', () => {
     assert.equal(yes.body.added, true);
     assert.deepEqual(yes.body.members.map((m) => [m.email, m.joined]), [[ADA, true], [BO, false]]);
     assert.equal((await call(env, ADA, 'POST', '/api/invite', { email: BO })).body.added, false);
+    // Inviting someone again does not rename them: the name given is for a new account.
+    const again = await call(env, ADA, 'POST', '/api/invite', { email: BO, name: 'Somebody Else' });
+    assert.deepEqual(again.body.members.map((m) => m.name), ['Ada', 'Bo']);
 
     // Invited, Bo is in it the next time he signs in.
     const joined = await call(env, BO, 'GET', '/api/me');
