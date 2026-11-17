@@ -202,23 +202,53 @@ describe('following technologies', () => {
 
   it('puts the threads that show a technology a person follows in their personal view', async () => {
     const e = env();
-    const solo = asMe(SOLO);
-    assert.deepEqual(entries(await inbox(e, solo, null, { personal: true })), []);
-    followPerson(e, SOLO.id, 'xw');
-    assert.deepEqual(entries(await inbox(e, solo, null, { personal: true })), [key('C1', '1.1')]);
+    const ew = asMe(EW);
+    assert.deepEqual(entries(await inbox(e, ew, null, { personal: true })), []);
+    followPerson(e, EW.id, 'xw');
+    assert.deepEqual(entries(await inbox(e, ew, null, { personal: true })), [key('C1', '1.1')]);
     const t = {
       thread: key('C1', '1.1'), team: 'helix', source: 'slack', channel_id: 'C1',
     };
-    assert.ok(await mayWork(e, solo)(['helix'], t));
-    assert.ok(!await mayWork(e, solo)(['helix'], { ...t, thread: key('C1', '2.1') }));
-    assert.ok(await thread(e, solo, key('C1', '1.1')));
-    assert.equal(await thread(e, solo, key('C1', '2.1')), null);
+    assert.ok(await mayWork(e, ew)(['helix'], t));
+    assert.ok(!await mayWork(e, ew)(['helix'], { ...t, thread: key('C1', '2.1') }));
+    assert.ok(await thread(e, ew, key('C1', '1.1')));
+    assert.equal(await thread(e, ew, key('C1', '2.1')), null);
     // Their inbox listens in the room of the team that holds it, and hears only of that thread.
-    assert.deepEqual(await roomsOf(e, solo), ['helix']);
-    assert.deepEqual([...await followersOf(e, [SOLO.id, ADA.id], key('C1', '1.1'))], [SOLO.id]);
-    const sockets = [{ person: SOLO.id, scoped: true }];
+    assert.deepEqual(await roomsOf(e, ew), ['ew', 'helix']);
+    assert.deepEqual([...await followersOf(e, [EW.id, ADA.id], key('C1', '1.1'))], [EW.id]);
+    const sockets = [{ person: EW.id, scoped: true }];
     assert.equal((await recipients(e, { thread: key('C1', '1.1') }, sockets)).length, 1);
     assert.equal((await recipients(e, { thread: key('C1', '2.1') }, sockets)).length, 0);
+  });
+
+  it('opens nothing to someone on no ops team, even with a follow on record', async () => {
+    const e = env();
+    const solo = asMe(SOLO);
+    assert.equal((await call(e, solo, 'PUT', '/api/follows', { tech: 'xw' })).status, 403);
+    // A row from when they were on a team counts for nothing now.
+    followPerson(e, SOLO.id, 'xw');
+    assert.deepEqual(entries(await inbox(e, solo, null, { personal: true })), []);
+    const t = {
+      thread: key('C1', '1.1'), team: 'helix', source: 'slack', channel_id: 'C1',
+    };
+    assert.ok(!await mayWork(e, solo)(['helix'], t));
+    assert.equal(await thread(e, solo, key('C1', '1.1')), null);
+    assert.deepEqual(await roomsOf(e, solo), []);
+    const sockets = [{ person: SOLO.id, scoped: true }];
+    assert.equal((await recipients(e, { thread: key('C1', '1.1') }, sockets)).length, 0);
+    // Taking it back is still theirs.
+    assert.equal((await call(e, solo, 'PUT', '/api/follows', { tech: 'xw', follow: false })).status, 200);
+  });
+
+  it('tells a follower that a thread stopped showing what they follow, so it can go', async () => {
+    const e = env();
+    followPerson(e, EW.id, 'xw');
+    const sockets = [{ person: EW.id, scoped: true }, { person: SOLO.id, scoped: true }];
+    // Relabeled: it shows xw no more.
+    await e.DB.batch(threadTechStatements(e.DB, key('C1', '1.1'), {}));
+    assert.equal((await recipients(e, { thread: key('C1', '1.1') }, sockets)).length, 0);
+    const heard = await recipients(e, { thread: key('C1', '1.1'), tech: ['xw'] }, sockets);
+    assert.deepEqual(heard.map((s) => s.person), [EW.id]);
   });
 
   it('finds the threads a team follows when it searches', async () => {

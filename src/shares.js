@@ -20,7 +20,7 @@
 import { ADMIN_TEAM } from './review.js';
 import { UNASSIGNED } from './rules.js';
 import {
-  followedByPerson, followersOf, followingTeams, followsEntry,
+  followedByPerson, followersOf, followersOfTech, followingTeams, followsEntry,
 } from './follows.js';
 
 /**
@@ -211,11 +211,15 @@ export async function recipients(env, event, sockets) {
     const people = scoped.map((s) => s.person);
     const place = await env.DB.prepare('SELECT source, channel_id FROM threads WHERE thread = ?')
       .bind(event.thread).first();
-    const [inIt, following] = await Promise.all([
+    // A thread whose label gained or lost technologies (`tech`, src/normalizer.js) is told to
+    // those who follow one of them too: one that no longer shows what they follow leaves their
+    // open inbox when it reloads. The event names the thread only, nothing of what is in it.
+    const [inIt, following, changed] = await Promise.all([
       inChannel(env, people, place),
       place ? followersOf(env, people, event.thread) : new Set(),
+      Array.isArray(event.tech) ? followersOfTech(env, people, event.tech) : new Set(),
     ]);
-    allowed = new Set([...inIt, ...following]);
+    allowed = new Set([...inIt, ...following, ...changed]);
   }
   return sockets.filter((s) => !s.scoped || allowed.has(s.person));
 }

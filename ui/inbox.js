@@ -7189,6 +7189,8 @@ async function loadInbox(early = null) {
   if (!state.as) checkBells(scopeKey(), first);
   mergeProfiles(state.data.profiles);
   renderUser();
+  // The technologies' names come with the inbox (`vocab`): the menu's Following names them now.
+  renderFollowMenu();
   state.coPeople = coParticipants();
   state.scores = inPass(() => new Map(state.data.threads.map((t) => [t.thread, smartScore(t)])));
   render();

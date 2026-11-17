@@ -575,6 +575,7 @@ describe('inbox page', () => {
         checkBells: () => {},
         mergeProfiles: () => {},
         renderUser: () => {},
+        renderFollowMenu: () => {},
         coParticipants: () => new Map(),
         inPass: (f) => f(),
         smartScore: () => 0,

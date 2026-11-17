@@ -23,6 +23,16 @@
 export const MAX_FOLLOWS = 50;
 
 /**
+ * SQL: the rows of `person_follows` that count. A person's follows open threads in any team's
+ * channels to them, as a team's shares do, so they count only while the person is on an ops team:
+ * someone who signed in from SIGNIN_DOMAINS and is on none (src/shares.js `teamless`) cannot
+ * follow, and someone who leaves every team stops seeing what they followed, without their rows
+ * being deleted.
+ */
+const COUNTED_PERSON_FOLLOWS = `SELECT person, tech FROM person_follows f
+  WHERE EXISTS (SELECT 1 FROM team_members m WHERE m.person = f.person)`;
+
+/**
  * SQL: the inbox entries (`COALESCE(logical_thread, thread)`) with a member that shows one of the
  * technologies `techs` selects (SQL that selects `tech` ids). Conversations only: an alert or an
  * ignored channel's thread is in no one's inbox by what it shows.
@@ -54,7 +64,7 @@ export const followedByTeams = (alias, param) => inFollowed(
 /** SQL: thread row `alias` shows a technology person `param` (an SQL parameter, an id) follows. */
 export const followedByPerson = (alias, param) => inFollowed(
   alias,
-  `SELECT tech FROM person_follows WHERE person = ${param}`,
+  `SELECT tech FROM (${COUNTED_PERSON_FOLLOWS}) WHERE person = ${param}`,
 );
 
 /**
@@ -99,10 +109,26 @@ export async function followersOf(env, people, thread) {
     return new Set();
   }
   const { results } = await env.DB.prepare(`${ENTRY_TECH}
-      JOIN (SELECT person AS who, tech FROM person_follows
+      JOIN (SELECT person AS who, tech FROM (${COUNTED_PERSON_FOLLOWS})
         WHERE person IN (SELECT value FROM json_each(?2))) f ON f.tech = g.tech
     WHERE x.kind = 'channel'`).bind(String(thread), JSON.stringify(ids)).all();
   return new Set((results || []).map((r) => r.who));
+}
+
+/**
+ * Which of `people` (ids) follow any of `techs` (ids), as it counts: those who had a thread
+ * that no longer shows what they follow hear that it changed, so their open inbox lets it go.
+ */
+export async function followersOfTech(env, people, techs) {
+  const ids = [...new Set([].concat(people || []).filter(Boolean))];
+  const list = [...new Set([].concat(techs || []).filter(Boolean))];
+  if (!env.DB || !ids.length || !list.length) {
+    return new Set();
+  }
+  const { results } = await env.DB.prepare(`SELECT DISTINCT person FROM (${COUNTED_PERSON_FOLLOWS})
+    WHERE person IN (SELECT value FROM json_each(?1)) AND tech IN (SELECT value FROM json_each(?2))`)
+    .bind(JSON.stringify(ids), JSON.stringify(list)).all();
+  return new Set((results || []).map((r) => r.person));
 }
 
 /** Whether person `person` follows a technology inbox entry `thread` shows. */
@@ -221,8 +247,18 @@ export async function setTeamFollow(env, {
   return { ok: true, changed: Boolean(meta.changes) };
 }
 
-/** Person `person` follows `tech`, or (`follow` false) no more. As `setTeamFollow`. */
+/**
+ * Person `person` follows `tech`, or (`follow` false) no more. As `setTeamFollow`; only someone
+ * on an ops team follows (see COUNTED_PERSON_FOLLOWS), and anyone may stop.
+ */
 export async function setPersonFollow(env, { person, tech, follow }) {
+  if (follow) {
+    const member = await env.DB.prepare('SELECT 1 FROM team_members WHERE person = ? LIMIT 1')
+      .bind(person).first();
+    if (!member) {
+      return { error: 'only members of an ops team follow technologies', status: 403 };
+    }
+  }
   if (!follow) {
     const { meta } = await env.DB.prepare('DELETE FROM person_follows WHERE person = ? AND tech = ?')
       .bind(person, String(tech || '')).run();

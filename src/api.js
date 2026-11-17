@@ -1144,7 +1144,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
         person: me.id, tech: body.tech, follow: body.follow !== false,
       });
       if (res.error) {
-        return json({ error: res.error }, 400);
+        return json({ error: res.error }, res.status || 400);
       }
       return json({ ...await followsOf(env, me), changed: res.changed });
     }

@@ -87,7 +87,10 @@ and the label job tells the rooms of the teams that follow those (`announceFollo
 `person_follows` (migration 0072), nothing else. Configuration, like the shares: whose inbox has a
 thread is worked out from it, its thread's `thread_tech` and its group each time
 (`followingTeams`, `followersOf`), never stored, so a relabel, a re-threading or a follow taken back
-moves the thread in or out of the inboxes at once, and nothing has to be undone.
+moves the thread in or out of the inboxes at once, and nothing has to be undone. A person's row
+counts only while they are on an ops team (`COUNTED_PERSON_FOLLOWS`); leaving every team keeps the
+row and ends its effect. A relabel's room event names the technologies it gained or lost (`tech`), so
+a person whose thread no longer shows what they follow still hears of it, and their inbox lets it go.
 
 **Label review.** applies to the current label → history only. A review holds while its
 `labeled_through` matches the label's (`src/review.js`).

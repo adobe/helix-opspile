@@ -69,7 +69,7 @@ async function announceFollowed(env, key, tech) {
   ]);
   const rooms = [...new Set([...teams, ...following])];
   if (rooms.length) {
-    await notifyRoom(env, rooms, { type: 'thread', thread: key });
+    await notifyRoom(env, rooms, { type: 'thread', thread: key, tech: changed });
   }
 }
 
