@@ -344,12 +344,21 @@ dialog.confirm .send { border-radius: var(--spectrum-corner-radius-100); padding
    scrolling under its title where they do not. */
 dialog.keysheet { width: min(calc(var(--spectrum-spacing-100) * 110), 94vw); max-height: 86vh; padding: 0; overflow: hidden; }
 dialog.keysheet form { display: flex; flex-direction: column; max-height: 86vh; }
-dialog.keysheet .top { display: flex; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); }
-dialog.keysheet .close { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
+dialog:is(.keysheet, .notifyhelp) .top { display: flex; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); }
+dialog:is(.keysheet, .notifyhelp) .close { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
 dialog.keysheet .groups { overflow: auto; columns: 2 calc(var(--spectrum-spacing-100) * 40); }
 dialog.keysheet section { break-inside: avoid; }
 dialog.keysheet .keys { display: grid; grid-template-columns: 1fr auto; margin: 0; }
 dialog.keysheet .keys dd { margin: 0; text-align: right; white-space: nowrap; }
+/* The notification troubleshooter (ui/notifyhelp.js, with the confirm dialog's buttons): its
+   step scrolling under its title, the drawings of the system's settings as wide as the text. */
+dialog.notifyhelp { width: min(calc(var(--spectrum-spacing-100) * 70), 94vw); max-height: 88vh; overflow: hidden; }
+dialog.notifyhelp form { display: flex; flex-direction: column; max-height: 88vh; }
+dialog.notifyhelp .nh-body { overflow: auto; }
+dialog.notifyhelp .apply { flex-wrap: wrap; }
+.nh-steps { margin: 0; padding-left: var(--spectrum-spacing-400); }
+.nh-fig { margin: var(--spectrum-spacing-200) 0px var(--spectrum-spacing-300); }
+.nh-pic { display: block; width: 100%; height: auto; }
 .menu .item kbd.end { margin-left: auto; }
 .toast { position: fixed; bottom: calc(var(--spectrum-spacing-300) + var(--safe-bottom)); left: 50%; transform: translateX(-50%); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
   border-radius: var(--spectrum-corner-radius-700); padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-100); z-index: 10; }
@@ -2611,6 +2620,42 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum dialog.keysheet .keys { gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); font-size: var(--spectrum-font-size-100); }
 .spectrum dialog.keysheet .keys dd { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum dialog.keysheet kbd { border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); border-radius: var(--spectrum-corner-radius-75); font-size: var(--spectrum-font-size-75); }
+/* The notification troubleshooter: S2's Dialog, as the shortcuts' is, its steps headed as
+   sections. Its drawings of System Settings are in S2's colors, the window on the base layer,
+   its boxes a step lighter, and a negative ring where to click. */
+.spectrum dialog.notifyhelp { padding: 0px; }
+.spectrum dialog.notifyhelp .top { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-400) var(--spectrum-spacing-200); }
+.spectrum dialog.notifyhelp h2 { margin: 0px; font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum dialog.notifyhelp .close { width: var(--spectrum-spacing-600); height: var(--spectrum-spacing-600); border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
+.spectrum dialog.notifyhelp .close:hover { background: var(--spectrum-gray-200); }
+.spectrum dialog.notifyhelp .nh-body { padding: 0px var(--spectrum-spacing-400) var(--spectrum-spacing-400); }
+.spectrum dialog.notifyhelp h3 { margin: var(--spectrum-spacing-300) 0px var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum dialog.notifyhelp a { color: var(--link); }
+.spectrum dialog.notifyhelp .apply { margin-top: var(--spectrum-spacing-300); }
+.spectrum .nh-note, .spectrum .nh-fig figcaption { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .nh-fig figcaption { margin-top: var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); }
+.spectrum .nh-pic text { fill: var(--spectrum-neutral-content-color-default); }
+.spectrum .nh-pic .nh-dim { fill: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .nh-pic :is(.nh-strong, .nh-title) { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .nh-pic .nh-on { fill: var(--spectrum-white); }
+.spectrum .nh-pic :is(.nh-win, .nh-bar) { fill: var(--spectrum-gray-50); stroke: var(--spectrum-gray-300); }
+.spectrum .nh-pic .nh-side { fill: var(--spectrum-gray-100); }
+.spectrum .nh-pic .nh-box { fill: var(--spectrum-gray-100); }
+.spectrum .nh-pic .nh-sep { stroke: var(--spectrum-gray-300); }
+.spectrum .nh-pic :is(.nh-sel, .nh-field, .nh-btn) { fill: var(--spectrum-gray-300); }
+.spectrum .nh-pic .nh-ico { fill: var(--spectrum-gray-visual-color); }
+.spectrum .nh-pic .nh-ico.blue { fill: var(--spectrum-blue-visual-color); }
+.spectrum .nh-pic .nh-ico.red, .spectrum .nh-pic .nh-tl.r { fill: var(--spectrum-red-visual-color); }
+.spectrum .nh-pic .nh-ico.magenta { fill: var(--spectrum-magenta-visual-color); }
+.spectrum .nh-pic .nh-ico.indigo, .spectrum .nh-pic .nh-moon { fill: var(--spectrum-indigo-visual-color); }
+.spectrum .nh-pic .nh-tl.y { fill: var(--spectrum-yellow-visual-color); }
+.spectrum .nh-pic .nh-tl.g { fill: var(--spectrum-green-visual-color); }
+.spectrum .nh-pic .nh-tog { fill: var(--spectrum-gray-400); }
+.spectrum .nh-pic :is(.nh-tog.on, .nh-btn.on) { fill: var(--spectrum-accent-background-color-default); }
+.spectrum .nh-pic .nh-knob { fill: var(--spectrum-white); }
+.spectrum .nh-pic .nh-tick { fill: none; stroke: var(--spectrum-white); stroke-linecap: round; stroke-linejoin: round; }
+.spectrum .nh-pic .nh-glyph { fill: none; stroke: var(--spectrum-neutral-content-color-default); stroke-linecap: round; }
+.spectrum .nh-pic .nh-ring { fill: none; stroke: var(--spectrum-negative-visual-color); }
 
 /* Toasts: S2's neutral Toast (white text on neutral-subdued, the large radius, elevated), its
    action an outline Button for static white. */

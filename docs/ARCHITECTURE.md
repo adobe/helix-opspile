@@ -861,6 +861,14 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   view or turning it off. Inboxes in several tabs show one notification per thread, and none
   for the thread you are reading, nor while viewing as someone else. The first visit asks once
   (a toast) whether the browser may show them; browsers only ask on a click.
+  A page sees the browser's permission, not whether the system shows the banner (on a Mac,
+  System Settings or a Focus keeps Chrome's banners off while Chrome says "granted"). So the
+  menu's **Send a test notification** sends one with the chime and asks whether a banner
+  showed; if not, a dialog (`ui/notifyhelp.js`) walks through the system's settings, with
+  drawings of System Settings on a Mac, for the browser and the installed app's own entry. While
+  the browser blocks them, the menu says how to allow them again. Once the browser allows them,
+  the inbox sends "Notifications are on" once in a tab and once as the installed app, with a
+  toast asking whether it popped up. `/inbox?notify=help` opens the troubleshooter.
 - The toolbar is the same on the inbox and the admin pages: the pages and label review on the
   left, and on the right whoever is signed in, with the view on screen under their name. Their
   name opens a menu with "View as" (admin team; while it is on, a chip next to the name says

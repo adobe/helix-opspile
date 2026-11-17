@@ -80,6 +80,8 @@ export default [
         RichText: 'readonly',
         // A customer's stack drawing, ui/stack.js (the inbox).
         Stack: 'readonly',
+        // The notification troubleshooter's steps, ui/notifyhelp.js (the inbox).
+        NotifyHelp: 'readonly',
         // The Topics page's graph, ui/topicgraph.js.
         TopicGraph: 'readonly',
         // Content swaps that fade in, ui/app.js.

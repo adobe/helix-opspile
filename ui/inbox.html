@@ -50,7 +50,9 @@
       <button class="item" id="notifySound" role="switch" aria-checked="false" title="On this device: a chime with each notification"><span class="ck s2-check" aria-hidden="true"></span>Play a sound</button>
       <div id="bells"></div>
       <p class="hint" id="notifyHint"></p>
-      <button class="item allow" id="notifyAllow" hidden>Allow notifications in this browser</button></section>
+      <button class="item allow" id="notifyAllow" hidden>Allow notifications in this browser</button>
+      <button class="item allow" id="notifyTest" hidden title="A notification and the chime, then: did you see a banner? If not, how to show them">Send a test notification</button>
+      <button class="item allow" id="notifyFix" hidden aria-haspopup="dialog"></button></section>
     <section id="tracesBox" hidden><h4>Thread Agent</h4>
       <button class="item" id="tracesAll" role="switch" aria-checked="true"><span class="ck s2-check" aria-hidden="true"></span>Show its thinking under threads</button>
       <div id="tracesHere" hidden><label class="hint" for="tracesChannel" id="tracesChannelLabel"></label><select id="tracesChannel">
@@ -84,6 +86,7 @@
 <script src="table.js"></script>
 <script src="writing.js"></script>
 <script src="stack.js"></script>
+<script src="notifyhelp.js"></script>
 <script type="module" src="inbox.js"></script>
 <script src="app.js"></script>
 </body>
