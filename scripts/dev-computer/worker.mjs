@@ -27,34 +27,70 @@
  *   curl localhost:8788/shell -d '{}'        # what the agent is told its shell has
  *
  * `runtime` changes the computer's shell and `image` its kernel's image, as a team's choice
- * does at the agent's next message (`changeShell`), and stay until the next change. `/uploads`
- * puts files into the read-only uploads of the thread. Each `thread` is an agent of its own,
- * with its own files. `PUT /images/<key>` writes an object of the images bucket, and
- * `GET /images/<key>` reads it (404 when there is none). `GET /health` answers `ok`.
+ * does at the agent's next message (`changeShell`), and stay until the next change; `cache`
+ * (`{ mib, fileMib }`) sizes the isolate's image cache (src/agent/image.js). `/uploads`
+ * puts files into the read-only uploads of the thread. `/reads` answers what the isolate asked
+ * of the images bucket and keeps, and `/drop` ends the agent's kernel.
+ * Each `thread` is an agent of its own, with its own files. With the secret `GITHUB_TOKEN`,
+ * git sends it to github.com, through the gateway (`devSecrets`, `devEnv`). `PUT /images/<key>`
+ * writes an object of the images bucket, and `GET /images/<key>` reads it (404 when there is
+ * none). `GET /health` answers `ok`.
  *
  * Deployed (`--env stage`, .github/workflows/computer-stage.yml), it is a shell on the
  * internet: `REQUIRE_TOKEN` is set there, and every request needs the secret `COMPUTER_TOKEN`
  * in `x-opspile-computer-token`. Without the secret, it answers nothing but 403.
  */
 
+/* eslint-disable max-classes-per-file */
+import { WorkerEntrypoint } from 'cloudflare:workers';
 import { ThreadAgent } from '../../src/agent/agent.js';
+import { forgetImages, imageReads, sizeImageCache } from '../../src/agent/image.js';
+import { forward } from '../../src/agent/secrets.js';
 import { mountList } from '../../src/threadfiles.js';
+import { devEnv, devSecrets } from './secrets.mjs';
 
 export { WorkspaceServiceProxy } from '@cloudflare/computer';
-export { SecretGateway } from '../../src/agent/gateway.js';
+
+/** The Worker's SecretGateway (src/agent/gateway.js), with the dev computer's secrets. */
+export class SecretGateway extends WorkerEntrypoint {
+  async fetch(request) {
+    return forward(this.env, this.ctx.props || {}, request, { secrets: devSecrets(this.env) });
+  }
+}
+
+const MiB = 1024 * 1024;
 
 export class ComputerAgent extends ThreadAgent {
-  /** Runs `command` as pi's bash tool does: what it answers, and what the command printed. */
+  /** The kernel's programs reach the network with the dev computer's secrets. */
+  kernelFetch(request) {
+    return forward(this.env, { agent: this.name }, request, { secrets: devSecrets(this.env) });
+  }
+
+  /**
+   * Runs `command` as pi's bash tool does: what it answers, what the command printed, and what
+   * the isolate read of the images bucket and keeps (`images`, src/agent/image.js).
+   * `cache` (`{ mib, fileMib }`, `{}` for the Worker's own) empties what the isolate keeps and
+   * sizes it first.
+   */
   async exec({
-    command, runtime, image, timeout, env,
+    command, runtime, image, timeout, env, cache,
   }) {
+    if (cache) {
+      // A cache of its own: what the isolate kept for another agent is forgotten first.
+      forgetImages();
+      sizeImageCache({
+        ...(cache.mib ? { bytes: cache.mib * MiB } : {}),
+        ...(cache.fileMib ? { fileMax: cache.fileMib * MiB } : {}),
+      });
+    }
     await this.shell({ runtime, image });
     this.tools = ['computer'];
     const output = { stdout: '', stderr: '' };
     const started = Date.now();
+    const vars = { ...devEnv(this.env), ...(env || {}) };
     const res = await this.computer().exec(String(command), {
       ...(timeout ? { timeout: Number(timeout) } : {}),
-      ...(env ? { env } : {}),
+      ...(Object.keys(vars).length ? { env: vars } : {}),
       onOutput: (chunk, context, info) => {
         output[info.stream] += chunk;
       },
@@ -66,7 +102,20 @@ export class ComputerAgent extends ThreadAgent {
       ...(res.ok ? res.value : { error: res.error.code, message: res.error.message }),
       ...output,
       sqliteBytes: this.ctx.storage.sql.databaseSize,
+      images: imageReads(),
     };
+  }
+
+  /** What the isolate asked of the images bucket, and keeps (src/agent/image.js). */
+  // eslint-disable-next-line class-methods-use-this
+  async reads() {
+    return { images: imageReads() };
+  }
+
+  /** Ends the kernel, as when the agent's object lets it go: the next command boots another. */
+  async drop() {
+    await this.changeShell(this.runtime, this.image);
+    return { dropped: true, images: imageReads() };
   }
 
   /** Changes the shell or the image, if asked: what the agent is told of it then. */
@@ -130,7 +179,7 @@ export default {
       }
     }
     if (request.method !== 'POST') {
-      return new Response('POST { command, runtime?, image?, timeout?, env? }, /uploads { name: text } or /shell\n', { status: 405 });
+      return new Response('POST { command, runtime?, image?, timeout?, env?, cache? }, /uploads { name: text }, /shell, /reads or /drop\n', { status: 405 });
     }
     const thread = url.searchParams.get('thread') || 'dev';
     const agent = env.AGENTS.get(env.AGENTS.idFromName(`dev:${thread}`));
@@ -141,6 +190,12 @@ export default {
       const body = await request.json();
       if (url.pathname === '/uploads') {
         return Response.json(await agent.upload(body));
+      }
+      if (url.pathname === '/reads') {
+        return Response.json(await agent.reads());
+      }
+      if (url.pathname === '/drop') {
+        return Response.json(await agent.drop());
       }
       return Response.json(url.pathname === '/shell'
         ? await agent.shell(body) : await agent.exec(body));

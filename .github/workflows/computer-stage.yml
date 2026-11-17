@@ -11,6 +11,12 @@ name: Computer on stage
 # The Worker is a shell on the internet: it answers only requests with the secret
 # COMPUTER_TOKEN, which each run makes, masks and keeps nowhere, and replaces with one nobody
 # knows when it ends. Its address names the account, so the logs and the summary leave it out.
+#
+# git's checks clone from github.com, which limits anonymous clones from Cloudflare's shared
+# addresses (429). So the run hands the Worker its own GITHUB_TOKEN (contents: read, which
+# GitHub revokes when the job ends) as the secret GITHUB_TOKEN, and the computer's gateway puts
+# it into git's requests to github.com only, as it does a team's secrets: no program sees it
+# (scripts/dev-computer/worker.mjs, `devSecrets`). The run deletes it again when it ends.
 
 on:
   push:
@@ -26,6 +32,7 @@ on:
       - 'scripts/dev-computer/**'
       - 'src/agent/**'
       - '!src/agent/stub.js'
+      - '!src/agent/gateway.js'
       - 'src/accounts.js'
       - 'src/attach.js'
       - 'src/bashrequests.js'
@@ -88,6 +95,10 @@ on:
       - 'src/ui-markdown.js'
       - 'src/vectors.js'
   workflow_dispatch:
+    inputs:
+      measure:
+        description: "The image caches to measure: default, or MiB in all/of one file (48/24), comma-separated"
+        default: default
 
 permissions:
   contents: read
@@ -131,9 +142,12 @@ jobs:
 
       - name: Deploy
         id: deploy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           umask 077
-          printf '{"COMPUTER_TOKEN":"%s"}' "$COMPUTER_TOKEN" > "$RUNNER_TEMP/secrets.json"
+          printf '{"COMPUTER_TOKEN":"%s","GITHUB_TOKEN":"%s"}' "$COMPUTER_TOKEN" "$GITHUB_TOKEN" \
+            > "$RUNNER_TEMP/secrets.json"
           status=0
           npx wrangler deploy -c "$CONFIG" --env stage --secrets-file "$RUNNER_TEMP/secrets.json" \
             > "$RUNNER_TEMP/deploy.log" 2>&1 || status=$?
@@ -151,9 +165,21 @@ jobs:
           URL: ${{ steps.deploy.outputs.url }}
         run: npm run computer:check -- --images "$URL"
 
+      # What an agent of the GitHub image costs, for the step summary: measured, not checked
+      # (a size too large fails a step on the memory limit, which does not fail the run).
+      - name: Measure an agent's memory
+        if: always() && steps.deploy.outcome == 'success'
+        continue-on-error: true
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+          MEASURE: ${{ inputs.measure || 'default' }}
+        run: npm run computer:check -- --measure "$MEASURE" "$URL"
+
       - name: Lock it again
         if: always() && steps.deploy.outcome != 'skipped'
         run: |
           node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))' \
             | npx wrangler secret put COMPUTER_TOKEN -c "$CONFIG" --env stage > /dev/null 2>&1 \
             || echo "::warning::could not replace the stage computer's token"
+          npx wrangler secret delete GITHUB_TOKEN -c "$CONFIG" --env stage < /dev/null > /dev/null 2>&1 \
+            || echo "::warning::could not delete the stage computer's GITHUB_TOKEN"

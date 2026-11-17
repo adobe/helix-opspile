@@ -1966,15 +1966,22 @@ the default. An agent follows its team's choice before each delivery, as it foll
     computer failed".
   - **What is kept in memory.** Layers and blobs never change, so the Worker keeps what it
     read for every agent in its isolate: the trees of the last 8 images, and pieces (and the
-    whole blobs of files without them) up to 32 MiB, the least recently used going first. A
-    new isolate reads them again. Of a file over 16 MiB (yq, gh) the isolate keeps nothing:
+    whole blobs of files without them) up to 48 MiB, the least recently used going first. A
+    new isolate reads them again. Of a file over 24 MiB (yq, gh) the isolate keeps nothing:
     the agent's mount holds the last two pieces it read, so a read that starts in the piece
     the one before ended in does not fetch it again (a file without pieces is held whole by
-    the open file that read it, once per open). The kernel keeps its own copy of a program it
-    runs, and two of gh's 50 MB would crowd the object's 128 MB. So while a kernel runs, what
-    the isolate keeps of a program is a second copy, which it never reads; it pays when the
-    agent's kernel boots again, in the same isolate as it mostly does, and finds its programs
-    there (a command in some 100 ms instead of one to three seconds).
+    the open file that read it, once per open). The kernel keeps no copy of a program (since
+    slicc-kernel 1.189.1): a Dynamic Worker that starts cold reads it again, whole, through the
+    mount. So the isolate's cache is the only copy of a program in the agent's object, and
+    serves those reads and the kernel's next boot, in the same isolate as it mostly is (a
+    command in some 100 ms instead of one to three seconds). The object's 128 MB hold that
+    cache, the agent itself (its model loop), and, while the Worker Loader takes a program, its
+    bytes once more (gh's 50 MB). With 1.189.0's copies, two commands of one GitHub agent
+    exceeded it; stage checks that sequence now (`github: a session`). The sizes are measured
+    on stage (`npm run computer:check -- --measure 48/24,64/64 <origin>`, or the workflow's
+    `measure` input): at 64 MiB, with gh kept, the kernel's next boot exceeded the memory; at
+    48 MiB with gh kept it pushed every other program out, so the next boot read them all
+    again; 48 MiB and 24 MiB of one file kept the rest, and the next boot read only gh.
   - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
     whether it has `jq`. So the prompt cannot name a program the image lacks.
 - **Its network.** The kernel's programs reach the network through its proxy, which hands

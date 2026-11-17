@@ -155,8 +155,8 @@ export const IMAGES = [
     tools: `${BASE_TOOLS}, rg, sqlite3, strings`,
     layers: ['data'],
   },
-  // Not in Base: gh.wasm is 50 MB, which the agent's object keeps a copy of while its kernel
-  // runs, and each gh has a Dynamic Worker to itself.
+  // Not in Base: gh.wasm is 50 MB, which the agent's object reads whole each time a Dynamic
+  // Worker of gh starts cold (src/agent/image.js), and each gh has a Dynamic Worker to itself.
   {
     name: 'github',
     from: 'base',

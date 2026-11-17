@@ -17,7 +17,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { computerEnv } from '../src/agent/computer.js';
 import {
   commandsOf, DEFAULT_IMAGE, forgetImages, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree,
-  isImageName, keptOfImages, listImages, readImage,
+  imageReads, isImageName, keptOfImages, listImages, readImage, sizeImageCache,
 } from '../src/agent/image.js';
 import {
   DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, runtimeFor, RUNTIMES, setTeamImage,
@@ -332,6 +332,8 @@ describe('a kernel\'s image, from the bucket', () => {
   });
 
   it('keeps the blobs it read up to a limit, the least recently used going first', async () => {
+    // Smaller than the Worker's, so that the files can be.
+    sizeImageCache({ bytes: 32 * 1024 * 1024, fileMax: 16 * 1024 * 1024 });
     const bucket = fakeBucket();
     const big = (c) => c.repeat(12 * 1024 * 1024);
     const files = Object.fromEntries(['a', 'b', 'c'].map((c) => [`bin/${c}`, big(c)]));
@@ -362,7 +364,9 @@ describe('a kernel\'s image, from the bucket', () => {
     assert.equal(gets.length, 4);
   });
 
-  it('keeps a file over half that limit by its open file only, read once however it is read', async () => {
+  it('keeps a file over what one may be kept by its open file only, read once however it is read', async () => {
+    // Smaller than the Worker's, so that the files can be.
+    sizeImageCache({ bytes: 32 * 1024 * 1024, fileMax: 16 * 1024 * 1024 });
     const bucket = fakeBucket();
     const files = { 'bin/gh': 'g'.repeat(17 * 1024 * 1024) };
     const manifest = image(bucket, 'huge', [layer(bucket, 'huge', files)]);
@@ -484,7 +488,9 @@ describe('a kernel\'s image, from the bucket', () => {
     await whole(0);
   });
 
-  it('keeps none of a file with pieces over half that limit, but the last pieces its mount read', async () => {
+  it('keeps none of a file with pieces over what one may be, but the last pieces its mount read', async () => {
+    // Smaller than the Worker's, so that the files can be.
+    sizeImageCache({ bytes: 32 * 1024 * 1024, fileMax: 16 * 1024 * 1024 });
     const bucket = fakeBucket();
     const MiB = 1024 * 1024;
     const data = Array.from({ length: 17 }, (_, i) => String.fromCharCode(97 + i).repeat(MiB)).join('');
@@ -522,6 +528,40 @@ describe('a kernel\'s image, from the bucket', () => {
     await other.read(await other.open('/bin/gh', {}), 3 * MiB, 4);
     assert.equal(counting.gets.length, 4);
     assert.deepEqual(keptOfImages(), { entries: 0, bytes: 0 });
+  });
+
+  it('counts what it asked of the bucket, and keeps what its budget lets it', async () => {
+    const bucket = fakeBucket();
+    const MiB = 1024 * 1024;
+    const data = ['x', 'y', 'z'].map((c) => c.repeat(MiB)).join('');
+    const manifest = image(bucket, 'sized', [layer(bucket, 'sized', { 'bin/x': data }, { piece: MiB })]);
+    const { handlers } = imageDriver(bucket, await imageTree(bucket, manifest));
+    const read = async () => handlers.read(await handlers.open('/bin/x', {}), 0, 3 * MiB);
+    await read();
+    await read();
+    assert.deepEqual(imageReads(), {
+      gets: 1,
+      fetched: 3 * MiB,
+      hits: 3,
+      entries: 3,
+      bytes: 3 * MiB,
+      budget: 48 * MiB,
+      fileMax: 24 * MiB,
+    });
+    // A smaller budget lets the oldest go; a file over what one may keep is not kept.
+    assert.deepEqual(sizeImageCache({ bytes: 2 * MiB, fileMax: 4 * MiB }), {
+      bytes: 2 * MiB, fileMax: 2 * MiB,
+    });
+    assert.equal(imageReads().bytes, 2 * MiB);
+    await read();
+    assert.equal(imageReads().gets, 2);
+    assert.equal(imageReads().bytes, 2 * MiB);
+    sizeImageCache({ bytes: 8 * MiB, fileMax: 8 * MiB });
+    await read();
+    assert.equal(imageReads().bytes, 3 * MiB);
+    // forgetImages puts the budget back.
+    forgetImages();
+    assert.equal(imageReads().budget, 48 * MiB);
   });
 
   it('is mounted read-only, at the place the kernel looks for its commands', () => {

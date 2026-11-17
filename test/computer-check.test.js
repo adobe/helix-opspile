@@ -15,7 +15,8 @@ import { createHash } from 'node:crypto';
 import { afterEach, describe, it } from 'node:test';
 import { build, objectsOf } from '../scripts/computer-images.mjs';
 import {
-  CHECKS, commandsCheck, rangeChecks, request, runCheck, summaryOf, syncImages, waitForReady,
+  cachesOf, CHECKS, commandsCheck, GITHUB_SESSION, measure, measuredOf, rangeChecks, request,
+  runCheck, summaryOf, syncImages, waitForReady,
 } from '../scripts/dev-computer/check.mjs';
 
 const ORIGIN = 'https://computer.example';
@@ -236,6 +237,58 @@ describe('the checks of the stage computer', () => {
     assert.match(summary, /\| ✅ \| boots \| 5 ms \|\n\| ❌ \| dig \| 9 ms \|/);
     assert.match(summary, /\*\*dig\*\* \(exit 9\):\n\n```\nno servers could be reached\n```/);
     assert.doesNotMatch(summary, /https?:/);
+  });
+
+  it('run an agent\'s GitHub session on a computer of its own, its commands in order', () => {
+    const session = CHECKS.filter((c) => c.thread === 'github-session');
+    assert.deepEqual(session.map((c) => c.command), GITHUB_SESSION);
+    assert.ok(session.every((c) => c.image === 'github'));
+    const at = CHECKS.indexOf(session[0]);
+    assert.equal(CHECKS[at + 1], session[1]);
+    assert.match('gh version\n{"a":1}\nb\n200\n2\n42\nOpenSSL\n', session[0].match);
+    assert.match('1\n1\ngh version\ntar (GNU\ngzip\ndiff\ntree\nhi\n68690a\nJSON text data\n', session[1].match);
+  });
+
+  it('measure each cache on an agent of its own, its steps and what the isolate kept', async () => {
+    assert.deepEqual(cachesOf('default,48/24'), [
+      { label: 'default', mib: null, fileMib: null }, { label: '48/24', mib: 48, fileMib: 24 },
+    ]);
+    const asked = [];
+    let gets = 10;
+    globalThis.fetch = async (url, init) => {
+      const { pathname, searchParams } = new URL(url);
+      const body = JSON.parse(init.body);
+      asked.push([pathname, searchParams.get('thread'), body.cache ?? null]);
+      if (pathname === '/reads') {
+        return Response.json({ images: { gets, fetched: gets * 1e6, bytes: 5e6 } });
+      }
+      if (pathname === '/drop') {
+        return Response.json({ dropped: true });
+      }
+      gets += 2;
+      // The kernel booted again is too much for the object.
+      return asked.filter(([p]) => p === '/').length === 3
+        ? Response.json({ error: 'Durable Object\'s isolate exceeded its memory limit and was reset.' }, { status: 500 })
+        : Response.json({ exitCode: 0, images: { gets, fetched: gets * 1e6, bytes: 5e6 } });
+    };
+    const lines = [];
+    const [r] = await measure('https://computer.example', cachesOf('48/24'), {
+      run: 'r1', log: (l) => lines.push(l),
+    });
+    assert.deepEqual(r.steps.map((s) => [s.name, s.ok, s.gets, s.fetchedMB, s.keptMB]), [
+      ['command 1', true, 2, 2, 5], ['command 2', true, 2, 2, 5],
+      ['command 1, its kernel booted again', false, undefined, 0, 0],
+    ]);
+    assert.match(r.steps[2].error, /exceeded its memory limit/);
+    assert.ok(asked.every(([, thread]) => thread === 'measure-r1-48-24'));
+    // The cache is sized with the first command only.
+    assert.deepEqual(asked.filter(([p]) => p === '/').map(([, , c]) => c), [
+      { mib: 48, fileMib: 24 }, null, null,
+    ]);
+    const table = measuredOf([r]);
+    assert.match(table, /\| 48\/24 \| ✅ command 1 \| \d+ ms \| 2 \(2 MB\) \| 5 MB \|/);
+    assert.match(table, /\| 48\/24 \| ❌ command 1, its kernel booted again \| .* exceeded its memory limit/);
+    assert.doesNotMatch(table, /https?:/);
   });
 
   it('read files of the image whole and in parts, in a piece of their own and over the limit', async () => {

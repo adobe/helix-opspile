@@ -409,6 +409,11 @@ export class ThreadAgent extends Agent {
       : { mode: 'direct' };
   }
 
+  /** The answer to a request of the kernel's programs: the gateway's (src/agent/secrets.js). */
+  kernelFetch(request) {
+    return forward(this.env, { agent: this.name }, request);
+  }
+
   /**
    * The SLICC kernel of the computer (src/agent/kernel.js), made with the first command: its
    * root in this object's SQLite, its processes in Dynamic Workers without a network of their
@@ -435,7 +440,7 @@ export class ThreadAgent extends Agent {
         throw new Error(`there is no image ${this.image} in the images bucket (IMAGES)`);
       }
       const tree = await imageTree(this.env.IMAGES, image);
-      const gateway = gatewayFetch((request) => forward(this.env, { agent: this.name }, request));
+      const gateway = gatewayFetch((request) => this.kernelFetch(request));
       const kernel = await createCloudflareKernel({
         loader: this.env.LOADER,
         sql: storage.sql,
