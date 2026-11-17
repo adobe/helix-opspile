@@ -3076,7 +3076,7 @@ function sideGroup(key, run, { last, trailing }) {
   const body = open ? `<div class="sc-body">${sideRun(key, run, last).join('')}${more}</div>` : '';
   // What the line opens: its run under it, or the panel, which has every run.
   const shows = side.wide ? `aria-expanded="${paneled}" aria-controls="side"` : `aria-expanded="${open}"`;
-  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${paneled ? 'paneled' : ''} ${working ? 'working' : ''}${joined ? ' joined' : ''}" data-side="${esc(id)}">
+  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${paneled ? 'paneled' : ''} ${working ? 'working' : ''}${joined ? ' joined' : ''}${joined && sideBridge.p < BRIDGE_ACROSS ? ' emerging' : ''}" data-side="${esc(id)}">
     <button type="button" class="sc-head" data-side-toggle="${esc(id)}" ${shows}${live ? ' aria-disabled="true"' : ''}>
       <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}${live ? '' : '<span class="chev s2-chevron right" aria-hidden="true"></span>'}</span>
     </button>${body}</div>`;
@@ -3164,16 +3164,20 @@ function goneSidePanel() {
 const sideMotion = {
   p: 0, to: 0, raf: 0, mode: 'slide',
 };
-// A line joined to the panel while it is open (joinLine): once it is in sight, it reaches across
-// to the panel's edge, then the inner corners round off. `p` from 0 to 1, 1 when it is not moving;
+// A line joined to the panel while it is open (joinLine): once it is in sight, it comes out of the
+// panel, right to left, then the inner corners round off. `p` from 0 to 1, 1 when it is not moving;
 // `waiting` until the line is in sight, all of it.
 const sideBridge = { p: 1, raf: 0, waiting: false };
 /** The bridge from the line to the panel at rest, all there. */
 function bridgeStill() {
   cancelAnimationFrame(sideBridge.raf);
   Object.assign(sideBridge, { p: 1, raf: 0, waiting: false });
+  for (const el of document.querySelectorAll('#pane .sidechat.emerging')) {
+    el.classList.remove('emerging');
+    el.style.removeProperty('clip-path');
+  }
 }
-// Where the line has reached the panel, and its corners start to round.
+// Where the line is all out of the panel, and the corners where it meets it start to round.
 const BRIDGE_ACROSS = 0.7;
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2);
@@ -3300,15 +3304,16 @@ function drawJoin() {
   const roomB = Math.max(0, s.bottom - l.bottom);
   let d;
   const across = mode === 'join' && p < JOIN_ACROSS ? easeInOut(p / JOIN_ACROSS) : null;
-  // Joined while the panel is open: the line reaches across to its edge, not past it.
-  const bridge = across === null && sideBridge.p < BRIDGE_ACROSS
+  // Joined while the panel is open: the line comes out of the panel, its left edge going from
+  // the panel's to its own (the line itself `emerging` until then, shown only where it is out).
+  const emerge = across === null && sideBridge.p < BRIDGE_ACROSS
     ? easeInOut(sideBridge.p / BRIDGE_ACROSS) : null;
-  if (across !== null || bridge !== null) {
-    // The line reaching across, its right corners squaring as they get to the content's edge
-    // (or to the panel's).
-    const k = across ?? bridge;
-    const rr = Math.max(0, lerp(r - bw / 2, 0, k));
-    const xe = lerp(l.right - ox - bw / 2, across !== null ? far : jx, k);
+  line.el.classList.toggle('emerging', emerge !== null);
+  if (emerge === null) line.el.style.removeProperty('clip-path');
+  if (across !== null) {
+    // The line reaching across, its right corners squaring as they get to the content's edge.
+    const rr = Math.max(0, lerp(r - bw / 2, 0, across));
+    const xe = lerp(l.right - ox - bw / 2, far, across);
     d = `M${f(x0)},${f(lt)}L${f(xe - rr)},${f(lt)}A${f(rr)},${f(rr)} 0 0 1 ${f(xe)},${f(lt + rr)}`
       + `L${f(xe)},${f(lb - rr)}A${f(rr)},${f(rr)} 0 0 1 ${f(xe - rr)},${f(lb)}L${f(x0)},${f(lb)}`;
   } else {
@@ -3318,12 +3323,19 @@ function drawJoin() {
     const pt = lerp(t, -bw * 2, grown);
     const pb = lerp(b, h + bw * 2, grown);
     // Joined while it was open, the inner corners round off once the line has reached it.
-    const round = sideBridge.p < 1 ? easeInOut((sideBridge.p - BRIDGE_ACROSS) / (1 - BRIDGE_ACROSS)) : 1;
+    const round = sideBridge.p < 1 ? easeInOut(clamp01((sideBridge.p - BRIDGE_ACROSS) / (1 - BRIDGE_ACROSS))) : 1;
     const ft = Math.min(r, t - pt, roomT) * round;
     const fb = Math.min(r, pb - b, roomB) * round;
-    d = `M${f(x0)},${f(lt)}L${f(jx - ft)},${f(lt)}L${f(jx - ft)},${f(t)}A${f(ft)},${f(ft)} 0 0 0 ${f(jx)},${f(t - ft)}`
+    // Coming out of the panel, the line's left edge is drawn here too, with its corners.
+    const xe = emerge === null ? x0 : lerp(jx, l.left - ox + bw / 2, emerge);
+    const rr = emerge === null ? 0 : Math.max(0, Math.min(r - bw / 2, (jx - xe) / 2, (lb - lt) / 2));
+    d = `M${f(xe + rr)},${f(lt)}L${f(jx - ft)},${f(lt)}L${f(jx - ft)},${f(t)}A${f(ft)},${f(ft)} 0 0 0 ${f(jx)},${f(t - ft)}`
       + `L${f(jx)},${f(pt)}L${f(far)},${f(pt)}L${f(far)},${f(pb)}L${f(jx)},${f(pb)}`
-      + `L${f(jx)},${f(b + fb)}A${f(fb)},${f(fb)} 0 0 0 ${f(jx - fb)},${f(b)}L${f(jx - fb)},${f(lb)}L${f(x0)},${f(lb)}`;
+      + `L${f(jx)},${f(b + fb)}A${f(fb)},${f(fb)} 0 0 0 ${f(jx - fb)},${f(b)}L${f(jx - fb)},${f(lb)}L${f(xe + rr)},${f(lb)}`;
+    if (emerge !== null) {
+      d += `A${f(rr)},${f(rr)} 0 0 1 ${f(xe)},${f(lb - rr)}L${f(xe)},${f(lt + rr)}A${f(rr)},${f(rr)} 0 0 1 ${f(xe + rr)},${f(lt)}Z`;
+      line.el.style.setProperty('clip-path', `inset(0px 0px 0px ${f(Math.max(0, xe + ox - l.left + rr))}px)`);
+    }
   }
   path.setAttribute('d', d);
   // In the thread's column only where it scrolls; in the panel's, all of it while the panel is
@@ -3352,20 +3364,20 @@ function sideScrolls(scroller) {
 
 /**
  * The panel, open, joined to the line of conversation `run` instead of the one it was joined to,
- * or none: you started a conversation in it, whose line showed in the thread. The line reaches
- * across to the panel (`sideBridge`) once it is in sight: the thread scrolls to it, as it does
- * to what is new, or you do.
+ * or none: you started a conversation in it, whose line showed in the thread. The line comes out
+ * of the panel (`sideBridge`) once it is in sight: the thread scrolls to it, as it does to what
+ * is new, or you do. Until then it is hidden (`emerging`, sideGroup).
  */
 function joinLine(run) {
   side.joined = run;
   for (const el of $('pane').querySelectorAll('.sidechat.joined')) el.classList.remove('joined');
-  sideLine(run)?.el.classList.add('joined');
   bridgeStill();
+  sideLine(run)?.el.classList.add('joined', ...(REDUCED_MOTION.matches ? [] : ['emerging']));
   if (!REDUCED_MOTION.matches) Object.assign(sideBridge, { p: 0, waiting: true });
   drawJoin();
 }
 
-/** The line, in sight now, reaching across to the panel, over --side-motion. */
+/** The line, in sight now, coming out of the panel, over --side-motion. */
 function bridgeAcross() {
   sideBridge.waiting = false;
   const dur = parseFloat(getComputedStyle(document.querySelector('main')).getPropertyValue('--side-motion')) || 0;
