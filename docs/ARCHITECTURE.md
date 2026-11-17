@@ -1499,13 +1499,14 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   and Discard leave it open, and Undo of a discard shows over it. It is the same markup on
   every screen: on a wider one the stylesheet shows no tab and makes the drawer no box
   (`display: contents`), so the lines are the reply box's own.
-- In the inbox, an entry with a draft shows a pencil in place of its status dot (as a resolved
-  one shows ✓), in the status's color and outlined while the team has not read the thread; the
-  personal inbox shows none. The **Draft** card filters by drafts saved last by you, by a
-  colleague, or none. A draft does not change the status pile. The outline is the pencil's
-  own shape, not the ring a dot has for "our move": a ringed pencil would mean two things in
-  one column. A draft that waits on a thread nobody has read yet is what the outline points
-  out; "our move" stays in the pencil's tooltip, after the draft.
+- In the inbox, an entry's status mark is a stack of Spectrum workflow icons (`statusMark`,
+  `ui/inbox.js`): in front its kind, in the status's color, and behind it what applies of its
+  urgency (critical or high), a draft, resolved and "our move", which peek out and spread out
+  under the pointer. While the team has not read the thread, the kind is smaller, inside an
+  outline of its own shape (scripts/wf-rings.mjs); the outline means only that, so "our move"
+  has its own icon in the stack. An entry with a draft has the draft in its stack, its tooltip
+  saying whose and when; the personal inbox shows none. The **Draft** card filters by drafts
+  saved last by you, by a colleague, or none. A draft does not change the status pile.
 - A draft can carry **sources** (`drafts.sources`, src/sources.js): what an agent says it rests
   on, as `{ url, title?, quote? }`, at most 10, http(s) only. They are for the person reviewing
   the draft: they stay in the inbox and the tools, and no reply ever carries them. Whoever may

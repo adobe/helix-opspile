@@ -122,11 +122,10 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .t:hover { background: var(--hover); }
 
 .t .l1, .t .l2 { display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; }
-.t .dot { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: 50%; }
 .t .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .t .when { flex: none; }
-.t .l2 { padding-left: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100)); }
+.t .l2 { padding-left: calc(var(--spectrum-component-height-50) + 3 * var(--spectrum-spacing-100)); }
 .t .cust { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); max-width: 34%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .t .cust img { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); flex: none; }
 .faces { display: flex; flex: none; }
@@ -166,7 +165,7 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 #threads .count .clearq:hover { color: var(--ink); }
 /* A search result: a third line with the message that matched, the query's words marked. */
 .t.hit { height: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-200)); grid-template-rows: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) var(--spectrum-spacing-400) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); contain-intrinsic-size: auto calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-200)); }
-.t .l3 { min-width: 0; padding-left: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100)); font-size: var(--spectrum-font-size-75); color: var(--mute); overflow: hidden;
+.t .l3 { min-width: 0; padding-left: calc(var(--spectrum-component-height-50) + 3 * var(--spectrum-spacing-100)); font-size: var(--spectrum-font-size-75); color: var(--mute); overflow: hidden;
   white-space: nowrap; text-overflow: ellipsis; }
 .t .l3 b { color: var(--ink); font-weight: 600; }
 .t .l3 .tag { margin-right: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
@@ -207,13 +206,6 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .tag { padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); border: var(--spectrum-border-width-100) solid var(--line); white-space: nowrap; }
 .tag.hot { color: var(--red); border-color: var(--red); }
 .tag.us { color: var(--yellow); border-color: var(--yellow); }
-.t .dot { --ring: var(--faint); }
-.t .dot.c-critical { --ring: var(--spectrum-red-1100); } .t .dot.c-hot { --ring: var(--red); } .t .dot.c-you { --ring: var(--accent); }
-.t .dot.c-waiting { --ring: var(--yellow); } .t .dot.c-silent { --ring: var(--purple); }
-.t .dot.c-team { --ring: var(--green); }
-.t .dot.ring { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--col), 0 0 0 calc(var(--spectrum-border-width-100) * 3.5) var(--ring); }
-.t.sel .dot.ring { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--sel), 0 0 0 calc(var(--spectrum-border-width-100) * 3.5) var(--ring); }
-.t .dot.ring:not([class*="c-"]) { background: transparent; }
 
 /*
  * The filters are a column of their own on the frame. Folded to a rail (below) they slide out
@@ -1205,16 +1197,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
  * "Y replies, X mentions", then the latest reply as far as it fits before the reactions, grey
  * in unread rows too, so the bold title leads.
  */
-/* A resolved row's ✓ takes the status dot's place, as wide as the dot so the titles line up. */
-.t .ok { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); display: flex; justify-content: center;
- }
-/* A draft's pencil does too, in the status's color (the dot's), as wide as a ringed dot. */
-.t .pen { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); display: flex; justify-content: center;
-  color: var(--faint); }
-.t .pen svg { flex: none; width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
-.t .pen.s-critical { color: var(--spectrum-red-1100); } .t .pen.s-hot { color: var(--red); } .t .pen.s-you { color: var(--accent); }
-.t .pen.s-waiting { color: var(--yellow); } .t .pen.s-silent { color: var(--purple); }
-.t .pen.s-team { color: var(--green); }
 #threads { background: var(--row-read); }
 .t { --row-bg: var(--row-read); background: var(--row-bg); }
 .t.unread { --row-bg: var(--row-unread); }
@@ -1230,7 +1212,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   white-space: nowrap; }
 .t .tags { flex: none; }
 .t .faces .av, .t .moods .em { border-color: var(--row-bg); }
-.t .dot.ring { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--row-bg), 0 0 0 calc(var(--spectrum-border-width-100) * 3.5) var(--ring); }
 
 
 /*
@@ -1392,7 +1373,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   --s2-popover: var(--spectrum-background-layer-2-color);
   --s2-pill: calc(var(--s2-ctl) / 2);
 }
-.spectrum .c-critical, .spectrum .t .dot.c-critical { --ring: var(--spectrum-red-1100); background: var(--spectrum-red-1100) !important; }
+.spectrum .c-critical { --ring: var(--spectrum-red-1100); background: var(--spectrum-red-1100) !important; }
 .spectrum .c-slack {
   background: linear-gradient(var(--spectrum-cyan-visual-color) 25%, var(--spectrum-green-visual-color) 0 50%,
     var(--spectrum-yellow-visual-color) 0 75%, var(--spectrum-magenta-visual-color) 0) !important;
@@ -1510,7 +1491,6 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .t.unread .replies.re { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .replies .men { color: var(--spectrum-red-900); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .snip { color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .t .ok { color: var(--spectrum-positive-visual-color); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .cust img, .spectrum .ph .sub img, .spectrum .chans img { border-radius: var(--spectrum-corner-radius-75); }
 /* Faces: an AvatarGroup, each ringed in the row's own layer. */
 .spectrum .moods .em { background: var(--spectrum-gray-100); }
@@ -2749,20 +2729,12 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 }
 .spectrum .fr .ico.wf { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); justify-self: center; border-radius: 0; color: var(--spectrum-neutral-content-color-default); }
 .spectrum .fr .lab.dim ~ .ico.wf, .spectrum .fr:has(.lab.dim) .ico.wf { color: var(--spectrum-disabled-content-color); }
-.spectrum .moods .em .wf { width: var(--spectrum-workflow-icon-size-xxs); height: var(--spectrum-workflow-icon-size-xxs); color: var(--spectrum-neutral-content-color-default); }
-.spectrum .moods .em.critical .wf { color: var(--spectrum-negative-visual-color); }
-.spectrum .moods .em.high .wf { color: var(--spectrum-notice-visual-color); }
-/* The kind and urgency apart from the reactions (iconSpot in ui/inbox.js). Before the title: */
-.t .ki { flex: none; display: flex; align-items: center; }
-.spectrum .t .ki .wf { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .t .ki.critical .wf { color: var(--spectrum-negative-visual-color); }
-.spectrum .t .ki.high .wf { color: var(--spectrum-notice-visual-color); }
-/* As a stack in the status dot's place: a slot as wide as the kind and two chips peeking out
-   behind it, so titles line up whatever a row has; more chips wait behind the second. Pointing
-   at it spreads them out, over the title, on an elevated layer. */
+/* A row's status mark (statusMark in ui/inbox.js), a stack: a slot as wide as the kind and two
+   chips peeking out behind it, so titles line up whatever a row has (.l2 and .l3 start past
+   it); more chips wait behind the second. Pointing at it spreads them out, over the title, on
+   an elevated layer. */
 .t .mks { --mk-d: var(--spectrum-component-height-50); --mk-peek: var(--spectrum-spacing-100);
  flex: none; position: relative; align-self: stretch; width: calc(var(--mk-d) + 2 * var(--mk-peek)); }
-.t.ic-stack .l2, .t.ic-stack .l3 { padding-left: calc(var(--spectrum-component-height-50) + 3 * var(--spectrum-spacing-100)); }
 .t .mk { --mk-bg: var(--row-bg); position: absolute; z-index: 1; top: 50%; left: calc(-1 * var(--spectrum-spacing-75)); translate: 0 -50%; display: flex; padding: var(--spectrum-spacing-75); border-radius: calc(var(--mk-d) / 2 + var(--spectrum-spacing-75));
  transition: background-color var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out), box-shadow var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
 .t .mk:hover { --mk-bg: var(--spectrum-background-elevated-color); z-index: 3; background: var(--mk-bg); box-shadow: var(--spectrum-drop-shadow-x) var(--spectrum-drop-shadow-y) var(--spectrum-drop-shadow-blur) var(--spectrum-drop-shadow-elevated-color); }
