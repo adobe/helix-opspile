@@ -42,6 +42,7 @@ on:
       - 'src/cogs/meter.js'
       - 'src/cogs/prices.js'
       - 'src/deadjobs.js'
+      - 'src/diagrams.js'
       - 'src/discord.js'
       - 'src/dot.js'
       - 'src/draftevents.js'

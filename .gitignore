@@ -166,3 +166,6 @@ src/ui-spectrum.bundle.js
 
 # Production threads and Clef's judgements of them (scripts/rank.mjs)
 .rank/
+
+# The renderer Worker deploys from graphviz/ with the repository's packages (npm run deploy:graphviz:*)
+graphviz/node_modules

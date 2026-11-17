@@ -1,0 +1,10 @@
+{
+  "name": "helix-opspile-graphviz",
+  "private": true,
+  "description": "The renderer Worker: Graphviz's dot, as a wasm program in a SLICC kernel (src/graphviz/worker.js). Deployed with cf from this directory; its packages are the repository's.",
+  "type": "module",
+  "devDependencies": {
+    "cf": "1.0.0-beta.20",
+    "wrangler": "^4.151.3"
+  }
+}

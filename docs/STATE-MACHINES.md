@@ -201,6 +201,11 @@ the new reason. Fulfilled is not stored: the person is in the thread (a message 
 theirs), so the row stays but the header and `list_experts` leave it out, and it no longer counts
 toward the three a thread may have. Both go by the person, whichever of their accounts was named.
 
+**Renderer kernel.** none → booting → booted (src/graphviz/worker.js, one per isolate of the
+renderer Worker). The first layout boots it; a failed boot leaves none, and the next layout
+tries again. A layout that runs past its ten seconds ends the kernel, back to none: whatever it
+was stuck in goes with it.
+
 **Stack drawing.** none → drawn → drawn again (`stack.md` of a customer's knowledge base,
 `src/stack.js`). Whether the file exists is the state; its `generated` stamp says who drew it last
 and when. The first drawing is a create (refused when one appeared meanwhile); every later one

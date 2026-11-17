@@ -65,6 +65,7 @@ import { Timing, withTiming } from './timing.js';
 import { batchedDatabase } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
+import { drawDiagram } from './diagrams.js';
 
 /**
  * The inbox API behind Cloudflare Access. Every request is tied to a person in D1 by the
@@ -1262,6 +1263,13 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       res.headers.set('cache-control', 'private, max-age=600');
     }
     return res;
+  }
+  // A diagram drawn on the server (src/diagrams.js), for the members of a team.
+  if (url.pathname === '/api/diagram' && request.method === 'POST') {
+    if (!isAdmin(me) && !(me.teams || []).length) {
+      return json({ error: 'for the members of a team' }, 403);
+    }
+    return drawDiagram(env, await request.json().catch(() => ({})));
   }
   if (url.pathname === '/api/emoji/closest') {
     const names = (url.searchParams.get('names') || '').split(',');
