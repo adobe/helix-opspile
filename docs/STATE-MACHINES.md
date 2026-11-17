@@ -565,4 +565,5 @@ it stays so for the thread in the tab. Those that wait or run always show.
 **Notification sound.** silent → unlocked → loaded or tone (`audio` and `chime` in `ui/inbox.js`). A
 page plays sound only after a click or key press in it, so the first one creates the audio and
 fetches `/notify.mp3`; a reload starts silent again. A sound that does not load plays a short tone.
-On unless `opspile.notify.sound` is `off`, per device; one tab plays it (the `opspile:chime` lock).
+Off unless `opspile.notify.sound` is `on`, per device (the menu's "Play a sound"; whoever never
+chose hears none); one tab plays it (the `opspile:chime` lock).

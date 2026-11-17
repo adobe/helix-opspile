@@ -7658,13 +7658,14 @@ function noteView(views, key) {
 /**
  * The notifications' sound: /notify.mp3 (src/sound.js), which the page plays, as browsers do
  * not play a notification's own (macOS plays Chrome's only now and then), so the notifications
- * themselves are silent. Per device (localStorage `opspile.notify.sound`), on unless turned off.
+ * themselves are silent. Per device (localStorage `opspile.notify.sound`), off unless turned on:
+ * a chime that macOS cannot mute, as it can a notification's own sound, is for who asked for it.
  * Browsers only let a page play sound once it was clicked or typed in: the audio starts on the
  * first click, and a page not clicked since it was loaded stays silent. Inboxes open in several
  * tabs play it once (a lock held for a moment). A short tone, if the sound does not load.
  */
 const SOUND_KEY = 'opspile.notify.sound';
-const soundOn = () => localStorage.getItem(SOUND_KEY) !== 'off';
+const soundOn = () => localStorage.getItem(SOUND_KEY) === 'on';
 let audio = null;
 let chime = null;
 function unlockAudio() {
