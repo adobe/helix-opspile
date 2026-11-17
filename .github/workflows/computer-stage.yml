@@ -76,6 +76,7 @@ on:
       - 'src/profiles.js'
       - 'src/raw.js'
       - 'src/refile.js'
+      - 'src/requests.js'
       - 'src/resolve.js'
       - 'src/rethread.js'
       - 'src/review.js'

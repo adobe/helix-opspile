@@ -368,14 +368,14 @@ function drawList() {
     const match = (r) => !f || `${plainName(r.channel)} ${r.channel.channelId} ${teamLabel(r.team)} ${r.requestedBy.name || ''} ${r.requestedBy.email}`
       .toLowerCase().includes(f);
     const row = (r) => `<div class="row${String(state.sel) === String(r.id) ? ' on' : ''}" data-sel="${r.id}">
-        <span class="name">${channelName(r.channel)} <span class="sub">→ ${esc(teamLabel(r.team))}</span></span>
+        <span class="name">${channelName(r.channel)} <span class="sub">${r.move && r.channel.team ? `${esc(teamLabel(r.channel.team))} ` : ''}→ ${esc(teamLabel(r.team))}</span></span>
         ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
     const open = state.requests.filter((r) => r.status === 'open' && match(r));
     const decided = state.requests.filter((r) => r.status !== 'open' && match(r));
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter requests" value="${esc(state.filter)}"></label>
       <h2>Waiting for a decision</h2>${open.map(row).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No request is waiting.'}</div>`}
       ${decided.length ? `<h2>Decided</h2>${decided.map(row).join('')}` : ''}
-      <p class="hint">Team managers ask for channels on their team's page. Confirming one assigns the channel to the team, as adding it on the team's page does.</p>`;
+      <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team.</p>`;
   } else {
     const rows = state.orgs.filter((o) => (!f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f))
       && (!state.noIcon || iconless(o))).map((o) => `
@@ -1386,7 +1386,9 @@ function drawRequest(r, preview) {
       <label>Channel</label><span>${channelName(c)} <span class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></span></span>
       <label>Now</label><span>${c.team ? `filed under <b>${esc(teamLabel(c.team))}</b>` : 'no threads yet'}${org ? ` · customer <b>${esc(org)}</b>` : ''} · ${c.threads} thread${c.threads === 1 ? '' : 's'}</span>
       <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}">${esc(teamLabel(r.team))}</a></span>
+      <label>Asks</label><span>${r.move ? `a move: filed under ${esc(teamLabel(r.team))}${c.team && c.team !== r.team ? ` instead of ${esc(teamLabel(c.team))}` : ''}` : `to be in ${esc(teamLabel(r.team))}'s inbox`}</span>
       <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(ago(r.requestedAt))}</span></span>
+      ${r.thread ? `<label>Asked in</label><span>the <a href="/inbox?team=${encodeURIComponent(c.team || r.team)}&t=${encodeURIComponent(r.thread)}">sidebar of a thread</a> of this channel, through its agent</span>` : ''}
       ${r.note ? `<label>Note</label><span class="note">${esc(r.note)}</span>` : ''}
       ${open ? '' : `<label>Answer</label><span>${decisionText(r)}</span>`}
     </div></div>
