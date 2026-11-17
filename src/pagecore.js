@@ -1,0 +1,116 @@
+/*
+ * Copyright 2026 Adobe. All rights reserved.
+ * This file is licensed to you under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License. You may obtain a copy
+ * of the License at https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under
+ * the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR REPRESENTATIONS
+ * OF ANY KIND, either express or implied. See the License for the specific language
+ * governing permissions and limitations under the License.
+ */
+
+import TOKENS from './ui-spectrum.bundle.js';
+
+/**
+ * How a page of ui/ is put together where it is served, without what only the inbox's pages
+ * have (src/page.js): the customer portal's Worker (src/portal/worker.js) serves its page with
+ * this, and stays without their bundles.
+ */
+
+/** `<script src="name.js"></script>`, with or without `type="module"`, in a page of ui/. */
+const SCRIPT = /<script( type="module")? src="([a-z-]+\.js)"><\/script>/g;
+
+/** `<link rel="stylesheet" href="name.css">` in a page of ui/. */
+const STYLE = /<link rel="stylesheet" href="([a-z-]+\.css)">/g;
+
+/** A Spectrum 2 token a stylesheet uses: `var(--spectrum-…)`. */
+const TOKEN = /var\(--(spectrum-[a-z0-9-]+)/g;
+
+/**
+ * The Spectrum 2 tokens a stylesheet uses, and those they are made of, as custom properties
+ * on :root: the light color scheme and the medium scale, the dark color scheme where the
+ * browser prefers it and the large scale on a touch screen, as Spectrum's classes would set
+ * them (@spectrum-css/tokens, src/ui-spectrum.bundle.js). The color scheme picked in your
+ * menu (ui/header.js, `data-scheme` on <html>) wins over the browser's: `light` keeps the
+ * light one, `dark` takes the dark one whatever the browser prefers.
+ *
+ * @param {string} css
+ * @param {Record<string, Record<string, string>>} tokens the sets, by `global`, `light`, …
+ */
+export function spectrumTokens(css, tokens = TOKENS) {
+  const sets = ['global', 'light', 'dark', 'medium', 'large'];
+  const used = new Set();
+  const todo = [...css.matchAll(TOKEN)].map((m) => m[1]);
+  while (todo.length) {
+    const name = todo.pop();
+    if (!used.has(name)) {
+      used.add(name);
+      for (const set of sets) {
+        const value = tokens[set][name];
+        if (value) {
+          todo.push(...[...value.matchAll(TOKEN)].map((m) => m[1]));
+        }
+      }
+    }
+  }
+  const missing = [...css.matchAll(TOKEN)].map((m) => m[1])
+    .filter((name) => !sets.some((set) => tokens[set][name]));
+  if (missing.length) {
+    throw new Error(`no Spectrum 2 token ${[...new Set(missing)].join(', ')}`);
+  }
+  const block = (...from) => from.flatMap((set) => Object.entries(tokens[set]))
+    .filter(([name]) => used.has(name))
+    .map(([name, value]) => `  --${name}: ${value};`)
+    .join('\n');
+  const root = (from, sel = ':root') => (block(...from) ? `${sel} {\n${block(...from)}\n}\n` : '');
+  const media = (query, from, sel) => (root(from, sel) ? `@media ${query} {\n${root(from, sel)}}\n` : '');
+  return root(['global', 'light', 'medium'])
+    + media('(prefers-color-scheme: dark)', ['dark'], ':root:not([data-scheme="light"])')
+    + root(['dark'], ':root[data-scheme="dark"]')
+    + media('(hover: none) and (pointer: coarse)', ['large']);
+}
+
+/**
+ * A color token as the browser draws it in one color scheme (the pages' theme-color, which
+ * takes no custom properties, is the base background's: test/ui-spectrum.test.js): its value
+ * with every `var()` filled in.
+ */
+export function spectrumColor(name, scheme, tokens = TOKENS) {
+  const value = (n) => tokens[scheme][n] ?? tokens.global[n] ?? tokens.medium[n];
+  let out = `var(--${name})`;
+  for (let i = 0; i < 10 && out.includes('var('); i += 1) {
+    out = out.replace(/var\(--(spectrum-[a-z0-9-]+)\)/g, (_, n) => value(n) ?? '');
+  }
+  return out;
+}
+
+/**
+ * A page as served: the scripts and stylesheets it names, from `files` by file name, inlined
+ * where it names them. `spectrum-tokens.css` is none of those: it is the Spectrum 2 tokens
+ * the page's other stylesheets use (`spectrumTokens`).
+ *
+ * @param {string} html the page, ui/<name>.html
+ * @param {Record<string, string>} given its scripts and stylesheets by file name
+ */
+export function assemble(html, given) {
+  const files = { ...given };
+  const linked = [...html.matchAll(STYLE)].map((m) => m[1]).filter((name) => name !== 'spectrum-tokens.css');
+  for (const name of linked) {
+    if (typeof files[name] !== 'string') {
+      throw new Error(`no stylesheet ${name} for the page`);
+    }
+  }
+  files['spectrum-tokens.css'] = spectrumTokens(linked.map((name) => files[name]).join('\n'));
+  const styled = html.replace(STYLE, (tag, name) => (
+    // In an inline <style>, `</style` would end it.
+    `<style>\n${files[name].replace(/<\/(style)/gi, '<\\/$1')}</style>`));
+  return styled.replace(SCRIPT, (tag, module, name) => {
+    if (typeof files[name] !== 'string') {
+      throw new Error(`no script ${name} for the page`);
+    }
+    // In an inline <script>, `</script` would end it.
+    const code = files[name].replace(/<\/(script)/gi, '<\\/$1');
+    return `<script${module || ''}>\n${code}</script>`;
+  });
+}

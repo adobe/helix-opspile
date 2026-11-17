@@ -185,6 +185,22 @@ async function fetchDiscordChannel(env, guild, channelId) {
   };
 }
 
+/**
+ * A customer portal channel, from what its event says of it (`channelHint`, src/normalize.js):
+ * the portal is not asked. Its lobby (the customer's mail domain) is its group, named as the
+ * customer calls itself, and customers are in it by definition, so it is shared.
+ */
+function portalChannel(tenant, hint) {
+  return {
+    name: hint.name,
+    group_id: tenant,
+    group_name: hint.company || null,
+    shared: 1,
+    connected: '[]',
+    topic: hint.topic || null,
+  };
+}
+
 export function toChannel(row, source, channelId) {
   return {
     source,
@@ -232,18 +248,28 @@ const classifiedChanged = (row, next) => CLASSIFIED
  * the row as it was, and a retry finds the change again.
  */
 export async function getChannel(env, {
-  source, tenant, channelId, groupId, refresh,
+  source, tenant, channelId, groupId, refresh, channelHint,
 }, now = Date.now(), { onChange } = {}) {
   const row = await env.DB.prepare(
     'SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?',
   ).bind(source, tenant, channelId).first();
-  // Slack channels looked up before links named their workspace are looked up again.
-  if (!refresh && fresh(row, now) && row.name && (source !== 'slack' || row.domain != null)) {
+  if (source === 'portal') {
+    // The event is the lookup: the row follows it when it says something else (or is a day
+    // old), and without a hint the row stands.
+    const hinted = channelHint && channelHint.name ? portalChannel(tenant, channelHint) : null;
+    if (!hinted || (fresh(row, now) && !['name', 'group_name', 'topic']
+      .some((k) => (row[k] ?? null) !== (hinted[k] ?? null)))) {
+      return toChannel(row, source, channelId);
+    }
+  } else if (!refresh && fresh(row, now) && row.name && (source !== 'slack' || row.domain != null)) {
+    // Slack channels looked up before links named their workspace are looked up again.
     return toChannel(row, source, channelId);
   }
   let f;
   try {
-    if (source === 'slack') {
+    if (source === 'portal') {
+      f = portalChannel(tenant, channelHint);
+    } else if (source === 'slack') {
       f = await fetchSlackChannel(env, tenant, channelId, now);
     } else if (source === 'discord') {
       f = await fetchDiscordChannel(env, tenant, channelId);
@@ -434,13 +460,36 @@ export async function getIdentity(env, ref, now = Date.now()) {
     FROM identities i LEFT JOIN people p ON p.id = i.person
     WHERE i.source = ? AND i.tenant = ? AND i.user_id = ?`)
     .bind(ref.source, ref.tenant, ref.userId).first();
-  // Rows cached before avatars existed have avatar NULL; '' means "looked, none".
-  if (fresh(row, now) && row.avatar !== null && row.avatar !== undefined) {
+  if (ref.source === 'portal') {
+    // A portal account is what its events say of it (their author's name and mail address):
+    // the portal is not asked. A reference without them (a reaction's, a mention's) is the row.
+    if (!ref.name && !ref.email) {
+      return row || {
+        kind: 'person', name: ref.userId, email: null, home: null,
+      };
+    }
+    const same = row && row.name === (ref.name || null)
+      && (row.email || null) === (ref.email || null);
+    if (same && fresh(row, now)) {
+      return row;
+    }
+  } else if (fresh(row, now) && row.avatar !== null && row.avatar !== undefined) {
+    // Rows cached before avatars existed have avatar NULL; '' means "looked, none".
     return row;
   }
   let f;
   try {
-    if (ref.source === 'slack') {
+    if (ref.source === 'portal') {
+      f = {
+        kind: 'person',
+        name: ref.name || ref.email,
+        email: ref.email || null,
+        home: null,
+        avatar: await gravatar(ref.email),
+        title: null,
+        company: null,
+      };
+    } else if (ref.source === 'slack') {
       f = await fetchSlackUser(env, ref.userId);
     } else if (ref.source === 'discord') {
       f = await fetchDiscordUser(env, ref.tenant, ref.userId, ref.name);

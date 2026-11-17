@@ -62,6 +62,10 @@ const PEOPLE = [
   {
     key: 'ola', id: 9, name: 'Ola Hansen', email: 'ola@umbrella.example', org: 'umbrella', staff: false,
   },
+  {
+    // A customer who can use neither Slack nor Teams with Adobe: in the customer portal.
+    key: 'lucius', id: 10, name: 'Lucius Fox', email: 'lucius.fox@wayne.example', org: 'wayne', staff: false, title: 'Head of digital',
+  },
 ];
 
 /**
@@ -191,6 +195,11 @@ const CHANNELS = {
     org: 'initech',
     team: 'platform',
     rejects: 'is_archived',
+  },
+  // A channel of the customer portal (src/portalsource.js), opened for a customer's lobby: the
+  // inbox posts there as the person, with no account to connect.
+  portal: {
+    source: 'portal', channelId: 'c0wayne0000001', name: 'wayne-enterprises', org: 'wayne', team: 'edge', tech: ['eds', 'ue', 'da'],
   },
   // A community server: a forum where every post is a thread.
   forum: {
@@ -487,14 +496,18 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       // A snowflake: ms since Discord's epoch, shifted by 22 bits.
       return String((BigInt(ms) - 1420070400000n) * 4194304n + BigInt(seq));
     }
+    if (source === 'portal') {
+      // The portal's message ids (src/portal/ids.js): the time in base 36, then six digits.
+      return `m${Math.floor(ms).toString(36).padStart(9, '0')}${String(seq).padStart(6, '0')}`;
+    }
     return source === 'slack'
       ? `${Math.floor(ms / 1000)}.${String(seq).padStart(6, '0')}`
       : String(ms + seq);
   }
 
   function threadKey(ch, rootId) {
-    if (ch.source === 'discord') {
-      return `discord:${TENANT}:${ch.channelId}:${rootId}`;
+    if (ch.source === 'discord' || ch.source === 'portal') {
+      return `${ch.source}:${TENANT}:${ch.channelId}:${rootId}`;
     }
     return ch.source === 'slack'
       ? `slack:${TENANT}:${ch.channelId}:${rootId}`
@@ -502,6 +515,10 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   }
 
   function permalink(ch, id) {
+    if (ch.source === 'portal') {
+      // The portal is its customers': the inbox keeps no link to it.
+      return null;
+    }
     if (ch.source === 'discord') {
       return `https://discord.example.com/channels/${TENANT}/${ch.channelId}/${id}`;
     }
@@ -1203,6 +1220,30 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['dana', 64, 'Does the rewrite Sam sent explain it?'],
       ['agent', 63.5, 'It does: `rewrite` drops `/content/acme`, and the content source\'s `url` ends in `/acme`, so preview asks the content host for `/en/index` under the wrong root.\n\nI put that in the draft, with the one-line fix. Nothing went to the channel.'],
     ],
+  });
+
+  // The customer portal: the welcome that opened the channel, and the customer's first question.
+  seed({
+    ch: CHANNELS.portal,
+    messages: [
+      ['lena', 300, 'Welcome to Adobe Enterprise Support, Wayne Enterprises! This is your channel with the Edge ops team. Start a new thread for each question, and we answer you here.'],
+      ['lucius', 280, 'Thank you. We are glad to have a line to you at last.'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'other', next_actor: 'nobody', urgency: 0.1, resolved_p: 0.9,
+    },
+  });
+  seed({
+    ch: CHANNELS.portal,
+    messages: [
+      ['lucius', 42, 'Universal Editor shows a blank canvas for our press releases\nPages under `/press` open in Universal Editor with nothing on the canvas. Everything else is fine, and the pages are live.'],
+      ['lena', 35, 'Is `/press` a folder of its own in Document Authoring, with its own component filter?'],
+      ['lucius', 20, 'Yes: it has a `component-filters.json` of its own, added last week.'],
+    ],
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 0.6, resolved_p: 0.1,
+    },
   });
 
   seed({

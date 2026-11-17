@@ -585,6 +585,42 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   DB.sqlite.prepare(`INSERT INTO team_follows (team, tech, added_by, added_at) VALUES
     ('edge', 'ue', 'lena@example.com', ?), ('edge', 'xw', 'lena@example.com', ?)`).run(ago(3), ago(1));
 
+  // Customers waiting in the customer portal (src/portalrequests.js): one who picked what Edge
+  // ops follows (its managers may open a channel too), one nobody follows, and one declined.
+  const lobby = (domain, company, tech, note, members, at, status = 'open', decided = []) => DB.sqlite
+    .prepare(`INSERT INTO portal_requests (portal, domain, company, tech, note, members, requested_by,
+      requested_name, requested_at, seq, status, decided_by, decided_name, decided_at, reason)
+      VALUES ('dev', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`)
+    .run(
+      domain,
+      company,
+      JSON.stringify(tech),
+      note,
+      JSON.stringify(members),
+      members[0].email,
+      members[0].name,
+      at,
+      status,
+      ...[0, 1, 2, 3].map((i) => decided[i] ?? null),
+    );
+  lobby('wayne.example', 'Wayne Enterprises', ['eds', 'ue', 'da'], 'We cannot use Slack or Teams with vendors. We go live with Edge Delivery in March and need a line to the people who run it.', [
+    {
+      id: 'u1', name: 'Lucius Fox', email: 'lucius.fox@wayne.example', joined: true,
+    },
+    {
+      id: 'u2', name: 'Selina Kyle', email: 'selina.kyle@wayne.example', joined: true,
+    },
+    {
+      id: 'u3', name: 'Harvey Dent', email: 'harvey.dent@wayne.example', joined: false,
+    },
+  ], ago(0.4));
+  lobby('stark.example', 'Stark Industries', ['commerce', 'aco'], null, [{
+    id: 'u4', name: 'Pepper Potts', email: 'pepper.potts@stark.example', joined: true,
+  }], ago(1.5));
+  lobby('duff.example', 'Duff Brewing', ['analytics'], 'Dashboards.', [{
+    id: 'u5', name: 'Duffman', email: 'duffman@duff.example', joined: true,
+  }], ago(9), 'declined', ['priya@example.com', 'Priya Nair', ago(8), 'You have a Slack channel with us: ask there.']);
+
   // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
   // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
   for (const b of bases) {
@@ -597,6 +633,15 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     CHANNELS,
     NORMALIZE: { send: async (body) => queued.push(body) },
     AGENTS: {},
+    // The customer portal's Worker, made up: it opens a channel, takes the welcome message and
+    // a decline, and tells nothing back.
+    PORTAL: {
+      open: async ({ name }) => ({
+        ok: true, channel: { id: `c${Date.now().toString(36).padStart(12, '0')}`, name },
+      }),
+      post: async () => ({ ok: true, id: `m${Date.now().toString(36).padStart(15, '0')}` }),
+      decline: async () => ({ ok: true }),
+    },
     AGENT_MODEL: 'dev',
     AGENT_CHANNELS: 'C0ACMEAEM',
     // Seals the MCP servers' headers; made up for the preview.

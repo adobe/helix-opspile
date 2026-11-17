@@ -15,19 +15,24 @@ import { DatabaseSync } from 'node:sqlite';
 
 const MIGRATIONS = new URL('../migrations/', import.meta.url);
 
+/** The customer portal's own database (portal/migrations): `d1({ migrations: PORTAL })`. */
+export const PORTAL = new URL('../portal/migrations/', import.meta.url);
+
 /**
  * A D1-shaped wrapper around an in-memory SQLite database with the real migrations
  * applied, so tests run the same SQL as production.
  */
-export function d1({ rules = [], people = [], teams = [] } = {}) {
+export function d1({
+  rules = [], people = [], teams = [], migrations = MIGRATIONS,
+} = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   // D1's limit, where this Node can set it: a longer LIKE pattern fails there, "too complex".
   if (db.limits) {
     db.limits.likePatternLength = 50;
   }
-  for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) {
-    db.exec(readFileSync(new URL(file, MIGRATIONS), 'utf8'));
+  for (const file of readdirSync(migrations).filter((f) => f.endsWith('.sql')).sort()) {
+    db.exec(readFileSync(new URL(file, migrations), 'utf8'));
   }
   const insert = (table, row) => {
     const cols = Object.keys(row);

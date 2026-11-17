@@ -16,7 +16,9 @@
  * Team managers (and every member of a self-managed team) see the teams they manage, add and
  * remove members and promote or demote them, and ask the admin team for channels (a request:
  * they pick one in the same search the admin team adds channels with). The admin team confirms
- * or declines the requests under Requests; the rest is for the admin team.
+ * or declines the requests under Requests; the rest is for the admin team. Customers ask too,
+ * from the customer portal, for a channel: the admin team opens one under Requests, and a team's
+ * managers on their team's page, when the team follows a technology the customer picked.
  *
  * Teams: create, rename and delete teams; add members (found by name or email) and remove
  * them; the rules that file channels under the team (a channel-name prefix like `aem-`, a
@@ -29,6 +31,8 @@
 const state = {
   me: null, tab: 'teams', listError: '', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '', view: null,
   requests: [], openRequests: 0, names: {}, noIcon: false,
+  // The customers waiting in the customer portal, and whether it is connected to this inbox.
+  portal: [], portalBound: false,
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -273,6 +277,8 @@ async function load() {
   state.teams = teams.body.teams;
   state.names = teams.body.names || {};
   state.requests = requests.body.requests || [];
+  state.portal = requests.body.portal || [];
+  state.portalBound = Boolean(requests.body.portalBound);
   state.openRequests = requests.body.open ?? teams.body.requests ?? 0;
   renderCount();
   state.unassigned = teams.body.unassigned;
@@ -371,9 +377,14 @@ function drawList() {
         ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
     const open = state.requests.filter((r) => r.status === 'open' && match(r));
     const decided = state.requests.filter((r) => r.status !== 'open' && match(r));
+    // The customers in the portal: each asks for a channel of its own.
+    const asks = state.portal.filter((r) => !f || `${r.company || ''} ${r.domain} ${r.requestedBy.name || ''} ${r.requestedBy.email || ''}`.toLowerCase().includes(f));
+    const waiting = asks.filter((r) => r.status === 'open');
+    const answered = asks.filter((r) => r.status !== 'open');
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter requests" value="${esc(state.filter)}"></label>
+      ${waiting.length ? `<h2>Customers waiting in the portal</h2>${waiting.map(portalRow).join('')}` : ''}
       <h2>Waiting for a decision</h2>${open.map(row).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No request is waiting.'}</div>`}
-      ${decided.length ? `<h2>Decided</h2>${decided.map(row).join('')}` : ''}
+      ${decided.length || answered.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}` : ''}
       <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team.</p>`;
   } else {
     const rows = state.orgs.filter((o) => (!f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f))
@@ -417,6 +428,7 @@ function select(sel) {
   toUrl();
   renderList();
   if (state.tab === 'teams') showTeam(sel);
+  else if (state.tab === 'requests' && String(sel).startsWith(PORTAL)) showPortalRequest(String(sel).slice(PORTAL.length));
   else if (state.tab === 'requests') showRequest(sel);
   else showOrg(sel);
 }
@@ -558,7 +570,7 @@ function channelName(c, words) {
 /** A channel's name as text, for the status line. */
 const plainName = (c) => (c.source === 'teams'
   ? `${c.groupName ? `${c.groupName} › ` : ''}${c.name || c.channelId}` : `#${c.name || c.channelId}`);
-const platform = (c) => ({ teams: 'Teams', discord: 'Discord' }[c.source] || `Slack${c.shared ? ' Connect' : ''}`);
+const platform = (c) => ({ teams: 'Teams', discord: 'Discord', portal: 'Portal' }[c.source] || `Slack${c.shared ? ' Connect' : ''}`);
 const pct = (p) => `${Math.round((p || 0) * 100)}%`;
 /** Clef's pick for a channel, as a tag. */
 function clefTag(clef, here) {
@@ -1073,7 +1085,7 @@ function ruleForm(r = {}) {
     <label class="fld"><span>Field</span><select id="rField">${Object.entries(FIELD_LABEL).map(([k, v]) => `<option value="${k}"${(r.field || 'name') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
     <label class="fld"><span>Match</span><select id="rMode"><option value="prefix"${mode === 'prefix' ? ' selected' : ''}>starts with</option><option value="regex"${mode === 'regex' ? ' selected' : ''}>regular expression</option></select></label>
     <label class="fld grow"><span>Pattern</span><input id="rPattern" class="mono" value="${esc(mode === 'prefix' ? prefix : r.pattern)}" required></label>
-    <label class="fld"><span>Platform</span><select id="rSource"><option value="">Every platform</option><option value="slack"${r.source === 'slack' ? ' selected' : ''}>Slack only</option><option value="teams"${r.source === 'teams' ? ' selected' : ''}>Teams only</option><option value="discord"${r.source === 'discord' ? ' selected' : ''}>Discord only</option></select></label>
+    <label class="fld"><span>Platform</span><select id="rSource"><option value="">Every platform</option><option value="slack"${r.source === 'slack' ? ' selected' : ''}>Slack only</option><option value="teams"${r.source === 'teams' ? ' selected' : ''}>Teams only</option><option value="discord"${r.source === 'discord' ? ' selected' : ''}>Discord only</option><option value="portal"${r.source === 'portal' ? ' selected' : ''}>Portal only</option></select></label>
     <label class="fld"><span>Priority</span><input id="rPriority" type="number" min="0" max="10000" value="${r.priority ?? 100}" title="The lowest matching rule wins"></label>
     <label class="fld"><span>Note (optional)</span><input id="rNote" value="${esc(r.note || '')}"></label>
     <button class="primary">${r.id ? 'Save rule' : 'Add rule'}</button>${r.id ? '<button type="button" id="rCancel">Cancel</button>' : ''}
@@ -1180,9 +1192,11 @@ async function showTeam(slug) {
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   const {
     team, members, rules, channels, suggestions, coverage, requests = [], follows = [], followable = [],
+    portal = [],
   } = r.body;
+  if (r.body.portalBound !== undefined) state.portalBound = Boolean(r.body.portalBound);
   const v = {
-    target: 'team', value: slug, team, members, rules, channels, suggestions, coverage, requests, follows, followable,
+    target: 'team', value: slug, team, members, rules, channels, suggestions, coverage, requests, follows, followable, portal,
   };
   state.view = v;
   const templates = rules.filter((x) => x.value !== slug);
@@ -1218,6 +1232,8 @@ async function showTeam(slug) {
       <p class="hint">Threads that show one of these technologies are in this team's inbox, in any team's channels, and its members work them there. Clef tags each thread with what the thread itself shows, not what its channel uses. The channels stay filed where they are, and the thread's agent gets this team's knowledge base too.</p></div>` : ''}
     ${real && (!admin || v.requests.length) ? `<div class="card"><h2>Requests</h2><div id="requestsTable"></div>
       <p class="hint">${admin ? 'Channels this team\'s managers asked for. Review one to confirm or decline it.' : 'The channels this team asked the admin team for, and their answers.'}</p></div>` : ''}
+    ${real && v.portal.length ? `<div class="card"><h2>Customers in the portal</h2><div id="portalTable"></div>
+      <p class="hint">Customers who signed in to the customer portal and picked a technology this team follows. Opening a channel makes it in the portal, filed under this team, with your welcome message as its first thread.</p></div>` : ''}
     ${suggestions ? `<div class="card"><h2>Suggested channels</h2>
       <p class="hint lead">Channels the admin team holds (no rule files them under a team) where members of ${esc(team.name)} post, react or are members, and the ones Clef thinks are this team's. Add assigns one here by hand.</p>
       <div id="suggestTable"></div></div>` : ''}`;
@@ -1226,6 +1242,7 @@ async function showTeam(slug) {
   if (suggestions) renderSuggestions();
   wireChannelPicker();
   if ($('requestsTable')) renderRequests();
+  if ($('portalTable')) renderPortal();
   if (!real) return;
   renderMembers();
   wireMemberPicker();
@@ -1285,7 +1302,7 @@ async function showTeam(slug) {
 
 const who = (p) => esc((p && (p.name || p.email)) || 'someone');
 const STATUS = {
-  open: 'pending', confirmed: 'confirmed', declined: 'declined', withdrawn: 'withdrawn',
+  open: 'pending', confirmed: 'confirmed', declined: 'declined', withdrawn: 'withdrawn', opened: 'opened',
 };
 const statusTag = (r) => `<span class="tag ${esc(r.status)}">${esc(STATUS[r.status] || r.status)}</span>`;
 
@@ -1327,6 +1344,7 @@ async function refreshRequests() {
   const r = await call('/api/admin/requests');
   if (!r.ok) return;
   state.requests = r.body.requests;
+  state.portal = r.body.portal || [];
   state.openRequests = r.body.open;
   renderCount();
   const v = state.view;
@@ -1493,6 +1511,168 @@ async function showRequest(id) {
     renderList();
   }
   drawRequest(r, preview);
+}
+
+// ---- customers in the portal ---------------------------------------------------------------
+//
+// A customer who can use neither Slack nor Teams with Adobe signs in to the customer portal
+// with their work mail address, says what they use of Adobe's and asks for a channel
+// (src/portalrequests.js). The admin team answers under Requests: Open channel makes the
+// channel in the portal, files it under a team and a customer, and posts the welcome message
+// as whoever opens it; Decline takes a reason the customer reads. A team's managers see the
+// customers who picked a technology the team follows on their team's page, and open a channel
+// for their team.
+
+/** What marks a portal request among the requests picked (`?request=portal:3`). */
+const PORTAL = 'portal:';
+
+const portalRow = (r) => `<div class="row${String(state.sel) === `${PORTAL}${r.id}` ? ' on' : ''}" data-sel="${PORTAL}${r.id}">
+  <span class="name">${esc(r.company || r.domain)} <span class="sub">${esc(r.domain)}</span></span>
+  ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
+
+/** The message a new channel starts with, until whoever opens it writes their own. */
+const welcomeText = (r, team) => `Welcome to Adobe Enterprise Support, ${r.company || r.domain}! This is your channel with the ${teamLabel(team)} team. Start a new thread for each question, and we answer you here.`;
+
+/** A portal request as it is now, wherever the page shows it. */
+function updatePortal(r) {
+  const was = state.portal.find((x) => x.id === r.id);
+  if (was && was.status === 'open' && r.status !== 'open') state.openRequests = Math.max(0, state.openRequests - 1);
+  if (was) Object.assign(was, r); else state.portal.unshift(r);
+  const mine = state.view?.portal?.find((x) => x.id === r.id);
+  if (mine) Object.assign(mine, r);
+  renderCount();
+}
+
+/**
+ * A customer's request: who they are, what they use, and Open channel or Decline. `forTeam`:
+ * a manager came from their team's page, and opens it for that team.
+ */
+function drawPortalRequest(r, forTeam = null) {
+  const admin = Boolean(state.me.admin);
+  const open = r.status === 'open';
+  const follows = new Map(r.teams.map((t) => [t.team, t]));
+  // The teams it may go to: the admin team picks any; a manager, theirs that follow.
+  const teams = admin ? [...state.teams].sort((a, b) => Number(follows.has(b.slug)) - Number(follows.has(a.slug)))
+    : state.teams.filter((t) => follows.has(t.slug));
+  const first = forTeam || (teams[0] && teams[0].slug) || '';
+  const techName = new Map(r.tech.map((t) => [t.tech, t.name]));
+  const why = (t) => (follows.has(t) ? ` (follows ${follows.get(t).tech.map((id) => techName.get(id) || id).join(', ')})` : '');
+  const c = r.channel;
+  $('detail').innerHTML = `
+    <div class="title">${forTeam ? `<button class="back shown" id="pqBack" title="Back to ${esc(teamLabel(forTeam))}" aria-label="Back to ${esc(teamLabel(forTeam))}"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg></button>` : backButton()}
+      <h1 class="fill">${esc(r.company || r.domain)} <span class="sub">${esc(r.domain)}</span></h1>${statusTag(r)}</div>
+    <div class="status" id="status"></div>
+    <div class="card"><div class="field">
+      <label>Asks for</label><span>a channel in the customer portal</span>
+      <label>Uses</label><span>${r.tech.map((t) => `<span class="tag">${esc(t.name)}</span>`).join(' ') || '<span class="sub">nothing picked</span>'}</span>
+      <label>Followed by</label><span>${r.teams.length ? r.teams.map((t) => `<a href="/inbox/admin?tab=teams&team=${encodeURIComponent(t.team)}">${esc(t.name)}</a> <span class="sub">${esc(t.tech.map((id) => techName.get(id) || id).join(', '))}</span>`).join(' · ') : '<span class="sub">no team follows any of these</span>'}</span>
+      ${r.note ? `<label>Needs</label><span class="note">${esc(r.note)}</span>` : ''}
+      <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(r.requestedBy.email || '')} · ${esc(ago(r.requestedAt))}</span></span>
+      <label>People</label><span>${r.members.map((m) => `${esc(m.name || m.email)}${m.joined ? '' : ' <span class="sub">(invited)</span>'}`).join(', ')}</span>
+      ${c ? `<label>Channel</label><span>filed under <a href="/inbox/admin?tab=teams&team=${encodeURIComponent(c.team)}">${esc(teamLabel(c.team))}</a> · customer <b>${esc(orgLabel(c.org))}</b> <span class="sub mono">${esc(c.channelId)}</span></span>` : ''}
+      ${open ? '' : `<label>Answer</label><span>${statusTag(r)} by ${who(r.decidedBy)} ${esc(ago(r.decidedAt))}${r.reason ? `: <span class="note">${esc(r.reason)}</span>` : ''}</span>`}
+    </div></div>
+    ${r.status === 'declined' ? '' : `<div class="card"><h2>${c ? 'Opening another channel' : 'Opening a channel'}</h2>
+      ${state.portalBound ? '' : '<p class="hint lead">The customer portal is not connected to this inbox yet (PORTAL_WORKER): no channel can be opened from here.</p>'}
+      <form class="form portalopen" id="pqForm">
+        <label class="fld"><span>Channel name</span><input id="pqName" maxlength="80" value="${esc(c ? '' : r.suggest.name)}" required></label>
+        ${admin ? `<label class="fld"><span>Customer${r.suggest.known ? `: ${esc(r.suggest.orgName || r.suggest.org)}` : ' (new)'}</span><input id="pqOrg" class="mono" maxlength="63" value="${esc(c ? c.org : r.suggest.org)}" required></label>` : ''}
+        <label class="fld"><span>Team</span><select id="pqTeam"${forTeam ? ' disabled' : ''}>${teams.map((t) => `<option value="${esc(t.slug)}"${t.slug === first ? ' selected' : ''}>${esc(t.name)}${esc(why(t.slug))}</option>`).join('')}</select></label>
+        ${admin && teams.length > 1 ? `<fieldset class="what shares"><legend>Also in the inbox of</legend>${teams.map((t) => `<label class="only"><input type="checkbox" name="pqShare" value="${esc(t.slug)}"> ${esc(t.name)}</label>`).join('')}</fieldset>` : ''}
+        <label class="fld what"><span>Welcome message, posted as you: the channel's first thread</span><textarea id="pqWelcome" rows="4" maxlength="8000">${esc(first ? welcomeText(r, first) : '')}</textarea></label>
+        <button class="primary" id="pqOpen"${state.portalBound && teams.length ? '' : ' disabled'}${off(`portal:${r.id}`)}>Open channel</button></form>
+      <p class="hint">${admin ? 'The portal makes the channel, with everyone of the customer\'s lobby in it. Here it is filed under the team and the customer by hand (a channel-id rule with priority 10 each), and is in the other teams\' inboxes too.' : 'The portal makes the channel, with everyone of the customer\'s lobby in it, and it is filed under your team.'}</p></div>`}
+    ${open && admin ? `<div class="card"><h2>Declining it</h2><form class="form" id="pqDeclineForm"><label class="fld grow"><span>Reason, for the customer (optional)</span><input id="pqReason" maxlength="500"></label>
+      <button class="danger" id="pqDecline"${off(`portal:${r.id}`)}>Decline</button></form></div>` : ''}`;
+  showStatus();
+  if ($('pqBack')) $('pqBack').onclick = () => showTeam(forTeam);
+  const again = (req) => {
+    updatePortal(req);
+    renderList();
+    drawPortalRequest(req, forTeam);
+  };
+  if ($('pqTeam')) {
+    // The team the channel is filed under has it already: not one to share it with.
+    const shares = () => {
+      for (const box of document.querySelectorAll('[name="pqShare"]')) {
+        box.disabled = box.value === $('pqTeam').value;
+        if (box.disabled) box.checked = false;
+      }
+    };
+    shares();
+    // The welcome names the team, until it is written by hand.
+    $('pqTeam').onchange = () => {
+      const w = $('pqWelcome');
+      if (!w.dataset.touched) w.value = welcomeText(r, $('pqTeam').value);
+      shares();
+    };
+    $('pqWelcome').oninput = () => { $('pqWelcome').dataset.touched = '1'; };
+  }
+  if ($('pqForm')) {
+    $('pqForm').onsubmit = (e) => {
+      e.preventDefault();
+      const body = {
+        id: r.id,
+        team: $('pqTeam').value,
+        name: $('pqName').value,
+        org: $('pqOrg') ? $('pqOrg').value : undefined,
+        share: [...document.querySelectorAll('[name="pqShare"]:checked')].map((x) => x.value).filter((t) => t !== $('pqTeam').value),
+        welcome: $('pqWelcome').value,
+      };
+      // Opening it twice would make two channels: not sent again by itself.
+      hold($('pqOpen'), `portal:${r.id}`, () => call('/api/admin/portal/open', 'POST', body)).then((res) => {
+        if (!res) return;
+        if (!res.ok) {
+          failed(`Open a channel for ${r.company || r.domain}`, res);
+        } else {
+          const { channel, shared = [], welcome } = res.body;
+          const also = shared.length ? `, and in the inbox of ${shared.map(teamLabel).join(', ')}` : '';
+          const said = welcome && welcome.error ? `; the welcome message was not posted (${welcome.error})` : '';
+          status(said ? 'warn' : 'ok', `Opened #${channel.name} for ${r.company || r.domain}, filed under ${teamLabel(channel.team)}${also}${said}.`);
+        }
+        // Drawn again once the button is free: the request as it is now.
+        if (res.body.request) again(res.body.request);
+      });
+    };
+  }
+  if ($('pqDeclineForm')) {
+    $('pqDeclineForm').onsubmit = (e) => {
+      e.preventDefault();
+      const reason = $('pqReason').value.trim() || undefined;
+      hold($('pqDecline'), `portal:${r.id}`, () => call('/api/admin/portal/decline', 'POST', { id: r.id, reason })).then((res) => {
+        if (!res) return;
+        if (!res.ok) failed(`Decline ${r.company || r.domain}`, res);
+        else status('ok', `Declined ${r.company || r.domain}.`);
+        if (res.body.request) again(res.body.request);
+      });
+    };
+  }
+}
+
+function showPortalRequest(id) {
+  loadingPage();
+  state.view = null;
+  const r = state.portal.find((x) => String(x.id) === String(id));
+  if (!r) { $('detail').innerHTML = '<div class="empty">No such request.</div>'; return; }
+  drawPortalRequest(r);
+}
+
+/** The team page's customers in the portal: those who picked a technology the team follows. */
+function renderPortal() {
+  const v = state.view;
+  const rows = v.portal.map((r) => `<tr><td>${esc(r.company || r.domain)}<div class="sub">${esc(r.domain)}</div></td>
+    <td>${r.tech.filter((t) => r.teams.some((x) => x.team === v.value && x.tech.includes(t.tech))).map((t) => `<span class="tag">${esc(t.name)}</span>`).join(' ')}</td>
+    <td class="nw">${who(r.requestedBy)}<div class="sub">${esc(ago(r.requestedAt))}</div></td>
+    <td>${statusTag(r)}</td>
+    <td class="nw"><button class="link" data-portal="${r.id}">${r.status === 'open' ? 'Open a channel' : 'Show'}</button></td></tr>`).join('');
+  $('portalTable').innerHTML = `<table><tr><th>Customer</th><th>Uses</th><th>Asked by</th><th>Status</th><th></th></tr>${rows}</table>`;
+  for (const b of $('portalTable').querySelectorAll('[data-portal]')) {
+    const r = v.portal.find((x) => String(x.id) === b.dataset.portal);
+    b.onclick = () => {
+      if (!state.portal.some((x) => x.id === r.id)) state.portal.push(r);
+      drawPortalRequest(r, v.value);
+    };
+  }
 }
 
 // ---- orgs ---------------------------------------------------------------------------------

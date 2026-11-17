@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" class="spectrum">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Enterprise Support</title>
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="rgb(27, 27, 27)" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="rgb(248, 248, 248)" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-title" content="Support">
+<!-- Spectrum 2 (README, "Spectrum 2"): its typefaces, the tokens the stylesheets use, what every
+     page shares, and this page's own: its layout, then its look. This is the customers' page
+     (src/portal/worker.js serves it, not the inbox's Worker): its header has no pages to
+     switch between, so it is written here and not by ui/header.js. -->
+<link rel="stylesheet" href="spectrum-fonts.css">
+<link rel="stylesheet" href="spectrum-tokens.css">
+<link rel="stylesheet" href="spectrum.css">
+<link rel="stylesheet" href="spectrum-portal.css">
+</head>
+<body>
+<header>
+  <h1><a href="/"><img src="/icon.svg" alt="Adobe"><span>Enterprise Support</span></a></h1>
+  <span class="spacer"></span>
+  <button id="user" popovertarget="menu" aria-haspopup="true" aria-expanded="false" aria-label="Account" hidden>
+    <span class="av" id="userAv"></span>
+    <span class="who"><span class="nm" id="me"></span><span class="sub" id="userSub"></span></span>
+    <span class="s2-chevron" aria-hidden="true"></span>
+  </button>
+  <div id="menu" class="menu" popover>
+    <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
+    <section id="menuCompany" hidden><button type="button" class="item" id="openCompany"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7a2.25 2.25 0 1 0 0-4.5A2.25 2.25 0 0 0 5.5 7ZM1.5 13c0-2.2 1.8-3.75 4-3.75s4 1.55 4 3.75M11 7.25a1.9 1.9 0 1 0 0-3.8M11.5 9.4c1.7.3 3 1.6 3 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Your company and colleagues</button></section>
+    <section><a class="item" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
+  </div>
+</header>
+<main id="main"><div class="empty">Loading…</div></main>
+<script src="markdown.js"></script>
+<script type="module" src="portal.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

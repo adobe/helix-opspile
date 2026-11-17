@@ -1,9 +1,10 @@
 # helix-opspile architecture
 
 opspile is a unified inbox for an ops team. It ingests every channel the team works in on
-**Slack**, **Microsoft Teams** and **Discord**, keeps the threads in **Cloudflare R2**, and tracks read/unread
-state per person and per team, so that you can see which threads somebody else has already
-seen and you have not.
+**Slack**, **Microsoft Teams** and **Discord**, and those of its own **customer portal** (for
+customers who can use none of the three with Adobe), keeps the threads in **Cloudflare R2**, and
+tracks read/unread state per person and per team, so that you can see which threads somebody
+else has already seen and you have not.
 
 It follows the spirit of [klickhaus](https://github.com/adobe/klickhaus): a small static UI in
 plain JavaScript, fed by separate ingestion services, with the data store doing the heavy
@@ -20,6 +21,7 @@ flowchart LR
   S[Slack Events API] --> R
   T[Microsoft Graph<br/>change notifications] --> R
   D[Discord REST API<br/>polled every minute] --> R
+  P[Customer portal<br/>its own Worker, its events] --> R
   B[Backfill from history APIs] --> R
   R[(1. raw events<br/>R2, append-only)] --> C
   C[(2. channel folders<br/>R2, one file per message)] --> I
@@ -74,8 +76,16 @@ are removed before an event is stored.
   belongs to, who reacted (messages carry counts only) and since when the poller has seen each
   reaction, and when it found a message gone. Keys are `<message id>-<hash of the envelope>`
   and `<message id>-delete`, so the same state read twice shares a key.
+- **The customer portal** (see [Customer portal](#customer-portal)) is a Worker of this
+  repository, so its events say what the normalizer needs: `{ portal, seq, at, type, domain,
+  channel, author, message | reaction | lobby }` (`src/portal/events.js`), a message as it is now
+  (`rev` counts its edits and its deletion), with its channel's name and its author's name and
+  mail address. They are stored as they arrive, under `portal/<domain>/<channel, or
+  _lobby>/<yyyy>/<mm>/<dd>/<event ms>-<portal>-<seq>.json`: `seq` is the event's number in the
+  portal's outbox, so one delivered twice is one object, and `domain`, the customer's mail
+  domain, is the tenant.
 - Backfill pages from the history APIs land here too, marked `via: backfill` (Discord's:
-  `via: history`).
+  `via: history`; the portal's, which tells of a thread again when asked: `via: resend`).
 
 ### 2. Channel folders
 
@@ -203,6 +213,10 @@ shared with it (with `share`, the agent asks for the usual request instead). It 
 whose sidebar it came from (`thread`), which the request's page links to. The agent files one only
 while it answers a sidebar message, never on the thread's messages, which customers write.
 
+**Portal requests.** Customers ask as well, for a channel of their own in the customer portal:
+the admin team opens one for them under Requests, and a team's managers on their team's page
+when the team follows a technology the customer picked. See [Customer portal](#customer-portal).
+
 Channel names and authors are not in the events, so the normalizer looks them up
 (`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a
 day. These are its only platform calls. Files only move forward to a newer version, and a
@@ -226,7 +240,9 @@ is left out.
 root message is `<rootId>/<rootId>.md`). Message bodies are markdown themselves, converted
 through a syntax tree: each platform's body is read into mdast (Teams HTML in `src/html.js`;
 Slack's blocks, `rich_text` first, and its mrkdwn where there are none in `src/slackmd.js`;
-Discord's flavor of markdown in `src/discordmd.js`) and written by `src/mdast.js`, so markers
+Discord's flavor of markdown in `src/discordmd.js`; the portal's is markdown as its author
+typed it, which stays as it is but for images, which become links, `src/portalsource.js`) and
+written by `src/mdast.js`, so markers
 and escapes are where markdown wants them and the inbox shows what the platform shows (a
 Teams system notice, whose body is an empty
 `<systemEventMessage/>`, is written from its `eventDetail`: "Meeting ended after 50 s. Only Ada
@@ -266,6 +282,7 @@ The message body, as markdown.
 thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
              teams:<tenantId>:<teamId>:<channelId>:<rootMessageId>
              discord:<guildId>:<channelId>:<rootMessageId>
+             portal:<mail domain>:<channelId>:<rootMessageId>
 ```
 
 - A message that quotes another (Slack: one forwarded with it, `is_share`, or the preview Slack
@@ -2511,6 +2528,105 @@ card's *What should I know about …?*) opens the thread, enters its sidebar and
 that, where the thread has an agent and the viewer may talk to it; elsewhere the click does what
 it did.
 
+## Customer portal
+
+Some customers can use neither Slack nor Teams with Adobe: their company allows no chat tool
+but its own. The **customer portal** is where the inbox reaches them: a second Worker
+(`src/portal/worker.js`, deployed as `helix-opspile-portal`, `-test` for the test one) with its
+own page, its own D1 database (`portal/migrations`) and nothing else. To the inbox it is a
+**platform**, as Slack is, with the source `portal`:
+
+```mermaid
+flowchart LR
+  C[Customer<br/>signed in by Access] --> PW[portal Worker<br/>page, API, D1]
+  PW -- "events (OPSPILE: PortalSource)" --> IN[inbox Worker<br/>pile 1, then the queue]
+  IN -- "post, edit, react, open, decline,<br/>resend (PORTAL: PortalPlatform)" --> PW
+```
+
+Neither Worker reads the other's database. Each reaches the other through a service binding to
+one named entrypoint, which only a Worker of the same account can bind: the portal's `OPSPILE` is
+the inbox's `PortalSource` (`src/portalentry.js`: `events`, `technologies`), the inbox's `PORTAL`
+the portal's `PortalPlatform` (`src/portal/platform.js`). Both bindings are optional, so either
+Worker deploys without the other: an unbound portal keeps what happens in it in its outbox, and
+an unbound inbox shows the portal's threads it has, and says that it cannot post there.
+
+**Signing in.** The portal is behind its own Cloudflare Access application, whose only login
+method is a one-time code by mail: a customer signs in with their work mail address, with no
+account at any chat tool. The Worker verifies Access's token itself (`src/access.js`) and takes
+only the mail address from it. `PORTAL_DOMAINS` lists the mail domains the portal is open to;
+nobody else gets past its API, whatever Access lets in.
+
+**Lobbies.** A customer is its mail domain, and its **lobby** is where its people wait for a
+channel (`lobbies`, `members`). The first of a domain to sign in founds the lobby. Members
+invite colleagues **of the same domain** by mail address; an invited colleague is in the lobby
+from then on and joins when they first sign in, and anyone else of the domain is told whom to
+ask. (Nothing is mailed: the member tells them where the portal is.) In the lobby they say
+what the company is called, pick the **technologies** they use, and say what they need. The
+technologies are Adobe's own of the inbox's tech stack (`tech_stack.portal`, migration 0074:
+Edge Delivery, Universal Editor, Assets, …, not the CDNs and code hosts the stack also has),
+which the portal asks the inbox for and keeps for an hour (`src/portal/tech.js`). Then they
+**ask for a channel**.
+
+**Portal requests.** A lobby that asked reaches the inbox as a `lobby` event, a snapshot of it
+(what it picked, its note, its people), again with every change. The normalizer keeps the
+latest as one row per lobby (`portal_requests`, `src/portalrequests.js`; an event older than
+the row's `seq` changes nothing, so a replay does not either). The admin team sees them under
+**Requests** in the admin pages, with the channel requests, and counted with them in the header.
+A request names the teams that **follow** a technology the lobby picked (`team_follows`): their
+managers see it on their team's page.
+
+- **Open channel** (`POST /api/admin/portal/open`): the portal makes the channel, and every
+  member of the lobby is in it (a lobby's channels are all its members'; most lobbies have one).
+  In the inbox the channel is filed **by hand** under a team and a customer (two `channel_id`
+  rules with priority 10, as a manual assignment's), shared with more teams (`channel_teams`),
+  and the customer gets a row in `orgs` when the inbox has not met it (named as it calls itself,
+  with its domain's icon). The **welcome message** is posted in the channel as whoever opens
+  it, which starts its first thread. The admin team picks any team and customer; a manager opens
+  it for a team they manage that follows what the lobby picked, under the customer the inbox
+  suggests. A lobby that has a channel can get another the same way.
+- **Decline** (`POST /api/admin/portal/decline`, the admin team): with a reason the customer
+  reads in the lobby. They may ask again, which opens the request again.
+
+**In the channel.** The customer's page is the personal inbox without the rest: the lobby's
+channels (a picker when there is more than one), a channel's threads with what is new to you
+and what Adobe resolved, and the thread picked, with a reply box. A thread is its first message
+(its first line is the title) and the replies to it; messages are markdown, and one's own can be
+edited and deleted. Reactions are emoji; Adobe's ✅ on a thread's first message shows it
+**resolved**, and writing again reopens it in the inbox as on any platform. The page asks for
+what is new every 15 seconds while it is on screen.
+
+**In the inbox** a portal channel is a channel like any other: its threads are in the inboxes
+of its teams, labeled, re-threaded, searched and worked by thread agents. What differs:
+
+- **Nobody connects an account.** The inbox says who acts, by their mail address, and the
+  portal takes its word (the binding is the trust): a person's reply, their edit of it, their
+  reactions and ✅ are theirs in the portal, where Adobe's people show with an **Adobe** badge.
+  The account id is a hash of the mail address (`src/portal/ids.js`), which both Workers work
+  out, so the inbox knows a person's account there without asking.
+- **The app** posts and reacts there as a bot account, *Enterprise Support* (the agents'
+  `post_message` and `add_reaction`, and `POST /api/post/app`, where **Post messages** is on).
+- **The tenant is the lobby**, the customer's mail domain: accounts, mentions and the people a
+  reply can name stay within one customer. The channel is `shared` (customers are in it), so the
+  agents' `any_thread` tool, which is for internal channels, is never on in it.
+- **Text only**: no files either way, and an image in a customer's markdown is a link in pile 2
+  (the inbox loads images from the platforms' files only). A link to a Slack or Teams file in a
+  portal message is text its author typed, not a file of the thread: the app fetches none for it
+  (`threadFiles` in `src/agent/files.js`). `@Name` stays text.
+- **No link to the message**: the portal is its customers', so pile 2 keeps no `permalink`
+  nobody of the inbox could open.
+- **A reply whose thread the inbox does not have** is backfilled by asking the portal to tell of
+  the thread again (`resend`).
+
+**Delivery.** Every change the inbox has to hear of is written to the portal's `events` table
+in the same batch as the change, then sent through `OPSPILE.events` behind the request that
+made it, and by the portal's cron (every other minute) for what that left: at least once, the
+inbox's pile-1 key making a second delivery the same object. Delivered events are deleted after
+a week.
+
+**What it does not do yet.** Nothing is mailed: not the invitations, and not a notice that
+Adobe answered, so a customer sees an answer when they look. No files. No channel is opened
+without a lobby's request, and none is closed or renamed.
+
 ## Platform facts that shape the design
 
 These were measured against the live APIs during exploration.
@@ -2534,6 +2650,11 @@ These were measured against the live APIs during exploration.
   the conversation of the message it answers, and a thread started from such a reply joins it
   too. Message ids are snowflakes (ms since 2015 shifted by 22 bits), unique across Discord.
   Joins, pins, boosts and "started a thread" notices are not stored in pile 2.
+- **The customer portal is two-level by design**: a thread is its first message, and replies
+  carry its id (`root`); a reply to a reply is a reply in its thread. Message ids are `m`, the
+  time in base 36 and six random digits, unique across the portal; a message's version is the
+  number of its changes (`rev`), not a time, so an edit in the millisecond it was posted in is
+  still newer.
 - **Alert channels** consist entirely of bot posts without replies. They are filed as
   `kind: alert` and counted, rather than shown as individual unread threads.
 
@@ -2572,6 +2693,12 @@ Two new apps:
   reaction timed when it was first seen), a message no longer there as a deletion. The object
   stores each thread's parent, each reply's root, the last message id per channel and thread,
   and its view of the last day's messages; the cron pokes it, so a stopped alarm restarts.
+
+- The **customer portal** needs no app: it is a Worker of this repository, which delivers its
+  events to the inbox's `PortalSource` entrypoint (see [Customer portal](#customer-portal)).
+  The events carry the channel's name and the author's name and mail address, so the
+  normalizer's lookups take them from the event (`channelHint` and `authorRef` in
+  `src/normalize.js`, `src/lookup.js`) and a replay asks the portal nothing.
 
 **Failed jobs.** The NORMALIZE queue retries a job five times. Its last failure is recorded in
 `dead_jobs` (migration 0050, `src/deadjobs.js`; ids and keys only, kept for 30 days), which

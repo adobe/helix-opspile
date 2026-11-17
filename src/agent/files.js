@@ -68,11 +68,15 @@ export function fileRef(link) {
   return null;
 }
 
-/** The files the readable messages link to: refs with the message (`id`, `at`) and link text. */
+/**
+ * The files the readable messages link to: refs with the message (`id`, `at`) and link text.
+ * A customer portal message has none: the portal takes text only, so a link in it is what its
+ * author typed, and naming a Slack or Teams file there does not have the app fetch it for them.
+ */
 export function threadFiles(messages, readable = () => true) {
   const out = new Map();
   for (const m of messages || []) {
-    if (!m.deletedAt && readable(m)) {
+    if (!m.deletedAt && m.source !== 'portal' && readable(m)) {
       for (const { label, url } of links(m.body)) {
         const ref = fileRef(url);
         if (ref && !out.has(ref.id)) {

@@ -1,0 +1,10 @@
+{
+  "name": "helix-opspile-portal",
+  "private": true,
+  "description": "The customer portal: a Worker of its own (src/portal/worker.js), which the inbox reads as a platform. Deployed with cf from this directory; its packages are the repository's.",
+  "type": "module",
+  "devDependencies": {
+    "cf": "1.0.0-beta.20",
+    "wrangler": "^4.151.3"
+  }
+}

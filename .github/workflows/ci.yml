@@ -27,6 +27,8 @@ jobs:
       - run: npm test
       # Builds the Worker without credentials (default mode, no vars needed).
       - run: npx cf deploy --dry-run
+      # And the customer portal's (portal/cloudflare.config.ts), the same way.
+      - run: npm run portal:build
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -70,6 +72,9 @@ jobs:
       MEMBERSHIP_SLACK_BOT: ${{ secrets.MEMBERSHIP_SLACK_BOT }}
       AI_GATEWAY_TOKEN_REQUIRED: ${{ secrets.AI_GATEWAY_TOKEN_REQUIRED }}
       SLACK_ADMIN_TOKEN_REQUIRED: ${{ secrets.SLACK_ADMIN_TOKEN_REQUIRED }}
+      # The customer portal's Worker (src/portalsource.js), bound where named: the inbox posts
+      # and opens channels there (optional; off while empty).
+      PORTAL_WORKER: ${{ secrets.PORTAL_WORKER }}
       # Discord (optional; off while DISCORD_GUILDS is empty).
       DISCORD_GUILDS: ${{ secrets.DISCORD_GUILDS }}
       DISCORD_STAFF_ROLES: ${{ secrets.DISCORD_STAFF_ROLES }}

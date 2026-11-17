@@ -1,6 +1,7 @@
 # State machines
 
-opspile has two status columns, `channel_requests.status` and `bash_requests.status`. Everything
+opspile has three status columns, `channel_requests.status`, `bash_requests.status` and
+`portal_requests.status` (and the customer portal, in its own database, `lobbies.status`). Everything
 else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
@@ -438,6 +439,56 @@ last seven) once it has an `account` row (`analytics_engine/queries`, at hour 0,
 storage, `modelUsage` in `src/cogs/meter.js`). The first reading only sets the start: what the ledger
 held before is not counted on one day. Readings are one at a time, so a round is counted once; a
 ledger that went back (a new session) counts from nothing.
+
+## The customer portal
+
+The portal is a Worker of its own with its own database (`portal/migrations`, `src/portal/`); the
+inbox keeps what it heard of it. Each side's state is its own, and the events between them are the
+only thing both see.
+
+**Lobby.** `draft` → `requested` → `open`, or → `declined` → `requested` again (`lobbies.status`
+in the portal, `src/portal/store.js`). The first of a mail domain to sign in founds it (the insert
+decides who: `ON CONFLICT DO NOTHING`); asking is conditional on `draft` or `declined`, declining on
+`requested`, so each happens once. Opening a channel makes it `open` from any state, and it stays
+open: more channels change nothing. Nothing is told of a `draft`.
+
+**Lobby member.** absent → invited → joined (`members.joined_at`). Only a member invites, only an
+address of the lobby's domain; an invitation nobody used can be taken back, a member who signed in
+stays. Someone of the domain who is neither is told whom to ask, and reads nothing.
+
+**Portal request.** absent → `open` → `opened`, or → `declined` → `open` again
+(`portal_requests.status` in the inbox, `src/portalrequests.js`). The row follows the lobby: every
+`lobby` event is a snapshot with its number in the portal's outbox (`seq`), and the row takes one
+only when it is newer (`WHERE excluded.seq > portal_requests.seq`), so a replay of pile 1, or two
+events out of order, end where the latest says. The inbox's own decisions are written before the
+portal is asked: a decline is conditional on `open` (whoever comes second gets 409), and is taken
+back when the portal did not take it (`reopenDeclined`), unless the portal says the lobby is not
+waiting any more. Opening is not claimed: the portal makes a channel per call, so a second call
+makes a second channel, which the request allows on purpose (a lobby may get more than one), and
+the page does not send it again by itself. If filing the new channel fails after the portal made
+it, the answer says so and names it: it is in the inbox under the admin team (the rule of last
+resort), to be assigned on a team's page.
+
+**Portal message.** absent → posted → edited (any number of times) → deleted (`messages.rev`,
+`edited_at`, `deleted_at` in the portal). `rev` counts the changes and is the version of the
+message's file in pile 2 (`normalizePortal`), so a file only moves to a later change whatever
+order the events arrive in, also for two changes in one millisecond; a deletion is the last one.
+Telling of a thread again (`resend`, for a backfill) sends each message as it is, with the `rev`
+it has: nothing moves.
+
+**Portal event.** written → delivered → deleted after a week (`events.delivered_at`,
+`src/portal/events.js`). An event is written in the same batch as the change it tells of, so
+there is no change without its event; a lobby's is written after the change, and is a snapshot,
+so a lost one is made up for by the next. Delivery is at least once: two deliveries at once may
+send the same events, and one that failed is sent again by the cron (`attempts`, `error`); the
+inbox keys each by its `seq`, so both are one object in pile 1. An unbound portal delivers
+nothing and keeps everything.
+
+**Portal technologies.** the built-in list → the inbox's, an hour old at most (`tech`, `meta.tech_at`
+in the portal, `src/portal/tech.js`). An empty or failed answer leaves the list as it is: "the
+inbox said nothing" is not "there are none". A lobby's picks are checked against the list when
+they are saved, not after, so one the inbox no longer offers stays picked, and shows in the
+request by its id.
 
 ## In the page
 

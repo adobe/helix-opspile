@@ -130,7 +130,8 @@ export async function refreshMembers(env, ch, deps = {}, now = Date.now()) {
         return i ? { ...m, name: i.name, email: i.email } : m;
       });
     } else if (ch.source !== 'teams') {
-      // Discord lists a server's members only with a privileged intent opspile does not ask for.
+      // Discord lists a server's members only with a privileged intent opspile does not ask for,
+      // and the customer portal's are its lobby's, which its events name.
       throw new Error(`members are not listed on ${platformName(ch.source)}`);
     } else {
       if (!ch.group_id) {
@@ -244,6 +245,8 @@ export function channelState(f) {
     lines.push(`Channel: "${f.name || '?'}" in the Microsoft Teams team "${f.groupName || '?'}"`);
   } else if (f.source === 'discord') {
     lines.push(`Channel: #${f.name || '?'} in the Discord server "${f.groupName || '?'}"`);
+  } else if (f.source === 'portal') {
+    lines.push(`Channel: #${f.name || '?'} in the customer portal, opened for "${f.groupName || '?'}"`);
   } else {
     lines.push(`Channel: #${f.name || '?'} on Slack`);
   }

@@ -428,3 +428,5 @@ export { DiscordPoller } from './poller.js';
 export { WorkspaceServiceProxy } from '@cloudflare/computer';
 // Where the shells of the agents' computers reach the network, with their secrets.
 export { SecretGateway } from './agent/gateway.js';
+// Where the customer portal's events arrive (src/portalsource.js).
+export { PortalSource } from './portalentry.js';

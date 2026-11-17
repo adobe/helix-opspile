@@ -63,6 +63,10 @@ export function rawParts(key, payload) {
       poll: d.poll,
     };
   }
+  if (source === 'portal') {
+    // The customer portal's event: the message's text is markdown as its author typed it.
+    return { text: p.message && p.message.text };
+  }
   return { payload: p };
 }
 

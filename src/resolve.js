@@ -23,7 +23,7 @@ import { isStaffDomain } from './lookup.js';
 const RESOLVED_P = 0.5;
 
 /** The reaction each platform uses for "resolved" (the one opspile adds). */
-export const RESOLVED_EMOJI = { slack: 'white_check_mark', teams: '✅' };
+export const RESOLVED_EMOJI = { slack: 'white_check_mark', teams: '✅', portal: '✅' };
 
 // ✅ and ✔️ both mean resolved, on either platform.
 const RESOLVED = new Set(['white_check_mark', 'heavy_check_mark', '✅', '✔']);

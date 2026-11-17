@@ -279,7 +279,7 @@ export async function resolveChannel(env, ref) {
   // A link pasted from markdown may keep the backslash of an escaped `&`.
   const s = String(ref || '').trim().replace(/\\&/g, '&');
   let keys = [];
-  const id = /^(slack|teams|discord):([^:]+):(.+)$/.exec(s);
+  const id = /^(slack|teams|discord|portal):([^:]+):(.+)$/.exec(s);
   if (id) {
     keys.push([id[1], id[2], id[3]]);
   }

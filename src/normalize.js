@@ -17,6 +17,7 @@
  * - `{ op: 'delete', message }`: a tombstone (`deletedAt`, no body)
  * - `{ op: 'channel', channel }`: channel metadata changed (rename, creation)
  * - `{ op: 'reaction', reaction }`: someone reacted to a message (read state only)
+ * - `{ op: 'lobby', lobby }`: how a lobby of the customer portal is now (src/portalrequests.js)
  * - `{ op: 'skip', reason }`: nothing for pile 2
  *
  * A message carries an `authorRef` that the caller resolves to an author, and its body
@@ -635,6 +636,90 @@ export function normalizeTeams(key, msg) {
   return { op: 'upsert', message };
 }
 
+/**
+ * A customer portal event (src/portal/events.js, stored by src/portalsource.js) to a pile-2
+ * operation. The portal is this repository's own, so its events say what the normalizer needs
+ * in the normalizer's terms: a message as it is now (posted, edited or deleted; `rev` counts
+ * its changes, and is its version), with its channel's name and its author's name and mail address,
+ * which the lookups take from here (`channelHint`, `authorRef`) instead of asking the portal.
+ * The tenant is the lobby, the customer's mail domain.
+ */
+export function normalizePortal(key, event) {
+  const e = event || {};
+  const tenant = e.domain;
+  if (e.type === 'lobby') {
+    return {
+      op: 'lobby',
+      lobby: {
+        ...(e.lobby || {}), domain: tenant, portal: e.portal || 'portal', seq: e.seq, at: e.at,
+      },
+    };
+  }
+  const ch = e.channel || {};
+  const channelHint = { name: ch.name, topic: ch.topic || null, company: ch.company || null };
+  if (e.type === 'channel') {
+    return {
+      op: 'channel',
+      channel: {
+        source: 'portal', tenant, channelId: ch.id, name: ch.name, at: e.at,
+      },
+    };
+  }
+  const a = e.author || {};
+  const authorRef = a.kind === 'bot'
+    ? {
+      kind: 'bot', name: a.name || 'Enterprise Support', source: 'portal', tenant, botId: a.id,
+    }
+    : {
+      source: 'portal', tenant, userId: a.id, name: a.name || null, email: a.email || null,
+    };
+  if (e.type === 'reaction') {
+    const r = e.reaction || {};
+    return {
+      op: 'reaction',
+      reaction: {
+        removed: Boolean(r.removed),
+        emoji: r.emoji,
+        source: 'portal',
+        tenant,
+        channelId: ch.id,
+        id: r.message,
+        userId: a.id,
+        at: r.at || e.at,
+        // Who reacted, for the lookup: the event names them.
+        userRef: a.kind === 'bot' ? undefined : authorRef,
+      },
+    };
+  }
+  if (e.type !== 'message' || !e.message) {
+    return { op: 'skip', reason: e.type || 'unknown' };
+  }
+  const m = e.message;
+  const message = {
+    source: 'portal',
+    tenant,
+    channelId: ch.id,
+    channelHint,
+    rootId: m.root || m.id,
+    id: m.id,
+    thread: `portal:${tenant}:${ch.id}:${m.root || m.id}`,
+    at: m.at,
+    editedAt: m.editedAt || undefined,
+    // The message as it is now: the portal counts its changes (an edit, its deletion).
+    version: String(Number(m.rev) || 0).padStart(9, '0'),
+    authorRef,
+    format: 'portal',
+    text: m.text || '',
+    // No link to it: the portal is its customers', and nobody of the inbox can open it there.
+    raw: key,
+    mentionIds: [],
+  };
+  if (m.deletedAt) {
+    return { op: 'delete', message: { ...message, deletedAt: m.deletedAt, text: '' } };
+  }
+  return { op: 'upsert', message };
+}
+
 /** Dispatches on the pile-1 key's source. */
 export function normalize(key, json) {
   const source = key.split('/')[0];
@@ -650,6 +735,9 @@ export function normalize(key, json) {
   }
   if (source === 'discord') {
     return normalizeDiscord(key, json);
+  }
+  if (source === 'portal') {
+    return normalizePortal(key, json);
   }
   return { op: 'skip', reason: `unknown source ${source}` };
 }
