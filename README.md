@@ -442,7 +442,9 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   443 of a site, past the secrets, so `openssl s_client` shows the site's own certificate
   chain: see docs/ARCHITECTURE.md, "The computer's shell".
 - **`any_thread`**: the agent reads any thread of the inbox (`read_any_thread`), by its key or a
-  link to one of its messages. Only the admin team turns it on, one channel at a time, in
+  link to one of its messages, finds a customer's channels by the customer's or a channel's name
+  or the sites their threads are about (`find_channels`), and lists a channel's conversations
+  (`list_any_channel_threads`). Only the admin team turns it on, one channel at a time, in
   internal channels only (the org's type is **Internal**, and the channel is not shared). See
   ARCHITECTURE, "Agent tools".
 - **`membership`**: where someone in the thread asks for people to be added to the channel (or

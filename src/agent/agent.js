@@ -54,7 +54,9 @@ import { agentProvider, modelProblem, modelRef } from './model.js';
 import { forward } from './secrets.js';
 import { DOH, socketUplink } from './uplink.js';
 import { seed, seedPin } from './seed.js';
-import { inSidebar, keepAnswers, talk } from './sidebar.js';
+import {
+  currentSidebar, inSidebar, keepAnswers, talk,
+} from './sidebar.js';
 import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
 import {
   keepThreadFiles, mountList, UPLOADS_DIR, uploadsMount,
@@ -186,6 +188,8 @@ export class ThreadAgent extends Agent {
           posted: (id) => this.posted(id),
           // Whether the turn answers a sidebar message: then nothing goes to the channel.
           inSidebar: () => inSidebar(this),
+          // Which sidebar message it answers, for what it files for its author.
+          sidebarMessage: () => currentSidebar(this),
           pinned: (session) => seedPin(this, session),
           // For request_bash: the deadline of what it asks for.
           schedule: (when, callback, payload) => this.schedule(when, callback, payload),

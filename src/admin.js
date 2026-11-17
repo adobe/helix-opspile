@@ -539,7 +539,8 @@ async function assigned(env, { source, channelId }, slug) {
 
 /**
  * POST /api/admin/requests/confirm `{ id, dryRun?, move? }`: the admin team grants a request.
- * It is the manual assignment of `assign`, as if made on the team's page: `dryRun` says what
+ * It is the manual assignment of `assign`, as if made on the team's page (with `move` when the
+ * request asks for a move, src/requests.js): `dryRun` says what
  * it would move (or that it would share the channel), and applied, the channel is re-filed or
  * shared and the request is confirmed, with who confirmed it and what came of it.
  */
@@ -554,7 +555,8 @@ async function confirmRequest(env, me, body) {
     source: channel.source,
     channelId: channel.channelId,
     value: request.team,
-    move: body.move,
+    // A move request moves, whoever holds the channel; the admin team may move any request.
+    move: body.move || request.move,
     dryRun: body.dryRun,
   }, false);
   if (body.dryRun) {

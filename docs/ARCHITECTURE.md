@@ -174,6 +174,16 @@ with it, and so does a rule that moves the channel there. Confirming closes the 
 one declined or withdrawn meanwhile moves nothing, and a failed assignment opens it again. Nothing
 is sent by mail or chat.
 
+A thread's agent files requests too, from its sidebar (`src/agent/channelrequest.js`): asked there
+why the thread is in this team's inbox, it answers from `channel_assignment` (the rule that filed
+the channel, with its note, and the rules that would without it), finds the team it belongs to
+with `list_teams`, and `request_channel_reassignment` asks for it, for the person who wrote the
+sidebar message, with their reason. Such a request asks for a **move** (`move`, migration 0071):
+confirmed, the channel is filed under the team even when another team holds it, instead of being
+shared with it (with `share`, the agent asks for the usual request instead). It names the thread
+whose sidebar it came from (`thread`), which the request's page links to. The agent files one only
+while it answers a sidebar message, never on the thread's messages, which customers write.
+
 Channel names and authors are not in the events, so the normalizer looks them up
 (`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a
 day. These are its only platform calls. Files only move forward to a newer version, and a
@@ -225,6 +235,7 @@ at: 2026-10-14T07:37:26Z
 author: { kind: person, name: …, org: …, staff: true }
 editedAt: …
 deletedAt: …
+dropped: [color, highlight]   # only if the markdown cannot show what the platform did
 raw: [<raw object key>, …]
 permalink: https://…
 ---
@@ -245,6 +256,11 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
   inbox shows it as a card. Its words are not its author's: they count for no mentions, nor for
   the vectors of what people talk about, and editing the message leaves the quote alone.
 - New messages are new objects, so concurrent replies never contend for the same file.
+- What markdown cannot say stays in pile 1 only, and `dropped` names it: a Teams message whose
+  text is in more than one colour (`color`) or partly highlighted (`highlight`), as a table
+  that marks some rows by colour does (`htmlDropped` in [src/html.js](../src/html.js)). A colour
+  all of the text has (pasted from a document) means nothing and is not named. An agent reading
+  the message is told, and reads it as it was sent with `raw_message`.
 - An edit rewrites exactly one file. Earlier versions remain in pile 1.
 - A deletion keeps the file as a tombstone (`deletedAt` set, body removed), so links and read
   watermarks stay valid.
@@ -1664,9 +1680,13 @@ written by people outside its control.
 |---|---|
 | `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB and 8000 pixels a side, read from their headers) go to the model as images, larger ones through the Markdown conversion; an image the model would refuse never reaches it (`src/agent/images.js`), since the API refuses the whole request and the image would stay in the history: the provider also leaves such images out of every request (over 2000 pixels a side when it has more than 20 images); plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
+| `raw_message` | a message of the entry, or with `thread` of another conversation of its channel, as its platform sent it: the newest version in pile 1 (`src/agent/rawmessage.js`), only what the message says (the Teams body as HTML, its attachments and `eventDetail`; Slack's text, blocks, attachments and files, the edited message for an edit; Discord's content, embeds, attachments, components and poll), not the envelope, in parts of 30,000 characters (`offset`). It is not checked for prompt injection again: the agent is told it is data, not instructions. A withheld message stays withheld. A message whose markdown dropped something (`dropped`, see "Pile 2") says so where the agent reads it, naming the tool; under `read_any_thread`, which it cannot read, not |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` |
 | `read_any_thread` | only where it is turned on (see "Agent tools"): any thread of the inbox, by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
+| `find_channels` | with `read_any_thread`: the inbox's channels, on every platform, that a customer's name, a channel's or Teams team's name, a domain's name, or a site or repository (`owner/name`, or an Edge Delivery host) names, best first, the agent's own left out: id, platform and name, customer, ops teams, conversations and latest activity, why it matched, and the channel's link on its platform |
+| `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for any channel, by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
+| `channel_assignment`, `list_teams`, `request_channel_reassignment` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"). The admin team decides |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
 | `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
@@ -2137,7 +2157,20 @@ to test it first, and never to put a customer's name or a secret into one.
 paste links to customers' threads elsewhere. With this tool the agent has `read_any_thread`:
 any thread of the inbox, whatever its channel, team or customer, by its key or a link to one of
 its messages (`resolveAnyThread`, `src/agent/history.js`), except in channels the rules ignore.
-It has no search: a person points it to a thread. The messages go through Clef's injection check
+With it come `find_channels` and `list_any_channel_threads` (`src/agent/channelfind.js`): when a
+colleague relays a customer's question into an internal channel, the agent looks for the
+customer's own channel and whether the question is being worked there, instead of depending on a
+link someone saved in kb-org. `find_channels` matches the query's words against the customers'
+slugs and names (`orgs`, and the slugs the rules file threads under), the channels' names (and
+a Teams team's), and as the owner of the `site` and `repo` facts of their threads; a site
+(`owner/name`, or an Edge Delivery host) matches those facts exactly. Words every company name
+has ("Technologies", "Inc") are left out, and a channel is ranked by how many words matched,
+then by its sites, then by its latest activity; a word matches at the start of a word of a name
+("acme" is in aem-acme, not in megacme). A channel of an internal org or a vendor is found by its
+name or its org's, never by a site someone asked about there, and the agent's own channel and
+those the rules ignore never. Neither tool searches the messages: what they show is the names
+and facts the inbox has already, and the agent reads a thread with `read_any_thread`, which
+records it. The messages go through Clef's injection check
 like any others, and each thread an agent reads is kept in `agent_thread_reads`, since a
 transcript can be reset.
 

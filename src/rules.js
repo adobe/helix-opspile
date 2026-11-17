@@ -54,6 +54,22 @@ function compile(pattern) {
   }
 }
 
+const ordered = (rules) => [...rules].sort((a, b) => (a.priority - b.priority) || (a.id - b.id));
+
+/** What `rule` gives `channel` for `target`, or null when it does not apply or match. */
+function valueOf(rule, channel, target) {
+  if (rule.target !== target || (rule.source && rule.source !== channel.source)) {
+    return null;
+  }
+  const re = compile(rule.pattern);
+  const hit = re && candidates(channel, rule.field).map((v) => re.exec(v)).find(Boolean);
+  if (!hit) {
+    return null;
+  }
+  const value = rule.value.replace(/\$(\d)/g, (_, n) => hit[Number(n)] || '');
+  return target === 'kind' ? value : slug(value);
+}
+
 /**
  * Evaluates the rules for one channel.
  *
@@ -63,22 +79,27 @@ function compile(pattern) {
  */
 export function classify(rules, channel) {
   const result = { ...DEFAULTS, matched: {} };
-  const sorted = [...rules].sort((a, b) => (a.priority - b.priority) || (a.id - b.id));
+  const sorted = ordered(rules);
   for (const target of Object.keys(DEFAULTS)) {
     for (const rule of sorted) {
-      if (rule.target !== target || (rule.source && rule.source !== channel.source)) {
-        // eslint-disable-next-line no-continue
-        continue;
-      }
-      const re = compile(rule.pattern);
-      const hit = re && candidates(channel, rule.field).map((v) => re.exec(v)).find(Boolean);
-      if (hit) {
-        const value = rule.value.replace(/\$(\d)/g, (_, n) => hit[Number(n)] || '');
-        result[target] = target === 'kind' ? value : slug(value);
+      const value = valueOf(rule, channel, target);
+      if (value !== null) {
+        result[target] = value;
         result.matched[target] = rule.id;
         break;
       }
     }
   }
   return result;
+}
+
+/**
+ * Every rule for `target` that matches `channel`, in the order they are tried: the first one
+ * decides (`classify`), the others are what would decide without it. `[{ rule, value }]`.
+ */
+export function matching(rules, channel, target) {
+  return ordered(rules).flatMap((rule) => {
+    const value = valueOf(rule, channel, target);
+    return value === null ? [] : [{ rule, value }];
+  });
 }

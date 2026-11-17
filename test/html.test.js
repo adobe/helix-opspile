@@ -12,7 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { htmlToMarkdown } from '../src/html.js';
+import { htmlDropped, htmlToMarkdown } from '../src/html.js';
 
 describe('htmlToMarkdown', () => {
   it('converts paragraphs, emphasis and breaks', () => {
@@ -130,5 +130,24 @@ describe('htmlToMarkdown', () => {
   it('keeps plain text', () => {
     assert.equal(htmlToMarkdown('just text'), 'just text');
     assert.equal(htmlToMarkdown(''), '');
+  });
+});
+
+describe('htmlDropped', () => {
+  it('names text colors and highlights that tell some of the text from the rest', () => {
+    const table = '<table><tr><td>W1</td><td><span style="color:#2B9B62">site-one</span></td></tr>'
+      + '<tr><td>W4</td><td><p><span style="color:inherit">site-two</span></p></td></tr></table>';
+    assert.deepEqual(htmlDropped(table), ['color']);
+    assert.equal(htmlToMarkdown(table), '| W1 | site-one |\n| --- | --- |\n| W4 | site-two |');
+    assert.deepEqual(htmlDropped('<p>a <font color="red">b</font></p>'), ['color']);
+    assert.deepEqual(htmlDropped('<p>a <span style="background-color: yellow">b</span> <mark>c</mark></p>'), ['highlight']);
+  });
+
+  it('leaves out a color all of the text has, and colors that are none', () => {
+    assert.deepEqual(htmlDropped('<div style="color:rgb(36, 36, 36)"><p>pasted</p><p>text</p></div>'), []);
+    assert.deepEqual(htmlDropped('<p>a <span style="color:inherit">b</span> <span style="background:transparent">c</span></p>'), []);
+    // White space is in no color.
+    assert.deepEqual(htmlDropped('<p><span style="color:red">all red</span>&nbsp;</p>'), []);
+    assert.deepEqual(htmlDropped(''), []);
   });
 });

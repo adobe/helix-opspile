@@ -37,7 +37,8 @@ import { membershipOn } from './membership.js';
  *   tech stack (src/extract.js), which apply to every channel of the team from the next
  *   labeling of a thread. It cannot change the admin team's, which apply to every channel.
  * - `any_thread`: the agent reads any thread of the inbox, whatever its channel, team or
- *   customer (src/agent/history.js).
+ *   customer (src/agent/history.js), finds a customer's channels and lists their threads
+ *   (src/agent/channelfind.js).
  * - `membership`: the agent asks the platform's admin bot to add people to the thread's channel,
  *   or remove them, where someone asked for it in the thread (src/agent/membership.js): on Teams
  *   admin-bot (teams-admin-agent), on Slack AEM Ops Automation (the slack-automation relay), each
@@ -97,9 +98,10 @@ export const AGENT_TOOLS = [
   {
     tool: 'any_thread',
     title: 'Read any thread',
-    names: ['read_any_thread'],
+    names: ['read_any_thread', 'find_channels', 'list_any_channel_threads'],
     description: 'The agent reads any thread of the inbox, of any channel, team or customer, by'
-      + ' its key or a link to one of its messages',
+      + ' its key or a link to one of its messages, finds a customer\'s channels by its name or'
+      + ' the sites their threads are about, and lists a channel\'s conversations',
     note: 'One channel at a time, by the admin team, in internal channels only: not a customer\'s,'
       + ' partner\'s or vendor\'s, and none shared outside Adobe. What the agent read can reach'
       + ' its drafts, notes, knowledge bases and the other tools it has here. Every thread it'

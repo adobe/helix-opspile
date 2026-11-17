@@ -465,6 +465,14 @@ describe('pile-2 files', () => {
     assert.equal(merge({ ...file('1', {}, 'with size'), format: FORMAT }, { ...file('1', {}, 'plain'), format: 1 }), null);
   });
 
+  it('rewrites the same version when a newer normalizer finds what its markdown dropped', () => {
+    const old = { ...file('1', {}, 'same'), format: FORMAT - 1 };
+    const now = { ...file('1', { dropped: ['color'] }, 'same'), format: FORMAT };
+    assert.deepEqual(merge(old, now).meta.dropped, ['color']);
+    assert.equal(merge(old, { ...file('1', {}, 'same'), format: FORMAT }), null);
+    assert.match(render(now.meta, now.body), /\ndropped: \["color"\]\n/);
+  });
+
   it('turns a file into a tombstone and keeps it one', () => {
     const del = { ...file('3', { deletedAt: 'd' }), deleted: true };
     const tomb = merge(file('1'), del);

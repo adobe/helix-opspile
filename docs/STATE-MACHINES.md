@@ -28,7 +28,8 @@ that whoever comes second finds out instead of overwriting.
 ## Threads and messages
 
 **Message file.** absent → live → edited → tombstone. `merge` in `src/channels.js`: a file only moves
-to a newer `version`, and a tombstone is final, so a replay in any order comes out the same.
+to a newer `version` (or, at the same version, to what a higher `FORMAT` writes differently: its
+body or `dropped`), and a tombstone is final, so a replay in any order comes out the same.
 
 **Read watermark.** One moving position per person and thread (`watermarks`, `advanceWatermark` in
 `src/threads.js`). The write is conditional on being newer, so it never moves back.
@@ -106,7 +107,9 @@ a thread a newer message already re-filed in its row still gets its derived data
 **Channel request.** open → confirmed, declined or withdrawn (`src/requests.js`). The one real status
 column, and `CHECK` keeps it to those four; a partial unique index allows one open request per channel
 and team. Every close is `WHERE status = 'open'`. Confirming claims the request first, then assigns;
-a failed assignment opens it again, unless the rule was saved by then.
+a failed assignment opens it again, unless the rule was saved by then. `move` (migration 0071) is fixed when the
+request is made: a move request confirms as a move whoever holds the channel, the others move it
+only out of the admin team and share it otherwise.
 
 ## Drafts and replies
 
