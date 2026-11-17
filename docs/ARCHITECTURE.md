@@ -102,6 +102,22 @@ it; added to a channel another team holds, the new team shares it and nothing mo
 channel back to the admin team is always a move. The shares are configuration, like the rules,
 so a replay of pile 1 keeps them.
 
+**Following technologies.** A team follows technologies of the tech stack (`team_follows`, migration
+0072; its managers and the admin team pick them on its page, `PUT /api/admin/follows`), and so does a
+person (`person_follows`; from a thread's tech stack dropdown, or the Following section of their menu,
+`PUT /api/follows`). A thread that shows one is in the team's inbox, or the person's personal view,
+whichever team its channel is filed under, and they work it there as a shared channel's: read,
+reply, react, resolve, draft, search, live updates, notifications, the MCP server. What a thread
+shows is its own label's (`labels.tech`: what Clef is sure of, and what the rules detected), not its
+channel's (`channel_tech`), so a team that follows Experience Workspace gets the threads about it,
+not every thread of a customer that uses it; and an inbox entry shows what any of its members does.
+Conversations only: an alert channel's threads are followed by none. Nothing is filed anew: the
+channel stays under its team, with its shares, and a following team cannot start a thread in it.
+`src/follows.js` has the SQL; `thread_tech` has what each thread shows by index, so that `team = ?
+OR <shared channel> OR <followed>` stays a search by index (`teamsOf`, `mayWork`, `roomsOf`, the
+inbox's `inInbox`). A thread's agent writes the knowledge bases of the teams that follow it, as those
+of its channel's shares (`accessibleRepos`, `via: 'follow'`).
+
 An org is a slug. What it is called, its icon (a domain, whose favicon is shown, or an image
 URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an org without
 one is a customer shown by its slug and the favicon of its usual mail domain. The inbox and
@@ -447,8 +463,9 @@ to them; `generated` says which agent wrote it and when, and `verified` will rec
 review. Every change is a commit, so a bad memory is a `git revert`.
 
 [Thread agents](#thread-agents) are the writers. A thread's agent writes its team's and its
-customer's knowledge base, and those of the teams its channel is shared with (`channel_teams`);
-every other team's it reads but cannot write (src/agent/repos.js, `accessibleRepos`). Code, not the agent, writes `index.md` and `log.md`
+customer's knowledge base, those of the teams its channel is shared with (`channel_teams`), and
+those of the teams that follow a technology its thread shows (`team_follows`, see "Following
+technologies"); every other team's it reads but cannot write (src/agent/repos.js, `accessibleRepos`). Code, not the agent, writes `index.md` and `log.md`
 and stamps `generated`, and a write that is not a well-formed concept is refused. For now
 every write is trusted and lands on `main`; staff review comes later, against the git
 history and the trust tiers OKF derives from `verified`.
@@ -693,7 +710,8 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
 - The thread list has the personal view and a view per team the viewer is in, switched above
   the list (for a member of two teams: *Personal · Admin · Helix*). **Personal**
   (`view=personal`, and the default: any address without `team=`) has the conversations in the channels you posted or
-  were mentioned in, whichever team they are filed under (all of their threads, not only the ones you are in; no alerts), puts the
+  were mentioned in, whichever team they are filed under (all of their threads, not only the ones you are in; no alerts),
+  and the ones that show a technology you follow (see "Following technologies"), puts the
   latest activity first (a person's last post, or for a thread only bots posted in its last
   message) and keeps only the customer and platform cards (one customer is picked
   at a time); filters on the cards it does not show do not apply there, and are kept for the team

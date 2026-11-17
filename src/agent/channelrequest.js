@@ -16,6 +16,7 @@ import { createRequest, listRequests } from '../requests.js';
 import { ADMIN_TEAM } from '../review.js';
 import { matching } from '../rules.js';
 import { sharesOf } from '../shares.js';
+import { entryFollows } from '../follows.js';
 
 /**
  * Where the agent's channel is filed and why, the ops teams there are, and a request to file it
@@ -66,22 +67,24 @@ async function teamNames(env) {
 }
 
 /**
- * Where channel `t` (the agent's target: `source`, `tenant`, `channelId`, `team`, `org`, `kind`)
- * is filed and why: for team, org and kind, every rule that matches it in the order they are
- * tried (the first decides), the teams it is shared with, Clef's pick and the open requests.
+ * Where channel `t` (the agent's target: `source`, `tenant`, `channelId`, `team`, `org`, `kind`,
+ * and the thread's `key`) is filed and why: for team, org and kind, every rule that matches it in
+ * the order they are tried (the first decides), the teams it is shared with, the teams that follow
+ * a technology the thread shows (src/follows.js), Clef's pick and the open requests.
  */
 export async function channelAssignment(env, t) {
   const row = await env.DB.prepare(`SELECT * FROM channels WHERE source = ? AND channel_id = ?
     ORDER BY tenant = ? DESC LIMIT 1`).bind(t.source, t.channelId, t.tenant || '').first();
   const rules = await loadRules(env);
   const channel = toChannel(row, t.source, t.channelId);
-  const [names, shares, label, requests] = await Promise.all([
+  const [names, shares, label, requests, follows] = await Promise.all([
     teamNames(env),
     sharesOf(env, t.source, t.channelId),
     env.DB.prepare(`SELECT team, team_p, kind, kind_p, labeled_at FROM channel_labels
       WHERE source = ? AND channel_id = ? ORDER BY labeled_at DESC LIMIT 1`)
       .bind(t.source, t.channelId).first(),
     listRequests(env, { channel: { source: t.source, channelId: t.channelId }, limit: 10 }),
+    t.key ? entryFollows(env, t.key) : [],
   ]);
   return {
     channel: {
@@ -95,6 +98,7 @@ export async function channelAssignment(env, t) {
     org: matching(rules, channel, 'org'),
     kind: matching(rules, channel, 'kind'),
     shares,
+    follows,
     clef: label || null,
     requests,
     names,
@@ -131,6 +135,11 @@ export function assignmentText(a, t) {
   lines.push('', a.shares.length
     ? `Shared with (in their inboxes too, filed where it is): ${a.shares.map(team).join(', ')}`
     : 'Shared with no other team.');
+  const following = [...new Set((a.follows || []).map((f) => f.team))];
+  if (following.length) {
+    const what = (slug) => a.follows.filter((f) => f.team === slug).map((f) => f.tech).join(', ');
+    lines.push(`This thread is in the inboxes of ${following.map((s) => `${team(s)} (follows ${what(s)})`).join(', ')} too: they follow a technology Clef tagged the thread with. That is the thread's, not the channel's, and files nothing.`);
+  }
   if (a.clef) {
     const p = a.clef.team_p == null ? '' : ` (${Math.round(a.clef.team_p * 100)}%)`;
     lines.push(`Clef's pick of a team, on ${String(a.clef.labeled_at).slice(0, 10)}: ${a.clef.team === 'none' ? 'none of them' : team(a.clef.team)}${p}. Clef is asked only about the admin team's channels.`);

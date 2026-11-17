@@ -75,6 +75,20 @@ thread whose files are missing is recorded in `dead_jobs`, and the sweep leaves 
 A label written before migration 0059 has no `tech` (null, not `{}`): the thread view then goes by
 `channel_tech.thread` until the thread is labeled again.
 
+**What a thread shows, by index.** `thread_tech` (migration 0072, `src/follows.js`) is derived from
+`labels.tech`: one row per technology, written in the same `db.batch` as the label (all of the
+thread's rows deleted, then what the label shows inserted), so the two never disagree, and the
+migration fills it from the labels there were. A label without `tech` has no rows, as above. It is
+what following a technology reads (below); a relabel that changes it says what it gained and lost,
+and the label job tells the rooms of the teams that follow those (`announceFollowed` in
+`src/normalizer.js`), best effort, as every room's.
+
+**Following a technology.** not followed → followed → not followed: a row in `team_follows` or
+`person_follows` (migration 0072), nothing else. Configuration, like the shares: whose inbox has a
+thread is worked out from it, its thread's `thread_tech` and its group each time
+(`followingTeams`, `followersOf`), never stored, so a relabel, a re-threading or a follow taken back
+moves the thread in or out of the inboxes at once, and nothing has to be undone.
+
 **Label review.** applies to the current label → history only. A review holds while its
 `labeled_through` matches the label's (`src/review.js`).
 

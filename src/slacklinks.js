@@ -60,7 +60,9 @@ export async function slackMessageLinks(env, me, texts, tenant) {
   const threads = [...new Set(rows.map((r) => r.thread))];
   const allowed = new Map(await Promise.all(threads.map(async (thread) => {
     const row = rows.find((r) => r.thread === thread);
-    const place = { source: 'slack', channel_id: row.channel_id, team: row.team };
+    const place = {
+      source: 'slack', channel_id: row.channel_id, team: row.team, thread,
+    };
     const yes = isAdmin(me) || await mayWork(env, me)(await teamsOf(env, place), place);
     return [thread, yes];
   })));

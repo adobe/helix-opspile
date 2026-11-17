@@ -15,6 +15,7 @@ import { segment } from './raw.js';
 import { EMBEDDING_MODEL } from './rethread.js';
 import { channelTag } from './fulltext.js';
 import { likePattern as like } from './like.js';
+import { followedByTeams } from './follows.js';
 
 /**
  * Search over a team's inbox (or the viewer's teams', for the personal view), on every platform
@@ -97,12 +98,13 @@ export function snippet(body, words = []) {
 }
 
 /**
- * SQL: thread row `alias` is filed under one of the teams (`?1`, a JSON list), or in a channel
- * shared with one of them.
+ * SQL: thread row `alias` is filed under one of the teams (`?1`, a JSON list), in a channel
+ * shared with one of them, or shows a technology one of them follows (src/follows.js).
  */
 const ofTeams = (alias) => `(${alias}.team IN (SELECT value FROM json_each(?1))
   OR (${alias}.source, ${alias}.channel_id) IN (SELECT source, channel_id FROM channel_teams
-    WHERE team IN (SELECT value FROM json_each(?1))))`;
+    WHERE team IN (SELECT value FROM json_each(?1)))
+  OR ${followedByTeams(alias, '?1')})`;
 
 /** Filters for the vectors the teams see: their own, then the shared channels', in parts. */
 export function vectorFilters(teams, channels) {
@@ -122,12 +124,17 @@ export function vectorFilters(teams, channels) {
   return out;
 }
 
-/** The channels shared with `teams` and filed under another team, as channel keys. */
+/**
+ * The channels shared with `teams` and filed under another team, as channel keys, and those of
+ * the threads that show a technology one of them follows (src/follows.js): the vectors and the
+ * full text are asked for these channels too, and the inbox keeps what of them is the teams'.
+ */
 async function sharedChannels(env, teams) {
   const { results } = await env.DB.prepare(`SELECT DISTINCT
       t.source || ':' || t.tenant || ':' || t.channel_id AS channel
-    FROM threads t WHERE (t.source, t.channel_id) IN (SELECT source, channel_id
+    FROM threads t WHERE ((t.source, t.channel_id) IN (SELECT source, channel_id
       FROM channel_teams WHERE team IN (SELECT value FROM json_each(?1)))
+      OR ${followedByTeams('t', '?1')})
       AND t.team NOT IN (SELECT value FROM json_each(?1))`)
     .bind(JSON.stringify(teams)).all();
   return (results || []).map((r) => r.channel);

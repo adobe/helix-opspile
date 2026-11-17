@@ -64,7 +64,8 @@ function fakeDb(during = async () => {}, { channels = {}, people = {} } = {}) {
         },
         first: async () => (channels[args[0]] ? { source: 'slack', channel_id: channels[args[0]] } : null),
         all: async () => ({
-          results: sql.includes('json_each')
+          // Who follows what a thread shows (src/follows.js): nobody here.
+          results: sql.includes('json_each') && !sql.includes('person_follows')
             ? JSON.parse(args[0]).filter((p) => (people[args[2]] || []).includes(p))
               .map((person) => ({ person }))
             : [],

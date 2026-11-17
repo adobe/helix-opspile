@@ -883,6 +883,47 @@ function renderSuggestions() {
 
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+/**
+ * The technologies the team follows (src/follows.js): the threads that show one are in its
+ * inbox. Its managers and the admin team pick them; the list offers the rest of the tech stack,
+ * by product.
+ */
+function renderFollows() {
+  const v = state.view;
+  const { team } = v;
+  const byId = new Map(v.followable.map((t) => [t.tech, t]));
+  const name = (id) => byId.get(id)?.name || id;
+  $('followsTable').innerHTML = v.follows.length
+    ? `<table><tr><th>Technology</th><th>Product</th><th>Added by</th><th></th></tr>${v.follows.map((f) => `<tr>
+      <td>${esc(name(f.tech))} <span class="sub mono">${esc(f.tech)}</span></td><td>${esc(byId.get(f.tech)?.product || '')}</td>
+      <td>${esc(f.added_by || '')}</td>
+      <td><button class="link" data-unfollow="${esc(f.tech)}"${off(`follow:${team.slug}:${f.tech}`)}>Unfollow</button></td></tr>`).join('')}</table>`
+    : '<div class="empty">None yet: the inbox has the team\'s channels and the channels shared with it.</div>';
+  const followed = new Set(v.follows.map((f) => f.tech));
+  const groups = new Map();
+  for (const t of v.followable.filter((x) => !followed.has(x.tech))) {
+    const g = t.product || 'Other';
+    groups.set(g, [...(groups.get(g) || []), t]);
+  }
+  $('fTech').innerHTML = `<option value="">Pick one…</option>${[...groups].sort(([a], [b]) => a.localeCompare(b))
+    .map(([g, list]) => `<optgroup label="${esc(g)}">${list.map((t) => `<option value="${esc(t.tech)}">${esc(t.name)}</option>`).join('')}</optgroup>`).join('')}`;
+  const change = (tech, follow, button) => hold(button, `follow:${team.slug}:${tech}`, async () => {
+    const res = await call('/api/admin/follows', 'PUT', { team: team.slug, tech, follow });
+    if (!res.ok) { failed(follow ? `Follow ${name(tech)}` : `Unfollow ${name(tech)}`, res); return; }
+    v.follows = res.body.follows;
+    status('ok', follow ? `${team.name} follows ${name(tech)}: the threads that show it are in its inbox.` : `${team.name} no longer follows ${name(tech)}.`);
+    if (v === state.view) renderFollows();
+  });
+  for (const b of $('followsTable').querySelectorAll('[data-unfollow]')) {
+    b.onclick = () => change(b.dataset.unfollow, false, b);
+  }
+  $('followForm').onsubmit = (e) => {
+    e.preventDefault();
+    const tech = $('fTech').value;
+    if (tech) change(tech, true, $('fAdd'));
+  };
+}
+
 function renderMembers() {
   const { members, team } = state.view;
   const role = (m) => {
@@ -1139,10 +1180,10 @@ async function showTeam(slug) {
   if (!current()) return;
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   const {
-    team, members, rules, channels, suggestions, coverage, requests = [],
+    team, members, rules, channels, suggestions, coverage, requests = [], follows = [], followable = [],
   } = r.body;
   const v = {
-    target: 'team', value: slug, team, members, rules, channels, suggestions, coverage, requests,
+    target: 'team', value: slug, team, members, rules, channels, suggestions, coverage, requests, follows, followable,
   };
   state.view = v;
   const templates = rules.filter((x) => x.value !== slug);
@@ -1172,6 +1213,10 @@ async function showTeam(slug) {
       <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>.</p>
       ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}` : ''}
     ${channelsCard('team')}
+    ${real ? `<div class="card"><h2>Technologies</h2><div id="followsTable"></div>
+      <form class="form" id="followForm"><label class="fld grow"><span>Follow a technology</span><select id="fTech"></select></label>
+      <button class="primary" id="fAdd">Follow</button></form>
+      <p class="hint">Threads that show one of these technologies are in this team's inbox, in any team's channels, and its members work them there. Clef tags each thread with what the thread itself shows, not what its channel uses. The channels stay filed where they are, and the thread's agent gets this team's knowledge base too.</p></div>` : ''}
     ${real && (!admin || v.requests.length) ? `<div class="card"><h2>Requests</h2><div id="requestsTable"></div>
       <p class="hint">${admin ? 'Channels this team\'s managers asked for. Review one to confirm or decline it.' : 'The channels this team asked the admin team for, and their answers.'}</p></div>` : ''}
     ${suggestions ? `<div class="card"><h2>Suggested channels</h2>
@@ -1185,6 +1230,7 @@ async function showTeam(slug) {
   if (!real) return;
   renderMembers();
   wireMemberPicker();
+  renderFollows();
   $('tSelf').onchange = async () => {
     const box = $('tSelf');
     const on = box.checked;

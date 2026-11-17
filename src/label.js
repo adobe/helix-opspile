@@ -18,6 +18,7 @@ import {
 } from './extract.js';
 import { isStaffDomain } from './lookup.js';
 import { LAYERS } from './stack.js';
+import { threadTechStatements } from './follows.js';
 import {
   coveredBy, GENERIC, nameKey, productKey, productLike, techIndex,
 } from './products.js';
@@ -706,7 +707,10 @@ export async function labelThread(env, key, now = new Date()) {
   const [kind, kindP] = choice('kind');
   const topics = topicsOf(a);
   const shown = techOf(tech, a, found.tech);
-  await env.DB.prepare(`INSERT INTO labels (thread, next_actor, next_actor_p, kind, kind_p,
+  // What it showed before, for the inboxes that follow what it shows or showed (src/follows.js).
+  const { results: before } = await env.DB.prepare('SELECT tech FROM thread_tech WHERE thread = ?')
+    .bind(key).all();
+  const label = env.DB.prepare(`INSERT INTO labels (thread, next_actor, next_actor_p, kind, kind_p,
       urgency, resolved_p, labeled_through, model, labeled_at, title, topics, tech)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (thread) DO UPDATE SET next_actor = excluded.next_actor,
@@ -729,9 +733,12 @@ export async function labelThread(env, key, now = new Date()) {
       title,
       topics ? JSON.stringify(topics) : null,
       JSON.stringify(shown),
-    )
-    .run();
+    );
+  // The label and what the thread shows by index (`thread_tech`) at once.
+  await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown)]);
   await recordTech(env, thread, shown);
+  const was = (before || []).map((r) => r.tech).sort();
+  const is = Object.keys(shown).sort();
   const loose = [...clairicFacts(clairic.answers),
     ...productFacts(clairic.answers?.products, state, thread, tech)];
   await replaceFacts(env.DB, key, 'clairic', loose);
@@ -742,6 +749,13 @@ export async function labelThread(env, key, now = new Date()) {
     topics: topics ? Object.keys(topics) : [],
     facts: loose.length,
     title: Boolean(title),
+    // What it shows, when that changed: the inboxes that follow a technology it gained or lost
+    // list it again (src/normalizer.js).
+    ...(was.join() !== is.join() ? {
+      tech: {
+        gained: is.filter((t) => !was.includes(t)), lost: was.filter((t) => !is.includes(t)),
+      },
+    } : {}),
   };
 }
 

@@ -41,6 +41,7 @@ import { runCatchUp } from './catchup.js';
 import { notifyRoom } from './notify.js';
 import { signalFacts } from './resolve.js';
 import { teamsOf } from './shares.js';
+import { teamsFollowing } from './follows.js';
 import { classify } from './rules.js';
 import {
   advanceWatermark, applyReaction, findMessage, indexMessage, mentionedByName, recordMentions,
@@ -48,6 +49,29 @@ import {
 } from './threads.js';
 
 export { notifyRoom };
+
+/**
+ * A thread whose label gained or lost technologies (`tech`, src/label.js): the open inboxes of
+ * the teams that follow one of them, and of the people who do (in the rooms of its teams), list
+ * it again, so a thread that now shows a technology they follow comes in, and one that no longer
+ * does goes. Best effort, as every room's.
+ */
+async function announceFollowed(env, key, tech) {
+  if (!env.ROOMS) {
+    return;
+  }
+  const changed = [...tech.gained, ...tech.lost];
+  const row = await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
+    .bind(key).first();
+  const [teams, following] = await Promise.all([
+    row ? teamsOf(env, row) : [],
+    teamsFollowing(env, changed),
+  ]);
+  const rooms = [...new Set([...teams, ...following])];
+  if (rooms.length) {
+    await notifyRoom(env, rooms, { type: 'thread', thread: key });
+  }
+}
 
 const messageKeyOf = (m) => `${m.source}:${m.tenant}:${m.channelId}:${m.id}`;
 
@@ -126,7 +150,7 @@ export async function processReaction(env, key, r) {
     at: r.at,
     removed: r.removed,
   });
-  const row = await env.DB.prepare('SELECT team, kind, source, channel_id FROM threads WHERE thread = ?')
+  const row = await env.DB.prepare('SELECT thread, team, kind, source, channel_id FROM threads WHERE thread = ?')
     .bind(msg.thread).first();
   // Every team whose inbox has the thread: a shared channel's too.
   const rooms = env.ROOMS ? await teamsOf(env, row) : [];
@@ -530,7 +554,7 @@ export async function processKey(env, key, cache = {}) {
     await queueExport(env, message.thread);
   }
   const rooms = env.ROOMS ? await teamsOf(env, {
-    team: cls.team, source: message.source, channel_id: message.channelId,
+    team: cls.team, source: message.source, channel_id: message.channelId, thread: message.thread,
   }) : [];
   // Who to notify (ui/inbox.js): the people a message just posted (not a backfill, a replay or a
   // catch-up long after) newly mentions, the people whose thread it is, and who wrote it.
@@ -622,6 +646,10 @@ export async function consume(batch, baseEnv, meter = null) {
         if (r.result === 'labeled' || r.result === 'titled') {
           // eslint-disable-next-line no-await-in-loop
           await queueExport(env, body.label, { delaySeconds: 0 });
+        }
+        if (r.tech) {
+          // eslint-disable-next-line no-await-in-loop
+          await announceFollowed(env, body.label, r.tech);
         }
       } else if (body.export) {
         // eslint-disable-next-line no-await-in-loop

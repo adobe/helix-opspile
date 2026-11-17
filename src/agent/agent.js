@@ -642,6 +642,9 @@ export class ThreadAgent extends Agent {
         source: row ? row.source : null,
         permalink: root ? root.permalink : null,
         threads: entry ? entry.keys : [],
+        // The teams that follow a technology the thread shows (src/follows.js), whose knowledge
+        // bases it has as those of the teams its channel is shared with.
+        follows: entry ? entry.follows : [],
       };
     }
     this.cachedTarget = { at: Date.now(), value };

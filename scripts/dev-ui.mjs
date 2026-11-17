@@ -93,6 +93,7 @@ import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { findPerson } from '../src/kbpeople.js';
 import { createStore } from './dev-ui-fixtures.mjs';
+import { followable, followsOfTeams } from '../src/follows.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const uiDir = join(root, 'ui');
@@ -144,6 +145,12 @@ const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
 // incidents, so the user menu lists one.
 let settings = withDefaults(store.me, {
   bells: [{ view: 'edge', sel: { type: ['conversation'], kind: ['incident'] } }],
+});
+// The technologies Dana follows (src/follows.js), and her teams', which the admin pages keep.
+let follows = ['da'];
+const followsNow = async () => ({
+  me: follows,
+  teams: await followsOfTeams(adminApi.env, store.me.teams.map((t) => t.slug)),
 });
 const reloadClients = new Set();
 
@@ -1194,6 +1201,7 @@ async function api(req, res, url) {
       readonly: true,
       connected: {},
       react: {},
+      follows: { me: [], teams: {} },
     });
   }
   if (url.pathname === '/api/me') {
@@ -1230,7 +1238,22 @@ async function api(req, res, url) {
         app: Object.fromEntries(['slack', 'teams', 'discord'].map((p) => [p, appRule(p)])),
       },
       settings,
+      follows: await followsNow(),
     });
+  }
+  if (url.pathname === '/api/follows') {
+    // As src/api.js: what Dana follows, changed one technology at a time.
+    if (req.method === 'PUT') {
+      const b = await readJson(req);
+      const id = String(b.tech || '');
+      if (!vocabNames.tech[id]) {
+        return json(res, { error: 'no tech stack has that technology' }, 400);
+      }
+      follows = b.follow === false ? follows.filter((t) => t !== id)
+        : [...new Set([...follows, id])].sort();
+      return json(res, await followsNow());
+    }
+    return json(res, { ...await followsNow(), tech: await followable(adminApi.env) });
   }
   if (url.pathname === '/api/settings') {
     if (req.method === 'PUT') {

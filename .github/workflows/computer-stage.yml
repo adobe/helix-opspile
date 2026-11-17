@@ -55,6 +55,7 @@ on:
       - 'src/extract.js'
       - 'src/favicons.js'
       - 'src/filecache.js'
+      - 'src/follows.js'
       - 'src/fulltext.js'
       - 'src/github.js'
       - 'src/graph.js'
