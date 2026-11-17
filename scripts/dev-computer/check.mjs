@@ -23,7 +23,11 @@
  *   npm run computer:check
  *   npm run computer:check -- http://localhost:8788
  *   COMPUTER_TOKEN=… npm run computer:check -- --images https://<stage worker>
+ *   npm run computer:check -- --measure default,48/48 http://localhost:8788
  *
+ * `--measure` checks nothing: it measures what an agent of the GitHub image costs, with each
+ * cache it names (`measure`: the Worker's own, and what the isolate keeps in all and of one
+ * file, in MiB), and how much memory is free in its object after it.
  * `--images` first puts into the Worker's bucket the objects of the images it lacks
  * (`syncImages`, as `npm run computer:images` does for a deployment). `COMPUTER_TOKEN` is sent
  * in `x-opspile-computer-token`, which the deployed Worker requires. Each run's agents are new
@@ -93,6 +97,29 @@ export function uploadChecks(runtime) {
     },
   ];
 }
+
+/**
+ * Two commands of an agent of the GitHub image, in order, on a computer of their own: once the
+ * second made its object exceed its memory (kernel 1.189.0 kept a copy of every program it
+ * ran, gh's 50 MB too, beside the image cache's).
+ */
+export const GITHUB_SESSION = [
+  'GH_TOKEN=x gh version | head -1 | cut -d" " -f1-2 && echo \'{"a":1}\' | jq -c .'
+    + ' && printf "a\\n" | grep a | sed s/a/b/ | awk \'{print}\''
+    + ' && curl -sS -o /dev/null -w "%{http_code}\\n" https://www.aem.live/'
+    + ' && dig +short www.aem.live | grep -c . && qjs -e "console.log(6 * 7)"'
+    + ' && openssl version | cut -d" " -f1',
+  'cd /tmp && rm -rf c && git clone -q --depth 1 https://github.com/adobe/helix-shared c'
+    + ' && git -C c log --oneline | wc -l && printf "a: 1\\n" | yq .a'
+    + ' && GH_TOKEN=x gh version | head -1 | cut -d" " -f1-2'
+    + ' && tar --version | head -1 | cut -d" " -f1-2 && gzip --version | head -1 | cut -d" " -f1'
+    + ' && diff --version | head -1 | cut -d" " -f1 && tree --version | cut -d" " -f1'
+    + ' && printf "<p>hi</p>" | html2markdown && echo hi | xxd -p && file -b c/package.json',
+];
+const GITHUB_SESSION_OUTPUT = [
+  /^gh version\n\{"a":1\}\nb\n200\n[1-9]\d*\n42\nOpenSSL\n$/,
+  /^1\n1\ngh version\ntar \(GNU\ngzip\ndiff\ntree\nhi\n68690a\nJSON text data\n$/,
+];
 
 export const CHECKS = [
   { name: 'boots', command: 'uname -s; id -un', match: /^Linux\nroot\n$/ },
@@ -200,6 +227,14 @@ export const CHECKS = [
     match: /^gh version 2\.\d+\.\d+\n[1-9]\n$/,
     timeout: 120,
   },
+  ...GITHUB_SESSION.map((command, i) => ({
+    name: `github: a session, command ${i + 1} of ${GITHUB_SESSION.length}`,
+    image: 'github',
+    thread: 'github-session',
+    command,
+    match: GITHUB_SESSION_OUTPUT[i],
+    timeout: 120,
+  })),
   {
     name: 'data: rg, sqlite3, strings',
     image: 'data',
@@ -495,6 +530,108 @@ async function startDev() {
   return { origin: `http://localhost:${port}`, stop: () => dev.kill('SIGTERM') };
 }
 
+/**
+ * The caches `--measure` tries: `{ label, mib, fileMib }` (null sizes: the Worker's own), from
+ * `spec` (`default,48/48,64/64`: what the isolate keeps in all, and of one file, in MiB).
+ */
+export function cachesOf(spec = 'default') {
+  return String(spec).split(',').filter(Boolean).map((c) => {
+    const m = /^(\d+)\/(\d+)$/.exec(c);
+    return m ? { label: c, mib: Number(m[1]), fileMib: Number(m[2]) }
+      : { label: 'default', mib: null, fileMib: null };
+  });
+}
+
+const MB = (n) => Math.round((n || 0) / 1e5) / 10;
+
+/**
+ * What an agent of the GitHub image costs, on the computer at `origin`, with each of `caches`
+ * (cachesOf), each on an agent of its own: GITHUB_SESSION, then its kernel ended and the first
+ * command again (as when the object lets its kernel go and boots it again), each with its time
+ * and what the isolate asked of the images bucket then; and at the end how much memory its
+ * object had free (`/probe`, `step` MiB more each time until the isolate is reset, or `max`).
+ * `[{ label, steps: [{ name, ms, ok, gets, fetchedMB, keptMB, error }], freeMiB }]`.
+ */
+export async function measure(origin, caches, {
+  token, run, step = 4, max = 124, log = console.log,
+} = {}) {
+  const headers = { 'content-type': 'application/json', ...headersOf(token) };
+  const post = async (thread, path, body) => {
+    const res = await fetch(`${origin}${path}?thread=${thread}`, {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    try {
+      return { status: res.status, ...JSON.parse(text) };
+    } catch {
+      return { status: res.status, error: text.trim().slice(0, 200) };
+    }
+  };
+  const out = [];
+  for (const cache of caches) {
+    const thread = `measure-${run}-${cache.label.replace(/\//g, '-')}`;
+    const steps = [];
+    // What the isolate asked of the bucket before (another agent's, in the same isolate).
+    // eslint-disable-next-line no-await-in-loop
+    let before = (await post(thread, '/probe', { mib: 0 }).catch(() => ({}))).images || null;
+    const exec = async (name, command, first) => {
+      const started = Date.now();
+      const body = await post(thread, '/', {
+        command,
+        image: 'github',
+        timeout: 120,
+        ...(first && cache.mib ? { cache: { mib: cache.mib, fileMib: cache.fileMib } } : {}),
+      }).catch((e) => ({ error: reasonOf(e) }));
+      const now = body.images;
+      const result = {
+        name,
+        ms: Date.now() - started,
+        ok: !body.error && body.exitCode === 0,
+        gets: now && before ? now.gets - before.gets : now?.gets,
+        fetchedMB: MB(now && before ? now.fetched - before.fetched : now?.fetched),
+        keptMB: MB(now?.bytes),
+        ...(body.error ? { error: `${body.error}${body.message ? `: ${body.message}` : ''}`.slice(0, 160) } : {}),
+      };
+      before = now || null;
+      steps.push(result);
+      log(`  ${cache.label}: ${name}: ${result.ok ? 'ok' : 'FAIL'} ${result.ms} ms, ${result.gets ?? '–'} GETs`
+        + ` (${result.fetchedMB} MB), ${result.keptMB} MB kept${result.error ? `, ${result.error}` : ''}`);
+    };
+    // eslint-disable-next-line no-await-in-loop
+    await exec('command 1', GITHUB_SESSION[0], true);
+    // eslint-disable-next-line no-await-in-loop
+    await exec('command 2', GITHUB_SESSION[1]);
+    // eslint-disable-next-line no-await-in-loop
+    await post(thread, '/drop', {}).catch(() => {});
+    // eslint-disable-next-line no-await-in-loop
+    await exec('command 1, its kernel booted again', GITHUB_SESSION[0]);
+    let freeMiB = 0;
+    for (let mib = step; mib <= max; mib += step) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await post(thread, '/probe', { mib }).catch((e) => ({ error: reasonOf(e) }));
+      if (res.error || res.mib !== mib) {
+        break;
+      }
+      freeMiB = mib;
+    }
+    log(`  ${cache.label}: ${freeMiB} MiB free after it (${freeMiB >= max ? 'at least' : 'to the nearest'} ${step} MiB)`);
+    out.push({ label: cache.label, steps, freeMiB });
+  }
+  return out;
+}
+
+/** What `measure` found, as a Markdown table. */
+export function measuredOf(results, { max = 124 } = {}) {
+  const rows = results.flatMap((r) => [
+    ...r.steps.map((s) => `| ${r.label} | ${s.ok ? '✅' : '❌'} ${s.name} | ${s.ms} ms | ${s.gets ?? '–'}`
+      + ` (${s.fetchedMB} MB) | ${s.keptMB} MB |${s.error ? ` ${s.error.replace(/\|/g, '/')}` : ''}`),
+    `| ${r.label} | free in the object after it | ${r.freeMiB >= max ? '≥ ' : ''}${r.freeMiB} MiB | | |`,
+  ]);
+  return ['### What an agent of the GitHub image costs', '',
+    '| Cache (MiB, of one file) | Step | Time | GETs (fetched) | Kept |', '| --- | --- | --- | --- | --- |',
+    ...rows, ''].join('\n');
+}
+
 async function checkAll(origin, argv) {
   const token = process.env.COMPUTER_TOKEN;
   const built = await build();
@@ -503,6 +640,16 @@ async function checkAll(origin, argv) {
     await syncImages(origin, built, { token });
   }
   const run = process.env.GITHUB_RUN_ID || Date.now().toString(36);
+  if (argv.includes('--measure')) {
+    const spec = argv[argv.indexOf('--measure') + 1];
+    const results = await measure(origin, cachesOf(/^https?:/.test(spec || '') ? undefined : spec), {
+      token, run: `${run}-${process.env.GITHUB_RUN_ATTEMPT || 1}`,
+    });
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, measuredOf(results));
+    }
+    return;
+  }
   const checks = [...CHECKS, ...rangeChecks(built), ...built.images.map(commandsCheck)];
   const results = [];
   for (const check of checks) {

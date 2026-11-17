@@ -15,7 +15,8 @@ import { createHash } from 'node:crypto';
 import { afterEach, describe, it } from 'node:test';
 import { build, objectsOf } from '../scripts/computer-images.mjs';
 import {
-  CHECKS, commandsCheck, rangeChecks, request, runCheck, summaryOf, syncImages, waitForReady,
+  cachesOf, CHECKS, commandsCheck, GITHUB_SESSION, measure, measuredOf, rangeChecks, request,
+  runCheck, summaryOf, syncImages, waitForReady,
 } from '../scripts/dev-computer/check.mjs';
 
 const ORIGIN = 'https://computer.example';
@@ -236,6 +237,56 @@ describe('the checks of the stage computer', () => {
     assert.match(summary, /\| ✅ \| boots \| 5 ms \|\n\| ❌ \| dig \| 9 ms \|/);
     assert.match(summary, /\*\*dig\*\* \(exit 9\):\n\n```\nno servers could be reached\n```/);
     assert.doesNotMatch(summary, /https?:/);
+  });
+
+  it('run an agent\'s GitHub session on a computer of its own, its commands in order', () => {
+    const session = CHECKS.filter((c) => c.thread === 'github-session');
+    assert.deepEqual(session.map((c) => c.command), GITHUB_SESSION);
+    assert.ok(session.every((c) => c.image === 'github'));
+    const at = CHECKS.indexOf(session[0]);
+    assert.equal(CHECKS[at + 1], session[1]);
+    assert.match('gh version\n{"a":1}\nb\n200\n2\n42\nOpenSSL\n', session[0].match);
+    assert.match('1\n1\ngh version\ntar (GNU\ngzip\ndiff\ntree\nhi\n68690a\nJSON text data\n', session[1].match);
+  });
+
+  it('measure each cache on an agent of its own, and how much memory is free after it', async () => {
+    assert.deepEqual(cachesOf('default,48/32'), [
+      { label: 'default', mib: null, fileMib: null }, { label: '48/32', mib: 48, fileMib: 32 },
+    ]);
+    const asked = [];
+    let gets = 10;
+    globalThis.fetch = async (url, init) => {
+      const { pathname, searchParams } = new URL(url);
+      const body = JSON.parse(init.body);
+      asked.push([pathname, searchParams.get('thread'), body.mib ?? body.cache ?? null]);
+      if (pathname === '/probe') {
+        // 12 MiB free: past that the isolate is reset, and the Worker answers 500.
+        return body.mib > 12 ? new Response('exceeded its memory limit', { status: 500 })
+          : Response.json({ mib: body.mib, images: { gets, fetched: gets * 1e6, bytes: 5e6 } });
+      }
+      if (pathname === '/drop') {
+        return Response.json({ dropped: true });
+      }
+      gets += 2;
+      return Response.json({ exitCode: 0, images: { gets, fetched: gets * 1e6, bytes: 5e6 } });
+    };
+    const lines = [];
+    const [r] = await measure('https://computer.example', cachesOf('48/32'), {
+      run: 'r1', log: (l) => lines.push(l),
+    });
+    assert.equal(r.freeMiB, 12);
+    assert.deepEqual(r.steps.map((s) => [s.name, s.ok, s.gets, s.fetchedMB, s.keptMB]), [
+      ['command 1', true, 2, 2, 5], ['command 2', true, 2, 2, 5],
+      ['command 1, its kernel booted again', true, 2, 2, 5],
+    ]);
+    assert.ok(asked.every(([, thread]) => thread === 'measure-r1-48-32'));
+    // The cache is sized with the first command, and the probes go up until one fails.
+    assert.deepEqual(asked.find(([p]) => p === '/').at(2), { mib: 48, fileMib: 32 });
+    assert.deepEqual(asked.filter(([p]) => p === '/probe').map(([, , m]) => m), [0, 4, 8, 12, 16]);
+    const table = measuredOf([r]);
+    assert.match(table, /\| 48\/32 \| ✅ command 1 \| \d+ ms \| 2 \(2 MB\) \| 5 MB \|/);
+    assert.match(table, /\| 48\/32 \| free in the object after it \| 12 MiB \|/);
+    assert.doesNotMatch(table, /https?:/);
   });
 
   it('read files of the image whole and in parts, in a piece of their own and over the limit', async () => {

@@ -17,7 +17,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { computerEnv } from '../src/agent/computer.js';
 import {
   commandsOf, DEFAULT_IMAGE, forgetImages, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree,
-  isImageName, keptOfImages, listImages, readImage,
+  imageReads, isImageName, keptOfImages, listImages, readImage, sizeImageCache,
 } from '../src/agent/image.js';
 import {
   DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, runtimeFor, RUNTIMES, setTeamImage,
@@ -522,6 +522,40 @@ describe('a kernel\'s image, from the bucket', () => {
     await other.read(await other.open('/bin/gh', {}), 3 * MiB, 4);
     assert.equal(counting.gets.length, 4);
     assert.deepEqual(keptOfImages(), { entries: 0, bytes: 0 });
+  });
+
+  it('counts what it asked of the bucket, and keeps what its budget lets it', async () => {
+    const bucket = fakeBucket();
+    const MiB = 1024 * 1024;
+    const data = ['x', 'y', 'z'].map((c) => c.repeat(MiB)).join('');
+    const manifest = image(bucket, 'sized', [layer(bucket, 'sized', { 'bin/x': data }, { piece: MiB })]);
+    const { handlers } = imageDriver(bucket, await imageTree(bucket, manifest));
+    const read = async () => handlers.read(await handlers.open('/bin/x', {}), 0, 3 * MiB);
+    await read();
+    await read();
+    assert.deepEqual(imageReads(), {
+      gets: 1,
+      fetched: 3 * MiB,
+      hits: 3,
+      entries: 3,
+      bytes: 3 * MiB,
+      budget: 32 * MiB,
+      fileMax: 16 * MiB,
+    });
+    // A smaller budget lets the oldest go; a file over what one may keep is not kept.
+    assert.deepEqual(sizeImageCache({ bytes: 2 * MiB, fileMax: 4 * MiB }), {
+      bytes: 2 * MiB, fileMax: 2 * MiB,
+    });
+    assert.equal(imageReads().bytes, 2 * MiB);
+    await read();
+    assert.equal(imageReads().gets, 2);
+    assert.equal(imageReads().bytes, 2 * MiB);
+    sizeImageCache({ bytes: 8 * MiB, fileMax: 8 * MiB });
+    await read();
+    assert.equal(imageReads().bytes, 3 * MiB);
+    // forgetImages puts the budget back.
+    forgetImages();
+    assert.equal(imageReads().budget, 32 * MiB);
   });
 
   it('is mounted read-only, at the place the kernel looks for its commands', () => {

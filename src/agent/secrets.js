@@ -325,10 +325,26 @@ const refuse = (host, why) => new Response(
 );
 
 /**
- * The gateway's answer to `request`, a request of the shell of the agent `props.agent`: sent
- * with the secrets it names put in, or refused (see above). `fetch` sends it.
+ * The secrets the agent `props.agent` may use, from D1: `Map<name, { hosts, value }>`, `value`
+ * a function that unseals it.
  */
-export async function forward(env, props, request, { fetch: send = fetch } = {}) {
+async function agentSecrets(env, props) {
+  const rows = await secretRows(env, await agentScope(env, props && props.agent), { values: true });
+  return new Map([...rows].map(([name, r]) => [name, {
+    hosts: r.hosts, value: () => unseal(env, r.value),
+  }]));
+}
+
+/**
+ * The gateway's answer to `request`, a request of the shell of the agent `props.agent`: sent
+ * with the secrets it names put in, or refused (see above). `fetch` sends it. `secrets` is
+ * where they come from, `async () => Map<name, { hosts, value }>` (`value` a function that
+ * gives it), by default the agent's team's and customer's in D1; the dev computer, which has
+ * no D1, has its own (scripts/dev-computer/worker.mjs).
+ */
+export async function forward(env, props, request, {
+  fetch: send = fetch, secrets = () => agentSecrets(env, props),
+} = {}) {
   const headerList = [...request.headers];
   const basic = basicOf(request.headers.get('authorization'));
   const body = await bodyText(request);
@@ -342,7 +358,7 @@ export async function forward(env, props, request, { fetch: send = fetch } = {})
     return send(request);
   }
   const url = new URL(request.url);
-  const rows = await secretRows(env, await agentScope(env, props && props.agent), { values: true });
+  const rows = await secrets();
   const why = [];
   for (const name of named) {
     const s = rows.get(name);
@@ -359,7 +375,7 @@ export async function forward(env, props, request, { fetch: send = fetch } = {})
   const values = new Map();
   for (const name of named) {
     // eslint-disable-next-line no-await-in-loop
-    values.set(name, await unseal(env, rows.get(name).value));
+    values.set(name, await rows.get(name).value());
   }
   const put = (s, how = 'raw') => s.replace(FIND, (m, name) => (values.has(name)
     ? ESCAPE[how](values.get(name)) : m));
