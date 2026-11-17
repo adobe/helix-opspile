@@ -12,7 +12,7 @@
 
 import { botImages, discordForm, slackUpload } from '../attach.js';
 import { discordApi, discordEnabled } from '../discord.js';
-import { PORTAL_BOT, portalCall } from '../portalsource.js';
+import { PORTAL_BOT, portalCall, portalUpload } from '../portalsource.js';
 import { entryOf } from '../drafts.js';
 import { invitedFields, inviteMentioned } from '../invite.js';
 import {
@@ -158,12 +158,19 @@ export async function postAsApp(env, key, text, options = {}) {
     return postToTeams(env, t, marked, { ...rest, attachments: botImages(files), entities });
   }
   if (t.source === 'portal') {
-    // The customer portal: the app is a bot account there, and the text goes as it is.
-    if (files.length) {
-      return { error: 'the customer portal takes text only' };
+    // The customer portal: the app is a bot account there, and the text goes as it is, with
+    // its files uploaded first.
+    const up = await portalUpload(env, t, files, PORTAL_BOT);
+    if (up.error) {
+      return { error: `Portal: ${up.error}` };
     }
     const res = await portalCall(env, 'post', {
-      domain: t.tenant, channel: t.channel_id, root: t.root_id, text: body, author: PORTAL_BOT,
+      domain: t.tenant,
+      channel: t.channel_id,
+      root: t.root_id,
+      text: body,
+      files: up.ids,
+      author: PORTAL_BOT,
     });
     return res.ok ? { ok: true, platform: 'portal', id: res.id }
       : { error: `Portal: ${res.error}`, unknown: res.unknown || undefined };

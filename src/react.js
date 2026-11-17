@@ -135,7 +135,9 @@ async function tokenFor(env, me, t) {
   }
   if (t.source === 'portal') {
     // No account to connect: the portal takes the inbox's word for who reacts.
-    return { tok: { portal: portalAuthor(me), userId: await portalAccount(me.email) } };
+    return {
+      tok: { portal: await portalAuthor(env, me), userId: await portalAccount(me.email) },
+    };
   }
   const tok = await personalToken(env, me.id, t.source);
   if (!tok) {

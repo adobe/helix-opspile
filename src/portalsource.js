@@ -10,7 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
-import { portalUserId } from './portal/ids.js';
+import { portalFileRef, portalUserId } from './portal/ids.js';
+import { personAvatar } from './lookup.js';
 import { readMarkdown, writeMarkdown } from './mdast.js';
 import {
   dayPath, putRaw, segment,
@@ -26,8 +27,9 @@ import {
  *   does Slack's. An event carries the channel's name and its author's name and mail address,
  *   so the normalizer files it without asking the portal anything (src/normalize.js
  *   `normalizePortal`, src/lookup.js).
- * - **out**: the inbox posts, reacts and opens channels through the `PORTAL` binding, the
- *   portal's `PortalPlatform` entrypoint (`portalCall`). It says who acts, by their mail
+ * - **out**: the inbox posts, reacts, uploads files and opens channels through the `PORTAL`
+ *   binding, the portal's `PortalPlatform` entrypoint (`portalCall`), and reads the files and
+ *   pictures the portal keeps the same way (`portalFetch`). It says who acts, by their mail
  *   address: nobody connects an account for the portal. What it wrote comes back as events.
  *
  * A channel's tenant is its lobby, the customer's mail domain: accounts and mentions stay
@@ -115,8 +117,101 @@ export async function portalCall(env, method, args) {
   }
 }
 
-/** Who acts in the portal for a person of the inbox: `{ email, name }`. */
-export const portalAuthor = (me) => ({ email: me.email, name: me.name || undefined });
+/**
+ * Who acts in the portal for a person of the inbox: `{ email, name, avatar }`, with the picture
+ * the inbox knows of them (their Slack one first, as their header's), which the portal shows
+ * its customers beside what they write.
+ */
+export async function portalAuthor(env, me) {
+  const avatar = env.DB ? await personAvatar(env, me).catch(() => null) : null;
+  return {
+    email: me.email,
+    name: me.name || undefined,
+    avatar: /^https:\/\//.test(avatar || '') ? avatar : undefined,
+  };
+}
+
+/**
+ * Something the portal keeps, as a response: a file of a thread's channel (`file`), a picture
+ * someone uploaded (`avatar`), a customer's logo (`logo`). Null where the portal is not bound,
+ * or failed; the portal's own 404 is a response.
+ */
+export async function portalFetch(env, what, args) {
+  if (!portalBound(env)) {
+    return null;
+  }
+  try {
+    const res = await env.PORTAL[what](args);
+    return res instanceof Response ? res : null;
+  } catch (e) {
+    console.warn(JSON.stringify({ route: 'portal', call: what, error: e.message }));
+    return null;
+  }
+}
+
+/**
+ * The file of the customer portal a link is to, when it is one of thread `thread`'s: `{ id,
+ * name, domain, channel }`, or null. A portal thread's key names its lobby and its channel,
+ * and the portal opens a file only for the channel it is in.
+ */
+export function portalFileOf(thread, link) {
+  const [source, domain, channel] = String(thread || '').split(':');
+  const ref = source === 'portal' && domain && channel ? portalFileRef(link) : null;
+  return ref ? { ...ref, domain, channel } : null;
+}
+
+/** A portal file opened: `{ body, size, type, name, status, range }`, or `{ error }`. */
+export async function openPortalFile(env, thread, link, { range = null, max = Infinity } = {}) {
+  const f = portalFileOf(thread, link);
+  if (!f) {
+    return { error: 'not a file of this thread' };
+  }
+  const res = await portalFetch(env, 'file', {
+    domain: f.domain, channel: f.channel, id: f.id, range,
+  });
+  if (!res || !res.ok) {
+    await res?.body?.cancel();
+    return { error: res ? 'the portal does not have this file any more' : 'the customer portal is not connected here' };
+  }
+  const size = Number(res.headers.get('content-length') || 0);
+  if (size > max) {
+    await res.body?.cancel();
+    return { error: `too large (${Math.round(size / 1024 / 1024)} MB; up to ${Math.round(max / 1024 / 1024)} MB)` };
+  }
+  let { name } = f;
+  try {
+    name = decodeURIComponent(res.headers.get('x-file-name') || '') || f.name;
+  } catch {
+    // The link's name stands.
+  }
+  return {
+    body: res.body,
+    size: size || undefined,
+    type: res.headers.get('x-file-type') || 'application/octet-stream',
+    name,
+    status: res.status,
+    range: res.headers.get('content-range'),
+  };
+}
+
+/**
+ * Uploads `files` (src/attach.js: `{ name, type, bytes }`) to a portal channel for a message
+ * `author` is about to post there: `{ ids }`, what `post` takes as `files`, or `{ error }`.
+ */
+export async function portalUpload(env, t, files, author) {
+  const ids = [];
+  for (const f of files) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await portalCall(env, 'upload', {
+      domain: t.tenant, channel: t.channel_id, name: f.name, type: f.type, bytes: f.bytes, author,
+    });
+    if (!res.ok || !res.file) {
+      return { error: res.error || 'the portal did not take the file', unknown: res.unknown };
+    }
+    ids.push(res.file.id);
+  }
+  return { ids };
+}
 
 /** Who acts in the portal for the inbox's app: the bot, under the product's name. */
 export const PORTAL_BOT = { bot: true, name: 'Enterprise Support' };

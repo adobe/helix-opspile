@@ -82,7 +82,11 @@ async function editAsUser(env, me, t, msg, body, ids) {
       return { error: 'this message was posted by someone else', status: 403 };
     }
     const res = await portalCall(env, 'edit', {
-      domain: t.tenant, channel: t.channel_id, id: msg.id, text: body, author: portalAuthor(me),
+      domain: t.tenant,
+      channel: t.channel_id,
+      id: msg.id,
+      text: body,
+      author: await portalAuthor(env, me),
     });
     return res.ok ? { ok: true } : { error: `Portal: ${res.error}`, status: res.status === 409 ? 409 : 502 };
   }

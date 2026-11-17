@@ -17,6 +17,7 @@ import { refreshAttachment } from './discord.js';
 import { folderFiles } from './filecache.js';
 import { json } from './http.js';
 import { slackApi } from './lookup.js';
+import { openPortalFile } from './portalsource.js';
 import { keptTeamsFile } from './teamsfiles.js';
 
 /**
@@ -25,6 +26,8 @@ import { keptTeamsFile } from './teamsfiles.js';
  * fetch it with the opspile app's credentials, as an agent's `read_file` does,
  * src/agent/files.js):
  *
+ * - `GET /api/file/open?t=<thread>&u=<link>`: a file of the customer portal, shown (an image)
+ *   or downloaded; the other platforms' files open on their platform.
  * - `GET /api/file?t=<thread>&u=<link>`: a text file (a CSV, a log, JSON), for the preview of
  *   it (ui/table.js). Only text is passed on, and always as `text/plain` (never HTML the
  *   browser would run): what the file is comes in `x-file-type`, its name in `x-file-name`
@@ -224,6 +227,26 @@ export async function streamFile(env, key, wanted, request, { load = cachedMessa
     }
     return r2Part(obj, type);
   }
+  if (f.source === 'portal') {
+    // Through the portal's Worker, which answers with the part asked for.
+    const got = await openPortalFile(env, f.thread, f.url, { range });
+    const kind = got.error ? null : mediaType(got.type, got.name);
+    if (!kind) {
+      await got.body?.cancel();
+      return json({ error: got.error || 'not a video or audio file' }, got.error ? 502 : 415);
+    }
+    return new Response(got.body, {
+      status: got.status === 206 ? 206 : 200,
+      headers: {
+        ...SAFE,
+        'content-type': kind,
+        'accept-ranges': 'bytes',
+        'cache-control': 'private, max-age=3600',
+        ...(got.size ? { 'content-length': String(got.size) } : {}),
+        ...(got.range ? { 'content-range': got.range } : {}),
+      },
+    });
+  }
   let url;
   let type;
   const headers = {};
@@ -266,6 +289,36 @@ export async function streamFile(env, key, wanted, request, { load = cachedMessa
     }
   }
   return new Response(res.body, { status: res.status === 206 ? 206 : 200, headers: out });
+}
+
+/**
+ * The response to `GET /api/file/open`: file `wanted` of thread `key`, to look at or to keep.
+ * Only a file of the customer portal, which has nowhere else for the inbox's people to open
+ * it: an image is shown, anything else is a download, and neither runs in the inbox's origin.
+ */
+export async function openThreadFile(env, key, wanted, { load = cachedMessages } = {}) {
+  const f = await fileOf(env, key, wanted, load);
+  if (!f) {
+    return json({ error: 'not a file of this thread' }, 404);
+  }
+  if (f.source !== 'portal') {
+    return json({ error: 'this file opens where it lives' }, 400);
+  }
+  const got = await openPortalFile(env, f.thread, f.url);
+  if (got.error) {
+    return json({ error: got.error }, 502);
+  }
+  const image = /^image\/(png|jpeg|gif|webp)$/.test(got.type);
+  const name = encodeURIComponent(got.name || 'file').replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16)}`);
+  return new Response(got.body, {
+    headers: {
+      ...SAFE,
+      'content-type': image ? got.type : 'application/octet-stream',
+      'content-disposition': `${image ? 'inline' : 'attachment'}; filename*=UTF-8''${name}`,
+      'cache-control': 'private, max-age=3600',
+      ...(got.size ? { 'content-length': String(got.size) } : {}),
+    },
+  });
 }
 
 /** The response to `GET /api/file/poster`: the still Slack made of video `wanted`, or 404. */

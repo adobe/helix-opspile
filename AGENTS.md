@@ -55,7 +55,11 @@ code and docs, is the decision model that labels threads and channels.
   only ones of them that import `cloudflare:workers`, so the rest stays testable in Node.
   `src/portal/ids.js` is the one file both import. What a customer sees is never a team's or
   another customer's: every portal API call starts from the signed-in mail address's domain.
-  `npm run portal:dev` previews it (README, "Customer portal").
+  `npm run portal:dev` previews it (README, "Customer portal"). What people upload there (files,
+  pictures, logos) is served so that a browser runs none of it (`src/portal/files.js`,
+  `openThreadFile` in `src/fileview.js`): keep it so, and never serve SVG or HTML inline.
+- `ui/writing.js` (the global `Writing`) is the markdown formatting of a text box, the inbox's
+  and the portal's: change a shortcut there, not in either page.
 - Generated files: `src/emoji.js` (from `scripts/emoji.mjs`, do not edit it by hand),
   `src/ui-markdown.bundle.js`, `src/ui-editor.bundle.js` (CodeMirror, the knowledge-base
   editor's text field) and `src/ui-highlight.bundle.js` (@pierre/highlights, the code

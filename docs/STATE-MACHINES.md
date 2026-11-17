@@ -476,6 +476,22 @@ order the events arrive in, also for two changes in one millisecond; a deletion 
 Telling of a thread again (`resend`, for a backfill) sends each message as it is, with the `rev`
 it has: nothing moves.
 
+**Portal file.** uploaded → attached → deleted with its message; or uploaded → deleted after a day
+(`files.message`, `src/portal/files.js`). A file is uploaded before the message that carries it, by
+whoever writes it, and is nobody's until then: only its uploader's message takes it, in the batch
+that writes the message, and only once (`WHERE message IS NULL`). One that no message took (the
+composer was left, the file removed from it) is an orphan the cron deletes after a day, the row
+conditional on it still being one. A deleted message loses its files after its tombstone is
+written, so a failure between the two leaves files no thread shows, not a message without the
+files it says it has.
+
+**Picture and logo.** none → uploaded → replaced or removed (`users.avatar_key`,
+`lobbies.logo_key`). Each upload is a new object under a new key, which the row then names, and
+the one before is deleted: an address with the old version (`?v=`) answers with the new picture,
+which is what a cached page wants. The inbox learns of a picture with its owner's next message
+(`author.picture`), of a logo with the lobby's next event; a picture taken away is their Gravatar
+again from their next message on.
+
 **Portal event.** written → delivered → deleted after a week (`events.delivered_at`,
 `src/portal/events.js`). An event is written in the same batch as the change it tells of, so
 there is no change without its event; a lobby's is written after the change, and is a snapshot,

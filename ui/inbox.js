@@ -695,7 +695,11 @@ function openInbox(href) {
 // Slack, Teams and Discord images come through the Worker, with the app's credentials; a Teams
 // image with its thread, so the Worker serves its copy from pile 1 (SharePoint files only so).
 const MEDIA = /^https:\/\/(files\.slack\.com\/|graph\.microsoft\.com\/|[a-z0-9-]+\.sharepoint\.com\/|(cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/)/i;
-const proxied = (u, thread) => (MEDIA.test(u) ? `/api/media?u=${encodeURIComponent(u)}${thread && /^teams:/.test(thread) ? `&t=${encodeURIComponent(thread)}` : ''}` : u);
+// A file of the customer portal (src/portal/ids.js `portalFileRef`): the portal's own address,
+// which only its customers open. The inbox shows it through the Worker, for its thread.
+const PORTAL_FILE = /^https:\/\/[^/?#\s]+\/api\/file\/f[0-9a-z]{16}\/[^/?#\s]+$/;
+const portalFile = (u, thread) => /^portal:/.test(thread || '') && PORTAL_FILE.test(u);
+const proxied = (u, thread) => (MEDIA.test(u) || portalFile(u, thread) ? `/api/media?u=${encodeURIComponent(u)}${thread && /^(teams|portal):/.test(thread) ? `&t=${encodeURIComponent(thread)}` : ''}` : u);
 // Rendered once per text and set of known names: opening a thread again, or a live update,
 // renders only the messages that are new or changed.
 const rendered = new Map();
@@ -734,6 +738,12 @@ function md(src, thread = '') {
     }).replace(/data-quote-author="([^"]*)"/g, (_, name) => {
       const key = profileKey(null, { name: attrText(name), platform: 'slack' });
       return `data-p="${esc(key)}"`;
+    }).replace(/<a class="(file-name|file-go)" href="([^"]*)"/g, (tag, cls, href) => {
+      // A file of the customer portal opens through the Worker (GET /api/file/open): its own
+      // address is the portal's, which the inbox's people cannot open. `data-link` keeps it,
+      // for the preview.
+      const link = attrText(href);
+      return portalFile(link, thread) ? `<a class="${cls}" data-link="${href}" href="${esc(fileUrl(link, 'open'))}"` : tag;
     });
     if (rendered.size >= RENDERED_MAX) rendered.delete(rendered.keys().next().value);
   } else {
@@ -8350,118 +8360,14 @@ function toggleShortcuts() {
   dlg.showModal();
 }
 
-/**
- * Markdown formatting of the text between `start` and `end` of `value`, as Slack's ⌘B and the
- * like do it: `kind` wraps the words (`bold`, `italic`, `strike`, `code`) or takes the marks off
- * them again, makes them a `link` or a `block` of code, or starts their lines as a `quote`, a
- * `bullet` or a `number`ed list (or stops). The replacement of `from`…`to` with `insert`, and
- * the selection after it.
- */
-function formatText(value, selStart, selEnd, kind) {
-  const sel = value.slice(selStart, selEnd);
-  const WRAP = {
-    bold: '**', italic: '_', strike: '~~', code: '`',
-  };
-  const mark = WRAP[kind];
-  if (mark) {
-    const n = mark.length;
-    // Already marked, inside the selection or around it: the marks come off.
-    if (sel.length >= 2 * n && sel.startsWith(mark) && sel.endsWith(mark)) {
-      const inner = sel.slice(n, -n);
-      return {
-        from: selStart, to: selEnd, insert: inner, start: selStart, end: selStart + inner.length,
-      };
-    }
-    if (value.slice(selStart - n, selStart) === mark && value.slice(selEnd, selEnd + n) === mark) {
-      return {
-        from: selStart - n, to: selEnd + n, insert: sel, start: selStart - n, end: selEnd - n,
-      };
-    }
-    // Markdown wants the marks next to the words: spaces at the ends stay outside.
-    const lead = /^\s*/.exec(sel)[0].length;
-    const trail = sel.length > lead ? /\s*$/.exec(sel)[0].length : 0;
-    const a = selStart + lead;
-    const b = selEnd - trail;
-    return {
-      from: a, to: b, insert: `${mark}${value.slice(a, b)}${mark}`, start: a + n, end: b + n,
-    };
-  }
-  if (kind === 'link') {
-    const url = /^(?:https?:\/\/|mailto:)\S+$/.test(sel.trim());
-    const insert = url ? `[](${sel.trim()})` : `[${sel}]()`;
-    // The caret where the missing part goes: the label for a URL, the URL for words.
-    const at = url || !sel ? selStart + 1 : selStart + insert.length - 1;
-    return {
-      from: selStart, to: selEnd, insert, start: at, end: at,
-    };
-  }
-  if (kind === 'block') {
-    const before = selStart > 0 && value[selStart - 1] !== '\n' ? '\n' : '';
-    const after = selEnd < value.length && value[selEnd] !== '\n' ? '\n' : '';
-    const body = sel.replace(/\n$/, '');
-    const at = selStart + before.length + 4;
-    return {
-      from: selStart, to: selEnd, insert: `${before}\`\`\`\n${body}\n\`\`\`${after}`, start: at, end: at + body.length,
-    };
-  }
-  // Lines: from the selStart of the first one selected to the selEnd of the last.
-  const from = value.lastIndexOf('\n', selStart - 1) + 1;
-  const last = selEnd > selStart && value[selEnd - 1] === '\n' ? selEnd - 1 : selEnd;
-  const to = value.indexOf('\n', last) < 0 ? value.length : value.indexOf('\n', last);
-  const lines = value.slice(from, to).split('\n');
-  const PREFIX = { quote: /^> ?/, bullet: /^[-*+] /, number: /^\d+\. / };
-  const has = PREFIX[kind];
-  const filled = lines.filter((l) => l.trim());
-  const off = filled.length > 0 && filled.every((l) => has.test(l));
-  let i = 0;
-  const out = lines.map((l) => {
-    if (off) return l.replace(has, '');
-    if (!l.trim() && lines.length > 1) return l;
-    i += 1;
-    // A list of the other kind becomes this one.
-    const bare = kind === 'quote' ? l : l.replace(/^(?:[-*+]|\d+\.) /, '');
-    return `${{ quote: '> ', bullet: '- ', number: `${i}. ` }[kind]}${bare}`;
-  });
-  const insert = out.join('\n');
-  if (selStart === selEnd) {
-    const at = Math.max(from, selStart + out[0].length - lines[0].length);
-    return {
-      from, to, insert, start: at, end: at,
-    };
-  }
-  return {
-    from, to, insert, start: from, end: from + insert.length,
-  };
-}
-
-/** What a formatting shortcut in a text box is (`formatText`'s kind), else null. */
-function formatKind(e) {
-  if (!(e.metaKey || e.ctrlKey) || (e.metaKey && e.ctrlKey)) return null;
-  // Letters as the layout names them (⌥ changes them on a Mac), digits as on the keyboard (⇧
-  // changes those).
-  const letter = !e.altKey && /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() : '';
-  const k = letter || (/^(?:Key|Digit)(.)$/.exec(e.code || '')?.[1] || '').toLowerCase();
-  if (e.altKey) return e.shiftKey && k === 'c' ? 'block' : null;
-  if (!e.shiftKey) return { b: 'bold', i: 'italic' }[k] || null;
-  return {
-    x: 'strike', c: 'code', u: 'link', 9: 'quote', 8: 'bullet', 7: 'number',
-  }[k] || null;
-}
+// Formatting in a text box, and a link pasted over words: ui/writing.js, which the customer
+// portal's page has too.
+const {
+  formatText, formatKind, applyText, pasteLink,
+} = Writing;
 
 /** The text boxes formatting works in: replies, a new thread, an edit, the sidebar. */
 const writable = (el) => el?.tagName === 'TEXTAREA' && Boolean(el.closest('#pane, #side'));
-
-/** Replaces what `r` (formatText) says in `box`, so Undo takes it back, and selects as it says. */
-function applyText(box, r) {
-  box.focus();
-  box.setSelectionRange(r.from, r.to);
-  // The browser's own edit keeps Undo; where there is none, the text is set (and said so).
-  if (!document.execCommand?.('insertText', false, r.insert)) {
-    box.setRangeText(r.insert, r.from, r.to, 'end');
-    box.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-  box.setSelectionRange(r.start, r.end);
-}
 
 function wireFormatting() {
   document.addEventListener('focusin', (e) => {
@@ -8480,18 +8386,7 @@ function wireFormatting() {
   });
   // A link pasted over words makes them its label, as in Slack.
   document.addEventListener('paste', (e) => {
-    const box = e.target;
-    if (e.defaultPrevented || !writable(box) || box.selectionStart === box.selectionEnd) return;
-    if (e.clipboardData?.files?.length) return;
-    const url = (e.clipboardData?.getData('text/plain') || '').trim();
-    const sel = box.value.slice(box.selectionStart, box.selectionEnd);
-    if (!/^https?:\/\/\S+$/.test(url) || /\n/.test(sel) || /^\s*https?:\/\//.test(sel)) return;
-    e.preventDefault();
-    const insert = `[${sel}](${url})`;
-    const at = box.selectionStart + insert.length;
-    applyText(box, {
-      from: box.selectionStart, to: box.selectionEnd, insert, start: at, end: at,
-    });
+    if (!e.defaultPrevented && writable(e.target)) pasteLink(e);
   });
 }
 
@@ -9742,7 +9637,7 @@ function cardFile(fileEl) {
   const a = fileEl.querySelector('a.file-name');
   const id = fileEl.closest('.msg[data-id]')?.dataset.id || '';
   return {
-    id, thread: id.slice(0, id.lastIndexOf('|')), link: a?.getAttribute('href') || '', href: a?.href || '',
+    id, thread: id.slice(0, id.lastIndexOf('|')), link: a?.dataset.link || a?.getAttribute('href') || '', href: a?.href || '',
     name: a?.textContent || '', home: fileEl.dataset.home || '', kind: fileEl.querySelector('[data-preview]')?.dataset.preview,
   };
 }

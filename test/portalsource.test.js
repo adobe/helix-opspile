@@ -71,6 +71,7 @@ function world({ bound = true } = {}) {
   inbox.DB.sqlite.prepare("UPDATE team_members SET role = 'manager' WHERE person = 2").run();
   const portal = {
     DB: d1({ migrations: PORTAL }),
+    FILES: fakeBucket(),
     PORTAL_DOMAINS: DOMAIN,
     PUBLIC_ORIGIN: 'https://portal.example',
     PORTAL_NAME: 'test',
@@ -87,6 +88,10 @@ function world({ bound = true } = {}) {
       open: (a) => platform.open(portal, a),
       decline: (a) => platform.decline(portal, a),
       resend: (a) => platform.again(portal, a),
+      upload: (a) => platform.upload(portal, a),
+      file: (a) => platform.file(portal, a),
+      avatar: (a) => platform.avatar(portal, a),
+      logo: (a) => platform.logo(portal, a),
     };
   }
   const results = [];
@@ -121,6 +126,15 @@ function world({ bound = true } = {}) {
     }), portal, url, { email });
     return { status: res.status, body: await res.json() };
   }
+  /** The portal's API as a customer, for bytes: an upload (`bytes`, `type`) or a download. */
+  async function customerRaw(email, method, path, { bytes, type } = {}) {
+    const url = new URL(`https://portal.example${path}`);
+    return portalApi(new Request(url, {
+      method,
+      headers: { origin: 'https://portal.example', ...(type ? { 'content-type': type } : {}) },
+      body: bytes,
+    }), portal, url, { email });
+  }
   /** The inbox's API as one of its people. */
   async function staff(me, method, path, body) {
     const url = new URL(`https://opspile.example${path}`);
@@ -128,8 +142,13 @@ function world({ bound = true } = {}) {
     const res = await api(request, inbox, url, { viewer: me });
     return { status: res.status, body: await res.json() };
   }
+  /** The inbox's API as one of its people, for bytes: the response as it is. */
+  async function staffRaw(me, path, init = {}) {
+    const url = new URL(`https://opspile.example${path}`);
+    return api(new Request(url, init), inbox, url, { viewer: me });
+  }
   return {
-    inbox, portal, pump, customer, staff, results,
+    inbox, portal, pump, customer, customerRaw, staff, staffRaw, results,
   };
 }
 
@@ -162,8 +181,9 @@ describe('the portal as a source', () => {
   it('is a platform of the inbox', () => {
     assert.ok(PLATFORMS.includes('portal'));
     assert.equal(platformName('portal'), 'Customer Portal');
-    assert.equal(personRule('portal').count, 0);
-    assert.equal(appRule('portal').count, 0);
+    // Files go there through its Worker, as the person and as the app.
+    assert.equal(personRule('portal').count, 10);
+    assert.equal(appRule('portal').other, true);
   });
 
   it('keys an event by the portal\'s number for it, so one delivered twice is one', async () => {
@@ -198,7 +218,7 @@ describe('the portal as a source', () => {
     assert.equal(up.op, 'upsert');
     assert.equal(up.message.thread, 'portal:customer.example:c1:m1');
     assert.deepEqual(up.message.authorRef, {
-      source: 'portal', tenant: DOMAIN, userId: 'u1', name: 'Cy', email: CY,
+      source: 'portal', tenant: DOMAIN, userId: 'u1', name: 'Cy', email: CY, avatar: '',
     });
     assert.deepEqual(up.message.channelHint, { name: 'customer', topic: null, company: 'Customer Inc' });
     assert.equal(up.message.format, 'portal');
@@ -251,13 +271,23 @@ describe('the portal as a source', () => {
     assert.equal(portalMarkdown('not an image: `![x](y)`'), 'not an image: `![x](y)`');
   });
 
-  it('has no files: a link a customer typed is not one the app fetches for them', () => {
-    const link = '[report](https://files.slack.com/files-pri/T1-F0SECRET1/report.pdf)';
-    const message = {
-      id: 'm1', thread: 'portal:customer.example:c1:m1', at: '2026-11-17T10:00:00Z', body: link,
+  it('has the portal\'s files only: a link a customer typed is not one the app fetches', () => {
+    const slack = '[report](https://files.slack.com/files-pri/T1-F0SECRET1/report.pdf)';
+    const own = '[log.txt](https://portal.example/api/file/f0123456789abcdef/log.txt)';
+    const there = {
+      id: 'm1', source: 'portal', thread: 'portal:customer.example:c1:m1', at: '2026-11-17T10:00:00Z',
     };
-    assert.equal(threadFiles([{ ...message, source: 'slack' }]).length, 1);
-    assert.deepEqual(threadFiles([{ ...message, source: 'portal' }]), []);
+    const elsewhere = {
+      id: '1.1', source: 'slack', thread: 'slack:E1:C1:1.1', at: '2026-11-17T10:00:00Z',
+    };
+    // A Slack file named in a portal message is text; the portal's own file is a file.
+    assert.deepEqual(threadFiles([{ ...there, body: slack }]), []);
+    assert.deepEqual(threadFiles([{ ...there, body: own }]).map((f) => [f.source, f.id, f.name]), [['portal', 'f0123456789abcdef', 'log.txt']]);
+    // And the other way: a link to a portal file posted in Slack opens nothing.
+    assert.deepEqual(threadFiles([{ ...elsewhere, body: own }]), []);
+    assert.equal(threadFiles([{ ...elsewhere, body: slack }]).length, 1);
+    // A portal message is one by its thread's key too, where its source is not said.
+    assert.deepEqual(threadFiles([{ ...there, source: undefined, body: slack }]), []);
   });
 
   it('answers without the portal when its Worker is not bound', async () => {
@@ -531,7 +561,7 @@ describe('a portal channel in the inbox', () => {
     assert.equal(me.connected.portal, true);
     assert.equal(me.react.portal, true);
     assert.equal(me.edit.portal, true);
-    assert.equal(me.attach.portal.count, 0);
+    assert.equal(me.attach.portal.count, 10);
     const none = world({ bound: false });
     const without = (await none.staff(viewer(MANAGER), 'GET', '/api/me')).body;
     assert.equal(without.connected.portal, undefined);
@@ -551,7 +581,13 @@ describe('a portal channel in the inbox', () => {
     const seen = (await w.customer(CY, 'GET', `/api/thread?channel=${w.channel}&thread=${w.root}`)).body.thread;
     assert.deepEqual(seen.messages.map((m) => m.author.kind), ['staff', 'bot']);
     assert.deepEqual(seen.messages[0].reactions.map((r) => r.emoji), ['🎉']);
-    assert.equal((await postAsApp(w.inbox, w.thread, 'x', { files: [{ name: 'a.txt' }] })).error, 'the customer portal takes text only');
+    // With a file, which the customer finds under the message.
+    const withFile = await postAsApp(w.inbox, w.thread, 'The log.', {
+      files: [{ name: 'run.log', type: 'text/plain', bytes: new TextEncoder().encode('ok\n') }],
+    });
+    assert.equal(withFile.ok, true);
+    const again = (await w.customer(CY, 'GET', `/api/thread?channel=${w.channel}&thread=${w.root}`)).body.thread;
+    assert.deepEqual(again.messages.at(-1).files.map((f) => [f.name, f.type, f.size]), [['run.log', 'text/plain', 3]]);
   });
 
   it('asks the portal for a thread it has a reply of, but not the start', async () => {
@@ -578,5 +614,169 @@ describe('a portal channel in the inbox', () => {
     const after = [...w.inbox.CHANNELS.objects].map(([k, o]) => [k, parse(o.body).body]);
     assert.deepEqual(after, before);
     assert.equal(parse(w.inbox.CHANNELS.objects.get(`channels/customer-inc/edge/portal-${w.channel}/${w.root}/${reply.body.id}.md`).body).body.trim(), 'Second');
+  });
+});
+
+/** The start of a PNG of `w` by `h`: enough for its size to be read. */
+function pngOf(w, h) {
+  const b = new Uint8Array(40);
+  b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+  new DataView(b.buffer).setUint32(16, w);
+  new DataView(b.buffer).setUint32(20, h);
+  return b;
+}
+const text = (s) => new TextEncoder().encode(s);
+
+describe('files, mentions and pictures between the portal and the inbox', () => {
+  it('files a customer\'s attachments, shows them through the portal, and sends files back', async () => {
+    const w = await openedWorld();
+    const { channel, thread, root } = w;
+    const up = async (name, type, bytes) => (await (await w.customerRaw(CY, 'POST', `/api/upload?channel=${channel}&name=${encodeURIComponent(name)}`, { bytes, type })).json()).file;
+    const shot = await up('shot (1).png', 'image/png', pngOf(640, 480));
+    const csv = await up('rows.csv', 'text/csv', text('a,b\n1,2\n'));
+    assert.deepEqual([shot.width, shot.height, shot.size], [640, 480, 40]);
+    const sent = await w.customer(CY, 'POST', '/api/post', { channel, thread: root, files: [shot.id, csv.id] });
+    assert.equal(sent.status, 200, JSON.stringify(sent.body));
+    await w.pump();
+
+    // Pile 2: the files as every platform's are, linked to the portal.
+    const [{ path }] = w.inbox.DB.rows('SELECT path FROM threads');
+    const { body } = parse(w.inbox.CHANNELS.objects.get(`${path}${sent.body.id}.md`).body);
+    const image = `https://portal.example/api/file/${shot.id}/shot%20%281%29.png`;
+    const table = `https://portal.example/api/file/${csv.id}/rows.csv`;
+    assert.equal(body.trim(), `Attachments:\n![shot (1).png](${image} "640x480")\n\n- [rows.csv](${table})`);
+    assert.equal(w.inbox.DB.rows('SELECT attachments FROM messages WHERE id = ?', sent.body.id)[0].attachments, 2);
+
+    // The inbox shows the image through the portal's Worker, for the thread's people only.
+    const t = encodeURIComponent(thread);
+    const media = await w.staffRaw(viewer(MANAGER), `/api/media?t=${t}&u=${encodeURIComponent(image)}`);
+    assert.equal(media.status, 200);
+    assert.equal(media.headers.get('content-type'), 'image/png');
+    assert.equal((await media.arrayBuffer()).byteLength, 40);
+    assert.equal((await w.staffRaw(viewer(OTHER), `/api/media?t=${t}&u=${encodeURIComponent(image)}`)).status, 404);
+    // Without its thread, a portal address is nobody's attachment.
+    assert.equal((await w.staffRaw(viewer(MANAGER), `/api/media?u=${encodeURIComponent(image)}`)).status, 400);
+    // The other file is a download, and its text can be previewed.
+    const open = await w.staffRaw(viewer(MANAGER), `/api/file/open?t=${t}&u=${encodeURIComponent(table)}`);
+    assert.equal(open.status, 200);
+    assert.equal(open.headers.get('content-type'), 'application/octet-stream');
+    assert.match(open.headers.get('content-disposition'), /^attachment; filename\*=UTF-8''rows\.csv$/);
+    assert.equal(await open.text(), 'a,b\n1,2\n');
+    const preview = await w.staffRaw(viewer(MANAGER), `/api/file?t=${t}&u=${encodeURIComponent(table)}`);
+    assert.equal(await preview.text(), 'a,b\n1,2\n');
+    // A file that is not one of the thread's messages opens nothing, whatever its address says.
+    const other = 'https://portal.example/api/file/f0000000000000000/rows.csv';
+    assert.equal((await w.staffRaw(viewer(MANAGER), `/api/file/open?t=${t}&u=${encodeURIComponent(other)}`)).status, 404);
+    assert.equal((await w.staffRaw(viewer(MANAGER), `/api/media?t=${t}&u=${encodeURIComponent(other)}`)).status, 502);
+
+    // Adobe answers with a file of its own: uploaded to the portal, then posted.
+    const form = new FormData();
+    form.append('payload', JSON.stringify({ thread, text: 'Fixed in this one.' }));
+    form.append('files', new File([pngOf(20, 10)], 'fix.png', { type: 'image/png' }));
+    const reply = await w.staffRaw(viewer(MANAGER), '/api/post', { method: 'POST', body: form });
+    assert.equal(reply.status, 200, JSON.stringify(await reply.clone().json()));
+    const seen = (await w.customer(CY, 'GET', `/api/thread?channel=${channel}&thread=${root}`)).body.thread;
+    const [file] = seen.messages.at(-1).files;
+    assert.deepEqual([file.name, file.type, file.width, file.height], ['fix.png', 'image/png', 20, 10]);
+    const got = await w.customerRaw(CY, 'GET', file.url);
+    assert.equal(got.headers.get('content-type'), 'image/png');
+    assert.equal((await got.arrayBuffer()).byteLength, 40);
+    // And it comes back to the inbox as the person's message, with its file.
+    await w.pump();
+    const [mine] = w.inbox.DB.rows("SELECT id, attachments FROM messages WHERE author = 'Max Manager'");
+    assert.equal(mine.attachments, 1);
+  });
+
+  it('knows whom a message mentions, on both sides', async () => {
+    const w = await openedWorld();
+    const { channel, thread, root } = w;
+    // The people of the channel: the lobby's, and the Adobe people who wrote there.
+    const { body: { people } } = await w.customer(CY, 'GET', `/api/people?channel=${channel}`);
+    assert.deepEqual(people.map((p) => [p.name, p.kind]), [['Cy', 'customer'], ['Ada Admin', 'staff']]);
+    await w.customer(CY, 'POST', '/api/post', { channel, thread: root, text: 'Could you look, @Ada Admin? And @Nobody Here.' });
+    await w.pump();
+    assert.deepEqual(w.inbox.DB.rows('SELECT person, via FROM mentions'), [{ person: 1, via: 'id' }]);
+
+    // Adobe mentions a customer by name: theirs in the portal, where the thread says so.
+    await w.customer(DEE, 'GET', '/api/me');
+    const sent = await w.staff(viewer(MANAGER), 'POST', '/api/post', { thread, text: 'Yes. @Dee, is it the same for you?' });
+    assert.equal(sent.status, 200);
+    const { body: { threads } } = await w.customer(DEE, 'GET', `/api/threads?channel=${channel}`);
+    assert.equal(threads[0].mentioned, true);
+    assert.equal((await w.customer(CY, 'GET', `/api/threads?channel=${channel}`)).body.threads[0].mentioned, false);
+    const seen = (await w.customer(DEE, 'GET', `/api/thread?channel=${channel}&thread=${root}`)).body.thread;
+    assert.deepEqual(seen.messages.map((m) => m.mentionsMe), [false, false, true]);
+    // Read, it mentions nobody anew.
+    assert.equal((await w.customer(DEE, 'GET', `/api/threads?channel=${channel}`)).body.threads[0].mentioned, false);
+    // The lobby's people are accounts in the inbox, so a reply can name one who never wrote.
+    await w.pump();
+    const names = w.inbox.DB.rows("SELECT name FROM identities WHERE source = 'portal' AND tenant = ? ORDER BY name", DOMAIN).map((r) => r.name);
+    assert.deepEqual(names, ['Ada Admin', 'Cy', 'Dee', 'Max Manager']);
+  });
+
+  it('shows people\'s pictures: a customer\'s in the inbox, Adobe\'s in the portal', async () => {
+    const w = await openedWorld();
+    const { channel, thread, root } = w;
+    // A customer uploads a picture; their next message carries it to the inbox.
+    const put = await w.customerRaw(CY, 'PUT', '/api/avatar', { bytes: pngOf(256, 256), type: 'image/png' });
+    const { avatar } = await put.json();
+    assert.match(avatar, /^\/api\/avatar\/u[0-9a-f]{20}\?v=\w+$/);
+    await w.customer(CY, 'POST', '/api/post', { channel, thread: root, text: 'Hello' });
+    await w.pump();
+    const cy = await portalUserId(CY);
+    const [identity] = w.inbox.DB.rows("SELECT avatar FROM identities WHERE source = 'portal' AND user_id = ?", cy);
+    assert.match(identity.avatar, new RegExp(`^/api/portal/avatar/${cy}\\?v=\\w+$`));
+    const shown = await w.staffRaw(viewer(MANAGER), identity.avatar);
+    assert.equal(shown.status, 200);
+    assert.equal(shown.headers.get('content-type'), 'image/png');
+    assert.equal((await w.staffRaw(viewer(MANAGER), `/api/portal/avatar/${await portalUserId(DEE)}`)).status, 404);
+    // Taken away again, their Gravatar's stands in with their next message.
+    await w.customer(CY, 'DELETE', '/api/avatar', {});
+    await w.customer(CY, 'POST', '/api/post', { channel, thread: root, text: 'Again' });
+    await w.pump();
+    assert.match(w.inbox.DB.rows("SELECT avatar FROM identities WHERE source = 'portal' AND user_id = ?", cy)[0].avatar, /^https:\/\/gravatar\.com\/avatar\//);
+
+    // Adobe's people have the picture the inbox knows of them, which the portal fetches itself.
+    w.inbox.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, email,
+      person, fetched_at, avatar) VALUES ('slack', 'E1', 'U2', 'person', 'Max Manager', ?, 2,
+      '2026-11-17T00:00:00Z', 'https://avatars.example/max.png')`).run(MANAGER.email);
+    await w.staff(viewer(MANAGER), 'POST', '/api/post', { thread, text: 'Hi' });
+    const max = await portalUserId(MANAGER.email);
+    assert.equal(w.portal.DB.rows('SELECT avatar FROM users WHERE id = ?', max)[0].avatar, 'https://avatars.example/max.png');
+    const fetched = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      fetched.push(String(url));
+      return new Response(pngOf(48, 48), { headers: { 'content-type': 'image/png' } });
+    };
+    try {
+      const face = await w.customerRaw(CY, 'GET', `/api/avatar/${max}`);
+      assert.equal(face.status, 200);
+      assert.equal(face.headers.get('content-type'), 'image/png');
+      assert.deepEqual(fetched, ['https://avatars.example/max.png']);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('shows a customer\'s logo on its request, and as the icon of a customer it had not met', async () => {
+    const w = await asked();
+    w.inbox.PUBLIC_ORIGIN = 'https://opspile.example/';
+    const put = await w.customerRaw(CY, 'PUT', '/api/logo', { bytes: pngOf(128, 64), type: 'image/png' });
+    assert.match((await put.json()).lobby.logo, /^\/api\/logo\?v=\w+$/);
+    await w.pump();
+    const [request] = (await w.staff(viewer(ADMIN), 'GET', '/api/admin/requests')).body.portal;
+    assert.match(request.logo, /^\/api\/portal\/logo\/customer\.example\?v=\w+$/);
+    const shown = await w.staffRaw(viewer(ADMIN), request.logo);
+    assert.equal(shown.headers.get('content-type'), 'image/png');
+    assert.equal((await w.staffRaw(viewer(ADMIN), '/api/portal/logo/nobody.example')).status, 404);
+    await w.staff(viewer(ADMIN), 'POST', '/api/admin/portal/open', { id: request.id, team: 'edge' });
+    assert.deepEqual(w.inbox.DB.rows('SELECT slug, icon FROM orgs'), [{
+      slug: 'customer-inc', icon: 'https://opspile.example/api/portal/logo/customer.example',
+    }]);
+    // Removed, the request has none.
+    await w.customer(CY, 'DELETE', '/api/logo', {});
+    await w.pump();
+    assert.equal((await w.staff(viewer(ADMIN), 'GET', '/api/admin/requests')).body.portal[0].logo, null);
   });
 });

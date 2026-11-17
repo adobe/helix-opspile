@@ -43,6 +43,13 @@ export async function sha256(value) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** Gravatar URL for an email; Gravatar answers 404 when there is no picture. */
+export async function gravatar(email) {
+  return email
+    ? `https://gravatar.com/avatar/${await sha256(String(email).trim().toLowerCase())}?s=96&d=404`
+    : '';
+}
+
 function stringMetadata(meta) {
   return Object.fromEntries(
     Object.entries(meta)

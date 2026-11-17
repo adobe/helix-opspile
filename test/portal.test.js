@@ -14,14 +14,20 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { api } from '../src/portal/api.js';
 import { deliver, pruneEvents } from '../src/portal/events.js';
+import { pruneFiles, rangeOf } from '../src/portal/files.js';
+import { PORTAL_FILES, portalPage } from '../src/portal/page.js';
 import {
-  CHANNEL_ID, domainOf, MESSAGE_ID, messageId, portalBotId, portalUserId,
+  CHANNEL_ID, domainOf, FILE_ID, filePath, MESSAGE_ID, messageId, portalBotId, portalFileRef,
+  portalUserId,
 } from '../src/portal/ids.js';
 import * as platform from '../src/portal/platform.js';
-import { companyFromDomain, nameFromMail, titleOf } from '../src/portal/store.js';
+import {
+  companyFromDomain, mentionsIn, nameFromMail, titleOf,
+} from '../src/portal/store.js';
 import { DEFAULT_TECH, listTech, refreshTech } from '../src/portal/tech.js';
 import { d1, PORTAL } from './d1.js';
-import { quiet } from './fakes.js';
+import { fakeBucket, quiet } from './fakes.js';
+import { PAGES, SCRIPTS } from './ui.js';
 
 // Made-up people and domains only.
 const ADA = 'ada@customer.example';
@@ -34,6 +40,7 @@ function portal({ bound = true } = {}) {
   const got = [];
   const env = {
     DB: d1({ migrations: PORTAL }),
+    FILES: fakeBucket(),
     PORTAL_DOMAINS: 'customer.example, Other.Example',
     PUBLIC_ORIGIN: 'https://portal.example/',
     PORTAL_NAME: 'test',
@@ -64,6 +71,26 @@ async function call(env, email, method, path, body, headers = {}) {
   await Promise.all(pending);
   return { status: res.status, body: await res.json() };
 }
+
+/** One call of the portal's API as `email` whose body, or answer, is bytes: the response. */
+async function raw(env, email, method, path, { bytes, type, origin = 'https://portal.example' } = {}) {
+  const url = new URL(`https://portal.example${path}`);
+  return api(new Request(url, {
+    method,
+    headers: { ...(origin ? { origin } : {}), ...(type ? { 'content-type': type } : {}) },
+    body: bytes,
+  }), env, url, { email });
+}
+
+/** The start of a PNG of `w` by `h`: enough for its size to be read. */
+function pngOf(w, h) {
+  const b = new Uint8Array(40);
+  b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+  new DataView(b.buffer).setUint32(16, w);
+  new DataView(b.buffer).setUint32(20, h);
+  return b;
+}
+const text = (t) => new TextEncoder().encode(t);
 
 /** A lobby with a channel, as the inbox opens one: `{ env, channel }`. */
 async function opened() {
@@ -445,5 +472,153 @@ describe('the customer portal: its outbox', () => {
     env.OPSPILE = { technologies: async () => [{ tech: 'eds', name: 'Edge Delivery', product: 'Sites' }, { tech: '', name: 'x' }] };
     assert.deepEqual(await refreshTech(env), { result: 'refreshed', tech: 1 });
     assert.deepEqual(await listTech(env), [{ tech: 'eds', name: 'Edge Delivery', product: 'Sites' }]);
+  });
+});
+
+describe('the customer portal: files', () => {
+  const upload = async (env, email, channel, name, type, bytes) => {
+    const res = await raw(env, email, 'POST', `/api/upload?channel=${channel}&name=${encodeURIComponent(name)}`, { bytes, type });
+    return { status: res.status, ...await res.json() };
+  };
+
+  it('names a file by an id nobody guesses, and finds it in a link to the portal', () => {
+    assert.equal(filePath('f0123456789abcdef', 'a (1)\'s.png'), '/api/file/f0123456789abcdef/a%20%281%29%27s.png');
+    assert.deepEqual(portalFileRef('https://portal.example/api/file/f0123456789abcdef/a%20%281%29.png'), { id: 'f0123456789abcdef', name: 'a (1).png' });
+    for (const no of ['http://portal.example/api/file/f0123456789abcdef/a.png', 'https://portal.example/api/file/f012/a.png', 'https://portal.example/api/file/f0123456789abcdef/a/b', 'https://portal.example/api/file/f0123456789abcdef/a.png?x=1']) {
+      assert.equal(portalFileRef(no), null, no);
+    }
+    assert.deepEqual(rangeOf('bytes=0-9'), { offset: 0, length: 10 });
+    assert.deepEqual(rangeOf('bytes=5-'), { offset: 5 });
+    assert.deepEqual(rangeOf('bytes=-4'), { suffix: 4 });
+    assert.equal(rangeOf('lines=1-2'), undefined);
+  });
+
+  it('keeps what is uploaded for a message, and the message carries it', async () => {
+    const { env, channel } = await opened();
+    const shot = await upload(env, ADA, channel, '../../shot.png', 'image/png; charset=x', pngOf(800, 600));
+    assert.equal(shot.status, 200);
+    assert.match(shot.file.id, FILE_ID);
+    // Its name is its last segment, its size is read from its bytes, whatever was said.
+    assert.deepEqual([shot.file.name, shot.file.type, shot.file.width, shot.file.height, shot.file.url], ['shot.png', 'image/png', 800, 600, `/api/file/${shot.file.id}/shot.png`]);
+    const page = await upload(env, ADA, channel, 'page.html', 'text/html', text('<script>alert(1)</script>'));
+    assert.equal((await upload(env, ADA, channel, 'empty.txt', 'text/plain', new Uint8Array(0))).status, 400);
+    // An upload is a write of the portal's own page: it says where it is from.
+    assert.equal((await raw(env, ADA, 'POST', `/api/upload?channel=${channel}&name=x.txt`, { bytes: text('x'), type: 'text/plain', origin: null })).status, 400);
+    assert.equal((await raw(env, ADA, 'POST', `/api/upload?channel=${channel}&name=x.txt`, { bytes: text('x'), type: 'text/plain', origin: 'https://evil.example' })).status, 400);
+    assert.equal((await upload(env, EVE, channel, 'x.txt', 'text/plain', text('x'))).status, 404);
+
+    // Only its uploader attaches it, once; a message with files needs no text.
+    assert.equal((await call(env, BO, 'POST', '/api/post', { channel, files: [shot.file.id] })).status, 400);
+    const sent = await call(env, ADA, 'POST', '/api/post', { channel, files: [shot.file.id, page.file.id] });
+    assert.equal(sent.status, 200, JSON.stringify(sent.body));
+    assert.equal((await call(env, ADA, 'POST', '/api/post', { channel, text: 'again', files: [shot.file.id] })).status, 400);
+    const { thread } = (await call(env, BO, 'GET', `/api/thread?channel=${channel}&thread=${sent.body.id}`)).body;
+    assert.deepEqual(thread.messages[0].files.map((f) => f.name), ['shot.png', 'page.html']);
+    assert.equal(thread.messages[0].body, '');
+    // The inbox hears of them, by their address in the portal.
+    await deliver(env);
+    const event = env.got.at(-1);
+    assert.deepEqual(event.message.files.map((f) => [f.name, f.type, f.url]), [
+      ['shot.png', 'image/png', `https://portal.example/api/file/${shot.file.id}/shot.png`],
+      ['page.html', 'text/html', `https://portal.example/api/file/${page.file.id}/page.html`],
+    ]);
+
+    // Served so that a browser runs none of it: an image is shown, a page is a download.
+    const image = await raw(env, BO, 'GET', shot.file.url);
+    assert.equal(image.status, 200);
+    assert.equal(image.headers.get('content-type'), 'image/png');
+    assert.match(image.headers.get('content-disposition'), /^inline; /);
+    assert.equal(image.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(image.headers.get('content-security-policy'), /default-src 'none'; sandbox/);
+    const html = await raw(env, BO, 'GET', page.file.url);
+    assert.equal(html.headers.get('content-type'), 'application/octet-stream');
+    assert.match(html.headers.get('content-disposition'), /^attachment; filename\*=UTF-8''page\.html$/);
+    const part = await api(new Request(`https://portal.example${shot.file.url}`, { headers: { range: 'bytes=0-7' } }), env, new URL(`https://portal.example${shot.file.url}`), { email: BO });
+    assert.equal(part.status, 206);
+    assert.equal(part.headers.get('content-range'), 'bytes 0-7/40');
+    assert.equal((await part.arrayBuffer()).byteLength, 8);
+    // Nobody of another customer reads it, and the inbox only for the channel it is in.
+    await call(env, EVE, 'GET', '/api/me');
+    assert.equal((await raw(env, EVE, 'GET', shot.file.url)).status, 404);
+    assert.equal((await platform.file(env, { domain: 'customer.example', channel, id: shot.file.id })).status, 200);
+    assert.equal((await platform.file(env, { domain: 'customer.example', channel: 'c000000000000', id: shot.file.id })).status, 404);
+    assert.equal((await platform.file(env, { domain: 'other.example', channel, id: shot.file.id })).status, 404);
+
+    // Deleted with its message.
+    await call(env, ADA, 'POST', '/api/delete', { channel, id: sent.body.id });
+    assert.equal((await raw(env, BO, 'GET', shot.file.url)).status, 404);
+    assert.equal(env.FILES.objects.size, 0);
+  });
+
+  it('deletes what no message took within a day', async () => {
+    const { env, channel } = await opened();
+    const kept = await upload(env, ADA, channel, 'kept.txt', 'text/plain', text('kept'));
+    await upload(env, ADA, channel, 'left.txt', 'text/plain', text('left'));
+    await call(env, ADA, 'POST', '/api/post', { channel, text: 'With one.', files: [kept.file.id] });
+    assert.deepEqual(await pruneFiles(env), { deleted: 0 });
+    assert.deepEqual(await pruneFiles(env, Date.now() + 25 * 60 * 60 * 1000), { deleted: 1 });
+    assert.deepEqual(env.DB.rows('SELECT name FROM files'), [{ name: 'kept.txt' }]);
+    assert.equal(env.FILES.objects.size, 1);
+  });
+
+  it('keeps a person\'s picture and a customer\'s logo, for those who may see them', async () => {
+    const { env } = await opened();
+    // A picture is a small raster image.
+    assert.equal((await raw(env, ADA, 'PUT', '/api/avatar', { bytes: text('<svg/>'), type: 'image/svg+xml' })).status, 415);
+    assert.equal((await raw(env, ADA, 'PUT', '/api/avatar', { bytes: new Uint8Array(600 * 1024), type: 'image/png' })).status, 413);
+    const put = await (await raw(env, ADA, 'PUT', '/api/avatar', { bytes: pngOf(256, 256), type: 'image/png' })).json();
+    assert.equal(put.picture, true);
+    const { me } = (await call(env, ADA, 'GET', '/api/me')).body;
+    assert.deepEqual([me.avatar, me.picture], [put.avatar, true]);
+    // Her colleagues see it; another customer's people do not.
+    assert.equal((await raw(env, BO, 'GET', put.avatar)).headers.get('content-type'), 'image/png');
+    await call(env, EVE, 'GET', '/api/me');
+    assert.equal((await raw(env, EVE, 'GET', put.avatar)).status, 404);
+    // A new one replaces it, and its address changes.
+    const next = await (await raw(env, ADA, 'PUT', '/api/avatar', { bytes: pngOf(64, 64), type: 'image/png' })).json();
+    assert.notEqual(next.avatar, put.avatar);
+    assert.equal([...env.FILES.objects.keys()].filter((k) => k.startsWith('avatars/')).length, 1);
+    assert.equal((await call(env, ADA, 'DELETE', '/api/avatar', {})).body.picture, false);
+    assert.equal(env.FILES.objects.size, 0);
+
+    // The logo is the lobby's: any member sets it, and the inbox hears of it.
+    const logo = await (await raw(env, BO, 'PUT', '/api/logo', { bytes: pngOf(128, 64), type: 'image/png' })).json();
+    assert.match(logo.lobby.logo, /^\/api\/logo\?v=\w+$/);
+    assert.equal((await raw(env, ADA, 'GET', '/api/logo')).headers.get('content-type'), 'image/png');
+    assert.equal((await raw(env, EVE, 'GET', '/api/logo')).status, 404);
+    await deliver(env);
+    assert.equal(env.got.at(-1).lobby.logo, logo.lobby.logo.split('?v=')[1]);
+    assert.equal((await platform.logo(env, { domain: 'customer.example' })).status, 200);
+    assert.equal((await call(env, ADA, 'DELETE', '/api/logo', {})).body.lobby.logo, null);
+  });
+
+  it('finds whom a message mentions by their name', () => {
+    const people = [{ id: 'u1', name: 'Ada Lovelace' }, { id: 'u2', name: 'Bo' }, { id: 'u3', name: 'Bob' }];
+    assert.deepEqual(mentionsIn('Thanks @ada lovelace, and @Bo!', people), ['u1', 'u2']);
+    assert.deepEqual(mentionsIn('@Bob only', people), ['u3']);
+    assert.deepEqual(mentionsIn('mail bo@Bo.example or a@@Bo', people), []);
+    assert.deepEqual(mentionsIn('No one here', people), []);
+  });
+});
+
+describe('the customer portal: its page', () => {
+  it('is served with its scripts, the markdown renderer and the emoji it suggests', () => {
+    const html = portalPage(PAGES['portal.html'], Object.fromEntries(PORTAL_FILES.map((f) => [f, SCRIPTS[f]])));
+    assert.doesNotMatch(html, /<script[^>]* src=|<link rel="stylesheet"/);
+    assert.ok(html.includes('globalThis.Writing = '));
+    assert.ok(html.includes('var Markdown='));
+    assert.doesNotMatch(html, /PORTAL_EMOJI \*\/ \{ names: \{\}/);
+    assert.match(html, /const EMOJI = \{"names":\{"100":"💯"/);
+    assert.throws(() => portalPage('<p>no script</p>', {}), /PORTAL_EMOJI/);
+  });
+
+  it('writes as the inbox does: its formatting is the inbox\'s, its files are checked first', () => {
+    const js = SCRIPTS['portal.js'];
+    assert.match(js, /Writing\.formatText\(box\.value, box\.selectionStart, box\.selectionEnd, kind\)/);
+    assert.match(js, /Markdown\.suggestMentions\(/);
+    assert.match(js, /Markdown\.matchEmoji\(EMOJI\.names, EMOJI\.aliases/);
+    // Nothing is sent while a file is still on its way, or did not arrive.
+    assert.match(js, /if \(list\.some\(\(u\) => u\.status === 'error'\)\)/);
+    assert.match(js, /if \(list\.some\(\(u\) => u\.status === 'uploading'\)\) return;/);
   });
 });

@@ -104,6 +104,9 @@ export default defineConfig(({ mode }) => {
         ...inbox(),
         // The portal's own record (portal/migrations), of the Worker's name.
         DB: bindings.d1({ name }),
+        // What its people upload: the files of messages, their pictures, customers' logos
+        // (src/portal/files.js). `cf deploy` makes the bucket.
+        FILES: bindings.r2({ name: `${name}-files` }),
       },
     },
   };

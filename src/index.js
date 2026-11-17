@@ -25,6 +25,7 @@ import appJs from '../ui/app.js' with { type: 'text' };
 import headerJs from '../ui/header.js' with { type: 'text' };
 import rankJs from '../ui/rank.js' with { type: 'text' };
 import tableJs from '../ui/table.js' with { type: 'text' };
+import writingJs from '../ui/writing.js' with { type: 'text' };
 import stackJs from '../ui/stack.js' with { type: 'text' };
 import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
 // Spectrum 2's look of every page (README, "Spectrum 2").
@@ -89,6 +90,7 @@ const SCRIPTS = {
   'header.js': headerJs,
   'rank.js': rankJs,
   'table.js': tableJs,
+  'writing.js': writingJs,
   'stack.js': stackJs,
   'topicgraph.js': topicGraphJs,
   'spectrum-fonts.css': spectrumFontsCss,

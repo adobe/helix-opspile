@@ -79,8 +79,8 @@ are removed before an event is stored.
 - **The customer portal** (see [Customer portal](#customer-portal)) is a Worker of this
   repository, so its events say what the normalizer needs: `{ portal, seq, at, type, domain,
   channel, author, message | reaction | lobby }` (`src/portal/events.js`), a message as it is now
-  (`rev` counts its edits and its deletion), with its channel's name and its author's name and
-  mail address. They are stored as they arrive, under `portal/<domain>/<channel, or
+  (`rev` counts its edits and its deletion), with its files, whom it mentions, its channel's
+  name and its author's name, mail address and picture. They are stored as they arrive, under `portal/<domain>/<channel, or
   _lobby>/<yyyy>/<mm>/<dd>/<event ms>-<portal>-<seq>.json`: `seq` is the event's number in the
   portal's outbox, so one delivered twice is one object, and `domain`, the customer's mail
   domain, is the tenant.
@@ -2587,6 +2587,7 @@ managers see it on their team's page.
   it, which starts its first thread. The admin team picks any team and customer; a manager opens
   it for a team they manage that follows what the lobby picked, under the customer the inbox
   suggests. A lobby that has a channel can get another the same way.
+  A customer that uploaded a logo has it as its icon there.
 - **Decline** (`POST /api/admin/portal/decline`, the admin team): with a reason the customer
   reads in the lobby. They may ask again, which opens the request again.
 
@@ -2597,6 +2598,34 @@ and what Adobe resolved, and the thread picked, with a reply box. A thread is it
 edited and deleted. Reactions are emoji; Adobe's ✅ on a thread's first message shows it
 **resolved**, and writing again reopens it in the inbox as on any platform. The page asks for
 what is new every 15 seconds while it is on screen.
+
+**Writing** there is as in the inbox. The text box takes Slack's formatting shortcuts, with a
+toolbar for them (`ui/writing.js`, which the inbox's reply box uses too), and shows what will
+be sent (Preview). `@` suggests the people of the channel (the lobby's who signed in, and the
+Adobe people who wrote there), and a message **mentions** those whose `@Name` it has
+(`messages.mentions`): the thread says "@ you" in their list until they read it. `:` suggests
+emoji, by the names the inbox knows, and a `:name:` typed out shows as its emoji. **Files** are
+attached, pasted or dropped, up to ten of 20 MB a message; each is uploaded when it is added
+(`POST /api/upload`, `files`) and named by the message that is then sent, and one no message
+took is deleted after a day. A message shows its images where they are (their size read from
+their bytes, so the page keeps their space) and larger on a click, its video and audio in a
+player, and its other files as cards to download.
+
+**Pictures and logos** (`src/portal/files.js`). Everyone has a face beside what they write: the
+picture they uploaded (in the lobby, where they wait, or later from their menu), else their
+Gravatar, else their initials; Adobe's people the picture the inbox knows of them (their Slack
+one first), which the inbox names with everything it does there. The portal fetches Gravatar's
+and Adobe's pictures itself (`GET /api/avatar/<account>`), so a customer's browser asks nobody
+but the portal. A customer has a **logo**, uploaded by any of its people, which stands beside
+the channel's name; the inbox shows it on the customer's request, and makes it the icon of a
+customer it had not met when a channel is opened. Pictures and logos are made small in the
+browser (256 and 512 pixels) and are PNG, JPEG, WebP or GIF, never SVG.
+
+**What people upload is served so that a browser runs none of it**: with `nosniff` and a
+content security policy that loads nothing, shown in the page only when it is a raster image,
+a video or audio, and as a download (`application/octet-stream`) otherwise, in the portal and
+through the inbox alike. The bytes are in the portal's R2 bucket (`FILES`:
+`files/<lobby>/<channel>/<id>`, `avatars/<account>/…`, `logos/<domain>/…`).
 
 **In the inbox** a portal channel is a channel like any other: its threads are in the inboxes
 of its teams, labeled, re-threaded, searched and worked by thread agents. What differs:
@@ -2611,10 +2640,23 @@ of its teams, labeled, re-threaded, searched and worked by thread agents. What d
 - **The tenant is the lobby**, the customer's mail domain: accounts, mentions and the people a
   reply can name stay within one customer. The channel is `shared` (customers are in it), so the
   agents' `any_thread` tool, which is for internal channels, is never on in it.
-- **Text only**: no files either way, and an image in a customer's markdown is a link in pile 2
-  (the inbox loads images from the platforms' files only). A link to a Slack or Teams file in a
-  portal message is text its author typed, not a file of the thread: the app fetches none for it
-  (`threadFiles` in `src/agent/files.js`). `@Name` stays text.
+- **Files stay in the portal.** A message's event names its files by their address there
+  (`https://<portal>/api/file/<id>/<name>`), and pile 2 lists them as every platform's files
+  are. Nobody of the inbox can open that address, so the inbox opens it through the portal's
+  Worker (`PORTAL.file`), for the thread's people: images through the media proxy, video and
+  audio in the player, text in the preview, anything else as a download (`GET /api/file/open`),
+  and agents with `read_file`. The portal opens a file only for the channel of the thread it is
+  asked for, and only a portal message's links are portal files: a link to a Slack or Teams
+  file that a customer typed is text, as is a portal file's address posted elsewhere
+  (`threadFiles` in `src/agent/files.js`). An image in a customer's markdown is a link.
+  Files the inbox sends (a person's reply, the app's) are uploaded to the portal first
+  (`PORTAL.upload`), up to ten of 10 MB.
+- **Mentions are by name.** The portal's event names whom a message mentions, with their
+  accounts, so the inbox knows them before they have written; a lobby's event makes its people
+  accounts too, so a reply from the inbox can name one who has not written yet. What the inbox
+  sends mentions whoever's `@Name` it has, as the portal reads any message.
+- **Pictures.** A customer's uploaded picture is their account's in the inbox, through the
+  portal's Worker (`GET /api/portal/avatar/<account>`); without one, their Gravatar.
 - **No link to the message**: the portal is its customers', so pile 2 keeps no `permalink`
   nobody of the inbox could open.
 - **A reply whose thread the inbox does not have** is backfilled by asking the portal to tell of
@@ -2627,8 +2669,8 @@ inbox's pile-1 key making a second delivery the same object. Delivered events ar
 a week.
 
 **What it does not do yet.** Nothing is mailed: not the invitations, and not a notice that
-Adobe answered, so a customer sees an answer when they look. No files. No channel is opened
-without a lobby's request, and none is closed or renamed.
+Adobe answered or mentioned somebody, so a customer sees an answer when they look. No channel
+is opened without a lobby's request, and none is closed or renamed.
 
 ## Platform facts that shape the design
 
