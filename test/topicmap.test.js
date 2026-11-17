@@ -399,6 +399,15 @@ describe('topic map: building', () => {
     assert.deepEqual(parseNames('no json', 2), [null, null]);
   });
 
+  it('drops a name the model garbled, and a mangled theme', () => {
+    const names = parseNames(JSON.stringify([
+      { id: 0, name: 'Kauf Rear Kauf stash Kauf', theme: 'Customers need purges to work.' },
+      { id: 1, name: 'CDN purge\uFF5C', theme: 'Customers need purges to work.' },
+      { id: 2, name: 'CDN purge and stale cache', theme: 'Customers need partic\uFFFDadier.' },
+    ]), 3);
+    assert.deepEqual(names, [null, null, { label: 'CDN purge and stale cache', theme: '' }]);
+  });
+
   it('needs enough threads, and the index and Workers AI', async () => {
     const env = await setup({ perGroup: 5 });
     assert.match((await buildTopicMap(env)).error, new RegExp(`15 threads.*needs ${MIN_THREADS}`));

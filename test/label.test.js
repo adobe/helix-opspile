@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   askClef, clairicFacts, FIELDS, MAX_GAPS, MAX_QUESTIONS, productFacts, TOPIC_MIN, TOPICS,
-  isTitle, namedIn, QUESTIONS, stateOf, topicList, topicsOf, writeTitle,
+  garbled, isTitle, mangled, namedIn, QUESTIONS, stateOf, topicList, topicsOf, writeTitle,
 } from '../src/label.js';
 
 // Made-up thread and people only.
@@ -274,5 +274,61 @@ describe('titles that are not titles', () => {
     assert.equal(isTitle('No-cache header missing on PDF assets'), true);
     const env = { AI: { run: async () => ({ response: 'None' }) } };
     assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), null);
+  });
+
+  // What production's title model wrote once, for a thread it titles well every other time.
+  const GARBLED = 'partic\u00E1\u010D Kaufpeater\uFFFDadierstash partic404 Kauf Rear Kauf Kauf\uFF5C'
+    + ' particATOalenaad Babeems(em';
+
+  it('knows an answer that is no language', () => {
+    assert.equal(isTitle(GARBLED), false);
+    for (const t of [GARBLED, 'Sidekick login\uFFFD fails', 'Cache purge\uFF5Cbegin', 'Kauf Rear Kauf stash Kauf',
+      '<|eot_id|> Sidekick login', 'Purge \u2581of \u2581cache', 'Sidekick \uE000 login', 'Sidekick \u0007 login']) {
+      assert.equal(garbled(t), true, t);
+    }
+    // Titles as they are: names, numbers, punctuation, other languages, a word twice.
+    for (const t of ['Sidekick login fails after SSO change', 'Non-www and HTTP requests return Fastly error',
+      'DA site mapping to site with different org', 'Missing resource-published and resource-unpublished events',
+      'LLMO-8784 and LLMO-8785 tickets', '404 on /fr/ pages after go-live (CDN)', 'Zugriff auf Pr\u00FCfumgebung f\u00FCr Autoren',
+      '\u30B5\u30A4\u30C9\u30AD\u30C3\u30AF\u306E\u30ED\u30B0\u30A4\u30F3\u5931\u6557\uFF08SSO\uFF09', 'Caf\u00E9 menu block \u2013 layout']) {
+      assert.equal(garbled(t), false, t);
+      assert.equal(isTitle(t), true, t);
+    }
+    // A sentence may say a word three times; a mangled one is still told.
+    const theme = 'Customers need their pages, their blocks and their forms to publish.';
+    assert.equal(mangled(theme), false);
+    assert.equal(mangled(`${theme}\uFFFD`), true);
+  });
+
+  it('asks once more for a garbled or cut-off answer, and has no title when that is no better', async () => {
+    const run = (answers) => {
+      const env = { asked: 0 };
+      env.AI = {
+        run: async () => {
+          env.asked += 1;
+          return answers.shift();
+        },
+      };
+      return env;
+    };
+    const good = { response: 'Missing order after payment approval' };
+    // The inference went wrong once: the second answer is the title.
+    let env = run([{ response: GARBLED }, good]);
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), 'Missing order after payment approval');
+    assert.equal(env.asked, 2);
+    // Twice: no title (the label keeps the one it had), and no third call.
+    env = run([{ response: GARBLED }, { response: GARBLED }, good]);
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), null);
+    assert.equal(env.asked, 2);
+    // An answer that did not end within a title's tokens is not one, whatever it says.
+    env = run([{ response: 'Babeems stash Rear', usage: { completion_tokens: 40 } }, good]);
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), 'Missing order after payment approval');
+    env = run([{ choices: [{ message: { content: 'Babeems stash Rear' }, finish_reason: 'length' }] },
+      { choices: [{ message: { content: 'Missing order after payment approval' }, finish_reason: 'stop' }], usage: { completion_tokens: 10 } }]);
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), 'Missing order after payment approval');
+    // A good first answer is asked for once.
+    env = run([good, good]);
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), 'Missing order after payment approval');
+    assert.equal(env.asked, 1);
   });
 });

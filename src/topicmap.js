@@ -10,7 +10,9 @@
  * governing permissions and limitations under the License.
  */
 
-import { TITLER, topicList, topicNames } from './label.js';
+import {
+  garbled, mangled, TITLER, topicList, topicNames,
+} from './label.js';
 import { EMBEDDING_MODEL } from './rethread.js';
 import { authHeaders, gatewayBaseUrl, modelProblem } from './agent/model.js';
 import { threadVectorId } from './vectors.js';
@@ -305,6 +307,9 @@ export const NAMER = 'You name a topic: a group of support threads between Adobe
   + ' no customer, company, brand or person, and not Adobe, AEM or Edge Delivery Services, which'
   + ' every thread is about.';
 
+// A theme the model mangled (src/label.js) is left out: the name stands on its own.
+const themeOf = (s) => (mangled(s) ? '' : String(s || '').trim().slice(0, MAX_THEME));
+
 const tidy = (s) => String(s || '').replace(/^\s*(?:\d+[.)]|[-*#•]|name:|theme:|topic:|line \d:)\s*/i, '')
   .replace(/^["'`*\s]+|["'`*\s]+$/g, '').trim();
 
@@ -323,8 +328,9 @@ export async function nameTopic(env, titles) {
     });
     const text = String((res && (res.response || res.choices?.[0]?.message?.content)) || '');
     const [first, ...rest] = text.split('\n').map(tidy).filter(Boolean);
-    const label = first && first.length <= MAX_LABEL ? first.replace(/[.:]$/, '') : null;
-    return { label, theme: label ? (rest[0] || '').slice(0, MAX_THEME) : '' };
+    const label = first && first.length <= MAX_LABEL && !garbled(first)
+      ? first.replace(/[.:]$/, '') : null;
+    return { label, theme: label ? themeOf(rest[0]) : '' };
   } catch (e) {
     console.log(JSON.stringify({ route: 'topicmap', namer: 'error', error: e.message }));
     return { label: null, theme: '' };
@@ -373,7 +379,7 @@ const sentence = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
  * The names NAMER_ALL gave, by topic id: `[{ label, theme }]`, null for a topic it gave no name
- * worth showing (none, too long, vague, or the same as another's).
+ * worth showing (none, too long, vague, garbled, or the same as another's).
  */
 export function parseNames(text, n) {
   const out = Array.from({ length: n }, () => null);
@@ -389,9 +395,9 @@ export function parseNames(text, n) {
     const id = Number(item && item.id);
     const label = sentence(tidy(item && item.name).replace(/[.:]$/, ''));
     if (Number.isInteger(id) && id >= 0 && id < n && !out[id] && label && label.length <= MAX_LABEL
-      && !vague(label) && !seen.has(label.toLowerCase())) {
+      && !vague(label) && !garbled(label) && !seen.has(label.toLowerCase())) {
       seen.add(label.toLowerCase());
-      out[id] = { label, theme: String((item && item.theme) || '').trim().slice(0, MAX_THEME) };
+      out[id] = { label, theme: themeOf(item && item.theme) };
     }
   }
   return out;

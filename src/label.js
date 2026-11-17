@@ -527,17 +527,78 @@ export function namedIn(title, thread) {
  * title, please provide …"): no title, so the inbox shows the thread's first words instead.
  */
 const NO_TITLE = /^(?:none|null|n\/a|untitled|no title\b.*|no (?:specific )?(?:topic|information|issue|discussion)\b.*|invalid title\b.*|(?:general )?inquiry)$/i;
-export const isTitle = (t) => Boolean(t) && !NO_TITLE.test(String(t).trim());
+
+// What no title, name or sentence has: the replacement character (bytes that were no text),
+// half a surrogate pair, private-use and control characters, and the marks of a model's special
+// tokens. Full-width forms belong to Chinese, Japanese and Korean text, and to no other.
+const MANGLED = /[\uFFFD\u2581\p{Co}\p{Cs}]|(?![\t\n\r])\p{Cc}|<\||\|>/u;
+const FULL_WIDTH = /[\uFF01-\uFF5E]/;
+const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+/** Whether `text` has characters that only an inference gone wrong writes. */
+export function mangled(text) {
+  const s = String(text ?? '');
+  return MANGLED.test(s) || (FULL_WIDTH.test(s) && !CJK.test(s));
+}
+
+/**
+ * Whether a title or a name is what a model writes when its inference went wrong, not its
+ * answer: tokens of no language ("Kaufpeater\uFFFDadierstash partic404 Kauf Rear Kauf Kauf\uFF5C",
+ * once in production, for a thread the same model titles well every other time). It is mangled,
+ * or says one word of four letters or more three times, which no title of eight words does.
+ */
+export function garbled(text) {
+  if (mangled(text)) {
+    return true;
+  }
+  const seen = new Map();
+  for (const w of String(text ?? '').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || []) {
+    seen.set(w, (seen.get(w) || 0) + 1);
+    if (seen.get(w) > 2) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export const isTitle = (t) => Boolean(t) && !NO_TITLE.test(String(t).trim()) && !garbled(t);
 
 const firstLine = (res) => String((res && (res.response || res.choices?.[0]?.message?.content)) || '')
   .split('\n')[0].replace(/^["'`*#\s]+|["'`*.\s]+$/g, '').trim();
+
+// A title takes about ten tokens. An answer that did not end within these is not one.
+const TITLE_TOKENS = 40;
+const cutOff = (res) => res?.choices?.[0]?.finish_reason === 'length'
+  || Number(res?.usage?.completion_tokens) >= TITLE_TOKENS;
+
+/**
+ * The model's answer to `messages`, its first line. One that is garbled or was cut off is the
+ * inference's fault, not the thread's (asked again, the model answers as ever), so it is asked
+ * for once more; '' when that is no better. The log counts them (`route: 'title'`).
+ */
+async function titleBy(env, messages, thread) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await env.AI.run(TITLER, { messages, max_tokens: TITLE_TOKENS });
+    const title = firstLine(res);
+    const dropped = (garbled(title) && 'garbled') || (cutOff(res) && 'cut off');
+    if (!dropped) {
+      return title;
+    }
+    console.log(JSON.stringify({
+      route: 'title', thread: thread?.thread, dropped, attempt,
+    }));
+  }
+  return '';
+}
 
 /**
  * A short title by a language model: the specific failure, or the topic, without what the
  * inbox already shows next to it. A title that still names the customer or the product is
  * asked for once more, with the names it should leave out; it is never cut up, because what
  * is left of a sentence without its subject ("Headless options in without App Builder")
- * reads worse than the name.
+ * reads worse than the name. An answer that is no language is asked for once more, and is no
+ * title when that is no better: the thread keeps the title it had, or shows its first words.
  */
 export async function writeTitle(env, state, alert, thread) {
   const instructions = [
@@ -551,18 +612,15 @@ export async function writeTitle(env, state, alert, thread) {
     { role: 'system', content: instructions },
     { role: 'user', content: state.slice(0, 6000) },
   ];
-  let title = firstLine(await env.AI.run(TITLER, { messages, max_tokens: 40 }));
+  let title = await titleBy(env, messages, thread);
   const named = isTitle(title) ? namedIn(title, thread) : [];
   if (named.length) {
-    const again = firstLine(await env.AI.run(TITLER, {
-      messages: [...messages, { role: 'assistant', content: title }, {
-        role: 'user',
-        content: `The inbox shows ${named.map((n) => `"${n}"`).join(' and ')} next to the title already.`
-          + ' Write the title again without naming it, as a whole phrase that says the same.'
-          + ' Reply with the title only, no quotes.',
-      }],
-      max_tokens: 40,
-    }).catch(() => null));
+    const again = await titleBy(env, [...messages, { role: 'assistant', content: title }, {
+      role: 'user',
+      content: `The inbox shows ${named.map((n) => `"${n}"`).join(' and ')} next to the title already.`
+        + ' Write the title again without naming it, as a whole phrase that says the same.'
+        + ' Reply with the title only, no quotes.',
+    }], thread).catch(() => '');
     if (isTitle(again)) {
       title = again;
     }

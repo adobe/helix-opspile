@@ -1037,7 +1037,12 @@ and an unchanged thread is never labeled twice):
   second answer is kept whole (the names are never cut out of a title, which leaves broken
   phrases such as "Headless options in without App Builder"). When the model finds nothing
   to name ("None", "No title available"), the thread has no title, and the inbox shows its
-  first words.
+  first words. Now and then an inference goes wrong and the answer is no language: the
+  replacement character, the marks of special tokens, one word three times, or text that did
+  not end within the 40 tokens a title may take (`garbled`, `cutOff` in `src/label.js`). The
+  thread is not the cause (asked again, the model answers as ever), so such an answer is asked
+  for once more, and is no title when that is no better: the thread keeps the title it had.
+  The log counts them (`route: 'title'`, `dropped`). Topic names are checked the same way.
 - Clef also answers yes/no questions about the **tech stack** the thread shows (Edge Delivery,
   Document Authoring, Universal Editor, the CDN, the content source, …): the technologies of
   the teams' configuration (`tech_stack`), each asked as "Does this thread show that the
