@@ -752,7 +752,8 @@ const urgencyOf = (t) => (t.label && t.label.urgency != null ? URGENCY[Math.min(
 // name (`.wf-<name>`, a mask in ui/spectrum-inbox.css, in the color of the text around it).
 // Emoji are for what people put on messages. Critical and high are the same icon wherever
 // they show: as an urgency, as the status that is that urgency unseen, and on a thread's row.
-const wf = (name) => `<span class="wf wf-${name}" aria-hidden="true"></span>`;
+// `ringed`: a kind's icon smaller, inside an outline of its own shape (scripts/wf-rings.mjs).
+const wf = (name, ringed) => `<span class="wf wf-${name}${ringed ? ' ringed' : ''}" aria-hidden="true"></span>`;
 const KIND_ICON = {
   incident: 'cloud-error',
   security: 'lock',
@@ -1351,16 +1352,16 @@ const looseText = (text) => String(text || '').replace(EMOJI_CODE, '').replace(/
 
 const ourMove = (t) => t.waiting_on === 'us';
 
-/** The thread's mood: how urgent it is (if it is), its kind, then the reactions people left in it. */
-function moods(t) {
-  const out = [];
+/** A thread's kind and, when it is critical or high, its urgency. */
+function kindMarks(t) {
   const u = urgencyOf(t);
-  if (u === 'critical' || u === 'high') out.push(`<span class="em ${u}" role="img" aria-label="${cap(u)} urgency" title="${cap(u)} urgency">${wf(URGENCY_ICON[u])}</span>`);
-  const k = kindOf(t);
-  if (k) out.push(`<span class="em" role="img" aria-label="${esc(cap(k))}" title="${esc(cap(k))}">${wf(KIND_ICON[k] || KIND_ICON.other)}</span>`);
+  return { u: u === 'critical' || u === 'high' ? u : null, k: kindOf(t) };
+}
+/** The reactions people left in the thread, the most given first. */
+function moods(t) {
   const rx = (t.reactions || []).map((r) => ({ ...r, html: emojiHtml(r.emoji, { slack: t.source === 'slack' }) }))
     .filter((r) => r.html).sort((a, b) => b.count - a.count).slice(0, 5);
-  for (const r of rx) out.push(`<span class="em" title="${esc(`${r.emoji} × ${r.count}`)}">${r.html}</span>`);
+  const out = rx.map((r) => `<span class="em" title="${esc(`${r.emoji} × ${r.count}`)}">${r.html}</span>`);
   return out.length ? `<span class="moods">${out.join('')}</span>` : '';
 }
 
@@ -1377,27 +1378,29 @@ function flags(t) {
   return out;
 }
 const titleHtml = (t, hit) => `${t.root_known ? '' : '↳ '}${hit ? marked(t.title || '(no text)', state.search.words) : emojify(t.title || '(no text)')}`;
-const statusTitle = (t, status) => `${STATUS_HINT[status]}${ourMove(t) ? ' · our move' : ''}`;
-// A pencil, the draft's mark, in a 16 by 16 box: drawn along the box's diagonal, nib down to
-// the left. While the team has not read the thread, a smaller one sits inside an outline of
-// the pencil's own shape, a gap away, as the ringed status dot sits inside its ring.
-const PENCIL = '<path d="M1 8l3-2.2v4.4zM4.8 5.8H12v4.4H4.8zM12.8 5.8h1a1.2 1.2 0 0 1 1.2 1.2v2a1.2 1.2 0 0 1-1.2 1.2h-1z"/>';
-const PENCIL_IN = '<path d="M3.6 8l2-1.5v3zM6.3 6.5h5.2v3H6.3zM12.1 6.5h.7a.7.7 0 0 1 .7.7v1.6a.7.7 0 0 1-.7.7h-.7z"/>';
-const PENCIL_OUTLINE = '<path d="M.9 8l3.7-3.3h8.6a2.2 2.2 0 0 1 2.2 2.2v2.2a2.2 2.2 0 0 1-2.2 2.2H4.6z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>';
-const pencil = (outlined) => `<svg viewBox="0 0 16 16" aria-hidden="true"><g fill="currentColor" transform="rotate(-45 8 8)">${outlined ? PENCIL_OUTLINE + PENCIL_IN : PENCIL}</g></svg>`;
 /**
- * A row's one status mark: the status dot, a ✓ in its place once the thread is resolved, or a
- * pencil in the status's color while the thread has a draft (resolved or not: the draft waits
- * to be sent or discarded), outlined while the team has not read the thread.
+ * A row's status mark, a stack of Spectrum workflow icons (emoji are for what people put on
+ * messages). In front, the thread's kind in the status's color; while the team has not read
+ * the thread, smaller, inside an outline of its own shape (`.ringed`, scripts/wf-rings.mjs).
+ * Behind it, as many as apply: the urgency (critical or high), a draft (resolved or not: it waits
+ * to be sent or discarded), resolved, and our move. They peek out at rest (ui/spectrum-inbox.css,
+ * `.mk`) and spread out under the pointer, each with its tooltip.
  */
 function statusMark(t, status) {
-  const title = esc(statusTitle(t, status));
+  const { u, k } = kindMarks(t);
+  const behind = [];
+  if (u) behind.push({ cls: u, say: `${cap(u)} urgency`, icon: URGENCY_ICON[u] });
   if (t.draft) {
-    const hint = `Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`;
-    return `<span class="pen s-${status}${t.unread ? ' ring' : ''}" title="${esc(hint)} · ${title}">${pencil(t.unread)}</span>`;
+    behind.push({
+      cls: 'draft', icon: 'edit', say: 'Draft', hint: `Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`,
+    });
   }
-  if (isResolved(t)) return `<span class="ok" title="Resolved · ${title}">✓</span>`;
-  return `<span class="dot ${status === 'quiet' ? '' : `c-${status}`} ${ourMove(t) ? 'ring' : ''}" title="${title}"></span>`;
+  if (isResolved(t)) behind.push({ cls: 'ok', say: 'Resolved', icon: 'checkmark-circle' });
+  if (ourMove(t)) behind.push({ cls: 'us', say: 'Our move', icon: 'call-center' });
+  const front = `${cap(k)}${t.unread ? ', unread' : ''} · ${STATUS_HINT[status]}`;
+  const say = [front, ...behind.map((x) => x.say)].join(' · ');
+  const chips = behind.map((x) => `<span class="mi ${x.cls}" title="${esc(x.hint || x.say)}">${wf(x.icon)}</span>`).join('');
+  return `<span class="mks"><span class="mk" role="img" aria-label="${esc(say)}"><span class="mi k s-${status}${t.unread ? ' ring' : ''}" title="${esc(front)}">${wf(KIND_ICON[k] || KIND_ICON.other, t.unread)}</span>${chips}</span></span>`;
 }
 const rowOpen = (t, hit, cls) => `<div class="t ${t.unread ? 'unread' : ''} ${state.open === t.thread ? 'sel' : ''} ${!hit && state.prevKeys && !state.prevKeys.has(t.thread) ? 'enter' : ''}${hit ? ' hit' : ''}${flags(t)}${cls}" data-thread="${esc(t.thread)}"${hit ? ` data-hit="1"${hit.snippet ? ` data-msg="${esc(hit.snippet.message)}"` : ''}` : ''}>`;
 

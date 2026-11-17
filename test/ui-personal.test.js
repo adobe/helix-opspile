@@ -120,7 +120,7 @@ function load() {
     kindOf: () => 'question',
     KIND_ICON: { question: 'help', other: 'comment' },
     URGENCY_ICON: { critical: 'alert-diamond', high: 'alert-triangle' },
-    wf: (name) => `<span class="wf wf-${name}" aria-hidden="true"></span>`,
+    wf: (name, ringed) => `<span class="wf wf-${name}${ringed ? ' ringed' : ''}" aria-hidden="true"></span>`,
     cap: (v) => v[0].toUpperCase() + v.slice(1),
     avatar: (name) => `<span class="av">${esc(name)}</span>`,
     profileKey: () => '',
@@ -219,12 +219,12 @@ describe('the simple personal view', () => {
       t.participants = [{ name: 'Sam Reyes' }];
       let r = page.row(t);
       assert.match(r, /^<div class="t unread[^"]* mention simple"/);
-      assert.doesNotMatch(r, /class="faces"|class="dot|class="cust"|mentions<\/b>/);
+      assert.doesNotMatch(r, /class="faces"|class="mks"|class="cust"|mentions<\/b>/);
       assert.equal(badge(r), '2');
       state.settings.expert = true;
       r = page.row(t);
       assert.doesNotMatch(r, / simple"/);
-      assert.match(r, /class="dot/);
+      assert.match(r, /class="mks"/);
       assert.match(r, /<span class="faces"><span class="av">Sam Reyes<\/span><\/span>/);
       assert.match(r, /<span class="cust">[\s\S]*ACME<\/span>/);
       assert.match(r, /<b class="men" title="Unread mentions of you">2 mentions<\/b>/);
@@ -253,37 +253,43 @@ describe('the simple personal view', () => {
       });
       return t;
     }
-    const mark = (r) => (/<span class="(pen|ok|dot)[^"]*"[^>]*>/.exec(r) || [])[0] || '';
+    /** The status mark's chips: the front's classes, then each behind it, with its tooltip. */
+    const chips = (r) => [...r.matchAll(/<span class="mi ([^"]*)" title="([^"]*)">/g)].map((m) => `${m[1]}: ${m[2]}`);
 
-    it('shows a pencil in the status dot\'s place, over the resolved ✓, in the status\'s color', () => {
+    it('puts the kind in front, in the status\'s color, and the draft and resolved behind it', () => {
       state.settings.expert = true;
       const t = drafted(false);
       let r = page.row(t);
-      assert.equal(mark(r), '<span class="pen s-team" title="Draft by you, 1h: Try the purge · Team on it">');
-      assert.doesNotMatch(r, /class="ok"|class="dot|class="drafted"|✎ Draft/);
-      // Without the draft, the resolved thread has its ✓ back.
+      assert.deepEqual(chips(r), [
+        'k s-team: Question · Team on it',
+        'draft: Draft by you, 1h: Try the purge',
+        'ok: Resolved',
+      ]);
+      assert.match(r, /<span class="mk" role="img" aria-label="Question · Team on it · Draft · Resolved">/);
+      assert.doesNotMatch(r, /class="drafted"|✎ Draft|<svg/);
+      // Without the draft, only resolved is behind the kind.
       delete t.draft;
       r = page.row(t);
-      assert.match(mark(r), /^<span class="ok" title="Resolved · Team on it">$/);
+      assert.deepEqual(chips(r).slice(1), ['ok: Resolved']);
     });
 
-    it('outlines the pencil in its own shape while the team has not read the thread', () => {
+    it('outlines the kind in its own shape while the team has not read the thread', () => {
       state.settings.expert = true;
       const t = drafted(true);
       let r = page.row(t);
-      assert.match(mark(r), /^<span class="pen s-team ring" title="Draft by you, 1h: Try the purge · Team on it">$/);
-      assert.match(r, /<path d="[^"]*" fill="none" stroke="currentColor"/);
+      assert.match(chips(r)[0], /^k s-team ring: Question, unread · /);
+      assert.match(r, /<span class="wf wf-help ringed" aria-hidden="true">/);
       read('a3');
       r = page.row(t);
-      assert.match(mark(r), /^<span class="pen s-team" /);
-      assert.doesNotMatch(r, /fill="none"/);
+      assert.match(chips(r)[0], /^k s-team: Question · /);
+      assert.doesNotMatch(r, /ringed/);
     });
 
     it('shows no draft mark at all in the personal view', () => {
       for (const unread of [true, false]) {
         const r = page.row(drafted(unread));
         assert.match(r, / simple"/);
-        assert.doesNotMatch(r, /class="pen|class="drafted"|Draft|<svg/);
+        assert.doesNotMatch(r, /class="mks"|class="drafted"|Draft|<svg/);
       }
     });
   });
