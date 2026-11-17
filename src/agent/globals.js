@@ -13,6 +13,7 @@
 import {
   approved, currentApp, installationsWithApprovals, installationToken,
 } from '../github.js';
+import { fluffyConnection, fluffyInstances } from './fluffyjaws.js';
 
 /**
  * Global MCP servers: set up once for the whole deployment, not per team or customer, and
@@ -27,6 +28,10 @@ import {
  * - `github`: GitHub's MCP server, read-only, as the opspile GitHub App (src/github.js), on
  *   the repositories it is installed on, for each installation the admin team allowed. One
  *   server per allowed installation: `github`, or `github_<account>` when there are several.
+ * - `fluffyjaws`: FluffyJaws' MCP server (Adobe's internal search and support assistant: its
+ *   knowledge, Slack, the wiki, Jira, GitHub, support tickets), as a person a member of the
+ *   admin team connected once, or as a FluffyJaws service app (src/agent/fluffyjaws.js). Off for
+ *   new teams: the agents of a team where it is on see what that person sees there.
  *
  * A server's agents see it as `mcp__<name>`, like the team's and the customer's servers
  * (src/agent/mcp.js); its id there is `global:<key>`.
@@ -58,6 +63,20 @@ export const GLOBAL_SERVERS = [
     instructions: 'Only the repositories the opspile GitHub App is installed on can be read; a'
       + ' repository that is not found is one it is not installed on.',
     newTeams: true,
+  },
+  {
+    server: 'fluffyjaws',
+    title: 'FluffyJaws',
+    description: 'FluffyJaws\' MCP server, Adobe\'s internal support assistant: searches its'
+      + ' knowledge (FluffyPack), product documentation, Slack, the wiki, Jira, GitHub code and'
+      + ' support tickets, and answers questions about them',
+    instructions: 'FluffyJaws is Adobe\'s own, internal system: searching it for this customer\'s'
+      + ' errors, tickets or products is what it is for. It answers as the person who connected'
+      + ' it (or as opspile\'s service app), with what they may see, which is about every customer:'
+      + ' never quote another customer\'s name or data into this thread.',
+    // Saves a conversation at FluffyJaws: agents only read there.
+    exclude: ['content_compass_recommend'],
+    newTeams: false,
   },
 ];
 
@@ -108,6 +127,9 @@ export async function instancesOf(env, server) {
       })),
       problem: null,
     };
+  }
+  if (server === 'fluffyjaws') {
+    return fluffyInstances(env);
   }
   return { instances: [], problem: 'unknown server' };
 }
@@ -189,7 +211,8 @@ export async function globalServersFor(env, target) {
 
 /**
  * A global server to connect to, by its id (`global:<key>`): `{ id, name, url, headers,
- * expiresAt? }`, null when it is gone.
+ * expiresAt?, authProvider? }`, null when it is gone. `authProvider` (fluffyjaws) gives the
+ * transport a token before each request, and another when the server refuses it.
  */
 export async function globalConnection(env, id) {
   const key = String(id).replace(/^global:/, '');
@@ -200,6 +223,9 @@ export async function globalConnection(env, id) {
       url: BROWSER_MCP_URL,
       headers: { Authorization: `Bearer ${env.BROWSER_RUN_TOKEN}` },
     } : null;
+  }
+  if (key === 'fluffyjaws') {
+    return fluffyConnection(env, id);
   }
   const m = /^github:(\d+)$/.exec(key);
   if (m) {

@@ -603,7 +603,7 @@ channels at once): on, every channel of the team that nobody switched has an age
 channels it gets later too. A new team starts with it on (the admin team's name for it in
 `changed_by`), and with the [agent tools](#agent-tools) `computer` and `extraction_rules` and
 the [global servers](#global-mcp-servers) `browser` and `github` on for the team (those marked
-`newTeams`); the teams from before that have them as they had them, and deleting a team
+`newTeams`; `fluffyjaws`, which acts as a person, is not); the teams from before that have them as they had them, and deleting a team
 deletes them. A channel nobody switched has an agent when its team's default or
 `AGENT_CHANNELS`, the deployment's default, turns it on. Alert channels have no
 agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
@@ -1788,11 +1788,11 @@ refresh tokens that expire unused (opspile's own after 30 days) stay alive. opsp
 ### Global MCP servers
 
 Some servers are not a team's or a customer's but opspile's own, built in
-(`src/agent/globals.js`) and set up once: **`browser`** and **`github`**. A new team starts
-with both on; otherwise they are off until the admin team or a team's managers turn one on, for an ops team or for a single channel
+(`src/agent/globals.js`) and set up once: **`browser`**, **`github`** and **`fluffyjaws`**. A
+new team starts with the first two on; otherwise they are off until the admin team or a team's managers turn one on, for an ops team or for a single channel
 (`mcp_global_switches`; a channel's switch wins over its team's, and a channel without one
 follows its team). An agent gets those on for its thread's team or channel, next to the team's
-and the customer's, as `mcp__browser`, `mcp__github`; its id there is `global:<key>`. Their
+and the customer's, as `mcp__browser`, `mcp__github`, `mcp__fluffyjaws`; its id there is `global:<key>`. Their
 tools are those the last check found (`mcp_global_tools`), so an agent does not ask a
 server or mint a token just to list them; the editor's **Check** and the cron, once a day,
 ask again. The prompt says that these are opspile's own, and that customer data does not go
@@ -1824,6 +1824,45 @@ Web Crypto; GitHub's PKCS#1 key is wrapped as PKCS#8), trades it for a token per
 keeps it per isolate until shortly before it expires, and an agent's client is replaced
 before its token runs out. An app installed on several accounts is a server per account,
 `github_<account>`.
+
+**`fluffyjaws`: FluffyJaws' MCP server, as a person or a service app.** FluffyJaws, Adobe's
+internal support assistant, serves MCP at `https://api.fluffyjaws.adobe.com/api/v1/mcp`
+(Streamable HTTP): searches of its knowledge, product documentation, Slack, the wiki, Jira,
+GitHub code and support tickets, and a chat. Agents get every tool but
+`content_compass_recommend`, which saves a conversation there. FluffyJaws takes an access token
+of its own Okta authorization server (`FLUFFYJAWS_ISSUER`) as `Authorization: Bearer`, and only
+one with five minutes left (`src/agent/fluffyjaws.js`). The transport gets it from an auth
+provider before each request, and another one when FluffyJaws answers 401. Two credentials,
+the service app winning where both are set up:
+
+- **A person's grant.** `FLUFFYJAWS_CLIENT_ID` is opspile's own Okta client there: native,
+  public (no secret), authorization code with PKCE (S256) and refresh tokens, its one redirect
+  URI the agents' OAuth callback (`/api/kb/mcp/oauth/callback`). FluffyJaws' Okta refuses
+  dynamic client registration, so nothing is discovered or registered: the endpoints are the
+  issuer's `/v1/authorize`, `/v1/token` and `/v1/revoke`. A member of the admin team
+  **connects** it in the editor: the browser goes to Okta with `openid profile email
+  offline_access` and a `state` whose hash finds the sign-in again (`mcp_global_grants`, one row
+  per server), and comes back to the callback, which tries the agents' servers first and then
+  this; only the person who started may finish, within ten minutes. The tokens are sealed with
+  `TOKEN_KEY`; who signed in (the ID token's email and name, read without checking its signature:
+  it came straight from Okta's token endpoint) and who connected it are plain columns, and the
+  editor shows them to everyone, since **every agent where it is on acts as that person** at
+  FluffyJaws and sees what they see. That is why it is off for new teams. A token with less than
+  seven minutes left is refreshed, one refresh at a time across every agent, as the agents' OAuth
+  servers do (a 30-second lease, `refresh_lock`; Okta may rotate refresh tokens): a refresh
+  writes only over the grant it started from, and one that lost revokes what it got. A grant Okta
+  rejects (`invalid_grant`) is dropped with the reason until someone connects again; connecting
+  again revokes the grant before, and **Disconnect** revokes it and deletes the row. The daily
+  check of the global servers needs a token, so the refresh token is used at least once a day.
+- **A service app.** `FLUFFYJAWS_SERVICE_CLIENT_ID` and the secret `FLUFFYJAWS_SERVICE_SECRET`:
+  an Okta service app registered in FluffyJaws' Integrations workspace, client credentials
+  (`client_secret_basic`) with the scope `fluffyjaws`. No person: each call says
+  `X-FluffyJaws-End-User: automation`. The token is kept per isolate until seven minutes before
+  it expires.
+
+The agents are told that FluffyJaws is Adobe's own, so searching it for the customer's errors,
+tickets and products is what it is for, and that what it returns is about every customer: never
+another customer's name or data in the thread.
 
 Writes clone the knowledge base into memory (isomorphic-git), apply the change, rewrite the
 indexes and the log, commit and push with a short-lived write token. Many agents write the

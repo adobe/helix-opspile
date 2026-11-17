@@ -342,6 +342,12 @@ lease, which gives back only its own lease. Disconnecting and signing in do not 
 refresh writes only over the sealed grant it started from. One that lost revokes what it got, unless
 the grant is still the same one.
 
+**FluffyJaws grant.** none → signing in → connected → rejected → signing in → connected
+(`grantState` in `src/agent/fluffyjaws.js`, from the row of `mcp_global_grants`). The same rules as
+the MCP OAuth grant: one refresh at a time under `refresh_lock`, a refresh writes only over the
+sealed tokens it started from, and one that lost revokes what it got unless the grant is the same.
+Connecting again revokes the grant before once the new one is kept; disconnecting deletes the row.
+
 **Computer secret.** none → set → changed → deleted (a row in `agent_secrets`,
 `src/secretadmin.js`). Not stored anywhere else: the shell has only a placeholder, and the gateway
 (`forward` in `src/agent/secrets.js`) reads the row on every request that names it, by the agent's
