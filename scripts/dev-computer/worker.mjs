@@ -44,7 +44,7 @@
 /* eslint-disable max-classes-per-file */
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { ThreadAgent } from '../../src/agent/agent.js';
-import { imageReads, sizeImageCache } from '../../src/agent/image.js';
+import { forgetImages, imageReads, sizeImageCache } from '../../src/agent/image.js';
 import { forward } from '../../src/agent/secrets.js';
 import { mountList } from '../../src/threadfiles.js';
 import { devEnv, devSecrets } from './secrets.mjs';
@@ -69,12 +69,15 @@ export class ComputerAgent extends ThreadAgent {
   /**
    * Runs `command` as pi's bash tool does: what it answers, what the command printed, and what
    * the isolate read of the images bucket and keeps (`images`, src/agent/image.js).
-   * `cache` (`{ mib, fileMib }`) sizes what the isolate keeps first.
+   * `cache` (`{ mib, fileMib }`, `{}` for the Worker's own) empties what the isolate keeps and
+   * sizes it first.
    */
   async exec({
     command, runtime, image, timeout, env, cache,
   }) {
     if (cache) {
+      // A cache of its own: what the isolate kept for another agent is forgotten first.
+      forgetImages();
       sizeImageCache({
         ...(cache.mib ? { bytes: cache.mib * MiB } : {}),
         ...(cache.fileMib ? { fileMax: cache.fileMib * MiB } : {}),
@@ -113,8 +116,14 @@ export class ComputerAgent extends ThreadAgent {
     for (let i = 0; i < Number(mib); i += 1) {
       held.push(new Uint8Array(MiB).fill((i % 255) + 1));
     }
+    // Held a while: the runtime counts an isolate's memory now and then, not at each allocation.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1000);
+    });
     const sqliteBytes = this.ctx.storage.sql.databaseSize;
-    return { mib: held.length, images: imageReads(), sqliteBytes };
+    return {
+      mib: held.reduce((n, b) => n + (b[0] ? 1 : 0), 0), images: imageReads(), sqliteBytes,
+    };
   }
 
   /** Ends the kernel, as when the agent's object lets it go: the next command boots another. */

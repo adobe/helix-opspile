@@ -549,11 +549,12 @@ const MB = (n) => Math.round((n || 0) / 1e5) / 10;
  * (cachesOf), each on an agent of its own: GITHUB_SESSION, then its kernel ended and the first
  * command again (as when the object lets its kernel go and boots it again), each with its time
  * and what the isolate asked of the images bucket then; and at the end how much memory its
- * object had free (`/probe`, `step` MiB more each time until the isolate is reset, or `max`).
+ * object had free (`/probe`, `step` MiB more each time until the isolate is reset, or `max`;
+ * each held for a second).
  * `[{ label, steps: [{ name, ms, ok, gets, fetchedMB, keptMB, error }], freeMiB }]`.
  */
 export async function measure(origin, caches, {
-  token, run, step = 4, max = 124, log = console.log,
+  token, run, step = 8, max = 256, log = console.log,
 } = {}) {
   const headers = { 'content-type': 'application/json', ...headersOf(token) };
   const post = async (thread, path, body) => {
@@ -580,7 +581,7 @@ export async function measure(origin, caches, {
         command,
         image: 'github',
         timeout: 120,
-        ...(first && cache.mib ? { cache: { mib: cache.mib, fileMib: cache.fileMib } } : {}),
+        ...(first ? { cache: cache.mib ? { mib: cache.mib, fileMib: cache.fileMib } : {} } : {}),
       }).catch((e) => ({ error: reasonOf(e) }));
       const now = body.images;
       const result = {
@@ -621,7 +622,7 @@ export async function measure(origin, caches, {
 }
 
 /** What `measure` found, as a Markdown table. */
-export function measuredOf(results, { max = 124 } = {}) {
+export function measuredOf(results, { max = 256 } = {}) {
   const rows = results.flatMap((r) => [
     ...r.steps.map((s) => `| ${r.label} | ${s.ok ? '✅' : '❌'} ${s.name} | ${s.ms} ms | ${s.gets ?? '–'}`
       + ` (${s.fetchedMB} MB) | ${s.keptMB} MB |${s.error ? ` ${s.error.replace(/\|/g, '/')}` : ''}`),

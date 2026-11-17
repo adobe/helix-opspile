@@ -260,8 +260,8 @@ describe('the checks of the stage computer', () => {
       const body = JSON.parse(init.body);
       asked.push([pathname, searchParams.get('thread'), body.mib ?? body.cache ?? null]);
       if (pathname === '/probe') {
-        // 12 MiB free: past that the isolate is reset, and the Worker answers 500.
-        return body.mib > 12 ? new Response('exceeded its memory limit', { status: 500 })
+        // 8 MiB free: past that the isolate is reset, and the Worker answers 500.
+        return body.mib > 8 ? new Response('exceeded its memory limit', { status: 500 })
           : Response.json({ mib: body.mib, images: { gets, fetched: gets * 1e6, bytes: 5e6 } });
       }
       if (pathname === '/drop') {
@@ -274,7 +274,7 @@ describe('the checks of the stage computer', () => {
     const [r] = await measure('https://computer.example', cachesOf('48/32'), {
       run: 'r1', log: (l) => lines.push(l),
     });
-    assert.equal(r.freeMiB, 12);
+    assert.equal(r.freeMiB, 8);
     assert.deepEqual(r.steps.map((s) => [s.name, s.ok, s.gets, s.fetchedMB, s.keptMB]), [
       ['command 1', true, 2, 2, 5], ['command 2', true, 2, 2, 5],
       ['command 1, its kernel booted again', true, 2, 2, 5],
@@ -282,10 +282,10 @@ describe('the checks of the stage computer', () => {
     assert.ok(asked.every(([, thread]) => thread === 'measure-r1-48-32'));
     // The cache is sized with the first command, and the probes go up until one fails.
     assert.deepEqual(asked.find(([p]) => p === '/').at(2), { mib: 48, fileMib: 32 });
-    assert.deepEqual(asked.filter(([p]) => p === '/probe').map(([, , m]) => m), [0, 4, 8, 12, 16]);
+    assert.deepEqual(asked.filter(([p]) => p === '/probe').map(([, , m]) => m), [0, 8, 16]);
     const table = measuredOf([r]);
     assert.match(table, /\| 48\/32 \| ✅ command 1 \| \d+ ms \| 2 \(2 MB\) \| 5 MB \|/);
-    assert.match(table, /\| 48\/32 \| free in the object after it \| 12 MiB \|/);
+    assert.match(table, /\| 48\/32 \| free in the object after it \| 8 MiB \|/);
     assert.doesNotMatch(table, /https?:/);
   });
 
