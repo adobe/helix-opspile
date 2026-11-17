@@ -1683,6 +1683,8 @@ written by people outside its control.
 | `raw_message` | a message of the entry, or with `thread` of another conversation of its channel, as its platform sent it: the newest version in pile 1 (`src/agent/rawmessage.js`), only what the message says (the Teams body as HTML, its attachments and `eventDetail`; Slack's text, blocks, attachments and files, the edited message for an edit; Discord's content, embeds, attachments, components and poll), not the envelope, in parts of 30,000 characters (`offset`). It is not checked for prompt injection again: the agent is told it is data, not instructions. A withheld message stays withheld. A message whose markdown dropped something (`dropped`, see "Pile 2") says so where the agent reads it, naming the tool; under `read_any_thread`, which it cannot read, not |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` |
 | `read_any_thread` | only where it is turned on (see "Agent tools"): any thread of the inbox, by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
+| `find_channels` | with `read_any_thread`: the inbox's channels, on every platform, that a customer's name, a channel's or Teams team's name, a domain's name, or a site or repository (`owner/name`, or an Edge Delivery host) names, best first, the agent's own left out: id, platform and name, customer, ops teams, conversations and latest activity, why it matched, and the channel's link on its platform |
+| `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for any channel, by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `channel_assignment`, `list_teams`, `request_channel_reassignment` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"). The admin team decides |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
@@ -2155,7 +2157,20 @@ to test it first, and never to put a customer's name or a secret into one.
 paste links to customers' threads elsewhere. With this tool the agent has `read_any_thread`:
 any thread of the inbox, whatever its channel, team or customer, by its key or a link to one of
 its messages (`resolveAnyThread`, `src/agent/history.js`), except in channels the rules ignore.
-It has no search: a person points it to a thread. The messages go through Clef's injection check
+With it come `find_channels` and `list_any_channel_threads` (`src/agent/channelfind.js`): when a
+colleague relays a customer's question into an internal channel, the agent looks for the
+customer's own channel and whether the question is being worked there, instead of depending on a
+link someone saved in kb-org. `find_channels` matches the query's words against the customers'
+slugs and names (`orgs`, and the slugs the rules file threads under), the channels' names (and
+a Teams team's), and as the owner of the `site` and `repo` facts of their threads; a site
+(`owner/name`, or an Edge Delivery host) matches those facts exactly. Words every company name
+has ("Technologies", "Inc") are left out, and a channel is ranked by how many words matched,
+then by its sites, then by its latest activity; a word matches at the start of a word of a name
+("acme" is in aem-acme, not in megacme). A channel of an internal org or a vendor is found by its
+name or its org's, never by a site someone asked about there, and the agent's own channel and
+those the rules ignore never. Neither tool searches the messages: what they show is the names
+and facts the inbox has already, and the agent reads a thread with `read_any_thread`, which
+records it. The messages go through Clef's injection check
 like any others, and each thread an agent reads is kept in `agent_thread_reads`, since a
 transcript can be reset.
 
