@@ -2862,6 +2862,12 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .fmc .fmc-frame.fmc-frame-set .fmc-shape, .fmc .fmc-frame-set .fmc-inner { fill: var(--card); stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-100); }
 .fmc .fmc-frame-set .fmc-inner { fill: none; }
 .fmc .fmc-frame.fmc-grey .fmc-shape { fill: var(--spectrum-gray-100); }
+/* Zones of an architecture, each a faint tint of its own (FMC: few colors, and muted). */
+.fmc .fmc-frame.fmc-zone-edge .fmc-shape { fill: color-mix(in srgb, var(--spectrum-celery-100) 35%, var(--card)); }
+.fmc .fmc-frame.fmc-zone-pipe .fmc-shape { fill: color-mix(in srgb, var(--spectrum-cyan-100) 35%, var(--card)); }
+.fmc .fmc-frame.fmc-zone-author .fmc-shape { fill: color-mix(in srgb, var(--spectrum-fuchsia-100) 35%, var(--card)); }
+.fmc .fmc-frame.fmc-zone-dev .fmc-shape { fill: color-mix(in srgb, var(--spectrum-indigo-100) 35%, var(--card)); }
+.fmc .fmc-frame.fmc-zone-oversight .fmc-shape { fill: color-mix(in srgb, var(--spectrum-yellow-100) 35%, var(--card)); }
 .fmc .fmc-dashed .fmc-shape { stroke-dasharray: var(--spectrum-spacing-100) var(--spectrum-spacing-75); }
 .fmc [data-part] { cursor: default; outline: none; }
 .fmc [data-part]:focus-visible .fmc-shape { stroke: var(--accent); }

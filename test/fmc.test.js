@@ -22,7 +22,7 @@ import { FMC_PATH, fmcScript } from '../src/page.js';
 import { parseStack, stackFile, stackView } from '../src/stack.js';
 import FMC, { etag } from '../src/ui-fmc.bundle.js';
 import { BUNDLES, bundle } from '../scripts/ui-markdown.mjs';
-import { FIGURES, stacks } from '../scripts/fmc-gallery.mjs';
+import { ARCHITECTURES, FIGURES, stacks } from '../scripts/fmc-gallery.mjs';
 import { ACME_STACK } from '../scripts/dev-ui-kb.mjs';
 import { SCRIPTS } from './ui.js';
 
@@ -130,6 +130,34 @@ describe('FMC block diagrams (src/fmc.js)', () => {
       }
     }
     assert.ok(FIGURES.length >= 18);
+  });
+
+  it('draw Helix 6 as adobe/helix-home does: its zones, structured nodes and request channels', () => {
+    const h6 = ARCHITECTURES.find((a) => a.id === 'helix6');
+    const { svg, graph } = renderFmc(viz, h6.dot);
+    assert.equal(renderFmc(viz, h6.dot).svg, svg);
+    const node = (label) => graph.nodes.find((n) => n.attrs.label === label);
+    const cluster = (name) => graph.clusters.find((c) => c.name === name);
+    // Top to bottom: who asks, the CDNs, the services, the buses, the API, the content.
+    const rank = (label) => node(label).rank;
+    assert.ok(rank('Visitor') < rank('BYO CDN'));
+    assert.ok(rank('BYO CDN') < node('Outer CDN\\n`*.aem.live`, `*.aem.page`').rank);
+    assert.ok(rank('Config Service') < rank('<org-1>'));
+    assert.ok(rank('<org-1>') < rank('Source'));
+    assert.ok(rank('Source') < rank('Docs'));
+    // The zones, tinted, and what is nested in them.
+    for (const z of ['oversight', 'edge', 'pipe', 'author', 'dev']) {
+      assert.match(svg, new RegExp(`fmc-frame fmc-frame-group [^"]*fmc-zone-${z}`), z);
+    }
+    for (const [c, kind] of [['cluster_api', 'agent'], ['cluster_s3', 'storage'], ['cluster_contentbus', 'storage'], ['cluster_byo', 'storage']]) {
+      assert.ok(cluster(c), c);
+      assert.match(svg, new RegExp(`fmc-frame fmc-frame-${kind}`), c);
+    }
+    // The inner CDNs' channels hang under each, as many as they are: 24 request channels in all.
+    assert.equal((svg.match(/class="fmc-rlabel"/g) || []).length, 24);
+    const x = (label) => node(label).x;
+    const ch = graph.nodes.find((n) => n.name === 'c_med');
+    assert.ok(Math.abs(ch.x - x('Media CDN\\n`media.aem.page`')) < 1, `${ch.x}`);
   });
 });
 

@@ -280,8 +280,9 @@ A customer's stack is drawn as an FMC block diagram (`src/fmc.js`, after the
 places the parts, and the renderer draws them as SVG with classes (`fmc-…`) that
 `ui/spectrum-inbox.css` gives Spectrum 2 colors, so it follows the color scheme too. The inbox
 imports it, `/inbox/fmc.js`, the first time it shows a stack. `npm run ui:dev` has a gallery of it
-at `/__dev/fmc`: the guidelines' figures next to the same structures as DOT drawn by it, and the
-fake data's stacks (`scripts/fmc-gallery.mjs`).
+at `/__dev/fmc`: the guidelines' figures next to the same structures as DOT drawn by it, Helix 6's
+architecture next to its OmniGraffle original, and the fake data's stacks
+(`scripts/fmc-gallery.mjs`).
 
 Until it was every page's look it was a preview under `/spectrum`; those addresses redirect to the
 same pages under `/inbox`. `/spectrum` is still a path of the Access application (see "Inbox
