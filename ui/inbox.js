@@ -1351,13 +1351,47 @@ const looseText = (text) => String(text || '').replace(EMOJI_CODE, '').replace(/
 
 const ourMove = (t) => t.waiting_on === 'us';
 
+/*
+ * Where a row puts its kind and urgency (Spectrum workflow icons), apart from the reactions
+ * people left (emoji). A design exploration: `?icons=` picks one and the browser keeps it.
+ * - 'tags': with the reactions, in bubbles (as before);
+ * - 'title': before the title, the urgency's color on the kind;
+ * - 'when': beside the time on the first line;
+ * - 'gutter': under the status mark, in the column the status dot starts, in the urgency's color;
+ * - 'badge': a subtle Badge, the kind's icon and name, before the customer.
+ */
+const ICON_SPOTS = ['tags', 'title', 'when', 'gutter', 'badge'];
+const iconSpot = (() => {
+  let v = new URLSearchParams(location.search).get('icons');
+  try {
+    if (ICON_SPOTS.includes(v)) localStorage.setItem('opspile.icons', v);
+    else v = localStorage.getItem('opspile.icons');
+  } catch { /* storage is off */ }
+  return ICON_SPOTS.includes(v) ? v : 'tags';
+})();
+/** A thread's kind and, when it is critical or high, its urgency: icons, and what they say. */
+function kindMarks(t) {
+  const u = urgencyOf(t);
+  const k = kindOf(t);
+  return { u: u === 'critical' || u === 'high' ? u : null, k };
+}
+/** The kind and urgency icons, bare, for the spots outside the reactions. */
+function kindIcons(t, cls) {
+  const { u, k } = kindMarks(t);
+  const say = [u && `${cap(u)} urgency`, cap(k)].filter(Boolean).join(' · ');
+  if (cls === 'badge') {
+    return `<span class="kb${u ? ` ${u}` : ''}" role="img" aria-label="${esc(say)}" title="${esc(say)}">${u ? wf(URGENCY_ICON[u]) : ''}${wf(KIND_ICON[k] || KIND_ICON.other)}<span class="kn">${esc(cap(k))}</span></span>`;
+  }
+  return `<span class="ki ki-${cls}${u ? ` ${u}` : ''}" role="img" aria-label="${esc(say)}" title="${esc(say)}">${u && cls === 'when' ? wf(URGENCY_ICON[u]) : ''}${wf(KIND_ICON[k] || KIND_ICON.other)}</span>`;
+}
 /** The thread's mood: how urgent it is (if it is), its kind, then the reactions people left in it. */
 function moods(t) {
   const out = [];
-  const u = urgencyOf(t);
-  if (u === 'critical' || u === 'high') out.push(`<span class="em ${u}" role="img" aria-label="${cap(u)} urgency" title="${cap(u)} urgency">${wf(URGENCY_ICON[u])}</span>`);
-  const k = kindOf(t);
-  if (k) out.push(`<span class="em" role="img" aria-label="${esc(cap(k))}" title="${esc(cap(k))}">${wf(KIND_ICON[k] || KIND_ICON.other)}</span>`);
+  if (iconSpot === 'tags') {
+    const { u, k } = kindMarks(t);
+    if (u) out.push(`<span class="em ${u}" role="img" aria-label="${cap(u)} urgency" title="${cap(u)} urgency">${wf(URGENCY_ICON[u])}</span>`);
+    out.push(`<span class="em" role="img" aria-label="${esc(cap(k))}" title="${esc(cap(k))}">${wf(KIND_ICON[k] || KIND_ICON.other)}</span>`);
+  }
   const rx = (t.reactions || []).map((r) => ({ ...r, html: emojiHtml(r.emoji, { slack: t.source === 'slack' }) }))
     .filter((r) => r.html).sort((a, b) => b.count - a.count).slice(0, 5);
   for (const r of rx) out.push(`<span class="em" title="${esc(`${r.emoji} × ${r.count}`)}">${r.html}</span>`);
@@ -1432,11 +1466,12 @@ function row(t, hit = null) {
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
   const cust = oneCustomer() ? ''
     : `<span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>`;
-  return `${rowOpen(t, hit, oneCustomer() ? ' nocust' : '')}
-    <div class="l1">${statusMark(t, status)}
-      <span class="title">${titleHtml(t, hit)}</span>
+  const at = (spot) => (iconSpot === spot ? kindIcons(t, spot) : '');
+  return `${rowOpen(t, hit, `${oneCustomer() ? ' nocust' : ''} ic-${iconSpot}`)}
+    <div class="l1">${statusMark(t, status)}${at('title')}
+      <span class="title">${titleHtml(t, hit)}</span>${at('when')}
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}
+    <div class="l2">${at('gutter')}${at('badge')}${cust}
       <span class="faces">${faces}</span>
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
       <span class="tags">${moods(t)}</span>

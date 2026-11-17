@@ -2752,6 +2752,23 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .spectrum .moods .em .wf { width: var(--spectrum-workflow-icon-size-xxs); height: var(--spectrum-workflow-icon-size-xxs); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .moods .em.critical .wf { color: var(--spectrum-negative-visual-color); }
 .spectrum .moods .em.high .wf { color: var(--spectrum-notice-visual-color); }
+/* The kind and urgency apart from the reactions (iconSpot in ui/inbox.js): bare icons, or a Badge. */
+.t .ki { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
+.spectrum .t .ki .wf { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .t .ki.critical .wf { color: var(--spectrum-negative-visual-color); }
+.spectrum .t .ki.high .wf { color: var(--spectrum-notice-visual-color); }
+.spectrum .t .ki-when .wf { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); }
+/* Under the status mark: the line's indent is the icon's column. */
+.t.ic-gutter .l2 { padding-left: 0; }
+.t .ki-gutter { width: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100) - var(--spectrum-spacing-100)); justify-content: center; overflow: visible; }
+.spectrum .t .ki-gutter .wf { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); }
+.t .kb { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50); padding: 0 var(--spectrum-spacing-75); border-radius: var(--spectrum-corner-radius-75); white-space: nowrap; }
+.spectrum .t .kb { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-100); }
+.spectrum .t .kb.critical { background: var(--spectrum-negative-subtle-background-color-default); }
+.spectrum .t .kb.high { background: var(--spectrum-notice-subtle-background-color-default); }
+.spectrum .t .kb .wf { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); }
+.spectrum .t .kb.critical .wf:first-child { color: var(--spectrum-negative-visual-color); }
+.spectrum .t .kb.high .wf:first-child { color: var(--spectrum-notice-visual-color); }
 @media (forced-colors: active) { .spectrum .wf { background: CanvasText; } }
 .spectrum .wf-chevron-down { --wf: var(--s2-icon-chevron); }
 .spectrum .wf-alert-diamond { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEwLDE4Ljc5NDkyYy0uNjAxMDcsMC0xLjE2NjUtLjIzNDM4LTEuNTkxMzEtLjY1OTE4TDEuODY0MjYsMTEuNTkwODJjLS44NzY0Ni0uODc2OTUtLjg3NjQ2LTIuMzA0NjktLjAwMDQ5LTMuMTgxNjRMOC40MDkxOCwxLjg2NDI2Yy44NDg2My0uODQ5NjEsMi4zMzI1Mi0uODQ5NjEsMy4xODIxMywwbDYuNTQ0NDMsNi41NDQ5MmMuODc2NDYuODc2OTUuODc2NDYsMi4zMDQ2OS4wMDA0OSwzLjE4MTY0aC0uMDAwNDlsLTYuNTQ0OTIsNi41NDQ5MmMtLjQyNDMyLjQyNDgtLjk4OTc1LjY1OTE4LTEuNTkwODIuNjU5MThaTTEwLDIuNzA1MDhjLS4yMDAyLDAtLjM4ODY3LjA3ODEyLS41Mjk3OS4yMTk3M2wtNi41NDU0MSw2LjU0NDkyYy0uMjkxOTkuMjkxOTktLjI5MTk5Ljc2ODU1LjAwMDQ5LDEuMDYwNTVsNi41NDQ0Myw2LjU0NDkyYy4yODMyLjI4MzIuNzc3ODMuMjgzMiwxLjA2MDA2LDBsNi41NDQ5Mi02LjU0NDkyYy4yOTI0OC0uMjkxOTkuMjkyNDgtLjc2ODU1LDAtMS4wNjA1NWwtNi41NDQ0My02LjU0NDkyYy0uMTQxNi0uMTQxNi0uMzMwMDgtLjIxOTczLS41MzAyNy0uMjE5NzNaIiBzdHJva2Utd2lkdGg9IjAiLz48cGF0aCBkPSJNOS45OTkzNiwxNC45OTgzNGMtLjIzMDY1LjAwODEyLS40NTUzOC0uMDczNzgtLjYyNjYxLS4yMjgzNS0uMzMwMzMtLjM2NDYyLS4zMzAzMy0uOTE5OTMsMC0xLjI4NDU1LjE2OTM1LS4xNTgzMi4zOTQ4My0uMjQyNzkuNjI2NjQtLjIzNDc2LjIzNjM1LS4wMDk0Ny40NjU4OS4wODAyNi42MzMwMi4yNDc0NS4xNjIwNy4xNjc3LjI0OTE2LjM5Mzg2LjI0MTM3LjYyNjgxLjAxMjM4LjIzNDY5LS4wNjk1OS40NjQ2LS4yMjc3LjYzODY0LS4xNzM1OC4xNjQ1NS0uNDA3ODYuMjQ5NTktLjY0NjcxLjIzNDc1WiIgc3Ryb2tlLXdpZHRoPSIwIi8+PHBhdGggZD0iTTEwLDExLjYyNWMtLjQxNDA2LDAtLjc1LS4zMzU5NC0uNzUtLjc1di01YzAtLjQxNDA2LjMzNTk0LS43NS43NS0uNzVzLjc1LjMzNTk0Ljc1Ljc1djVjMCwuNDE0MDYtLjMzNTk0Ljc1LS43NS43NVoiIHN0cm9rZS13aWR0aD0iMCIvPjwvc3ZnPg=="); }
