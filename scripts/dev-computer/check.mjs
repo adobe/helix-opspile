@@ -122,12 +122,6 @@ const GITHUB_SESSION_OUTPUT = [
 ];
 
 export const CHECKS = [
-  // Graphviz's dot (the diagrams layer), in Base.
-  {
-    name: 'kernel: dot lays out a graph, as SVG and JSON',
-    command: "printf 'digraph { a -> b }' | dot -Tsvg | grep -c 'class=\"node\"'; printf 'digraph { a -> b }' | dot -Tjson | grep -c '\"name\": \"a\"'",
-    match: /^2\n1\n$/,
-  },
   { name: 'boots', command: 'uname -s; id -un', match: /^Linux\nroot\n$/ },
   {
     name: 'curl over https',
@@ -250,6 +244,12 @@ export const CHECKS = [
   },
   ...uploadChecks('just-bash'),
   ...uploadChecks('slicc-kernel'),
+  // Graphviz's dot (the diagrams layer), in Base.
+  {
+    name: 'kernel: dot lays out a graph, as SVG and JSON',
+    command: "printf 'digraph { a -> b }' | dot -Tsvg | grep -c 'class=\"node\"'; printf 'digraph { a -> b }' | dot -Tjson | grep -c '\"name\": \"a\"'",
+    match: /^2\n1\n$/,
+  },
 ];
 
 /**
