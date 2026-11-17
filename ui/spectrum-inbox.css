@@ -2752,23 +2752,52 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .spectrum .moods .em .wf { width: var(--spectrum-workflow-icon-size-xxs); height: var(--spectrum-workflow-icon-size-xxs); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .moods .em.critical .wf { color: var(--spectrum-negative-visual-color); }
 .spectrum .moods .em.high .wf { color: var(--spectrum-notice-visual-color); }
-/* The kind and urgency apart from the reactions (iconSpot in ui/inbox.js): bare icons, or a Badge. */
-.t .ki { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
+/* The kind and urgency apart from the reactions (iconSpot in ui/inbox.js). Before the title: */
+.t .ki { flex: none; display: flex; align-items: center; }
 .spectrum .t .ki .wf { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .t .ki.critical .wf { color: var(--spectrum-negative-visual-color); }
 .spectrum .t .ki.high .wf { color: var(--spectrum-notice-visual-color); }
-.spectrum .t .ki-when .wf { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); }
-/* Under the status mark: the line's indent is the icon's column. */
-.t.ic-gutter .l2 { padding-left: 0; }
-.t .ki-gutter { width: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100) - var(--spectrum-spacing-100)); justify-content: center; overflow: visible; }
-.spectrum .t .ki-gutter .wf { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); }
-.t .kb { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50); padding: 0 var(--spectrum-spacing-75); border-radius: var(--spectrum-corner-radius-75); white-space: nowrap; }
-.spectrum .t .kb { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-100); }
-.spectrum .t .kb.critical { background: var(--spectrum-negative-subtle-background-color-default); }
-.spectrum .t .kb.high { background: var(--spectrum-notice-subtle-background-color-default); }
-.spectrum .t .kb .wf { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); }
-.spectrum .t .kb.critical .wf:first-child { color: var(--spectrum-negative-visual-color); }
-.spectrum .t .kb.high .wf:first-child { color: var(--spectrum-notice-visual-color); }
+/* As a stack in the status dot's place: a slot as wide as the kind and two chips peeking out
+   behind it, so titles line up whatever a row has; more chips wait behind the second. Pointing
+   at it spreads them out, over the title, on an elevated layer. */
+.t .mks { --mk-d: var(--spectrum-component-height-50); --mk-peek: var(--spectrum-spacing-100);
+ flex: none; position: relative; align-self: stretch; width: calc(var(--mk-d) + 2 * var(--mk-peek)); }
+.t.ic-stack .l2, .t.ic-stack .l3 { padding-left: calc(var(--spectrum-component-height-50) + 3 * var(--spectrum-spacing-100)); }
+.t .mk { --mk-bg: var(--row-bg); position: absolute; z-index: 1; top: 50%; left: calc(-1 * var(--spectrum-spacing-75)); translate: 0 -50%; display: flex; padding: var(--spectrum-spacing-75); border-radius: calc(var(--mk-d) / 2 + var(--spectrum-spacing-75));
+ transition: background-color var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out), box-shadow var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
+.t .mk:hover { --mk-bg: var(--spectrum-background-elevated-color); z-index: 3; background: var(--mk-bg); box-shadow: var(--spectrum-drop-shadow-x) var(--spectrum-drop-shadow-y) var(--spectrum-drop-shadow-blur) var(--spectrum-drop-shadow-elevated-color); }
+.t .mi { position: relative; flex: none; box-sizing: border-box; width: var(--mk-d); height: var(--mk-d); display: grid; place-items: center; border-radius: 50%;
+ background: var(--spectrum-gray-200); border: var(--spectrum-border-width-200) solid var(--mk-bg); margin-left: calc(var(--mk-peek) - var(--mk-d));
+ transition: margin-left var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out), border-color var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
+.t .mi:nth-child(n + 4) { margin-left: calc(-1 * var(--mk-d)); }
+.t .mk:hover .mi { margin-left: var(--spectrum-spacing-50); }
+.t .mk .mi:first-child { margin-left: 0; background: var(--mk-bg); border-color: transparent; }
+.t .mi:nth-child(1) { z-index: 6; } .t .mi:nth-child(2) { z-index: 5; } .t .mi:nth-child(3) { z-index: 4; }
+.t .mi:nth-child(4) { z-index: 3; } .t .mi:nth-child(5) { z-index: 2; } .t .mi:nth-child(6) { z-index: 1; }
+.spectrum .t .mi .wf { width: var(--spectrum-workflow-icon-size-xxs); height: var(--spectrum-workflow-icon-size-xxs); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .t .mi.k .wf { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+/* Unread: a ring in the status's color, a gap away from a smaller icon, as the pencil's outline. */
+.t .mi.k.ring { box-shadow: inset 0 0 0 calc(var(--spectrum-border-width-100) * 1.5) currentColor; }
+.spectrum .t .mi.k.ring .wf { width: var(--spectrum-workflow-icon-size-xxs); height: var(--spectrum-workflow-icon-size-xxs); color: currentColor; }
+.spectrum .t .mi.k { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .t .mi.k:not(.s-quiet) .wf { color: currentColor; }
+.spectrum .t .mi.k.s-critical { color: var(--spectrum-red-1100); } .spectrum .t .mi.k.s-hot { color: var(--red); } .spectrum .t .mi.k.s-you { color: var(--accent); }
+.spectrum .t .mi.k.s-waiting { color: var(--yellow); } .spectrum .t .mi.k.s-silent { color: var(--purple); } .spectrum .t .mi.k.s-team { color: var(--green); }
+/* Behind the kind, a chip shows its edge in its meaning's color; spread out, its icon on a subtle one. */
+.t .mi:not(:first-child) .wf { opacity: 0; transition: opacity var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
+.t .mk:hover .mi .wf { opacity: 1; }
+.t .mi:not(:first-child) { transition: margin-left var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out), background-color var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out), border-color var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
+.spectrum .t .mi.draft, .spectrum .t .mi.us { background: var(--spectrum-gray-500); }
+.spectrum .t .mi.critical { background: var(--spectrum-negative-visual-color); }
+.spectrum .t .mi.high { background: var(--spectrum-notice-visual-color); }
+.spectrum .t .mi.ok { background: var(--spectrum-positive-visual-color); }
+.spectrum .t .mk:hover .mi.draft, .spectrum .t .mk:hover .mi.us { background: var(--spectrum-gray-200); }
+.spectrum .t .mk:hover .mi.critical { background: var(--spectrum-negative-subtle-background-color-default); }
+.spectrum .t .mk:hover .mi.high { background: var(--spectrum-notice-subtle-background-color-default); }
+.spectrum .t .mk:hover .mi.ok { background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .t .mi.critical .wf { color: var(--spectrum-negative-visual-color); }
+.spectrum .t .mi.high .wf { color: var(--spectrum-notice-visual-color); }
+.spectrum .t .mi.ok .wf { color: var(--spectrum-positive-visual-color); }
 @media (forced-colors: active) { .spectrum .wf { background: CanvasText; } }
 .spectrum .wf-chevron-down { --wf: var(--s2-icon-chevron); }
 .spectrum .wf-alert-diamond { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEwLDE4Ljc5NDkyYy0uNjAxMDcsMC0xLjE2NjUtLjIzNDM4LTEuNTkxMzEtLjY1OTE4TDEuODY0MjYsMTEuNTkwODJjLS44NzY0Ni0uODc2OTUtLjg3NjQ2LTIuMzA0NjktLjAwMDQ5LTMuMTgxNjRMOC40MDkxOCwxLjg2NDI2Yy44NDg2My0uODQ5NjEsMi4zMzI1Mi0uODQ5NjEsMy4xODIxMywwbDYuNTQ0NDMsNi41NDQ5MmMuODc2NDYuODc2OTUuODc2NDYsMi4zMDQ2OS4wMDA0OSwzLjE4MTY0aC0uMDAwNDlsLTYuNTQ0OTIsNi41NDQ5MmMtLjQyNDMyLjQyNDgtLjk4OTc1LjY1OTE4LTEuNTkwODIuNjU5MThaTTEwLDIuNzA1MDhjLS4yMDAyLDAtLjM4ODY3LjA3ODEyLS41Mjk3OS4yMTk3M2wtNi41NDU0MSw2LjU0NDkyYy0uMjkxOTkuMjkxOTktLjI5MTk5Ljc2ODU1LjAwMDQ5LDEuMDYwNTVsNi41NDQ0Myw2LjU0NDkyYy4yODMyLjI4MzIuNzc3ODMuMjgzMiwxLjA2MDA2LDBsNi41NDQ5Mi02LjU0NDkyYy4yOTI0OC0uMjkxOTkuMjkyNDgtLjc2ODU1LDAtMS4wNjA1NWwtNi41NDQ0My02LjU0NDkyYy0uMTQxNi0uMTQxNi0uMzMwMDgtLjIxOTczLS41MzAyNy0uMjE5NzNaIiBzdHJva2Utd2lkdGg9IjAiLz48cGF0aCBkPSJNOS45OTkzNiwxNC45OTgzNGMtLjIzMDY1LjAwODEyLS40NTUzOC0uMDczNzgtLjYyNjYxLS4yMjgzNS0uMzMwMzMtLjM2NDYyLS4zMzAzMy0uOTE5OTMsMC0xLjI4NDU1LjE2OTM1LS4xNTgzMi4zOTQ4My0uMjQyNzkuNjI2NjQtLjIzNDc2LjIzNjM1LS4wMDk0Ny40NjU4OS4wODAyNi42MzMwMi4yNDc0NS4xNjIwNy4xNjc3LjI0OTE2LjM5Mzg2LjI0MTM3LjYyNjgxLjAxMjM4LjIzNDY5LS4wNjk1OS40NjQ2LS4yMjc3LjYzODY0LS4xNzM1OC4xNjQ1NS0uNDA3ODYuMjQ5NTktLjY0NjcxLjIzNDc1WiIgc3Ryb2tlLXdpZHRoPSIwIi8+PHBhdGggZD0iTTEwLDExLjYyNWMtLjQxNDA2LDAtLjc1LS4zMzU5NC0uNzUtLjc1di01YzAtLjQxNDA2LjMzNTk0LS43NS43NS0uNzVzLjc1LjMzNTk0Ljc1Ljc1djVjMCwuNDE0MDYtLjMzNTk0Ljc1LS43NS43NVoiIHN0cm9rZS13aWR0aD0iMCIvPjwvc3ZnPg=="); }

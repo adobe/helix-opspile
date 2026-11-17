@@ -1356,11 +1356,10 @@ const ourMove = (t) => t.waiting_on === 'us';
  * people left (emoji). A design exploration: `?icons=` picks one and the browser keeps it.
  * - 'tags': with the reactions, in bubbles (as before);
  * - 'title': before the title, the urgency's color on the kind;
- * - 'when': beside the time on the first line;
- * - 'gutter': under the status mark, in the column the status dot starts, in the urgency's color;
- * - 'badge': a subtle Badge, the kind's icon and name, before the customer.
+ * - 'stack': the kind in the status dot's place and color, ringed while unread, and behind it
+ *   the rest of what the row says (stackMark), which spread out under the pointer.
  */
-const ICON_SPOTS = ['tags', 'title', 'when', 'gutter', 'badge'];
+const ICON_SPOTS = ['tags', 'title', 'stack'];
 const iconSpot = (() => {
   let v = new URLSearchParams(location.search).get('icons');
   try {
@@ -1369,20 +1368,37 @@ const iconSpot = (() => {
   } catch { /* storage is off */ }
   return ICON_SPOTS.includes(v) ? v : 'tags';
 })();
-/** A thread's kind and, when it is critical or high, its urgency: icons, and what they say. */
+/** A thread's kind and, when it is critical or high, its urgency. */
 function kindMarks(t) {
   const u = urgencyOf(t);
-  const k = kindOf(t);
-  return { u: u === 'critical' || u === 'high' ? u : null, k };
+  return { u: u === 'critical' || u === 'high' ? u : null, k: kindOf(t) };
 }
-/** The kind and urgency icons, bare, for the spots outside the reactions. */
-function kindIcons(t, cls) {
+/** The kind icon before the title ('title'), in the urgency's color when it is critical or high. */
+function kindIcons(t) {
   const { u, k } = kindMarks(t);
   const say = [u && `${cap(u)} urgency`, cap(k)].filter(Boolean).join(' · ');
-  if (cls === 'badge') {
-    return `<span class="kb${u ? ` ${u}` : ''}" role="img" aria-label="${esc(say)}" title="${esc(say)}">${u ? wf(URGENCY_ICON[u]) : ''}${wf(KIND_ICON[k] || KIND_ICON.other)}<span class="kn">${esc(cap(k))}</span></span>`;
+  return `<span class="ki${u ? ` ${u}` : ''}" role="img" aria-label="${esc(say)}" title="${esc(say)}">${wf(KIND_ICON[k] || KIND_ICON.other)}</span>`;
+}
+/**
+ * A row's status as a stack ('stack'): in front, the kind's icon where the status dot was, in the
+ * status's color and ringed while the team has not read the thread; behind it, as many as apply
+ * of: the urgency (critical or high), a draft, resolved, and our move.
+ */
+function stackMark(t, status) {
+  const { u, k } = kindMarks(t);
+  const behind = [];
+  if (u) behind.push({ cls: u, say: `${cap(u)} urgency`, icon: URGENCY_ICON[u] });
+  if (t.draft) {
+    behind.push({
+      cls: 'draft', icon: 'edit', say: 'Draft', hint: `Draft by ${draftBy(t.draft)}, ${ago(t.draft.updated_at)}: ${t.draft.preview}`,
+    });
   }
-  return `<span class="ki ki-${cls}${u ? ` ${u}` : ''}" role="img" aria-label="${esc(say)}" title="${esc(say)}">${u && cls === 'when' ? wf(URGENCY_ICON[u]) : ''}${wf(KIND_ICON[k] || KIND_ICON.other)}</span>`;
+  if (isResolved(t)) behind.push({ cls: 'ok', say: 'Resolved', icon: 'checkmark-circle' });
+  if (ourMove(t)) behind.push({ cls: 'us', say: 'Our move', icon: 'call-center' });
+  const front = `${cap(k)}${t.unread ? ', unread' : ''} · ${STATUS_HINT[status]}`;
+  const say = [front, ...behind.map((x) => x.say)].join(' · ');
+  const chips = behind.map((x) => `<span class="mi ${x.cls}" title="${esc(x.hint || x.say)}">${wf(x.icon)}</span>`).join('');
+  return `<span class="mks"><span class="mk" role="img" aria-label="${esc(say)}"><span class="mi k s-${status}${t.unread ? ' ring' : ''}" title="${esc(front)}">${wf(KIND_ICON[k] || KIND_ICON.other)}</span>${chips}</span></span>`;
 }
 /** The thread's mood: how urgent it is (if it is), its kind, then the reactions people left in it. */
 function moods(t) {
@@ -1466,12 +1482,12 @@ function row(t, hit = null) {
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
   const cust = oneCustomer() ? ''
     : `<span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>`;
-  const at = (spot) => (iconSpot === spot ? kindIcons(t, spot) : '');
+  const mark = iconSpot === 'stack' ? stackMark(t, status) : statusMark(t, status);
   return `${rowOpen(t, hit, `${oneCustomer() ? ' nocust' : ''} ic-${iconSpot}`)}
-    <div class="l1">${statusMark(t, status)}${at('title')}
-      <span class="title">${titleHtml(t, hit)}</span>${at('when')}
+    <div class="l1">${mark}${iconSpot === 'title' ? kindIcons(t) : ''}
+      <span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${at('gutter')}${at('badge')}${cust}
+    <div class="l2">${cust}
       <span class="faces">${faces}</span>
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
       <span class="tags">${moods(t)}</span>
