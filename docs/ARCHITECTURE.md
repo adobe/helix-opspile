@@ -783,7 +783,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   view already shown sorts it afresh; the thread open then stays, if it passes the filters.
 - **Notifications** are shown by the browser while an inbox is open (a tab, or the installed
   app, also in the background), through the service worker, so that a click opens the thread
-  in the inbox already open, or in a new one. There are three kinds, settings of the person in
+  in the inbox already open, or in a new one. The inbox stays on the view on screen (Personal,
+  or a team's inbox with its filters) when that view can show the thread, and only otherwise
+  switches to the closest that can, Personal first; a new window opens the view the inbox that
+  showed the notification was on, by the same rule. There are three kinds, settings of the person in
   D1 (`person_settings`, `GET`/`PUT /api/settings`), so every device has them: a message that
   mentions you (on unless turned off in the user menu; the room's announcement says whom it
   mentions), a new message from someone else in a thread of yours (you posted in it, were
