@@ -28,7 +28,8 @@ that whoever comes second finds out instead of overwriting.
 ## Threads and messages
 
 **Message file.** absent → live → edited → tombstone. `merge` in `src/channels.js`: a file only moves
-to a newer `version`, and a tombstone is final, so a replay in any order comes out the same.
+to a newer `version` (or, at the same version, to what a higher `FORMAT` writes differently: its
+body or `dropped`), and a tombstone is final, so a replay in any order comes out the same.
 
 **Read watermark.** One moving position per person and thread (`watermarks`, `advanceWatermark` in
 `src/threads.js`). The write is conditional on being newer, so it never moves back.

@@ -29,7 +29,7 @@ import { discordToMarkdown, discordTokens } from './discordmd.js';
 import {
   blockUsers, slackBlocksToMarkdown, slackLabels, slackToMarkdown,
 } from './slackmd.js';
-import { htmlToMarkdown } from './html.js';
+import { htmlDropped, htmlToMarkdown } from './html.js';
 import {
   isRenameNotice, normalize, slackLinkIn, teamsEventText, teamsEventUsers,
 } from './normalize.js';
@@ -412,6 +412,9 @@ export async function processKey(env, key, cache = {}) {
   if (!deleted) {
     await recordBots(env, message);
   }
+  // What the platform showed that the markdown cannot (src/html.js): the agent's raw_message
+  // shows the message as it was sent.
+  const dropped = !deleted && message.format === 'html' ? htmlDropped(message.text) : [];
   const meta = {
     source: message.source,
     thread: message.thread,
@@ -421,6 +424,7 @@ export async function processKey(env, key, cache = {}) {
     subject: message.subject,
     editedAt: message.editedAt,
     deletedAt: message.deletedAt,
+    dropped: dropped.length ? dropped : undefined,
     raw: [key],
     permalink: message.permalink,
   };

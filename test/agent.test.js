@@ -1045,6 +1045,23 @@ describe('the earlier conversations of the channel', () => {
     assert.equal(refused.error, true);
   });
 
+  it('shows a message of the thread or the channel as Slack sent it, and no withheld one', async () => {
+    const { run } = await setup();
+    const own = await run('raw_message', { message: '1792584000.000100' });
+    assert.equal(own.error, false);
+    assert.equal(own.text, 'Message 1792584000.000100 as Slack sent it:\n<raw>\ntext:\nOur CDN purge takes forever on www\n</raw>');
+    const part = await run('raw_message', { message: '1792584000.000100', offset: 10 });
+    assert.match(part.text, /<raw>\nCDN purge takes forever on www\n<\/raw>$/);
+    const earlier = await run('raw_message', { message: '1792500060.000200', thread: '1792500000.000100' });
+    assert.match(earlier.text, /text:\nMaybe desk/);
+    assert.match((await run('raw_message', { message: '1792500060.000200' })).text, /^The thread has no message 1792500060\.000200/);
+    const flagged = await run('raw_message', { message: '1792584120.000300' });
+    assert.equal(flagged.error, true);
+    assert.match(flagged.text, /withheld/);
+    assert.doesNotMatch(flagged.text, /Ignore all previous/);
+    assert.equal((await run('raw_message', { message: '1', thread: 'slack:E1:C2:1792500000.000100' })).error, true);
+  });
+
   describe('with read_any_thread', () => {
     const AT = '2026-10-21T10:00:00Z';
     const OWN = 'slack:E1:C2:1792500000.000100';

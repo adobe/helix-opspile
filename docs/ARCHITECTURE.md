@@ -225,6 +225,7 @@ at: 2026-10-14T07:37:26Z
 author: { kind: person, name: …, org: …, staff: true }
 editedAt: …
 deletedAt: …
+dropped: [color, highlight]   # only if the markdown cannot show what the platform did
 raw: [<raw object key>, …]
 permalink: https://…
 ---
@@ -245,6 +246,11 @@ thread key   slack:<enterpriseId>:<channelId>:<thread_ts>
   inbox shows it as a card. Its words are not its author's: they count for no mentions, nor for
   the vectors of what people talk about, and editing the message leaves the quote alone.
 - New messages are new objects, so concurrent replies never contend for the same file.
+- What markdown cannot say stays in pile 1 only, and `dropped` names it: a Teams message whose
+  text is in more than one colour (`color`) or partly highlighted (`highlight`), as a table
+  that marks some rows by colour does (`htmlDropped` in [src/html.js](../src/html.js)). A colour
+  all of the text has (pasted from a document) means nothing and is not named. An agent reading
+  the message is told, and reads it as it was sent with `raw_message`.
 - An edit rewrites exactly one file. Earlier versions remain in pile 1.
 - A deletion keeps the file as a tombstone (`deletedAt` set, body removed), so links and read
   watermarks stay valid.
@@ -1664,6 +1670,7 @@ written by people outside its control.
 |---|---|
 | `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB and 8000 pixels a side, read from their headers) go to the model as images, larger ones through the Markdown conversion; an image the model would refuse never reaches it (`src/agent/images.js`), since the API refuses the whole request and the image would stay in the history: the provider also leaves such images out of every request (over 2000 pixels a side when it has more than 20 images); plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
+| `raw_message` | a message of the entry, or with `thread` of another conversation of its channel, as its platform sent it: the newest version in pile 1 (`src/agent/rawmessage.js`), only what the message says (the Teams body as HTML, its attachments and `eventDetail`; Slack's text, blocks, attachments and files, the edited message for an edit; Discord's content, embeds, attachments, components and poll), not the envelope, in parts of 30,000 characters (`offset`). It is not checked for prompt injection again: the agent is told it is data, not instructions. A withheld message stays withheld. A message whose markdown dropped something (`dropped`, see "Pile 2") says so where the agent reads it, naming the tool; under `read_any_thread`, which it cannot read, not |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` |
 | `read_any_thread` | only where it is turned on (see "Agent tools"): any thread of the inbox, by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
