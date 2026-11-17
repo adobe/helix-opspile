@@ -80,6 +80,9 @@ export function personRule(platform, scope) {
       reconnect: 'teams',
     };
   }
+  if (platform === 'portal') {
+    return { count: 0, why: 'the customer portal takes text only' };
+  }
   return { count: 0, why: 'the inbox cannot post to Discord as you' };
 }
 
@@ -102,6 +105,9 @@ export function appRule(platform) {
     return {
       count: MAX_FILES, file: 10 * MB, total: 10 * MB, types: null, other: true,
     };
+  }
+  if (platform === 'portal') {
+    return { count: 0, why: 'the customer portal takes text only' };
   }
   return { count: 0, why: `the inbox cannot attach files on ${platform}` };
 }

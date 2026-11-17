@@ -169,3 +169,5 @@ src/ui-spectrum.bundle.js
 
 # The renderer Worker deploys from graphviz/ with the repository's packages (npm run deploy:graphviz:*)
 graphviz/node_modules
+# So does the customer portal's Worker, from portal/ (npm run deploy:portal:*)
+portal/node_modules

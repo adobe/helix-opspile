@@ -41,6 +41,8 @@ import { runCatchUp } from './catchup.js';
 import { notifyRoom } from './notify.js';
 import { signalFacts } from './resolve.js';
 import { teamsOf } from './shares.js';
+import { portalMarkdown } from './portalsource.js';
+import { recordLobby } from './portalrequests.js';
 import { teamsFollowing } from './follows.js';
 import { classify } from './rules.js';
 import {
@@ -241,6 +243,9 @@ async function toMarkdown(env, message) {
   if (message.format === 'discord') {
     return discordMarkdown(env, message);
   }
+  if (message.format === 'portal') {
+    return portalMarkdown(message.text);
+  }
   if (message.format !== 'mrkdwn') {
     return message.text;
   }
@@ -388,7 +393,15 @@ export async function processKey(env, key, cache = {}) {
   if (op.op === 'skip') {
     return { key, result: 'skip', reason: op.reason };
   }
+  if (op.op === 'lobby') {
+    // A customer portal lobby as it is now: the request the admin pages show.
+    return { key, ...await recordLobby(env, op.lobby) };
+  }
   if (op.op === 'reaction') {
+    if (op.reaction.userRef) {
+      // The portal's event names who reacted: their account is known before it is looked up.
+      await getIdentity(env, op.reaction.userRef);
+    }
     return processReaction(env, key, op.reaction);
   }
   if (op.op === 'channel') {

@@ -1107,7 +1107,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       // the opspile app, by platform.
       attach: me.readonly ? {} : {
         ...await attachable(env, me.id),
-        app: Object.fromEntries(['slack', 'teams', 'discord'].map((p) => [p, appRule(p)])),
+        app: Object.fromEntries(['slack', 'teams', 'discord', 'portal'].map((p) => [p, appRule(p)])),
       },
       // Accounts that can be connected besides Slack and Microsoft (Discord needs its app).
       connectable: { discord: Boolean(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) },

@@ -1387,6 +1387,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
     var(--spectrum-yellow-visual-color) 0 75%, var(--spectrum-magenta-visual-color) 0) !important;
 }
 .spectrum .c-discord { background: var(--spectrum-purple-visual-color) !important; }
+/* The customer portal, Adobe's own: its red. */
+.spectrum .c-portal { background: var(--spectrum-red-visual-color) !important; }
 
 /* Avatar: round and bold (its colors are every page's, ui/spectrum.css). */
 .spectrum .av { border-radius: 50%; font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-white); }

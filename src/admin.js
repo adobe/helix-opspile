@@ -38,6 +38,11 @@ import {
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
 import { followable, setTeamFollow, teamFollows } from './follows.js';
+import { portalAuthor, portalBound, portalCall } from './portalsource.js';
+import {
+  getPortalRequest, listPortalRequests, portalOpenCount, recordDeclined, recordOpened,
+  reopenDeclined,
+} from './portalrequests.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -57,6 +62,12 @@ import { followable, setTeamFollow, teamFollows } from './follows.js';
  * They also search every channel, and ask the admin team to assign one to their team (a
  * request, migration 0028, src/requests.js); the admin team confirms the request, which runs
  * the same assignment it makes by hand, or declines it. Everything else is for the admin team.
+ *
+ * Customers ask too, from the customer portal (src/portalrequests.js): a lobby there asks for
+ * a channel. The admin team opens one (`portal/open`: the portal makes the channel, and it is
+ * filed under a team and a customer by hand, shared with more teams, and gets its welcome
+ * message) or declines (`portal/decline`); a team's managers open one for their team when it
+ * follows a technology the lobby picked.
  *
  * Every rule change can be tried first (`dryRun`): the answer lists the channels that would
  * move. Applied, the moves go to the NORMALIZE queue as `refile` jobs (src/refile.js).
@@ -91,7 +102,7 @@ async function rows(env, sql, ...args) {
 const CHANNEL_FIELDS = [['name', 'name'], ['groupName', 'group_name'], ['orgName', 'org_name'], ['org', 'org'], ['channelId', 'channel_id']];
 
 /** A channel's platform as the admin pages name it. */
-const platformLabel = (c) => ({ teams: 'Teams', discord: 'Discord' }[c.source] || `Slack${c.shared ? ' Connect' : ''}`);
+const platformLabel = (c) => ({ teams: 'Teams', discord: 'Discord', portal: 'Portal' }[c.source] || `Slack${c.shared ? ' Connect' : ''}`);
 
 /**
  * A channel's name as the admin pages show it: on Teams with its team (`acme-support › Main`),
@@ -508,12 +519,15 @@ async function assign(env, me, body, remove) {
  */
 async function requestList(env, me, { status, count }) {
   const teams = isAdmin(me) ? null : managedTeams(me);
-  const open = await openCount(env, teams);
+  // The customers waiting in the portal count too: they are the admin team's to answer.
+  const open = await openCount(env, teams) + await portalOpenCount(env, teams);
   if (count) {
     return json({ open });
   }
   return json({
     requests: await listRequests(env, { teams, status: ['open', 'decided'].includes(status) ? status : null }),
+    portal: await listPortalRequests(env, { teams }),
+    portalBound: portalBound(env),
     open,
   });
 }
@@ -621,6 +635,155 @@ async function withdrawRequest(env, me, body) {
   return closed.closed ? json({ ok: true, ...closed }) : json({ error: 'decided meanwhile', ...closed }, 409);
 }
 
+// ---- customer portal requests -----------------------------------------------------------
+
+const DEFAULT_CHANNEL = 'support';
+
+/**
+ * POST /api/admin/portal/open `{ id, team, name?, org?, share?, topic?, welcome? }`: opens a
+ * channel in the customer portal for the lobby of request `id`, and puts it in the inbox. The
+ * portal makes the channel (every member of the lobby is in it); here it is filed under `team`
+ * and the customer `org` by hand, as a manual assignment does, shared with the teams of
+ * `share`, and `welcome` is posted in it as the person who opens it, which starts its first
+ * thread. The admin team picks any team and customer; a manager opens it for a team they
+ * manage that follows a technology the lobby picked, under the customer the inbox suggests.
+ * A lobby that has a channel can get another the same way.
+ */
+async function openPortal(env, me, body) {
+  const r = await getPortalRequest(env, body.id);
+  if (!r) {
+    return json({ error: 'no such request' }, 404);
+  }
+  if (r.status === 'declined') {
+    return json({ error: 'this request was declined: the customer asks again first', request: r }, 409);
+  }
+  const everything = isAdmin(me);
+  const slug = toSlug(clean(body.team));
+  if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
+    return bad('give the team the channel is for');
+  }
+  if (!everything && !r.teams.some((t) => t.team === slug)) {
+    return json({ error: 'your team follows none of the technologies this customer picked' }, 403);
+  }
+  if (!portalBound(env)) {
+    return json({ error: 'the customer portal is not connected to this inbox' }, 409);
+  }
+  const name = toSlug(clean(body.name, 80) || r.suggest.name);
+  const customer = everything && clean(body.org) ? toSlug(clean(body.org)) : r.suggest.org;
+  if (!SLUG.test(customer)) {
+    return bad('a customer is lowercase letters, digits and -, like acme');
+  }
+  const topic = clean(body.topic, 300) || null;
+  const opened = await portalCall(env, 'open', {
+    domain: r.domain,
+    name: name === UNASSIGNED ? DEFAULT_CHANNEL : name,
+    topic,
+    by: portalAuthor(me),
+  });
+  if (opened.error || !opened.channel) {
+    return json({ error: opened.error || 'the portal opened no channel' }, opened.status === 404 ? 404 : 502);
+  }
+  const channelId = opened.channel.id;
+  const now = new Date().toISOString();
+  // The channel as the inbox knows it, before its first message says the same.
+  await env.DB.prepare(`INSERT INTO channels (source, tenant, channel_id, name, group_id,
+      group_name, shared, connected, topic, fetched_at)
+    VALUES ('portal', ?, ?, ?, ?, ?, 1, '[]', ?, ?) ON CONFLICT DO NOTHING`)
+    .bind(r.domain, channelId, opened.channel.name, r.domain, r.company, topic, now).run();
+  // A customer the inbox has not met is named as it calls itself, with its domain's icon.
+  await env.DB.prepare(`INSERT INTO orgs (slug, name, type, icon, updated_at)
+    VALUES (?, ?, 'customer', ?, ?) ON CONFLICT (slug) DO NOTHING`)
+    .bind(customer, r.company || null, r.domain, now).run();
+  await ensureKnowledgeBase(env, 'org', customer).catch(() => null);
+  for (const [target, value] of [['team', slug], ['org', customer]]) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await assign(env, me, {
+      target, source: 'portal', channelId, value, move: true,
+    }, false);
+    if (!res.ok) {
+      // eslint-disable-next-line no-await-in-loop
+      const { error } = await res.json().catch(() => ({}));
+      return json({
+        error: `the channel is open in the portal, but could not be filed under ${value}: ${error || res.status}. Assign it on the team's page.`,
+        channel: { source: 'portal', channelId },
+      }, 502);
+    }
+  }
+  const shared = [];
+  const others = everything && Array.isArray(body.share)
+    ? body.share.map((x) => toSlug(clean(x))) : [];
+  for (const other of others.filter((x) => x !== slug)) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(other).first()) {
+      // eslint-disable-next-line no-await-in-loop
+      await share(env, {
+        source: 'portal', channelId, team: other, by: me.email || String(me.id),
+      });
+      shared.push(other);
+    }
+  }
+  const request = await recordOpened(env, me, r.id, { channelId, team: slug, org: customer });
+  // The welcome message, as the person: it comes back through the portal's events, and is the
+  // channel's first thread.
+  const text = String(body.welcome ?? '').trim().slice(0, 8000);
+  const welcome = text ? await portalCall(env, 'post', {
+    domain: r.domain, channel: channelId, text, author: portalAuthor(me),
+  }) : null;
+  console.log(JSON.stringify({
+    route: 'admin',
+    portal: 'opened',
+    by: me.id,
+    id: r.id,
+    team: slug,
+    shared: shared.length,
+    welcome: Boolean(welcome && welcome.ok),
+  }));
+  return json({
+    ok: true,
+    request,
+    channel: {
+      source: 'portal',
+      tenant: r.domain,
+      channelId,
+      name: opened.channel.name,
+      team: slug,
+      org: customer,
+    },
+    shared,
+    ...(welcome ? {
+      welcome: welcome.ok ? { id: welcome.id } : { error: welcome.error },
+      ...(welcome.ok ? { thread: `portal:${r.domain}:${channelId}:${welcome.id}` } : {}),
+    } : {}),
+  });
+}
+
+/**
+ * POST /api/admin/portal/decline `{ id, reason? }`: the admin team turns a lobby's request
+ * down, with a reason the customer reads in the portal. They may ask again.
+ */
+async function declinePortal(env, me, body) {
+  const r = await getPortalRequest(env, body.id);
+  if (!r) {
+    return json({ error: 'no such request' }, 404);
+  }
+  const reason = clean(body.reason, 500) || null;
+  if (r.status !== 'open' || !await recordDeclined(env, me, r.id, reason)) {
+    return json({
+      error: `this request is ${r.status} already`, request: await getPortalRequest(env, r.id),
+    }, 409);
+  }
+  const res = await portalCall(env, 'decline', { domain: r.domain, reason });
+  // A lobby that is not waiting any more (it has a channel, or was declined) is as it is.
+  if (res.error && res.status !== 409) {
+    await reopenDeclined(env, r.id);
+    return json({ error: res.error, request: await getPortalRequest(env, r.id) }, 502);
+  }
+  console.log(JSON.stringify({
+    route: 'admin', portal: 'declined', by: me.id, id: r.id,
+  }));
+  return json({ ok: true, request: await getPortalRequest(env, r.id) });
+}
+
 // ---- teams and members ------------------------------------------------------------------
 
 async function listTeams(env, me) {
@@ -637,8 +800,10 @@ async function listTeams(env, me) {
     .map((t) => ({ ...t, self_managed: Boolean(t.self_managed) }));
   const unassigned = everything ? await env.DB.prepare(`SELECT COUNT(DISTINCT channel_id) AS channels,
       COUNT(*) AS threads FROM threads WHERE team = ?`).bind(UNASSIGNED).first() : null;
-  // The open assignment requests: the admin team's to decide, the managers' to wait for.
-  const requests = await openCount(env, everything ? null : managedTeams(me));
+  // The open assignment requests: the admin team's to decide, the managers' to wait for; and
+  // the customers waiting in the portal, theirs to open a channel for.
+  const scope = everything ? null : managedTeams(me);
+  const requests = await openCount(env, scope) + await portalOpenCount(env, scope);
   // Every team's name, for a manager's page to say where a channel is now.
   const names = Object.fromEntries(all.map((t) => [t.slug, t.name]));
   return json({
@@ -661,6 +826,9 @@ async function team(env, slug, me) {
     channels: await channelList(env, rules, { team: slug }),
     // What the team's managers asked the admin team for, and what came of it.
     requests: t ? await listRequests(env, { teams: [slug], limit: 50 }) : [],
+    // The customers in the portal who picked a technology the team follows.
+    portal: t ? await listPortalRequests(env, { teams: [slug], limit: 50 }) : [],
+    portalBound: portalBound(env),
     // The technologies it follows (src/follows.js), and what it may follow.
     ...(t ? {
       follows: await teamFollows(env, slug), followable: await followable(env, slug),
@@ -1075,7 +1243,8 @@ export async function admin(request, env, url, me) {
   // Team managers: their teams' members, the channel search, and requests for their teams.
   const teamOf = m === 'GET' ? q('team') || q('slug') : clean(body.team);
   const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members',
-    'GET channels', 'GET requests', 'POST requests', 'DELETE requests', 'PUT follows'];
+    'GET channels', 'GET requests', 'POST requests', 'DELETE requests', 'PUT follows',
+    'POST portal/open'];
   // Every manager may search channels; the requests they see are their teams' (`requests`).
   const anyTeam = ['GET teams', 'GET channels', 'GET requests'];
   if (!isAdmin(me)) {
@@ -1110,6 +1279,8 @@ export async function admin(request, env, url, me) {
     case 'DELETE requests': return withdrawRequest(env, me, body);
     case 'POST requests/confirm': return confirmRequest(env, me, body);
     case 'POST requests/decline': return declineRequest(env, me, body);
+    case 'POST portal/open': return openPortal(env, me, body);
+    case 'POST portal/decline': return declinePortal(env, me, body);
     case 'POST classify': return json(await classifyChannels(env, {
       limit: Math.min(Math.max(Number(body.limit) || 10, 1), 25),
     }));

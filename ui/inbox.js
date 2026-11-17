@@ -113,7 +113,8 @@ function timeLabel(iso, now = new Date()) {
  * its time zone.
  */
 const timeTag = (iso, dated = false) => `<time datetime="${esc(iso)}" title="${esc(WHOLE_TIME(new Date(iso)))}">${esc(dated ? timeLabel(iso) : clock(iso))}</time>`;
-const PLATFORM = { slack: 'Slack', teams: 'Teams', discord: 'Discord' };
+// `portal` is the customer portal (src/portalsource.js): a platform of the inbox's own.
+const PLATFORM = { slack: 'Slack', teams: 'Teams', discord: 'Discord', portal: 'Portal' };
 const platform = (t) => PLATFORM[t.source] || 'Teams';
 // The account a person connects for a platform.
 const accountOf = (p) => (p === 'teams' ? 'Microsoft' : PLATFORM[p] || p);
@@ -782,7 +783,7 @@ const RESOLVED_ICON = { open: 'circle', resolved: 'checkmark-circle', '(none)': 
 const DRAFT_ICON = { mine: 'edit', team: 'user-edit', none: 'edit-no' };
 const WAITING_ICON = { Us: 'call-center', Customer: 'clock', Nobody: 'pause-circle' };
 const TYPE_ICON = { conversation: 'chat', alert: 'bell' };
-const PLATFORM_SITE = { Slack: 'slack.com', Teams: 'teams.microsoft.com', Discord: 'discord.com' };
+const PLATFORM_SITE = { Slack: 'slack.com', Teams: 'teams.microsoft.com', Discord: 'discord.com', Portal: 'adobe.com' };
 const kindOf = (t) => (t.kind === 'alert' ? 'alert' : (t.label?.label_kind && t.label.label_kind !== 'other' ? t.label.label_kind : 'other'));
 // A staff ✅ on the root decides (until a customer writes again), else Clef does.
 const resolvedOf = (t) => t.resolution?.verdict
@@ -1049,9 +1050,9 @@ const FACETS = [
   { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
     label: { conversation: 'Conversations', alert: 'Alerts' }, glyph: (v) => TYPE_ICON[v],
     color: colorOf({ conversation: 'c-blue', alert: 'c-crimson' }) },
-  { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams', 'Discord'],
+  { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams', 'Discord', 'Portal'],
     icon: (v) => PLATFORM_SITE[v],
-    color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams', Discord: 'c-discord' }) },
+    color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams', Discord: 'c-discord', Portal: 'c-portal' }) },
 ];
 // The views: the inbox of one of the viewer's teams (`state.team`), or the personal view
 // (`state.sort` is 'personal'), the threads of the channels they posted or were mentioned in,
@@ -3781,7 +3782,10 @@ function composer(thread, resolve = '', key = thread.thread) {
     return `<div class="composer">${agent}<span class="connect">Replies to Discord are written in Discord: ${backlink(thread, 'reply in Discord ↗')}.${link}</span>${LINES}</div>`;
   }
   if (!state.me.connected?.[p]) {
-    return `<div class="composer">${agent}<span class="connect">To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.</span>${LINES}</div>`;
+    // Nobody connects an account for the customer portal: its Worker is bound to the inbox, or not.
+    const how = p === 'portal' ? 'The customer portal is not connected to this inbox: nothing can be posted there.'
+      : `To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.`;
+    return `<div class="composer">${agent}<span class="connect">${how}</span>${LINES}</div>`;
   }
   return `<div class="composer"><ul class="mentions s2-float s2-up" id="mention-list" role="listbox" hidden></ul>
     <div class="tray" id="tray" hidden></div>${attachButton(thread)}${agent}
@@ -5661,6 +5665,9 @@ function composeFeed({ channel, error, unsure, lost }) {
 }
 
 function composeBox({ channel, posting, unsure }) {
+  if (channel && channel.source === 'portal' && !state.me.connected?.portal) {
+    return '<div class="composer"><span class="connect">The customer portal is not connected to this inbox: nothing can be posted there.</span></div>';
+  }
   if (channel && !state.me.connected?.[channel.source]) {
     return `<div class="composer"><span class="connect">To post as yourself, <a href="/api/auth/${channel.source}/start">connect your ${accountOf(channel.source)} account</a>.</span></div>`;
   }
@@ -9022,7 +9029,7 @@ const FILTER_ARGS = {
 // Filters whose values are ids the API names (src/label.js vocab): checked against them.
 const VOCAB_ARGS = { topic: 'topics', tech: 'tech' };
 const FILTER_VALUES = {
-  status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams', 'discord'], resolved: ['open', 'resolved'],
+  status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams', 'discord', 'portal'], resolved: ['open', 'resolved'],
   waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_ICON),
   draft: ['mine', 'team', 'none'],
 };
@@ -9101,6 +9108,7 @@ function replyBlocked(data) {
   if (state.data?.me?.readonly) return READONLY;
   const p = data.thread.source;
   if (p === 'discord') return 'opspile cannot reply on Discord (only bots can post through its API). The user replies in Discord itself; the thread has a link to it.';
+  if (p === 'portal' && !state.me.connected?.portal) return 'The customer portal is not connected to this inbox, so opspile cannot post there.';
   if (!state.me.connected?.[p]) return `The user has not connected their ${accountOf(p)} account, so opspile cannot post as them. Ask them to use the connect link in the reply box.`;
   if (!$('reply')) return 'The reply box is not available for this thread.';
   return null;

@@ -11,6 +11,7 @@
  */
 
 import { discordEnabled } from '../discord.js';
+import { portalBound } from '../portalsource.js';
 import { teamsBotEnabled } from '../teamsbot.js';
 import { membershipOn } from './membership.js';
 
@@ -60,8 +61,8 @@ export const AGENT_TOOLS = [
     note: 'As the bot of each platform: the Slack app (bot scopes chat:write and'
       + ' reactions:write), the Teams bot (installed in a team on its first post there; it'
       + ' cannot react, Teams lets no bot), the Discord bot (Send Messages, Send Messages in'
-      + ' Threads, Add Reactions).',
-    platforms: ['slack', 'teams', 'discord'],
+      + ' Threads, Add Reactions), and in the customer portal as Enterprise Support.',
+    platforms: ['slack', 'teams', 'discord', 'portal'],
   },
   {
     tool: 'computer',
@@ -131,6 +132,8 @@ const BOTS = {
   slack: (env) => Boolean(env.SLACK_BOT_TOKEN),
   teams: teamsBotEnabled,
   discord: discordEnabled,
+  // The customer portal: the inbox posts there as its app once the portal's Worker is bound.
+  portal: portalBound,
 };
 export const isAgentTool = (tool) => BY_NAME.has(String(tool));
 export const agentTool = (tool) => BY_NAME.get(String(tool)) || null;

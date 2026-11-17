@@ -1244,15 +1244,16 @@ async function api(req, res, url) {
       rooms: [...new Set([...teams.map((t) => t.slug), ...[...store.threads.values()]
         .filter((e) => myChannels().has(`${e.ch.source}:${e.ch.channelId}`))
         .map((e) => e.row.team)])].sort(),
-      connected: { slack: true, teams: true },
-      react: { slack: true, teams: true },
-      edit: { slack: true, teams: true },
+      connected: { slack: true, teams: true, portal: true },
+      react: { slack: true, teams: true, portal: true },
+      edit: { slack: true, teams: true, portal: true },
       // Slack takes any file; Teams only images, as before the Microsoft account is connected
       // again with access to the channel files, so the explanation can be seen too.
       attach: {
         slack: personRule('slack', 'chat:write,files:write'),
         teams: personRule('teams', 'ChannelMessage.Send'),
-        app: Object.fromEntries(['slack', 'teams', 'discord'].map((p) => [p, appRule(p)])),
+        portal: personRule('portal'),
+        app: Object.fromEntries(['slack', 'teams', 'discord', 'portal'].map((p) => [p, appRule(p)])),
       },
       settings,
       follows: await followsNow(),

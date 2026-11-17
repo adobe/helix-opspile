@@ -14,6 +14,7 @@ import {
   discordApi, messagesAfter, putDiscord, reactionsOf, threadInfo,
 } from './discord.js';
 import { cachedGraph } from './graph.js';
+import { portalCall } from './portalsource.js';
 import {
   dayPath, messageKey, putRaw, segment,
 } from './raw.js';
@@ -167,7 +168,22 @@ async function backfillDiscord(env, { tenant: guild, channelId, rootId }) {
   return envelopes.length;
 }
 
-const BACKFILL = { slack: backfillSlack, teams: backfillTeams, discord: backfillDiscord };
+/**
+ * The customer portal: it tells of the thread's messages again, as events (src/portal/store.js
+ * `resend`), which are filed as they arrive. A portal that is not bound here, or has no such
+ * channel, is not asked again.
+ */
+async function backfillPortal(env, { tenant, channelId, rootId }) {
+  const res = await portalCall(env, 'resend', { domain: tenant, channel: channelId, root: rootId });
+  if (res.error) {
+    throw new Error(res.status === 404 || res.status === 409 ? `portal: channel_not_found (${res.error})` : `portal: ${res.error}`);
+  }
+  return res.messages || 0;
+}
+
+const BACKFILL = {
+  slack: backfillSlack, teams: backfillTeams, discord: backfillDiscord, portal: backfillPortal,
+};
 
 /**
  * Runs one backfill request from the queue. An error that stays is recorded on the request (for

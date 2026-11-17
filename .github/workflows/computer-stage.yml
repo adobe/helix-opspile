@@ -77,6 +77,8 @@ on:
       - 'src/normalize.js'
       - 'src/notify.js'
       - 'src/platforms.js'
+      - 'src/portal/ids.js'
+      - 'src/portalsource.js'
       - 'src/post.js'
       - 'src/products.js'
       - 'src/profiles.js'

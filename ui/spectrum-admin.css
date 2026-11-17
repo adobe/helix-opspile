@@ -125,6 +125,12 @@ tr.left td { opacity: .55; }
  * picked team or org has a back button, and tables scroll sideways in their card.
  */
 .title .back { display: none; }
+/* Back from a customer's portal request to the team it was opened from: on every screen. */
+.title .back.shown { display: grid; place-items: center; padding: 0; border: 0; background: none; }
+/* Opening a portal channel: the welcome message, and the teams it is shared with. */
+.portalopen textarea { width: 100%; resize: vertical; }
+.portalopen fieldset { display: flex; flex-wrap: wrap; min-width: 0; margin: 0; padding: 0; border: 0; }
+.portalopen input[type="checkbox"] { min-width: 0; }
 /* A text field under 16px makes iOS zoom in on it when it is focused: the large scale's body
    size (17px), on a touch screen. */
 @media (hover: none) and (pointer: coarse) {
@@ -499,6 +505,15 @@ body main.instant :is(#list, #detail) { transition: none; }
   .spectrum #detail:has(> .empty.pick) { display: flex; flex-direction: column; }
 }
 .spectrum #detail > .empty.pick { padding: var(--spectrum-spacing-400); }
+
+.spectrum .title .back.shown { width: var(--s2-ctl); height: var(--s2-ctl); }
+.spectrum .title .back.shown svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+.spectrum .title h1 .sub { font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .tag.opened { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .portalopen textarea { padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100); line-height: var(--spectrum-line-height-200); }
+.spectrum .portalopen fieldset { gap: var(--spectrum-spacing-75) var(--spectrum-spacing-200); }
+.spectrum .portalopen legend { margin-bottom: var(--spectrum-spacing-75); padding: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .portalopen label.only { margin: 0; }
 
 /* The phone's back button: a quiet icon-only ActionButton. */
 .spectrum .title .back { color: var(--spectrum-neutral-content-color-default); border-radius: var(--s2-radius); }

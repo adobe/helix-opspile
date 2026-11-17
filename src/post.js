@@ -27,6 +27,8 @@ import {
   inPersonalView, personalChannels, sharesByChannel, teamsOf,
 } from './shares.js';
 import { refreshMembers } from './suggest.js';
+import { MESSAGE_ID } from './portal/ids.js';
+import { portalAuthor, portalBound, portalCall } from './portalsource.js';
 import { resolveShortcodes } from './shortcodes.js';
 import { messageHtml } from './ui-markdown.js';
 
@@ -149,6 +151,12 @@ async function saveToken(env, person, platform, t) {
 }
 
 /**
+ * The customer portal among a person's platforms, where its Worker is bound: nobody connects an
+ * account for it, and the portal takes the inbox's word for who posts, reacts or edits.
+ */
+const portalOn = (env) => (portalBound(env) ? { portal: true } : {});
+
+/**
  * Whether the person's tokens may react: Slack tokens from before `reactions:write` was
  * asked for may not (they need to connect again); `ChannelMessage.Send` already may.
  */
@@ -160,6 +168,7 @@ export async function reactable(env, person) {
     slack: by.has('slack') && by.get('slack').split(/[\s,]+/).includes('reactions:write'),
     teams: by.has('teams'),
     discord: false,
+    ...portalOn(env),
   };
 }
 
@@ -183,7 +192,9 @@ export async function editable(env, person) {
       teams = 'reconnect';
     }
   }
-  return { slack: by.has('slack'), teams, discord: false };
+  return {
+    slack: by.has('slack'), teams, discord: false, ...portalOn(env),
+  };
 }
 
 /**
@@ -194,15 +205,23 @@ export async function editable(env, person) {
 export async function attachable(env, person) {
   const { results } = await env.DB.prepare('SELECT platform, scope FROM user_tokens WHERE person = ?')
     .bind(person).all();
-  return Object.fromEntries((results || []).filter((r) => r.platform !== 'discord')
-    .map((r) => [r.platform, personRule(r.platform, r.scope)]));
+  return {
+    ...Object.fromEntries((results || []).filter((r) => r.platform !== 'discord')
+      .map((r) => [r.platform, personRule(r.platform, r.scope)])),
+    ...(portalBound(env) ? { portal: personRule('portal') } : {}),
+  };
 }
 
 export async function connections(env, person) {
   const { results } = await env.DB.prepare('SELECT platform FROM user_tokens WHERE person = ?')
     .bind(person).all();
   const set = new Set((results || []).map((r) => r.platform));
-  return { slack: set.has('slack'), teams: set.has('teams'), discord: set.has('discord') };
+  return {
+    slack: set.has('slack'),
+    teams: set.has('teams'),
+    discord: set.has('discord'),
+    ...portalOn(env),
+  };
 }
 
 /**
@@ -612,8 +631,9 @@ export async function channelPlace(env, ref) {
     ORDER BY t.any_at DESC LIMIT 1`).bind(id.join(':'), source, tenant).first();
 }
 
-// The id a platform gives the first message of a thread: a Slack `ts`, a Teams message id.
-const ROOT_ID = { slack: /^\d{1,12}\.\d{1,8}$/, teams: /^\d{1,20}$/ };
+// The id a platform gives the first message of a thread: a Slack `ts`, a Teams message id, a
+// portal message id.
+const ROOT_ID = { slack: /^\d{1,12}\.\d{1,8}$/, teams: /^\d{1,20}$/, portal: MESSAGE_ID };
 
 /**
  * The inbox entry a message `id` starts in channel `t`, as src/normalize.js will key it (the
@@ -1016,6 +1036,37 @@ export async function post(env, me, request, inTeam, files = []) {
   }
   if (t.source === 'discord') {
     return json({ error: 'reply in Discord: the inbox cannot post there as you' }, 409);
+  }
+  if (t.source === 'portal') {
+    // The customer portal: nobody connects an account for it. The inbox says who posts, by
+    // their mail address (src/portalsource.js), and the text goes as it is: markdown.
+    const refused = checkFiles(personRule('portal'), files);
+    if (refused) {
+      return json({ error: refused }, 400);
+    }
+    const { text: sent } = await resolveShortcodes(env, body, {
+      source: t.source, tenant: t.tenant,
+    });
+    await routeReply(env, key, t);
+    const res = await portalCall(env, 'post', {
+      domain: t.tenant,
+      channel: t.channel_id,
+      root: t === place && !key ? undefined : t.root_id,
+      text: sent,
+      author: portalAuthor(me),
+    });
+    if (res.error) {
+      return json({
+        error: `Portal: ${res.error}`, unknown: res.unknown || undefined,
+      }, res.status === 409 ? 409 : 502);
+    }
+    return json({
+      ok: true,
+      platform: 'portal',
+      id: res.id,
+      text: sent,
+      ...(t === place && !key ? { thread: threadOf(t, res.id) } : {}),
+    });
   }
   const { token, scope, userId } = await personalToken(env, me.id, t.source) || {};
   if (!token) {

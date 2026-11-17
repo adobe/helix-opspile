@@ -121,6 +121,16 @@ function membershipBindings() {
   };
 }
 
+// The customer portal, optional (src/portalsource.js): a service binding to its Worker
+// (portal/cloudflare.config.ts, src/portal/worker.js), of the same account, named by
+// PORTAL_WORKER (helix-opspile-portal, its `PortalPlatform` entrypoint).
+// With it, the inbox posts, reacts and opens channels in the portal; the portal's events reach
+// the inbox through the `PortalSource` entrypoint of src/index.js, bound or not.
+function portalBinding() {
+  const worker = process.env.PORTAL_WORKER;
+  return worker ? { PORTAL: bindings.worker({ worker, exportName: 'PortalPlatform' }) } : {};
+}
+
 const SECRETS = [
   'SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'MS_CLIENT_SECRET', 'DIAG_TOKEN', 'GRAPH_CLIENT_STATE',
   // Posting as the user: the Slack app's client secret, and the key that encrypts tokens.
@@ -267,6 +277,7 @@ export default defineConfig(({ mode }) => {
         ...vars(deployed),
         ...resources(mode),
         ...membershipBindings(),
+        ...portalBinding(),
         COGS_RESOURCES: bindings.text(cogsResources(mode, name)),
         // One Durable Object per ops team: live read state (#7).
         ROOMS: bindings.durableObject({ worker: name, exportName: 'TeamRoom' }),

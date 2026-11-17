@@ -12,6 +12,7 @@
 
 import { botImages, discordForm, slackUpload } from '../attach.js';
 import { discordApi, discordEnabled } from '../discord.js';
+import { PORTAL_BOT, portalCall } from '../portalsource.js';
 import { entryOf } from '../drafts.js';
 import { invitedFields, inviteMentioned } from '../invite.js';
 import {
@@ -48,7 +49,9 @@ import { editInTeams, postToTeams } from '../teamsbot.js';
  * Framework has no call for a bot to react.
  */
 
-export const MAX_POST = { slack: 8000, discord: 2000, teams: 8000 };
+export const MAX_POST = {
+  slack: 8000, discord: 2000, teams: 8000, portal: 8000,
+};
 
 /**
  * Posts `text` in the thread of inbox entry `key`: `{ ok, platform, id }`, or `{ error }`; on
@@ -154,6 +157,17 @@ export async function postAsApp(env, key, text, options = {}) {
     const { text: marked, entities } = teamsBotMessage(body, mentions);
     return postToTeams(env, t, marked, { ...rest, attachments: botImages(files), entities });
   }
+  if (t.source === 'portal') {
+    // The customer portal: the app is a bot account there, and the text goes as it is.
+    if (files.length) {
+      return { error: 'the customer portal takes text only' };
+    }
+    const res = await portalCall(env, 'post', {
+      domain: t.tenant, channel: t.channel_id, root: t.root_id, text: body, author: PORTAL_BOT,
+    });
+    return res.ok ? { ok: true, platform: 'portal', id: res.id }
+      : { error: `Portal: ${res.error}`, unknown: res.unknown || undefined };
+  }
   return { error: `opspile cannot post to ${t.source}` };
 }
 
@@ -233,6 +247,12 @@ export async function editAsApp(env, t, message, text, mentions = []) {
     const { text: marked, entities } = teamsBotMessage(body, mentions);
     return editInTeams(env, t, id, marked, entities);
   }
+  if (t.source === 'portal') {
+    const res = await portalCall(env, 'edit', {
+      domain: t.tenant, channel: t.channel_id, id, text: body, author: PORTAL_BOT,
+    });
+    return res.ok ? { ok: true, platform: 'portal', id } : { error: `Portal: ${res.error}` };
+  }
   return { error: `opspile cannot edit on ${t.source}` };
 }
 
@@ -271,7 +291,7 @@ export function appReaction(source, emoji) {
 export async function reactAsApp(env, key, messageId, emoji) {
   const entry = key && await entryOf(env, key);
   const m = entry && messageId && await env.DB.prepare(`SELECT m.id, m.permalink, t.source,
-      t.channel_id, t.root_id FROM messages m JOIN threads t ON t.thread = m.thread
+      t.tenant, t.channel_id, t.root_id FROM messages m JOIN threads t ON t.thread = m.thread
     WHERE m.thread IN (SELECT value FROM json_each(?)) AND m.id = ? AND m.deleted = 0`)
     .bind(JSON.stringify(entry.keys), String(messageId)).first();
   if (!m) {
@@ -332,6 +352,12 @@ export async function reactAsApp(env, key, messageId, emoji) {
           : `Discord: ${e.message}`,
       };
     }
+  }
+  if (m.source === 'portal') {
+    const res = await portalCall(env, 'react', {
+      domain: m.tenant, channel: m.channel_id, id: m.id, emoji: r.emoji, author: PORTAL_BOT,
+    });
+    return res.ok ? { ok: true, platform: 'portal', emoji: r.emoji } : { error: `Portal: ${res.error}` };
   }
   return { error: `opspile cannot react on ${m.source}` };
 }
