@@ -38,7 +38,7 @@ describe('the renderer Worker (src/graphviz/render.js)', () => {
     assert.match(res.out, /^<\?xml|<svg/);
     assert.deepEqual(calls.at(-1), ['dot', '-Kneato', '-Tsvg']);
     assert.match((await layout(run, 'x', { engine: 'rm -rf' })).error, /engine is one of dot, neato/);
-    assert.match((await layout(run, 'x', { format: 'png' })).error, /format is one of json, svg/);
+    assert.match((await layout(run, 'x', { format: 'png' })).error, /format is one of json0, json, svg/);
     assert.match((await layout(run, 'digraph { a -> }')).error, /syntax error in line 1/);
   });
 
@@ -62,6 +62,8 @@ describe('the renderer Worker (src/graphviz/render.js)', () => {
         assert.equal(res.svg, renderFmc(viz, d).svg, `figure ${f.n}`);
       }
     }
+    // As json0, dot's layout without its drawing instructions, which src/fmc.js does not read.
+    assert.deepEqual(calls.at(-1), ['dot', '-Kdot', '-Tjson0']);
     // src/dot.js first, with its line.
     assert.match((await render(run, 'graph { a -> b }')).error, /^line 1: a graph joins nodes with --/);
   });

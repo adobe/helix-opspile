@@ -22,7 +22,9 @@ import { checkDot, MAX_DOT } from '../dot.js';
 import { drawLayout } from '../fmc.js';
 
 export const ENGINES = ['dot', 'neato', 'fdp', 'sfdp', 'circo', 'twopi', 'osage', 'patchwork'];
-export const FORMATS = ['json', 'svg', 'xdot', 'dot', 'plain'];
+// json0 is json without dot's drawing instructions (_draw_, _ldraw_, …), which src/fmc.js does
+// not read: the same layout at a third of the size, and dot's output crosses the kernel's pipe.
+export const FORMATS = ['json0', 'json', 'svg', 'xdot', 'dot', 'plain'];
 /** How long one layout may take: dot is fast, a pathological graph is not. */
 export const LAYOUT_MS = 10000;
 
@@ -71,7 +73,7 @@ export async function layout(run, dot, { engine = 'dot', format = 'json', timeou
 }
 
 /**
- * Draws `dot` as the inbox draws a diagram: dot's layout (`-Tjson`), drawn by src/fmc.js.
+ * Draws `dot` as the inbox draws a diagram: dot's layout (`-Tjson0`), drawn by src/fmc.js.
  * `{ ok: true, svg, width, height, ms }` or `{ ok: false, error }`. What src/dot.js refuses is
  * refused here first, with its line, as a write of the diagram would be.
  */
@@ -80,7 +82,7 @@ export async function render(run, dot, options = {}) {
   if (why) {
     return { ok: false, error: why };
   }
-  const res = await layout(run, dot, { ...options, format: 'json' });
+  const res = await layout(run, dot, { ...options, format: 'json0' });
   if (!res.ok) {
     return res;
   }
