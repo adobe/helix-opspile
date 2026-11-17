@@ -1361,7 +1361,7 @@ const ourMove = (t) => t.waiting_on === 'us';
  */
 const ICON_SPOTS = ['tags', 'title', 'stack'];
 const iconSpot = (() => {
-  let v = new URLSearchParams(location.search).get('icons');
+  let v = globalThis.location ? new URLSearchParams(location.search).get('icons') : null;
   try {
     if (ICON_SPOTS.includes(v)) localStorage.setItem('opspile.icons', v);
     else v = localStorage.getItem('opspile.icons');
