@@ -377,6 +377,35 @@ describe('the welcome notification', () => {
     assert.equal(await page({ perm: 'denied' }).welcomeNote(true), false);
   });
 
+  it('follows a switch that the browser was just allowed for, once it is saved', async () => {
+    const calls = [];
+    const settings = { mentions: false, threads: false };
+    const Notification = { permission: 'default' };
+    const { toggle } = piece('  // Allowed just now: the welcome once the switch', "  $('notifyMentions').onclick", 'toggle', {
+      state: { settings },
+      canNotify: () => true,
+      Notification,
+      askToNotify: async (opts) => {
+        calls.push(['ask', opts]);
+        Notification.permission = 'granted';
+        return true;
+      },
+      saveSettings: async (patch) => {
+        Object.assign(settings, patch);
+        calls.push(['save', patch]);
+        return true;
+      },
+      welcomeNote: (justAllowed) => calls.push(['welcome', justAllowed, settings.mentions]),
+    });
+    await toggle('mentions')();
+    assert.deepEqual(calls, [['ask', { welcome: false }], ['save', { mentions: true }], ['welcome', true, true]]);
+    // Allowed already, or turned off: no welcome.
+    calls.length = 0;
+    await toggle('threads')();
+    await toggle('mentions')();
+    assert.deepEqual(calls.filter(([c]) => c === 'welcome'), []);
+  });
+
   it('survives storage it did not write', async () => {
     const p = page();
     p.store.set('opspile.notify.welcomed', '{not json');
