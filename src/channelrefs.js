@@ -48,7 +48,7 @@ export function channelTokens(texts) {
 }
 
 /** The channel on its platform, for someone who cannot see it in the inbox. */
-function platformUrl(row) {
+export function platformUrl(row) {
   if (row.source === 'slack') {
     return slackLinkIn(row.domain, `https://slack.com/archives/${row.channel_id}`);
   }

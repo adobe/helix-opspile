@@ -25,6 +25,8 @@ const MAX_TEXT = 1200;
 const DOING = {
   read_thread: 'Reading the thread',
   read_any_thread: 'Reading another thread',
+  find_channels: 'Looking for the customer\'s channel',
+  list_any_channel_threads: 'Looking through another channel',
   get_draft: 'Reading the draft',
   read_file: 'Reading an attached file',
   update_draft: 'Updating the draft',

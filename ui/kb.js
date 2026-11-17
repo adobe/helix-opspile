@@ -1003,7 +1003,7 @@ const TOOL_CONFIRM = {
     off: (where) => `Agents of ${where} lose their shell with their next message. The files they made stay in their threads.`,
   },
   any_thread: {
-    on: (where) => `From their next message, the agents of ${where} can read any thread of the inbox, of any channel, team or customer, and what they read can reach their drafts, notes, knowledge bases and their other tools.`,
+    on: (where) => `From their next message, the agents of ${where} can read any thread of the inbox, of any channel, team or customer, and find any customer's channels, and what they read can reach their drafts, notes, knowledge bases and their other tools.`,
     off: (where) => `Agents of ${where} stop reading other channels' threads at once. What they read before stays in their transcripts.`,
   },
   membership: {

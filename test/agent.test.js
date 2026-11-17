@@ -1078,7 +1078,7 @@ describe('the earlier conversations of the channel', () => {
 
     it('reads a thread of another channel by key or link, with flagged messages withheld, and keeps a record', async () => {
       const { e, run, ext } = await internal();
-      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread']);
+      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads']);
       assert.equal(ext.sections.length, 1);
       const read = await run(LINK);
       assert.equal(read.error, false);
@@ -1102,6 +1102,80 @@ describe('the earlier conversations of the channel', () => {
       e.DB.sqlite.exec("UPDATE channels SET shared = 1 WHERE channel_id = 'C2'");
       assert.equal((await run(THREAD)).error, true);
       assert.equal(e.DB.rows('SELECT 1 FROM agent_thread_reads').length, 1);
+    });
+
+    it('finds a customer\'s channels by its name, a site or a domain, and lists their threads', async () => {
+      const { e, ext } = await internal();
+      const { sqlite } = e.DB;
+      const call = async (name, args) => {
+        const res = await ext.tools.find((t) => t.name === name).execute(args, {});
+        return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+      };
+      sqlite.prepare(`INSERT INTO orgs (slug, name, type, updated_at)
+        VALUES ('acme', 'Acme Technologies', 'customer', ?)`).run(AT);
+      const fact = sqlite.prepare(`INSERT INTO facts (thread, source, field, value)
+        VALUES (?, 'rule', 'site', 'acme/www')`);
+      fact.run(THREAD);
+      // The site, asked about in the agent's own channel and in another internal one: neither
+      // is the customer's.
+      fact.run(OWN);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, channel_name, path, root_at, last_at, messages, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'helix', ?, ?, 'channels/x/', ?, ?, 1, ?)`)
+        .run('slack:E1:C3:1.000100', 'slack', 'E1', 'C3', '1.000100', 'other', 'channel', 'ask-us', AT, AT, AT);
+      fact.run('slack:E1:C3:1.000100');
+      // The customer's Teams channel, and a channel the rules ignore.
+      const TEAMS = 'teams:TN1:G1:19:abc@thread.tacv2:100';
+      sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, name, group_id, group_name,
+          shared, connected, fetched_at)
+        VALUES ('teams', 'TN1', '19:abc@thread.tacv2', 'General', 'G1', 'Acme Corp - Adobe', 0, '[]', ?)`).run(AT);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, path, root_at, last_at, messages, updated_at)
+        VALUES (?, 'teams', 'TN1', '19:abc@thread.tacv2', '100', 'acme', 'helix', 'channel',
+          'channels/y/', ?, '2026-10-19T00:00:00Z', 2, ?)`).run(TEAMS, AT, AT);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, channel_name, path, root_at, any_at, messages, updated_at)
+        VALUES ('slack:E1:C9:1.000100', 'slack', 'E1', 'C9', '1.000100', 'acme', 'helix', 'ignore',
+          'acme-bots', 'channels/z/', ?, ?, 1, ?)`).run(AT, AT, AT);
+
+      const named = await call('find_channels', { query: 'ACME TECHNOLOGIES - WWW' });
+      assert.equal(named.error, false);
+      const lines = named.text.split('\n');
+      assert.equal(lines.length, 2);
+      assert.match(lines[0], /^- slack:E1:C1 \| Slack #aem-acme \| customer acme \(Acme Technologies\) \| ops team helix \| 3 conversations, latest 2026-[^|]+\| matched customer: acme; channel name: acme; acme\/www in 1 thread \| https:\/\/[^ ]*slack\.com\/archives\/C1$/);
+      assert.match(lines[1], /^- teams:TN1:19:abc@thread\.tacv2 \| Microsoft Teams #General in the team Acme Corp - Adobe \| customer acme \(Acme Technologies\) \| ops team helix \| 1 conversation, latest 2026-10-19 \| matched customer: acme; channel name: acme \| https:\/\/teams\.microsoft\.com\/l\/channel\/19%3Aabc%40thread\.tacv2\/General\?groupId=G1&tenantId=TN1$/);
+      // A host of the site, or a domain, finds the same channels; the internal ones never.
+      const sited = await call('find_channels', { query: 'https://main--www--acme.aem.page/de/page' });
+      assert.match(sited.text, /^- slack:E1:C1 \|/);
+      assert.doesNotMatch(sited.text, /C3|C2|C9/);
+      assert.match((await call('find_channels', { query: 'www.acme.com', limit: 1 })).text, /^- slack:E1:C1 \|[^\n]*\n\[… more matches; narrow the query\]$/);
+      assert.match((await call('find_channels', { query: 'globex' })).text, /^No channel of the inbox matches "globex"\. /);
+      assert.equal((await call('find_channels', { query: 'a b' })).error, true);
+
+      const listed = await call('list_any_channel_threads', { channel: 'slack:E1:C1' });
+      assert.equal(listed.error, false);
+      assert.match(listed.text, /^slack:E1:C1 \| Slack #aem-acme \|[^\n]*\n- slack:E1:C1:\d+\.\d+ \| /);
+      assert.equal(listed.text.split('\n').length, 4);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, path, root_at, last_at, messages, updated_at)
+        VALUES ('slack:E1:C0123456789:1.000100', 'slack', 'E1', 'C0123456789', '1.000100', 'acme',
+          'helix', 'channel', 'channels/w/', ?, ?, 1, ?)`).run(AT, AT, AT);
+      assert.match((await call('list_any_channel_threads', { channel: 'https://acme.slack.com/archives/C0123456789' })).text, /^slack:E1:C0123456789 \| Slack channel \(name unknown\) \|/);
+      for (const channel of [THREAD, LINK]) {
+        // eslint-disable-next-line no-await-in-loop
+        assert.match((await call('list_any_channel_threads', { channel })).text, /^slack:E1:C1 \|/, channel);
+      }
+      const teams = await call('list_any_channel_threads', {
+        channel: 'https://teams.microsoft.com/l/channel/19%3Aabc%40thread.tacv2/General?groupId=G1\\&tenantId=TN1',
+      });
+      assert.match(teams.text, /^teams:TN1:19:abc@thread\.tacv2 \| [^\n]*\n- teams:TN1:G1:19:abc@thread\.tacv2:100 \| /);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C1', query: 'call the inbox' })).text.split('\n').length, 2);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C9' })).error, true);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C404' })).error, true);
+
+      sqlite.exec('UPDATE agent_tool_switches SET enabled = 0');
+      assert.equal((await call('find_channels', { query: 'acme' })).error, true);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C1' })).error, true);
     });
 
     it('finds the thread of a Teams or Discord link, and none in an ignored channel', async () => {
