@@ -11,6 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { inboxPage, page } from '../src/page.js';
 import { PAGES, SCRIPTS } from './ui.js';
@@ -34,6 +35,18 @@ describe('page scripts', () => {
     }
     const scripts = Object.keys(SCRIPTS).filter((f) => f.endsWith('.js'));
     assert.deepEqual(scripts.filter((f) => !used.has(f)), [], 'scripts no page uses');
+  });
+
+  it('are every one the Worker imports, or it does not start (src/index.js builds the pages)', () => {
+    // npm run ui:dev and test/ui.js read ui/ themselves: only this sees the Worker's list.
+    const index = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+    const imported = [...index.matchAll(/^import (\w+) from '\.\.\/ui\/([\w.-]+\.(?:js|css))' with \{ type: 'text' \};$/gm)];
+    const listed = Object.fromEntries([...index.matchAll(/^ {2}'([\w.-]+\.(?:js|css))': (\w+),$/gm)].map((m) => [m[1], m[2]]));
+    assert.deepEqual(Object.keys(listed).sort(), Object.keys(SCRIPTS).sort());
+    for (const [, name, file] of imported) {
+      assert.equal(listed[file], name, file);
+    }
+    assert.deepEqual(imported.map((m) => m[2]).sort(), Object.keys(SCRIPTS).sort());
   });
 
   it('are inlined where the pages are served', () => {
