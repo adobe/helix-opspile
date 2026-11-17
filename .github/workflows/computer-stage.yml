@@ -96,7 +96,7 @@ on:
   workflow_dispatch:
     inputs:
       measure:
-        description: "The image caches to measure: default, or MiB in all/of one file (48/48), comma-separated"
+        description: "The image caches to measure: default, or MiB in all/of one file (48/24), comma-separated"
         default: default
 
 permissions:
@@ -164,8 +164,8 @@ jobs:
           URL: ${{ steps.deploy.outputs.url }}
         run: npm run computer:check -- --images "$URL"
 
-      # What an agent of the GitHub image costs, for the step summary: measured, not checked.
-      # Its last probe makes an object exceed its memory on purpose, so it runs after the checks.
+      # What an agent of the GitHub image costs, for the step summary: measured, not checked
+      # (a size too large fails a step on the memory limit, which does not fail the run).
       - name: Measure an agent's memory
         if: always() && steps.deploy.outcome == 'success'
         continue-on-error: true

@@ -687,7 +687,13 @@ deploys the same computer to Cloudflare as `helix-opspile-computer-stage` (`wran
 `helix-opspile-computer-stage-images` and `-files`, made by the workflow), puts the images into
 its bucket and runs the same checks there. That Worker is a shell on the internet: it answers
 only with the secret `COMPUTER_TOKEN` in `x-opspile-computer-token`, which each run makes and
-replaces with an unknown one when it ends. It needs the repository's `CLOUDFLARE_API_TOKEN` and
+replaces with an unknown one when it ends. It also gets the run's own `GITHUB_TOKEN` (read-only,
+revoked by GitHub when the job ends, deleted from the Worker by the run) as its secret
+`GITHUB_TOKEN`, which the computer's gateway puts into git's requests to github.com only, as it
+does a team's secrets: git's checks clone as the run, not anonymously from Cloudflare's shared
+addresses, which GitHub limits (429). After the checks the run measures what an agent of the
+GitHub image costs with the image cache (`--measure`; the workflow's `measure` input tries other
+sizes) into its summary. It needs the repository's `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`, as the deploy does. The check waits for the Worker just deployed to
 answer (two minutes at most), and tries a request again, with a bounded backoff, when the
 network fails it or it answers 403 (the old token, while the deploy spreads), 429, or a 5xx of

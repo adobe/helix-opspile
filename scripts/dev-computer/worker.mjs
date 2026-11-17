@@ -29,8 +29,8 @@
  * `runtime` changes the computer's shell and `image` its kernel's image, as a team's choice
  * does at the agent's next message (`changeShell`), and stay until the next change; `cache`
  * (`{ mib, fileMib }`) sizes the isolate's image cache (src/agent/image.js). `/uploads`
- * puts files into the read-only uploads of the thread. `/probe { mib }` allocates that much in
- * the agent's object and lets it go (how much memory is free), and `/drop` ends its kernel.
+ * puts files into the read-only uploads of the thread. `/reads` answers what the isolate asked
+ * of the images bucket and keeps, and `/drop` ends the agent's kernel.
  * Each `thread` is an agent of its own, with its own files. With the secret `GITHUB_TOKEN`,
  * git sends it to github.com, through the gateway (`devSecrets`, `devEnv`). `PUT /images/<key>`
  * writes an object of the images bucket, and `GET /images/<key>` reads it (404 when there is
@@ -106,24 +106,10 @@ export class ComputerAgent extends ThreadAgent {
     };
   }
 
-  /**
-   * How much more this object's isolate holds: `mib` MiB, allocated and written, then let go.
-   * Past its memory limit the isolate is reset, and the request fails: so the largest `mib`
-   * that answers is what was free (check.mjs `measure`).
-   */
-  async probe({ mib }) {
-    const held = [];
-    for (let i = 0; i < Number(mib); i += 1) {
-      held.push(new Uint8Array(MiB).fill((i % 255) + 1));
-    }
-    // Held a while: the runtime counts an isolate's memory now and then, not at each allocation.
-    await new Promise((resolve) => {
-      setTimeout(resolve, 1000);
-    });
-    const sqliteBytes = this.ctx.storage.sql.databaseSize;
-    return {
-      mib: held.reduce((n, b) => n + (b[0] ? 1 : 0), 0), images: imageReads(), sqliteBytes,
-    };
+  /** What the isolate asked of the images bucket, and keeps (src/agent/image.js). */
+  // eslint-disable-next-line class-methods-use-this
+  async reads() {
+    return { images: imageReads() };
   }
 
   /** Ends the kernel, as when the agent's object lets it go: the next command boots another. */
@@ -193,7 +179,7 @@ export default {
       }
     }
     if (request.method !== 'POST') {
-      return new Response('POST { command, runtime?, image?, timeout?, env?, cache? }, /uploads { name: text }, /shell, /probe { mib } or /drop\n', { status: 405 });
+      return new Response('POST { command, runtime?, image?, timeout?, env?, cache? }, /uploads { name: text }, /shell, /reads or /drop\n', { status: 405 });
     }
     const thread = url.searchParams.get('thread') || 'dev';
     const agent = env.AGENTS.get(env.AGENTS.idFromName(`dev:${thread}`));
@@ -205,8 +191,8 @@ export default {
       if (url.pathname === '/uploads') {
         return Response.json(await agent.upload(body));
       }
-      if (url.pathname === '/probe') {
-        return Response.json(await agent.probe(body));
+      if (url.pathname === '/reads') {
+        return Response.json(await agent.reads());
       }
       if (url.pathname === '/drop') {
         return Response.json(await agent.drop());

@@ -27,7 +27,7 @@
  *
  * `--measure` checks nothing: it measures what an agent of the GitHub image costs, with each
  * cache it names (`measure`: the Worker's own, and what the isolate keeps in all and of one
- * file, in MiB), and how much memory is free in its object after it.
+ * file, in MiB): its steps, the GETs of the images bucket, and what the isolate keeps.
  * `--images` first puts into the Worker's bucket the objects of the images it lacks
  * (`syncImages`, as `npm run computer:images` does for a deployment). `COMPUTER_TOKEN` is sent
  * in `x-opspile-computer-token`, which the deployed Worker requires. Each run's agents are new
@@ -548,14 +548,12 @@ const MB = (n) => Math.round((n || 0) / 1e5) / 10;
  * What an agent of the GitHub image costs, on the computer at `origin`, with each of `caches`
  * (cachesOf), each on an agent of its own: GITHUB_SESSION, then its kernel ended and the first
  * command again (as when the object lets its kernel go and boots it again), each with its time
- * and what the isolate asked of the images bucket then; and at the end how much memory its
- * object had free (`/probe`, `step` MiB more each time until the isolate is reset, or `max`;
- * each held for a second).
- * `[{ label, steps: [{ name, ms, ok, gets, fetchedMB, keptMB, error }], freeMiB }]`.
+ * and what the isolate asked of the images bucket then and keeps: `[{ label, steps: [{ name,
+ * ms, ok, gets, fetchedMB, keptMB, error }] }]`. What an object uses of its 128 MB is not to be
+ * had from inside it (an allocation of its own is not held to the limit as the kernel's is: it
+ * "had" 208 MiB free), so a step that fails on the limit is the measure of too much.
  */
-export async function measure(origin, caches, {
-  token, run, step = 8, max = 256, log = console.log,
-} = {}) {
+export async function measure(origin, caches, { token, run, log = console.log } = {}) {
   const headers = { 'content-type': 'application/json', ...headersOf(token) };
   const post = async (thread, path, body) => {
     const res = await fetch(`${origin}${path}?thread=${thread}`, {
@@ -574,7 +572,7 @@ export async function measure(origin, caches, {
     const steps = [];
     // What the isolate asked of the bucket before (another agent's, in the same isolate).
     // eslint-disable-next-line no-await-in-loop
-    let before = (await post(thread, '/probe', { mib: 0 }).catch(() => ({}))).images || null;
+    let before = (await post(thread, '/reads', {}).catch(() => ({}))).images || null;
     const exec = async (name, command, first) => {
       const started = Date.now();
       const body = await post(thread, '/', {
@@ -606,27 +604,16 @@ export async function measure(origin, caches, {
     await post(thread, '/drop', {}).catch(() => {});
     // eslint-disable-next-line no-await-in-loop
     await exec('command 1, its kernel booted again', GITHUB_SESSION[0]);
-    let freeMiB = 0;
-    for (let mib = step; mib <= max; mib += step) {
-      // eslint-disable-next-line no-await-in-loop
-      const res = await post(thread, '/probe', { mib }).catch((e) => ({ error: reasonOf(e) }));
-      if (res.error || res.mib !== mib) {
-        break;
-      }
-      freeMiB = mib;
-    }
-    log(`  ${cache.label}: ${freeMiB} MiB free after it (${freeMiB >= max ? 'at least' : 'to the nearest'} ${step} MiB)`);
-    out.push({ label: cache.label, steps, freeMiB });
+    out.push({ label: cache.label, steps });
   }
   return out;
 }
 
 /** What `measure` found, as a Markdown table. */
-export function measuredOf(results, { max = 256 } = {}) {
+export function measuredOf(results) {
   const rows = results.flatMap((r) => [
     ...r.steps.map((s) => `| ${r.label} | ${s.ok ? '✅' : '❌'} ${s.name} | ${s.ms} ms | ${s.gets ?? '–'}`
       + ` (${s.fetchedMB} MB) | ${s.keptMB} MB |${s.error ? ` ${s.error.replace(/\|/g, '/')}` : ''}`),
-    `| ${r.label} | free in the object after it | ${r.freeMiB >= max ? '≥ ' : ''}${r.freeMiB} MiB | | |`,
   ]);
   return ['### What an agent of the GitHub image costs', '',
     '| Cache (MiB, of one file) | Step | Time | GETs (fetched) | Kept |', '| --- | --- | --- | --- | --- |',

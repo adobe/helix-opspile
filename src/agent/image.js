@@ -34,9 +34,15 @@
  * every agent of this isolate: the trees of the last few images, and pieces and whole blobs up
  * to CACHE_BYTES, the least recently used going first. None of a file over CACHE_BLOB_MAX: of
  * one with pieces, the mount holds the last HOLD_PIECES it read; of one without, the file
- * handle that read it holds it whole. A kernel keeps its own copy of a program it runs, so
- * while it runs what is kept here is a second one; it is worth it when the agent's kernel
- * boots again in the same isolate, as it mostly does, and then finds every program here.
+ * handle that read it holds it whole.
+ *
+ * The kernel keeps no copy of a program (since 1.189.1): it compiles one, and a Dynamic Worker
+ * that starts cold reads it again, whole, through this mount. So what is kept here is the only
+ * copy of a program in the agent's object, which serves those reads, and the kernel's next
+ * boot in this isolate (an agent mostly comes back to the same one): a command in some 100 ms
+ * instead of one to three seconds. Reading a program costs, while the Worker Loader takes it,
+ * its bytes once more (gh's 50 MB), beside what is kept here and the agent itself (its model
+ * loop runs in the same object), all in the object's 128 MB.
  *
  * No Workers runtime is needed here, so this is tested in Node, with a bucket in memory.
  */
@@ -48,10 +54,14 @@ export const isImageName = (name) => /^[a-z][a-z0-9-]{0,31}$/.test(String(name |
 export const IMAGE_ROOT = '/opt/image';
 export const IMAGE_COMMANDS = `${IMAGE_ROOT}/node_modules`;
 
-const CACHE_BYTES = 32 * 1024 * 1024;
-// Of a file larger than this none is kept for the isolate: the kernel keeps its own copy of a
-// program it runs (gh's 50 MB), and two would crowd the object's 128 MB.
-const CACHE_BLOB_MAX = CACHE_BYTES / 2;
+// Measured on stage (`npm run computer:check -- --measure`, GitHub image): at 64 MiB, kept
+// with gh in it, the object exceeded its memory when its kernel booted again and read gh. At
+// 48 MiB it does not, and leaves room for the agent's own loop.
+const CACHE_BYTES = 48 * 1024 * 1024;
+// Of a file larger than this none is kept for the isolate: gh (50 MB) and yq (28 MB) would push
+// out every other program, which a kernel that boots again then reads from the bucket, and gh,
+// kept, beside its copy for the Worker Loader, is what made 64 MiB too much.
+const CACHE_BLOB_MAX = 24 * 1024 * 1024;
 /** What the isolate keeps at most (CACHE_BYTES), and of one file (CACHE_BLOB_MAX). */
 const budget = { bytes: CACHE_BYTES, fileMax: CACHE_BLOB_MAX };
 const CACHE_TREES = 8;

@@ -249,43 +249,45 @@ describe('the checks of the stage computer', () => {
     assert.match('1\n1\ngh version\ntar (GNU\ngzip\ndiff\ntree\nhi\n68690a\nJSON text data\n', session[1].match);
   });
 
-  it('measure each cache on an agent of its own, and how much memory is free after it', async () => {
-    assert.deepEqual(cachesOf('default,48/32'), [
-      { label: 'default', mib: null, fileMib: null }, { label: '48/32', mib: 48, fileMib: 32 },
+  it('measure each cache on an agent of its own, its steps and what the isolate kept', async () => {
+    assert.deepEqual(cachesOf('default,48/24'), [
+      { label: 'default', mib: null, fileMib: null }, { label: '48/24', mib: 48, fileMib: 24 },
     ]);
     const asked = [];
     let gets = 10;
     globalThis.fetch = async (url, init) => {
       const { pathname, searchParams } = new URL(url);
       const body = JSON.parse(init.body);
-      asked.push([pathname, searchParams.get('thread'), body.mib ?? body.cache ?? null]);
-      if (pathname === '/probe') {
-        // 8 MiB free: past that the isolate is reset, and the Worker answers 500.
-        return body.mib > 8 ? new Response('exceeded its memory limit', { status: 500 })
-          : Response.json({ mib: body.mib, images: { gets, fetched: gets * 1e6, bytes: 5e6 } });
+      asked.push([pathname, searchParams.get('thread'), body.cache ?? null]);
+      if (pathname === '/reads') {
+        return Response.json({ images: { gets, fetched: gets * 1e6, bytes: 5e6 } });
       }
       if (pathname === '/drop') {
         return Response.json({ dropped: true });
       }
       gets += 2;
-      return Response.json({ exitCode: 0, images: { gets, fetched: gets * 1e6, bytes: 5e6 } });
+      // The kernel booted again is too much for the object.
+      return asked.filter(([p]) => p === '/').length === 3
+        ? Response.json({ error: 'Durable Object\'s isolate exceeded its memory limit and was reset.' }, { status: 500 })
+        : Response.json({ exitCode: 0, images: { gets, fetched: gets * 1e6, bytes: 5e6 } });
     };
     const lines = [];
-    const [r] = await measure('https://computer.example', cachesOf('48/32'), {
+    const [r] = await measure('https://computer.example', cachesOf('48/24'), {
       run: 'r1', log: (l) => lines.push(l),
     });
-    assert.equal(r.freeMiB, 8);
     assert.deepEqual(r.steps.map((s) => [s.name, s.ok, s.gets, s.fetchedMB, s.keptMB]), [
       ['command 1', true, 2, 2, 5], ['command 2', true, 2, 2, 5],
-      ['command 1, its kernel booted again', true, 2, 2, 5],
+      ['command 1, its kernel booted again', false, undefined, 0, 0],
     ]);
-    assert.ok(asked.every(([, thread]) => thread === 'measure-r1-48-32'));
-    // The cache is sized with the first command, and the probes go up until one fails.
-    assert.deepEqual(asked.find(([p]) => p === '/').at(2), { mib: 48, fileMib: 32 });
-    assert.deepEqual(asked.filter(([p]) => p === '/probe').map(([, , m]) => m), [0, 8, 16]);
+    assert.match(r.steps[2].error, /exceeded its memory limit/);
+    assert.ok(asked.every(([, thread]) => thread === 'measure-r1-48-24'));
+    // The cache is sized with the first command only.
+    assert.deepEqual(asked.filter(([p]) => p === '/').map(([, , c]) => c), [
+      { mib: 48, fileMib: 24 }, null, null,
+    ]);
     const table = measuredOf([r]);
-    assert.match(table, /\| 48\/32 \| ✅ command 1 \| \d+ ms \| 2 \(2 MB\) \| 5 MB \|/);
-    assert.match(table, /\| 48\/32 \| free in the object after it \| 8 MiB \|/);
+    assert.match(table, /\| 48\/24 \| ✅ command 1 \| \d+ ms \| 2 \(2 MB\) \| 5 MB \|/);
+    assert.match(table, /\| 48\/24 \| ❌ command 1, its kernel booted again \| .* exceeded its memory limit/);
     assert.doesNotMatch(table, /https?:/);
   });
 
