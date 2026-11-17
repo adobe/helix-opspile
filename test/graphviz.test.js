@@ -107,6 +107,9 @@ describe('diagrams with the renderer (src/diagrams.js)', () => {
     assert.equal((await drawDiagram({ GRAPHVIZ }, { dot: 'graph { a -> b }' })).status, 422);
     assert.equal((await drawDiagram({ GRAPHVIZ }, {})).status, 400);
     assert.equal((await drawDiagram({}, { dot: 'digraph { a }' })).status, 503);
+    // Out of time: 503 too, so the page draws it itself.
+    const slow = { render: async () => ({ ok: false, error: 'dot took longer than 10 s', timedOut: true }) };
+    assert.equal((await drawDiagram({ GRAPHVIZ: slow }, { dot: 'digraph { a }' })).status, 503);
   });
 });
 
