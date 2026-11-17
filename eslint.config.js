@@ -74,6 +74,8 @@ export default [
         Rank: 'readonly',
         // The preview of attached files, ui/table.js (the inbox).
         Table: 'readonly',
+        // A customer's stack drawing, ui/stack.js (the inbox).
+        Stack: 'readonly',
         // The Topics page's graph, ui/topicgraph.js.
         TopicGraph: 'readonly',
         // Content swaps that fade in, ui/app.js.

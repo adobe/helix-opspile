@@ -25,6 +25,7 @@ import appJs from '../ui/app.js' with { type: 'text' };
 import headerJs from '../ui/header.js' with { type: 'text' };
 import rankJs from '../ui/rank.js' with { type: 'text' };
 import tableJs from '../ui/table.js' with { type: 'text' };
+import stackJs from '../ui/stack.js' with { type: 'text' };
 import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
 // Spectrum 2's look of every page (README, "Spectrum 2").
 import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
@@ -59,7 +60,7 @@ import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
 import {
-  fromPreview, highlightScript, inboxPage, page,
+  fmcScript, fromPreview, highlightScript, inboxPage, page,
 } from './page.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
@@ -88,6 +89,7 @@ const SCRIPTS = {
   'header.js': headerJs,
   'rank.js': rankJs,
   'table.js': tableJs,
+  'stack.js': stackJs,
   'topicgraph.js': topicGraphJs,
   'spectrum-fonts.css': spectrumFontsCss,
   'spectrum.css': spectrumCss,
@@ -253,6 +255,11 @@ const handlers = {
     const highlighter = highlightScript(request, pathname);
     if (highlighter) {
       return highlighter;
+    }
+    // The stack drawing's renderer, which it imports with the first stack it shows.
+    const fmc = fmcScript(request, pathname);
+    if (fmc) {
+      return fmc;
     }
     if (request.method === 'GET' || request.method === 'HEAD') {
       const iconResponse = icon(pathname);

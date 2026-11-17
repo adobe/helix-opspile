@@ -72,7 +72,7 @@ import { pwa } from '../src/pwa.js';
 import { cleanPick } from '../src/rankevents.js';
 import { suggestMentions } from '../src/mention-match.js';
 import {
-  fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
+  fmcScript, fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
 } from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
@@ -88,6 +88,7 @@ import { previewOf, readState, waitingOn } from '../src/threads.js';
 import {
   fold, orgStacks, readMembers, threadTech,
 } from '../src/api.js';
+import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { findPerson } from '../src/kbpeople.js';
@@ -486,6 +487,10 @@ function elsewhereCounts() {
   })).filter((t) => t.unread > 0);
 }
 
+/** The channel's tech stack (channel_tech), likeliest first. */
+const channelTech = (entry) => (entry.ch.tech || [])
+  .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
+
 /**
  * As src/threads.js's `unreadInYours`: what the red badge counts, per thread, for the viewer:
  * unread messages that mention them, and in a thread they posted or were mentioned in (a
@@ -520,10 +525,6 @@ function unreadInYours(rows) {
   }
   return out;
 }
-
-/** The channel's tech stack (channel_tech), likeliest first. */
-const channelTech = (entry) => (entry.ch.tech || [])
-  .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
 
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
 function inbox(team, before = null, personal = false, only = null) {
@@ -1043,6 +1044,30 @@ async function kbApi(req, res, url) {
       out.bases = out.bases.map((b) => ({ ...b, name: names.get(b.repo) || b.name }));
     }
     return json(res, out, r.status);
+  }
+  // A customer's stack drawing, as src/kbadmin.js draws it.
+  if (url.pathname === '/api/kb/stack') {
+    const repo = `kb-org-${url.searchParams.get('org')}`;
+    const listing = kb.has(repo) && await listed(repo);
+    if (!listing) {
+      return json(res, { error: 'no such knowledge base' }, 404);
+    }
+    const out = {
+      org: listing.slug, repo, path: STACK_PATH, may: listing.may,
+    };
+    const file = await kb.read(repo, STACK_PATH);
+    if (file.error) {
+      return json(res, { ...out, drawing: null });
+    }
+    const parsed = parseStack(file.text);
+    const stamp = /generated: \{ by: ([^,]+), at: ([^ }]+) \}/.exec(file.text);
+    return json(res, {
+      ...out,
+      hash: file.hash,
+      by: stamp ? stamp[1] : null,
+      at: stamp ? stamp[2] : null,
+      ...(parsed.error ? { drawing: null, error: parsed.error } : { drawing: stackView(parsed) }),
+    });
   }
   const repo = req.method === 'GET' ? url.searchParams.get('repo') : body.repo;
   const listing = kb.has(repo) && await listed(repo);
@@ -2192,6 +2217,14 @@ const server = createServer(async (req, res) => {
       res.end(await uiPage('inbox.html'));
       return;
     }
+    // The FMC gallery: the guidelines' figures and the stacks, as the inbox draws them.
+    if (url.pathname === '/__dev/fmc') {
+      const { galleryPage } = await import(`./fmc-gallery.mjs?${Date.now()}`);
+      const html = galleryPage(servedPage, await scripts());
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      res.end(html);
+      return;
+    }
     // The Spectrum 2 preview's addresses, as the Worker redirects them.
     const preview = fromPreview(url.pathname, url.search);
     if (preview) {
@@ -2205,7 +2238,7 @@ const server = createServer(async (req, res) => {
     }
     // The code highlighter, as the Worker serves it.
     const asked = { method: req.method, headers: new Headers(req.headers) };
-    const lit = highlightScript(asked, url.pathname);
+    const lit = highlightScript(asked, url.pathname) || fmcScript(asked, url.pathname);
     if (lit) {
       res.writeHead(lit.status, Object.fromEntries(lit.headers)).end(await lit.text());
       return;

@@ -298,7 +298,7 @@ describe('the simple personal view', () => {
       assert.ok(!outline().includes('x1'));
       assert.doesNotMatch(rowOf('a2'), /class="cust"/);
       const head = page.groupHtml(list()[0]);
-      assert.match(head, /^<button type="button" class="grp new sticky" data-group="acme" title="Only ACME">/);
+      assert.match(head, /^<div class="grp new sticky" data-group="acme"><button type="button" class="gn" data-group="acme" title="Only ACME">/);
       assert.match(head, /<span class="logo"><span class="ico av">A<\/span><img src="https:\/\/icons.test\/acme.example" alt="" loading="lazy"><\/span>/);
       assert.match(head, /<span class="nm">ACME<\/span>/);
       // A customer without an icon has its initial.
@@ -321,7 +321,8 @@ describe('the simple personal view', () => {
       // Top to bottom, one per layer, the likeliest; what is in no layer, or in Other, is not.
       assert.deepEqual(page.stackLine('acme'), ['Fastly', 'Edge Delivery', 'Document Authoring']);
       const head = page.groupHtml(list()[0]);
-      assert.match(head, /<span class="nm">ACME<\/span><span class="stk-line" title="ACME&#39;s tech stack: Fastly, Edge Delivery, Document Authoring"><span>Fastly<\/span><span>Edge Delivery<\/span><span>Document Authoring<\/span><\/span><\/button>$/);
+      assert.match(head, /<\/button><button type="button" class="stk-line" data-stack="acme" aria-haspopup="dialog" title="ACME&#39;s tech stack: Fastly, Edge Delivery, Document Authoring. Show the drawing"><span>Fastly<\/span><span>Edge Delivery<\/span><span>Document Authoring<\/span><\/button><\/div>$/);
+      assert.match(head, /class="grp new sticky stacked"/);
       // A customer Clef saw nothing of has none.
       assert.doesNotMatch(page.groupHtml(list().find((x) => x.head === 'initech')), /stk-line/);
       // Pages merge: each technology at the highest probability of any.
@@ -368,7 +369,7 @@ describe('the simple personal view', () => {
       assert.deepEqual(outline(), ['# globex', 'g1', 'g2']);
       const head = page.groupHtml(list()[0]);
       assert.match(head, /title="Back to all customers"/);
-      assert.match(head, /<span class="back">All customers<\/span><\/button>$/);
+      assert.match(head, /<button type="button" class="back" data-group="globex" title="Back to all customers">All customers<\/button><\/div>$/);
       assert.match(columnRow('globex'), /^<div class="fr on"/);
       assert.match(columnRow(''), /^<div class="fr all"/);
     });

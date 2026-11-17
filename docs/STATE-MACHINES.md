@@ -201,6 +201,14 @@ the new reason. Fulfilled is not stored: the person is in the thread (a message 
 theirs), so the row stays but the header and `list_experts` leave it out, and it no longer counts
 toward the three a thread may have. Both go by the person, whichever of their accounts was named.
 
+**Stack drawing.** none → drawn → drawn again (`stack.md` of a customer's knowledge base,
+`src/stack.js`). Whether the file exists is the state; its `generated` stamp says who drew it last
+and when. The first drawing is a create (refused when one appeared meanwhile); every later one
+names the `base` it was drawn from, so an agent never draws over a colleague's or a person's newer
+one unseen. A write that cannot be drawn is refused, so `drawn` always parses. Deleting the file
+in the editor goes back to none; the inbox then draws what Clef saw instead. The inbox keeps an
+answer of `GET /api/kb/stack` for a minute (`stackOf`, `ui/inbox.js`).
+
 **Agent polling.** idle → polling → due while hidden (`loadAgent`, `ui/inbox.js`). A failed request
 asks again; after five in a row the spinner goes.
 

@@ -14,12 +14,94 @@ import git from 'isomorphic-git';
 import { checkChanges, commitChanges } from '../src/agent/kbwrite.js';
 import { memfs } from '../src/agent/memfs.js';
 import { isEntry, SYSTEM_PROMPT } from '../src/agent/okf.js';
+import { stackFile } from '../src/stack.js';
 
 /**
  * Fake knowledge bases for `npm run ui:dev`: real git repos in memory, written by the same
  * `commitChanges` as production (OKF checks, indexes, log), behind the `/api/kb*` routes of
  * src/kbadmin.js. Made-up content only.
  */
+
+/**
+ * ACME's stack drawing (src/stack.js), which the inbox shows from ACME's heading; Globex has
+ * none, so its heading shows what Clef saw instead. The FMC gallery (scripts/fmc-gallery.mjs)
+ * draws it too.
+ */
+export const ACME_STACK = {
+  summary: 'ACME sells on an Edge Delivery storefront behind Akamai, with Adobe Commerce for the catalog, cart and checkout. Orders go on to their ERP through an App Builder action; authors write in SharePoint.',
+  parts: [
+    { layer: 'edge', name: 'Shoppers', kind: 'person' },
+    {
+      layer: 'edge', name: 'Akamai', tech: 'akamai', note: 'www.acme.example; /checkout bypasses the cache',
+    },
+    {
+      layer: 'site', name: 'Edge Delivery', tech: 'eds', note: 'storefront and PDPs, `acme/storefront`',
+    },
+    {
+      layer: 'site', name: 'Legacy shop', tech: 'aem65', note: 'the B2B pages, until they move',
+    },
+    { layer: 'content', name: 'Authors', kind: 'person' },
+    {
+      layer: 'content', name: 'SharePoint', kind: 'storage', group: 'Authoring', tech: 'sharepoint', note: 'pages and the redirects sheet',
+    },
+    {
+      layer: 'content', name: 'Assets', kind: 'storage', group: 'Authoring', tech: 'assets', note: 'product images',
+    },
+    {
+      layer: 'code', name: 'GitHub', kind: 'storage', tech: 'github', note: '`acme/storefront`, `acme/order-sync`',
+    },
+    {
+      layer: 'code', name: 'App Builder', tech: 'appbuilder', note: 'order sync every 5 minutes',
+    },
+    {
+      layer: 'commerce', name: 'Adobe Commerce', tech: 'commerce', note: 'catalog, cart, checkout',
+    },
+    {
+      layer: 'commerce', name: 'Payments', kind: 'external', note: 'hosted payment page',
+    },
+    {
+      layer: 'commerce', name: 'ERP', tech: 'erp', note: 'fulfilment and invoices',
+    },
+    {
+      layer: 'martech', name: 'Adobe Analytics', tech: 'analytics', note: 'through Launch',
+    },
+    {
+      layer: 'identity', name: 'Okta', tech: 'sso', note: 'authors sign in to SharePoint and the Sidekick',
+    },
+  ],
+  flows: [
+    {
+      from: 'Shoppers', to: 'Akamai', kind: 'request', label: 'HTTPS',
+    },
+    {
+      from: 'Akamai', to: 'Edge Delivery', kind: 'request', label: 'every page but /b2b',
+    },
+    {
+      from: 'Akamai', to: 'Legacy shop', kind: 'request', label: '/b2b',
+    },
+    {
+      from: 'Authors', to: 'SharePoint', kind: 'modify', label: 'pages',
+    },
+    {
+      from: 'Edge Delivery', to: 'SharePoint', kind: 'read', label: 'preview and publish',
+    },
+    {
+      from: 'Edge Delivery', to: 'Assets', kind: 'read', label: 'images',
+    },
+    {
+      from: 'Edge Delivery', to: 'GitHub', kind: 'read', label: 'code',
+    },
+    {
+      from: 'Edge Delivery', to: 'Adobe Commerce', kind: 'request', label: 'cart and checkout',
+    },
+    {
+      from: 'Adobe Commerce', to: 'Payments', kind: 'request', label: 'payment',
+    },
+    { from: 'Adobe Commerce', to: 'App Builder', label: 'new orders' },
+    { from: 'App Builder', to: 'ERP', label: 'orders, every 5 minutes' },
+  ],
+  notes: '## Open questions\n\n- When the B2B pages move to Edge Delivery.',
+};
 
 const DIR = '/kb';
 const SEED = {
@@ -52,6 +134,7 @@ const SEED = {
     kind: 'org',
     files: {
       'sites/www.md': '---\ntype: Site\ntitle: www\ndescription: The main website, on Fastly.\n---\n\nGoes live in March.\n',
+      'stack.md': stackFile(ACME_STACK, { title: 'Tech stack of ACME', keep: 'status: stable' }),
       // People, one Contact each (docs/ARCHITECTURE.md, "Layout"): the profile cards show them.
       'contacts/sam-reyes.md': [
         '---', 'type: Contact', 'title: Sam Reyes',

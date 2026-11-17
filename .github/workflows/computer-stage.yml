@@ -59,6 +59,7 @@ on:
       - 'src/like.js'
       - 'src/lookup.js'
       - 'src/markdown.js'
+      - 'src/mdast.js'
       - 'src/mention-match.js'
       - 'src/messagelinks.js'
       - 'src/notify.js'

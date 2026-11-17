@@ -27,7 +27,9 @@ import { modelProblem } from './model.js';
 export const IDLE_SECONDS = 24 * 60 * 60;
 
 export const IDLE_PROMPT = 'Nothing has been posted in the thread for a day. Look at where it stands:'
-  + ' if something worth remembering came out of it, put it into the knowledge bases; if the'
+  + ' if something worth remembering came out of it, put it into the knowledge bases, and if it'
+  + ' showed anything about the customer\'s stack that their stack drawing lacks or has wrong,'
+  + ' draw it again; if the'
   + ' team owes the customer an answer or a follow-up, make sure the draft has it; otherwise'
   + ' change nothing.';
 
