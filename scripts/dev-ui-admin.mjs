@@ -516,7 +516,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('soylent', 'Soylent Corporation', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('opspile', 'opspile', 'internal', NULL, '2026-10-20T09:00:00Z')`);
   // Channels Lena (a member of Edge ops) asked the admin team for: one the admin team holds
-  // (confirming moves it), one Platform ops holds (confirming shares it), and one declined.
+  // (confirming moves it), one Platform ops holds (confirming shares it), and one declined; and
+  // one her thread's agent asked to move for her.
   const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();
   DB.sqlite.prepare(`INSERT INTO channel_requests (source, channel_id, team, note, status, requested_by,
       requested_name, requested_at, decided_by, decided_name, decided_at, reason) VALUES
@@ -527,6 +528,13 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('slack', 'C0SANDBOX3', 'edge', NULL, 'declined', 'lena@example.com', 'Lena Berg', ?,
       'priya@example.com', 'Priya Nair', ?, 'A test channel: nothing to follow there.')`)
     .run(ago(2), ago(0.2), ago(6), ago(5));
+  // One the agent of an Umbrella thread filed for Lena from its sidebar: a move, out of
+  // Platform ops.
+  const umbrella = [...store.threads.values()].find(({ row }) => row.channel_id === 'C0UMBRELLA');
+  DB.sqlite.prepare(`INSERT INTO channel_requests (source, channel_id, team, note, status, requested_by,
+      requested_name, requested_at, move, thread) VALUES ('slack', 'C0UMBRELLA', 'edge', ?, 'open',
+      'lena@example.com', 'Lena Berg', ?, 1, ?)`)
+    .run('Lena says Umbrella is an Edge ops customer: the channel is filed by the aem- rule, which every EDS channel matches.', ago(0.05), umbrella ? umbrella.row.thread : null);
 
   // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
   // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
