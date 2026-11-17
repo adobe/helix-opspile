@@ -2954,6 +2954,9 @@ const side = {
   joined: null,
   // Whether the panel moves as it comes or goes now: while you enter or leave the sidebar.
   motion: false,
+  // The id of the message just asked in the panel: its conversation's line is joined to the panel
+  // (placeSidePanel, joinLine).
+  asked: null,
 };
 const SIDE_ICON = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
 const SIDE_HINT = `Talk to ${AGENT_NAME} in the sidebar: only your team sees it, nothing is posted (A)`;
@@ -3147,6 +3150,7 @@ function goneSidePanel() {
   main.style.removeProperty('--side-open');
   main.classList.remove('siding', 'side-sliding', 'side-veiled');
   side.joined = null;
+  bridgeStill();
   $('side-join').hidden = true;
 }
 
@@ -3160,6 +3164,17 @@ function goneSidePanel() {
 const sideMotion = {
   p: 0, to: 0, raf: 0, mode: 'slide',
 };
+// A line joined to the panel while it is open (joinLine): once it is in sight, it reaches across
+// to the panel's edge, then the inner corners round off. `p` from 0 to 1, 1 when it is not moving;
+// `waiting` until the line is in sight, all of it.
+const sideBridge = { p: 1, raf: 0, waiting: false };
+/** The bridge from the line to the panel at rest, all there. */
+function bridgeStill() {
+  cancelAnimationFrame(sideBridge.raf);
+  Object.assign(sideBridge, { p: 1, raf: 0, waiting: false });
+}
+// Where the line has reached the panel, and its corners start to round.
+const BRIDGE_ACROSS = 0.7;
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2);
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -3246,6 +3261,7 @@ function drawJoin() {
   const box = $('side-join');
   const panel = $('side');
   const { p, mode } = sideMotion;
+  if (sideBridge.waiting && p === 1 && sideLineInSight(side.joined)) bridgeAcross();
   const line = !panel.hidden && p > 0 && (mode === 'join' || p === 1) && sideLine(side.joined);
   const l = line && line.el.getBoundingClientRect();
   const s = line && sideScrolls(line.scroller);
@@ -3284,10 +3300,15 @@ function drawJoin() {
   const roomB = Math.max(0, s.bottom - l.bottom);
   let d;
   const across = mode === 'join' && p < JOIN_ACROSS ? easeInOut(p / JOIN_ACROSS) : null;
-  if (across !== null) {
-    // The line reaching across, its right corners squaring as they get to the content's edge.
-    const rr = Math.max(0, lerp(r - bw / 2, 0, across));
-    const xe = lerp(l.right - ox - bw / 2, far, across);
+  // Joined while the panel is open: the line reaches across to its edge, not past it.
+  const bridge = across === null && sideBridge.p < BRIDGE_ACROSS
+    ? easeInOut(sideBridge.p / BRIDGE_ACROSS) : null;
+  if (across !== null || bridge !== null) {
+    // The line reaching across, its right corners squaring as they get to the content's edge
+    // (or to the panel's).
+    const k = across ?? bridge;
+    const rr = Math.max(0, lerp(r - bw / 2, 0, k));
+    const xe = lerp(l.right - ox - bw / 2, across !== null ? far : jx, k);
     d = `M${f(x0)},${f(lt)}L${f(xe - rr)},${f(lt)}A${f(rr)},${f(rr)} 0 0 1 ${f(xe)},${f(lt + rr)}`
       + `L${f(xe)},${f(lb - rr)}A${f(rr)},${f(rr)} 0 0 1 ${f(xe - rr)},${f(lb)}L${f(x0)},${f(lb)}`;
   } else {
@@ -3296,8 +3317,10 @@ function drawJoin() {
     const grown = mode === 'join' && p < JOIN_GROWN ? easeInOut((p - JOIN_ACROSS) / (JOIN_GROWN - JOIN_ACROSS)) : 1;
     const pt = lerp(t, -bw * 2, grown);
     const pb = lerp(b, h + bw * 2, grown);
-    const ft = Math.min(r, t - pt, roomT);
-    const fb = Math.min(r, pb - b, roomB);
+    // Joined while it was open, the inner corners round off once the line has reached it.
+    const round = sideBridge.p < 1 ? easeInOut((sideBridge.p - BRIDGE_ACROSS) / (1 - BRIDGE_ACROSS)) : 1;
+    const ft = Math.min(r, t - pt, roomT) * round;
+    const fb = Math.min(r, pb - b, roomB) * round;
     d = `M${f(x0)},${f(lt)}L${f(jx - ft)},${f(lt)}L${f(jx - ft)},${f(t)}A${f(ft)},${f(ft)} 0 0 0 ${f(jx)},${f(t - ft)}`
       + `L${f(jx)},${f(pt)}L${f(far)},${f(pt)}L${f(far)},${f(pb)}L${f(jx)},${f(pb)}`
       + `L${f(jx)},${f(b + fb)}A${f(fb)},${f(fb)} 0 0 0 ${f(jx - fb)},${f(b)}L${f(jx - fb)},${f(lb)}L${f(x0)},${f(lb)}`;
@@ -3327,10 +3350,38 @@ function sideScrolls(scroller) {
   return { top, bottom: r.bottom };
 }
 
+/**
+ * The panel, open, joined to the line of conversation `run` instead of the one it was joined to,
+ * or none: you started a conversation in it, whose line showed in the thread. The line reaches
+ * across to the panel (`sideBridge`) once it is in sight: the thread scrolls to it, as it does
+ * to what is new, or you do.
+ */
+function joinLine(run) {
+  side.joined = run;
+  for (const el of $('pane').querySelectorAll('.sidechat.joined')) el.classList.remove('joined');
+  sideLine(run)?.el.classList.add('joined');
+  bridgeStill();
+  if (!REDUCED_MOTION.matches) Object.assign(sideBridge, { p: 0, waiting: true });
+  drawJoin();
+}
+
+/** The line, in sight now, reaching across to the panel, over --side-motion. */
+function bridgeAcross() {
+  sideBridge.waiting = false;
+  const dur = parseFloat(getComputedStyle(document.querySelector('main')).getPropertyValue('--side-motion')) || 0;
+  const t0 = performance.now();
+  const step = (now) => {
+    sideBridge.p = dur ? clamp01((now - t0) / dur) : 1;
+    drawJoin();
+    sideBridge.raf = sideBridge.p < 1 ? requestAnimationFrame(step) : 0;
+  };
+  sideBridge.raf = requestAnimationFrame(step);
+}
+
 let joinFrame = 0;
 /** The joined line again, once a frame at most: the thread scrolled, or something moved it. */
 function queueJoin() {
-  if (joinFrame || sideMotion.raf) return;
+  if (joinFrame || sideMotion.raf || sideBridge.raf) return;
   joinFrame = requestAnimationFrame(() => { joinFrame = 0; drawJoin(); });
 }
 
@@ -3375,7 +3426,11 @@ function placeSidePanel(key, thread, runs) {
     scroller.scrollTop += picked.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
     markFound(picked);
   } else if (atEnd) scroller.scrollTop = scroller.scrollHeight;
+  // What was just asked here: the panel is joined to its conversation's line, a new one too.
+  const asked = side.asked && runs.find(({ run }) => run.some((m) => m.id === side.asked));
+  side.asked = null;
   if (coming) moveSide(1, { animate: side.motion });
+  else if (asked && asked.run[0].id !== side.joined) joinLine(asked.run[0].id);
   else drawJoin();
 }
 
@@ -3396,8 +3451,7 @@ async function enterSide(key = state.open, { at = null } = {}) {
   side.at = at;
   // The panel is joined to the line that opened it, or that was picked since; opened otherwise,
   // to none.
-  if (at) side.joined = at;
-  else if (was !== key) side.joined = null;
+  if (at) { side.joined = at; bridgeStill(); } else if (was !== key) side.joined = null;
   side.motion = true;
   const shown = was !== key || at ? showSide(key) : null;
   side.motion = false;
@@ -3458,12 +3512,15 @@ async function askSide(key, said = null) {
     thread: key, id: `pending-${crypto.randomUUID()}`, role: 'person', by: { id: state.me.id, name: state.me.name }, body: text, at: new Date().toISOString(), pending: true,
   };
   side.sending.push(p);
+  if (sidePaneled(key)) side.asked = p.id;
   showSide(key);
   // What you just said, in the panel too, wherever it was scrolled to.
   const scroller = sidePaneled(key) && $('side').querySelector(':scope > .scroller');
   if (scroller) scroller.scrollTop = scroller.scrollHeight;
   const res = await request('POST', '/api/agent/sidebar', { thread: key, text }).catch((e) => ({ ok: false, data: { error: e.message } }));
   side.sending = side.sending.filter((x) => x !== p);
+  // The line joined to the panel, by its first message's id: what was on its way has its own now.
+  if (side.joined === p.id) side.joined = res.ok ? res.data.message.id : null;
   if (!res.ok) {
     if (!side.typed.get(key)) side.typed.set(key, text);
     if (state.open === key && side.key === key && !$('side-reply')?.value) { $('side-reply').value = text; growReply($('side-reply')); }
@@ -3729,7 +3786,9 @@ async function openThread(key, { live = false, cached = false } = {}) {
   renderThreads();
   const pane = $('pane');
   const prevScroller = pane.querySelector('.scroller');
-  const wasNear = prevScroller ? nearBottom(prevScroller) : true;
+  // Scrolling down to what is new still (`__follow`, below) counts as at the bottom.
+  const following = prevScroller?.__follow > performance.now();
+  const wasNear = prevScroller ? nearBottom(prevScroller) || following : true;
   const keepTop = prevScroller ? prevScroller.scrollTop : 0;
   const keepHeight = prevScroller ? prevScroller.scrollHeight : 0;
   if (switching) hideSource();
@@ -3938,8 +3997,13 @@ async function openThread(key, { live = false, cached = false } = {}) {
     // New messages scroll up into view if I was at the bottom; otherwise stay put. Nothing new
     // (the same thread again, as the workspace's emoji arrive): it stays where it was, also
     // when that was the first unread message, a little above the bottom.
-    scroller.scrollTop = keepTop;
-    if (wasNear && scroller.scrollHeight > keepHeight) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+    // Shown again while it scrolls there (what you asked in the sidebar, then its answer), it
+    // goes on to the bottom, not back to where it set out from.
+    if (!following || scroller !== prevScroller) scroller.scrollTop = keepTop;
+    if (wasNear && (scroller.scrollHeight > keepHeight || following)) {
+      scroller.__follow = performance.now() + 1000;
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+    }
   } else {
     // Opened from a search result: at the message that matched, marked for a moment.
     const jump = state.jump?.key === key ? state.jump : null;

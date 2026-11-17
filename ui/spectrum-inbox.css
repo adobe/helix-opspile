@@ -534,7 +534,9 @@ main.siding #pane { margin-right: calc(var(--side-w) * var(--side-open, 1)); }
    (--side-in). Without a line in sight it slides in from the edge, clipped there. Closing, the
    same backwards. Open, the line stays joined to the panel: `#side-join` bridges the gap
    between them, with a rounded inner corner on either side, and opens the panel's edge where
-   the line meets it; it is clipped to where the thread scrolls, as the line is. */
+   the line meets it; it is clipped to where the thread scrolls, as the line is. A conversation
+   started in the open panel joins it too: once its new line is in sight, the line reaches across
+   to the panel's edge and the inner corners round off (joinLine). */
 main { --side-motion: var(--spectrum-animation-duration-1000); }
 #side > * { opacity: var(--side-in, 1); }
 main.side-veiled #side { opacity: 0; pointer-events: none; }
