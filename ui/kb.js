@@ -2015,7 +2015,8 @@ async function drawn(dot, title) {
     const res = await call('/api/diagram', { method: 'POST', body: JSON.stringify({ dot, title }) });
     if (res.ok) return res.body;
     if (res.status !== 503 && res.status !== 404) throw new Error(res.body.error || `Drawing failed (${res.status}).`);
-    onServer = false;
+    // No renderer here: the page draws from now on. One too slow for it: this one only.
+    if (res.status === 404 || res.body.error === 'no renderer here') onServer = false;
   }
   renderer = renderer || import(RENDERER);
   return (await renderer).render(dot, { title });
