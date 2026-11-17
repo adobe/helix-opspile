@@ -431,6 +431,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   const teamRows = store.teams.some((t) => t.slug === 'admin')
     ? store.teams.map(({ slug, name }) => ({ slug, name }))
     : [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))];
+  // A long name, self-managed: the list shows the name whole, the tag and counts under it.
+  teamRows.push({ slug: 'experience-workspace', name: 'Experience Modernization Workspace', self_managed: 1 });
   const DB = d1({
     teams: teamRows,
     people: [...store.people.values()].map((p) => ({
