@@ -874,6 +874,11 @@ Observability; it expires after a year) and `CLOUDFLARE_ACCOUNT_ID`, and reads t
 secrets of the same name. Migrations must be additive, because they run before the new code
 is live.
 
+**Pull requests merge through a merge queue** (a ruleset on `main`): `gh pr merge --auto`
+puts one in line, and it merges once CI's `test` and the AI review's `ai-review / review` have
+passed, on the pull request and again on the queue's merge of it with `main`. Both workflows
+run on `merge_group` for that, where the review passes without reviewing again.
+
 To deploy by hand instead: deploys go through the new Cloudflare CLI,
 [`cf`](https://developers.cloudflare.com/cf/), which reads `cloudflare.config.ts` (`--mode
 prod` or `--mode stage` selects the Worker). `cf deploy` and `cf dev` also build the inbox's

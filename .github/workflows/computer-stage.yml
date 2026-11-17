@@ -20,7 +20,8 @@ name: Computer on stage
 
 on:
   push:
-    branches-ignore: [main]
+    # The merge queue's branches hold what a pull request's branch had already.
+    branches-ignore: [main, 'gh-readonly-queue/**']
     # What the computer is made of: this workflow, the packages (the kernel, the images'
     # programs), the images and the checks, and every file of src/ that the Worker imports.
     # test/computer-stage-paths.test.js keeps the list to the imports, both ways.

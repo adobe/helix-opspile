@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  # The merge queue (a ruleset on main) tests each group before it merges.
+  merge_group:
   push:
     branches: [main]
 
