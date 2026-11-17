@@ -684,16 +684,16 @@ describe('the images this repository builds', () => {
       assert.match(devDependencies[name] || '', /^\d/, `${name} is pinned to one version`);
     }
     const built = await build();
-    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data', 'github']);
+    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data', 'github', 'graphviz']);
     assert.ok(IMAGES.every((i) => isImageName(i.name) && i.title && i.description));
     const [base, data] = built.images;
     assert.equal(base.v, 2);
-    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats']);
+    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'diagrams']);
     // The second image is the first one's layers, the same ones, and one more.
-    assert.deepEqual(data.layers.slice(0, 8), base.layers);
-    assert.deepEqual(data.layers.map((l) => l.name).slice(8), ['data']);
+    assert.deepEqual(data.layers.slice(0, 9), base.layers);
+    assert.deepEqual(data.layers.map((l) => l.name).slice(9), ['data']);
     assert.notEqual(base.digest, data.digest);
-    assert.equal(data.bytes, base.bytes + data.layers[8].bytes);
+    assert.equal(data.bytes, base.bytes + data.layers[9].bytes);
     // A layer and a blob are named by what they are.
     for (const l of built.layers.values()) {
       assert.equal(sha(l.body), l.digest);
@@ -764,8 +764,11 @@ describe('the images this repository builds', () => {
     const objects = objectsOf(built);
     const bucket = fakeBucket(Object.fromEntries(objects.map((o) => [o.key, o.body])));
     const digests = (list) => list.map((i) => [i.name, i.digest]);
-    assert.deepEqual(digests(await listImages(bucket)), digests(built.images));
-    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'data']);
+    // The index lists the images teams choose from: not the renderer Worker's.
+    const listed = built.images.filter((i) => !i.internal);
+    assert.deepEqual(digests(await listImages(bucket)), digests(listed));
+    assert.equal((await readImage(bucket, 'graphviz')).commands.join(), 'dot');
+    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'diagrams', 'data']);
     const tree = await imageTree(bucket, await readImage(bucket, 'data'));
     const { handlers } = imageDriver(bucket, tree);
     const packages = await handlers.readdir('/node_modules/@ai-ecoverse');
@@ -800,8 +803,8 @@ describe('the images this repository builds', () => {
     const kinds = keys.map((k) => k.split('/')[0]);
     assert.deepEqual([...new Set(kinds)], ['blobs', 'layers', 'images']);
     assert.equal(keys.at(-1), 'images/index.json');
-    assert.deepEqual(keys.slice(-4, -1), ['images/base.json', 'images/data.json', 'images/github.json']);
-    assert.equal(kinds.filter((k) => k === 'layers').length, 10);
+    assert.deepEqual(keys.slice(-5, -1), ['images/base.json', 'images/data.json', 'images/github.json', 'images/graphviz.json']);
+    assert.equal(kinds.filter((k) => k === 'layers').length, 11);
     assert.deepEqual(JSON.parse(objects.at(-1).body), indexOf(built.images));
     // An empty bucket lacks them all, and one that fails to answer too.
     assert.equal((await missingFrom(objects, async () => null)).length, objects.length);

@@ -665,10 +665,10 @@ describe('the agent\'s switchable tools', () => {
     assert.doesNotMatch(base, /just-bash|sqlite3/);
     assert.doesNotMatch(base, /GitHub CLI/);
     const github = await guide(shellOf(images[2]));
-    assert.match(github, /, qjs, gh\. curl reaches the internet;/);
+    assert.match(github, /, qjs, dot \(Graphviz\), gh\. curl reaches the internet;/);
     assert.match(github, /gh \(GitHub CLI\) reads GitHub: .* It needs \$GH_TOKEN, a secret the team keeps for api\.github\.com: without it gh does not run .* Use it to read: creating, commenting on or merging anything on GitHub is for people\./);
     const data = await guide(shellOf(images[1]));
-    assert.match(data, /curl, dig, host, nslookup, openssl, git, qjs, rg, sqlite3, strings\. curl reaches the internet;/);
+    assert.match(data, /curl, dig, host, nslookup, openssl, git, qjs, dot \(Graphviz\), rg, sqlite3, strings\. curl reaches the internet;/);
     for (const text of [base, data]) {
       // Both have jq, and say nothing of plain http: the kernel ends TLS for its programs.
       assert.doesNotMatch(text, /There is no jq|http:\/\/ only/);

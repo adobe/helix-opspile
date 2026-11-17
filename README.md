@@ -158,6 +158,7 @@ Nothing below is committed; set it on the Worker.
 | `KLICKHAUS_URL` | var | Optional: klickhaus' origin (or a path under it). With `KLICKHAUS_TEAMS`, the header has **Stats**, its `opspile.html` (the statistics of all threads) in a new tab, on the customer and team on screen |
 | `KLICKHAUS_TEAMS` | var | Optional, comma-separated ops team slugs whose members have klickhaus users: only they see Stats (admins too only as members of one), and `/api/me` gives them `stats: { url }` |
 | `LOADER` | Worker Loader | Dynamic Workers: the shells of the agents' computers (the `computer` tool: Cloudflare Computer's just-bash, or the processes of the SLICC kernel), and extraction rules that are scripts (without network access; without `LOADER` they do not run) |
+| `GRAPHVIZ` | Service binding | The renderer Worker (`helix-opspile-graphviz`, its `Graphviz` entrypoint; [graphviz/cloudflare.config.ts](graphviz/cloudflare.config.ts)): Graphviz on the server, which lays out every write of a diagram (`.dot`) to a knowledge base and draws them for the editor (`POST /api/diagram`). Bound where the Worker is deployed (`--mode prod`, `--mode stage`), after the renderer: `npm run deploy:graphviz:prod` first. Without it, diagrams are checked by src/dot.js alone and drawn in the page |
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
 | `AGENTS` | Durable Object | `ThreadAgent`, one per inbox entry with an agent (and per team and customer for seeded knowledge) |
 | `DISCORD` | Durable Object | `DiscordPoller`, one (`poller`): polls Discord on its alarm, and remembers each thread's parent channel, each inline reply's conversation, the last message stored per channel and thread, and what it saw of the last day's messages |
@@ -738,6 +739,23 @@ itself, `package.json` and its lock (the kernel, the images' programs),
 `scripts/computer-images.mjs`, `scripts/dev-computer/`, and every file of `src/` the Worker
 imports; `test/computer-stage-paths.test.js` fails when an import is missing from them, or a
 file is there that the Worker does not import, and names it.
+
+### Try the renderer Worker
+
+`npm run graphviz:dev` runs the renderer Worker
+([src/graphviz/worker.js](src/graphviz/worker.js)) in local workerd, with the `graphviz` image
+(dot, from `@ai-ecoverse/wasm-graphviz`) in a local bucket, as `npm run computer:dev` runs a
+computer. `npm run graphviz:check` draws every figure of the FMC gallery through it and checks
+that it draws what viz-js does in the page. `GRAPHVIZ_ORIGIN` points `npm run ui:dev` at it, so the
+editor's diagrams are drawn on the server, as in production:
+
+```sh
+npm run graphviz:dev    # http://localhost:8789
+curl localhost:8789/render -d '{"dot":"digraph { a -> b }"}'
+curl localhost:8789/layout -d '{"dot":"digraph { a -> b }","format":"svg","engine":"neato"}'
+npm run graphviz:check -- http://localhost:8789
+GRAPHVIZ_ORIGIN=http://localhost:8789 npm run ui:dev
+```
 
 ### Measure the inbox
 

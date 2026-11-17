@@ -1161,13 +1161,11 @@ export function stretchGraph(graph, list) {
 }
 
 /**
- * Draws `dot` (an FMC block diagram as DOT, see above) with `viz`, an instance of @viz-js/viz:
- * `{ svg, width, height, passes, graph }`. Graphviz lays it out once; `passes` counts the
- * routings (a second when a corridor needed more room). Throws Graphviz's error when the DOT is
- * not valid.
+ * Draws a layout Graphviz made of an FMC block diagram: the output of `dot -Tjson` (parsed),
+ * which is what viz-js's `renderJSON` gives too. The renderer Worker (src/graphviz/worker.js)
+ * runs a wasm build of dot and draws with this, as the page draws with `renderFmc`.
  */
-export function renderFmc(viz, dot, options = {}) {
-  const base = viz.renderJSON(dot);
+export function drawLayout(base, options = {}) {
   const graph = readGraph(base);
   let routed = route(graph);
   let passes = 1;
@@ -1182,4 +1180,14 @@ export function renderFmc(viz, dot, options = {}) {
   return {
     svg: out, width, height, passes, graph,
   };
+}
+
+/**
+ * Draws `dot` (an FMC block diagram as DOT, see above) with `viz`, an instance of @viz-js/viz:
+ * `{ svg, width, height, passes, graph }`. Graphviz lays it out once; `passes` counts the
+ * routings (a second when a corridor needed more room). Throws Graphviz's error when the DOT is
+ * not valid.
+ */
+export function renderFmc(viz, dot, options = {}) {
+  return drawLayout(viz.renderJSON(dot), options);
 }

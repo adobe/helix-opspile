@@ -13,8 +13,10 @@
 import git from 'isomorphic-git';
 import http from 'isomorphic-git/http/web';
 import { memfs } from './memfs.js';
+import { checkDiagrams } from '../diagrams.js';
 import {
-  addLogEntry, asSystemPrompt, checkConcept, checkLayout, isEntry, renderIndex, RESERVED,
+  addLogEntry, asSystemPrompt, checkConcept, checkLayout, dotInfo, isDiagram, isEntry, renderIndex,
+  RESERVED,
   splitFrontmatter, stampGenerated, SYSTEM_PROMPT,
 } from './okf.js';
 
@@ -124,10 +126,13 @@ async function rewriteIndexes(fs, dirs) {
       // eslint-disable-next-line no-await-in-loop
       const st = await fs.promises.stat(`${abs}/${name}`);
       if (st.isDirectory()) {
-        const count = fs.files(`${abs}/${name}`).filter((f) => f.endsWith('.md') && !RESERVED.has(f.split('/').pop())).length;
+        const count = fs.files(`${abs}/${name}`).filter((f) => (f.endsWith('.md') || isDiagram(f)) && !RESERVED.has(f.split('/').pop())).length;
         if (count) {
           entries.push({ name, dir: true, count });
         }
+      } else if (isDiagram(name)) {
+        // eslint-disable-next-line no-await-in-loop
+        entries.push({ name, dot: dotInfo(name, await fs.promises.readFile(`${abs}/${name}`, 'utf8')) });
       } else if (name.endsWith('.md')) {
         // eslint-disable-next-line no-await-in-loop
         const fm = splitFrontmatter(await fs.promises.readFile(`${abs}/${name}`, 'utf8'));
@@ -179,8 +184,10 @@ async function apply(fs, changes, { by, at }) {
       // eslint-disable-next-line no-await-in-loop
       await fs.mkdirp(dirOf(abs));
       const content = c.path === SYSTEM_PROMPT ? asSystemPrompt(c.content) : String(c.content);
+      // A diagram has no frontmatter to stamp: its commit says who wrote it and when.
+      const text = isDiagram(c.path) ? content : stampGenerated(content, by, at);
       // eslint-disable-next-line no-await-in-loop
-      await fs.promises.writeFile(abs, enc.encode(stampGenerated(content, by, at)));
+      await fs.promises.writeFile(abs, enc.encode(text));
     }
   }
   return null;
@@ -279,7 +286,8 @@ const rejected = (e) => /PushRejected|not a simple fast-forward|non-fast-forward
 export async function writeKnowledge(env, artifact, changes, {
   message, by, at = new Date().toISOString(), logEntry, author, staff = false,
 }) {
-  const invalid = checkChanges(changes, { staff, kind: kindOf(artifact) });
+  const invalid = checkChanges(changes, { staff, kind: kindOf(artifact) })
+    || await checkDiagrams(env, changes);
   if (invalid) {
     return { error: invalid };
   }

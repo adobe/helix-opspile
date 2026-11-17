@@ -124,7 +124,24 @@ function systemPromptTemplate(b) {
     + '     always check, what never to promise, who to ask. Comments like this one are not sent to the agents. -->\n\n';
 }
 
+/** A new diagram (`.dot`, src/dot.js): what it shows, its title, a node style, two nodes. */
+function diagramTemplate(path) {
+  const name = path.split('/').pop().replace(/\.dot$/, '') || 'diagram';
+  const title = name.replace(/[-_]+/g, ' ');
+  return `// One sentence that says what this diagram shows.\ndigraph ${/^[a-z_][a-z0-9_]*$/.test(name.replace(/-/g, '_')) ? name.replace(/-/g, '_') : 'diagram'} {\n  label="${title}";\n`
+    + '  node [shape=box, fixedsize=true, width=1.2, height=0.6];\n\n'
+    + '  visitor [fmc=person, label="Visitor", width=0.85, height=0.85];\n'
+    + '  // Defaults in braces hold only there: the channels\' sizes are not the boxes\'.\n'
+    + '  { node [fmc=channel, label="", width=0.16, height=0.16, request=true]; req; }\n'
+    + '  site [label="Site"];\n'
+    + '  content [fmc=storage, style=rounded, label="Content"];\n\n'
+    + '  visitor -> req -> site [dir=none];\n'
+    + '  site -> content [dir=back];\n}\n';
+}
+const isDiagram = (path) => /\.dot$/.test(String(path || ''));
+
 function conceptTemplate(path) {
+  if (isDiagram(path)) return diagramTemplate(path);
   const title = path.split('/').pop().replace(/\.md$/, '').replace(/[-_]+/g, ' ');
   return `---\ntype: Reference\ntitle: ${title}\ndescription: One sentence that says what this is.\ntags: []\n---\n\n`;
 }
@@ -1915,11 +1932,12 @@ async function newFile() {
 
 // ---- editor -----------------------------------------------------------------------------
 
-const PATH = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*\.md$/;
+const PATH = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*\.(md|dot)$/;
 const AUTOSAVE_MS = 1200;
 
 function renderEditor(note) {
   const f = state.file;
+  const dot = isDiagram(f.choosePath ? f.dotPath : f.path);
   const isPrompt = f.path === SYSTEM_PROMPT;
   let explain = f.readonly ? 'Written by code from the concepts; changes to the concepts update it.' : '';
   if (f.readonly && !f.generated) explain = `Read-only: ${esc(whoEdits())} change it.`;
@@ -1932,24 +1950,101 @@ function renderEditor(note) {
   $('editor').innerHTML = `
     <div class="bar">${up('files', 'Files')}
       ${f.choosePath
-    ? '<label class="newpath"><span>Path</span><input class="path" id="path" aria-describedby="pathHint"></label><span class="hint" id="pathHint">Folders and a name ending in .md, such as playbooks/cdn-purge.md</span>'
+    ? '<label class="newpath"><span>Path</span><input class="path" id="path" aria-describedby="pathHint"></label><span class="hint" id="pathHint">Folders and a name ending in .md (a concept, such as playbooks/cdn-purge.md) or .dot (a diagram)</span>'
     : `<span class="path">${esc(f.path)}</span>`}
       <span class="hash" id="hash"></span>
     </div>
     <div class="note${note ? ` ${note.kind}` : ''}" id="note">${note ? esc(note.text) : explain}</div>
-    <div class="text" id="text"></div>
+    ${dot ? '<div class="dotpane"><div class="text" id="text"></div><div class="dotview" id="dotview" role="img" aria-label="The diagram, drawn"></div></div>' : '<div class="text" id="text"></div>'}
     ${f.readonly || f.isNew ? '' : '<div class="foot"><span style="flex:1"></span><button id="delete" class="danger">Delete</button></div>'}`;
   state.editor = Editor.create($('text'), {
     text: f.baseline,
     readonly: f.readonly,
-    label: 'File contents',
-    onInput: f.readonly ? undefined : schedule,
+    label: dot ? 'The diagram, in DOT' : 'File contents',
+    language: dot ? 'dot' : 'markdown',
+    onInput: () => {
+      if (dot) drawSoon();
+      if (!f.readonly) schedule();
+    },
     onBlur: f.readonly ? undefined : () => { flush(); },
   });
   showHash();
+  if (dot) drawDiagram();
   if (f.readonly) return;
-  if ($('path')) $('path').addEventListener('input', schedule);
+  if ($('path')) {
+    $('path').value = f.pathDraft || '';
+    if (f.pathDraft != null) {
+      $('path').focus();
+      $('path').setSelectionRange(f.pathDraft.length, f.pathDraft.length);
+    }
+    $('path').addEventListener('input', () => {
+      // A new file becomes a diagram, or a concept again, by its name: the template follows.
+      const draft = $('path').value;
+      if (isDiagram(draft) !== isDiagram(f.dotPath)) {
+        const untouched = !edited();
+        f.pathDraft = draft;
+        f.dotPath = isDiagram(draft) ? draft : '';
+        if (untouched) f.baseline = conceptTemplate(isDiagram(draft) ? draft : 'new-concept.md');
+        const text = untouched ? f.baseline : editorText();
+        renderEditor();
+        if (!untouched) state.editor.value = text;
+        return;
+      }
+      f.pathDraft = draft;
+      schedule();
+    });
+  }
   if ($('delete')) $('delete').onclick = remove;
+}
+
+// ---- diagrams --------------------------------------------------------------------------
+
+/*
+ * A `.dot` file is drawn beside its text, a moment after the text changes: by the renderer
+ * Worker (POST /api/diagram, src/diagrams.js: Graphviz on the server, and the FMC drawing of
+ * src/fmc.js), or, where there is none (503), by the page itself, as the inbox draws a stack
+ * (/inbox/fmc.js, imported then). What Graphviz cannot draw it says under the last drawing.
+ */
+const RENDERER = '/inbox/fmc.js';
+const DRAW_MS = 250;
+let renderer = null;
+let onServer = true;
+/** `{ svg, width, height, ms }` of `dot`, or throws what is wrong with it. */
+async function drawn(dot, title) {
+  if (onServer) {
+    const res = await call('/api/diagram', { method: 'POST', body: JSON.stringify({ dot, title }) });
+    if (res.ok) return res.body;
+    if (res.status !== 503 && res.status !== 404) throw new Error(res.body.error || `Drawing failed (${res.status}).`);
+    onServer = false;
+  }
+  renderer = renderer || import(RENDERER);
+  return (await renderer).render(dot, { title });
+}
+let drawTimer = 0;
+let drawTurn = 0;
+function drawSoon() {
+  clearTimeout(drawTimer);
+  drawTimer = setTimeout(drawDiagram, DRAW_MS);
+}
+async function drawDiagram() {
+  const view = $('dotview');
+  const text = editorText();
+  if (!view || text === null) return;
+  const turn = ++drawTurn;
+  if (!view.firstChild) view.innerHTML = '<div class="dotnote">Drawing…</div>';
+  try {
+    const r = await drawn(text, state.file?.path || '');
+    if (turn !== drawTurn || !$('dotview')) return;
+    view.innerHTML = `${r.svg}<div class="dotnote">Drawn in ${r.ms.toFixed(0)} ms</div>`;
+    view.classList.remove('stale');
+  } catch (e) {
+    if (turn !== drawTurn || !$('dotview')) return;
+    if (String(e.message || e).includes('Failed to fetch')) renderer = null;
+    const svg = view.querySelector('svg');
+    view.classList.toggle('stale', Boolean(svg));
+    const note = `<div class="dotnote err">${esc(String(e.message || e).split('\n')[0] || 'Graphviz cannot draw this.')}</div>`;
+    view.innerHTML = `${svg ? svg.outerHTML : ''}${note}`;
+  }
 }
 
 function showHash() {
@@ -2010,7 +2105,7 @@ async function commit(f) {
   const content = editorText();
   const path = f.choosePath ? $('path').value.trim().replace(/^\/+/, '') : f.path;
   if (!PATH.test(path)) {
-    f.problem = 'Give the file a lowercase path that ends in .md, like issues/cdn-purge-delay.md.';
+    f.problem = 'Give the file a lowercase path that ends in .md (a concept, like issues/cdn-purge-delay.md) or .dot (a diagram).';
     setNote('warn', f.problem);
     return;
   }

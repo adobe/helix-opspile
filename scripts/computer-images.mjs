@@ -120,6 +120,12 @@ export const LAYERS = {
   github: [
     { name: '@ai-ecoverse/wasi-gh' },
   ],
+  // Graphviz's dot, its layouts and its core renderers (svg, json, xdot): for the diagrams of the
+  // knowledge bases (src/dot.js), in the agents' computers and in the renderer Worker
+  // (src/graphviz/worker.js), whose image it is alone.
+  diagrams: [
+    { name: '@ai-ecoverse/wasm-graphviz' },
+  ],
   data: [
     { name: '@ai-ecoverse/wasi-ripgrep' },
     { name: '@ai-ecoverse/wasm-sqlite3' },
@@ -127,7 +133,7 @@ export const LAYERS = {
   ],
 };
 
-const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, host, nslookup, openssl, git, qjs';
+const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, host, nslookup, openssl, git, qjs, dot (Graphviz)';
 
 /**
  * The images: `name` is what a team's choice stores, `title` and `description` are for the
@@ -140,11 +146,11 @@ export const IMAGES = [
     name: 'base',
     title: 'Base',
     description: 'GNU bash, coreutils, grep, sed, gawk, jq, yq, find, diff, tar, gzip, zip,'
-      + ' html2markdown, curl, dig, openssl, git and qjs (JavaScript): for reading logs, text,'
-      + ' JSON and YAML, asking APIs and DNS, reading certificates, cloning repositories, and'
-      + ' small scripts.',
+      + ' html2markdown, curl, dig, openssl, git, qjs (JavaScript) and dot (Graphviz): for'
+      + ' reading logs, text, JSON and YAML, asking APIs and DNS, reading certificates, cloning'
+      + ' repositories, small scripts, and laying out diagrams.',
     tools: BASE_TOOLS,
-    layers: ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats'],
+    layers: ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'diagrams'],
   },
   {
     name: 'data',
@@ -165,6 +171,16 @@ export const IMAGES = [
       + ' workflow runs. Give the team a GH_TOKEN secret for github.com.',
     tools: `${BASE_TOOLS}, gh`,
     layers: ['github'],
+  },
+  // The renderer Worker's (src/graphviz/worker.js): dot alone, no shell. Not offered to teams
+  // (`internal`: not in the index the knowledge-base editor lists).
+  {
+    name: 'graphviz',
+    title: 'Graphviz',
+    description: 'dot alone, for the renderer Worker.',
+    tools: 'dot',
+    layers: ['diagrams'],
+    internal: true,
   },
 ];
 
@@ -231,7 +247,7 @@ export function imagePackage(manifest, { commands, files } = {}, present = []) {
 }
 
 /** The programs `tools` names: its words, without what stands in brackets as a gloss. */
-export const toolNames = (tools) => tools.replace(/\((gawk)\)/g, '')
+export const toolNames = (tools) => tools.replace(/\((gawk|Graphviz)\)/g, '')
   .replace(/ and the rest/g, '')
   .split(/[\s,()]+/)
   .filter((w) => w && w !== 'and');
@@ -339,6 +355,7 @@ export async function build({
       title: image.title,
       description: image.description,
       tools: image.tools,
+      ...(image.internal ? { internal: true } : {}),
       commands,
       digest: sha256(stack.map((l) => l.digest).join('\n')),
       bytes: [...merged.values()].reduce((n, f) => n + f.size, 0),
@@ -356,7 +373,7 @@ export async function build({
 /** The index of `images` (their manifests): what the knowledge-base editor lists. */
 export const indexOf = (images) => ({
   v: 2,
-  images: images.map(({
+  images: images.filter((i) => !i.internal).map(({
     name, title, description, digest, bytes, layers,
   }) => ({
     name, title, description, digest, bytes, layers: layers.map((l) => l.name),

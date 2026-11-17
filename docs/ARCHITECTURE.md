@@ -506,6 +506,38 @@ message shows it. A customer's knowledge base has everyone who works on its thre
 customer's, partners' and Adobe's people, with their role on that account; a team's has the
 colleagues and partners it works with across customers, and never a customer's people.
 
+**Diagrams.** Beside the concepts, a knowledge base holds diagrams: `.dot` files, Graphviz DOT
+with the FMC attributes of the stack drawing's renderer (src/fmc.js: `fmc` on nodes and clusters,
+`request` on channels), drawn as FMC block diagrams. A diagram goes beside the concept it belongs
+to, which links it (`reference/delivery.dot` beside `reference/delivery.md`); it has no
+frontmatter: its title is the graph's `label` and its description the `//` comment it starts
+with, as `index.md` lists it (`(Diagram)`), and its commit says who wrote it. Agents write them
+directly with `kb_write`, whole, as they write concepts (the prompt teaches them the notation),
+and people in the editor, which draws one beside its text as it is typed (by the renderer
+Worker, below, or where there is none by the page's renderer, `/inbox/fmc.js`, imported the
+first time one is opened). Graphviz cannot run in a Worker (it is
+WebAssembly compiled from bytes, which Workers refuse), so every write of a `.dot` is checked by
+src/dot.js instead: the DOT grammar, the edge operator of the graph's kind, the FMC kinds, at most
+400 nodes and 64 KB. A write it refuses says which line; what passes, Graphviz then lays out on the
+server, and a write of what dot calls an error is refused with dot's words (src/diagrams.js).
+
+**The renderer Worker.** Graphviz runs on the server in a Worker of its own,
+`helix-opspile-graphviz` (src/graphviz/worker.js, graphviz/cloudflare.config.ts), as the agents'
+computers run their programs: a wasm build of dot (`@ai-ecoverse/wasm-graphviz`, built by
+homescoop: dot_static with the core renderers and the dot and neato layouts linked in, no expat,
+zlib or cairo) is the `graphviz` image of the computers' bucket (scripts/computer-images.mjs,
+not offered to teams), and a SLICC kernel with its root in memory runs it, one kernel per isolate,
+booted with the first layout, its processes Dynamic Workers (`LOADER`). A layout is a run of
+`dot -K<engine> -T<format>` with the DOT on its stdin, ten seconds at most (src/graphviz/
+render.js), after which the kernel is ended for the next one to boot. It has no public address:
+the inbox Worker's service binding (`GRAPHVIZ`, its `Graphviz` entrypoint) is its only way in,
+with `layout` (dot's output) and `render` (the FMC drawing of src/fmc.js, `drawLayout`, the same
+the page draws). It is deployed before the inbox Worker, which binds it; until its image is in
+the bucket, or when it fails, writes are checked by src/dot.js alone and the editor draws in the
+page (`/inbox/fmc.js`). The editor asks it first (`POST /api/diagram`, for the members of a
+team), so the editor needs no Graphviz of its own where it is deployed. dot is in the agents'
+Base image too, for laying out a diagram in the shell before writing it.
+
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a
 concept of type `System Prompt`). Every thread agent appends the bodies of those that apply
 to it, its team's first, then those of the teams its channel is shared with, then the customer's,

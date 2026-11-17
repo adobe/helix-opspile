@@ -962,3 +962,15 @@ main.instant[data-pane] :is(#bases, #files, #editor) { transition: none; }
 .spectrum .ch.global .setup .fld > input { width: calc(var(--spectrum-spacing-100) * 25); }
 .spectrum #editor .bar .newpath { display: flex; flex: 1; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 .spectrum #editor .bar .newpath + .hint { flex-basis: 100%; margin: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+
+/* A diagram (`.dot`): its text beside the drawing of it, which takes the larger part; under each
+   other where the editor is narrow. The drawing scrolls when it is larger than its side. While
+   Graphviz cannot draw the text, the last drawing stays, faded, with the reason under it. */
+.dotpane { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: var(--spectrum-spacing-200); margin: 0 var(--spectrum-spacing-300) var(--spectrum-spacing-300); }
+.spectrum #editor .dotpane .text { margin: 0; }
+.dotview { min-height: 0; overflow: auto; padding: var(--spectrum-spacing-200); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--s2-radius); }
+.dotview .fmc { margin: 0; }
+.dotview.stale .fmc { opacity: 0.4; }
+.dotnote { margin-top: var(--spectrum-spacing-100); color: var(--mute); font-family: var(--s2-font); font-size: var(--spectrum-font-size-75); }
+.dotnote.err { color: var(--spectrum-negative-content-color-default); }
+@media (max-width: 900px) { .dotpane { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } }
