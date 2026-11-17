@@ -554,7 +554,8 @@ does not read, a third of `-Tjson`'s size; dot's output crosses the kernel's pip
 not the layout, is what a large diagram's time goes to). A write is checked with `-Tplain`. It is deployed before the inbox Worker, which binds it; until its image is in
 the bucket, or when it fails, writes are checked by src/dot.js alone and the editor draws in the
 page (`/inbox/fmc.js`). The editor asks it first (`POST /api/diagram`, for the members of a
-team), so the editor needs no Graphviz of its own where it is deployed. dot is in the agents'
+team), so the editor needs no Graphviz of its own where it is deployed; a diagram the renderer
+cannot lay out in its ten seconds is answered 503, and the page draws it itself. dot is in the agents'
 Base image too, for laying out a diagram in the shell before writing it.
 
 **Agent instructions.** Each knowledge base may have a `systemprompt.md` at its root (a

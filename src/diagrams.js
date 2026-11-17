@@ -49,7 +49,10 @@ export async function checkDiagrams(env, changes) {
   return null;
 }
 
-/** POST /api/diagram: `{ svg, width, height, ms }`, or `{ error }` (422, 503 without one). */
+/**
+ * POST /api/diagram: `{ svg, width, height, ms }`, or `{ error }`: 422 for what dot cannot lay
+ * out, 503 without a renderer or when it ran out of time (the page then draws it itself).
+ */
 export async function drawDiagram(env, body) {
   if (!env.GRAPHVIZ) {
     return json({ error: 'no renderer here' }, 503);
@@ -64,6 +67,10 @@ export async function drawDiagram(env, body) {
   } catch (e) {
     console.error(JSON.stringify({ route: 'graphviz', error: e.message }));
     return json({ error: 'the renderer is not answering' }, 503);
+  }
+  // Too large for the renderer in time: the page draws it itself, as where there is none.
+  if (res.timedOut) {
+    return json({ error: res.error }, 503);
   }
   return res.ok
     ? json({
