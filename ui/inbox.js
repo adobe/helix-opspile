@@ -752,7 +752,8 @@ const urgencyOf = (t) => (t.label && t.label.urgency != null ? URGENCY[Math.min(
 // name (`.wf-<name>`, a mask in ui/spectrum-inbox.css, in the color of the text around it).
 // Emoji are for what people put on messages. Critical and high are the same icon wherever
 // they show: as an urgency, as the status that is that urgency unseen, and on a thread's row.
-const wf = (name) => `<span class="wf wf-${name}" aria-hidden="true"></span>`;
+// `ringed`: a kind's icon smaller, inside an outline of its own shape (scripts/wf-rings.mjs).
+const wf = (name, ringed) => `<span class="wf wf-${name}${ringed ? ' ringed' : ''}" aria-hidden="true"></span>`;
 const KIND_ICON = {
   incident: 'cloud-error',
   security: 'lock',
@@ -1381,7 +1382,7 @@ function kindIcons(t) {
 }
 /**
  * A row's status as a stack ('stack'): in front, the kind's icon where the status dot was, in the
- * status's color and ringed while the team has not read the thread; behind it, as many as apply
+ * status's color and ringed while the team has not read the thread, as the draft's pencil is; behind it, as many as apply
  * of: the urgency (critical or high), a draft, resolved, and our move.
  */
 function stackMark(t, status) {
@@ -1398,7 +1399,7 @@ function stackMark(t, status) {
   const front = `${cap(k)}${t.unread ? ', unread' : ''} · ${STATUS_HINT[status]}`;
   const say = [front, ...behind.map((x) => x.say)].join(' · ');
   const chips = behind.map((x) => `<span class="mi ${x.cls}" title="${esc(x.hint || x.say)}">${wf(x.icon)}</span>`).join('');
-  return `<span class="mks"><span class="mk" role="img" aria-label="${esc(say)}"><span class="mi k s-${status}${t.unread ? ' ring' : ''}" title="${esc(front)}">${wf(KIND_ICON[k] || KIND_ICON.other)}</span>${chips}</span></span>`;
+  return `<span class="mks"><span class="mk" role="img" aria-label="${esc(say)}"><span class="mi k s-${status}${t.unread ? ' ring' : ''}" title="${esc(front)}">${wf(KIND_ICON[k] || KIND_ICON.other, t.unread)}</span>${chips}</span></span>`;
 }
 /** The thread's mood: how urgent it is (if it is), its kind, then the reactions people left in it. */
 function moods(t) {
