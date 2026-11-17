@@ -11,10 +11,11 @@
  */
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { afterEach, describe, it } from 'node:test';
 import { build, objectsOf } from '../scripts/computer-images.mjs';
 import {
-  CHECKS, commandsCheck, request, runCheck, summaryOf, syncImages, waitForReady,
+  CHECKS, commandsCheck, rangeChecks, request, runCheck, summaryOf, syncImages, waitForReady,
 } from '../scripts/dev-computer/check.mjs';
 
 const ORIGIN = 'https://computer.example';
@@ -235,5 +236,26 @@ describe('the checks of the stage computer', () => {
     assert.match(summary, /\| ✅ \| boots \| 5 ms \|\n\| ❌ \| dig \| 9 ms \|/);
     assert.match(summary, /\*\*dig\*\* \(exit 9\):\n\n```\nno servers could be reached\n```/);
     assert.doesNotMatch(summary, /https?:/);
+  });
+
+  it('read files of the image whole and in parts, in a piece of their own and over the limit', async () => {
+    const built = await build();
+    const checks = rangeChecks(built);
+    assert.deepEqual(checks.map((c) => c.name), [
+      'base: magic.mgc read whole and in parts', 'base: yq.wasm read whole and in parts',
+    ]);
+    const files = [...built.layers.values()].flatMap((l) => l.layer.files);
+    const sizes = checks.map((c) => files.find((f) => c.command.includes(`/opt/image/${f.path};`)));
+    // One under the isolate's limit (16 MiB) and one over it, both in pieces.
+    assert.ok(sizes[0].size < 16 * 2 ** 20 && sizes[1].size > 16 * 2 ** 20);
+    assert.ok(sizes.every((f) => f.pieces));
+    // What sha256sum prints of each part, and nothing else.
+    const sha = (data) => createHash('sha256').update(data).digest('hex');
+    const body = built.blobs.get(sizes[0].sha256);
+    const printed = [body, body.subarray(0, 1500000), body.subarray(body.length - 3000000),
+      body.subarray(2000000, 2100000)].map((p) => `${sha(p)}  -\n`).join('');
+    assert.match(printed, checks[0].match);
+    assert.doesNotMatch(`${printed}x`, checks[0].match);
+    assert.doesNotMatch(printed, checks[1].match);
   });
 });

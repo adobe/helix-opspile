@@ -17,7 +17,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { computerEnv } from '../src/agent/computer.js';
 import {
   commandsOf, DEFAULT_IMAGE, forgetImages, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree,
-  isImageName, listImages, readImage,
+  isImageName, keptOfImages, listImages, readImage,
 } from '../src/agent/image.js';
 import {
   DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, runtimeFor, RUNTIMES, setTeamImage,
@@ -25,7 +25,7 @@ import {
 } from '../src/agent/kernel.js';
 import {
   bucketOf, build, buildLayer, IMAGES, imagePackage, indexOf, layerNames, LAYERS, missingFrom,
-  objectsOf, toolNames,
+  objectsOf, PIECE_BYTES, toolNames,
 } from '../scripts/computer-images.mjs';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -35,11 +35,19 @@ import { fakeBucket } from './fakes.js';
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 const put = (bucket, key, body) => bucket.objects.set(key, { body, options: {}, version: 'v' });
 
+/** The hashes of `text` in pieces of `size`: what a layer says of a blob's pieces. */
+const piecesOf = (text, size) => ({
+  size,
+  sha256: Array.from({ length: Math.ceil(text.length / size) }, (_, i) => (
+    sha(text.slice(i * size, (i + 1) * size)))),
+});
+
 /**
  * Puts a layer of `files` (`{ path: text }`; a text of 40 characters or more is a blob, a
  * shorter one is in the layer itself) into `bucket`: what an image's manifest says of it.
+ * With `piece`, a blob longer than that has the hashes of its pieces of that size too.
  */
-function layer(bucket, name, files) {
+function layer(bucket, name, files, { piece } = {}) {
   const list = Object.entries(files).map(([path, text]) => {
     const blob = text.length >= 40;
     if (blob) {
@@ -50,6 +58,7 @@ function layer(bucket, name, files) {
       mode: path.endsWith('.json') ? 0o444 : 0o555,
       size: text.length,
       ...(blob ? { sha256: sha(text) } : { data: Buffer.from(text).toString('base64') }),
+      ...(blob && piece && text.length > piece ? { pieces: piecesOf(text, piece) } : {}),
     };
   });
   const body = `${JSON.stringify({ v: 1, name, files: list })}\n`;
@@ -378,6 +387,143 @@ describe('a kernel\'s image, from the bucket', () => {
     await assert.rejects(handlers.read(fh, 0, 4), { code: 'EBADF' });
   });
 
+  /** A bucket that records what is asked of it: `[key, range]`, `range` null for a whole one. */
+  function recording(bucket) {
+    const gets = [];
+    return {
+      gets,
+      get: (key, options) => {
+        gets.push([key, options?.range ? [options.range.offset, options.range.length] : null]);
+        return bucket.get(key, options);
+      },
+    };
+  }
+
+  it('reads of a file with pieces the pieces a read covers, one GET for each run of them', async () => {
+    const bucket = fakeBucket();
+    const data = 'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(3);
+    const manifest = image(bucket, 'paged', [layer(bucket, 'paged', { 'share/data': data }, { piece: 16 })]);
+    const tree = await imageTree(bucket, manifest);
+    assert.equal(tree.files.get('/share/data').pieces.sha256.length, 7);
+    const counting = recording(bucket);
+    const { handlers } = imageDriver(counting, tree);
+    const key = `blobs/${sha(data)}`;
+    const fh = await handlers.open('/share/data', {});
+    // Within one piece: that piece.
+    assert.equal(utf8(await handlers.read(fh, 20, 10)), data.slice(20, 30));
+    assert.deepEqual(counting.gets, [[key, [16, 16]]]);
+    // Across pieces, the one read before kept: one GET for each run of the others.
+    assert.equal(utf8(await handlers.read(fh, 10, 90)), data.slice(10, 100));
+    assert.deepEqual(counting.gets.slice(1), [[key, [0, 16]], [key, [32, 76]]]);
+    // To the end, and past it, from memory; nothing at all past the end.
+    assert.equal(utf8(await handlers.read(fh, 100, 50)), data.slice(100));
+    assert.equal((await handlers.read(fh, 108, 1)).length, 0);
+    assert.equal((await handlers.read(fh, 0, 0)).length, 0);
+    assert.equal(counting.gets.length, 3);
+    // What is read is a copy: the kernel may take its buffer.
+    (await handlers.read(fh, 0, 108)).fill(0);
+    assert.equal(utf8(await handlers.read(fh, 0, 108)), data);
+    assert.deepEqual(keptOfImages(), { entries: 7, bytes: 108 });
+
+    // A read of all of it, in an isolate that kept nothing, is one GET of the whole blob.
+    forgetImages();
+    counting.gets.length = 0;
+    const again = await handlers.open('/share/data', {});
+    assert.equal(utf8(await handlers.read(again, 0, 1000)), data);
+    assert.deepEqual(counting.gets, [[key, null]]);
+    // Two reads of the same piece at once ask the bucket once.
+    forgetImages();
+    counting.gets.length = 0;
+    const both = await Promise.all([handlers.read(again, 0, 4), handlers.read(again, 8, 4)]);
+    assert.deepEqual(both.map(utf8), ['abcd', 'ijkl']);
+    assert.equal(counting.gets.length, 1);
+  });
+
+  it('checks each piece by its own hash, and keeps none of a read that failed', async () => {
+    const bucket = fakeBucket();
+    const data = 'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(3);
+    const manifest = image(bucket, 'paged', [layer(bucket, 'paged', { 'share/data': data }, { piece: 16 })]);
+    const { handlers } = imageDriver(bucket, await imageTree(bucket, manifest));
+    const key = `blobs/${sha(data)}`;
+    const fh = await handlers.open('/share/data', {});
+    put(bucket, key, `${data.slice(0, 40)}X${data.slice(41)}`);
+    // The first piece is right, the third is not.
+    assert.equal(utf8(await handlers.read(fh, 0, 4)), 'abcd');
+    await assert.rejects(handlers.read(fh, 36, 4), { code: 'EIO', message: /at piece 2/ });
+    // Shorter than its name says.
+    put(bucket, key, data.slice(0, 100));
+    await assert.rejects(handlers.read(fh, 90, 18), { code: 'EIO', message: /is not the file it names/ });
+    bucket.objects.delete(key);
+    await assert.rejects(handlers.read(fh, 50, 4), { code: 'EIO', message: /has no blobs\// });
+    assert.deepEqual(keptOfImages(), { entries: 1, bytes: 16 });
+    put(bucket, key, data);
+    assert.equal(utf8(await handlers.read(fh, 0, 108)), data);
+  });
+
+  it('reads a file whose pieces it cannot use as a whole blob, as one without them', async () => {
+    const bucket = fakeBucket();
+    const data = 'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(3);
+    const ref = layer(bucket, 'odd', { 'share/data': data }, { piece: 16 });
+    // Pieces that do not cover the file, or of no size: as from a build this one does not know.
+    const key = `layers/${ref.digest}.json`;
+    const { body } = bucket.objects.get(key);
+    const whole = async (size) => {
+      const changed = body.replace('"pieces":{"size":16', `"pieces":{"size":${size}`);
+      const other = { ...ref, digest: sha(changed) };
+      put(bucket, `layers/${other.digest}.json`, changed);
+      const tree = await imageTree(bucket, image(bucket, `odd-${size}`, [other]));
+      assert.equal(tree.files.get('/share/data').pieces, undefined);
+      const counting = recording(bucket);
+      const { handlers } = imageDriver(counting, tree);
+      const fh = await handlers.open('/share/data', {});
+      assert.equal(utf8(await handlers.read(fh, 20, 10)), data.slice(20, 30));
+      assert.deepEqual(counting.gets, [[`blobs/${sha(data)}`, null]]);
+      forgetImages();
+    };
+    await whole(32);
+    await whole(0);
+  });
+
+  it('keeps none of a file with pieces over half that limit, but the last pieces its mount read', async () => {
+    const bucket = fakeBucket();
+    const MiB = 1024 * 1024;
+    const data = Array.from({ length: 17 }, (_, i) => String.fromCharCode(97 + i).repeat(MiB)).join('');
+    const manifest = image(bucket, 'huge', [layer(bucket, 'huge', { 'bin/gh': data }, { piece: MiB })]);
+    const counting = recording(bucket);
+    const { handlers } = imageDriver(counting, await imageTree(bucket, manifest));
+    const key = `blobs/${sha(data)}`;
+    // As the kernel reads a program: whole, in runs of 8 MiB, each one GET.
+    const fh = await handlers.open('/bin/gh', {});
+    const runs = await Promise.all([0, 8, 16].map((at) => handlers.read(fh, at * MiB, 8 * MiB)));
+    assert.deepEqual(runs.map((r) => r.length), [8 * MiB, 8 * MiB, MiB]);
+    assert.equal(utf8(runs[2].subarray(0, 1)), 'q');
+    assert.deepEqual(counting.gets, [
+      [key, [0, 8 * MiB]], [key, [8 * MiB, 8 * MiB]], [key, [16 * MiB, MiB]],
+    ]);
+    assert.deepEqual(keptOfImages(), { entries: 0, bytes: 0 });
+    await handlers.release(fh);
+    // As it reads a data file, a page and 1 MiB on, each read through a file of its own: the
+    // piece the one before read last is read once.
+    counting.gets.length = 0;
+    const page = 64 * 1024;
+    for (const at of [page, page + MiB, page + 2 * MiB]) {
+      // eslint-disable-next-line no-await-in-loop
+      const one = await handlers.open('/bin/gh', {});
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await handlers.read(one, at, MiB)).length, MiB);
+      // eslint-disable-next-line no-await-in-loop
+      await handlers.release(one);
+    }
+    assert.deepEqual(counting.gets, [
+      [key, [0, 2 * MiB]], [key, [2 * MiB, MiB]], [key, [3 * MiB, MiB]],
+    ]);
+    // Another mount, another agent's, holds none of them.
+    const other = imageDriver(counting, await imageTree(bucket, manifest)).handlers;
+    await other.read(await other.open('/bin/gh', {}), 3 * MiB, 4);
+    assert.equal(counting.gets.length, 4);
+    assert.deepEqual(keptOfImages(), { entries: 0, bytes: 0 });
+  });
+
   it('is mounted read-only, at the place the kernel looks for its commands', () => {
     const { data } = stack();
     assert.deepEqual(imageSpec(data, IMAGE_ROOT), {
@@ -516,6 +662,16 @@ describe('the images this repository builds', () => {
     for (const [hash, body] of built.blobs) {
       assert.equal(sha(body), hash);
     }
+    // A blob over a piece has the hash of each piece too, a smaller one none.
+    const blobbed = [...built.layers.values()].flatMap((l) => l.layer.files)
+      .filter((f) => f.sha256);
+    assert.ok(blobbed.some((f) => f.size <= PIECE_BYTES));
+    assert.ok(blobbed.some((f) => f.size > 16 * PIECE_BYTES));
+    for (const f of blobbed) {
+      const body = built.blobs.get(f.sha256);
+      const pieces = f.size > PIECE_BYTES ? piecesOf(body, PIECE_BYTES) : undefined;
+      assert.deepEqual(f.pieces, pieces, f.path);
+    }
     // An Emscripten program comes with its glue as an empty file, its wasm as a blob, and
     // its manifest in the layer.
     const shell = built.layers.get('shell').layer.files
@@ -579,6 +735,10 @@ describe('the images this repository builds', () => {
     assert.deepEqual([...await handlers.read(fh, 0, 4)], [0, 0x61, 0x73, 0x6d]);
     const { size } = await handlers.getattr('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm');
     assert.ok(size > 1e6);
+    // Its pieces, read across two of them, are the file's bytes.
+    const bash = built.blobs.get(tree.files.get('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm').sha256);
+    const across = await handlers.read(fh, PIECE_BYTES - 10, 20);
+    assert.deepEqual(Buffer.from(across), bash.subarray(PIECE_BYTES - 10, PIECE_BYTES + 10));
   });
 
   it('are in one layer what they are in another: a layer\'s digest follows its files alone', async () => {

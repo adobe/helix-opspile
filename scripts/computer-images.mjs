@@ -30,9 +30,12 @@
  *   only what is new;
  * - `layers/<sha256>.json`: a layer (`v` 1): its `name` and its `files`, each a `path` in the
  *   image, a `mode` (read-only: 0444, or 0555 for a program), a `size`, and its `sha256` (a
- *   blob) or, for a small file, its bytes
- *   themselves (`data`, base64). An Emscripten program's JavaScript glue is there as an empty
- *   file: in a Worker the kernel runs the program without it, but finds the command by it;
+ *   blob) or, for a small file, its bytes themselves (`data`, base64). A blob over a piece
+ *   (PIECE_BYTES) has its `pieces` too: `{ size, sha256 }`, the hash of each piece of `size`
+ *   bytes, in order, so a read of a part of it is checked (a reader that does not know them
+ *   reads the whole blob, by its `sha256`). An Emscripten program's JavaScript glue is there
+ *   as an empty file: in a Worker the kernel runs the program without it, but finds the
+ *   command by it;
  * - `images/<name>.json`: an image's manifest (`v` 2): its `layers` from the bottom up (`name`,
  *   `digest`, `bytes`), its `commands`, what the agent is told it has (`tools`), and `digest`,
  *   which names exactly this stack;
@@ -168,6 +171,24 @@ export const IMAGES = [
 /** Files up to this size are in their layer itself, not in a blob of their own. */
 const INLINE_BYTES = 16 * 1024;
 
+/**
+ * A blob larger than this is read in pieces of this size too (src/agent/image.js): its file
+ * in the layer names the sha256 of each (`pieces`), so a piece is checked by itself.
+ */
+export const PIECE_BYTES = 1024 * 1024;
+
+/** The pieces of a blob (`data`), when it has more than one: `{ size, sha256 }`, or none. */
+export function piecesOf(data) {
+  if (data.length <= PIECE_BYTES) {
+    return undefined;
+  }
+  const sha256 = [];
+  for (let at = 0; at < data.length; at += PIECE_BYTES) {
+    sha256.push(createHash('sha256').update(data.subarray(at, at + PIECE_BYTES)).digest('hex'));
+  }
+  return { size: PIECE_BYTES, sha256 };
+}
+
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
 /** The files of a command entry (`slicc.commands.<name>`), relative to its package. */
@@ -251,11 +272,13 @@ export async function buildLayer(name, packages, modules) {
     if (!inline) {
       blobs.set(hash, data);
     }
+    const pieces = inline ? undefined : piecesOf(data);
     files.push({
       path,
       mode,
       size: data.length,
       ...(inline ? { data: data.toString('base64') } : { sha256: hash }),
+      ...(pieces ? { pieces } : {}),
     });
   };
   for (const spec of packages) {

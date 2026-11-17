@@ -1882,7 +1882,9 @@ the default. An agent follows its team's choice before each delivery, as it foll
     a command the image lacks.
   - **In the bucket**, everything but the images and their index is named by its content, and
     never changes: `blobs/<sha256>` is one file; `layers/<sha256>.json` is a layer, the paths,
-    modes and hashes of its files, with small files (a package's manifest) in it;
+    modes and hashes of its files, with small files (a package's manifest) in it, and for a
+    file over 1 MiB the hash of each 1 MiB piece of it too (`pieces`, which a reader that does
+    not know them ignores);
     `images/<name>.json` is an image's manifest, its layers by digest, its commands and a
     `digest` of the stack; `images/index.json` lists the images for the editor. An Emscripten
     program's JavaScript glue is an empty file: the kernel runs the program without it in a
@@ -1897,16 +1899,25 @@ the default. An agent follows its team's choice before each delivery, as it foll
     read-only at `/opt/image`, as a file system the agent's object serves itself
     (`imageDriver`, the kernel's in-process mount). `/opt/image/node_modules` is a command
     root of the kernel (`commands.append`), so the image's programs are in `/usr/bin`. A
-    file's bytes come from the bucket when a program first reads it, checked against its
-    hash. Nothing of the image is written to the object's SQLite, so changing a team's image
+    file's bytes come from the bucket when a program first reads it: of a file with pieces
+    only the pieces a read covers, one ranged GET for each run of them (the whole blob when
+    that is all of it), each checked against its own hash; a file without them whole,
+    checked against its hash. The kernel reads a program whole, 8 MiB at a time, and a data
+    file (file's magic) in pages, 1 MiB at a time. Nothing of the image is written to the object's SQLite, so changing a team's image
     costs a boot (some 50 ms), and every write to `/opt/image` fails (`EROFS`). A boot without
     the bucket, the image or one of its layers fails and says so: the command answers "the
     computer failed".
   - **What is kept in memory.** Layers and blobs never change, so the Worker keeps what it
-    read for every agent in its isolate: the trees of the last 8 images, and blobs up to
-    32 MB, the least recently used going first. A new isolate reads them again. A file over
-    16 MB (yq, gh) is kept only by the open file that read it, once per open: the kernel keeps
-    its own copy of a program it runs, and two of gh's 50 MB would crowd the object's 128 MB.
+    read for every agent in its isolate: the trees of the last 8 images, and pieces (and the
+    whole blobs of files without them) up to 32 MiB, the least recently used going first. A
+    new isolate reads them again. Of a file over 16 MiB (yq, gh) the isolate keeps nothing:
+    the agent's mount holds the last two pieces it read, so a read that starts in the piece
+    the one before ended in does not fetch it again (a file without pieces is held whole by
+    the open file that read it, once per open). The kernel keeps its own copy of a program it
+    runs, and two of gh's 50 MB would crowd the object's 128 MB. So while a kernel runs, what
+    the isolate keeps of a program is a second copy, which it never reads; it pays when the
+    agent's kernel boots again, in the same isolate as it mostly does, and finds its programs
+    there (a command in some 100 ms instead of one to three seconds).
   - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
     whether it has `jq`. So the prompt cannot name a program the image lacks.
 - **Its network.** The kernel's programs reach the network through its proxy, which hands
