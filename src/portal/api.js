@@ -290,12 +290,14 @@ export async function api(request, env, url, { email, waitUntil = () => {} } = {
     case 'GET people': return json({ people: await peopleOf(env, channel) });
     case 'GET status': {
       // Adobe's side from the inbox, and from here who is writing and whether anything is new.
+      // The thread is the channel's before anything is said of it, here or by the inbox.
       const root = url.searchParams.get('thread') || null;
-      const [adobe, pulse] = await Promise.all([
-        adobeSide(env, domain, channel.id, root),
-        root ? threadPulse(env, channel, root, user) : { typing: [], stamp: null },
-      ]);
-      return json({ ...adobe, ...pulse });
+      const pulse = root ? await threadPulse(env, channel, root, user)
+        : { typing: [], stamp: null };
+      if (!pulse) {
+        return json({ error: 'no such thread' }, 404);
+      }
+      return json({ ...await adobeSide(env, domain, channel.id, root), ...pulse });
     }
     case 'POST upload': {
       const file = await upload(request, MAX_FILE_BYTES);

@@ -39,25 +39,49 @@ const DAY = 24 * 60 * 60 * 1000;
 /** The wait model is kept this long per isolate: it learns slowly and reads every message. */
 const MODEL_MS = 60 * 60 * 1000;
 let model = null;
+let fitting = null;
 
-/** The wait model of every channel's conversations lately, or null without any wait. */
-async function waitModel(env, now) {
+/** Reads the last 180 days' conversations and fits the model; one read at a time. */
+function fitModel(env, now) {
+  fitting = fitting || (async () => {
+    try {
+      const { results } = await env.DB.prepare(`SELECT
+          COALESCE(t.logical_thread, t.thread) AS entry, t.team, x.at, x.staff
+        FROM messages x JOIN threads t ON t.thread = x.thread
+        WHERE x.at >= ? AND x.counted = 1 AND x.deleted = 0 AND t.kind = 'channel'`)
+        .bind(new Date(now - WINDOW_DAYS * DAY).toISOString()).all();
+      const rows = (results || []).map((r) => ({ ...r, at: Date.parse(r.at) }));
+      model = { at: now, fit: fitWaits(rows) };
+      return model.fit;
+    } finally {
+      fitting = null;
+    }
+  })();
+  return fitting;
+}
+
+/**
+ * The wait model of every channel's conversations lately, or null without any wait. An isolate
+ * that has one answers with it and, once it is an hour old, fits the next behind the answer
+ * (`waitUntil`): only an isolate's first status waits for the read.
+ */
+async function waitModel(env, now, waitUntil) {
   if (model && now - model.at < MODEL_MS) {
     return model.fit;
   }
-  const { results } = await env.DB.prepare(`SELECT COALESCE(t.logical_thread, t.thread) AS entry,
-      t.team, x.at, x.staff
-    FROM messages x JOIN threads t ON t.thread = x.thread
-    WHERE x.at >= ? AND x.counted = 1 AND x.deleted = 0 AND t.kind = 'channel'`)
-    .bind(new Date(now - WINDOW_DAYS * DAY).toISOString()).all();
-  const rows = (results || []).map((r) => ({ ...r, at: Date.parse(r.at) }));
-  model = { at: now, fit: fitWaits(rows) };
-  return model.fit;
+  if (model && waitUntil) {
+    waitUntil(fitModel(env, now).catch((e) => console.warn(JSON.stringify({
+      route: 'portal', model: 'error', error: e.message,
+    }))));
+    return model.fit;
+  }
+  return fitModel(env, now);
 }
 
 /** Forgets the wait model (tests). */
 export function clearWaitModel() {
   model = null;
+  fitting = null;
 }
 
 /**
@@ -106,7 +130,9 @@ async function channelTeam(env, domain, channel) {
  * `{ domain, channel, root? }` to `{ listening, estimate, working, draft }`; `{ listening: 0 }`
  * for a channel the inbox does not know.
  */
-export async function portalStatus(env, { domain, channel, root } = {}, { now = Date.now() } = {}) {
+export async function portalStatus(env, { domain, channel, root } = {}, {
+  now = Date.now(), waitUntil,
+} = {}) {
   const tenant = String(domain || '').toLowerCase();
   const id = String(channel || '');
   const none = {
@@ -126,7 +152,7 @@ export async function portalStatus(env, { domain, channel, root } = {}, { now = 
     t ? teamsOf(env, { ...t, thread: t.entry })
       : sharesOf(env, 'portal', id).then((shares) => [...new Set([team, ...shares])]),
     t ? entryFollowers(env, t.entry) : [],
-    waitModel(env, now),
+    waitModel(env, now, waitUntil),
   ]);
   const listening = await staffCount(env, teams, followers);
   if (!t) {

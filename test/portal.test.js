@@ -284,6 +284,55 @@ describe('the customer portal: a channel', () => {
     assert.equal((await call(env, 'cy@customer.example', 'GET', `/api/threads?channel=${channel}`)).status, 403);
   });
 
+  it('says nothing of a thread to another customer who knows its id', async () => {
+    const { env, channel } = await opened();
+    const { root } = await platform.post(env, {
+      domain: 'customer.example', channel, text: 'Welcome!', author: STAFF,
+    });
+    const asked = [];
+    env.OPSPILE.status = async (args) => {
+      asked.push(args);
+      return {
+        listening: 3, estimate: null, working: true, draft: true,
+      };
+    };
+    // Another customer, with a channel of its own.
+    await call(env, EVE, 'GET', '/api/me');
+    await call(env, EVE, 'POST', '/api/lobby/request', {});
+    const theirs = (await platform.open(env, { domain: 'other.example', name: 'other', by: STAFF })).channel.id;
+    const own = await platform.post(env, {
+      domain: 'other.example', channel: theirs, text: 'Welcome, too!', author: STAFF,
+    });
+    // Adobe writes in the first customer's thread: its people see it.
+    assert.deepEqual(await platform.typing(env, {
+      domain: 'customer.example', channel, root, author: STAFF,
+    }), { ok: true });
+    const seen = await call(env, ADA, 'GET', `/api/status?channel=${channel}&thread=${root}`);
+    assert.deepEqual([seen.status, seen.body.typing, seen.body.working], [200, ['Sam Staff'], true]);
+    // The other customer, in their own channel, with that thread's id: no such thread, as
+    // GET /api/thread says, and the inbox is not asked about it.
+    asked.length = 0;
+    const path = `channel=${theirs}&thread=${root}`;
+    assert.equal((await call(env, EVE, 'GET', `/api/thread?${path}`)).status, 404);
+    const leaked = await call(env, EVE, 'GET', `/api/status?${path}`);
+    assert.equal(leaked.status, 404);
+    assert.doesNotMatch(JSON.stringify(leaked.body), /Sam|typing|stamp|working/);
+    assert.deepEqual(asked, []);
+    // Nor with the first customer's channel, which is not theirs.
+    assert.equal((await call(env, EVE, 'GET', `/api/status?channel=${channel}&thread=${root}`)).status, 404);
+    // A reply's id is no thread's either; their own thread answers, with nobody writing.
+    const reply = await platform.post(env, {
+      domain: 'other.example', channel: theirs, root: own.root, text: 'More.', author: STAFF,
+    });
+    assert.equal((await call(env, EVE, 'GET', `/api/status?channel=${theirs}&thread=${reply.id}`)).status, 404);
+    const mine = await call(env, EVE, 'GET', `/api/status?channel=${theirs}&thread=${own.root}`);
+    assert.deepEqual([mine.status, mine.body.typing], [200, []]);
+    // And nobody is said to write in a thread through a channel that does not have it.
+    assert.equal((await platform.typing(env, {
+      domain: 'other.example', channel: theirs, root, author: STAFF,
+    })).status, 404);
+  });
+
   it('holds threads: Adobe and the customer write, read, react, edit and delete', async () => {
     const { env, channel } = await opened();
     const welcome = await platform.post(env, {

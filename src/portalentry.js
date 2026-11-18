@@ -49,6 +49,6 @@ export class PortalSource extends WorkerEntrypoint {
    * whether the thread's agent is at work and whether a draft waits.
    */
   async status(args) {
-    return portalStatus(this.env, args);
+    return portalStatus(this.env, args, { waitUntil: (p) => this.ctx.waitUntil(p) });
   }
 }

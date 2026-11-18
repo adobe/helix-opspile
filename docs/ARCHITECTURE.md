@@ -2707,6 +2707,9 @@ once in ten seconds per thread however many pages ask, and adds what it knows it
 | "Adobe is reviewing a draft of the answer" | the inbox | The thread has a draft (`drafts`), an agent's or a person's, while the customer waits. Not what it says |
 
 Nothing of this is in pile 1 or pile 2: it is the present, asked for, and gone when nobody asks.
+It is a thread's own people's: the portal answers only for a thread of the channel asked for,
+which is one of the caller's lobby (`404` otherwise, as `GET /api/thread`), and asks the inbox
+nothing before it knows that.
 
 **The wait model** (`src/wait-model.js`) estimates the customer's **wait**: from their first
 message since Adobe's last post to Adobe's next post in the conversation. That is not the time
@@ -2722,7 +2725,9 @@ expert list): a customer does not care who answers. Two things say most about a 
 It is the response model with other keys, unchanged: the phase where that has the channel, the
 team where it has the person, minutes counted on the team's clock and both shrunk towards
 everyone's, so a team with few waits says what everyone's say. The inbox fits it from the last
-180 days' conversations and keeps it for an hour per isolate.
+180 days' conversations and keeps it for an hour per isolate; after that it answers with the
+one it has and fits the next behind the answer, so only an isolate's first status waits for
+the read.
 
 Checked against production, walking forward a day at a time over four weeks (1,836 waits,
 `npm run response:waits`), it beats one number for everyone: the mean error on the log of the

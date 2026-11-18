@@ -759,18 +759,27 @@ export async function setTyping(env, channel, user, root, now = Date.now()) {
 /**
  * What `user` polls of a thread while it is on screen: who else is writing in it now (`typing`:
  * names), and a `stamp` that changes with anything a reader would see anew (a message, an
- * edit, a deletion, a reaction), so the page loads the thread again only then.
+ * edit, a deletion, a reaction), so the page loads the thread again only then. Null for a
+ * thread `channel` does not have: a thread's id says nothing to who is not in its channel.
  */
 export async function threadPulse(env, channel, root, user, now = Date.now()) {
-  const [writing, stamp] = await env.DB.batch([
+  const id = String(root || '');
+  const [thread, writing, stamp] = await env.DB.batch([
+    env.DB.prepare('SELECT 1 AS there FROM messages WHERE id = ?1 AND root = ?1 AND channel = ?2')
+      .bind(id, channel.id),
+    // Of this channel's thread only, whatever the first query said.
     env.DB.prepare(`SELECT u.name FROM typing t JOIN users u ON u.id = t.user
-      WHERE t.root = ?1 AND t.user != ?2 AND t.at > ?3 ORDER BY t.at`)
-      .bind(String(root || ''), user.id, iso(now - TYPING_MS)),
+      WHERE t.root = ?1 AND t.user != ?2 AND t.at > ?3
+        AND t.root IN (SELECT id FROM messages WHERE id = ?1 AND channel = ?4)
+      ORDER BY t.at`).bind(id, user.id, iso(now - TYPING_MS), channel.id),
     env.DB.prepare(`SELECT COUNT(*) AS n, MAX(at) AS latest, SUM(rev) AS revs,
         (SELECT COUNT(*) || '.' || COALESCE(MAX(at), '') FROM reactions WHERE message IN
           (SELECT id FROM messages WHERE channel = ?1 AND root = ?2)) AS reactions
-      FROM messages WHERE channel = ?1 AND root = ?2`).bind(channel.id, String(root || '')),
+      FROM messages WHERE channel = ?1 AND root = ?2`).bind(channel.id, id),
   ]);
+  if (!(thread.results || []).length) {
+    return null;
+  }
   const s = (stamp.results || [])[0] || {};
   return {
     typing: (writing.results || []).map((r) => r.name),

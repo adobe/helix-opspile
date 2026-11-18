@@ -877,6 +877,35 @@ describe('Adobe\'s side of a thread, for the customer', () => {
     assert.equal((await statusOf(w, CY, w.root)).estimate.asked, null);
   });
 
+  it('fits the model once per isolate, then again behind an answer when it is an hour old', async () => {
+    const w = await openedWorld();
+    clearWaitModel();
+    let reads = 0;
+    const { prepare } = w.inbox.DB;
+    w.inbox.DB.prepare = (sql) => {
+      reads += /FROM messages x JOIN threads t/.test(sql) ? 1 : 0;
+      return prepare.call(w.inbox.DB, sql);
+    };
+    const args = { domain: DOMAIN, channel: w.channel, root: w.root };
+    const now = Date.now();
+    const behind = [];
+    const options = (at) => ({ now: at, waitUntil: (p) => behind.push(p) });
+    // Two pages at once on a new isolate: one read.
+    await Promise.all([
+      portalStatus(w.inbox, args, options(now)), portalStatus(w.inbox, args, options(now)),
+    ]);
+    assert.deepEqual([reads, behind.length], [1, 0]);
+    await portalStatus(w.inbox, args, options(now + 59 * 60 * 1000));
+    assert.equal(reads, 1);
+    // An hour on: answered with the model it has, the next one fitted behind the answer.
+    await portalStatus(w.inbox, args, options(now + 61 * 60 * 1000));
+    assert.equal(behind.length, 1);
+    await Promise.all(behind);
+    assert.equal(reads, 2);
+    await portalStatus(w.inbox, args, options(now + 62 * 60 * 1000));
+    assert.deepEqual([reads, behind.length], [2, 1]);
+  });
+
   it('says when the agent works on the thread, or a draft waits, and nothing of what they say', async () => {
     const w = await openedWorld();
     clearWaitModel();

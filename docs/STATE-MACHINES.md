@@ -513,8 +513,10 @@ inbox's pile 1 never hears who typed.
 wait, whether the agent works, whether a draft waits) is the present, read from the inbox's own
 tables when asked and stored nowhere; an inbox that does not answer leaves the page without
 it, and with what the portal knows itself (who writes, the thread's `stamp`). The **wait model**
-behind the estimate is fit from the last 180 days and kept for an hour per isolate of the inbox
-(`src/portalstatus.js`); nothing fits it ahead of time, and no wait at all is no estimate.
+behind the estimate is absent → fitted → stale → fitted again, per isolate of the inbox
+(`src/portalstatus.js`): fit from the last 180 days by the first status asked, one read however
+many ask at once; an hour old it is stale, still answered with, and fitted again behind that
+answer. A fit that fails leaves the one there is. No wait at all is no estimate.
 
 **Portal technologies.** the built-in list → the inbox's, an hour old at most (`tech`, `meta.tech_at`
 in the portal, `src/portal/tech.js`). An empty or failed answer leaves the list as it is: "the
