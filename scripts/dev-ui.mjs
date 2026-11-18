@@ -34,6 +34,8 @@
  * For scripts/perf-ui.mjs, `POST /__dev/simulate?thread=<key>` posts a message into a thread
  * (a random one without `thread`) and sends the live update, as the simulation does; with
  * `&mention=1` the message mentions Dana, who gets a notification (once the browser allows it).
+ * `GET /__dev/notify` has a button for each way the inbox notifies (the page's own, the service
+ * worker's, a mention in the inbox) and opens the inbox's notification troubleshooter.
  * `POST /__dev/rethread?into=<key>&after=<ms>` starts a thread in the channel of `into` and
  * folds it into `into`'s group `after` ms later (30 s by default), as re-threading does.
  *
@@ -2291,6 +2293,12 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/inbox') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       res.end(await uiPage('inbox.html'));
+      return;
+    }
+    // Buttons that try every way the inbox notifies, and open its troubleshooter.
+    if (url.pathname === '/__dev/notify') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+      res.end(await readFile(join(dirname(fileURLToPath(import.meta.url)), 'dev-notify.html')));
       return;
     }
     // The FMC gallery: the guidelines' figures and the stacks, as the inbox draws them.

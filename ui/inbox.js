@@ -7771,12 +7771,16 @@ function wireExpert() {
 }
 
 /** Asks the browser to allow notifications (only on a click). True if they are allowed. */
-async function askToNotify() {
+async function askToNotify({ welcome = true } = {}) {
   if (!canNotify()) { toast('This browser does not show notifications.'); return false; }
-  if (Notification.permission === 'default') await Notification.requestPermission().catch(() => {});
+  const before = Notification.permission;
+  if (before === 'default') await Notification.requestPermission().catch(() => {});
   renderNotify();
-  if (Notification.permission === 'denied') toast('Notifications are blocked for this site: allow them in this browser\'s site settings.');
-  return Notification.permission === 'granted';
+  if (Notification.permission === 'denied') toast('Notifications are blocked for this site.', { label: 'How to allow them', run: () => openNotifyHelp('blocked') });
+  const ok = Notification.permission === 'granted';
+  // Just allowed: say so with one (and ask whether it showed).
+  if (ok && before === 'default' && welcome) welcomeNote(true);
+  return ok;
 }
 
 /** The bell above the list: on, for the view on screen with its filters, or off again. */
@@ -7789,8 +7793,11 @@ async function toggleBell() {
     return;
   }
   if (bells.length >= 20) { toast('That is 20 views with notifications already: turn one off in the menu first.'); return; }
-  const ok = await askToNotify();
+  const unasked = canNotify() && Notification.permission === 'default';
+  const ok = await askToNotify({ welcome: false });
   if (await saveSettings({ bells: [...bells, bell] })) {
+    // Just allowed: the welcome's toast, which asks whether it showed, says it instead.
+    if (ok && unasked && await welcomeNote(true)) return;
     toast(`${ok ? 'You get a notification' : 'Once this browser allows notifications, you get one'} when a thread in ${bellLabel(bell)} gets a new message.`);
   }
 }
@@ -7814,17 +7821,25 @@ function renderNotify() {
   }[perm] || '';
   if (perm === 'granted') $('notifyHint').textContent = s.bells?.length ? 'While the inbox is open, in a tab or as the app.' : 'While the inbox is open. The bell above the list adds the view on screen.';
   $('notifyAllow').hidden = perm !== 'default';
+  // The troubleshooter: a test once they are allowed, how to allow them while they are not.
+  $('notifyTest').hidden = perm !== 'granted';
+  $('notifyFix').hidden = !['denied', 'unsupported'].includes(perm);
+  $('notifyFix').textContent = perm === 'denied' ? 'How to allow them again' : 'How to get them';
   $('notifySound').setAttribute('aria-checked', String(soundOn()));
 }
 function wireNotify() {
+  // Allowed just now: the welcome once the switch is saved, as it may be the only one on.
   const toggle = (key) => async () => {
     const on = !state.settings[key];
-    if (on) await askToNotify();
-    saveSettings({ [key]: on });
+    const unasked = on && canNotify() && Notification.permission === 'default';
+    const ok = on && await askToNotify({ welcome: false });
+    if (await saveSettings({ [key]: on }) && ok && unasked) welcomeNote(true);
   };
   $('notifyMentions').onclick = toggle('mentions');
   $('notifyThreads').onclick = toggle('threads');
   $('notifyAllow').onclick = () => askToNotify();
+  $('notifyTest').onclick = () => sendTestNote();
+  $('notifyFix').onclick = () => openNotifyHelp();
   $('notifySound').onclick = () => {
     localStorage.setItem(SOUND_KEY, soundOn() ? 'off' : 'on');
     renderNotify();
@@ -7845,6 +7860,11 @@ function wireNotify() {
     navigator.serviceWorker.startMessages?.();
   }
   renderNotify();
+  // /inbox?notify=help opens the troubleshooter; ?notify=seen is a click on its test (or the
+  // welcome) when no inbox was open.
+  if (NOTIFY_ASKED === 'seen') testSeen();
+  else if (NOTIFY_ASKED) openNotifyHelp();
+  else welcomeNote();
   // Mentions and your threads notify unless turned off, once the browser allows it: asked for
   // once, on a click.
   if (!state.as && (state.settings.mentions || state.settings.threads) && canNotify()
@@ -7922,8 +7942,8 @@ function fallbackTone(t) {
     osc.stop(t + d + 0.95);
   });
 }
-function playChime() {
-  if (!audio || !soundOn()) return;
+function playChime({ always = false } = {}) {
+  if (!audio || !(always || soundOn())) return;
   const run = async () => {
     if (audio.state === 'suspended') await audio.resume().catch(() => {});
     const buffer = await chime;
@@ -7940,6 +7960,164 @@ function playChime() {
     run();
     await new Promise((r) => { setTimeout(r, 1500); });
   }).catch(() => {});
+}
+
+// ---------------------------------------------------------------- the troubleshooter
+// A page sees whether the browser allows notifications, not whether the system shows them: a
+// Mac keeps a banner off (System Settings, a Focus) while Chrome says "granted". So the user
+// menu sends a test, with the chime, and asks whether a banner showed; if not, the dialog walks
+// through the system's settings (ui/notifyhelp.js says each step). While the browser blocks
+// them, the menu says how to allow them again. The first time the browser allows them, and
+// once on a device for a tab and once for the installed app, the inbox sends "Notifications are
+// on" and asks with a toast whether it showed. Not while viewing as someone else.
+
+/** Where a click on the test (or the welcome) goes: the inbox, which then knows it showed. */
+const TEST_URL = '/inbox?notify=seen';
+const WELCOMED_KEY = 'opspile.notify.welcomed';
+// What the address asked of the troubleshooter (`notify`), as the page was loaded: the address
+// is the view's (toUrl) once the inbox is on screen.
+const NOTIFY_ASKED = new URLSearchParams(location.search).get('notify');
+const permission = () => (canNotify() ? Notification.permission : 'unsupported');
+
+/**
+ * Shows a notification through the service worker, so that a click on it opens `opts.data.url`
+ * (src/pwa.js), else as the page's own. Throws if the browser does not take it.
+ */
+async function deliverNote(title, opts) {
+  let refused = null;
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    if (reg) { await reg.showNotification(title, opts); return; }
+  } catch (e) {
+    refused = e; // no service worker, or it refused: a plain one, below
+  }
+  let n;
+  try {
+    n = new Notification(title, opts);
+  } catch (e) {
+    // Where only the service worker may show them (Android), its reason is the one to tell.
+    throw refused || e;
+  }
+  n.onclick = () => { window.focus(); n.close(); openFromNote(opts.data.url, opts.data.views); };
+}
+
+/** The troubleshooter's dialog at step `name` (the browser's permission's, without). */
+function openNotifyHelp(name, extra = {}) {
+  if (state.as) return null;
+  $('menu')?.hidePopover?.();
+  let dlg = document.querySelector('dialog.notifyhelp[open]');
+  if (!dlg) {
+    dlg = toNode(`<dialog class="confirm notifyhelp" aria-labelledby="notifyhelp-title"><form method="dialog">
+      <div class="top"><h2 id="notifyhelp-title"></h2><button class="close" aria-label="Close" title="Close (Esc)"><span class="s2-cross" aria-hidden="true"></span></button></div>
+      <div class="nh-body"></div></form></dialog>`);
+    dlg.addEventListener('click', (e) => {
+      const act = e.target.closest('[data-nh]')?.dataset.nh;
+      if (act) notifyHelpAct(dlg, act);
+    });
+    dlg.addEventListener('close', () => Dialog.remove(dlg));
+    document.body.append(dlg);
+    dlg.showModal();
+  }
+  showHelpStep(dlg, name || NotifyHelp.first(permission()), extra);
+  return dlg;
+}
+function showHelpStep(dlg, name, extra = {}) {
+  const { title, html } = NotifyHelp.step(name, { where: NotifyHelp.where(), origin: location.origin, ...extra });
+  dlg.dataset.step = name;
+  dlg.querySelector('h2').textContent = title;
+  const body = dlg.querySelector('.nh-body');
+  body.innerHTML = html;
+  body.scrollTop = 0;
+  body.querySelector('.apply .send')?.focus();
+}
+async function notifyHelpAct(dlg, act) {
+  if (act === 'send') await sendTestNote();
+  else if (act === 'yes') showHelpStep(dlg, 'works');
+  else if (act === 'no') showHelpStep(dlg, 'hidden');
+  else if (act === 'reload') location.reload();
+  else if (act === 'allow') {
+    // Allowed: the test is the welcome here.
+    if (await askToNotify({ welcome: false })) await sendTestNote(); else showHelpStep(dlg, NotifyHelp.first(permission()));
+  }
+}
+
+/**
+ * The menu's test: a notification, as the inbox shows them, and the chime (even with "Play a
+ * sound" off: hearing it, with no banner, says the system hid the banner). Then the dialog asks.
+ */
+async function sendTestNote() {
+  if (state.as) return;
+  if (!allowed()) { openNotifyHelp(); return; }
+  unlockAudio();
+  try {
+    await deliverNote('Test notification', {
+      body: 'If you see this, the inbox\'s notifications show on this device.',
+      tag: 'opspile:test',
+      renotify: true,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      silent: true,
+      data: { url: TEST_URL },
+    });
+  } catch (e) {
+    openNotifyHelp('failed', { error: e.message });
+    return;
+  }
+  // A test says what the welcome would: none on this device's next load.
+  markWelcomed();
+  playChime({ always: true });
+  openNotifyHelp('sent', { sound: Boolean(audio) });
+}
+
+/** A click on the test (or the welcome): it showed. */
+function testSeen() {
+  window.focus();
+  const dlg = document.querySelector('dialog.notifyhelp[open]');
+  if (dlg) showHelpStep(dlg, 'works');
+  else if (!state.as) toast('That was the test: notifications show on this device.');
+}
+
+/** This device's inbox in a tab (`tab`) or as the installed app (`app`), for the welcome. */
+const noteContext = () => (NotifyHelp.where().app ? 'app' : 'tab');
+function welcomedIn() {
+  try {
+    const v = JSON.parse(localStorage.getItem(WELCOMED_KEY));
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+function markWelcomed() {
+  const seen = welcomedIn();
+  if (!seen.includes(noteContext())) localStorage.setItem(WELCOMED_KEY, JSON.stringify([...seen, noteContext()]));
+}
+/**
+ * "Notifications are on", as Slack says it: `justAllowed` when the browser has just allowed them,
+ * else once on this device in a tab and once as the installed app (which has the tab's
+ * permission, so it never asks), and only while some notification is on. A page cannot tell
+ * whether its banner showed, so a toast asks, and its button opens the troubleshooter. True if
+ * it was sent.
+ */
+async function welcomeNote(justAllowed = false) {
+  const s = state.settings;
+  if (!notifying() || !(s?.mentions || s?.threads || s?.bells?.length)) return false;
+  if (!justAllowed && welcomedIn().includes(noteContext())) return false;
+  markWelcomed();
+  try {
+    await deliverNote('Notifications are on', {
+      body: 'This is how the inbox tells you of new messages while it is open.',
+      tag: 'opspile:welcome',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      silent: true,
+      data: { url: TEST_URL },
+    });
+  } catch {
+    return false;
+  }
+  playChime();
+  toast('Notifications are on: the inbox just sent you one. Didn\'t see it pop up?', { label: 'Fix it', run: () => openNotifyHelp('hidden') }, { stay: true });
+  return true;
 }
 /**
  * A notification's picture: the author's avatar, round, as the inbox shows it (initials on
@@ -8007,14 +8185,7 @@ async function showNote({
     data: { url, views },
   };
   playChime();
-  try {
-    const reg = await navigator.serviceWorker?.getRegistration();
-    if (reg) { await reg.showNotification(title, opts); return; }
-  } catch {
-    // no service worker: a plain one, below
-  }
-  const n = new Notification(title, opts);
-  n.onclick = () => { window.focus(); n.close(); openFromNote(url, views); };
+  await deliverNote(title, opts);
 }
 /**
  * A click on a notification, in this inbox: its thread, in the view on screen if that can show
@@ -8023,6 +8194,7 @@ async function showNote({
  */
 async function openFromNote(url, views) {
   const q = new URL(url, location.href).searchParams;
+  if (q.get('notify') === 'seen') { testSeen(); return; }
   const key = q.get('t');
   const asked = q.get('view') === 'personal' || !q.get('team') ? PERSONAL_VIEW : q.get('team');
   const view = noteView(Array.isArray(views) ? views : [asked], key);

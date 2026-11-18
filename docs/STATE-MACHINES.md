@@ -640,6 +640,14 @@ it stays so for the thread in the tab. Those that wait or run always show.
 **Notification permission.** unasked → asked → granted or denied (`Notification.permission` and
 `opspile.notify.asked`). The browser's own state is the record, and the first visit asks once.
 
+**Notification welcome.** unsent → sent, for a tab and for the installed app on this device
+(`opspile.notify.welcomed` in `ui/inbox.js`, a list of `tab` and `app`). Once the browser allows
+notifications (and one of mentions, your threads or a bell is on), the first load in each sends
+"Notifications are on" with a toast asking whether it popped up; the installed app shares the
+tab's permission and storage, so it never asks but is welcomed once on its own. The browser
+allowing them just now (default → granted) sends it again; so does clearing the key. The menu's
+test notification counts as the welcome. Not while viewing as someone else.
+
 **Notification sound.** silent → unlocked → loaded or tone (`audio` and `chime` in `ui/inbox.js`). A
 page plays sound only after a click or key press in it, so the first one creates the audio and
 fetches `/notify.mp3`; a reload starts silent again. A sound that does not load plays a short tone.

@@ -767,6 +767,8 @@ and Access are replaced by an in-memory store in
 New fake messages arrive every 25 seconds (`node scripts/dev-ui.mjs --no-sim` turns that off),
 one in five mentioning Dana, who gets a notification once the browser allows them, as for any
 message in a thread of theirs (`curl -X POST 'localhost:8787/__dev/simulate?mention=1'` sends one).
+<http://localhost:8787/__dev/notify> has a button for each way the inbox notifies, and opens its
+notification troubleshooter (`/inbox?notify=help`).
 No Cloudflare login or `.dev.vars` is needed. The knowledge-base editor is at
 <http://localhost:8787/inbox/kb>, over a few made-up knowledge bases in memory
 ([scripts/dev-ui-kb.mjs](scripts/dev-ui-kb.mjs)), written by the same code as production.
