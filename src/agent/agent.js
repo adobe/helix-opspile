@@ -19,9 +19,6 @@ import { Agent } from 'agents';
 import { PiHarness, ROOT_SESSION } from 'agents/harness/pi';
 import { createInlineCodemodeSandbox } from '@earendil-works/pi-codemode/cloudflare';
 import { Workspace } from '@cloudflare/computer';
-import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
-import curlModules from '@cloudflare/computer/shell/curl';
-import jqModules from '@cloudflare/computer/shell/jq';
 import {
   attachKernel, compiledTlsEngine, createCloudflareKernel, fetchTransport, inProcessMount,
   sliccBackend,
@@ -47,7 +44,7 @@ import {
   commandsOf, DEFAULT_IMAGE, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree, readImage,
 } from './image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageSpec, shellFor,
+  CURL_HOME, CURLRC, gatewayFetch, imageFor, imageSpec, KERNEL_ENV,
 } from './kernel.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
@@ -90,13 +87,11 @@ import { latestTurn } from './turn.js';
  * Tools the team turns on (src/agent/agenttools.js): `post_message` (with `add_reaction`), and
  * `computer`, pi's bash tool on Cloudflare Computer, whose Workspace lives in this object's
  * SQLite (src/agent/computer.js), with `request_bash`, a command a person runs there for it.
- * Its shell, in a Dynamic Worker, reaches the files back through
- * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that), and the network
- * through SecretGateway (src/agent/gateway.js), which adds the team's and the customer's
- * secrets where the shell names them. Where the team chose the SLICC kernel as the computer's
- * shell (src/agent/kernel.js), the kernel runs in this object, on the same Workspace, with the
- * programs of the team's image from the `IMAGES` bucket (src/agent/image.js), and its requests
- * go through the same gateway code.
+ * Its shell is the SLICC kernel (src/agent/kernel.js), which runs in this object, on that
+ * Workspace, with the programs of the team's image from the `IMAGES` bucket
+ * (src/agent/image.js), its processes in Dynamic Workers. Its requests go through the gateway's
+ * `forward` (src/agent/secrets.js), which adds the team's and the customer's secrets where a
+ * request names them.
  */
 
 const TARGET_TTL_MS = 5 * 60 * 1000;
@@ -202,7 +197,7 @@ export class ThreadAgent extends Agent {
         // an extension in place.
         this.registry.install(opspileExtension(agent));
         await this.currentArm();
-        await this.currentRuntime();
+        await this.currentImage();
         this.registry.install(agentToolsExtension(agent, await this.currentTools()));
         this.installMcp(await this.servers.current());
         this.registry.install(staffExtension(agent));
@@ -290,56 +285,49 @@ export class ThreadAgent extends Agent {
     return this.tools;
   }
 
-  /**
-   * The shell of the computer last installed (src/agent/kernel.js), and with the kernel its
-   * image, from storage at first.
-   */
-  async currentRuntime() {
-    this.runtime ??= (await this.ctx.storage.get('runtime')) || DEFAULT_RUNTIME;
+  /** The image of the computer's kernel last installed (src/agent/image.js), stored at first. */
+  async currentImage() {
     this.image ??= (await this.ctx.storage.get('image')) || DEFAULT_IMAGE;
-    return this.runtime;
+    return this.image;
   }
 
   /**
    * Before the agent is told something: are its switchable tools still the ones turned on, and
-   * its computer's shell and image the ones its team chose? A change is installed at once when
-   * Pi is open, else when it opens. A failure keeps them.
+   * its computer's image the one its team chose? A change is installed at once when Pi is open,
+   * else when it opens. A failure keeps them.
    */
   async syncTools() {
     try {
       const before = await this.currentTools();
-      const runtime = await this.currentRuntime();
+      const current = await this.currentImage();
       const target = await this.target();
       const now = await toolsFor(this.env, target);
-      // Asked only where there is a computer: its shell is nothing to an agent without one.
-      const shell = now.includes('computer') ? await shellFor(this.env, target) : { runtime };
-      const image = shell.image || this.image;
-      const same = shell.runtime === runtime && image === this.image;
+      // Asked only where there is a computer: its image is nothing to an agent without one.
+      const image = now.includes('computer') ? await imageFor(this.env, target) : current;
+      const same = image === current;
       if (now.join(',') === before.join(',') && same) {
         return;
       }
       if (!same) {
-        await this.changeShell(shell.runtime, image);
+        await this.changeImage(image);
       }
       this.tools = now;
       await this.ctx.storage.put('tools', now);
       if (this.agentContext) {
         this.registry.install(agentToolsExtension(this.agentContext, now));
       }
-      console.log(JSON.stringify({
-        route: 'agent', tools: now, runtime: shell.runtime, ...(shell.image ? { image } : {}),
-      }));
+      console.log(JSON.stringify({ route: 'agent', tools: now, image }));
     } catch (e) {
       console.log(JSON.stringify({ route: 'agent', tools: 'sync failed', error: e.message }));
     }
   }
 
   /**
-   * The computer gets another shell, or its kernel another image, with the next command: a new
-   * Workspace over the same files. A kernel that ran here is ended; its own root (/root,
-   * /tmp) stays in this object's SQLite, for when the team chooses the kernel again.
+   * The computer's kernel gets another image (or the same one again) with the next command: a
+   * new Workspace over the same files. A kernel that ran here is ended; its own root (/root,
+   * /tmp) stays in this object's SQLite, for the next one.
    */
-  async changeShell(runtime, image = this.image) {
+  async changeImage(image = this.image) {
     const kernel = await (this.booting || Promise.resolve(null)).catch(() => null);
     if (this.ws && kernel) {
       await this.ws.close().catch(() => {});
@@ -351,22 +339,17 @@ export class ThreadAgent extends Agent {
     if (kernel) {
       kernel.terminate();
     }
-    this.runtime = runtime;
     this.image = image;
-    await this.ctx.storage.put('runtime', runtime);
     await this.ctx.storage.put('image', image);
   }
 
   /**
-   * What the agent is told its shell is: `{ runtime }`, and with the kernel `image`, what the
-   * image says it has (`tools`) and its commands, from the bucket (kept for a few minutes).
-   * Without the image (no bucket, or it is gone), the agent is told to look for itself.
+   * What the agent is told its shell is: its `image`, what the image says it has (`tools`) and
+   * its commands, from the bucket (kept for a few minutes). Without the image (no bucket, or it
+   * is gone), the agent is told to look for itself.
    */
   async shellInfo() {
-    const runtime = await this.currentRuntime();
-    if (runtime !== 'slicc-kernel') {
-      return { runtime };
-    }
+    await this.currentImage();
     const kept = this.imageInfo;
     if (!kept || kept.name !== this.image || Date.now() - kept.at > IMAGE_TTL_MS) {
       const image = await readImage(this.env.IMAGES, this.image).catch(() => null);
@@ -377,20 +360,18 @@ export class ThreadAgent extends Agent {
       };
     }
     const { name, tools, commands } = this.imageInfo;
-    return {
-      runtime, image: name, ...(tools ? { tools, commands } : {}),
-    };
+    return { image: name, ...(tools ? { tools, commands } : {}) };
   }
 
   /** The agent's computer, as pi's environment: a Workspace in this object, made on first use. */
   computer() {
-    this.computerEnv ??= computerEnv(() => this.readyWorkspace(), { runtime: () => this.runtime });
+    this.computerEnv ??= computerEnv(() => this.readyWorkspace());
     return this.computerEnv;
   }
 
   /** The Workspace of the computer, ready to run a command in its working directory. */
   async readyWorkspace() {
-    await this.currentRuntime();
+    await this.currentImage();
     const ws = this.workspace();
     await ws.ready();
     if (!this.computerReady) {
@@ -398,19 +379,6 @@ export class ThreadAgent extends Agent {
       this.computerReady = true;
     }
     return ws;
-  }
-
-  /**
-   * Where the shell reaches the network: through the Worker's SecretGateway, which puts the
-   * team's and the customer's secrets into the requests that name them (src/agent/secrets.js)
-   * and lets the others through as they are. It knows this agent by name; the revision is
-   * fixed, as the name is.
-   */
-  egress() {
-    const gateway = this.ctx.exports && this.ctx.exports.SecretGateway;
-    return gateway
-      ? { mode: 'http-gateway', gateway: gateway({ props: { agent: this.name } }), revision: 'secrets-1' }
-      : { mode: 'direct' };
   }
 
   /** The answer to a request of the kernel's programs: the gateway's (src/agent/secrets.js). */
@@ -423,17 +391,16 @@ export class ThreadAgent extends Agent {
    * root in this object's SQLite, its processes in Dynamic Workers without a network of their
    * own, and the team's image from the `IMAGES` bucket mounted read-only at IMAGE_ROOT, where
    * it finds its commands (src/agent/image.js: a boot without the bucket or the image fails,
-   * and says so). What its programs ask of the network goes
-   * through the gateway's `forward`, as just-bash's does (src/agent/secrets.js), and they
-   * follow redirects themselves, through it again. For `https://` the kernel's proxy ends a
-   * program's TLS itself, with the TLS engine this Worker carries (a Worker cannot compile
-   * one at run time), and hands the request to the same transport. A program's own TCP
-   * leaves through the uplink (src/agent/uplink.js), the Worker's sockets, to port 443 only,
-   * past the gateway: for a site's own TLS. A Worker's clock stands still while it computes;
-   * the kernel waits on a timer before each timed wait, which moves it. It must not call into
-   * this object for the time (it did up to 1.188): each such call raised the request's
-   * subrequest depth, until R2 failed in the same request and a program read from the image
-   * failed to start with EIO.
+   * and says so). What its programs ask of the network goes through the gateway's `forward`
+   * (src/agent/secrets.js), and they follow redirects themselves, through it again. For
+   * `https://` the kernel's proxy ends a program's TLS itself, with the TLS engine this Worker
+   * carries (a Worker cannot compile one at run time), and hands the request to the same
+   * transport. A program's own TCP leaves through the uplink (src/agent/uplink.js), the
+   * Worker's sockets, to port 443 only, past the gateway: for a site's own TLS. A Worker's
+   * clock stands still while it computes; the kernel waits on a timer before each timed wait,
+   * which moves it. It must not call into this object for the time (it did up to 1.188): each
+   * such call raised the request's subrequest depth, until R2 failed in the same request and a
+   * program read from the image failed to start with EIO.
    */
   kernel() {
     this.booting ??= (async () => {
@@ -450,6 +417,8 @@ export class ThreadAgent extends Agent {
         sql: storage.sql,
         sqlite: { transaction: (fn) => storage.transactionSync(fn) },
         commands: { append: [IMAGE_COMMANDS] },
+        // curl's configuration (CURL_HOME), and tar's options.
+        env: KERNEL_ENV,
         // How much of a Dynamic Worker's 128 MB the kernel fills with processes: by default
         // 64 MiB, too little for git's clone, which is three processes deep (git, git
         // remote-https, git-remote-https) and forks a fourth to read the pack. The kernel
@@ -470,6 +439,9 @@ export class ThreadAgent extends Agent {
         const client = await attachKernel(await kernel.connect(), { locks: null });
         try {
           await client.fs.mkdir(IMAGE_ROOT);
+          // Written at each boot: the computer's own root keeps what a program changed there.
+          await client.fs.mkdir(CURL_HOME);
+          await client.fs.writeFile(`${CURL_HOME}/.curlrc`, CURLRC);
         } finally {
           await client.close();
         }
@@ -496,30 +468,20 @@ export class ThreadAgent extends Agent {
     return this.booting;
   }
 
-  /** The shell of the computer, as a backend of its Workspace: the one its team chose. */
+  /** The shell of the computer, as the backend of its Workspace: the kernel. */
   backend() {
-    if (this.runtime === 'slicc-kernel') {
-      // A file is in the Workspace when its program closed it, not a second later.
-      return sliccBackend({
-        kernel: () => this.kernel(),
-        mountPoint: COMPUTER_CWD,
-        writeBehind: false,
-      });
-    }
-    return new WorkerShellBackend({
-      id: 'shell',
-      loader: this.env.LOADER,
-      workspace: { binding: 'AGENTS', id: this.ctx.id.toString(), name: this.name },
-      ctx: this.ctx,
-      commands: [jqModules, curlModules],
-      egress: this.egress(),
+    // A file is in the Workspace when its program closed it, not a second later.
+    return sliccBackend({
+      kernel: () => this.kernel(),
+      mountPoint: COMPUTER_CWD,
+      writeBehind: false,
     });
   }
 
   /**
    * The Workspace of the computer: files in this object's SQLite, and its shell (`backend`),
-   * which reaches the internet (curl) without a filter, with its secrets (`egress`, or the
-   * kernel's transport). Made once `currentRuntime` is known.
+   * which reaches the internet (curl) without a filter, with its secrets (the kernel's
+   * transport). Made once `currentImage` is known.
    */
   workspace() {
     this.ws ??= new Workspace({
@@ -530,7 +492,7 @@ export class ThreadAgent extends Agent {
           [`${COMPUTER_CWD}/${UPLOADS_DIR}`]: uploadsMount(this.env.FILES, () => this.ctx.storage.get('uploads')),
         },
       } : {}),
-      ...(this.runtime === 'slicc-kernel' ? { output: { dir: KERNEL_OUTPUT_DIR } } : {}),
+      output: { dir: KERNEL_OUTPUT_DIR },
     });
     return this.ws;
   }
@@ -588,16 +550,8 @@ export class ThreadAgent extends Agent {
     const copies = (list.all || []).filter((c) => c.expires > Date.now());
     await this.setUploads(mountList(copies));
     // The computer may be asleep: the expired files leave its SQLite now, not at its next use.
-    await this.currentRuntime();
+    await this.currentImage();
     await this.workspace().ready();
-  }
-
-  /** For the shell in the Dynamic Worker (through WorkspaceServiceProxy): the files. */
-  async __getWorkspaceStub() {
-    await this.currentRuntime();
-    const ws = this.workspace();
-    await ws.ready();
-    return ws.stub();
   }
 
   /** Remembers a message the agent posted, so that it is not told about it. */
@@ -881,8 +835,7 @@ export class ThreadAgent extends Agent {
       pending,
       turn,
       tools: await this.currentTools(),
-      runtime: await this.currentRuntime(),
-      ...(this.runtime === 'slicc-kernel' ? { image: this.image } : {}),
+      image: await this.currentImage(),
       mcp: catalog.servers.map((s) => ({
         name: s.name, scope: s.scope, tools: s.tools.length, error: s.error,
       })),

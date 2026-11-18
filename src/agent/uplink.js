@@ -15,12 +15,13 @@
  * uplink (`network.uplink`), over the Worker's own sockets (`connect` from
  * `cloudflare:sockets`, passed in by src/agent/agent.js, so this is tested in Node).
  *
- * Everything else a program sends leaves through the kernel's proxy and the SecretGateway
- * (src/agent/gateway.js), as HTTP. This is for what HTTP cannot show: a site's own TLS, its
- * certificate chain as the site sends it (`openssl s_client`). So it dials only UPLINK_PORTS,
- * and a program reaches any other port of an outside address as an unreachable network. The
- * gateway does not see these bytes, and so cannot put a secret into them: a program holds
- * only a secret's placeholder, never its value, and a TLS stream carries the placeholder.
+ * Everything else a program sends leaves through the kernel's proxy and the gateway's
+ * `forward` (src/agent/secrets.js), as HTTP. This is for what HTTP cannot show: a site's own
+ * TLS, its certificate chain as the site sends it (`openssl s_client`). So it dials only
+ * UPLINK_PORTS, and a program reaches any other port of an outside address as an unreachable
+ * network. The gateway does not see these bytes, and so cannot put a secret into them: a
+ * program holds only a secret's placeholder, never its value, and a TLS stream carries the
+ * placeholder.
  *
  * It has no names of its own, so it has no `resolve`: the kernel resolves outside names, for
  * getaddrinfo and for its DNS (dig, host, nslookup) alike, through `network.doh` (DOH, over the

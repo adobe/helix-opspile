@@ -14,7 +14,7 @@
 /**
  * `npm run computer:check`: what Node's tests cannot run, checked on an agent's computer
  * (scripts/dev-computer/worker.mjs): the programs of the images of scripts/computer-images.mjs,
- * and that both shells refuse every change to the uploads with an exit code and an error. Without
+ * and that the shell refuses every change to the uploads with an exit code and an error. Without
  * an origin it starts `npm run computer:dev` on a free port and stops it after; with one it
  * checks that computer, the local one or the one deployed to Cloudflare, where the limits of
  * Dynamic Workers are real (.github/workflows/computer-stage.yml). Run it after updating
@@ -48,10 +48,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build, missingFrom, objectsOf } from '../computer-images.mjs';
 
 /**
- * The checks: `command` runs in `runtime` (the kernel by default) with `image` (base by
- * default), on a computer of its own per runtime and image (so a check does not reboot
- * another's kernel) or of its own `thread`, with `uploads` (`{ name: text }`) put there first,
- * and passes when its output matches `match` (stdout, then stderr) and its exit code is 0.
+ * The checks: `command` runs on the kernel with `image` (base by default), on a computer of
+ * its own per image (so a check does not reboot another's kernel) or of its own `thread`, with
+ * `uploads` (`{ name: text }`) put there first, and passes when its output matches `match`
+ * (stdout, then stderr) and its exit code is 0.
  */
 const ORIGINAL = 'line 1\nERROR boom\n';
 
@@ -66,30 +66,27 @@ export const CHANGES = [
 ];
 
 /**
- * The uploads, in `runtime`: every change refused, with an exit code and an error, and the file
+ * The uploads: every change refused, with an exit code and an error, and the file
  * as it was; read, with the files next to them written; and read-only still once they change,
  * which takes a new Workspace. Each change runs in a subshell, whose exit code is printed.
  */
-export function uploadChecks(runtime) {
+export function uploadChecks() {
   const uploads = { 'sample.log': ORIGINAL };
   return [
     ...CHANGES.map((change) => ({
-      name: `${runtime}: the uploads refuse \`${change}\``,
-      runtime,
+      name: `kernel: the uploads refuse \`${change}\``,
       uploads,
       command: `( ${change} ); s=$?; cat uploads/sample.log; echo "exit $s"`,
       match: /^line 1\nERROR boom\nexit [1-9]\d*\n[\s\S]*read-only/i,
     })),
     {
-      name: `${runtime}: the uploads are read, and the files next to them written`,
-      runtime,
+      name: 'kernel: the uploads are read, and the files next to them written',
       uploads,
       command: 'cat uploads/sample.log && echo ok > notes.txt && cat notes.txt',
       match: /^line 1\nERROR boom\nok\n$/,
     },
     {
-      name: `${runtime}: the uploads are read-only still once they change`,
-      runtime,
+      name: 'kernel: the uploads are read-only still once they change',
       uploads: { ...uploads, 'other.log': 'other\n' },
       command: '( echo overwrite > uploads/other.log ); s=$?'
         + '; cat uploads/other.log uploads/sample.log notes.txt; echo "exit $s"',
@@ -201,6 +198,25 @@ export const CHECKS = [
     match: /^1\n$/,
   },
   {
+    // The proxy's answer to curl's CONNECT is not among the site's headers (src/agent/kernel.js,
+    // CURLRC): they start with the site's own status line.
+    name: 'curl -I and -D show the site\'s headers only',
+    command: 'curl -sI https://www.aem.live/ | head -1 | cut -d" " -f2'
+      + ' && curl -s -D - -o /dev/null https://www.aem.live/ | grep -c "^HTTP/"',
+    match: /^200\n1\n$/,
+  },
+  {
+    name: 'rg, in Base',
+    command: "printf 'x\\nneedle\\n' | rg -c needle",
+    match: /^1\n$/,
+  },
+  {
+    name: 'tar unpacks without changing owners',
+    command: 'cd /tmp && mkdir -p t && echo hi > t/a && tar czf t.tgz t && rm -r t'
+      + ' && tar xzf t.tgz 2>&1 && cat t/a',
+    match: /^hi\n$/,
+  },
+  {
     name: 'yq',
     command: "printf 'a:\\n  b: [1, 2]\\n' | yq -o json -I0 .a",
     match: /^\{"b":\[1,2\]\}\n$/,
@@ -236,14 +252,12 @@ export const CHECKS = [
     timeout: 120,
   })),
   {
-    name: 'data: rg, sqlite3, strings',
+    name: 'data: sqlite3, strings',
     image: 'data',
-    command: "printf 'x\\nneedle\\n' | rg -c needle && sqlite3 :memory: 'select 6 * 7'"
-      + ' && printf "\\0\\0hello\\0" | strings',
-    match: /^1\n42\nhello\n$/,
+    command: "sqlite3 :memory: 'select 6 * 7' && printf \"\\0\\0hello\\0\" | strings",
+    match: /^42\nhello\n$/,
   },
-  ...uploadChecks('just-bash'),
-  ...uploadChecks('slicc-kernel'),
+  ...uploadChecks(),
   // Graphviz's dot (the diagrams layer), in Base.
   {
     name: 'kernel: dot lays out a graph, as SVG and JSON',
@@ -434,8 +448,7 @@ export async function syncImages(origin, built, { token, log = console.log, retr
  */
 export async function runCheck(origin, check, { token, run, retry = {} }) {
   const image = check.image || 'base';
-  const runtime = check.runtime || 'slicc-kernel';
-  const thread = `check-${run}-${check.thread || (runtime === 'slicc-kernel' ? image : runtime)}`;
+  const thread = `check-${run}-${check.thread || image}`;
   const headers = { 'content-type': 'application/json', ...headersOf(token) };
   const started = Date.now();
   try {
@@ -453,8 +466,7 @@ export async function runCheck(origin, check, { token, run, retry = {} }) {
       headers,
       body: JSON.stringify({
         command: check.command,
-        runtime,
-        ...(runtime === 'slicc-kernel' ? { image } : {}),
+        image,
         timeout: check.timeout || 60,
       }),
     }, {

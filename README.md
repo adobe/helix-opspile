@@ -51,7 +51,7 @@ still answer.
 | `POST /api/kb/mcp/oauth/start`, `GET /api/kb/mcp/oauth/callback`, `POST /api/kb/mcp/oauth/disconnect` | The OAuth sign-in of an agents' MCP server (`auth: oauth`), for whoever may edit it: `start { id }` answers with the URL of the server's sign-in (discovery, client registration and PKCE done); the server sends the browser back to `callback?code&state`, which only the person who started may finish, keeps the grant (sealed with `TOKEN_KEY`), lists the tools and returns to the editor; `disconnect { id }` revokes the grant where the server can, and forgets it. The callback also finishes the global FluffyJaws server's sign-in (below). |
 | `POST /teams/bot` | The messaging endpoint of the opspile Teams bot. The bot is notification-only and opspile reads Teams through Graph, so it answers every activity with 200 and keeps nothing. |
 | `GET /api/kb/extraction?repo=`, `POST`/`DELETE /api/kb/extraction/rule`, `POST`/`DELETE /api/kb/extraction/tech`, `POST /api/kb/extraction/test` | A team's extraction rules and tech stack (src/extract.js), from its knowledge base (`?repo=`, or `{ repo, … }`): `GET` the team's and the admin team's, which apply to every channel (the members of the team, read-only: `may: false`); `rule { id?, name, kind, target, field, pattern, flags, value, transform, exclude, script, enabled }` adds a rule or changes rule `id`, `DELETE rule { id }`; `tech { tech, name, description, enabled }` adds or changes a technology, `DELETE tech { tech }`; `test { rule, text }` what a rule finds, unsaved too. For the admin team and the team's managers. |
-| `GET /api/kb/tools?repo=`, `PUT /api/kb/tools` | The agents' switchable tools (`post_message`, `computer`, `extraction_rules`, `any_thread`, `membership`) of a knowledge base's team or customer: whether this deployment can run each, the team's switch and the channels' switches; `PUT { tool, team, enabled }` for a team, `{ tool, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `any_thread` only for the admin team, per channel, in internal channels. The `computer` comes with the secrets of the team or customer (`secrets`: names and hosts, never values) and, for a team, its shell (`runtime`) and the image of its kernels (`image`, one of `images`), which `PUT { tool: "computer", team, runtime }` (`just-bash` or `slicc-kernel`) and `PUT { tool: "computer", team, image }` choose, for the admin team only. |
+| `GET /api/kb/tools?repo=`, `PUT /api/kb/tools` | The agents' switchable tools (`post_message`, `computer`, `extraction_rules`, `any_thread`, `membership`) of a knowledge base's team or customer: whether this deployment can run each, the team's switch and the channels' switches; `PUT { tool, team, enabled }` for a team, `{ tool, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `any_thread` only for the admin team, per channel, in internal channels. The `computer` comes with the secrets of the team or customer (`secrets`: names and hosts, never values) and, for a team, the image of its computers (`image`, one of `images`), which `PUT { tool: "computer", team, image }` chooses, for the admin team only. |
 | `POST`, `PUT`, `DELETE /api/kb/tools/secrets` | The secrets of the agents' computers, for whoever may edit the knowledge base: `POST { repo, name, value, hosts, description? }` adds one (`name` is the shell's variable, `ACME_API_KEY`; `hosts` the only hosts it is sent to, `api.example.com` or `*.example.com`), `PUT { id, … }` changes it (`value` absent: kept), `DELETE { id }` removes it. The value is sealed with `TOKEN_KEY` and never shown again. |
 | `PUT /api/kb/mcp/global`, `POST /api/kb/mcp/global/check` | A global MCP server (`browser`, `github`, `fluffyjaws`, `slack_channels`) on or off: `{ server, team, enabled }` for a team, `{ server, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers (`slack_channels` for the admin team only); `check { server }` connects to it and lists its tools again. |
 | `POST /api/kb/mcp/global/connect`, `POST /api/kb/mcp/global/disconnect` | FluffyJaws' sign-in, for the admin team, where it signs in as a person (`FLUFFYJAWS_CLIENT_ID`): `connect { server: 'fluffyjaws', repo }` answers with the URL of the sign-in at FluffyJaws' Okta (opspile's own client, PKCE; no client registration), which comes back to `/api/kb/mcp/oauth/callback`, keeps the grant (sealed with `TOKEN_KEY`), lists the tools and returns to `repo`; `disconnect { server }` revokes the grant at Okta and forgets it. Every agent where it is on then acts as that person, whom the list of servers shows to everyone. |
@@ -165,7 +165,7 @@ Nothing below is committed; set it on the Worker.
 | `MCP_ORIGINS` | var | Optional, comma-separated: browser origins besides `PUBLIC_ORIGIN` that may call `/mcp` (requests with any other `Origin` get 403) |
 | `KLICKHAUS_URL` | var | Optional: klickhaus' origin (or a path under it). With `KLICKHAUS_TEAMS`, the header has **Stats**, its `opspile.html` (the statistics of all threads) in a new tab, on the customer and team on screen |
 | `KLICKHAUS_TEAMS` | var | Optional, comma-separated ops team slugs whose members have klickhaus users: only they see Stats (admins too only as members of one), and `/api/me` gives them `stats: { url }` |
-| `LOADER` | Worker Loader | Dynamic Workers: the shells of the agents' computers (the `computer` tool: Cloudflare Computer's just-bash, or the processes of the SLICC kernel), and extraction rules that are scripts (without network access; without `LOADER` they do not run) |
+| `LOADER` | Worker Loader | Dynamic Workers: the processes of the agents' computers (the `computer` tool, on the SLICC kernel), and extraction rules that are scripts (without network access; without `LOADER` they do not run) |
 | `GRAPHVIZ` | Service binding | The renderer Worker (`helix-opspile-graphviz`, its `Graphviz` entrypoint; [graphviz/cloudflare.config.ts](graphviz/cloudflare.config.ts)): Graphviz on the server, which lays out every write of a diagram (`.dot`) to a knowledge base and draws them for the editor (`POST /api/diagram`). Bound where the Worker is deployed (`--mode prod`, `--mode stage`), after the renderer: `npm run deploy:graphviz:prod` first. Without it, diagrams are checked by src/dot.js alone and drawn in the page |
 | `ROOMS` | Durable Object | `TeamRoom`, one per ops team: live read state |
 | `AGENTS` | Durable Object | `ThreadAgent`, one per inbox entry with an agent (and per team and customer for seeded knowledge) |
@@ -457,13 +457,14 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   which cannot react: Teams lets no bot. A platform whose bot is not set up does not get the
   tool.
 - **`computer`**: pi's `bash` tool, on [Cloudflare Computer](https://github.com/cloudflare/computer):
-  a just-bash shell in a Dynamic Worker (the `LOADER` binding) over a working directory per
-  thread that keeps its files, with `jq` and `curl`. The shell reaches the internet without a
+  GNU bash and real programs on the [SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel),
+  their processes in Dynamic Workers (the `LOADER` binding), over a working directory per
+  thread that keeps its files. The shell reaches the internet without a
   filter, so what an agent read can leave through it; the prompt says not to send anything to
   sites that are not the customer's or Adobe's. **Secrets**, added in the Computer tool of a
   team's or a customer's knowledge base, are API keys the agents use without holding them: the
-  shell has `$NAME` as a placeholder, and the Worker's `SecretGateway`, which every request of
-  the shell goes through, puts the value in only in HTTPS requests to the hosts the secret lists
+  shell has `$NAME` as a placeholder, and the Worker's gateway, which every request of the
+  shell goes through, puts the value in only in HTTPS requests to the hosts the secret lists
   (and takes it out of the answer). A request that names one for another host is refused.
   With it the agent has **`request_bash`**: it asks a person on the team to run a command in
   that shell (a command, a reason, a timeout, a deadline, and the variables the person fills
@@ -471,21 +472,17 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   and **Deny**; the agent is told later how it ended. What the person fills in goes to that one
   run and is kept nowhere, and is taken out of what the agent reads of the output; the page can
   remember it on the device, encrypted.
-  **Shell**, in the same row of a team's knowledge base, is what runs the commands of that
-  team's agents, and only the admin team chooses it: **just-bash** (the default), or **SLICC
-  kernel (experimental)**, GNU bash and real programs on the
-  [SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel), over the same files. With the
-  kernel comes **Image**, the programs it has: **Base** (coreutils, grep, sed, gawk, jq, yq,
-  find, diff, tar, gzip, zip, xz, html2markdown, curl, dig, host, nslookup, openssl, git, and
-  `qjs`, a JavaScript interpreter), **Data** (Base, with ripgrep, sqlite3 and strings) or
-  **GitHub** (Base, with `gh`, the GitHub CLI; give the team a `GH_TOKEN` secret for
-  `api.github.com`).
+  **Image**, in the same row of a team's knowledge base, is the programs of that team's
+  agents' computers, and only the admin team chooses it: **Base** (the default: coreutils,
+  grep, ripgrep, sed, gawk, jq, yq, find, diff, tar, gzip, zip, xz, html2markdown, curl, dig,
+  host, nslookup, openssl, git, `qjs`, a JavaScript interpreter, and `dot`), **Data** (Base,
+  with sqlite3 and strings) or **GitHub** (Base, with `gh`, the GitHub CLI; give the team a
+  `GH_TOKEN` secret for `api.github.com`).
   An image is a stack of read-only layers, as a container image is, defined in
   [scripts/computer-images.mjs](scripts/computer-images.mjs). They live in the `IMAGES`
   bucket, not in the Worker, and a computer mounts its image at `/opt/image` without copying
-  it. curl and the secrets work there as in just-bash, and a program's own TCP reaches port
-  443 of a site, past the secrets, so `openssl s_client` shows the site's own certificate
-  chain: see docs/ARCHITECTURE.md, "The computer's shell".
+  it. A program's own TCP reaches port 443 of a site, past the secrets, so `openssl s_client`
+  shows the site's own certificate chain: see docs/ARCHITECTURE.md, "The computer's shell".
 - **`any_thread`**: the agent reads any thread of the inbox (`read_any_thread`), by its key or a
   link to one of its messages, finds a customer's channels by the customer's or a channel's name
   or the sites their threads are about (`find_channels`), and lists a channel's conversations
@@ -778,13 +775,13 @@ thinking shows in her inbox).
 
 `npm run computer:dev` runs an agent's computer by itself in local workerd
 ([scripts/dev-computer/worker.mjs](scripts/dev-computer/worker.mjs)): the real `ThreadAgent` with
-its Workspace and both shells, without a model, an inbox or D1 (so without secrets), and with
-the images in a local bucket. No Cloudflare login is needed. `runtime` chooses the shell and
-`image` the kernel's image, as a team's choice does, and they stay until the next change:
+its Workspace and its kernel, without a model, an inbox or D1 (so without secrets), and with
+the images in a local bucket. No Cloudflare login is needed. `image` chooses the image, as a
+team's choice does, and it stays until the next change:
 
 ```sh
 npm run computer:dev    # http://localhost:8788
-curl localhost:8788 -d '{"command":"uname -a; ls -la","runtime":"slicc-kernel"}'
+curl localhost:8788 -d '{"command":"uname -a; ls -la"}'
 curl localhost:8788 -d '{"command":"sqlite3 --version","image":"data"}'
 curl localhost:8788 -d '{"command":"sleep 9","timeout":2}'
 curl localhost:8788/uploads -d '{"a.log":"line 1\nERROR boom\n"}'   # the thread's uploads
@@ -795,7 +792,7 @@ curl 'localhost:8788?thread=other' -d '{"command":"ls"}'              # another 
 Use it for a new version of `@ai-ecoverse/slicc-kernel`, or for a new image, layer or program
 (`scripts/computer-images.mjs`): Node's tests cannot run the kernel. `npm run computer:check`
 ([scripts/dev-computer/check.mjs](scripts/dev-computer/check.mjs)) starts it on a free port and
-checks what they cannot: every program of every image, and that both shells refuse every change
+checks what they cannot: every program of every image, and that the shell refuses every change
 to the uploads with an exit code and an error, and read them. Add a check for a program you
 add. `npm run computer:check -- http://localhost:8788` checks a computer that is running
 already. `cf dev` runs the whole Worker with its own local bucket, which

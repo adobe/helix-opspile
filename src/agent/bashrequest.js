@@ -249,13 +249,11 @@ async function execute(agent, request, values) {
     }
     const seconds = (Date.now() - started) / 1000;
     return {
-      // 124 is just-bash's answer to a run it stopped at `timeoutMs` (the kernel's is the
-      // signal that ended bash: `timedOut`), and it says so no other way. A command can exit
-      // with 124 by itself (`timeout` in it does), having run to its end: the shell stopped it
-      // only if its time was up. `started` is from before the shell's own clock ran, so a run
-      // the shell stopped never looks shorter than it was.
-      status: timedOut(agent.runtime, result.exitCode, seconds, request.timeout)
-        && seconds >= request.timeout ? 'timeout' : 'done',
+      // The shell stopped a run at `timeoutMs` with the signal that ended bash (`timedOut`),
+      // and says so no other way; a command can end with that code by itself, having run to
+      // its end, so its time must have been up too. `started` is from before the shell's own
+      // clock ran, so a run the shell stopped never looks shorter than it was.
+      status: timedOut(result.exitCode, seconds, request.timeout) ? 'timeout' : 'done',
       exitCode: result.exitCode,
       ...streams,
       notes,

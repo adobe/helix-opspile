@@ -246,16 +246,17 @@ thread asks again.
 **Agent uploads.** empty → mounted → expired (`uploads`, `uploads-expiry`). The schedule is armed
 before the list is stored, so a failure tries again.
 
-**Computer shell.** just-bash ⇄ slicc-kernel, and with the kernel one image or another
-(`agent_tool_options`, the team's `runtime` and `image`; `runtime` and `image` in the agent's
-storage, the ones its Workspace was made for; `src/agent/kernel.js`). A team without a row, or
-with a value this deployment does not know (written by a later one, read after a rollback), has
-just-bash, and `base`. The agent compares them before each delivery (`syncTools`), as it does its
-tools: a change ends the kernel if one runs, drops the Workspace, and is stored before the next
-command makes a new one, over the same files. An image the bucket does not have is still the
-team's choice: the kernel does not boot, the command fails saying why, and nothing falls back. A command still running in the old shell is ended. The
-kernel's own root stays in the agent's SQLite when the team goes back (`slicc_*`, the image and
-`/tmp`): nothing reads it until the team chooses the kernel again.
+**Computer image.** one image ⇄ another (`agent_tool_options`, the team's `image`; `image` in
+the agent's storage, the one its Workspace was made for; `src/agent/kernel.js`). A team without
+a row, or with a value no image can have, has `base`. The agent compares them before each
+delivery (`syncTools`), as it does its tools: a change ends the kernel if one runs, drops the
+Workspace, and is stored before the next command makes a new one, over the same files. A command
+still running in the old kernel is ended. An image the bucket does not have is still the team's
+choice: the kernel does not boot, the command fails saying why, and nothing falls back. The
+kernel's own root stays in the agent's SQLite from one image to the next (`slicc_*`: `/root`,
+`/etc`, `/tmp`). The shell itself was a choice too, just-bash ⇄ slicc-kernel (`runtime`), until
+just-bash was removed: migration 0076 deleted the teams' rows, and an agent's stored `runtime` is
+read by nothing.
 
 **Kernel image.** Not a state of the agent: a kernel mounts its team's image from the bucket at
 every boot, read-only, and keeps nothing of it (`src/agent/image.js`). What has an order is the

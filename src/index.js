@@ -426,9 +426,5 @@ export default {
 export { TeamRoom } from './room.js';
 export { ThreadAgent } from './agent/agent.js';
 export { DiscordPoller } from './poller.js';
-// The way back from an agent's shell (a Dynamic Worker) to its files (src/agent/computer.js).
-export { WorkspaceServiceProxy } from '@cloudflare/computer';
-// Where the shells of the agents' computers reach the network, with their secrets.
-export { SecretGateway } from './agent/gateway.js';
 // Where the customer portal's events arrive (src/portalsource.js).
 export { PortalSource } from './portalentry.js';
