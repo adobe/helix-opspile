@@ -15,6 +15,7 @@ import {
 } from './deliver.js';
 import { mentionedOutside } from './members.js';
 import { modelProblem } from './model.js';
+import { rearmIdle } from './wakeups.js';
 
 /**
  * How a thread agent is told about messages. `agent` is the ThreadAgent (its `env`, `ctx`,
@@ -65,8 +66,12 @@ export async function verdictsOf(agent, messages) {
   return out;
 }
 
-/** Wakes the agent a day after message `mark`, unless another one comes first. */
+/**
+ * Wakes the agent a day after message `mark`, unless another one comes first; and counts the
+ * wake-ups it set with wakeup_after_idle from `mark` again (src/agent/wakeups.js).
+ */
 export async function armIdle(agent, mark) {
+  await rearmIdle(agent, mark);
   const previous = await agent.ctx.storage.get('idle');
   if (previous) {
     await agent.cancelSchedule(previous).catch(() => false);

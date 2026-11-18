@@ -1671,8 +1671,13 @@ a root folded into a group pokes the group's agent, not one of its own); it read
 messages after its watermark from pile 2 and gets them as one input, the whole thread on first contact. A new message
 during a run joins that run. A day after the latest message, its own posts included, a schedule
 wakes it once more to wrap up: file what was learned, or put a follow-up in the draft. It is also
-told, as an input of their own, that a person discarded its draft, and how a command it asked a
-person to run ended (see "Agent tools").
+told, as an input of their own, that a person discarded its draft, how a command it asked a
+person to run ended (see "Agent tools"), and the message of a wake-up it set itself: with
+`wakeup_after` at a time, whatever is posted meanwhile; with `wakeup_after_idle` once nothing has
+been posted for a while, counted from when it set it and again from every later message, its own
+too (`src/agent/wakeups.js`). Each wakes it once, at least a minute and at most 7 days ahead, and
+five wait at a time at most; the prompt asks for one whenever it says it will come back to
+something.
 
 **In the inbox.** The open thread shows the agent's **latest turn** under its last message,
 on the Adobe side, as "Opspile Agent" with opspile's icon: while it works, a spinner and what
@@ -1785,6 +1790,7 @@ written by people outside its control.
 | `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
+| `wakeup_after`, `wakeup_after_idle` | a thread's agent only: wakes it up once with a message it writes to itself, at a time (a duration or an ISO time) or once the thread has been quiet for a while (see "When it runs") |
 | `draw_stack` | the customer's stack drawing, `stack.md` of kb-org (see "Stack drawing"), whole: a summary, parts by layer and the flows between them. One that exists is drawn again only from its `base` |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
 

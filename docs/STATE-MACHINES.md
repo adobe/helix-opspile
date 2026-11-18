@@ -196,6 +196,13 @@ comes back, or after a minute.
 `idle` in storage, `src/agent/delivery.js`). The schedule is armed before the mark moves, because a
 retry finds nothing unseen afterwards. Deliveries run one at a time.
 
+**Agent wake-up.** set → due → told, or dropped (`wakeups` in the agent's storage,
+`src/agent/wakeups.js`). One the agent set with `wakeup_after` is due at its time; one set with
+`wakeup_after_idle` is armed again from every later message, by `armIdle` when the wrap-up is,
+before the mark moves, and a schedule whose `mark` is not the wake-up's is stale and does nothing.
+Due, it leaves the list before the agent is told, so it wakes it once; an agent turned off since
+drops it unsaid. At most five wait.
+
 **Agent turn.** working → done or failed. Worked out from the transcript (`src/agent/turn.js`). A turn
 that stopped half way with no run pending counts as failed after 15 minutes. A finished one is kept
 in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thread`: written a moment
