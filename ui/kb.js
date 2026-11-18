@@ -1734,12 +1734,14 @@ function bindFinds() {
     el.oninput = () => {
       state.perFilter[el.dataset.findFor] = el.value;
       const q = el.value.trim().toLowerCase();
+      // The input is in its label (s2-search): the rows are the list's, around it.
+      const per = el.closest('.per');
       let shown = 0;
-      for (const row of el.parentElement.querySelectorAll('.row2[data-find]')) {
+      for (const row of per.querySelectorAll('.row2[data-find]')) {
         row.hidden = Boolean(q) && !row.dataset.find.includes(q);
         if (!row.hidden) shown += 1;
       }
-      el.parentElement.querySelector('.none').hidden = shown > 0;
+      per.querySelector('.none').hidden = shown > 0;
     };
   }
 }
