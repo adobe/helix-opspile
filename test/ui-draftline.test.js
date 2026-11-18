@@ -15,8 +15,9 @@
  * same with a mouse and on touch, and a mouse resting on the line opens it too, after a delay.
  * Taking the draft into the reply box is a button of its own; the reply box never shows the draft
  * for the pointer (that changed the layout under it, which left the line, hid the draft and came
- * back, over and over). Open or closed, the draft is rendered as the message will be, and text
- * selected in it stays: the pointer leaving does not close the line on it.
+ * back, over and over); a double click on its text does, as Edit does. Open or closed, the draft
+ * is rendered as the message will be, and text selected in it stays: the pointer leaving does not
+ * close the line on it. With a part of it selected, Edit and the sends take that part.
  */
 
 import assert from 'node:assert/strict';
@@ -108,10 +109,19 @@ describe('draft line', () => {
     assert.match(draftLine(draft, { editable: true, own: true }), /data-draft="edit" aria-label="Add to reply"/);
   });
 
-  it('takes the draft in with a button of its own, never by clicking its text', () => {
+  it('takes the draft in with a button of its own, or a double click, never a click on its text', () => {
     const html = draftLine(draft, { editable: true, asMe: true });
     assert.doesNotMatch(html.match(/<div class="pv"[^>]*>/)[0], /data-draft|title=/);
     assert.equal(html.match(/data-draft="edit"/g).length, 1);
+  });
+
+  it('says what Edit and the sends do with a part of the draft selected', () => {
+    const html = draftLine(draft, { editable: true, asMe: true, asBot: true });
+    const parts = [...html.matchAll(/data-draft="(\w+)"[^>]*data-part="([^"]+)" data-part-title="([^"]+)"/g)];
+    assert.deepEqual(parts.map((m) => [m[1], m[2]]), [['edit', 'Edit selection'], ['bot', 'Send selection as bot'], ['me', 'Send selection as me']]);
+    assert.ok(parts.slice(1).every((m) => /the draft stays/.test(m[3])));
+    assert.match(draftLine(draft, { editable: true, own: true }), /data-part="Add selection to reply"/);
+    assert.doesNotMatch(html.match(/data-draft="view"[^>]*>/)[0], /data-part/);
   });
 
   it('listens to clicks, keys and the pointer resting on it, not to the focus moving', () => {
@@ -120,7 +130,72 @@ describe('draft line', () => {
     });
     const types = [];
     wireDraftBar({ addEventListener: (type) => types.push(type) });
-    assert.deepEqual(types.sort(), ['click', 'keydown', 'pointerenter', 'pointerleave']);
+    assert.deepEqual(types.sort(), ['click', 'dblclick', 'keydown', 'pointerenter', 'pointerleave']);
+  });
+
+  it('edits all of the draft on a double click on its text, where Edit is offered', () => {
+    const on = {};
+    let edit = true;
+    const el = {
+      __key: 'k',
+      querySelector: (q) => (q === '[data-draft="edit"]:not(:disabled)' && edit ? {} : null),
+      addEventListener: (t, f) => { on[t] = f; },
+    };
+    const adopted = [];
+    let cleared = 0;
+    const { wireDraftBar } = piece('function wireDraftBar', '/** Takes the draft into', 'wireDraftBar', {
+      wireSources: () => {},
+      adoptDraft: (k) => adopted.push(k),
+      getSelection: () => ({
+        removeAllRanges: () => {
+          cleared += 1;
+        },
+      }),
+    });
+    wireDraftBar(el);
+    const at = (inside) => ({ target: { closest: (q) => (q === '.pv' ? inside.pv : inside.link) } });
+    on.dblclick(at({ pv: {} }));
+    assert.deepEqual(adopted, ['k']);
+    assert.equal(cleared, 1);
+    on.dblclick(at({ pv: {}, link: {} }));
+    on.dblclick(at({}));
+    edit = false;
+    on.dblclick(at({ pv: {} }));
+    assert.deepEqual(adopted, ['k']);
+  });
+
+  it('takes the part of the draft selected into the box or the thread, and all of it without one', () => {
+    const on = {};
+    const el = {
+      __key: 'k',
+      querySelector: () => null,
+      addEventListener: (t, f) => {
+        on[t] = f;
+      },
+    };
+    const calls = [];
+    let part = null;
+    const { wireDraftBar } = piece('function wireDraftBar', '/** Takes the draft into', 'wireDraftBar', {
+      wireSources: () => {},
+      lineDraft: () => draft,
+      draftPart: () => part,
+      adoptDraft: (k) => calls.push(['all', k]),
+      adoptPart: (k, p) => calls.push(['part', k, p.body]),
+      sendDraft: (k, bot, p) => calls.push(['send', k, bot, p?.body ?? null]),
+      discardDraft: (k) => calls.push(['discard', k]),
+    });
+    wireDraftBar(el);
+    const button = (act) => ({ dataset: { draft: act }, disabled: false });
+    const click = (act) => on.click({ target: { closest: () => button(act) } });
+    click('edit');
+    click('me');
+    part = { body: 'we', mentions: [] };
+    click('edit');
+    click('bot');
+    click('discard');
+    assert.deepEqual(calls, [
+      ['all', 'k'], ['send', 'k', false, null], ['part', 'k', 'we'], ['send', 'k', true, 'we'], ['discard', 'k'],
+    ]);
   });
 
   it('opens on a resting pointer only after a delay, and closes as it leaves', () => {
@@ -226,5 +301,54 @@ describe('draft line', () => {
     const sel = css.match(/\.spectrum \.draftbar ::selection \{ background: ([^;]+);/)?.[1];
     assert.equal(page, card);
     assert.ok(sel && sel !== card, 'the draft line needs a ::selection of its own');
+  });
+
+  it('sends a part of the draft as a reply of its own: the draft stays', async () => {
+    const d = { ...draft, mentions: [{ id: 'u1', name: 'Sam Reyes' }] };
+    const sent = [];
+    const { sendDraft } = piece('async function sendDraft', '/**\n * Where the selection', 'sendDraft', {
+      state: { cache: new Map([['k', { data: { draft: d, thread: { source: 'slack' } } }]]) },
+      $: () => null,
+      getSelection: () => ({ removeAllRanges: () => {} }),
+      sendAsApp: async (k, text, base, { mentions }) => {
+        sent.push(['bot', text, base, mentions]);
+        return {};
+      },
+      send: async (k, thread, out) => { sent.push(['me', out.body, out.updated_at, out.mentions]); },
+      toast: () => {},
+      renderDraftBar: () => {},
+    });
+    const part = { body: 'Thanks @Sam Reyes', mentions: d.mentions };
+    await sendDraft('k', true, part);
+    await sendDraft('k', false, part);
+    await sendDraft('k', false);
+    assert.deepEqual(sent, [
+      ['bot', 'Thanks @Sam Reyes', null, d.mentions],
+      ['me', 'Thanks @Sam Reyes', null, d.mentions],
+      ['me', d.body, d.updated_at, d.mentions],
+    ]);
+  });
+
+  it('labels its buttons for the part selected, and back for all of it', () => {
+    const span = { textContent: 'Send as me' };
+    const attrs = { 'aria-label': null };
+    const b = {
+      dataset: { part: 'Send selection as me', partTitle: 'Post the part' },
+      title: 'Post the draft',
+      getAttribute: (n) => attrs[n],
+      setAttribute: (n, v) => { attrs[n] = v; },
+      querySelector: () => span,
+    };
+    const classes = new Set();
+    const el = {
+      classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) },
+      querySelectorAll: () => [b],
+    };
+    const { markPart } = piece('function markPart', 'document.addEventListener', 'markPart');
+    markPart(el, true);
+    assert.deepEqual([span.textContent, b.title, classes.has('part')], ['Send selection as me', 'Post the part', true]);
+    markPart(el, true);
+    markPart(el, false);
+    assert.deepEqual([span.textContent, b.title, classes.has('part')], ['Send as me', 'Post the draft', false]);
   });
 });

@@ -157,7 +157,9 @@ shows on the message at once. It goes once the thread's reactions agree after th
 when the platform refused it, or after a minute. A second click on the same emoji replaces it.
 
 **Reply box.** empty, own text, holds the draft, diverged (`boxState` in `ui/inbox.js`, from
-`{ text, from, base }`). Only a box that holds the draft unchanged follows it.
+`{ text, from, base }`). Only a box that holds the draft unchanged follows it. A part of the
+draft taken in (Edit selection, Add selection to reply) is own text: it names no version, and a
+reply with it, like a part sent from the line, does not use the draft up.
 
 **Draft line.** closed → open → closed (`draftOpen`, `ui/inbox.js`): **View draft**, a click, shows
 all of the draft on its line, rendered; a mouse resting on the line for `HOVER_DELAY_MS` opens it
