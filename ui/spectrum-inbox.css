@@ -1171,7 +1171,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .pcard .nm { font-size: var(--spectrum-font-size-100); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pcard .ttl { color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pcard .chips { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); flex-wrap: wrap; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
-.pcard .rel { font-size: var(--spectrum-font-size-50); font-weight: 650; padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); border-radius: var(--spectrum-corner-radius-600); color: var(--spectrum-white); }
+.pcard .rel { font-size: var(--spectrum-font-size-50); font-weight: 650; padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); border: var(--spectrum-border-width-100) solid transparent; border-radius: var(--spectrum-corner-radius-600); color: var(--spectrum-white); }
 .pcard .rel.adobe { background: var(--me); } .pcard .rel.partner { background: var(--spectrum-purple-background-color-default); }
 .pcard .rel.customer { background: var(--spectrum-orange-background-color-default); } .pcard .rel.bot { background: var(--faint); }
 .pcard dl { display: grid; grid-template-columns: auto 1fr; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); margin: 0; }
@@ -2199,13 +2199,15 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .ph.newthread .cancel { font-size: var(--spectrum-font-size-75); }
 
 /* Profile cards: a Popover with a large Avatar, the relation a bold Badge in its category's
-   S2 color. */
+   S2 color. The Badge has the box of the Tag beside it (its padding, and a border, transparent),
+   so the two are as tall and their text on one line. */
 .spectrum .pcard { font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
 .spectrum .pcard .nm { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .pcard .ttl, .spectrum .pcard .note { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .pcard dt { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .pcard .rel {
-  padding: 0 var(--spectrum-spacing-100);
+  padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100));
+  border: var(--spectrum-border-width-100) solid transparent;
   border-radius: var(--spectrum-corner-radius-100);
   font-size: var(--spectrum-font-size-50);
   font-weight: var(--spectrum-bold-font-weight);
