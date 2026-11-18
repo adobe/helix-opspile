@@ -14,6 +14,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { admin } from '../src/admin.js';
 import { BROWSER_MCP_URL, GITHUB_MCP_URL } from '../src/agent/globals.js';
 import { FLUFFYJAWS_MCP_URL } from '../src/agent/fluffyjaws.js';
+import { SLACK_MCP_URL } from '../src/agent/slackmcp.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
@@ -211,6 +212,22 @@ const FLUFFY_MCP = fakeMcpServers([{
     ['dynamics_ticket_search', 'Search support tickets', true],
     ['content_compass_recommend', 'Recommend content, and save the conversation', false],
   ], 'query'),
+}]);
+// The slack-automation relay's SlackMcp entrypoint, made up: a service binding in the preview
+// too (SLACK_MCP). Only the admin team switches it; a team manager sees its switches disabled.
+const SLACK_MCP = fakeMcpServers([{
+  url: SLACK_MCP_URL,
+  name: 'slack-automation-relay',
+  tools: tools([
+    ['channel_profile', 'Who is in a channel and how: members, guests, Slack Connect organisations', true],
+    ['person_status', 'One person by email or Slack user id: their account here', true],
+    ['invite_guest', 'Sends a guest invitation by email to one channel', false],
+    ['add_to_channel', 'Adds a member or guest of this workspace to a channel', false],
+    ['remove_from_channel', 'Removes a person from a public channel', false],
+    ['invite_slack_connect', 'Sends a Slack Connect invitation by email to a public channel', false],
+    ['disconnect_org', 'Disconnects a Slack Connect organisation from a channel', false],
+    ['archive_channel', 'Archives a channel. Never #general', false],
+  ], 'channel'),
 }]);
 /** FluffyJaws' Okta, made up: any code, one token; revoking does nothing. */
 async function fluffyOkta(request) {
@@ -656,6 +673,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     PUBLIC_ORIGIN: PREVIEW_ORIGIN,
     // The global browser server's API token, made up.
     BROWSER_RUN_TOKEN: PREVIEW_TOKEN,
+    // The relay's channel-management MCP server, as a service binding.
+    SLACK_MCP: { fetch: (request) => SLACK_MCP.fetch(request) },
     // FluffyJaws' Okta and opspile's client there, made up.
     FLUFFYJAWS_ISSUER: FLUFFY_OKTA,
     FLUFFYJAWS_CLIENT_ID: 'made-up-okta-client',
@@ -803,7 +822,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     secretsUrl,
     admins,
   )), Promise.resolve()))
-    .then(() => Promise.all(['browser', 'github', 'fluffyjaws'].map((server) => kbAdmin(
+    .then(() => Promise.all(['browser', 'github', 'fluffyjaws', 'slack_channels'].map((server) => kbAdmin(
       toRequest({ method: 'POST' }, checkUrl, { server }),
       env,
       checkUrl,

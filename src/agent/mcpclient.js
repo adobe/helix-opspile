@@ -35,9 +35,12 @@ export const CALL_TIMEOUT_MS = 120_000;
 
 /**
  * The servers of a team and an org on in channel `channelId` (its own switch, else the server's),
- * team first, then the global servers on for the team or the channel; without their headers.
+ * team first, then the global servers on for the team or the channel (and for its platform,
+ * `source`); without their headers.
  */
-export async function serversFor(env, { team, org, channelId }) {
+export async function serversFor(env, {
+  team, org, channelId, source,
+}) {
   const { results } = await env.DB.prepare(`SELECT s.id, s.scope, s.slug, s.name, s.url,
       s.description, s.allow, s.updated_at FROM mcp_servers s
       LEFT JOIN mcp_server_switches w ON w.server_id = s.id AND w.channel = ?
@@ -45,7 +48,7 @@ export async function serversFor(env, { team, org, channelId }) {
       AND ((s.scope = 'team' AND s.slug = ?) OR (s.scope = 'org' AND s.slug = ?))
     ORDER BY CASE s.scope WHEN 'team' THEN 0 ELSE 1 END, s.name`)
     .bind(channelId || '', team || '', org || '').all();
-  return [...(results || []), ...await globalServersFor(env, { team, channelId })];
+  return [...(results || []), ...await globalServersFor(env, { team, channelId, source })];
 }
 
 /**
@@ -108,13 +111,17 @@ function noStream(fetchFn) {
   };
 }
 
-/** A connected client for `{ url, headers, authProvider? }`. */
+/**
+ * A connected client for `{ url, headers, authProvider?, fetch? }`. A server's own `fetch` wins
+ * over the one given: only a global server's connection has one (src/agent/globals.js), to reach
+ * it through a service binding; a row of `mcp_servers` never does.
+ */
 export async function connect(server, { fetch: fetchFn = globalThis.fetch } = {}) {
   const client = new Client(CLIENT_INFO, {
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
   });
   const transport = new StreamableHTTPClientTransport(new URL(server.url), {
-    fetch: noStream(fetchFn),
+    fetch: noStream(server.fetch || fetchFn),
     requestInit: { headers: server.headers || {} },
     ...(server.authProvider ? { authProvider: server.authProvider } : {}),
   });

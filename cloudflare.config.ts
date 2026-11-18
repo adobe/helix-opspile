@@ -111,13 +111,16 @@ const FLUFFYJAWS_VARS = [
   'FLUFFYJAWS_ISSUER', 'FLUFFYJAWS_CLIENT_ID', 'FLUFFYJAWS_SERVICE_CLIENT_ID',
 ] as const;
 
+// The membership bindings, and SLACK_MCP: the `SlackMcp` entrypoint of the slack-automation
+// relay (SLACK_AUTOMATION_WORKER), the global slack_channels MCP server (src/agent/slackmcp.js),
+// off for every team and channel until the admin team turns it on.
 function membershipBindings() {
-  const bound = (binding: string, worker: string | undefined) => (worker
-    ? { [binding]: bindings.worker({ worker, exportName: 'MembershipRequests' }) }
-    : {});
+  const bound = (binding: string, worker: string | undefined, exportName = 'MembershipRequests') => (
+    worker ? { [binding]: bindings.worker({ worker, exportName }) } : {});
   return {
     ...bound('TEAMS_ADMIN', process.env.TEAMS_ADMIN_WORKER),
     ...bound('SLACK_AUTOMATION', process.env.SLACK_AUTOMATION_WORKER),
+    ...bound('SLACK_MCP', process.env.SLACK_AUTOMATION_WORKER, 'SlackMcp'),
   };
 }
 

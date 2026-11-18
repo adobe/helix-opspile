@@ -11,9 +11,8 @@
  */
 
 import {
-  GLOBAL_SERVERS, globalConnection, instancesOf, isGlobalServer, setGlobalSwitch, storedTools,
-  storeTools,
-  usableTools,
+  GLOBAL_SERVERS, globalConnection, globalServer, instancesOf, isGlobalServer, setGlobalSwitch,
+  storedTools, storeTools, usableTools,
 } from './agent/globals.js';
 import { probe, serverWithHeaders } from './agent/mcpclient.js';
 import {
@@ -61,8 +60,9 @@ import { isAdmin, managesTeam } from './review.js';
  * The global servers (src/agent/globals.js) come with the list, as `globals`: whether each is
  * available, what its last check found, and its switches for this knowledge base's team and
  * channels. `PUT /global { server, team | channel, enabled }` switches one (`enabled: null`
- * hands a channel back to its team's switch), for the admin team and the team's managers;
- * `POST /global/check { server }` connects and lists its tools again.
+ * hands a channel back to its team's switch), for the admin team and the team's managers (one
+ * marked `admins`, `may: false` for them, for the admin team only); `POST /global/check
+ * { server }` connects and lists its tools again.
  *
  * FluffyJaws, for the admin team, when it signs in as a person (src/agent/fluffyjaws.js):
  * `POST /global/connect { server: 'fluffyjaws', repo }` answers with the URL of Okta's sign-in,
@@ -371,6 +371,10 @@ async function globalsView(env, me, owner, only) {
       server: g.server,
       title: g.title,
       description: g.description,
+      // Switched by the admin team only; listed for agents on these platforms only.
+      admins: Boolean(g.admins),
+      may: !g.admins || admin,
+      platforms: g.platforms || null,
       available: instances.length > 0,
       problem,
       instances: instances.map((i, n) => ({
@@ -421,12 +425,16 @@ export async function channelOwner(env, channel) {
 /**
  * PUT /api/kb/mcp/global `{ server, team | channel, enabled }`: turns a global server on or off
  * for a team, or for a channel (`enabled: null` lets the channel follow its team again). For
- * the admin team and the managers of the team (of the team that owns the channel).
+ * the admin team and the managers of the team (of the team that owns the channel); one marked
+ * `admins` (slack_channels) for the admin team only.
  */
 async function switchGlobal(env, me, body) {
   const server = String(body.server || '');
   if (!isGlobalServer(server)) {
     return bad('no such global server');
+  }
+  if (globalServer(server).admins && !isAdmin(me)) {
+    return json({ error: 'only the admin team switches this server' }, 403);
   }
   const { enabled } = body;
   if (enabled !== null && typeof enabled !== 'boolean') {

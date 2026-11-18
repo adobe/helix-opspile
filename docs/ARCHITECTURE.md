@@ -1851,15 +1851,21 @@ refresh tokens that expire unused (opspile's own after 30 days) stay alive. opsp
 ### Global MCP servers
 
 Some servers are not a team's or a customer's but opspile's own, built in
-(`src/agent/globals.js`) and set up once: **`browser`**, **`github`** and **`fluffyjaws`**. A
-new team starts with the first two on; otherwise they are off until the admin team or a team's managers turn one on, for an ops team or for a single channel
+(`src/agent/globals.js`) and set up once: **`browser`**, **`github`**, **`fluffyjaws`** and
+**`slack_channels`**. A
+new team starts with the first two on; otherwise they are off until the admin team or a team's managers turn one on (one marked `admins`, `slack_channels`, the admin team only), for an ops team or for a single channel
 (`mcp_global_switches`; a channel's switch wins over its team's, and a channel without one
 follows its team). An agent gets those on for its thread's team or channel, next to the team's
-and the customer's, as `mcp__browser`, `mcp__github`, `mcp__fluffyjaws`; its id there is `global:<key>`. Their
+and the customer's, as `mcp__browser`, `mcp__github`, `mcp__fluffyjaws`, `mcp__slack_channels`
+(a server with `platforms` only in threads on one of them); its id there is `global:<key>`. Their
 tools are those the last check found (`mcp_global_tools`), so an agent does not ask a
 server or mint a token just to list them; the editor's **Check** and the cron, once a day,
 ask again. The prompt says that these are opspile's own, and that customer data does not go
-into websites or URLs that are not the customer's or Adobe's.
+into websites or URLs that are not the customer's or Adobe's; a server with a `guide` adds its
+own rules there (the `mcp-servers` section), next to the instructions `describeNamespace` shows.
+Only these definitions can give a connection its own `fetch`, which is how one reaches a service
+binding (`connect()` in `src/agent/mcpclient.js`): a team's or a customer's server is a row of
+`mcp_servers`, and its requests go to its URL on the internet, whatever it says.
 
 **`browser`: Cloudflare Browser Run.** Cloudflare's own hosted
 [Browser Run MCP server](https://github.com/cloudflare/mcp-server-cloudflare/tree/main/apps/browser-rendering)
@@ -1926,6 +1932,26 @@ the service app winning where both are set up:
 The agents are told that FluffyJaws is Adobe's own, so searching it for the customer's errors,
 tickets and products is what it is for, and that what it returns is about every customer: never
 another customer's name or data in the thread.
+
+**`slack_channels`: Slack channel management, through a service binding.** The slack-automation
+relay (AEM Ops Automation, the Worker `request_membership` posts to on Slack) serves MCP on a
+named entrypoint, `SlackMcp`, that has no public URL: opspile binds it as `SLACK_MCP` (with
+`SLACK_AUTOMATION_WORKER`, the same Worker), and the connection's `fetch` hands each request to
+the binding (`src/agent/slackmcp.js`), with `x-mcp-via: opspile`, which names opspile in the
+relay's reports. No credential: being bound is the permission. The relay is stateless Streamable
+HTTP (every POST answered with JSON, no session, a GET 405, as `noStream` expects; it ignores the
+URL). `channel_profile` and `person_status` read; `invite_guest`, `add_to_channel`,
+`remove_from_channel`, `invite_slack_connect`, `disconnect_org` and `archive_channel` act at
+once, with no confirmation in opspile or at the relay, which posts every write to the Slack
+admins with its `asked_by` and `reason` and keeps its own guards: the invite rules (a decline
+stands unless `ignore_rules`), no disconnection while a leaving person has no guest account
+(unless `force`), never #general. What keeps agents from it is the switch: off for new teams,
+switched by the admin team only (the editor's switches are disabled for the team's managers,
+and the API refuses them), and listed only for agents whose thread is on Slack. Its guide in the
+prompt names the thread's Slack channel id, says to change things only for what a person in the
+thread asked for, the destructive ones and the overrides only when Adobe staff ask, and to pass
+`asked_by` (the Slack user id of the person who asked, which `person_status` gives for the
+address `find_member` shows, else their name) and `reason` on every write.
 
 Writes clone the knowledge base into memory (isomorphic-git), apply the change, rewrite the
 indexes and the log, commit and push with a short-lived write token. Many agents write the
