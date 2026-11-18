@@ -94,11 +94,14 @@ describe('experiments', () => {
 
   it('tags a pinned thread\'s model use by its pin, whenever it is', () => {
     const after = Date.parse(MODEL.until) + 86400000;
-    assert.equal(armTags('t', MODEL_DURING, ENV, { model: 'sonnet' }), '#model=sonnet');
-    assert.equal(armTags('t', after, ENV, { model: 'sonnet' }), '#model=sonnet');
-    assert.equal(armTags('t', MODEL_DURING, ENV, { model: null }), '');
-    assert.equal(armTags('t', MODEL_DURING, ENV), '');
-    assert.equal(armTags('t', MODEL_DURING, { AGENT_MODEL: 'us.anthropic.claude-haiku-5-5' }, { model: 'sonnet' }), '');
+    // The model experiment's tags only: the compaction experiment runs beside it.
+    const modelTags = (...args) => tagsOf(armTags(...args)).filter((t) => t.experiment === 'model')
+      .map((t) => `#${t.experiment}=${t.arm}`).join('');
+    assert.equal(modelTags('t', MODEL_DURING, ENV, { model: 'sonnet' }), '#model=sonnet');
+    assert.equal(modelTags('t', after, ENV, { model: 'sonnet' }), '#model=sonnet');
+    assert.equal(modelTags('t', MODEL_DURING, ENV, { model: null }), '');
+    assert.equal(modelTags('t', MODEL_DURING, ENV), '');
+    assert.equal(modelTags('t', MODEL_DURING, { AGENT_MODEL: 'us.anthropic.claude-haiku-5-5' }, { model: 'sonnet' }), '');
   });
 
   it('asks for the retention the agent is in at each request, but none where none was asked', () => {

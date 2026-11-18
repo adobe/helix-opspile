@@ -214,7 +214,9 @@ in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thre
 after the answer, or by `status()` when it differs from the last one kept (in the agent's storage,
 `kept-turn`). An older turn never replaces a newer one; no turn (a reset) deletes the row. A turn in
 progress is never kept there. A turn that answers a sidebar message is kept as its answer instead
-(`sidebar_messages`, below), and the row stays the turn before it.
+(`sidebar_messages`, below), and the row stays the turn before it. A compaction that summarized the latest
+turn's input leaves no turn in the transcript: that is not a reset, and the kept turn stays
+(`cut` from `latestTurn`, `keepTurn` in `src/agent/agent.js`).
 
 **Agent live turn.** absent → kept, then replaced by every newer reading (`agent_live`, one row per
 entry, `keepLive` in `src/agent/kept.js`): the latest turn as `latestTurn` reads it, in any state,
@@ -350,6 +352,15 @@ delivered or metered (`mark`, `cogs:usage`) inside the window gets its thread's 
 none. Kept in storage first, then written to D1 (`agent_arms`), then marked `recorded`: a failed
 write is tried again at the next open, and the pin is never decided twice, so a thread never
 changes model. A draft counts for the arm of its thread's pin.
+
+**Idle compaction.** none → armed → compacted, or skipped (`compact-idle` in the agent's storage,
+`src/agent/idlecompact.js`; the compaction experiment's `idle` arm only). Every turn that ends
+cancels the wait and arms a new one 65 minutes out, the schedule's payload naming the token kept
+with it, so an older schedule finds another token and does nothing. Due, the key is deleted before
+anything else, so it compacts at most once per idle stretch; then it skips an agent out of the arm
+or with work pending (that work's end arms it again) and a context under 100k tokens. The summary is
+pi-durable's, placed at once: the transcript (`harness.messages()`, the trace) starts at it after,
+and older entries stay in pi's storage.
 
 **Arm model unusable.** usable → unusable for ten minutes → usable (`unusable` in
 `src/agent/model.js`, per isolate). A request the arm's model refuses before any answer (`unusableModel`)

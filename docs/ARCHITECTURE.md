@@ -1679,6 +1679,21 @@ thinking from the history, which Bedrock would refuse. A model the account canno
 the windows every thread is on `long` and AGENT_MODEL. What an agent in an arm uses is counted
 for COGS with the arm in the detail (below).
 
+**Compaction.** pi compacts a transcript on its own only near the model's context window, which
+pi-ai gives Opus and Sonnet 5.5 as 1M tokens: a long thread keeps its whole history, and every turn
+after an idle hour writes all of it to the prompt cache again. The **compaction experiment** (from
+2026-11-18 15:00 to 2026-12-02 15:00 UTC, not pinned, so the threads that started before it take
+part) has half the threads compact once they have been idle for 65 minutes, just past the one-hour
+cache (`src/agent/idlecompact.js`): every turn that ends arms a schedule, and when it fires with no
+turn since, nothing pending and a context of at least 100k tokens (the latest request's), pi-durable's
+manual compaction summarizes the older entries and keeps the latest ~20k tokens as they are, with
+instructions for a support thread (what was asked, promised and posted, the draft, the knowledge
+written, the people, ids and URLs exactly). The agent reads the messages again with `read_thread`
+when it needs them. The summary's tokens are metered with the arm, and the arms are judged by the
+cost per accepted draft. The trace shows the transcript from the summary on (`agent_compaction`);
+the entries before it stay in the object's SQLite. A turn whose input the summary took in is not a
+reset: the turn kept for the thread stays.
+
 **When it runs.** Every new message of the entry pokes the agent through the NORMALIZE queue
 (after 15 seconds, so a burst arrives together; a new root's after it is re-threaded, so that
 a root folded into a group pokes the group's agent, not one of its own); it reads the

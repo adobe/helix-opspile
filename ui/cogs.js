@@ -351,7 +351,8 @@ function experimentsCard(d) {
       ? `${x.from.slice(0, 10)} – ${new Date(Date.parse(x.until) - 1).toISOString().slice(0, 10)} (UTC)`
       : '';
     const vs = (a) => (a === base ? '<span class="sub">baseline</span>' : `<span class="${a.vs < 0 ? 'better' : 'worse'}">${pctChange(a.vs)}</span>`);
-    const who = x.measure === 'drafts' ? 'half the threads started in it each' : 'half the threads each';
+    let who = x.pinned ? 'half the threads started in it each' : 'half the threads each';
+    if (x.unit === 'org') who = 'half the customers each';
     const head = `<h2>${esc(x.title)} <span class="sub">${esc(window)}${window ? ', ' : ''}${who}</span></h2>`;
     if (x.measure === 'drafts') return `<div class="card experiment">${head}${draftArms(x, vs)}</div>`;
     const writes = (a) => (a.metrics.cache_write_tokens?.quantity || 0)
