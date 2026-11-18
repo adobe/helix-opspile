@@ -78,6 +78,8 @@ async function announceFollowed(env, key, tech) {
 const messageKeyOf = (m) => `${m.source}:${m.tenant}:${m.channelId}:${m.id}`;
 
 const MAX_MENTIONS = 20;
+/** The people of a customer portal lobby who get an account with each of its events. */
+const MAX_LOBBY_ACCOUNTS = 50;
 
 /** A Slack bot's name (bots.info), cached in `identities` like a user. */
 async function botName(env, ref) {
@@ -244,7 +246,7 @@ async function toMarkdown(env, message) {
     return discordMarkdown(env, message);
   }
   if (message.format === 'portal') {
-    return portalMarkdown(message.text);
+    return [portalMarkdown(message.text), message.files].filter(Boolean).join('\n\n');
   }
   if (message.format !== 'mrkdwn') {
     return message.text;
@@ -394,8 +396,20 @@ export async function processKey(env, key, cache = {}) {
     return { key, result: 'skip', reason: op.reason };
   }
   if (op.op === 'lobby') {
-    // A customer portal lobby as it is now: the request the admin pages show.
-    return { key, ...await recordLobby(env, op.lobby) };
+    // A customer portal lobby as it is now: the request the admin pages show. Its people are
+    // accounts from then on, so a reply from the inbox can mention one who has not written yet.
+    const recorded = await recordLobby(env, op.lobby);
+    if (recorded.result === 'lobby') {
+      for (const m of (op.lobby.members || []).slice(0, MAX_LOBBY_ACCOUNTS)) {
+        if (m && m.id && m.joined && (m.name || m.email)) {
+          // eslint-disable-next-line no-await-in-loop
+          await getIdentity(env, {
+            source: 'portal', tenant: op.lobby.domain, userId: m.id, name: m.name, email: m.email,
+          });
+        }
+      }
+    }
+    return { key, ...recorded };
   }
   if (op.op === 'reaction') {
     if (op.reaction.userRef) {
@@ -442,6 +456,11 @@ export async function processKey(env, key, cache = {}) {
 
   const deleted = op.op === 'delete';
   const { author, person } = await resolveAuthor(env, message.authorRef);
+  // The portal names whom a message mentions: their accounts, before they are looked up.
+  for (const ref of (message.mentionRefs || []).slice(0, MAX_MENTIONS)) {
+    // eslint-disable-next-line no-await-in-loop
+    await getIdentity(env, ref);
+  }
   // Before it is indexed: an edit, an unfurl or a Teams reaction rewrites a message D1 already has.
   // Only people's messages: a bot's does not make a thread unread either (`counted`).
   const posted = Boolean(env.ROOMS) && !deleted && author.kind === 'person' && fresh(message)

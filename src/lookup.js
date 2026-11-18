@@ -12,7 +12,7 @@
 
 import { discordApi, discordAvatar, staffRolesOf } from './discord.js';
 import { cachedGraph } from './graph.js';
-import { sha256 } from './raw.js';
+import { gravatar } from './raw.js';
 
 /** The Slack Connect teams of a channel (a conversation object): every team but its own. */
 export const connectedTeams = (c) => [...new Set([
@@ -353,11 +353,21 @@ export async function updateChannelName(env, {
   return renamed && Boolean(written.meta && written.meta.changes);
 }
 
-/** Gravatar URL for an email; Gravatar answers 404 when there is no picture. */
-export async function gravatar(email) {
-  return email
-    ? `https://gravatar.com/avatar/${await sha256(String(email).trim().toLowerCase())}?s=96&d=404`
-    : '';
+export { gravatar };
+
+/**
+ * A person's picture, for the header (and for what they write in the customer portal,
+ * src/portalsource.js): an account of theirs with one (Slack's first, a platform's own picture
+ * before Gravatar's), else Gravatar's for their email, which answers 404 where there is none
+ * (the header keeps the initials then).
+ */
+export async function personAvatar(env, me) {
+  const row = await env.DB.prepare(`SELECT avatar FROM identities
+    WHERE (person = ? OR email = ?) AND kind = 'person' AND avatar IS NOT NULL AND avatar != ''
+    ORDER BY avatar LIKE 'https://gravatar.com/%',
+      CASE source WHEN 'slack' THEN 0 WHEN 'teams' THEN 1 ELSE 2 END, fetched_at DESC
+    LIMIT 1`).bind(me.id ?? null, me.email || null).first();
+  return row?.avatar || await gravatar(me.email) || null;
 }
 
 /** Other names of an account, without blanks or repeats (`identities.aliases`). */
@@ -468,8 +478,11 @@ export async function getIdentity(env, ref, now = Date.now()) {
         kind: 'person', name: ref.userId, email: null, home: null,
       };
     }
+    // A reference that says nothing of a picture (a mention's, a lobby member's) keeps the row's.
     const same = row && row.name === (ref.name || null)
-      && (row.email || null) === (ref.email || null);
+      && (row.email || null) === (ref.email || null)
+      && (ref.avatar === undefined || (ref.avatar ? row.avatar === ref.avatar
+        : !String(row.avatar || '').startsWith('/api/portal/avatar/')));
     if (same && fresh(row, now)) {
       return row;
     }
@@ -485,7 +498,10 @@ export async function getIdentity(env, ref, now = Date.now()) {
         name: ref.name || ref.email,
         email: ref.email || null,
         home: null,
-        avatar: await gravatar(ref.email),
+        // The picture the event names (one uploaded in the portal, or the inbox's own of its
+        // people); without one, the row's when the reference says nothing, else their Gravatar.
+        avatar: ref.avatar || (ref.avatar === undefined && row && row.avatar)
+          || await gravatar(ref.email),
         title: null,
         company: null,
       };

@@ -27,6 +27,9 @@
  * migrations. What is replaced: Cloudflare Access ("signed in as Dana") and the inbox, which
  * here takes every event and does nothing with it.
  *
+ * Files, pictures and logos are kept in memory, and the pictures of Adobe's people are made up
+ * (the portal would fetch the ones the inbox knows).
+ *
  * `POST /__dev/reply` posts an answer from Adobe in the latest thread (the page shows it
  * within its 15 seconds), `POST /__dev/open` opens a channel for a lobby that waits, and
  * `POST /__dev/decline` declines it, as the inbox's admins do.
@@ -34,13 +37,15 @@
 
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { crc32, deflateSync } from 'node:zlib';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ICONS } from '../src/icons.js';
-import { assemble } from '../src/pagecore.js';
+import { PORTAL_FILES, portalPage } from '../src/portal/page.js';
 import { api } from '../src/portal/api.js';
 import * as platform from '../src/portal/platform.js';
 import { d1, PORTAL } from '../test/d1.js';
+import { fakeBucket } from '../test/fakes.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT) || 8790;
@@ -58,6 +63,8 @@ const ME = has('closed') ? 'dana.diaz@elsewhere.example'
 
 const env = {
   DB: d1({ migrations: PORTAL }),
+  // The portal's bucket, in memory: files, pictures and logos.
+  FILES: fakeBucket(),
   PORTAL_DOMAINS: DOMAIN,
   PUBLIC_ORIGIN: `http://localhost:${PORT}`,
   PORTAL_NAME: 'dev',
@@ -75,6 +82,57 @@ async function call(email, method, path, body) {
   return res.json();
 }
 
+/** A made-up PNG, `w` by `h`, of what `pixel(x, y)` says (`[r, g, b]`): no image library. */
+function png(w, h, pixel) {
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc32(body), body.length + 4);
+    return out;
+  };
+  const head = Buffer.alloc(13);
+  head.writeUInt32BE(w, 0);
+  head.writeUInt32BE(h, 4);
+  head.set([8, 2, 0, 0, 0], 8);
+  const rows = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      rows.set(pixel(x, y), y * (w * 3 + 1) + 1 + x * 3);
+    }
+  }
+  return new Uint8Array(Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', head), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0)),
+  ]));
+}
+
+/** A face: a head and shoulders in one color on another. */
+function face(bg, fg) {
+  const head = (x, y) => (x - 48) ** 2 + (y - 38) ** 2 < 18 ** 2;
+  const shoulders = (x, y) => (x - 48) ** 2 / 1.6 + (y - 100) ** 2 < 36 ** 2;
+  return png(96, 96, (x, y) => (head(x, y) || shoulders(x, y) ? fg : bg));
+}
+
+/** A chart: bars of made-up response times, the last ones too high. */
+const TIMES = [40, 44, 52, 47, 60, 58, 70, 66, 90, 150, 210, 240, 232, 250, 244, 238, 80, 52];
+const chart = png(640, 320, (x, y) => {
+  const height = TIMES[Math.floor((x - 40) / 30)] || 0;
+  const bar = x > 40 && x < 580 && (x - 40) % 30 < 22 && y > 290 - height && y < 290;
+  if (bar) {
+    return height > 120 ? [214, 69, 65] : [75, 117, 255];
+  }
+  return y === 290 || x === 40 ? [140, 140, 140] : [248, 248, 248];
+});
+
+/** A logo: an A-shaped mark. */
+const mark = png(128, 128, (x, y) => {
+  const outer = y > 24 && y < 104 && Math.abs(x - 64) < (y - 24) / 2;
+  const inner = y > 70 && Math.abs(x - 64) < (y - 70) / 2.4;
+  return outer && !inner ? [228, 60, 40] : [255, 255, 255];
+});
+
 const HOUR = 60 * 60 * 1000;
 const ago = (hours) => Date.now() - hours * HOUR;
 
@@ -89,6 +147,13 @@ async function seed() {
   await call(DANA, 'POST', '/api/invite', { email: `lee.long@${DOMAIN}`, name: 'Lee Long' });
   await call(DANA, 'POST', '/api/invite', { email: `mo.malik@${DOMAIN}`, name: 'Mo Malik' });
   await call(`lee.long@${DOMAIN}`, 'GET', '/api/me');
+  // Lee's picture and Acme's logo, uploaded as they would be.
+  const { setAvatar, setLogo } = await import('../src/portal/store.js');
+  const row = (email) => env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
+  await setAvatar(env, await row(`lee.long@${DOMAIN}`), {
+    type: 'image/png', bytes: face([90, 60, 160], [240, 220, 250]),
+  });
+  await setLogo(env, DOMAIN, { type: 'image/png', bytes: mark });
   if (has('lobby') || has('outsider')) {
     return;
   }
@@ -112,9 +177,20 @@ async function seed() {
   const { writeMessage, reactTo } = await import('../src/portal/store.js');
   const user = (id) => env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
   const dana = (await call(DANA, 'GET', '/api/me')).me;
-  const says = async (who, text, hours, thread) => {
+  const { uploadFile } = await import('../src/portal/files.js');
+  const says = async (who, text, hours, thread, attached = []) => {
     const author = await user(who.id);
-    return (await writeMessage(env, ch, author, { root: thread, text }, ago(hours))).id;
+    const files = [];
+    for (const f of attached) {
+      // eslint-disable-next-line no-await-in-loop
+      files.push((await uploadFile(env, ch, author, f, ago(hours))).file.id);
+    }
+    return (await writeMessage(env, ch, author, { root: thread, text, files }, ago(hours))).id;
+  };
+  // Adobe's people have the pictures the inbox knows of them: here, made-up ones.
+  const pictured = async (staff, bg, fg) => {
+    const u = await row(staff.email);
+    await setAvatar(env, u, { type: 'image/png', bytes: face(bg, fg) });
   };
 
   const welcome = (await platform.post(env, {
@@ -123,13 +199,21 @@ async function seed() {
     text: 'Welcome to Adobe Enterprise Support, Acme! This is your channel with the Edge ops team. Start a new thread for each question, and we answer you here.',
   }, ago(70))).id;
   await reactTo(env, ch, await user(dana.id), { id: welcome, emoji: '👍' }, ago(69));
+  await pictured(STAFF[0], [20, 110, 100], [220, 245, 240]);
 
-  const cache = await says(dana, 'Product pages are stale after publishing\nWe publish from Document Authoring, and `/products/anvil` still shows yesterday\'s price on the live site. Preview is right.', 50);
+  const cache = await says(dana, 'Product pages are stale after publishing\nWe publish from Document Authoring, and `/products/anvil` still shows yesterday\'s price on the live site. Preview is right. The response times since the last publish, and the requests behind them:', 50, undefined, [
+    { name: 'response-times.png', type: 'image/png', bytes: chart },
+    {
+      name: 'requests.csv',
+      type: 'text/csv',
+      bytes: new TextEncoder().encode('path,status,ms\n/products/anvil,200,231\n/products/hammer,200,244\n'),
+    },
+  ]);
   await platform.post(env, {
     ...at,
     root: cache,
     author: STAFF[1],
-    text: 'Thanks, Dana. Two questions:\n\n1. Is the price in the document itself, or does it come from a spreadsheet?\n2. Do you have a CDN of your own in front of the site?',
+    text: 'Thanks, @Dana Diaz. Two questions:\n\n1. Is the price in the document itself, or does it come from a spreadsheet?\n2. Do you have a CDN of your own in front of the site?',
   }, ago(49));
   await says(dana, 'It comes from the `prices` sheet. And yes, we bring our own CDN.', 48.5, cache);
   await platform.post(env, {
@@ -138,7 +222,8 @@ async function seed() {
     author: STAFF[1],
     text: 'Then that is it: the sheet was published, but your CDN was not purged. Set up the push invalidation for it:\n\n```yaml\ncdn:\n  prod:\n    host: www.acme.example\n    type: managed\n```\n\nPublish the sheet again afterwards and the page follows.',
   }, ago(48));
-  await says(lee, 'That did it, thank you!', 47, cache);
+  await says(lee, 'That did it, thank you! :tada:', 47, cache);
+  await pictured(STAFF[1], [150, 80, 20], [250, 235, 215]);
   await platform.react(env, {
     ...at, id: cache, emoji: '✅', author: STAFF[1],
   }, ago(46));
@@ -148,7 +233,7 @@ async function seed() {
     ...at,
     root: migration,
     author: STAFF[0],
-    text: 'There is a bulk import for that. How are the PDFs organized today: by product, by year, or flat? That decides the folder mapping.',
+    text: 'There is a bulk import for that. @Dana Diaz, how are the PDFs organized today: by product, by year, or flat? That decides the folder mapping.',
   }, ago(1.5));
 
   await says(dana, 'Can we get a second site for the Benelux market?', 0.2);
@@ -157,15 +242,8 @@ async function seed() {
 await seed();
 
 const read = (name) => readFileSync(join(root, 'ui', name), 'utf8');
-const { default: MARKDOWN } = await import('../src/ui-markdown.bundle.js');
-const page = () => assemble(read('portal.html'), {
-  'portal.js': read('portal.js'),
-  'app.js': read('app.js'),
-  'markdown.js': MARKDOWN,
-  'spectrum-fonts.css': read('spectrum-fonts.css'),
-  'spectrum.css': read('spectrum.css'),
-  'spectrum-portal.css': read('spectrum-portal.css'),
-});
+const page = () => portalPage(read('portal.html'), Object.fromEntries(PORTAL_FILES
+  .map((name) => [name, read(name)])));
 
 /** What the inbox's admins do, for the preview. */
 async function dev(pathname) {
@@ -217,9 +295,10 @@ createServer(async (req, res) => {
         headers: req.headers,
         body: chunks.length ? Buffer.concat(chunks) : undefined,
       });
+      // A file's bytes, a picture, or JSON: the answer as it is.
       const answer = await api(request, env, url, { email: ME });
-      res.writeHead(answer.status, { 'content-type': 'application/json' });
-      res.end(await answer.text());
+      res.writeHead(answer.status, Object.fromEntries(answer.headers));
+      res.end(Buffer.from(await answer.arrayBuffer()));
       return;
     }
     if (url.pathname === '/') {

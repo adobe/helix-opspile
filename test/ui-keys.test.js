@@ -36,7 +36,10 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
 
-const { formatText, formatKind } = piece('function formatText(', '/** The text boxes formatting works in', 'formatText, formatKind');
+// Formatting is ui/writing.js, the inbox's and the customer portal's: its global, as the pages
+// have it.
+// eslint-disable-next-line no-new-func
+const { formatText, formatKind } = new Function(`const globalThis = {};\n${SCRIPTS['writing.js']}\nreturn globalThis.Writing;`)();
 const { keyLabel, SHORTCUTS, sheetHtml } = piece('const MAC =', '/** The sheet of every shortcut', 'keyLabel, SHORTCUTS, sheetHtml', { esc });
 
 /** `text` with `[` `]` around the selection, formatted as `kind`, the selection marked again. */

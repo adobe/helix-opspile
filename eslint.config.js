@@ -74,6 +74,8 @@ export default [
         Rank: 'readonly',
         // The preview of attached files, ui/table.js (the inbox).
         Table: 'readonly',
+        // Markdown formatting in a text box, ui/writing.js (the inbox, the customer portal).
+        Writing: 'readonly',
         // A customer's stack drawing, ui/stack.js (the inbox).
         Stack: 'readonly',
         // The Topics page's graph, ui/topicgraph.js.

@@ -1366,6 +1366,21 @@ async function api(req, res, url) {
     });
     return res.end(clip.video.subarray(start, end + 1));
   }
+  // A file of the customer portal (src/fileview.js `openThreadFile`, `threadFile`): the portal
+  // is not here, so a made-up log stands in for whatever its link names.
+  const portalFile = /^portal:/.test(url.searchParams.get('t') || '')
+    && /\/api\/file\/f[0-9a-z]{16}\/([^/]+)$/.exec(url.searchParams.get('u') || '');
+  if ((url.pathname === '/api/file/open' || url.pathname === '/api/file') && portalFile) {
+    const name = decodeURIComponent(portalFile[1]);
+    res.writeHead(200, {
+      'content-type': url.pathname === '/api/file' ? 'text/plain; charset=utf-8' : 'application/octet-stream',
+      'x-content-type-options': 'nosniff',
+      'x-file-name': encodeURIComponent(name),
+      'x-file-type': 'text/plain',
+      ...(url.pathname === '/api/file/open' ? { 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}` } : {}),
+    });
+    return res.end('12:01:07 GET /press/2026-launch 200\n12:01:08 component-filters.json: no filter "press"\n12:01:08 canvas: 0 components\n');
+  }
   if (url.pathname === '/api/file') {
     // A text file of a message (src/fileview.js): the fixtures' uploads, as text.
     const id = (/^\/__dev\/files\/([\w-]+)\//.exec(url.searchParams.get('u') || '') || [])[1];

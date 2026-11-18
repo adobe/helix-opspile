@@ -28,7 +28,9 @@ import {
 } from './shares.js';
 import { refreshMembers } from './suggest.js';
 import { MESSAGE_ID } from './portal/ids.js';
-import { portalAuthor, portalBound, portalCall } from './portalsource.js';
+import {
+  portalAuthor, portalBound, portalCall, portalUpload,
+} from './portalsource.js';
 import { resolveShortcodes } from './shortcodes.js';
 import { messageHtml } from './ui-markdown.js';
 
@@ -1039,7 +1041,8 @@ export async function post(env, me, request, inTeam, files = []) {
   }
   if (t.source === 'portal') {
     // The customer portal: nobody connects an account for it. The inbox says who posts, by
-    // their mail address (src/portalsource.js), and the text goes as it is: markdown.
+    // their mail address (src/portalsource.js), and the text goes as it is: markdown, in
+    // which an `@Name` of someone in the channel is a mention there.
     const refused = checkFiles(personRule('portal'), files);
     if (refused) {
       return json({ error: refused }, 400);
@@ -1048,12 +1051,19 @@ export async function post(env, me, request, inTeam, files = []) {
       source: t.source, tenant: t.tenant,
     });
     await routeReply(env, key, t);
+    const author = await portalAuthor(env, me);
+    // The files first, then the message that carries them.
+    const up = await portalUpload(env, t, files, author);
+    if (up.error) {
+      return json({ error: `Portal: ${up.error}` }, 502);
+    }
     const res = await portalCall(env, 'post', {
       domain: t.tenant,
       channel: t.channel_id,
       root: t === place && !key ? undefined : t.root_id,
       text: sent,
-      author: portalAuthor(me),
+      files: up.ids,
+      author,
     });
     if (res.error) {
       return json({

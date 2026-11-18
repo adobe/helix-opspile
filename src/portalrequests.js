@@ -66,9 +66,10 @@ export async function recordLobby(env, lobby) {
   const tech = (Array.isArray(lobby.tech) ? lobby.tech : []).map((t) => clean(t, 64))
     .filter(Boolean).slice(0, 100);
   const { meta } = await env.DB.prepare(`INSERT INTO portal_requests (portal, domain, company,
-      tech, note, members, requested_by, requested_name, requested_at, seq, status)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+      tech, note, members, requested_by, requested_name, requested_at, seq, status, logo)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
     ON CONFLICT (portal, domain) DO UPDATE SET company = excluded.company, tech = excluded.tech,
+      logo = excluded.logo,
       note = excluded.note, members = excluded.members, requested_by = excluded.requested_by,
       requested_name = excluded.requested_name, requested_at = excluded.requested_at,
       seq = excluded.seq, status = excluded.status
@@ -85,6 +86,7 @@ export async function recordLobby(env, lobby) {
       lobby.requestedAt || lobby.at || new Date().toISOString(),
       Number(lobby.seq) || 0,
       status,
+      clean(lobby.logo, 64).replace(/[^a-z0-9]/gi, '') || null,
     ).run();
   return { result: meta.changes ? 'lobby' : 'unchanged', status };
 }
@@ -129,6 +131,8 @@ async function shape(env, r, names) {
     company: r.company || null,
     tech: tech.map((id) => ({ tech: id, name: names.get(id) || id })),
     note: r.note || null,
+    // The customer's logo, where they uploaded one: through the portal's Worker.
+    logo: r.logo ? `/api/portal/logo/${r.domain}?v=${r.logo}` : null,
     members: list(r.members),
     requestedBy: { email: r.requested_by, name: r.requested_name },
     requestedAt: r.requested_at,

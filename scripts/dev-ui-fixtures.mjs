@@ -1237,7 +1237,10 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   seed({
     ch: CHANNELS.portal,
     messages: [
-      ['lucius', 42, 'Universal Editor shows a blank canvas for our press releases\nPages under `/press` open in Universal Editor with nothing on the canvas. Everything else is fine, and the pages are live.'],
+      // With what he attached in the portal: an image and a log, by their addresses there.
+      ['lucius', 42, 'Universal Editor shows a blank canvas for our press releases\nPages under `/press` open in Universal Editor with nothing on the canvas. Everything else is fine, and the pages are live.\n\n'
+        + 'Attachments:\n![canvas.png](https://portal.example.com/api/file/f0wayne000000001a/canvas.png "1280x720")\n\n'
+        + '- [editor.log](https://portal.example.com/api/file/f0wayne000000002b/editor.log)'],
       ['lena', 35, 'Is `/press` a folder of its own in Document Authoring, with its own component filter?'],
       ['lucius', 20, 'Yes: it has a `component-filters.json` of its own, added last week.'],
     ],

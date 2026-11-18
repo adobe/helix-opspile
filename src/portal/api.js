@@ -13,9 +13,13 @@
 import { json } from '../http.js';
 import { deliver } from './events.js';
 import {
-  allowed, channelOf, channelsOf, deleteMessage, editMessage, invite, lobbyOf, membersOf,
-  reactTo, rename, requestChannel, signIn, threadOf, threadsOf, uninvite, updateLobby,
-  writeMessage,
+  avatarResponse, fileResponse, fileRow, MAX_FILE_BYTES, MAX_PICTURE_BYTES, pictureResponse,
+  uploadFile,
+} from './files.js';
+import {
+  allowed, channelOf, channelsOf, clearAvatar, clearLogo, deleteMessage, editMessage, invite,
+  lobbyOf, membersOf, peopleOf, reactTo, rename, requestChannel, setAvatar, setLogo, signIn,
+  threadOf, threadsOf, uninvite, updateLobby, writeMessage,
 } from './store.js';
 import { listTech, refreshTech, techStale } from './tech.js';
 
@@ -35,10 +39,19 @@ import { listTech, refreshTech, techStale } from './tech.js';
  * | `DELETE /api/invite` | `{ user }` takes an invitation back |
  * | `GET /api/threads?channel=` | a channel's threads |
  * | `GET /api/thread?channel=&thread=` | one thread's messages; marks it read |
- * | `POST /api/post` | `{ channel, thread?, text }` |
+ * | `GET /api/people?channel=` | who can be mentioned there |
+ * | `POST /api/upload?channel=&name=&w=&h=` | a file for a message, as the request's body |
+ * | `GET /api/file/<id>/<name>` | a file of one's lobby |
+ * | `POST /api/post` | `{ channel, thread?, text, files? }` (`files`: ids of uploads) |
  * | `POST /api/edit`, `/api/delete` | `{ channel, id, text? }`, one's own message |
  * | `POST /api/react` | `{ channel, id, emoji, remove? }` |
+ * | `PUT`, `DELETE /api/avatar` | one's picture, an image as the request's body |
+ * | `GET /api/avatar/<account>` | the picture of a colleague or of someone at Adobe |
+ * | `PUT`, `DELETE /api/logo`, `GET /api/logo` | the customer's logo |
  */
+
+/** The writes whose body is a file's bytes, not JSON. */
+const UPLOADS = ['POST upload', 'PUT avatar', 'PUT logo'];
 
 /** A store answer as a response: `{ error, status }` is the error, with that status. */
 function answer(r) {
@@ -58,10 +71,29 @@ async function bodyOf(request) {
   return body && typeof body === 'object' && !Array.isArray(body) ? body : null;
 }
 
-/** Whether a write comes from the portal's own page: browsers name where a request is from. */
-function sameOrigin(request, url) {
+/**
+ * Whether a write comes from the portal's own page: browsers name where a request is from.
+ * `strict`: it must say so (an upload's body is no JSON, which other sites cannot send).
+ */
+function sameOrigin(request, url, strict = false) {
   const origin = request.headers.get('origin');
-  return !origin || origin === url.origin;
+  return origin ? origin === url.origin : !strict;
+}
+
+/**
+ * An upload's body: its bytes and its content type, or `{ error, status }` for one that says it
+ * is larger than `max`, which is not read.
+ */
+async function upload(request, max) {
+  if (Number(request.headers.get('content-length') || 0) > max) {
+    await request.body?.cancel();
+    const mb = Math.round(max / 104857.6) / 10;
+    return { error: `too large: up to ${mb} MB`, status: 413 };
+  }
+  return {
+    type: request.headers.get('content-type') || '',
+    bytes: new Uint8Array(await request.arrayBuffer()),
+  };
 }
 
 async function me(env, who, after) {
@@ -82,6 +114,7 @@ async function me(env, who, after) {
       domain,
       member: false,
       company: lobby ? lobby.company : null,
+      logo: lobby ? lobby.logo : null,
       colleagues: members.filter((m) => m.joined).map((m) => ({ name: m.name, email: m.email })),
     });
   }
@@ -119,8 +152,9 @@ export async function api(request, env, url, { email, waitUntil = () => {} } = {
   }
   const { method } = request;
   const route = `${method} ${pathname.slice('/api/'.length)}`;
-  const body = method === 'GET' ? {} : await bodyOf(request);
-  if (method !== 'GET' && (!body || !sameOrigin(request, url))) {
+  const raw = UPLOADS.includes(route);
+  const body = method === 'GET' || raw ? {} : await bodyOf(request);
+  if (method !== 'GET' && (!body || !sameOrigin(request, url, raw))) {
     return json({ error: 'send JSON from the portal\'s page' }, 400);
   }
   const who = await signIn(env, email);
@@ -135,12 +169,32 @@ export async function api(request, env, url, { email, waitUntil = () => {} } = {
     return me(env, who, waitUntil);
   }
   if (route === 'PUT profile') {
-    return answer(await rename(env, who.user, body.name));
+    return answer(await rename(env, who.row, body.name));
+  }
+  if (route === 'PUT avatar') {
+    const picture = await upload(request, MAX_PICTURE_BYTES);
+    return answer(picture.error ? picture : await setAvatar(env, who.row, picture));
+  }
+  if (route === 'DELETE avatar') {
+    return answer(await clearAvatar(env, who.row));
+  }
+  // A picture: one's colleagues' (their mail domain is one's own), and Adobe's people's.
+  const pictured = /^GET avatar\/([ub][0-9a-f]{20})$/.exec(route);
+  if (pictured) {
+    const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(pictured[1]).first();
+    return u && (u.kind !== 'customer' || u.domain === who.domain)
+      ? avatarResponse(env, u) : json({ error: 'not found' }, 404);
+  }
+  if (route === 'GET logo') {
+    const row = await env.DB.prepare('SELECT logo_key FROM lobbies WHERE domain = ?')
+      .bind(who.domain).first();
+    return pictureResponse(env, row && row.logo_key);
   }
   if (!who.member) {
     return json({ error: 'ask a colleague who is here to invite you' }, 403);
   }
-  const { user, domain } = who;
+  // The account as the database has it: what a message's event says of its author.
+  const { row: user, domain } = who;
   switch (route) {
     case 'PUT lobby': {
       const known = (await listTech(env)).map((t) => t.tech);
@@ -149,13 +203,25 @@ export async function api(request, env, url, { email, waitUntil = () => {} } = {
     case 'POST lobby/request': return told(await requestChannel(env, domain, user));
     case 'POST invite': return told(await invite(env, domain, user, body));
     case 'DELETE invite': return told(await uninvite(env, domain, body));
+    case 'PUT logo': {
+      const picture = await upload(request, MAX_PICTURE_BYTES);
+      return picture.error ? answer(picture) : told(await setLogo(env, domain, picture));
+    }
+    case 'DELETE logo': return told(await clearLogo(env, domain));
     default:
+  }
+  // A file of the lobby's channels: the part of it the browser asks for.
+  const wanted = /^GET file\/(f[0-9a-z]{16})\/[^/]+$/.exec(route);
+  if (wanted) {
+    const file = await fileRow(env, domain, wanted[1]);
+    return file ? fileResponse(env, file, request.headers.get('range'))
+      : json({ error: 'not found' }, 404);
   }
   // The rest is a channel's: one of the caller's lobby.
   const channel = await channelOf(
     env,
     domain,
-    method === 'GET' ? url.searchParams.get('channel') : body.channel,
+    method === 'GET' || raw ? url.searchParams.get('channel') : body.channel,
   );
   if (!channel) {
     return json({ error: 'no such channel' }, 404);
@@ -166,8 +232,18 @@ export async function api(request, env, url, { email, waitUntil = () => {} } = {
       const thread = await threadOf(env, channel, url.searchParams.get('thread'), user);
       return thread ? json({ thread }) : json({ error: 'no such thread' }, 404);
     }
+    case 'GET people': return json({ people: await peopleOf(env, channel) });
+    case 'POST upload': {
+      const file = await upload(request, MAX_FILE_BYTES);
+      return answer(file.error ? file : await uploadFile(env, channel, user, {
+        ...file,
+        name: url.searchParams.get('name'),
+        width: url.searchParams.get('w'),
+        height: url.searchParams.get('h'),
+      }));
+    }
     case 'POST post': return told(await writeMessage(env, channel, user, {
-      root: body.thread, text: body.text,
+      root: body.thread, text: body.text, files: body.files,
     }));
     case 'POST edit': return told(await editMessage(env, channel, user, body));
     case 'POST delete': return told(await deleteMessage(env, channel, user, body));

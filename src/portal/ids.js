@@ -60,3 +60,33 @@ export const MESSAGE_ID = /^m[0-9a-z]{15}$/;
 
 /** What a channel id looks like. */
 export const CHANNEL_ID = /^c[0-9a-z]{12}$/;
+
+/** A file id: `f` and sixteen random digits. Whoever knows one still has to be let in. */
+export const fileId = () => `f${random(16)}`;
+
+/** What a file id looks like. */
+export const FILE_ID = /^f[0-9a-z]{16}$/;
+
+/** A file's name as a path segment: nothing in it ends a markdown link or a path. */
+const segmentOf = (name) => encodeURIComponent(String(name || 'file'))
+  .replace(/[()'!*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
+/** Where the portal serves a file: `/api/file/<id>/<name>`, under its origin. */
+export const filePath = (id, name) => `/api/file/${id}/${segmentOf(name)}`;
+
+/**
+ * The portal file a link is to, whatever origin it names (the portal's own, which the inbox
+ * does not know): `{ id, name }`, or null. Only what the link's message may have is opened:
+ * the portal checks that the file is of the message's channel.
+ */
+export function portalFileRef(link) {
+  const m = /^https:\/\/[^/?#\s]+\/api\/file\/(f[0-9a-z]{16})\/([^/?#\s]+)$/.exec(String(link || '').trim());
+  if (!m) {
+    return null;
+  }
+  try {
+    return { id: m[1], name: decodeURIComponent(m[2]) };
+  } catch {
+    return { id: m[1], name: m[2] };
+  }
+}

@@ -1560,6 +1560,7 @@ function drawPortalRequest(r, forTeam = null) {
   const c = r.channel;
   $('detail').innerHTML = `
     <div class="title">${forTeam ? `<button class="back shown" id="pqBack" title="Back to ${esc(teamLabel(forTeam))}" aria-label="Back to ${esc(teamLabel(forTeam))}"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg></button>` : backButton()}
+      ${r.logo ? `<img class="ico" src="${esc(r.logo)}" alt="" title="The logo ${esc(r.company || r.domain)} uploaded in the portal">` : ''}
       <h1 class="fill">${esc(r.company || r.domain)} <span class="sub">${esc(r.domain)}</span></h1>${statusTag(r)}</div>
     <div class="status" id="status"></div>
     <div class="card"><div class="field">

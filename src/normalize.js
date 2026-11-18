@@ -641,9 +641,29 @@ export function normalizeTeams(key, msg) {
  * operation. The portal is this repository's own, so its events say what the normalizer needs
  * in the normalizer's terms: a message as it is now (posted, edited or deleted; `rev` counts
  * its changes, and is its version), with its channel's name and its author's name and mail address,
- * which the lookups take from here (`channelHint`, `authorRef`) instead of asking the portal.
+ * which the lookups take from here (`channelHint`, `authorRef`) instead of asking the portal;
+ * its files as links to the portal, which the inbox opens through it, and whom it mentions.
  * The tenant is the lobby, the customer's mail domain.
  */
+/** A portal message's files as the list every platform's files are (see `slackFiles`). */
+function portalFiles(files) {
+  const ok = (Array.isArray(files) ? files : []).filter((f) => f && f.url && f.name);
+  const shown = (f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type || '');
+  const images = ok.filter(shown)
+    .map((f) => mdLink(f.name, f.url, true, sizeTitle(f.width, f.height)));
+  const links = ok.filter((f) => !shown(f)).map((f) => `- ${mdLink(f.name, f.url)}`);
+  return [images.join('\n'), links.join('\n')].filter(Boolean).join('\n\n');
+}
+
+/**
+ * Where the inbox shows the picture of a portal account: one the person uploaded there comes
+ * through the inbox (`GET /api/portal/avatar/…`, src/portalsource.js), one the inbox gave for
+ * its own people is where it was; '' when the event names neither.
+ */
+const portalAvatar = (a) => (a.picture
+  ? `/api/portal/avatar/${encodeURIComponent(a.id)}?v=${encodeURIComponent(a.picture)}`
+  : (/^https:\/\//.test(a.avatar || '') && a.avatar) || '');
+
 export function normalizePortal(key, event) {
   const e = event || {};
   const tenant = e.domain;
@@ -671,7 +691,12 @@ export function normalizePortal(key, event) {
       kind: 'bot', name: a.name || 'Enterprise Support', source: 'portal', tenant, botId: a.id,
     }
     : {
-      source: 'portal', tenant, userId: a.id, name: a.name || null, email: a.email || null,
+      source: 'portal',
+      tenant,
+      userId: a.id,
+      name: a.name || null,
+      email: a.email || null,
+      avatar: portalAvatar(a),
     };
   if (e.type === 'reaction') {
     const r = e.reaction || {};
@@ -695,6 +720,9 @@ export function normalizePortal(key, event) {
     return { op: 'skip', reason: e.type || 'unknown' };
   }
   const m = e.message;
+  const files = m.deletedAt ? '' : portalFiles(m.files);
+  // Who it mentions: the portal names them, so their accounts are known before they are asked for.
+  const mentioned = (Array.isArray(m.mentions) ? m.mentions : []).filter((x) => x && x.id);
   const message = {
     source: 'portal',
     tenant,
@@ -710,9 +738,13 @@ export function normalizePortal(key, event) {
     authorRef,
     format: 'portal',
     text: m.text || '',
+    files: files ? `Attachments:\n${files}` : undefined,
     // No link to it: the portal is its customers', and nobody of the inbox can open it there.
     raw: key,
-    mentionIds: [],
+    mentionIds: mentioned.map((x) => x.id),
+    mentionRefs: mentioned.filter((x) => x.kind !== 'bot' && (x.name || x.email)).map((x) => ({
+      source: 'portal', tenant, userId: x.id, name: x.name || null, email: x.email || null,
+    })),
   };
   if (m.deletedAt) {
     return { op: 'delete', message: { ...message, deletedAt: m.deletedAt, text: '' } };

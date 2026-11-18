@@ -28,25 +28,26 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import portalHtml from '../../ui/portal.html';
 import portalJs from '../../ui/portal.js' with { type: 'text' };
 import appJs from '../../ui/app.js' with { type: 'text' };
+import writingJs from '../../ui/writing.js' with { type: 'text' };
 import spectrumFontsCss from '../../ui/spectrum-fonts.css' with { type: 'text' };
 import spectrumCss from '../../ui/spectrum.css' with { type: 'text' };
 import spectrumPortalCss from '../../ui/spectrum-portal.css' with { type: 'text' };
 import { accessEmail } from '../access.js';
 import { json, text } from '../http.js';
 import { ICONS } from '../icons.js';
-import { assemble } from '../pagecore.js';
-import MARKDOWN from '../ui-markdown.bundle.js';
+import { portalPage } from './page.js';
 import { api } from './api.js';
 import { deliver, pruneEvents } from './events.js';
+import { pruneFiles } from './files.js';
 import {
-  again, decline, edit, open, post, react,
+  again, avatar, decline, edit, file, logo, open, post, react, upload,
 } from './platform.js';
 import { refreshTech, techStale } from './tech.js';
 
-const PAGE = assemble(portalHtml, {
+const PAGE = portalPage(portalHtml, {
   'portal.js': portalJs,
   'app.js': appJs,
-  'markdown.js': MARKDOWN,
+  'writing.js': writingJs,
   'spectrum-fonts.css': spectrumFontsCss,
   'spectrum.css': spectrumCss,
   'spectrum-portal.css': spectrumPortalCss,
@@ -114,6 +115,7 @@ export default {
     ctx.waitUntil(techStale(env).then((stale) => (stale ? refreshTech(env) : { result: 'fresh' }))
       .then(logged('tech')).catch(failed('tech')));
     ctx.waitUntil(pruneEvents(env).then(logged('prune')).catch(failed('prune')));
+    ctx.waitUntil(pruneFiles(env).then(logged('files')).catch(failed('files')));
   },
 };
 
@@ -131,6 +133,26 @@ export class PortalPlatform extends WorkerEntrypoint {
   /** `{ domain, channel, root?, text, author }`: posts a message. */
   post(args) {
     return this.#told(post(this.env, args));
+  }
+
+  /** `{ domain, channel, name, type, bytes, author }`: keeps a file for a message. */
+  upload(args) {
+    return upload(this.env, args);
+  }
+
+  /** `{ domain, channel, id, range? }`: a file of that channel, as a response. */
+  file(args) {
+    return file(this.env, args);
+  }
+
+  /** `{ user }`: the picture someone uploaded, as a response. */
+  avatar(args) {
+    return avatar(this.env, args);
+  }
+
+  /** `{ domain }`: a customer's logo, as a response. */
+  logo(args) {
+    return logo(this.env, args);
   }
 
   /** `{ domain, channel, id, text, author }`: changes a message its author wrote. */

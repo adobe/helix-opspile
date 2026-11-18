@@ -36,14 +36,17 @@ import {
 import { appPostCheck, postApp } from './postapp.js';
 import { closestEmoji, rankEmoji, workspaceEmoji } from './shortcodes.js';
 import { rankEvents, recordPick } from './rankevents.js';
-import { gravatar, isSignInDomain, isStaffDomain } from './lookup.js';
+import { isSignInDomain, isStaffDomain, personAvatar } from './lookup.js';
 import { appRule, readPost } from './attach.js';
+import { openPortalFile, portalFetch, portalFileOf } from './portalsource.js';
 import { react, resolve } from './react.js';
 import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { folderFiles } from './filecache.js';
-import { filePoster, streamFile, threadFile } from './fileview.js';
+import {
+  filePoster, openThreadFile, streamFile, threadFile,
+} from './fileview.js';
 import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
 import { mentionKinds, profiles, relationOf } from './profiles.js';
 import { channelLinks, channelRefs, nameChannelIds } from './channelrefs.js';
@@ -220,20 +223,6 @@ export async function viewer(request, env, options) {
     }
   }
   return me;
-}
-
-/**
- * The viewer's picture, for the header: an account of theirs with one (Slack's first, a
- * platform's own picture before Gravatar's), else Gravatar's for their email, which answers
- * 404 where there is none (the header keeps the initials then).
- */
-async function avatarOf(env, me) {
-  const row = await env.DB.prepare(`SELECT avatar FROM identities
-    WHERE (person = ? OR email = ?) AND kind = 'person' AND avatar IS NOT NULL AND avatar != ''
-    ORDER BY avatar LIKE 'https://gravatar.com/%',
-      CASE source WHEN 'slack' THEN 0 WHEN 'teams' THEN 1 ELSE 2 END, fetched_at DESC
-    LIMIT 1`).bind(me.id, me.email || null).first();
-  return row?.avatar || await gravatar(me.email) || null;
 }
 
 /**
@@ -1035,6 +1024,15 @@ export async function media(env, target, threadKey = null) {
   } catch {
     return json({ error: 'bad url' }, 400);
   }
+  // A file of the customer portal, of the thread's channel: through the portal's Worker.
+  if (threadKey && portalFileOf(threadKey, u.href)) {
+    const got = await openPortalFile(env, threadKey, u.href, { max: MEDIA_MAX });
+    if (got.error || !/^image\/(png|jpeg|gif|webp)$/.test(got.type)) {
+      await got.body?.cancel();
+      return json({ error: got.error || 'cannot show this attachment (not an image)' }, 502);
+    }
+    return new Response(got.body, { headers: mediaHeaders(got.type) });
+  }
   // Teams files opspile copied into pile 1 (src/teamsfiles.js) come from there. SharePoint
   // files only ever do: the app could read any of them, the inbox shows those of messages.
   const kept = threadKey && await keptTeamsFile(env, threadKey, u.href);
@@ -1098,7 +1096,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       ...me,
       ...(stats ? { stats } : {}),
       // Their face in the header.
-      avatar: await avatarOf(env, me),
+      avatar: await personAvatar(env, me),
       connected: me.readonly ? {} : await connections(env, me.id),
       react: me.readonly ? {} : await reactable(env, me.id),
       // Whose tokens may edit their own messages (src/edit.js).
@@ -1365,7 +1363,19 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     return media(env, url.searchParams.get('u'), t);
   }
-  if (['/api/file', '/api/file/stream', '/api/file/poster'].includes(url.pathname)) {
+  // What the customer portal keeps and the inbox shows: a picture someone uploaded there, a
+  // customer's logo (src/portalsource.js). For anyone signed in to the inbox.
+  const kept = /^\/api\/portal\/(avatar|logo)\/([a-z0-9.-]{1,120})$/.exec(url.pathname);
+  if (kept && request.method === 'GET') {
+    const res = await portalFetch(env, kept[1], kept[1] === 'avatar' ? { user: kept[2] } : { domain: kept[2] });
+    const type = res && res.ok ? (res.headers.get('content-type') || '') : '';
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(type)) {
+      await res?.body?.cancel();
+      return json({ error: 'no picture' }, 404);
+    }
+    return new Response(res.body, { headers: mediaHeaders(type) });
+  }
+  if (['/api/file', '/api/file/stream', '/api/file/poster', '/api/file/open'].includes(url.pathname)) {
     // A file of a message (the inbox's CSV and text previews, its video and audio player):
     // for those who may see its thread, and only a file a message of the thread links to
     // (src/fileview.js).
@@ -1376,6 +1386,9 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     const u = url.searchParams.get('u');
     if (url.pathname === '/api/file/stream') {
       return streamFile(env, t, u, request);
+    }
+    if (url.pathname === '/api/file/open') {
+      return openThreadFile(env, t, u);
     }
     return url.pathname === '/api/file/poster' ? filePoster(env, t, u) : threadFile(env, t, u);
   }

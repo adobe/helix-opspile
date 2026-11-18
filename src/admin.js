@@ -678,7 +678,7 @@ async function openPortal(env, me, body) {
     domain: r.domain,
     name: name === UNASSIGNED ? DEFAULT_CHANNEL : name,
     topic,
-    by: portalAuthor(me),
+    by: await portalAuthor(env, me),
   });
   if (opened.error || !opened.channel) {
     return json({ error: opened.error || 'the portal opened no channel' }, opened.status === 404 ? 404 : 502);
@@ -690,10 +690,13 @@ async function openPortal(env, me, body) {
       group_name, shared, connected, topic, fetched_at)
     VALUES ('portal', ?, ?, ?, ?, ?, 1, '[]', ?, ?) ON CONFLICT DO NOTHING`)
     .bind(r.domain, channelId, opened.channel.name, r.domain, r.company, topic, now).run();
-  // A customer the inbox has not met is named as it calls itself, with its domain's icon.
+  // A customer the inbox has not met is named as it calls itself, with the logo it uploaded
+  // in the portal (served by this Worker, so an address under its origin), else its domain's.
+  const origin = String(env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
+  const icon = r.logo && origin ? `${origin}/api/portal/logo/${r.domain}` : r.domain;
   await env.DB.prepare(`INSERT INTO orgs (slug, name, type, icon, updated_at)
     VALUES (?, ?, 'customer', ?, ?) ON CONFLICT (slug) DO NOTHING`)
-    .bind(customer, r.company || null, r.domain, now).run();
+    .bind(customer, r.company || null, icon, now).run();
   await ensureKnowledgeBase(env, 'org', customer).catch(() => null);
   for (const [target, value] of [['team', slug], ['org', customer]]) {
     // eslint-disable-next-line no-await-in-loop
@@ -727,7 +730,7 @@ async function openPortal(env, me, body) {
   // channel's first thread.
   const text = String(body.welcome ?? '').trim().slice(0, 8000);
   const welcome = text ? await portalCall(env, 'post', {
-    domain: r.domain, channel: channelId, text, author: portalAuthor(me),
+    domain: r.domain, channel: channelId, text, author: await portalAuthor(env, me),
   }) : null;
   console.log(JSON.stringify({
     route: 'admin',

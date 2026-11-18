@@ -58,6 +58,11 @@ const SLACK = {
   count: MAX_FILES, file: 20 * MB, total: 25 * MB, types: null, other: true,
 };
 
+/** The customer portal keeps any file, handed over through its Worker, one call a file. */
+const PORTAL = {
+  count: MAX_FILES, file: 10 * MB, total: 25 * MB, types: null, other: true,
+};
+
 /** The rule for posting as the person on `platform`, with a token granted `scope` (or none). */
 export function personRule(platform, scope) {
   if (platform === 'slack') {
@@ -81,7 +86,7 @@ export function personRule(platform, scope) {
     };
   }
   if (platform === 'portal') {
-    return { count: 0, why: 'the customer portal takes text only' };
+    return { ...PORTAL };
   }
   return { count: 0, why: 'the inbox cannot post to Discord as you' };
 }
@@ -107,7 +112,7 @@ export function appRule(platform) {
     };
   }
   if (platform === 'portal') {
-    return { count: 0, why: 'the customer portal takes text only' };
+    return { ...PORTAL };
   }
   return { count: 0, why: `the inbox cannot attach files on ${platform}` };
 }

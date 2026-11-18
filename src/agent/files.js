@@ -12,6 +12,8 @@
 
 import { discordEnabled, refreshAttachment } from '../discord.js';
 import { slackApi } from '../lookup.js';
+import { portalFileRef } from '../portal/ids.js';
+import { openPortalFile } from '../portalsource.js';
 import { canonicalUrl, isTeamsFileUrl, keptTeamsFile } from '../teamsfiles.js';
 import { imageSize, MAX_IMAGE_SIDE, tooLargeImage } from './images.js';
 
@@ -31,7 +33,8 @@ import { imageSize, MAX_IMAGE_SIDE, tooLargeImage } from './images.js';
  * goes through the same prompt-injection check (Clef) and is withheld when flagged.
  *
  * Teams files (SharePoint and OneDrive files, pasted images) are read from the copies the
- * normalizer keeps in pile 1 (src/teamsfiles.js); one without a copy cannot be read.
+ * normalizer keeps in pile 1 (src/teamsfiles.js); one without a copy cannot be read. The files
+ * of the customer portal are read through its Worker (src/portalsource.js).
  */
 
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -65,21 +68,31 @@ export function fileRef(link) {
   if (isTeamsFileUrl(url)) {
     return { source: 'teams', id: canonicalUrl(url), url: canonicalUrl(url) };
   }
+  // A file of the customer portal (src/portalsource.js): one of a portal thread only.
+  const portal = portalFileRef(url);
+  if (portal) {
+    return { source: 'portal', id: portal.id, url };
+  }
   return null;
 }
 
+/** Whether a message is the customer portal's: by its source, or its thread's key. */
+const ofPortal = (m) => m.source === 'portal' || String(m.thread || '').startsWith('portal:');
+
 /**
  * The files the readable messages link to: refs with the message (`id`, `at`) and link text.
- * A customer portal message has none: the portal takes text only, so a link in it is what its
- * author typed, and naming a Slack or Teams file there does not have the app fetch it for them.
+ * A customer portal message has the portal's files only, and no other message has those: a
+ * link to a Slack or Teams file that a customer typed does not have the app fetch it for them,
+ * nor does a link to a portal file posted elsewhere. (The portal then opens a file only for
+ * the channel of the thread it is asked for.)
  */
 export function threadFiles(messages, readable = () => true) {
   const out = new Map();
   for (const m of messages || []) {
-    if (!m.deletedAt && m.source !== 'portal' && readable(m)) {
+    if (!m.deletedAt && readable(m)) {
       for (const { label, url } of links(m.body)) {
         const ref = fileRef(url);
-        if (ref && !out.has(ref.id)) {
+        if (ref && (ref.source === 'portal') === ofPortal(m) && !out.has(ref.id)) {
           out.set(ref.id, {
             ...ref, name: label || null, message: m.id, at: m.at, thread: m.thread,
           });
@@ -127,6 +140,13 @@ export async function openFile(env, f, max = MAX_FILE_BYTES) {
   let name = f.name || url.split('/').pop().split('?')[0];
   if (f.source === 'teams') {
     return keptCopy(env, f, name, max);
+  }
+  if (f.source === 'portal') {
+    // Through the portal's Worker, for the channel of the file's thread.
+    const got = await openPortalFile(env, f.thread, f.url, { max });
+    return got.error ? got : {
+      body: got.body, size: got.size, type: got.type, name: got.name || name,
+    };
   }
   let type = '';
   let size;

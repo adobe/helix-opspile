@@ -14,6 +14,9 @@ import {
   channelId as newChannelId, domainOf, mailOf, messageId, portalBotId, portalUserId,
 } from './ids.js';
 import { emit, eventStatement } from './events.js';
+import {
+  deleteFilesOf, dropPicture, fileInfo, filesOf, pictureVersion, putPicture, takeFiles,
+} from './files.js';
 
 /**
  * The customer portal's record (portal/migrations): people, lobbies, channels, messages,
@@ -22,6 +25,9 @@ import { emit, eventStatement } from './events.js';
  * same domain, pick what they use of Adobe's, and ask for a channel. The inbox's admins open
  * one (src/portal/platform.js); from then on its members write there, and Adobe answers from
  * the inbox.
+ *
+ * A message carries markdown, the files uploaded for it (src/portal/files.js) and the people of
+ * its channel it mentions (`@Name`). People have a picture, customers a logo.
  *
  * Every change the inbox has to hear of writes an event with it (src/portal/events.js).
  */
@@ -64,23 +70,60 @@ export function companyFromDomain(domain) {
   return first.split('-').filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
 }
 
+/** The Adobe icon, which the portal serves: the picture of the inbox's app. */
+const BOT_PICTURE = '/icon-192.png';
+
+/** A short, stable name for a text, to tell one address from the one before. */
+function shortHash(text) {
+  let h = 5381;
+  for (const c of String(text)) {
+    // eslint-disable-next-line no-bitwise
+    h = ((h * 33) ^ c.codePointAt(0)) >>> 0;
+  }
+  return h.toString(36);
+}
+
+/**
+ * Where the page loads the picture of account `u` from (`GET /api/avatar/<id>`, which answers
+ * 404 for someone without one): its address changes when the picture does.
+ */
+export function avatarUrl(u) {
+  if (u.kind === 'bot') {
+    return BOT_PICTURE;
+  }
+  const version = u.avatar_key ? pictureVersion(u.avatar_key) : shortHash(u.avatar || u.email || '');
+  return `/api/avatar/${u.id}?v=${version}`;
+}
+
 const publicUser = (u) => (u ? {
-  id: u.id, name: u.name || nameFromMail(u.email), email: u.email || null, kind: u.kind,
+  id: u.id,
+  name: u.name || nameFromMail(u.email),
+  email: u.email || null,
+  kind: u.kind,
+  avatar: avatarUrl(u),
+  // Whether the picture is one they uploaded here (which they can take away again).
+  picture: Boolean(u.avatar_key),
 } : null);
 
 /**
  * The account of a mail address, made when it is first seen. A name given replaces the one
- * kept; `staff` (someone who answers from the inbox) stays, whatever comes later.
+ * kept, and so does a picture's address (`avatar`, which the inbox gives for its people);
+ * `staff` (someone who answers from the inbox) stays, whatever comes later.
  */
-export async function ensureUser(env, { email, name, kind = 'customer' }, now = Date.now()) {
+export async function ensureUser(env, {
+  email, name, kind = 'customer', avatar,
+}, now = Date.now()) {
   const mail = mailOf(email);
   const id = await portalUserId(mail);
   const given = clean(name, MAX_NAME) || null;
-  await env.DB.prepare(`INSERT INTO users (id, email, name, domain, kind, created_at)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+  const picture = /^https:\/\/\S{1,500}$/.test(avatar || '') ? avatar : null;
+  await env.DB.prepare(`INSERT INTO users (id, email, name, domain, kind, created_at, avatar)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?8)
     ON CONFLICT (id) DO UPDATE SET name = COALESCE(?7, users.name),
+      avatar = COALESCE(?8, users.avatar),
       kind = CASE WHEN ?5 = 'staff' THEN 'staff' ELSE users.kind END`)
-    .bind(id, mail, given || nameFromMail(mail), domainOf(mail), kind, iso(now), given).run();
+    .bind(id, mail, given || nameFromMail(mail), domainOf(mail), kind, iso(now), given, picture)
+    .run();
   return env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
 }
 
@@ -105,8 +148,9 @@ const parseTech = (s) => {
 
 /** A lobby's members, founder first, then as they were invited. */
 export async function membersOf(env, domain) {
-  const { results } = await env.DB.prepare(`SELECT u.id, u.name, u.email, u.kind, m.invited_by,
-      m.invited_at, m.joined_at FROM members m JOIN users u ON u.id = m.user
+  const { results } = await env.DB.prepare(`SELECT u.id, u.name, u.email, u.kind, u.avatar,
+      u.avatar_key, m.invited_by, m.invited_at, m.joined_at FROM members m
+      JOIN users u ON u.id = m.user
     WHERE m.lobby = ? ORDER BY m.invited_by IS NOT NULL, m.invited_at, u.email`)
     .bind(domain).all();
   return (results || []).map((r) => ({
@@ -127,6 +171,8 @@ export async function lobbyOf(env, domain) {
     requestedBy: l.requested_by,
     decidedAt: l.decided_at,
     reason: l.reason || null,
+    // Where the page loads the customer's logo from, when it has one.
+    logo: l.logo_key ? `/api/logo?v=${pictureVersion(l.logo_key)}` : null,
   } : null;
 }
 
@@ -150,6 +196,8 @@ export async function tellLobby(env, domain, now = Date.now()) {
       tech: lobby.tech,
       note: lobby.note,
       status: lobby.status,
+      // The logo's version, when the customer uploaded one: the inbox asks for it by domain.
+      logo: lobby.logo ? lobby.logo.split('?v=')[1] : null,
       requestedAt: lobby.requestedAt,
       requestedBy: by && { id: by.id, name: by.name, email: by.email },
       members: members.map((m) => ({
@@ -161,9 +209,10 @@ export async function tellLobby(env, domain, now = Date.now()) {
 }
 
 /**
- * Someone signed in (their mail address is verified by then): their account, their lobby,
- * and whether they are in it. The first of a domain founds its lobby; someone invited joins
- * it; anyone else of the domain is not in it until a member invites them.
+ * Someone signed in (their mail address is verified by then): their account (`user` as the
+ * page sees it, `row` as the database has it), their lobby, and whether they are in it. The
+ * first of a domain founds its lobby; someone invited joins it; anyone else of the domain is
+ * not in it until a member invites them.
  */
 export async function signIn(env, email, now = Date.now()) {
   const domain = domainOf(email);
@@ -172,7 +221,9 @@ export async function signIn(env, email, now = Date.now()) {
     WHERE u.id = ? AND m.lobby = ? AND m.joined_at IS NOT NULL`)
     .bind(await portalUserId(email), domain).first();
   if (known) {
-    return { user: publicUser(known), domain, member: true };
+    return {
+      user: publicUser(known), row: known, domain, member: true,
+    };
   }
   const user = await ensureUser(env, { email }, now);
   const at = iso(now);
@@ -191,7 +242,9 @@ export async function signIn(env, email, now = Date.now()) {
       AND joined_at IS NULL`).bind(at, domain, user.id).run();
     await tellLobby(env, domain, now);
   }
-  return { user: publicUser(user), domain, member: Boolean(member) };
+  return {
+    user: publicUser(user), row: user, domain, member: Boolean(member),
+  };
 }
 
 /** PUT /api/profile: what the person is called. */
@@ -202,6 +255,48 @@ export async function rename(env, user, name) {
   }
   await env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(given, user.id).run();
   return { ok: true, name: given };
+}
+
+/** PUT /api/avatar: the person's picture, a small image they uploaded. */
+export async function setAvatar(env, user, picture, now = Date.now()) {
+  const row = await env.DB.prepare('SELECT avatar_key FROM users WHERE id = ?').bind(user.id).first();
+  const put = await putPicture(env, 'avatars', user.id, picture, row && row.avatar_key, now);
+  if (put.error) {
+    return put;
+  }
+  await env.DB.prepare('UPDATE users SET avatar_key = ? WHERE id = ?').bind(put.key, user.id).run();
+  return { ok: true, avatar: avatarUrl({ ...user, avatar_key: put.key }), picture: true };
+}
+
+/** DELETE /api/avatar: back to the picture the person has elsewhere, or their initials. */
+export async function clearAvatar(env, user) {
+  const row = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
+  await env.DB.prepare('UPDATE users SET avatar_key = NULL WHERE id = ?').bind(user.id).run();
+  await dropPicture(env, row && row.avatar_key);
+  return { ok: true, avatar: avatarUrl({ ...row, avatar_key: null }), picture: false };
+}
+
+/** PUT /api/logo: the customer's logo, uploaded by one of its people. */
+export async function setLogo(env, domain, picture, now = Date.now()) {
+  const row = await env.DB.prepare('SELECT logo_key FROM lobbies WHERE domain = ?').bind(domain).first();
+  const put = await putPicture(env, 'logos', domain, picture, row && row.logo_key, now);
+  if (put.error) {
+    return put;
+  }
+  await env.DB.prepare('UPDATE lobbies SET logo_key = ?, updated_at = ? WHERE domain = ?')
+    .bind(put.key, iso(now), domain).run();
+  await tellLobby(env, domain, now);
+  return { ok: true, lobby: await lobbyOf(env, domain) };
+}
+
+/** DELETE /api/logo. */
+export async function clearLogo(env, domain, now = Date.now()) {
+  const row = await env.DB.prepare('SELECT logo_key FROM lobbies WHERE domain = ?').bind(domain).first();
+  await env.DB.prepare('UPDATE lobbies SET logo_key = NULL, updated_at = ? WHERE domain = ?')
+    .bind(iso(now), domain).run();
+  await dropPicture(env, row && row.logo_key);
+  await tellLobby(env, domain, now);
+  return { ok: true, lobby: await lobbyOf(env, domain) };
 }
 
 /**
@@ -320,6 +415,10 @@ export function titleOf(body) {
 export async function threadsOf(env, channel, user) {
   const { results } = await env.DB.prepare(`SELECT r.id, r.body, r.at, r.deleted_at,
       u.id AS author_id, u.name AS author_name, u.kind AS author_kind,
+      EXISTS (SELECT 1 FROM messages m, json_each(m.mentions) j WHERE m.channel = r.channel
+        AND m.root = r.id AND m.deleted_at IS NULL AND j.value = ?2
+        AND m.at > COALESCE((SELECT at FROM reads x WHERE x.user = ?2 AND x.root = r.id), ''))
+        AS mentioned,
       (SELECT COUNT(*) FROM messages m WHERE m.channel = r.channel AND m.root = r.id
         AND m.id != r.id AND m.deleted_at IS NULL) AS replies,
       (SELECT MAX(m.at) FROM messages m WHERE m.channel = r.channel AND m.root = r.id
@@ -344,10 +443,55 @@ export async function threadsOf(env, channel, user) {
       latest: r.latest || r.at,
       replies: r.replies,
       unread: r.unread,
+      // A message nobody of the reader's has read yet names them.
+      mentioned: Boolean(r.mentioned),
       resolved: Boolean(r.resolved),
       author: { id: r.author_id, name: r.author_name, kind: r.author_kind },
     }));
 }
+
+/**
+ * Who can be mentioned in `channel`, and whose `@Name` in a message is a mention: the people
+ * of its lobby who signed in, and the Adobe people who wrote in it. Account rows, customers
+ * first.
+ */
+export async function channelPeople(env, channel) {
+  const { results } = await env.DB.prepare(`SELECT u.* FROM users u WHERE u.kind != 'bot'
+      AND (u.id IN (SELECT user FROM members WHERE lobby = ?1 AND joined_at IS NOT NULL)
+        OR u.id IN (SELECT DISTINCT author FROM messages WHERE channel = ?2))
+    ORDER BY u.kind != 'customer', u.name, u.id`).bind(channel.lobby, channel.id).all();
+  return results || [];
+}
+
+/** GET /api/people: `channelPeople`, as the page's suggestions take them. */
+export async function peopleOf(env, channel) {
+  return (await channelPeople(env, channel)).map((u) => ({
+    id: u.id, name: u.name, kind: u.kind, avatar: avatarUrl(u),
+  }));
+}
+
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The accounts of `people` whose `@Name` is in `text`: who a message mentions, by id. */
+export function mentionsIn(text, people) {
+  const body = String(text || '');
+  if (!body.includes('@')) {
+    return [];
+  }
+  return people.filter((u) => u.name && new RegExp(
+    `(^|[^\\p{L}\\p{N}@])@${escapeRe(u.name)}(?![\\p{L}\\p{N}])`,
+    'iu',
+  ).test(body)).map((u) => u.id);
+}
+
+const parseIds = (s) => {
+  try {
+    const list = JSON.parse(s || '[]');
+    return Array.isArray(list) ? list.map(String) : [];
+  } catch {
+    return [];
+  }
+};
 
 /**
  * One thread for `user`: its messages, oldest first, each with its author and reactions (who
@@ -355,7 +499,8 @@ export async function threadsOf(env, channel, user) {
  */
 export async function threadOf(env, channel, root, user, now = Date.now()) {
   const { results } = await env.DB.prepare(`SELECT m.id, m.body, m.at, m.edited_at, m.deleted_at,
-      u.id AS author_id, u.name AS author_name, u.kind AS author_kind
+      m.mentions, u.id AS author_id, u.name AS author_name, u.kind AS author_kind,
+      u.avatar AS author_avatar, u.avatar_key AS author_avatar_key, u.email AS author_email
     FROM messages m JOIN users u ON u.id = m.author
     WHERE m.channel = ? AND m.root = ? ORDER BY m.at, m.rowid LIMIT ?`)
     .bind(channel.id, String(root || ''), MESSAGES).all();
@@ -383,6 +528,7 @@ export async function threadOf(env, channel, root, user, now = Date.now()) {
     ON CONFLICT (user, root) DO UPDATE SET at = MAX(reads.at, excluded.at)`)
     .bind(user.id, String(root), latest || iso(now)).run();
   const first = rows[0];
+  const files = await filesOf(env, rows.filter((r) => !r.deleted_at).map((r) => r.id));
   return {
     id: first.id,
     title: first.deleted_at ? '(deleted)' : titleOf(first.body),
@@ -395,7 +541,21 @@ export async function threadOf(env, channel, root, user, now = Date.now()) {
       deleted: Boolean(r.deleted_at),
       body: r.deleted_at ? '' : r.body,
       mine: r.author_id === user.id,
-      author: { id: r.author_id, name: r.author_name, kind: r.author_kind },
+      // Whether it names the reader, and the files it carries.
+      mentionsMe: !r.deleted_at && parseIds(r.mentions).includes(user.id),
+      files: (files.get(r.id) || []).map((f) => fileInfo(f)),
+      author: {
+        id: r.author_id,
+        name: r.author_name,
+        kind: r.author_kind,
+        avatar: avatarUrl({
+          id: r.author_id,
+          kind: r.author_kind,
+          avatar: r.author_avatar,
+          avatar_key: r.author_avatar_key,
+          email: r.author_email,
+        }),
+      },
       reactions: [...(by.get(r.id) || new Map()).values()].map((c) => ({
         emoji: c.emoji, count: c.count, mine: c.mine, names: c.names,
       })),
@@ -410,12 +570,22 @@ const channelInfo = async (env, channel) => ({
   company: (await lobbyOf(env, channel.lobby) || {}).company || null,
 });
 
+/**
+ * An account as an event names it. `avatar`: the address of the picture the inbox gave for one
+ * of its people; `picture`: the version of one the person uploaded here, which the inbox asks
+ * the portal for.
+ */
 const authorInfo = (u) => ({
   id: u.id,
   name: u.name || (u.email ? nameFromMail(u.email) : null),
   email: u.email || null,
   kind: u.kind,
+  ...(/^https:\/\//.test(u.avatar || '') ? { avatar: u.avatar } : {}),
+  ...(u.avatar_key ? { picture: pictureVersion(u.avatar_key) } : {}),
 });
+
+/** The portal's origin in the addresses its events carry; a made-up one where it has none. */
+const originOf = (env) => String(env.PUBLIC_ORIGIN || '').replace(/\/+$/, '') || 'https://portal.invalid';
 
 /** Where a message is, in the portal: `<origin>/?c=<channel>&t=<thread>#<message>`. */
 export function permalink(env, channel, root, id) {
@@ -425,8 +595,17 @@ export function permalink(env, channel, root, id) {
     : undefined;
 }
 
-/** The event of a message as it is now: posted, edited or deleted. */
-async function messageEvent(env, channel, author, m) {
+/**
+ * The event of a message as it is now: posted, edited or deleted, with its files and the
+ * people it mentions. `files` (rows): the ones it is about to take, in the same batch.
+ */
+async function messageEvent(env, channel, author, m, files = null) {
+  const gone = Boolean(m.deleted_at);
+  const rows = files || (gone ? [] : (await filesOf(env, [m.id])).get(m.id) || []);
+  const ids = gone ? [] : parseIds(m.mentions);
+  const { results: mentioned } = ids.length ? await env.DB.prepare(`SELECT id, name, email, kind
+    FROM users WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(ids)).all()
+    : { results: [] };
   return {
     type: 'message',
     domain: channel.lobby,
@@ -440,6 +619,8 @@ async function messageEvent(env, channel, author, m) {
       editedAt: m.edited_at || undefined,
       deletedAt: m.deleted_at || undefined,
       text: m.deleted_at ? '' : m.body,
+      ...(rows.length ? { files: rows.map((f) => fileInfo(f, originOf(env))) } : {}),
+      ...(mentioned && mentioned.length ? { mentions: mentioned } : {}),
       permalink: permalink(env, channel.id, m.root, m.id),
     },
   };
@@ -448,11 +629,16 @@ async function messageEvent(env, channel, author, m) {
 /**
  * Writes a message of `author` (an account row) in `channel`: a reply in thread `root`, or
  * without one the first message of a new thread. A reply to a reply goes to its thread.
- * `{ ok, id, root }`, or `{ error, status }`.
+ * `files`: the ids of the files uploaded for it (src/portal/files.js); with files, it needs no
+ * text. `{ ok, id, root }`, or `{ error, status }`.
  */
-export async function writeMessage(env, channel, author, { root, text }, now = Date.now()) {
+export async function writeMessage(env, channel, author, { root, text, files }, now = Date.now()) {
   const body = String(text ?? '').replace(/\r\n?/g, '\n').trim();
-  if (!body || body.length > MAX_TEXT) {
+  const taken = await takeFiles(env, channel, author, files);
+  if (taken.error) {
+    return taken;
+  }
+  if ((!body && !taken.files.length) || body.length > MAX_TEXT) {
     return { error: `write something (up to ${MAX_TEXT} characters)`, status: 400 };
   }
   let thread = null;
@@ -465,17 +651,23 @@ export async function writeMessage(env, channel, author, { root, text }, now = D
     thread = parent.root;
   }
   const id = messageId(now);
+  const mentions = mentionsIn(body, await channelPeople(env, channel))
+    .filter((u) => u !== author.id);
   const m = {
-    id, root: thread || id, body, at: iso(now),
+    id, root: thread || id, body, at: iso(now), mentions: JSON.stringify(mentions),
   };
+  const attached = taken.files.map((f) => ({ ...f, message: m.id }));
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO messages (id, channel, root, author, body, at)
-      VALUES (?, ?, ?, ?, ?, ?)`).bind(m.id, channel.id, m.root, author.id, m.body, m.at),
+    env.DB.prepare(`INSERT INTO messages (id, channel, root, author, body, at, mentions)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .bind(m.id, channel.id, m.root, author.id, m.body, m.at, mentions.length ? m.mentions : null),
+    ...attached.map((f) => env.DB.prepare(`UPDATE files SET message = ? WHERE id = ?
+      AND message IS NULL`).bind(m.id, f.id)),
     // Its author has read their own message.
     env.DB.prepare(`INSERT INTO reads (user, root, at) VALUES (?, ?, ?)
       ON CONFLICT (user, root) DO UPDATE SET at = MAX(reads.at, excluded.at)`)
       .bind(author.id, m.root, m.at),
-    eventStatement(env, await messageEvent(env, channel, author, m), new Date(now)),
+    eventStatement(env, await messageEvent(env, channel, author, m, attached), new Date(now)),
   ]);
   return { ok: true, id: m.id, root: m.root };
 }
@@ -501,18 +693,23 @@ export async function editMessage(env, channel, user, { id, text }, now = Date.n
   if (found.m.author !== user.id) {
     return { error: 'only its author changes a message', status: 403 };
   }
+  const mentions = mentionsIn(body, await channelPeople(env, channel)).filter((u) => u !== user.id);
   const m = {
-    ...found.m, body, edited_at: iso(now), rev: found.m.rev + 1,
+    ...found.m,
+    body,
+    edited_at: iso(now),
+    rev: found.m.rev + 1,
+    mentions: mentions.length ? JSON.stringify(mentions) : null,
   };
   await env.DB.batch([
-    env.DB.prepare('UPDATE messages SET body = ?, edited_at = ?, rev = ? WHERE id = ?')
-      .bind(m.body, m.edited_at, m.rev, m.id),
+    env.DB.prepare(`UPDATE messages SET body = ?, edited_at = ?, rev = ?, mentions = ?
+      WHERE id = ?`).bind(m.body, m.edited_at, m.rev, m.mentions, m.id),
     eventStatement(env, await messageEvent(env, channel, found.author, m), new Date(now)),
   ]);
   return { ok: true, id: m.id, root: m.root };
 }
 
-/** Deletes one's own message: it stays as a tombstone, without its text. */
+/** Deletes one's own message: it stays as a tombstone, without its text and its files. */
 export async function deleteMessage(env, channel, user, { id }, now = Date.now()) {
   const found = await messageOf(env, channel, id);
   if (!found || found.m.deleted_at) {
@@ -522,14 +719,16 @@ export async function deleteMessage(env, channel, user, { id }, now = Date.now()
     return { error: 'only its author deletes a message', status: 403 };
   }
   const m = {
-    ...found.m, body: '', deleted_at: iso(now), rev: found.m.rev + 1,
+    ...found.m, body: '', deleted_at: iso(now), rev: found.m.rev + 1, mentions: null,
   };
   await env.DB.batch([
-    env.DB.prepare("UPDATE messages SET body = '', deleted_at = ?, rev = ? WHERE id = ?")
-      .bind(m.deleted_at, m.rev, m.id),
+    env.DB.prepare(`UPDATE messages SET body = '', deleted_at = ?, rev = ?, mentions = NULL
+      WHERE id = ?`).bind(m.deleted_at, m.rev, m.id),
     env.DB.prepare('DELETE FROM reactions WHERE message = ?').bind(m.id),
     eventStatement(env, await messageEvent(env, channel, found.author, m), new Date(now)),
   ]);
+  // Its files go with it, once it is gone: a deleted message shows none meanwhile.
+  await deleteFilesOf(env, m.id);
   return { ok: true, id: m.id, root: m.root };
 }
 
