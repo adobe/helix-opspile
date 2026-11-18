@@ -71,6 +71,7 @@ on:
       - 'src/lookup.js'
       - 'src/markdown.js'
       - 'src/mdast.js'
+      - 'src/mdpick.js'
       - 'src/mention-match.js'
       - 'src/messagelinks.js'
       - 'src/normalize.js'

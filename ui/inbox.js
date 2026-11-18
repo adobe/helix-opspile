@@ -4338,14 +4338,18 @@ const withDraft = (text, d) => (text.trim() && text !== d.body ? `${text.trimEnd
 
 /** The composer state once draft `d` is taken into `text`; its mentions come along. */
 function takeDraft(key, d, text) {
-  if (d.mentions?.length) {
-    if (!mention.picked.has(key)) mention.picked.set(key, new Map());
-    for (const m of d.mentions) {
-      mention.picked.get(key).set(m.name, m);
-      mention.names.add(m.name);
-    }
-  }
+  pickMentions(key, d.mentions);
   return { text: withDraft(text, d), from: d.body, base: d.updated_at };
+}
+
+/** A draft's mentions (`list`), as picked in the reply box of thread `key`. */
+function pickMentions(key, list) {
+  if (!list?.length) return;
+  if (!mention.picked.has(key)) mention.picked.set(key, new Map());
+  for (const m of list) {
+    mention.picked.get(key).set(m.name, m);
+    mention.names.add(m.name);
+  }
 }
 
 /** The composer took this version of the draft in (and was not emptied since). */
@@ -4623,6 +4627,14 @@ const DRAFT_ICONS = {
   me: ICON('<path d="M14.2 1.8L7 9M14.2 1.8L9.6 14.2 7 9 1.8 6.4z"/>'),
   bot: ICON('<rect x="2.5" y="5" width="11" height="8.5" rx="2.2"/><path d="M8 5V2.4M5.8 8.6v1.2M10.2 8.6v1.2M1 9v1.8M15 9v1.8"/>'),
 };
+// What the draft line's buttons say with a part of the draft selected (`markPart`).
+const DRAFT_PART = {
+  add: ['Add selection to reply', 'Add selection to reply: the part of the draft you selected, after what you wrote; sending it uses up the draft'],
+  edit: ['Edit selection', 'Edit selection: put the part of the draft you selected in the reply box; sending it uses up the draft'],
+  bot: ['Send selection as bot', 'Post the part of the draft you selected in the thread, as the bot, and drop the rest'],
+  me: ['Send selection as me', 'Post the part of the draft you selected in the thread, as you, and drop the rest'],
+};
+const draftPartLabels = (k) => ` data-part="${DRAFT_PART[k][0]}" data-part-title="${DRAFT_PART[k][1]}"`;
 /** A quiet, icon-only button of the draft line: what it does is its label (and tooltip). */
 const draftTool = (act, icon, label, title, more = '') => `<button class="ico ${act}" data-draft="${act}" aria-label="${label}" title="${title}"${more}>${DRAFT_ICONS[icon]}</button>`;
 
@@ -4631,6 +4643,7 @@ const draftTool = (act, icon, label, title, more = '') => `<button class="ico ${
  * viewed (`open`), and what to do with it. Its tools are icons: View draft (opens and closes
  * it; open only while the pointer rests on it, `peek`, it is Keep draft open instead), `editable` (taking it into the reply box: Edit, or Add to reply after your `own` text)
  * and `discard`. Sending it is labelled, the person's own Send as me last: `asBot` and `asMe`.
+ * With a part of the draft selected, Edit and the sends take that part (`DRAFT_PART`).
  * `note` says where the draft stands; `thread` is the draft's, for the images it shows.
  */
 function draftLine(d, {
@@ -4643,13 +4656,13 @@ function draftLine(d, {
   else tools = [draftTool('view', 'view', 'View draft', 'View draft: all of it, here, until you hide it', view)];
   if (editable) {
     tools.push(own
-      ? draftTool('edit', 'add', 'Add to reply', 'Add to reply: the draft after what you wrote, to edit it')
-      : draftTool('edit', 'edit', 'Edit', 'Edit: put the draft in the reply box'));
+      ? draftTool('edit', 'add', 'Add to reply', 'Add to reply: the draft after what you wrote, to edit it', draftPartLabels('add'))
+      : draftTool('edit', 'edit', 'Edit', 'Edit: put the draft in the reply box', draftPartLabels('edit')));
   }
   if (discard) tools.push(draftTool('discard', 'discard', 'Discard', 'Discard: throw the draft away, for everyone on the team'));
   const sends = [];
-  if (asBot) sends.push(`<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot">${DRAFT_ICONS.bot}<span>Send as bot</span></button>`);
-  if (asMe) sends.push(`<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you">${DRAFT_ICONS.me}<span>Send as me</span></button>`);
+  if (asBot) sends.push(`<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot"${draftPartLabels('bot')}>${DRAFT_ICONS.bot}<span>Send as bot</span></button>`);
+  if (asMe) sends.push(`<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you"${draftPartLabels('me')}>${DRAFT_ICONS.me}<span>Send as me</span></button>`);
   return `<div class="dl"><div class="head"><span class="pen">${DRAFT_ICONS.draft}Draft</span><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span></div>
       <span class="tools">${tools.join('')}</span>${sends.length ? `<span class="sends">${sends.join('')}</span>` : ''}
       <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d)}</div>`;
@@ -4779,7 +4792,8 @@ function resizeDraft(el, from) {
  * and opening again, over and over.
  * Text selected in it keeps a line the pointer opened open, as View draft does: closing it (or
  * opening it) draws the text again, and the selection would go with it, nothing left to copy. A
- * drag that selects often goes past the line's edge.
+ * drag that selects often goes past the line's edge. With a part of its text selected, Edit and
+ * the sends take that part (`draftPart`); double-clicking the text edits all of it, as Edit does.
  */
 function wireDraftBar(el) {
   el.__wired = true;
@@ -4826,9 +4840,17 @@ function wireDraftBar(el) {
       el.querySelector('.view')?.focus();
       return;
     }
-    if (act === 'edit') adoptDraft(key);
-    else if (act === 'discard') discardDraft(key);
-    else sendDraft(key, act === 'bot');
+    const part = act === 'discard' ? null : draftPart(el, lineDraft(key));
+    if (act === 'edit') {
+      if (part) adoptPart(key, part); else adoptDraft(key);
+    } else if (act === 'discard') discardDraft(key);
+    else sendDraft(key, act === 'bot', part);
+  });
+  el.addEventListener('dblclick', (e) => {
+    if (!e.target.closest('.pv') || e.target.closest('a, button') || !el.querySelector('[data-draft="edit"]:not(:disabled)')) return;
+    // The double click selected a word: it is all of the draft that goes into the box.
+    getSelection()?.removeAllRanges();
+    adoptDraft(el.__key);
   });
   el.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || !(sourcePop.url || draftOpen.has(el.__key))) return;
@@ -4855,23 +4877,100 @@ function adoptDraft(key) {
   box.scrollTop = box.scrollHeight;
 }
 
-/** Sends the draft as it is, as you or as the opspile app: that uses it up. */
-async function sendDraft(key, asApp) {
+/**
+ * Sends the draft as it is, as you or as the opspile app: that uses it up. Sending a `part` of
+ * it (`draftPart`) uses it up too: the rest goes.
+ */
+async function sendDraft(key, asApp, part = null) {
   const data = state.cache.get(key)?.data;
   const d = data?.draft;
   if (!d) return;
+  const out = part ? { body: part.body, mentions: part.mentions, updated_at: d.updated_at } : d;
   $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  if (part) getSelection()?.removeAllRanges();
   if (asApp) {
     const sendIt = async (again = false) => {
-      const sent = await sendAsApp(key, d.body, d.updated_at, { mentions: d.mentions || [], again });
+      const sent = await sendAsApp(key, out.body, out.updated_at, { mentions: out.mentions || [], again });
       if (sent.unsure) toast(`It may have been sent: ${sent.error}.`, { label: 'Send again', run: () => sendIt(true) });
       else toast(sent.error ? `Nothing was sent: ${sent.error}.` : ['Sent as the bot.', sent.invited].filter(Boolean).join(' '), null, { stay: sent.missed });
     };
     await sendIt();
   } else {
-    await send(key, data.thread, d);
+    await send(key, data.thread, out);
   }
   renderDraftBar(key, true);
+}
+
+/**
+ * Where the selection in the draft line `el` starts and ends in the draft's text (`text`, as the
+ * page shows it, without tags), or null: nothing of the text is selected, or all of it.
+ */
+function draftSelection(el) {
+  const tx = el.querySelector('.pv .tx');
+  const sel = getSelection();
+  if (!tx || !sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const r = sel.getRangeAt(0);
+  if (!r.intersectsNode(tx)) return null;
+  const all = document.createRange();
+  all.selectNodeContents(tx);
+  const text = all.toString();
+  const at = (node, offset) => {
+    const before = document.createRange();
+    before.setStart(tx, 0);
+    before.setEnd(node, offset);
+    return before.toString().length;
+  };
+  const from = r.compareBoundaryPoints(Range.START_TO_START, all) <= 0 ? 0 : at(r.startContainer, r.startOffset);
+  const to = r.compareBoundaryPoints(Range.END_TO_END, all) >= 0 ? text.length : at(r.endContainer, r.endOffset);
+  const flat = (t) => t.replace(/\s+/g, ' ').trim();
+  const picked = flat(text.slice(from, to));
+  return picked && picked !== flat(text) ? { text, start: from, end: to } : null;
+}
+
+/**
+ * The part of draft `d` selected in its line `el`, as Markdown (`Markdown.pick`: its links, code
+ * and mentions kept), and the draft's mentions that are in it; null when there is none.
+ */
+function draftPart(el, d) {
+  const at = d && draftSelection(el);
+  const body = at && Markdown.pick(d.body, at.text, at.start, at.end);
+  if (!body || body === d.body.trim()) return null;
+  return { body, mentions: (d.mentions || []).filter((m) => namedIn(body, m.name)) };
+}
+
+/** The draft line's buttons say what they do: with a part of the draft selected (`part`), or all. */
+function markPart(el, part) {
+  el.classList.toggle('part', part);
+  for (const b of el.querySelectorAll('[data-part]')) {
+    b.__whole ??= { label: b.getAttribute('aria-label'), title: b.title, text: b.querySelector('span')?.textContent };
+    const span = b.querySelector('span');
+    if (span) span.textContent = part ? b.dataset.part : b.__whole.text;
+    if (b.__whole.label) b.setAttribute('aria-label', part ? b.dataset.part : b.__whole.label);
+    b.title = part ? b.dataset.partTitle : b.__whole.title;
+  }
+}
+document.addEventListener('selectionchange', () => {
+  const el = $('draftbar');
+  if (el?.__key) markPart(el, Boolean(lineDraft(el.__key) && draftSelection(el)));
+});
+
+/**
+ * Takes a part of the draft into the reply box, after what you typed: the draft taken in and
+ * cut down to it, so that sending it uses the draft up, as sending the part from the line does.
+ */
+function adoptPart(key, part) {
+  const d = state.cache.get(key)?.data?.draft;
+  const box = $('reply');
+  if (!d || !box || state.open !== key) return;
+  pickMentions(key, part.mentions);
+  const text = box.value.trim() ? `${box.value.trimEnd()}\n\n${part.body}` : part.body;
+  state.composers.set(key, { text, from: d.body, base: d.updated_at });
+  getSelection()?.removeAllRanges();
+  box.value = text;
+  box.dispatchEvent(new Event('input'));
+  box.focus();
+  box.setSelectionRange(text.length, text.length);
+  box.scrollTop = box.scrollHeight;
 }
 
 /** The draft as the inbox list shows it, without fetching the inbox again. */
@@ -6852,10 +6951,13 @@ function pickMention(key, i) {
 /** Who a picked account is, for its mention's class: a bot, or Adobe (the picker knows staff). */
 const pickedKind = (p) => (p.kind === 'bot' ? 'bot' : (p.staff ? 'adobe' : null));
 
+/** Whether `body` has an @Name of `name`. */
+const namedIn = (body, name) => new RegExp(`@${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'u').test(body);
+
 /** Accounts picked for this reply whose @Name is still in the text. */
 function mentionsIn(key, body) {
   return [...(mention.picked.get(key)?.values() || [])]
-    .filter((p) => new RegExp(`@${p.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'u').test(body))
+    .filter((p) => namedIn(body, p.name))
     .map((p) => ({ id: p.id, name: p.name }));
 }
 

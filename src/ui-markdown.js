@@ -24,6 +24,8 @@
  * - `suggestMentions` (src/mention-match.js): the composer's `@` suggestions from a thread's
  *   pool, ranked as the Worker ranks them
  * - code blocks highlighted by what the page gives `render` (`highlight`, src/ui-highlight.js)
+ * - `pick`: the Markdown of a part of a message as the page shows it (src/mdpick.js), the part
+ *   of a draft someone selected
  *
  * The page does not load this file: scripts/ui-markdown.mjs bundles it, with micromark,
  * into src/ui-markdown.bundle.js, which src/page.js puts into the page as `Markdown`. The
@@ -41,6 +43,7 @@ import { gfmTaskListItem, gfmTaskListItemHtml } from 'micromark-extension-gfm-ta
 import { CHANNEL_REF, QUOTE_TITLE, unlazy } from './markdown.js';
 import { slackMessageKey } from './slackurl.js';
 import { channelUrlKey } from './channelurl.js';
+import { pickSource } from './mdpick.js';
 
 export { emojiLookup, matchEmoji } from './emojinames.js';
 export { CHANNEL_REF, withoutQuotes } from './markdown.js';
@@ -624,3 +627,20 @@ export function render(src, {
   }).join('')).trim();
   return embedSlack(built, lookup, quoted) + (files ? fileCards(files, fileUrl) : '');
 }
+
+/**
+ * The Markdown of `text.slice(start, end)`, a part of message `src` as the page shows it (its
+ * text, without tags): see src/mdpick.js. Null when nothing is selected.
+ *
+ * @param {string} src
+ * @param {string} text
+ * @param {number} start
+ * @param {number} end
+ */
+export const pick = (src, text, start, end) => pickSource(
+  src,
+  text,
+  start,
+  end,
+  (md) => decode(render(md).replace(/<[^>]*>/g, '')),
+);
