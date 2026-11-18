@@ -553,6 +553,8 @@ describe('the agent\'s switchable tools', () => {
       },
       capture(step('bash', { command: 'cut -d, -f2 data.csv | sort -r; ls' })),
       capture(step('bash', { command: 'cat missing.txt' })),
+      // Longer than a typical staff reply (src/agent/draftlength.js): refused, nothing is sent.
+      capture(step('post_message', { text: 'word '.repeat(100) })),
       capture(step('post_message', { text: '@Cy Customer, purges take up to 5 minutes.' })),
       capture(step('add_reaction', { message: '1792584000.000100', emoji: ':tada:' })),
       capture(fauxAssistantMessage('Posted the purge time.')),
@@ -564,7 +566,9 @@ describe('the agent\'s switchable tools', () => {
     assert.match(system, /<posting>\nThe team turned on post_message/);
     assert.match(system, /You may react to a message with an emoji instead \(add_reaction\)/);
     assert.match(system, /<computer>\nYou have a computer: the bash tool runs commands in a shell of your own, with the working directory \/workspace/);
-    const [pwd, sum, missing, post, reacted] = results;
+    const [pwd, sum, missing, tooLong, post, reacted] = results;
+    assert.ok(tooLong.error);
+    assert.match(tooLong.text, /^The reply is 499 characters, longer than you may post yourself[^]*Nothing was posted\./);
     assert.equal(pwd.text.trim(), '/workspace');
     // The file is still there for the next command.
     assert.equal(sum.text.trim(), '2\n1\ndata.csv');
