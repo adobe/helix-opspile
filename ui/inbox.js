@@ -20,6 +20,8 @@ const state = {
   order: [], prevKeys: null, shownIds: null, sending: [], sort: 'team', unread: false, mentions: false, scores: new Map(),
   // The thread list on screen, while it stays the same list (see syncList).
   list: newList(),
+  // The simple personal view's customer column: the places it holds while you read (columnPlace).
+  column: null,
   cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, headOpen: null, composers: new Map(), attachments: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
@@ -1278,7 +1280,8 @@ function wireLogos() {
 /**
  * The customers' order in the column: those the red badge counts first (youCount), most
  * first, then those with unread threads, then the rest, then the excluded ones; by name within
- * each. `c.name` is looked up once per customer, not in every comparison.
+ * each. `c.name` is looked up once per customer, not in every comparison. A customer goes by its
+ * place (`c.at`, see columnPlace), not by what it has unread this instant.
  */
 const byName = new Intl.Collator(undefined, { sensitivity: 'base' });
 const columnPile = (c) => {
@@ -1286,8 +1289,45 @@ const columnPile = (c) => {
   if (c.you > 0) return 0;
   return c.unread ? 1 : 2;
 };
-const columnOrder = ([, a], [, b]) => columnPile(a) - columnPile(b) || b.you - a.you
-  || byName.compare(a.name, b.name);
+/** Whether place `a` is above place `b` (negative), below it (positive), or the same. */
+const placeOrder = (a, b) => a.pile - b.pile || b.you - a.you;
+const columnOrder = ([, a], [, b]) => placeOrder(a.at, b.at) || byName.compare(a.name, b.name);
+/**
+ * The column stays put while you read (`state.column`): reading the last unread thread of a
+ * customer took its badge and its bold away, and moved it to the bottom under the pointer. A
+ * customer's place is the highest it has had since the inbox was last away (`held`, by customer):
+ * what comes in moves it up at once, what you read moves it down only once the inbox has been
+ * away for `AWAY_MS` (forgetColumn), or in a new column (another view, the expert view, viewing
+ * as someone, a reload). Its badge and bold are what it has now. An excluded customer goes to the
+ * end at once, as you asked, and starts afresh when it is let back in.
+ */
+function columnPlace(v, c) {
+  const as = state.data?.as || null;
+  if (state.column?.as !== as) state.column = { as, held: new Map() };
+  const { held } = state.column;
+  const now = { pile: columnPile(c), you: c.you };
+  if (c.out) {
+    held.delete(v);
+    return now;
+  }
+  const was = held.get(v);
+  if (!was || placeOrder(now, was) < 0) held.set(v, now);
+  return held.get(v);
+}
+/**
+ * After a while away (`AWAY_MS`): the column lets go of the places it held, so the customers you
+ * read go down; the open thread's customer stays where it is. Whether it held others to let go of.
+ */
+function forgetColumn() {
+  const held = state.column?.held;
+  if (!held?.size) return false;
+  const open = state.open && state.data?.threads.find((t) => t.thread === state.open)?.org;
+  const kept = open && held.get(open);
+  if (kept && held.size === 1) return false;
+  held.clear();
+  if (kept) held.set(open, kept);
+  return true;
+}
 /**
  * The simple personal view's only card: its customers, by logo and name, bold while they have
  * unread threads, with the red badge. "All customers" first, picked while no customer is; a
@@ -1311,7 +1351,10 @@ function simpleCustomers() {
     by.set(t.org, c);
   }
   for (const v of on) if (!by.has(v)) by.set(v, { unread: false, you: 0 });
-  for (const [v, c] of by) c.name = customerName(v);
+  for (const [v, c] of by) {
+    c.name = customerName(v);
+    c.at = columnPlace(v, c);
+  }
   const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${c.out ? ' (excluded)' : ''}">
       ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${youBadge(c.you)}</div>`).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
@@ -1328,6 +1371,8 @@ function filterCards() {
     if (box.__html !== html) { box.innerHTML = html; box.__html = html; }
     return;
   }
+  // The column holds its places only while it is on screen (columnPlace).
+  state.column = null;
   $('filters').__html = undefined;
   const cards = viewFacets().filter((f) => !f.into).map((f) => {
     const parts = cardFacets(f.id);
@@ -7066,13 +7111,14 @@ const STATUS_TICK_MS = 60 * 1000;
 // announces that: the list is looked at again every minute while it is on screen.
 setInterval(() => { if (!hidden() && state.data) render(); }, STATUS_TICK_MS);
 // Away from the inbox (its tab hidden, or another window in front) for AWAY_MS, unread only lets go
-// of the threads read meanwhile (forgetRead): not sooner, so a look at another window and back
+// of the threads read meanwhile (forgetRead), and the simple personal view's customers of the
+// places they held (forgetColumn): not sooner, so a look at another window and back
 // finds the list as it was. While away, so the list is short when you are back; and when you are,
 // in case a timer in the background was late, and after the catch-up reload, for what was read
 // elsewhere.
 const AWAY_MS = 5 * 60 * 1000;
 const away = { since: 0, timer: null };
-const forgetSoon = () => { if (forgetRead()) render(); };
+const forgetSoon = () => { if ([forgetRead(), forgetColumn()].some(Boolean)) render(); };
 /** Left or back: the time away starts, or ends. */
 function awayOrBack() {
   if (hidden() || !document.hasFocus()) {

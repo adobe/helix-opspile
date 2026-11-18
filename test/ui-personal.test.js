@@ -90,7 +90,7 @@ function load() {
     FACETS, state, pass: null, keptUnread: (t) => t.unread, viewerId: () => ME,
   });
   const activityOf = (t) => String(t.last_at || t.any_at || '');
-  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, row, grouped, groupPlan, groupHtml, youCount, youBadge, stackLine, mergeStacks', {
+  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, forgetColumn, row, grouped, groupPlan, groupHtml, youCount, youBadge, stackLine, mergeStacks', {
     state,
     esc,
     notButton: views.notButton,
@@ -411,15 +411,19 @@ describe('the simple personal view', () => {
 
     it('puts the customers with unread mentions first, then the unread ones, then the rest', () => {
       assert.deepEqual(column(), ['acme', 'globex', 'initech']);
-      // ACME has unread threads still, Globex a mention.
+      // ACME has unread threads still, Globex a mention (once the column lets go: see below).
       read('a1');
+      page.forgetColumn();
       assert.deepEqual(column(), ['globex', 'acme', 'initech']);
       // Both unread, no mentions: by name.
       read('g2');
+      page.forgetColumn();
       assert.deepEqual(column(), ['acme', 'globex', 'initech']);
       read('a2');
+      page.forgetColumn();
       assert.deepEqual(column(), ['globex', 'acme', 'initech']);
       read('g1');
+      page.forgetColumn();
       assert.deepEqual(column(), ['acme', 'globex', 'initech']);
     });
 
@@ -428,10 +432,73 @@ describe('the simple personal view', () => {
       Object.assign(i1, { unread: true, unreadMentions: 5, mentionedMe: true });
       assert.deepEqual(column(), ['initech', 'acme', 'globex']);
       i1.unreadMentions = 2;
+      page.forgetColumn();
       // ACME and Initech have two each: by name.
       assert.deepEqual(column(), ['acme', 'initech', 'globex']);
       state.data.threads.find((t) => t.thread === 'g1').last_at = '2026-11-06T10:00Z';
       assert.deepEqual(column(), ['acme', 'initech', 'globex']);
+    });
+
+    it('keeps a customer where it is while you read it, and moves it down only after a while away', () => {
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      // You read ACME's last unread threads: its badge and bold go, its place does not.
+      read('a1');
+      read('a2');
+      read('x1');
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      assert.equal(badge(columnRow('acme')), null);
+      assert.doesNotMatch(columnRow('acme'), /class="lab new"/);
+      // Each render asks again: still where it was.
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      // Back after a while away (forgetSoon): ACME goes down, as it is read.
+      assert.equal(page.forgetColumn(), true);
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
+      assert.equal(page.forgetColumn(), true);
+    });
+
+    it('moves a customer up at once when something comes in', () => {
+      column();
+      read('a1');
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      // Initech had nothing unread: a mention of you moves it to the top, past the held places.
+      Object.assign(state.data.threads.find((t) => t.thread === 'i1'), { unread: true, unreadMentions: 3, mentionedMe: true });
+      assert.deepEqual(column(), ['initech', 'acme', 'globex']);
+      // Read, it stays there.
+      read('i1');
+      assert.deepEqual(column(), ['initech', 'acme', 'globex']);
+    });
+
+    it('keeps the open thread\'s customer where it is when it lets go of the others', () => {
+      state.open = 'a1';
+      column();
+      ['a1', 'a2', 'x1', 'g2'].forEach(read);
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      assert.equal(page.forgetColumn(), true);
+      // Globex is unread still, so before Initech; ACME stays on top while its thread is open.
+      // Only the open thread's customer held: nothing to let go of.
+      assert.equal(page.forgetColumn(), false);
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      state.open = 'g1';
+      assert.equal(page.forgetColumn(), true);
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
+    });
+
+    it('moves an excluded customer to the end at once, and starts afresh when it is let back in', () => {
+      exclude('acme');
+      assert.deepEqual(column(), ['globex', 'initech', 'acme']);
+      read('a1');
+      read('a2');
+      read('x1');
+      exclude('acme');
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
+    });
+
+    it('starts afresh for someone you view as', () => {
+      column();
+      read('a1');
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      state.data.as = 9;
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
     });
   });
 
