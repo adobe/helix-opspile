@@ -18,6 +18,9 @@ import {
   AGENT_EMAIL, discardDraft, draftOf, draftsFor, entryOf, saveDraft,
 } from '../drafts.js';
 import { recordDraftEvent } from '../draftevents.js';
+import {
+  draftLength, lengthNote, LIMITS, postLengthNote, TYPICAL,
+} from './draftlength.js';
 import { COMPUTER_CWD } from './computer.js';
 import { UPLOADS_DIR } from '../threadfiles.js';
 import {
@@ -838,7 +841,7 @@ export function opspileExtension(ctx) {
         name: 'update_draft',
         description: 'Save the shared draft reply of your thread. A person on the team sends it; you cannot send anything. Give `base`, the version from get_draft, when a draft exists; if a colleague changed it since, nothing is saved and you get their version back. `sources` replaces the sources of the draft, so give all of them each time.',
         parameters: Type.Object({
-          text: Type.String({ description: 'The whole reply, in Markdown (up to 8000 characters)' }),
+          text: Type.String({ description: `The whole reply, in Markdown (up to 8000 characters). As long as a reply Adobe staff would write: most are ${TYPICAL[0]} to ${TYPICAL[1]} characters; outside that the save warns, and under ${LIMITS[0]} or over ${LIMITS[1]} nothing is saved` }),
           base: Type.Optional(Type.String({ description: 'Version of the draft you are replacing' })),
           sources: Type.Optional(Type.Array(SOURCE, {
             maxItems: MAX_SOURCES,
@@ -846,6 +849,11 @@ export function opspileExtension(ctx) {
           })),
         }),
         async execute(args) {
+          // A draft far from what staff write is not saved; one outside the typical, with a note.
+          const length = draftLength(args.text);
+          if (length.verdict === 'fail') {
+            return fail(lengthNote(length));
+          }
           const t = await ctx.target();
           const me = { id: await agentPerson(env) };
           const mentions = await writtenMentions(env, t.key, args.text);
@@ -869,7 +877,8 @@ export function opspileExtension(ctx) {
             return fail(body.error || `failed (${res.status})`);
           }
           const tagged = taggedNote(mentions);
-          return text(`saved (version ${body.draft.updated_at}${tagged})`);
+          const note = lengthNote(length);
+          return text(`saved (version ${body.draft.updated_at}${tagged})${note ? ` ${note}` : ''}`);
         },
       }),
       defineTool({
@@ -1137,7 +1146,7 @@ export function agentToolsExtension(ctx, tools) {
       name: 'post_message',
       description: 'Post a reply in your thread now, as the opspile app: everyone in the channel, the customer too, sees it at once, and it cannot be taken back. Markdown; Slack and Teams take up to 8000 characters, Discord 2000. Use update_draft instead for anything a person should review first.',
       parameters: Type.Object({
-        text: Type.String({ description: 'The whole reply, in Markdown' }),
+        text: Type.String({ description: `The whole reply, in Markdown, up to ${TYPICAL[1]} characters: a longer one goes into the draft` }),
         draft: Type.Optional(Type.String({ description: 'Version of the draft this reply sends (get_draft): it is used up' })),
       }),
       executionMode: 'sequential',
@@ -1149,6 +1158,11 @@ export function agentToolsExtension(ctx, tools) {
         const max = MAX_POST[t.source];
         if (max && String(args.text || '').trim().length > max) {
           return fail(`Too long: ${platformName(t.source)} takes up to ${max} characters. Nothing was posted.`);
+        }
+        // Longer than a typical staff reply: a person reads it first (src/agent/draftlength.js).
+        const tooLong = postLengthNote(args.text);
+        if (tooLong) {
+          return fail(tooLong);
         }
         const mentions = await writtenMentions(env, t.key, args.text);
         const res = await postAsApp(env, t.key, args.text, { mentions });
