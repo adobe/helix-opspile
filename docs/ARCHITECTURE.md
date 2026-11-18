@@ -1560,7 +1560,8 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   you, or the thread agent), when, and how it starts, on one line, rendered as the message will
   be (its Markdown, mentions and emoji, as in the thread). **View draft** opens the line to all
   of it, and **Hide draft** closes it again, with a click or a tap alike; a mouse resting on the
-  line for 300 ms opens it too, until it leaves. The line grows upwards, so it stays under the
+  line for 300 ms opens it too, until it leaves (or until Hide draft, once some of its text is
+  selected, to copy). The line grows upwards, so it stays under the
   pointer, instead of moving away from it and closing again, over and over.
   The reply box is yours, and a draft never replaces what you typed. **Edit** takes the draft
   into the box to edit; with text there already, **Add to reply** puts it after that text.
