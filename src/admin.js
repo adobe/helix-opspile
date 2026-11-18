@@ -27,7 +27,7 @@ import {
 } from './review.js';
 import { classify, slug as toSlug, UNASSIGNED } from './rules.js';
 import {
-  isHolding, share, sharesByChannel, unshare,
+  isHolding, share, sharesByChannel, sharesOf, unshare,
 } from './shares.js';
 import { syncAccessQuietly } from './accesssync.js';
 import { faviconProxy, findIcons, orgDomain } from './favicons.js';
@@ -508,6 +508,52 @@ async function assign(env, me, body, remove) {
     await settleRequests(env, me, { channelId, team: value, outcome });
   }
   return res;
+}
+
+/**
+ * POST /api/admin/swap `{ source, channelId, team }`: a channel shared with `team` is filed
+ * under it instead (a manual assignment, as `assign` with `move` makes, so its folders,
+ * knowledge base and agents move), and the team it was filed under keeps it in its inbox,
+ * shared. For the admin team, and for whoever manages both teams. A channel the admin team
+ * (or nobody) held is moved only: those teams hold, they do not share.
+ */
+async function swapChannel(env, me, body) {
+  const channelId = clean(body.channelId);
+  const slug = clean(body.team);
+  const source = clean(body.source);
+  if (!channelId || !slug || !source) {
+    return bad('give a source, a channelId and a team');
+  }
+  if (!(await sharesOf(env, source, channelId)).includes(slug)) {
+    return json({ error: 'this channel is not shared with this team' }, 404);
+  }
+  const home = await homeOf(env, await loadRules(env), source, channelId);
+  const from = home.team;
+  if (from === slug) {
+    return json({ error: 'this channel is filed under this team already' }, 409);
+  }
+  if (!isAdmin(me) && !(managesTeam(me, slug) && managesTeam(me, from))) {
+    return json({ error: 'only the admin team, or a manager of both teams, may swap them' }, 403);
+  }
+  const res = await assign(env, me, {
+    target: 'team', source, channelId, value: slug, move: true,
+  }, false);
+  if (!res.ok) {
+    return res;
+  }
+  const done = await res.json();
+  const shared = !isHolding(from) && await share(env, {
+    source, channelId, team: from, by: me.email || String(me.id),
+  });
+  console.log(JSON.stringify({
+    route: 'admin', share: 'swapped', by: me.id, team: slug, from, moves: done.moves.length,
+  }));
+  return json({
+    ...done,
+    swapped: {
+      source, channelId, team: slug, from, shared: Boolean(shared),
+    },
+  });
 }
 
 // ---- assignment requests ----------------------------------------------------------------
@@ -1247,7 +1293,7 @@ export async function admin(request, env, url, me) {
   const teamOf = m === 'GET' ? q('team') || q('slug') : clean(body.team);
   const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members',
     'GET channels', 'GET requests', 'POST requests', 'DELETE requests', 'PUT follows',
-    'POST portal/open'];
+    'POST portal/open', 'POST swap'];
   // Every manager may search channels; the requests they see are their teams' (`requests`).
   const anyTeam = ['GET teams', 'GET channels', 'GET requests'];
   if (!isAdmin(me)) {
@@ -1275,6 +1321,7 @@ export async function admin(request, env, url, me) {
     case 'POST assign': return assign(env, me, body, false);
     case 'DELETE assign': return assign(env, me, body, true);
     case 'DELETE share': return unshareChannel(env, me, body);
+    case 'POST swap': return swapChannel(env, me, body);
     case 'PUT follows': return followTech(env, me, body);
     case 'GET channels': return json({ channels: (await channelList(env, await loadRules(env), { q: q('q') })).slice(0, 100) });
     case 'GET requests': return requestList(env, me, { status: q('status'), count: q('count') });

@@ -610,7 +610,7 @@ function channelsCard(target) {
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
     <div class="form picker"><label class="fld grow"><span>${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}</span><input id="pick" autocomplete="off"></label><div class="picks s2-float" id="picks" hidden></div></div>
     <p class="hint">Search by channel, Teams team, customer, team or id. ${target === 'team'
-    ? `A channel has one team it is filed under (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. Adding a channel ${esc(teamLabel('admin'))} holds files it under this team whatever the rules say (a channel-id rule with priority 10); adding one another team holds shares it with this team, and it stays where it is.${state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team.` : ''}`
+    ? `A channel has one team it is filed under (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. Adding a channel ${esc(teamLabel('admin'))} holds files it under this team whatever the rules say (a channel-id rule with priority 10); adding one another team holds shares it with this team, and it stays where it is. <b>Make primary</b> files a channel shared with this team under it instead, and the team it was filed under keeps it, shared.${state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team.` : ''}`
     : 'A manual assignment files one channel under this org whatever the rules say (a channel-id rule with priority 10).'}</p></div>`;
 }
 
@@ -677,6 +677,10 @@ function renderChannels() {
   // On another team's page, a way to hand a channel back to the admin team.
   const back = target === 'team' && state.me.admin && state.view.value !== 'admin'
     && state.teams.some((t) => t.slug === 'admin');
+  // A channel shared with this team can be filed under it instead, its team sharing it then:
+  // for the admin team, and for whoever manages both teams.
+  const manages = (slug) => state.me.admin || (state.me.manages || []).includes(slug);
+  const swappable = (c) => !isHolding(c.team) && manages(c.team) && manages(state.view.value);
   const rows = channels.map((c) => {
     if (c.left) {
       return `<tr class="left"><td>${channelName(c)}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
@@ -697,6 +701,7 @@ function renderChannels() {
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
       ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}"${off(assignKey(target, c.channelId, pick))} title="Assign it to ${esc(teamLabel(pick))} by hand">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
       <td class="nw">${sharedHere ? `<span class="tag manual" title="Filed under ${esc(teamLabel(c.team))}, and in this team's inbox too">shared by ${esc(teamLabel(c.team))}</span>
+        ${swappable(c) ? `<button class="link" data-swap="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`swap:${c.channelId}`)} title="File it under ${esc(teamLabel(state.view.value))} (its folders, knowledge base and agents move here); ${esc(teamLabel(c.team))} keeps it in its inbox, shared">Make primary</button>` : ''}
         ${state.me.admin ? `<button class="link" data-unshare="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unshare:${state.view.value}:${c.channelId}`)} title="Take it out of this team's inbox; it stays filed under ${esc(teamLabel(c.team))}">Remove</button>` : ''}`
     : `${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
         ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unassign:${target}:${c.channelId}`)}>Undo</button>` : ''}` : '<span class="sub">by rule</span>'}
@@ -720,6 +725,31 @@ function renderChannels() {
   }
   for (const b of $('channelsTable').querySelectorAll('[data-give]')) {
     b.onclick = () => press(b, () => assignHere(find(b.dataset.give), b.dataset.team));
+  }
+  for (const b of $('channelsTable').querySelectorAll('[data-swap]')) {
+    const c = find(b.dataset.swap);
+    const team = v.value;
+    const from = c.team;
+    b.onclick = () => hold(b, `swap:${c.channelId}`, async () => {
+      const res = await call('/api/admin/swap', 'POST', { team, channelId: c.channelId, source: c.source });
+      if (!res.ok) { failed(`Make ${teamLabel(team)} primary for ${plainName(c)}`, res); return; }
+      const { moves, rule, swapped } = res.body;
+      applyMoves(moves, v);
+      // Filed here now, and shared with the team it was filed under (also with no thread to move).
+      for (const x of v.channels.filter((y) => y.channelId === c.channelId && !y.left)) {
+        x.team = team;
+        x.sharedWith = [...new Set([...(x.sharedWith || []).filter((t) => t !== team),
+          ...(swapped.shared ? [from] : [])])];
+      }
+      setManual(c.channelId, rule, v);
+      const here = state.teams.find((t) => t.slug === team);
+      if (here) here.shared = Math.max(0, (here.shared || 0) - 1);
+      const there = state.teams.find((t) => t.slug === from);
+      if (there && swapped.shared) there.shared = (there.shared || 0) + 1;
+      status('ok', `${plainName(c)} is filed under ${teamLabel(team)} now${moves.length ? ', its threads re-filed in the background' : ''}${swapped.shared ? `; ${teamLabel(from)} keeps it in its inbox, shared` : ''}.`);
+      if (v === state.view) renderChannels();
+      renderList();
+    });
   }
   for (const b of $('channelsTable').querySelectorAll('[data-unshare]')) {
     const c = find(b.dataset.unshare);

@@ -585,6 +585,13 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   DB.sqlite.prepare(`INSERT INTO team_follows (team, tech, added_by, added_at) VALUES
     ('edge', 'ue', 'lena@example.com', ?), ('edge', 'xw', 'lena@example.com', ?)`).run(ago(3), ago(1));
 
+  // A Platform ops channel shared with Edge ops: Edge ops' page says "shared by Platform ops",
+  // and the admin team (or whoever manages both teams) can make Edge ops its team instead.
+  DB.sqlite.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_by, added_at)
+    SELECT source, channel_id, 'edge', 'priya@example.com', ? FROM threads
+    WHERE team = 'platform' AND channel_id NOT IN ('C0UMBRELLA', 'C0INITECH1')
+    ORDER BY channel_id LIMIT 1`).run(ago(4));
+
   // Customers waiting in the customer portal (src/portalrequests.js): one who picked what Edge
   // ops follows (its managers may open a channel too), one nobody follows, and one declined.
   const lobby = (domain, company, tech, note, members, at, status = 'open', decided = []) => DB.sqlite
