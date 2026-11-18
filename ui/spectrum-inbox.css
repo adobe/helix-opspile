@@ -577,6 +577,21 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
   main:not(.simple) { --filters-w: calc(var(--facet-w) * 4 + var(--facet-gap) * 3 + var(--spectrum-spacing-300) + var(--frame-gap)); }
   main { --list-share: 22%; --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 110)); }
 }
+/* A reading width for the two conversations, the thread and the sidebar: past --read-w their
+   content keeps to a column in the middle, with the room left over as padding on either side, so
+   the people on the left and Adobe on the right stay within a glance of each other. That holds
+   for all of the thread's column: its header, the messages, the reply box and the rows over it
+   (the draft, the commands the agent asks to run and the ones it ran). The edges, dividers and
+   scrollbars stay where they are. */
+:root { --read-w: calc(var(--spectrum-spacing-100) * 130); }
+@media (min-width: 1100px) {
+  :is(#pane > .ph, #pane .feed, #pane .composer) { --read-edge: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50));
+    padding-left: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); padding-right: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); }
+  :is(#side .sc-body, #side .composer) { --read-edge: var(--spectrum-spacing-300);
+    padding-left: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); padding-right: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); }
+  #side .sp-head { padding-left: max(var(--spectrum-spacing-300), calc((100% - var(--read-w)) / 2));
+    padding-right: max(var(--spectrum-spacing-200), calc((100% - var(--read-w)) / 2)); }
+}
 /* Sized by hand. With the sidebar out the thread's column has to hold it as well. */
 main.sized-f:not(.rail) { --filters-w: var(--user-filters-w); }
 main.sized-l, main.sized-l.siding { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(var(--user-list-w), 100% - var(--nav-w) - var(--pane-least))) 1fr; }

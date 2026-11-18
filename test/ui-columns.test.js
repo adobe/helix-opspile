@@ -111,6 +111,16 @@ describe('wide screens', () => {
     assert.equal(c.props.get('--user-list-w'), '380px');
   });
 
+  it('keeps both conversations to a reading width, padded in the middle past it', () => {
+    assert.match(css, /:root \{ --read-w: calc\(var\(--spectrum-spacing-100\) \* 130\); \}/);
+    // The thread's header, messages, reply box and its rows (draft, commands); the sidebar's.
+    const pad = 'padding-left: max\\(var\\(--read-edge\\), calc\\(\\(100% - var\\(--read-w\\)\\) / 2\\)\\);';
+    assert.match(css, new RegExp(`:is\\(#pane > \\.ph, #pane \\.feed, #pane \\.composer\\) \\{[^}]*${pad}`));
+    assert.match(css, new RegExp(`:is\\(#side \\.sc-body, #side \\.composer\\) \\{[^}]*${pad}`));
+    // The draft line and the command cards are rows of the reply box.
+    assert.match(js, /DRAFT_LINE = '<div class="draftbar"/);
+  });
+
   it('has a grip on each edge between the columns, which a screen reader can size', () => {
     for (const [id, controls] of [['grip-filters', 'filters'], ['grip-list', 'threads'], ['grip-side', 'side']]) {
       assert.match(PAGES['inbox.html'], new RegExp(`<div class="grip" id="${id}" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="${controls}" aria-label="[^"]+"`));

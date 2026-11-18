@@ -1755,6 +1755,10 @@ are a column (from 1100px, not the rail), the edges between the filters, the lis
 and the panel are grips: dragging one (or its arrow keys) sizes the column, and a double click
 gives it back to the band. The widths are kept in the browser per band (`opspile.columns`), and
 the filters flow into as many columns as their width has room for; the thread keeps 440px.
+Both conversations keep to a reading width (`--read-w`, 1040px): past it the thread's header,
+messages, reply box, draft and command cards, and the sidebar's messages and box, stay in a
+column in the middle, padded on either side, so neither side of a conversation is a head turn
+away from the other.
 
 **Traces.** The admin team sees everything an agent did with the MCP tool `get_thread_trace`:
 the thread's messages and the agent's steps in one timeline (`src/agent/trace.js`, read from the
