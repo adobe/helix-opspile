@@ -8747,8 +8747,13 @@ async function start() {
   Swap.watch($('pane'), () => (state.compose ? 'compose' : state.open), { skip: () => TAKING_TURNS.matches });
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
-    // The sidebar: entered by the agent's icon, left by ✕ Exit; its conversations unfold.
-    if (e.target.closest('[data-side-enter]')) { enterSide(); return; }
+    // The sidebar: entered by the agent's icon, left by ✕ Exit; its conversations unfold. The
+    // icon beside the reply box stays while the panel is open beside the thread: it closes it.
+    const enter = e.target.closest('[data-side-enter]');
+    if (enter) {
+      if (enter.matches('.sidebtn') && side.key === state.open) exitSide(); else enterSide();
+      return;
+    }
     if (e.target.closest('[data-side-exit]')) { exitSide(); return; }
     const fold = e.target.closest('[data-side-toggle]');
     if (fold && fold.getAttribute('aria-disabled') !== 'true') {
