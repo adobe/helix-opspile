@@ -2039,13 +2039,10 @@ other; the agent is not told about reactions.
 **`computer`.** pi's own `bash` tool, run on [Cloudflare Computer](https://github.com/cloudflare/computer)
 (`@cloudflare/computer`, `src/agent/computer.js`). The ThreadAgent object holds a Workspace: a
 filesystem in its own SQLite, so each thread has a working directory (`/workspace`) whose files
-last from one turn to the next, and nobody else's. Commands run in a `WorkerShellBackend`:
-[just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker (the `LOADER`
-binding), which reaches the files back over Workers RPC through `WorkspaceServiceProxy` (the
-Worker exports it) and the object's `__getWorkspaceStub()`. The shell has the text tools (cat,
-grep, sed, awk, sort, find, jq…) and `curl`, with network access through the Worker's
-`SecretGateway` (egress `http-gateway`, no filter; see "Computer secrets" below), and no npm,
-node or python. What curl fetches is untrusted, like
+last from one turn to the next, and nobody else's. Commands run in GNU bash on the SLICC
+kernel, with the programs of the team's image (below, "The computer's shell"), and `curl`,
+with network access through the gateway's `forward` (no filter; see "Computer secrets"
+below), and no npm, node or python. What curl fetches is untrusted, like
 customer messages; nothing stops an agent from sending what it read, so the prompt says not to
 send anything to sites that are not the customer's or Adobe's. The
 bridge is an `ExecutionEnv` for pi-durable whose `exec` is `workspace.runtime.exec`; pi's file
@@ -2065,46 +2062,46 @@ Files of withheld messages stay out of it, as they do of `read_file`, but a file
 checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
 says not to quote them, and code does not stop the shell from reading or sending them.
 
-**The computer's shell.** just-bash is an interpreter in JavaScript: what it has not built in
-does not run. The admin team can give a team's agents another shell (`runtime`, a row of
-`agent_tool_options`, migration 0064; `PUT /api/kb/tools` with `runtime`; the pickers in the
-Computer tool's row of the team's knowledge base): GNU bash and real programs on the
-[SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`slicc-kernel`,
-`src/agent/kernel.js`). It is experimental, as the kernel is on Cloudflare, and just-bash stays
-the default. An agent follows its team's choice before each delivery, as it follows its tools
-(`syncTools`; docs/STATE-MACHINES.md, "Computer shell").
+**The computer's shell** is GNU bash and real programs on the
+[SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`src/agent/kernel.js`). It
+replaced just-bash, an interpreter in JavaScript that ran only what it had built in; migration
+0076 deleted the teams' choice between the two (`runtime`). What a team's agents have is the
+image of their kernels (below), which the admin team chooses; an agent follows its team's
+choice before each delivery, as it follows its tools (`syncTools`; docs/STATE-MACHINES.md,
+"Computer image").
 
 - **Where it runs.** The kernel (`createCloudflareKernel`) lives in the ThreadAgent object; each
   process is a WebAssembly instance in a Dynamic Worker (the `LOADER` binding) that has no
-  network of its own and asks the kernel for every system call over Workers RPC. It is a
-  backend of the same Workspace (`sliccBackend`), mounted at `/workspace`, so the files of a
-  thread are the same in either shell, the uploads too, and so are `request_bash`, the output
-  limits and the timeouts. A run the kernel stops at its timeout ends by `SIGTERM` (exit code
+  network of its own and asks the kernel for every system call over Workers RPC. It is the
+  backend of the Workspace (`sliccBackend`), mounted at `/workspace`, with the uploads, and
+  `request_bash` runs there too. A run the kernel stops at its timeout ends by `SIGTERM` (exit code
   143, or 137 after `SIGKILL`), which counts as a timeout when the time was up (`timedOut`).
 - **Its files.** `/workspace` is the Workspace. `/opt/image` is the image, read-only (below).
   Everything else (`/root`, `/tmp`, `/etc`) is the kernel's own root, in the same SQLite, in
   tables of its own (`slicc_*`). Output that was too long is saved under
-  `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which this shell
+  `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which the shell
   cannot see. A file is in the Workspace when its program closes it (`writeBehind: false`).
   The kernel's driver of `/workspace` knows the Workspace's read-only mounts (the uploads):
   files below them are read-only to the kernel too, so it refuses any change there when it
   starts, as Linux does: `Read-only file system`, and a non-zero exit code. `npm run
-  computer:check` checks both shells on the uploads in local workerd, and on Cloudflare in the
-  `Computer on stage` workflow.
+  computer:check` checks the uploads in local workerd, and on Cloudflare in the `Computer on
+  stage` workflow.
 - **Its programs are an image** (`src/agent/image.js`), and a deployment can have several,
   by what a computer is for. An image is a stack of read-only layers, as a container image
   is. The Worker carries none, and no agent keeps a copy: they are in the `IMAGES` bucket, and
-  the admin team chooses one per team, next to the shell (`image`, another row of
-  `agent_tool_options`; `base` without one).
+  the admin team chooses one per team (`image`, a row of `agent_tool_options`, migration
+  0064; `PUT /api/kb/tools` with `image`; the picker in the Computer tool's row of the team's
+  knowledge base; `base` without one).
   - **Layers.** A layer is a tree of files. An image names its layers from the bottom up, on
     top of those of the image it is `from`, and where two layers have a path, the upper one's
     file is the image's. A layer cannot take a lower one's file away. `scripts/computer-images.mjs`
     defines them (`LAYERS`, `IMAGES`) and builds them from the `@ai-ecoverse/wasm-*` packages
     ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
-    `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
-    and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip, tar, zip and
-    unzip, xz, bzip2), `net` (curl, BIND's dig, host and nslookup), `tls` (openssl), `js` (qjs), `git`, `formats` (yq,
-    html2markdown, file) and `data` (ripgrep, sqlite3, strings). `base` is the first eight, and
+    `node_modules/`: `shell` (bash, coreutils), `text` (grep, ripgrep, sed, gawk, jq,
+    findutils, diff and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip,
+    tar, zip and unzip, xz, bzip2), `net` (curl, BIND's dig, host and nslookup), `tls`
+    (openssl), `js` (qjs), `git`, `formats` (yq, html2markdown, file) and `data` (sqlite3,
+    strings). `base` is the first eight, and
     `data` is `from: 'base'` with the ninth. A package's other files a program needs are named
     in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's
     magic; openssl's `etc/ssl`, its configuration and Mozilla's roots).
@@ -2158,10 +2155,16 @@ the default. An agent follows its team's choice before each delivery, as it foll
   - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
     whether it has `jq`. So the prompt cannot name a program the image lacks.
 - **Its network.** The kernel's programs reach the network through its proxy, which hands
-  every request to a transport: `fetchTransport` over `gatewayFetch`, which calls the same
-  `forward` as `SecretGateway` with the agent's name. So secrets go in, are refused and are
-  taken out of answers as below, and a redirect is curl's to follow (`-L`), through the gateway
-  again.
+  every request to a transport: `fetchTransport` over `gatewayFetch`, which calls the
+  gateway's `forward` with the agent's name. So secrets go in, are refused and are taken out
+  of answers as below, and a redirect is curl's to follow (`-L`), through the gateway again.
+  Programs find the proxy in `https_proxy`, so curl's `-i`, `-I` and `-D` would show the
+  proxy's answer to its `CONNECT` (`HTTP/1.1 200 Connection Established`) before the site's
+  headers, and a script that reads the first status line would read that one. Every process
+  has `CURL_HOME` (`KERNEL_ENV`), whose `.curlrc`, written at each boot, says
+  `suppress-connect-headers`. It has `TAR_OPTIONS=--no-same-owner` too: the kernel lets no
+  process give a file another owner, not even root, so tar would warn for every file it
+  unpacks.
 - **`https://`.** curl speaks TLS to the kernel's proxy, which ends it with
   `@ai-ecoverse/wasm-tls-engine` and hands the request to the transport. Elsewhere the kernel
   loads that engine from the image, by `import()` of a `data:` URL and compiling its wasm at
@@ -2213,8 +2216,7 @@ the default. An agent follows its team's choice before each delivery, as it foll
   HTTP goes through the kernel's transport, so the gateway puts a team's `GH_TOKEN` in; gh
   does not run without one. The agent is told to read with it, not to change anything on
   GitHub.
-- **What it does not have:** python, node (and so the AEM CLI or `aio`), and `xan`, which
-  just-bash has.
+- **What it does not have:** python, node (and so the AEM CLI or `aio`), and `xan`.
 
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits
@@ -2222,10 +2224,10 @@ it (`/api/kb/tools/secrets`, `src/secretadmin.js`), sealed with `TOKEN_KEY` and 
 again. A team's wins over the customer's of the same name. The agent never holds a value: its
 prompt lists the names, hosts and descriptions, and pi's `bash` gets each as a variable whose
 value is a placeholder (`$ACME_API_KEY` is `opspile-secret-ACME_API_KEY`), through the tool's
-`prepare`. The Workspace's egress is `http-gateway` with `SecretGateway` (`src/agent/gateway.js`,
-exported by the Worker), a `WorkerEntrypoint` that becomes the Dynamic Worker's
-`globalOutbound`: every `fetch` of the shell, curl's too, arrives there, with the agent's name in
-its props, which the shell cannot touch. A request that names no placeholder goes out as it is.
+`prepare`. Every request of the shell's programs, curl's too, leaves through the kernel's proxy
+and its transport (`gatewayFetch`), which hands it to `forward` in the agent's own object, with
+the agent's name, which the shell cannot touch. A request that names no placeholder goes out as
+it is.
 One that does is sent with the values in place of the placeholders (in the URL, the headers, a
 Basic `Authorization`, a textual body up to 1 MiB; percent-encoded in the URL and a form body,
 escaped in JSON and XML, a "form" that parses as JSON as JSON, which is what `curl -d` sends

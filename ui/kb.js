@@ -833,85 +833,43 @@ function toolRow(t) {
   </div>`;
 }
 
-// ---- the computer's shell -------------------------------------------------------------------
+// ---- the computer's image ------------------------------------------------------------------
 //
-// What runs the commands of a team's agents (src/agent/kernel.js): just-bash, or GNU bash and
-// real programs on the SLICC kernel, which is experimental, and with the kernel which image:
-// the programs it has (src/agent/image.js), a stack of layers, one of those in the
+// The programs of a team's agents' computers, GNU bash on the SLICC kernel
+// (src/agent/kernel.js): its image (src/agent/image.js), a stack of layers, one of those in the
 // deployment's images bucket.
 // In a team's knowledge base, in the Computer tool's row, for the admin team to choose;
 // everyone else sees what it is.
 
-/** The image picker of the team's kernels, with what the chosen image is; '' without the kernel. */
-function imageBlock(t) {
-  if (t.runtime.runtime !== 'slicc-kernel') return '';
+const megabytes = (bytes) => `${Math.round(bytes / 1024 / 1024)} MB`;
+
+/** The image picker of the team's computers, with what the chosen image is; '' outside a team. */
+function shellBlock(t) {
+  if (!t.image) return '';
   const b = base();
-  if (!t.images.length) return '<div class="sub err">No image is in this deployment\'s images bucket yet (npm run computer:images): commands fail until one is.</div>';
+  if (!t.images.length) return '<div class="shell"><div class="sub err">No image is in this deployment\'s images bucket yet (npm run computer:images): commands fail until one is.</div></div>';
   const now = t.images.find((i) => i.name === t.image.image);
   const options = t.images.map((i) => `<option value="${esc(i.name)}"${i === now ? ' selected' : ''}>${esc(i.title)}</option>`).join('');
   const gone = now ? '' : `<option value="" selected>${esc(t.image.image)} (not there)</option>`;
   const by = t.image.by ? `<div class="sub by">Chosen by ${esc(t.image.by)}, ${esc(ago(t.image.at))}</div>` : '';
-  return `<label class="sub mine">Image
+  return `<div class="shell">
+    <label class="sub mine">Image
       <select data-image aria-label="The image of the computers of ${esc(b.name)}"
-        title="${t.mayRuntime ? `The programs the agents of ${esc(b.name)} have` : 'Only the admin team chooses it.'}"${t.mayRuntime ? '' : ' disabled'}>${gone}${options}</select>
+        title="${t.mayImage ? `The programs the agents of ${esc(b.name)} have` : 'Only the admin team chooses it.'}"${t.mayImage ? '' : ' disabled'}>${gone}${options}</select>
     </label>
     <div class="sub${now ? '' : ' err'}">${esc(now ? `${now.description} Layers: ${now.layers.join(', ')} (${megabytes(now.bytes)}), mounted read-only at /opt/image.` : `The bucket has no image ${t.image.image}: commands fail until another is chosen.`)}</div>
-    ${by}`;
-}
-
-const megabytes = (bytes) => `${Math.round(bytes / 1024 / 1024)} MB`;
-
-/** The shell of the team's computers: a picker, what the chosen one is, and who chose it. */
-function shellBlock(t) {
-  if (!t.runtime) return '';
-  const b = base();
-  const now = t.runtimes.find((r) => r.runtime === t.runtime.runtime) || t.runtimes[0];
-  const options = t.runtimes.map((r) => `<option value="${esc(r.runtime)}"${r === now ? ' selected' : ''}>${esc(r.title)}</option>`).join('');
-  const by = t.runtime.by ? `<div class="sub by">Chosen by ${esc(t.runtime.by)}, ${esc(ago(t.runtime.at))}</div>` : '';
-  return `<div class="shell">
-    <label class="sub mine">Shell
-      <select data-runtime aria-label="The shell of the computers of ${esc(b.name)}"
-        title="${t.mayRuntime ? `What runs the commands of the agents of ${esc(b.name)}` : 'Only the admin team chooses it.'}"${t.mayRuntime ? '' : ' disabled'}>${options}</select>
-    </label>
-    <div class="sub">${esc(now.description)}</div>
     ${by}
-    ${imageBlock(t)}
   </div>`;
 }
 
-const SHELL_CONFIRM = {
-  'just-bash': (where) => `From their next message, the agents of ${where} run their commands in just-bash again, on the same files.`,
-  'slicc-kernel': (where) => `From their next message, the agents of ${where} run their commands in GNU bash on the SLICC kernel, on the same files, with the programs of its image. It is experimental: a command takes a little longer, and what a program does there may differ from just-bash's own.`,
-};
-
-/** The handlers of the computer's shell and image pickers. */
+/** The handler of the computer's image picker. */
 function bindShell(computer, stale) {
   const b = base();
-  const put = (choice) => call('/api/kb/tools', { method: 'PUT', body: JSON.stringify({ tool: 'computer', team: b.slug, ...choice }) });
-  const shell = $('editor').querySelector('[data-runtime]');
-  if (shell) {
-    shell.onchange = async () => {
-      const chosen = computer.runtimes.find((r) => r.runtime === shell.value);
-      if (!(await ask(`Use ${chosen.title} for ${b.name}?`, SHELL_CONFIRM[chosen.runtime](b.name), 'Use it'))) {
-        shell.value = computer.runtime.runtime;
-        return;
-      }
-      const { ok, body } = await put({ runtime: chosen.runtime });
-      if (stale()) return;
-      if (!ok) {
-        shell.value = computer.runtime.runtime;
-        showNote({ kind: 'err', text: body.error || 'Choosing the shell failed.' });
-        return;
-      }
-      computer.runtime = body.runtime;
-      renderMcp({ kind: 'ok', text: `The agents of ${b.name} use ${chosen.title}, from their next message.` });
-    };
-  }
   const image = $('editor').querySelector('[data-image]');
   if (image) {
     image.onchange = async () => {
       const chosen = computer.images.find((i) => i.name === image.value);
-      const { ok, body } = chosen ? await put({ image: chosen.name }) : { ok: false, body: {} };
+      const { ok, body } = chosen ? await call('/api/kb/tools', { method: 'PUT', body: JSON.stringify({ tool: 'computer', team: b.slug, image: chosen.name }) }) : { ok: false, body: {} };
       if (stale()) return;
       if (!ok) {
         renderMcp({ kind: 'err', text: body.error || 'Choosing the image failed.' });

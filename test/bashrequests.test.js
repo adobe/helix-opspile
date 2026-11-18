@@ -104,8 +104,9 @@ function env(extra = {}) {
 }
 
 /**
- * A Workspace as far as a run goes: just-bash over files in memory, with the variables of each
- * run, as @cloudflare/computer's shell has them. `result` replaces what a run answers.
+ * A Workspace as far as a run goes, standing in for the kernel's, which Node cannot run:
+ * just-bash, a bash interpreter, over files in memory, with the variables of each run, as
+ * @cloudflare/computer's shell has them. `result` replaces what a run answers.
  */
 function fakeWorkspace({ result } = {}) {
   const fs = new InMemoryFs();
@@ -425,49 +426,32 @@ describe('a command request', () => {
     // No values: nothing of the shell's record to delete.
     assert.deepEqual(failing.ws.disposed, []);
 
-    // The shell stops a run at its timeout with exit code 124, and says so no other way.
+    // The kernel stops a run at its timeout with the signal that ended bash, and says so no
+    // other way.
     mock.timers.enable({ apis: ['Date'], now: Date.now() });
     try {
-      const stopped = async () => {
+      const killed = async () => {
         mock.timers.tick(5000);
-        return { exitCode: 124, stdout: 'half\n', stderr: '' };
+        return { exitCode: 143, stdout: 'half\n', stderr: '' };
       };
-      const slow = fakeAgent(e, { ws: fakeWorkspace({ result: stopped }) });
+      const slow = fakeAgent(e, { ws: fakeWorkspace({ result: killed }) });
       ({ request } = await ask(slow, { command: 'sleep 100', timeout: 5, env: [] }, new Date()));
       await quiet(() => runBash(slow, { id: request.id, values: {}, by: ada }));
       await quiet(() => settled(slow));
       assert.equal((await requestOf(e, request.id)).status, 'timeout');
       assert.match(told(slow)[0], /^Ada \(Adobe staff\) ran the command .* It was stopped after 5 s, its timeout, before it finished\..*<stdout>\nhalf\n<\/stdout>/s);
-
-      // The kernel's shell says it with the signal that ended bash; to just-bash that is an
-      // exit code like any other.
-      const killed = async () => {
-        mock.timers.tick(5000);
-        return { exitCode: 143, stdout: 'half\n', stderr: '' };
-      };
-      const kernel = fakeAgent(e, { ws: fakeWorkspace({ result: killed }) });
-      kernel.runtime = 'slicc-kernel';
-      ({ request } = await ask(kernel, { command: 'sleep 100', timeout: 5, env: [] }, new Date()));
-      await quiet(() => runBash(kernel, { id: request.id, values: {}, by: ada }));
-      await quiet(() => settled(kernel));
-      assert.equal((await requestOf(e, request.id)).status, 'timeout');
-      const plain = fakeAgent(e, { ws: fakeWorkspace({ result: killed }) });
-      ({ request } = await ask(plain, { command: 'sleep 100', timeout: 5, env: [] }, new Date()));
-      await quiet(() => runBash(plain, { id: request.id, values: {}, by: ada }));
-      await quiet(() => settled(plain));
-      assert.deepEqual([(await requestOf(e, request.id)).status, (await requestOf(e, request.id)).exit_code], ['done', 143]);
     } finally {
       mock.timers.reset();
     }
 
-    // A command that exits with 124 by itself, before its time is up, ran to its end.
+    // A command that ends with that signal by itself, before its time is up, ran to its end.
     const own = fakeAgent(e);
-    ({ request } = await ask(own, { command: 'echo all; exit 124', timeout: 5, env: [] }, new Date()));
+    ({ request } = await ask(own, { command: 'echo all; exit 143', timeout: 5, env: [] }, new Date()));
     await quiet(() => runBash(own, { id: request.id, values: {}, by: ada }));
     await quiet(() => settled(own));
     const ran = await requestOf(e, request.id);
-    assert.deepEqual([ran.status, ran.exit_code], ['done', 124]);
-    assert.match(told(own)[0], /It exited with code 124 after .*<stdout>\nall\n<\/stdout>/s);
+    assert.deepEqual([ran.status, ran.exit_code], ['done', 143]);
+    assert.match(told(own)[0], /It exited with code 143 after .*<stdout>\nall\n<\/stdout>/s);
 
     const broken = fakeAgent(e, {
       ws: fakeWorkspace({

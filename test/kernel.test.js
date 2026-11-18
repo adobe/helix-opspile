@@ -20,8 +20,8 @@ import {
   imageReads, isImageName, keptOfImages, listImages, readImage, sizeImageCache,
 } from '../src/agent/image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, runtimeFor, RUNTIMES, setTeamImage,
-  setTeamRuntime, shellFor, teamImage, teamRuntime, timedOut,
+  CURL_HOME, CURLRC, gatewayFetch, imageFor, imageSpec, KERNEL_ENV, setTeamImage, teamImage,
+  timedOut,
 } from '../src/agent/kernel.js';
 import {
   bucketOf, build, buildLayer, IMAGES, imagePackage, indexOf, layerNames, LAYERS, missingFrom,
@@ -86,54 +86,26 @@ function image(bucket, name, layers, commands = []) {
 const PROGRAM = 'a program of forty characters or more, a blob';
 const utf8 = (bytes) => new TextDecoder().decode(bytes);
 
-describe('the computer\'s shells', () => {
-  it('are just-bash unless the team has another, and one this deployment knows', async () => {
-    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }, { slug: 'edge', name: 'Edge' }] });
-    const env = { DB };
-    assert.equal(DEFAULT_RUNTIME, 'just-bash');
-    assert.deepEqual(RUNTIMES.map((r) => r.runtime), ['just-bash', 'slicc-kernel']);
-    assert.equal(isRuntime('slicc-kernel'), true);
-    assert.equal(isRuntime('docker'), false);
-    assert.deepEqual(await teamRuntime(env, 'helix'), { runtime: 'just-bash' });
-    assert.equal(await runtimeFor(env, { team: 'helix' }), 'just-bash');
-    assert.equal(await runtimeFor(env, { team: null }), 'just-bash');
-    assert.equal(await runtimeFor({}, { team: 'helix' }), 'just-bash');
-
-    const chosen = await setTeamRuntime(env, { team: 'helix', runtime: 'slicc-kernel', by: 'Ada' });
-    assert.equal(chosen.runtime, 'slicc-kernel');
-    assert.equal(chosen.by, 'Ada');
-    assert.deepEqual(await teamRuntime(env, 'helix'), chosen);
-    assert.equal(await runtimeFor(env, { team: 'helix' }), 'slicc-kernel');
-    // Another team's is its own.
-    assert.equal(await runtimeFor(env, { team: 'edge' }), 'just-bash');
-
-    await setTeamRuntime(env, { team: 'helix', runtime: 'just-bash', by: 'Bo' });
-    assert.equal((await teamRuntime(env, 'helix')).by, 'Bo');
-    assert.equal(DB.rows('SELECT COUNT(*) AS n FROM agent_tool_options')[0].n, 1);
-
-    // What a later deployment wrote, read after a rollback.
-    DB.sqlite.exec("UPDATE agent_tool_options SET value = 'firecracker'");
-    assert.deepEqual(await teamRuntime(env, 'helix'), { runtime: 'just-bash' });
-  });
-
-  it('have an image with the kernel, the base one unless the team has another', async () => {
+describe('the computer\'s shell', () => {
+  it('has an image, the base one unless the team has another', async () => {
     const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }, { slug: 'edge', name: 'Edge' }] });
     const env = { DB };
     assert.equal(DEFAULT_IMAGE, 'base');
     assert.deepEqual(await teamImage(env, 'helix'), { image: 'base' });
-    // just-bash has no image, whatever was chosen.
-    await setTeamImage(env, { team: 'helix', image: 'data', by: 'Ada' });
-    assert.deepEqual(await shellFor(env, { team: 'helix' }), { runtime: 'just-bash' });
-    assert.equal((await teamImage(env, 'helix')).by, 'Ada');
-    await setTeamRuntime(env, { team: 'helix', runtime: 'slicc-kernel', by: 'Ada' });
-    assert.deepEqual(await shellFor(env, { team: 'helix' }), { runtime: 'slicc-kernel', image: 'data' });
-    assert.equal(await runtimeFor(env, { team: 'helix' }), 'slicc-kernel');
-    // The two are rows of their own.
-    assert.deepEqual(DB.rows('SELECT name, value FROM agent_tool_options ORDER BY name'), [
-      { name: 'image', value: 'data' }, { name: 'runtime', value: 'slicc-kernel' },
+    assert.equal(await imageFor(env, { team: 'helix' }), 'base');
+    assert.equal(await imageFor(env, { team: null }), 'base');
+    assert.equal(await imageFor({}, { team: 'helix' }), 'base');
+    const chosen = await setTeamImage(env, { team: 'helix', image: 'data', by: 'Ada' });
+    assert.deepEqual([chosen.image, chosen.by], ['data', 'Ada']);
+    assert.deepEqual(await teamImage(env, 'helix'), chosen);
+    assert.equal(await imageFor(env, { team: 'helix' }), 'data');
+    // Another team's is its own.
+    assert.equal(await imageFor(env, { team: 'edge' }), 'base');
+    await setTeamImage(env, { team: 'helix', image: 'github', by: 'Bo' });
+    assert.equal((await teamImage(env, 'helix')).by, 'Bo');
+    assert.deepEqual(DB.rows('SELECT name, value FROM agent_tool_options'), [
+      { name: 'image', value: 'github' },
     ]);
-    await setTeamRuntime(env, { team: 'edge', runtime: 'slicc-kernel', by: 'Bo' });
-    assert.deepEqual(await shellFor(env, { team: 'edge' }), { runtime: 'slicc-kernel', image: 'base' });
     // A name no image can have is the default.
     DB.sqlite.exec("UPDATE agent_tool_options SET value = '../etc' WHERE name = 'image'");
     assert.deepEqual(await teamImage(env, 'helix'), { image: 'base' });
@@ -142,17 +114,19 @@ describe('the computer\'s shells', () => {
     assert.equal(isImageName(''), false);
   });
 
-  it('say when they stopped a run whose time was up', () => {
-    // just-bash says 124 and nothing else.
-    assert.equal(timedOut('just-bash', 124, 0, 5), true);
-    assert.equal(timedOut(undefined, 124, 0, 5), true);
-    assert.equal(timedOut('just-bash', 143, 9, 5), false);
+  it('gives curl a configuration without the proxy\'s headers, and tar its options', () => {
+    assert.equal(KERNEL_ENV.CURL_HOME, CURL_HOME);
+    assert.match(CURLRC, /^suppress-connect-headers$/m);
+    assert.equal(KERNEL_ENV.TAR_OPTIONS, '--no-same-owner');
+  });
+
+  it('says when it stopped a run whose time was up', () => {
     // The kernel ends bash with SIGTERM, then SIGKILL; a command can end that way by itself.
-    assert.equal(timedOut('slicc-kernel', 143, 5.1, 5), true);
-    assert.equal(timedOut('slicc-kernel', 137, 10.2, 5), true);
-    assert.equal(timedOut('slicc-kernel', 143, 0.4, 5), false);
-    assert.equal(timedOut('slicc-kernel', 124, 9, 5), false);
-    assert.equal(timedOut('slicc-kernel', 0, 9, 5), false);
+    assert.equal(timedOut(143, 5.1, 5), true);
+    assert.equal(timedOut(137, 10.2, 5), true);
+    assert.equal(timedOut(143, 0.4, 5), false);
+    assert.equal(timedOut(124, 9, 5), false);
+    assert.equal(timedOut(0, 9, 5), false);
   });
 
   it('report a run the kernel stopped as a timeout, by its time', async () => {
@@ -168,14 +142,13 @@ describe('the computer\'s shells', () => {
         }),
       },
     });
-    const runtime = () => 'slicc-kernel';
-    const stopped = await computerEnv(ws(143, 30), { runtime }).exec('sleep 9', { timeout: 0.02 });
+    const stopped = await computerEnv(ws(143, 30)).exec('sleep 9', { timeout: 0.02 });
     assert.equal(stopped.ok, false);
     assert.equal(stopped.error.code, 'timeout');
     // `kill $$` in a command that had time left is the command's own end.
-    const own = await computerEnv(ws(143, 0), { runtime }).exec('kill $$', { timeout: 30 });
+    const own = await computerEnv(ws(143, 0)).exec('kill $$', { timeout: 30 });
     assert.deepEqual(own, { ok: true, value: { exitCode: 143 } });
-    const none = await computerEnv(ws(143, 0), { runtime }).exec('kill $$', {});
+    const none = await computerEnv(ws(143, 0)).exec('kill $$', {});
     assert.deepEqual(none, { ok: true, value: { exitCode: 143 } });
   });
 });
@@ -753,11 +726,11 @@ describe('the images this repository builds', () => {
       built.layers.get('github').layer.files.map((f) => f.path.split('/').slice(-2).join('/')),
       ['bin/gh.wasm', 'host/gh-host.mjs', 'wasi-gh/package.json'],
     );
-    assert.ok(['dig', 'git', 'yq', 'html2markdown', 'file', 'xxd', 'xz', 'patch', 'openssl']
+    assert.ok(['dig', 'git', 'yq', 'html2markdown', 'file', 'xxd', 'xz', 'patch', 'openssl', 'rg']
       .every((c) => commandsOf(base).includes(c)));
-    assert.ok(['rg', 'sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
+    assert.ok(['sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
       && !commandsOf(base).includes(c)));
-    await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, rg' }] }), /tells the agent of rg/);
+    await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, sqlite3' }] }), /tells the agent of sqlite3/);
     await assert.rejects(build({ images: [{ ...IMAGES[0], layers: ['gpu'] }] }), /has a layer gpu, which there is none of/);
 
     // A kernel's file system serves what was built, from a bucket with its objects.
@@ -827,7 +800,7 @@ describe('the images this repository builds', () => {
     have.set('images/data.json', 'an older manifest');
     const missing = (await missingFrom(objects, read)).map((o) => o.key);
     assert.deepEqual(missing, [...[...data.blobs].sort(), data.key, 'images/data.json']);
-    assert.equal(data.blobs.length, 3);
+    assert.equal(data.blobs.length, 2);
     assert.equal(bucketOf('prod'), 'helix-opspile-images');
     assert.equal(bucketOf('stage'), 'helix-opspile-images-stage');
   });

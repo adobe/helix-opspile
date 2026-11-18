@@ -923,10 +923,8 @@ const REACTING = {
 - Mention a reaction in your note only when it says something the team should know.`,
 };
 
-const JUST_BASH = 'The shell is just-bash: cat, grep, sed, awk, jq, sort, uniq, head, tail, find, diff, base64 and other text tools, and curl, which reaches the internet; there is no npm, node or python, and no binaries outside its command set.';
-
 /**
- * What the agent is told its shell has, with the SLICC kernel (src/agent/kernel.js): the
+ * What the agent is told its shell has, on the SLICC kernel (src/agent/kernel.js): the
  * programs its image names (`shell.tools`, src/agent/image.js).
  */
 function kernelShell(shell) {
@@ -956,14 +954,14 @@ function kernelShell(shell) {
 }
 
 /**
- * What the agent is told about the shell of its computer, `shell` (`{ runtime, image?, tools?,
+ * What the agent is told about the shell of its computer, `shell` (`{ image?, tools?,
  * commands? }`, the ThreadAgent's `shellInfo`): what it has, and with what to read a browser
  * recording's requests.
  */
-const shellGuide = (shell) => (shell && shell.runtime === 'slicc-kernel' ? {
+const shellGuide = (shell = {}) => ({
   has: kernelShell(shell),
   ndjson: shell.commands && shell.commands.includes('jq') ? 'jq' : 'grep and awk',
-} : { has: JUST_BASH, ndjson: 'jq' });
+});
 
 const computerGuide = (info) => {
   const shell = shellGuide(info);
@@ -1117,7 +1115,7 @@ const MEMBERSHIP_GUIDE = `The team turned on request_membership for this channel
  * with its own, and with `request_bash`, a command for a person to run there
  * (src/agent/bashrequest.js).
  * `tools` is the list of keys that are on; `ctx` as for opspileExtension, with `shell()`, what
- * the computer's shell is and has (the ThreadAgent's `shellInfo`; just-bash without it), and
+ * the computer's shell is and has (the ThreadAgent's `shellInfo`), and
  * `posted(platformMessageId)` to call for every message the agent posts, `inSidebar()`, whether
  * the turn answers a sidebar message (src/agent/sidebar.js: then posting, reacting and asking
  * the admin bots are refused), and
@@ -1216,7 +1214,7 @@ export function agentToolsExtension(ctx, tools) {
     ).catch(() => []);
     sections.push(section('computer', async () => {
       const note = secretsNote(await secrets());
-      const guide = computerGuide(ctx.shell ? await ctx.shell().catch(() => null) : null);
+      const guide = computerGuide(ctx.shell ? await ctx.shell().catch(() => undefined) : undefined);
       const all = ctx.hasThread ? `${guide}\n\n${REQUEST_BASH}` : guide;
       return note ? `${all}\n\n${note}` : all;
     }));

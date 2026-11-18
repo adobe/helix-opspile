@@ -13,46 +13,46 @@
 import { DEFAULT_IMAGE, isImageName } from './image.js';
 
 /**
- * The second shell of the agents' computers (the `computer` tool, src/agent/computer.js): GNU
- * bash and real programs on the SLICC kernel (@ai-ecoverse/slicc-kernel/cloudflare), where a
- * team chose it over just-bash (`shellFor`, the knowledge-base editor's Computer tool).
+ * The shell of the agents' computers (the `computer` tool, src/agent/computer.js): GNU bash and
+ * real programs on the SLICC kernel (@ai-ecoverse/slicc-kernel/cloudflare).
  *
  * The kernel runs in the ThreadAgent object, its processes in Dynamic Workers (env.LOADER)
- * that have no network of their own. It is a backend of the same Workspace as just-bash
- * (`sliccBackend`), so the thread's files are the same ones, mounted at /workspace, the
- * read-only uploads among them. The kernel's own root (/root, /tmp, /etc, and its programs
- * under /node_modules) is in the object's SQLite too, in tables of its own (`slicc_*`).
+ * that have no network of their own. It is the backend of the computer's Workspace
+ * (`sliccBackend`), so the thread's files are mounted at /workspace, the read-only uploads
+ * among them. The kernel's own root (/root, /tmp, /etc, and its programs under /node_modules)
+ * is in the object's SQLite too, in tables of its own (`slicc_*`).
  *
  * Its programs are an image (src/agent/image.js): the team's choice among those in the
- * `IMAGES` bucket, a stack of layers the kernel mounts read-only when it boots (`imageSpec`).
- * The agent's object keeps no copy of it.
+ * `IMAGES` bucket (`imageFor`, the knowledge-base editor's Computer tool), a stack of layers
+ * the kernel mounts read-only when it boots (`imageSpec`). The agent's object keeps no copy.
  *
  * Its programs reach the network through the kernel's proxy, which hands every request to a
- * transport: here `gatewayFetch`, the same `forward` as just-bash's SecretGateway
- * (src/agent/secrets.js), so the team's secrets go in where a request names them, and nowhere
- * else. Redirects are the program's to follow (curl -L), each hop through the gateway again.
+ * transport: here `gatewayFetch`, over the gateway's `forward` (src/agent/secrets.js), so the
+ * team's secrets go in where a request names them, and nowhere else. Redirects are the
+ * program's to follow (curl -L), each hop through the gateway again.
  *
  * This file has what needs no Workers runtime, so that it is tested in Node; the kernel
  * itself is made in src/agent/agent.js.
  */
 
-export const RUNTIMES = [
-  {
-    runtime: 'just-bash',
-    title: 'just-bash',
-    description: 'A bash interpreter in JavaScript, with its own cat, grep, sed, awk, jq, rg and'
-      + ' curl. It has no real programs: what is not built in does not run.',
-  },
-  {
-    runtime: 'slicc-kernel',
-    title: 'SLICC kernel (experimental)',
-    description: 'GNU bash with real programs (WebAssembly), with processes, pipes and signals,'
-      + ' on the same files, with curl and the secrets as in just-bash. Which programs is the'
-      + ' image\'s choice, below. A command takes about a tenth of a second longer.',
-  },
-];
-export const DEFAULT_RUNTIME = 'just-bash';
-export const isRuntime = (runtime) => RUNTIMES.some((r) => r.runtime === runtime);
+/**
+ * Where curl finds its configuration in the kernel (`CURL_HOME`), and what it says: the
+ * proxy's answer to curl's CONNECT (`HTTP/1.1 200 Connection Established`) is not shown with
+ * the site's headers (curl -i, -I, -D), which then start with the site's own status line, as
+ * they do anywhere else.
+ */
+export const CURL_HOME = '/etc/opspile/curl';
+export const CURLRC = 'suppress-connect-headers\n';
+
+/**
+ * What every process of the kernel has in its environment, besides the kernel's own: curl's
+ * configuration (CURLRC), and tar that does not try to give the files it unpacks the owners
+ * the archive names, which the kernel refuses even root (a warning for each file).
+ */
+export const KERNEL_ENV = {
+  CURL_HOME,
+  TAR_OPTIONS: '--no-same-owner',
+};
 
 /** An option of a team's Computer tool (`agent_tool_options`): its row, or null. */
 const option = async (env, team, name) => (team && env.DB ? env.DB.prepare(`SELECT value,
@@ -69,27 +69,6 @@ async function setOption(env, {
       changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
     .bind(team, name, value, by, at).run();
   return { by, at };
-}
-
-/**
- * The shell of a team's computers: `{ runtime, by, at }`, `by` and `at` only once someone
- * chose. A value this deployment does not know (an older one, after a rollback) is the default.
- */
-export async function teamRuntime(env, team) {
-  const row = await option(env, team, 'runtime');
-  return row && isRuntime(row.value)
-    ? { runtime: row.value, by: row.changed_by, at: row.changed_at }
-    : { runtime: DEFAULT_RUNTIME };
-}
-
-/** Sets the shell of a team's computers, as `by` (a name), now: `{ runtime, by, at }`. */
-export async function setTeamRuntime(env, { team, runtime, by }) {
-  return {
-    runtime,
-    ...await setOption(env, {
-      team, name: 'runtime', value: runtime, by,
-    }),
-  };
 }
 
 /**
@@ -113,20 +92,9 @@ export async function setTeamImage(env, { team, image, by }) {
   };
 }
 
-/**
- * The shell of an agent's computer, by its target's team (src/agent/agent.js `target`):
- * `{ runtime, image }`, `image` only with the kernel.
- */
-export async function shellFor(env, target) {
-  const team = target && target.team;
-  const { runtime } = await teamRuntime(env, team);
-  return runtime === 'slicc-kernel'
-    ? { runtime, image: (await teamImage(env, team)).image } : { runtime };
-}
-
-/** `shellFor`'s runtime alone. */
-export async function runtimeFor(env, target) {
-  return (await shellFor(env, target)).runtime;
+/** The image of an agent's computer, by its target's team (src/agent/agent.js `target`). */
+export async function imageFor(env, target) {
+  return (await teamImage(env, target && target.team)).image;
 }
 
 /**
@@ -161,13 +129,10 @@ export function imageSpec(image, target) {
 const KILLED = [143, 137];
 
 /**
- * Whether the shell stopped a run at `timeout` (seconds), which took `seconds`. just-bash
- * answers 124 and its word is taken (a person's run also asks whether the time was up,
- * src/agent/bashrequest.js). The kernel only ends bash with a signal, as a command can end by
- * itself: its exit code says so, and its time was up.
+ * Whether the shell stopped a run at `timeout` (seconds), which took `seconds`. The kernel only
+ * ends bash with a signal, as a command can end by itself: its exit code says so, and its time
+ * was up (a person's run asks the same, src/agent/bashrequest.js).
  */
-export function timedOut(runtime, exitCode, seconds, timeout) {
-  return runtime === 'slicc-kernel'
-    ? KILLED.includes(exitCode) && seconds >= timeout
-    : exitCode === 124;
+export function timedOut(exitCode, seconds, timeout) {
+  return KILLED.includes(exitCode) && seconds >= timeout;
 }
