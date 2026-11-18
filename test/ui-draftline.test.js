@@ -16,7 +16,8 @@
  * the button then keeps it open (Keep draft open), as View draft does, until Hide draft.
  * Taking the draft into the reply box is a button of its own; the reply box never shows the draft
  * for the pointer (that changed the layout under it, which left the line, hid the draft and came
- * back, over and over). Open or closed, the draft is rendered as the message will be.
+ * back, over and over). Open or closed, the draft is rendered as the message will be, and text
+ * selected in it stays: the pointer leaving does not close the line on it.
  */
 
 import assert from 'node:assert/strict';
@@ -142,6 +143,7 @@ describe('draft line', () => {
       wireSources: () => {},
       setTimeout: (f, ms) => timers.push([f, ms]),
       clearTimeout: () => {},
+      getSelection: () => null,
       TOUCH_ONLY: { matches: false },
       state: { open: 'k' },
       draftPeek,
@@ -180,6 +182,7 @@ describe('draft line', () => {
       wireSources: () => {},
       setTimeout: () => {},
       clearTimeout: () => {},
+      getSelection: () => null,
       TOUCH_ONLY: { matches: false },
       state: { open: 'k' },
       draftPeek,
@@ -197,5 +200,70 @@ describe('draft line', () => {
     // Clicked again (Hide draft), it closes.
     on.click({ target: { closest: () => button } });
     assert.ok(!draftOpen.has('k'));
+  });
+
+  it('stays open as the pointer leaves with some of the draft selected, to copy it', () => {
+    const on = {};
+    const text = {};
+    const el = {
+      __key: 'k',
+      matches: () => true,
+      querySelector: () => null,
+      contains: (n) => n === text,
+      addEventListener: (t, f) => { on[t] = f; },
+    };
+    const timers = [];
+    const renders = [];
+    const draftOpen = new Set();
+    const draftPeek = { key: null, timer: 0 };
+    let sel = { isCollapsed: true, anchorNode: null, focusNode: null };
+    const { wireDraftBar } = piece('function wireDraftBar', '/** Takes the draft into', 'wireDraftBar', {
+      wireSources: () => {},
+      setTimeout: (f, ms) => timers.push([f, ms]),
+      clearTimeout: () => {},
+      getSelection: () => sel,
+      TOUCH_ONLY: { matches: false },
+      state: { open: 'k' },
+      draftPeek,
+      draftOpen,
+      HOVER_DELAY_MS: 300,
+      renderDraftBar: (k) => renders.push([k, draftPeek.key]),
+    });
+    wireDraftBar(el);
+    on.pointerenter({ pointerType: 'mouse' });
+    timers[0][0]();
+    assert.equal(draftPeek.key, 'k');
+    // A drag that selects from the draft's text goes past the line's edge: it stays open, and
+    // is no longer the pointer's, so coming back and leaving again leaves it open too.
+    sel = { isCollapsed: false, anchorNode: text, focusNode: {} };
+    on.pointerleave();
+    assert.ok(draftOpen.has('k'));
+    assert.equal(draftPeek.key, null);
+    sel = { isCollapsed: true, anchorNode: null, focusNode: null };
+    on.pointerleave();
+    assert.ok(draftOpen.has('k'));
+    assert.deepEqual(renders, [['k', 'k']]);
+    // A selection elsewhere on the page does not keep it open.
+    draftOpen.clear();
+    on.pointerenter({ pointerType: 'mouse' });
+    timers[1][0]();
+    sel = { isCollapsed: false, anchorNode: {}, focusNode: {} };
+    on.pointerleave();
+    assert.ok(!draftOpen.has('k'));
+    // Nor does the resting pointer open a closed line over text selected in it: that would
+    // draw the text again, without the selection.
+    sel = { isCollapsed: false, anchorNode: {}, focusNode: text };
+    on.pointerenter({ pointerType: 'mouse' });
+    timers[2][0]();
+    assert.ok(!draftOpen.has('k'));
+  });
+
+  it('shows what is selected in it: not in the card\'s own fill, the page\'s selection', () => {
+    const css = SCRIPTS['spectrum-inbox.css'];
+    const page = SCRIPTS['spectrum.css'].match(/:where\(\.spectrum\) ::selection \{ background: ([^;]+);/)[1];
+    const card = css.match(/\.spectrum \.draftbar \{[^}]*background: ([^;]+);/)[1];
+    const sel = css.match(/\.spectrum \.draftbar ::selection \{ background: ([^;]+);/)?.[1];
+    assert.equal(page, card);
+    assert.ok(sel && sel !== card, 'the draft line needs a ::selection of its own');
   });
 });

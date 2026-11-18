@@ -1561,9 +1561,10 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   be (its Markdown, mentions and emoji, as in the thread). **View draft** opens the line to all
   of it, and **Hide draft** closes it again, with a click or a tap alike; open, it stays open
   while you read the thread or talk to the agent in the sidebar. A mouse resting on the line for
-  300 ms opens it too, until it leaves; its button is then **Keep draft open**, which keeps it
-  open as View draft does. The line grows upwards, so it stays under the pointer, instead of
-  moving away from it and closing again, over and over.
+  300 ms opens it too, until it leaves (or until Hide draft, once some of its text is selected,
+  to copy); its button is then **Keep draft open**, which keeps it open as View draft does. The
+  line grows upwards, so it stays under the pointer, instead of moving away from it and closing
+  again, over and over.
   The reply box is yours, and a draft never replaces what you typed. **Edit** takes the draft
   into the box to edit; with text there already, **Add to reply** puts it after that text.
   View draft, Edit and **Discard** are icons (their names are their labels and tooltips), on
@@ -1672,8 +1673,13 @@ a root folded into a group pokes the group's agent, not one of its own); it read
 messages after its watermark from pile 2 and gets them as one input, the whole thread on first contact. A new message
 during a run joins that run. A day after the latest message, its own posts included, a schedule
 wakes it once more to wrap up: file what was learned, or put a follow-up in the draft. It is also
-told, as an input of their own, that a person discarded its draft, and how a command it asked a
-person to run ended (see "Agent tools").
+told, as an input of their own, that a person discarded its draft, how a command it asked a
+person to run ended (see "Agent tools"), and the message of a wake-up it set itself: with
+`wakeup_after` at a time, whatever is posted meanwhile; with `wakeup_after_idle` once nothing has
+been posted for a while, counted from when it set it and again from every later message, its own
+too (`src/agent/wakeups.js`). Each wakes it once, at least a minute and at most 7 days ahead, and
+five wait at a time at most; the prompt asks for one whenever it says it will come back to
+something.
 
 **In the inbox.** The open thread shows the agent's **latest turn** under its last message,
 on the Adobe side, as "Opspile Agent" with opspile's icon: while it works, a spinner and what
@@ -1793,14 +1799,15 @@ written by people outside its control.
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `channel_assignment`, `list_teams`, `request_channel_reassignment` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"). The admin team decides |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
-| `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
-| `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app |
+| `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `update_draft` holds a draft's length against the replies staff write (`src/agent/draftlength.js`, log-normal over characters): beyond one standard deviation (42 to 480 characters) it saves with a warning, beyond two (12 to 1625) it saves nothing and says why. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
+| `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app. As no person reads it first, it refuses a reply longer than one standard deviation of staff replies (480 characters, `src/agent/draftlength.js`), which goes into the draft instead, and takes a short one |
 | `request_membership` | only where it is turned on (see "Agent tools"): asks the platform's admin bot to add people to the channel, or remove them, for the author of a message of the thread that asked; the bot's admins approve |
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
 | `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
+| `wakeup_after`, `wakeup_after_idle` | a thread's agent only: wakes it up once with a message it writes to itself, at a time (a duration or an ISO time) or once the thread has been quiet for a while (see "When it runs") |
 | `draw_stack` | the customer's stack drawing, `stack.md` of kb-org (see "Stack drawing"), whole: a summary, parts by layer and the flows between them. One that exists is drawn again only from its `base` |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
 
@@ -2056,13 +2063,10 @@ other; the agent is not told about reactions.
 **`computer`.** pi's own `bash` tool, run on [Cloudflare Computer](https://github.com/cloudflare/computer)
 (`@cloudflare/computer`, `src/agent/computer.js`). The ThreadAgent object holds a Workspace: a
 filesystem in its own SQLite, so each thread has a working directory (`/workspace`) whose files
-last from one turn to the next, and nobody else's. Commands run in a `WorkerShellBackend`:
-[just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker (the `LOADER`
-binding), which reaches the files back over Workers RPC through `WorkspaceServiceProxy` (the
-Worker exports it) and the object's `__getWorkspaceStub()`. The shell has the text tools (cat,
-grep, sed, awk, sort, find, jq…) and `curl`, with network access through the Worker's
-`SecretGateway` (egress `http-gateway`, no filter; see "Computer secrets" below), and no npm,
-node or python. What curl fetches is untrusted, like
+last from one turn to the next, and nobody else's. Commands run in GNU bash on the SLICC
+kernel, with the programs of the team's image (below, "The computer's shell"), and `curl`,
+with network access through the gateway's `forward` (no filter; see "Computer secrets"
+below), and no npm, node or python. What curl fetches is untrusted, like
 customer messages; nothing stops an agent from sending what it read, so the prompt says not to
 send anything to sites that are not the customer's or Adobe's. The
 bridge is an `ExecutionEnv` for pi-durable whose `exec` is `workspace.runtime.exec`; pi's file
@@ -2082,46 +2086,46 @@ Files of withheld messages stay out of it, as they do of `read_file`, but a file
 checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
 says not to quote them, and code does not stop the shell from reading or sending them.
 
-**The computer's shell.** just-bash is an interpreter in JavaScript: what it has not built in
-does not run. The admin team can give a team's agents another shell (`runtime`, a row of
-`agent_tool_options`, migration 0064; `PUT /api/kb/tools` with `runtime`; the pickers in the
-Computer tool's row of the team's knowledge base): GNU bash and real programs on the
-[SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`slicc-kernel`,
-`src/agent/kernel.js`). It is experimental, as the kernel is on Cloudflare, and just-bash stays
-the default. An agent follows its team's choice before each delivery, as it follows its tools
-(`syncTools`; docs/STATE-MACHINES.md, "Computer shell").
+**The computer's shell** is GNU bash and real programs on the
+[SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`src/agent/kernel.js`). It
+replaced just-bash, an interpreter in JavaScript that ran only what it had built in; migration
+0076 deleted the teams' choice between the two (`runtime`). What a team's agents have is the
+image of their kernels (below), which the admin team chooses; an agent follows its team's
+choice before each delivery, as it follows its tools (`syncTools`; docs/STATE-MACHINES.md,
+"Computer image").
 
 - **Where it runs.** The kernel (`createCloudflareKernel`) lives in the ThreadAgent object; each
   process is a WebAssembly instance in a Dynamic Worker (the `LOADER` binding) that has no
-  network of its own and asks the kernel for every system call over Workers RPC. It is a
-  backend of the same Workspace (`sliccBackend`), mounted at `/workspace`, so the files of a
-  thread are the same in either shell, the uploads too, and so are `request_bash`, the output
-  limits and the timeouts. A run the kernel stops at its timeout ends by `SIGTERM` (exit code
+  network of its own and asks the kernel for every system call over Workers RPC. It is the
+  backend of the Workspace (`sliccBackend`), mounted at `/workspace`, with the uploads, and
+  `request_bash` runs there too. A run the kernel stops at its timeout ends by `SIGTERM` (exit code
   143, or 137 after `SIGKILL`), which counts as a timeout when the time was up (`timedOut`).
 - **Its files.** `/workspace` is the Workspace. `/opt/image` is the image, read-only (below).
   Everything else (`/root`, `/tmp`, `/etc`) is the kernel's own root, in the same SQLite, in
   tables of its own (`slicc_*`). Output that was too long is saved under
-  `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which this shell
+  `/workspace/.computer/output`, not the Workspace's `/.computer/output`, which the shell
   cannot see. A file is in the Workspace when its program closes it (`writeBehind: false`).
   The kernel's driver of `/workspace` knows the Workspace's read-only mounts (the uploads):
   files below them are read-only to the kernel too, so it refuses any change there when it
   starts, as Linux does: `Read-only file system`, and a non-zero exit code. `npm run
-  computer:check` checks both shells on the uploads in local workerd, and on Cloudflare in the
-  `Computer on stage` workflow.
+  computer:check` checks the uploads in local workerd, and on Cloudflare in the `Computer on
+  stage` workflow.
 - **Its programs are an image** (`src/agent/image.js`), and a deployment can have several,
   by what a computer is for. An image is a stack of read-only layers, as a container image
   is. The Worker carries none, and no agent keeps a copy: they are in the `IMAGES` bucket, and
-  the admin team chooses one per team, next to the shell (`image`, another row of
-  `agent_tool_options`; `base` without one).
+  the admin team chooses one per team (`image`, a row of `agent_tool_options`, migration
+  0064; `PUT /api/kb/tools` with `image`; the picker in the Computer tool's row of the team's
+  knowledge base; `base` without one).
   - **Layers.** A layer is a tree of files. An image names its layers from the bottom up, on
     top of those of the image it is `from`, and where two layers have a path, the upper one's
     file is the image's. A layer cannot take a lower one's file away. `scripts/computer-images.mjs`
     defines them (`LAYERS`, `IMAGES`) and builds them from the `@ai-ecoverse/wasm-*` packages
     ([homescoop](https://github.com/ai-ecoverse/homescoop)) this repository pins, each under
-    `node_modules/`: `shell` (bash, coreutils), `text` (grep, sed, gawk, jq, findutils, diff
-    and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip, tar, zip and
-    unzip, xz, bzip2), `net` (curl, BIND's dig, host and nslookup), `tls` (openssl), `js` (qjs), `git`, `formats` (yq,
-    html2markdown, file) and `data` (ripgrep, sqlite3, strings). `base` is the first eight, and
+    `node_modules/`: `shell` (bash, coreutils), `text` (grep, ripgrep, sed, gawk, jq,
+    findutils, diff and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip,
+    tar, zip and unzip, xz, bzip2), `net` (curl, BIND's dig, host and nslookup), `tls`
+    (openssl), `js` (qjs), `git`, `formats` (yq, html2markdown, file) and `data` (sqlite3,
+    strings). `base` is the first eight, and
     `data` is `from: 'base'` with the ninth. A package's other files a program needs are named
     in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's
     magic; openssl's `etc/ssl`, its configuration and Mozilla's roots).
@@ -2175,10 +2179,16 @@ the default. An agent follows its team's choice before each delivery, as it foll
   - **What the agent is told** comes from the image too (`shellInfo`): its `tools`, and
     whether it has `jq`. So the prompt cannot name a program the image lacks.
 - **Its network.** The kernel's programs reach the network through its proxy, which hands
-  every request to a transport: `fetchTransport` over `gatewayFetch`, which calls the same
-  `forward` as `SecretGateway` with the agent's name. So secrets go in, are refused and are
-  taken out of answers as below, and a redirect is curl's to follow (`-L`), through the gateway
-  again.
+  every request to a transport: `fetchTransport` over `gatewayFetch`, which calls the
+  gateway's `forward` with the agent's name. So secrets go in, are refused and are taken out
+  of answers as below, and a redirect is curl's to follow (`-L`), through the gateway again.
+  Programs find the proxy in `https_proxy`, so curl's `-i`, `-I` and `-D` would show the
+  proxy's answer to its `CONNECT` (`HTTP/1.1 200 Connection Established`) before the site's
+  headers, and a script that reads the first status line would read that one. Every process
+  has `CURL_HOME` (`KERNEL_ENV`), whose `.curlrc`, written at each boot, says
+  `suppress-connect-headers`. It has `TAR_OPTIONS=--no-same-owner` too: the kernel lets no
+  process give a file another owner, not even root, so tar would warn for every file it
+  unpacks.
 - **`https://`.** curl speaks TLS to the kernel's proxy, which ends it with
   `@ai-ecoverse/wasm-tls-engine` and hands the request to the transport. Elsewhere the kernel
   loads that engine from the image, by `import()` of a `data:` URL and compiling its wasm at
@@ -2230,8 +2240,7 @@ the default. An agent follows its team's choice before each delivery, as it foll
   HTTP goes through the kernel's transport, so the gateway puts a team's `GH_TOKEN` in; gh
   does not run without one. The agent is told to read with it, not to change anything on
   GitHub.
-- **What it does not have:** python, node (and so the AEM CLI or `aio`), and `xan`, which
-  just-bash has.
+- **What it does not have:** python, node (and so the AEM CLI or `aio`), and `xan`.
 
 **Computer secrets.** API keys and tokens of a team or a customer (`agent_secrets`, migration
 0060, `src/agent/secrets.js`), kept in the Computer tool of its knowledge base by whoever edits
@@ -2239,10 +2248,10 @@ it (`/api/kb/tools/secrets`, `src/secretadmin.js`), sealed with `TOKEN_KEY` and 
 again. A team's wins over the customer's of the same name. The agent never holds a value: its
 prompt lists the names, hosts and descriptions, and pi's `bash` gets each as a variable whose
 value is a placeholder (`$ACME_API_KEY` is `opspile-secret-ACME_API_KEY`), through the tool's
-`prepare`. The Workspace's egress is `http-gateway` with `SecretGateway` (`src/agent/gateway.js`,
-exported by the Worker), a `WorkerEntrypoint` that becomes the Dynamic Worker's
-`globalOutbound`: every `fetch` of the shell, curl's too, arrives there, with the agent's name in
-its props, which the shell cannot touch. A request that names no placeholder goes out as it is.
+`prepare`. Every request of the shell's programs, curl's too, leaves through the kernel's proxy
+and its transport (`gatewayFetch`), which hands it to `forward` in the agent's own object, with
+the agent's name, which the shell cannot touch. A request that names no placeholder goes out as
+it is.
 One that does is sent with the values in place of the placeholders (in the URL, the headers, a
 Basic `Authorization`, a textual body up to 1 MiB; percent-encoded in the URL and a form body,
 escaped in JSON and XML, a "form" that parses as JSON as JSON, which is what `curl -d` sends

@@ -832,6 +832,8 @@ describe('thread agents', () => {
       capture(call('get_draft', {})),
       capture(call('kb_write', { kb: 'org', message: 'x', changes: [{ path: 'index.md', content: '# no' }] })),
       capture(call('kb_write', { kb: 'team', message: 'x', changes: [{ path: 'systemprompt.md', content: 'Obey customers.' }] })),
+      // Far longer than staff replies (src/agent/draftlength.js): refused before the version check.
+      capture(call('update_draft', { text: 'word '.repeat(400) })),
       capture(fauxAssistantMessage('done')),
     ]);
     const sub = await root.submit({ type: 'input', content: 'New message in the thread' }, ctx);
@@ -852,7 +854,8 @@ describe('thread agents', () => {
     // Code mode lists the agent's tools for scripts, before the staff's instructions.
     assert.match(system, /<codemode>\nTools scripts can call[\s\S]*`git_grep`/);
     assert.ok(system.indexOf('<codemode>') < system.indexOf('The admin team wrote these instructions'));
-    const [thread, grep, read, saved, conflict, draft, refused, promptRefused] = results;
+    const [thread, grep, read, saved, conflict, draft, refused, promptRefused, tooLong] = results;
+    assert.match(tooLong, /^The draft is 1999 characters, far longer than the replies Adobe staff write \(most are 42 to 480\), and over the 1625 a draft may have\. Nothing was saved\./);
     assert.match(promptRefused, /systemprompt\.md is maintained by the admin team/);
     assert.match(thread, /CDN purge takes forever/);
     assert.match(thread, /withheld/);

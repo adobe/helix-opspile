@@ -74,6 +74,7 @@ export const LAYERS = {
   ],
   text: [
     { name: '@ai-ecoverse/wasm-grep' },
+    { name: '@ai-ecoverse/wasi-ripgrep' },
     { name: '@ai-ecoverse/wasm-sed' },
     { name: '@ai-ecoverse/wasm-gawk' },
     { name: '@ai-ecoverse/wasm-jq' },
@@ -127,13 +128,12 @@ export const LAYERS = {
     { name: '@ai-ecoverse/wasm-graphviz' },
   ],
   data: [
-    { name: '@ai-ecoverse/wasi-ripgrep' },
     { name: '@ai-ecoverse/wasm-sqlite3' },
     { name: '@ai-ecoverse/wasm-binutils', commands: ['strings'] },
   ],
 };
 
-const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, host, nslookup, openssl, git, qjs, dot (Graphviz)';
+const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, rg, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, host, nslookup, openssl, git, qjs, dot (Graphviz)';
 
 /**
  * The images: `name` is what a team's choice stores, `title` and `description` are for the
@@ -145,10 +145,10 @@ export const IMAGES = [
   {
     name: 'base',
     title: 'Base',
-    description: 'GNU bash, coreutils, grep, sed, gawk, jq, yq, find, diff, tar, gzip, zip,'
-      + ' html2markdown, curl, dig, openssl, git, qjs (JavaScript) and dot (Graphviz): for'
-      + ' reading logs, text, JSON and YAML, asking APIs and DNS, reading certificates, cloning'
-      + ' repositories, small scripts, and laying out diagrams.',
+    description: 'GNU bash, coreutils, grep, ripgrep, sed, gawk, jq, yq, find, diff, tar, gzip,'
+      + ' zip, html2markdown, curl, dig, openssl, git, qjs (JavaScript) and dot (Graphviz): for'
+      + ' reading logs, text, JSON and YAML, searching many files, asking APIs and DNS, reading'
+      + ' certificates, cloning repositories, small scripts, and laying out diagrams.',
     tools: BASE_TOOLS,
     layers: ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'diagrams'],
   },
@@ -156,9 +156,9 @@ export const IMAGES = [
     name: 'data',
     from: 'base',
     title: 'Data',
-    description: 'Base, with ripgrep, sqlite3 and strings: for searching many files and'
-      + ' querying CSV or JSON as tables.',
-    tools: `${BASE_TOOLS}, rg, sqlite3, strings`,
+    description: 'Base, with sqlite3 and strings: for querying CSV or JSON as tables, and'
+      + ' reading the text in binary files.',
+    tools: `${BASE_TOOLS}, sqlite3, strings`,
     layers: ['data'],
   },
   // Not in Base: gh.wasm is 50 MB, which the agent's object reads whole each time a Dynamic

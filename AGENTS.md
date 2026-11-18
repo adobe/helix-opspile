@@ -86,7 +86,7 @@ code and docs, is the decision model that labels threads and channels.
   SDK, so the paths that use it stay testable in Node. Keep SDK imports out of everything but
   `src/agent/agent.js`. The same goes for `@ai-ecoverse/slicc-kernel` (it imports
   `cloudflare:workers`): `src/agent/kernel.js` and `src/agent/image.js` have what Node can
-  test, and `npm run computer:dev` runs an agent's computer in local workerd, both shells and
+  test, and `npm run computer:dev` runs an agent's computer in local workerd, its kernel and
   every image, to try the rest (README, "Try an agent's computer"); `npm run computer:check`
   runs every image's programs there, and on Cloudflare in the `Computer on stage` workflow, on
   a push to any branch but main that changes what the computer imports. Its `paths` list the

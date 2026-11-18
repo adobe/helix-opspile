@@ -2325,6 +2325,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border-radius: var(--spectrum-corner-radius-large-default);
   background: var(--spectrum-accent-subtle-background-color-default);
 }
+/* Text selected in the draft: the page's selection is the card's own fill, so it would not show. */
+.spectrum .draftbar ::selection { background: var(--spectrum-accent-color-500); }
 .spectrum .draftbar .pen { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .draftbar svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
 .spectrum .draftbar .by { color: var(--spectrum-neutral-subdued-content-color-default); }

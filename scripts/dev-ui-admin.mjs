@@ -683,11 +683,12 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     // preview's scripts are your own.
     SLACK_BOT_TOKEN: 'xoxb-made-up-preview-token',
     // The images of the computers on the SLICC kernel, as the bucket lists them
-    // (scripts/computer-images.mjs): the real ones' names and layers, with made-up sizes.
+    // (scripts/computer-images.mjs): the real ones' names and layers, with made-up sizes, and
+    // not the renderer Worker's, which the index leaves out.
     IMAGES: fakeBucket({
       'images/index.json': JSON.stringify({
         v: 2,
-        images: IMAGES.map((image, i) => ({
+        images: IMAGES.filter((image) => !image.internal).map((image, i) => ({
           name: image.name,
           title: image.title,
           description: image.description,
@@ -748,11 +749,9 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('any_thread', 'channel', 'C0EDGEQ01', 1, 'Dana', '2026-10-25T09:00:00Z');
     INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
-  // The admin team gave platform ops' computers the SLICC kernel as their shell, with the
-  // image for working on data.
+  // The admin team gave platform ops' computers the image for working on data.
   DB.sqlite.exec(`INSERT INTO agent_tool_options (tool, team, name, value, changed_by, changed_at)
-    VALUES ('computer', 'platform', 'runtime', 'slicc-kernel', 'Dana', '2026-10-26T09:00:00Z'),
-      ('computer', 'platform', 'image', 'data', 'Dana', '2026-10-27T09:00:00Z')`);
+    VALUES ('computer', 'platform', 'image', 'data', 'Dana', '2026-10-27T09:00:00Z')`);
   // Platform ops' own extraction rules, one saved by its agent, and its own tech stack: one
   // technology of its own, and one of the admin team's turned off for its channels.
   DB.sqlite.exec(`INSERT INTO extraction_rules (team, name, kind, target, field, pattern, flags, value,

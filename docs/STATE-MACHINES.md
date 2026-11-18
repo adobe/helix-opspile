@@ -161,9 +161,11 @@ when the platform refused it, or after a minute. A second click on the same emoj
 
 **Draft line.** closed → open → closed (`draftOpen`, `ui/inbox.js`): **View draft**, a click, shows
 all of the draft on its line, rendered; a mouse resting on the line for `HOVER_DELAY_MS` opens it
-too (`draftPeek` names the thread it opened), and leaving closes only what it opened. While the
-pointer's is open its button is Keep draft open, which makes it View draft's (`draftPeek` cleared):
-it stays open wherever the pointer goes, the sidebar too. Hide draft and Escape close either; a new line not under the pointer, or another thread's, drops the pointer's. The
+too (`draftPeek` names the thread it opened), and leaving closes only what it opened, unless text
+is selected in it: then it stays open, as View draft leaves it, so the selection is there to copy.
+While the pointer's is open its button is Keep draft open, which makes it View draft's (`draftPeek`
+cleared): it stays open wherever the pointer goes, the sidebar too. Hide draft and
+Escape close either; a new line not under the pointer, or another thread's, drops the pointer's. The
 open line grows upwards from the pane's bottom edge, so it stays under the pointer. The state changes
 at once; only the line's height follows, growing or shrinking (`resizeDraft`), and a re-render while
 it moves goes on from where it is. The reply box
@@ -195,6 +197,13 @@ comes back, or after a minute.
 **Thread agent.** first contact → delivered → idle armed → wrapped up; off at any point (`mark` and
 `idle` in storage, `src/agent/delivery.js`). The schedule is armed before the mark moves, because a
 retry finds nothing unseen afterwards. Deliveries run one at a time.
+
+**Agent wake-up.** set → due → told, or dropped (`wakeups` in the agent's storage,
+`src/agent/wakeups.js`). One the agent set with `wakeup_after` is due at its time; one set with
+`wakeup_after_idle` is armed again from every later message, by `armIdle` when the wrap-up is,
+before the mark moves, and a schedule whose `mark` is not the wake-up's is stale and does nothing.
+Due, it leaves the list before the agent is told, so it wakes it once; an agent turned off since
+drops it unsaid. At most five wait.
 
 **Agent turn.** working → done or failed. Worked out from the transcript (`src/agent/turn.js`). A turn
 that stopped half way with no run pending counts as failed after 15 minutes. A finished one is kept
@@ -246,16 +255,17 @@ thread asks again.
 **Agent uploads.** empty → mounted → expired (`uploads`, `uploads-expiry`). The schedule is armed
 before the list is stored, so a failure tries again.
 
-**Computer shell.** just-bash ⇄ slicc-kernel, and with the kernel one image or another
-(`agent_tool_options`, the team's `runtime` and `image`; `runtime` and `image` in the agent's
-storage, the ones its Workspace was made for; `src/agent/kernel.js`). A team without a row, or
-with a value this deployment does not know (written by a later one, read after a rollback), has
-just-bash, and `base`. The agent compares them before each delivery (`syncTools`), as it does its
-tools: a change ends the kernel if one runs, drops the Workspace, and is stored before the next
-command makes a new one, over the same files. An image the bucket does not have is still the
-team's choice: the kernel does not boot, the command fails saying why, and nothing falls back. A command still running in the old shell is ended. The
-kernel's own root stays in the agent's SQLite when the team goes back (`slicc_*`, the image and
-`/tmp`): nothing reads it until the team chooses the kernel again.
+**Computer image.** one image ⇄ another (`agent_tool_options`, the team's `image`; `image` in
+the agent's storage, the one its Workspace was made for; `src/agent/kernel.js`). A team without
+a row, or with a value no image can have, has `base`. The agent compares them before each
+delivery (`syncTools`), as it does its tools: a change ends the kernel if one runs, drops the
+Workspace, and is stored before the next command makes a new one, over the same files. A command
+still running in the old kernel is ended. An image the bucket does not have is still the team's
+choice: the kernel does not boot, the command fails saying why, and nothing falls back. The
+kernel's own root stays in the agent's SQLite from one image to the next (`slicc_*`: `/root`,
+`/etc`, `/tmp`). The shell itself was a choice too, just-bash ⇄ slicc-kernel (`runtime`), until
+just-bash was removed: migration 0076 deleted the teams' rows, and an agent's stored `runtime` is
+read by nothing.
 
 **Kernel image.** Not a state of the agent: a kernel mounts its team's image from the bucket at
 every boot, read-only, and keeps nothing of it (`src/agent/image.js`). What has an order is the
@@ -537,6 +547,14 @@ changed and reloads when it is shown.
 rows stay where they are. Unread only lets go of the read threads it holds once the inbox has been
 away (tab hidden or window not focused) for `AWAY_MS` (`forgetRead`, `away`): never the open thread,
 and not after a shorter look elsewhere.
+
+**Customer column.** placed → held → let go (`state.column`, `columnPlace` and `forgetColumn` in
+`ui/inbox.js`). The simple personal view's customers go by their place: the highest they have had
+(unread mentions of you, then unread, then the rest) since the inbox was last away. Something new
+moves a customer up at once; reading it moves it down only once the inbox has been away for
+`AWAY_MS`, as the thread list does, but never the open thread's customer. Its badge and bold are
+what it has now. Another view, the expert view, viewing as someone and a reload start afresh;
+excluding a customer puts it at the end at once and drops its place.
 
 **List row.** shown → leaving → kept aside, or shown again (`.leaving` and `__leave` on the row's
 node, `leaveRow` in `ui/inbox.js`). While the list is the same (`state.list`), a row on screen whose
