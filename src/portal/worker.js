@@ -29,6 +29,7 @@ import portalHtml from '../../ui/portal.html';
 import portalJs from '../../ui/portal.js' with { type: 'text' };
 import appJs from '../../ui/app.js' with { type: 'text' };
 import writingJs from '../../ui/writing.js' with { type: 'text' };
+import richtextJs from '../../ui/richtext.js' with { type: 'text' };
 import spectrumFontsCss from '../../ui/spectrum-fonts.css' with { type: 'text' };
 import spectrumCss from '../../ui/spectrum.css' with { type: 'text' };
 import spectrumPortalCss from '../../ui/spectrum-portal.css' with { type: 'text' };
@@ -48,6 +49,7 @@ const PAGE = portalPage(portalHtml, {
   'portal.js': portalJs,
   'app.js': appJs,
   'writing.js': writingJs,
+  'richtext.js': richtextJs,
   'spectrum-fonts.css': spectrumFontsCss,
   'spectrum.css': spectrumCss,
   'spectrum-portal.css': spectrumPortalCss,
