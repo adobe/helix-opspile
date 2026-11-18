@@ -89,7 +89,29 @@ export const DREAM = {
   default: 'off',
 };
 
-export const EXPERIMENTS = [CACHE, MODEL, DREAM];
+
+/**
+ * Compacting an idle thread: an agent whose thread has been quiet for 65 minutes, past the
+ * one-hour prompt cache, summarizes what it has done so far (src/agent/idlecompact.js), so that
+ * its next turn reads a short context instead of writing the whole transcript to the cache
+ * again; against agents that keep their whole transcript (pi compacts only near the model's
+ * 1M-token window). Judged by the cost per accepted draft, the summaries' cost included. Not
+ * pinned: threads that started before the window, which hold the long transcripts, take part.
+ */
+export const COMPACT = {
+  id: 'compact',
+  title: 'Compacting idle threads',
+  from: '2026-11-18T15:00:00Z',
+  until: '2026-12-02T15:00:00Z',
+  measure: 'drafts',
+  arms: [
+    { id: 'off', label: 'Whole transcript' },
+    { id: 'idle', label: 'Compacted after 65 min idle' },
+  ],
+  default: 'off',
+};
+
+export const EXPERIMENTS = [CACHE, MODEL, DREAM, COMPACT];
 
 const TAG = /#([a-z0-9_-]+)=([a-z0-9_-]+)/g;
 

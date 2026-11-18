@@ -39,6 +39,7 @@ import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
 import { dream, dreamOf, dreamState } from './dream.js';
 import { setWakeup, wakeupDue } from './wakeups.js';
+import { armCompact, compactIdle } from './idlecompact.js';
 import {
   COMPUTER_CWD, computerEnv, ensureCwd, KERNEL_OUTPUT_DIR,
 } from './computer.js';
@@ -113,6 +114,9 @@ const METER_DELAY_MS = 2000;
 // run has ended; asked again a few times while the transcript still says it works.
 const KEEP_DELAY_MS = 2000;
 const KEEP_TRIES = 3;
+// How long an idle compaction is waited for, in its schedule callback: summaries take a minute or
+// two; one still running after this is placed when it is done, unwatched.
+const COMPACT_WAIT_MS = 10 * 60 * 1000;
 const SIZE_EVERY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -634,6 +638,48 @@ export class ThreadAgent extends Agent {
     return wakeupDue(this, payload);
   }
 
+  /** A turn ended: compact after an idle hour, in the compaction experiment (idlecompact.js). */
+  async armCompact() {
+    try {
+      await armCompact(this);
+    } catch (e) {
+      console.log(JSON.stringify({ route: 'agent', compact: 'arm failed', error: e.message }));
+    }
+  }
+
+  /** Schedule callback: the thread has been idle since its turn ended (idlecompact.js). */
+  async compactIdle(payload) {
+    const r = await compactIdle(this, payload).catch((e) => ({ error: e.message }));
+    console.log(JSON.stringify({ route: 'agent', compact: 'idle', ...r }));
+    // What the summary cost, under the arm it ran in.
+    this.meterModel();
+    return r;
+  }
+
+  /**
+   * Compacts the thread's conversation with `instructions` (pi-durable's manual compaction: the
+   * summary is placed at once, the agent being idle) and waits for it, a while: its outcome's
+   * status (`completed`, `failed`, …), `running` when it took longer.
+   */
+  async compactRoot(instructions) {
+    const conversation = await this.harness.conversation(ROOT_SESSION);
+    const id = await conversation.compact(instructions, BACKGROUND_CONTEXT);
+    const pi = await this.harness.pi();
+    let timer;
+    const settled = await Promise.race([
+      pi.waitForTask(id, BACKGROUND_CONTEXT),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), COMPACT_WAIT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    const outcome = settled && settled.state && settled.state.outcome;
+    if (!outcome) {
+      return 'running';
+    }
+    const error = outcome.error && String(outcome.error.message || outcome.error).slice(0, 200);
+    return error ? `${outcome.status}: ${error}` : outcome.status;
+  }
+
   /** Knowledge shared by a staff member, to be filed in the knowledge bases. */
   async seed(note) {
     return seed(this, note);
@@ -752,12 +798,17 @@ export class ThreadAgent extends Agent {
     }
   }
 
-  /** The thread's latest turn (src/agent/turn.js), and what is pending. */
+  /**
+   * The thread's latest turn (src/agent/turn.js), and what is pending. `cut`: there is none
+   * because a compaction summarized it (its input was before the entries kept as they were).
+   */
   async latestTurn() {
     const pending = await this.harness.pending();
     // The turn is the thread's; a pinned seed session works beside it, and is in `pending`.
     const busy = pending.some((p) => p.session === ROOT_SESSION && p.status !== 'parked');
-    return { pending, turn: latestTurn(await this.harness.messages().catch(() => []), { busy }) };
+    const entries = await this.harness.messages().catch(() => []);
+    const turn = latestTurn(entries, { busy });
+    return { pending, turn, cut: !turn && Boolean(entries[0] && entries[0].kind === 'pi.compaction') };
   }
 
   /**
@@ -767,13 +818,16 @@ export class ThreadAgent extends Agent {
    * woken object does not write it again. A turn that answers a sidebar message is the
    * sidebar's (src/agent/sidebar.js): the turn kept for the thread stays the one before it.
    * Every finished sidebar answer in the transcript is kept first, also while a turn queued
-   * behind it works.
+   * behind it works. A turn a compaction cut off (`cut`) stays as it was kept.
    */
-  async keepTurn(turn, at = new Date().toISOString()) {
+  async keepTurn(turn, at = new Date().toISOString(), { cut = false } = {}) {
     if (this.name.startsWith('kb:')) {
       return;
     }
     await keepAnswers(this).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'sidebar failed', error: e.message })));
+    if (!turn && cut) {
+      return;
+    }
     await this.keepLive(turn, at).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'live failed', error: e.message })));
     if (turn && turn.state === 'working') {
       return;
@@ -821,10 +875,13 @@ export class ThreadAgent extends Agent {
       let working = false;
       try {
         const at = new Date().toISOString();
-        const { turn } = await this.latestTurn();
+        const { turn, cut } = await this.latestTurn();
         // The sidebar answers before it, even while the turn behind them works.
-        await this.keepTurn(turn, at);
+        await this.keepTurn(turn, at, { cut });
         working = Boolean(turn && turn.state === 'working');
+        if (!working) {
+          await this.armCompact();
+        }
       } catch (e) {
         console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message }));
       }
@@ -846,11 +903,11 @@ export class ThreadAgent extends Agent {
     this.meterModel();
     const catalog = await this.servers.current();
     const at = new Date().toISOString();
-    const { pending, turn } = await this.latestTurn();
+    const { pending, turn, cut } = await this.latestTurn();
     // A turn the inbox does not have yet (what it is doing, for an agent that has not written
     // it since this was deployed; one that stopped half way and counts as failed now): kept
     // behind the answer.
-    this.keepTurn(turn, at).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message })));
+    this.keepTurn(turn, at, { cut }).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message })));
     return {
       name: this.name,
       model: armModel(this.env, await this.currentArm()) || this.env.AGENT_MODEL || null,
