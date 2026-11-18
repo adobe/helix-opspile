@@ -129,6 +129,23 @@ header .note { white-space: nowrap; }
 .menu .keys dd { margin: 0; text-align: right; }
 .menu kbd { font: var(--spectrum-font-size-50) ui-monospace, monospace; border: var(--spectrum-border-width-100) solid var(--line); padding: 0 var(--spectrum-spacing-75);
  }
+/* A menu in columns (the inbox's: you and your view; notifications and the agent; the look, the
+   keyboard and logging out): one under the other, a single column as on a phone, until the
+   screen is wide enough for them side by side, under who you are, each as tall as the menu and
+   a line between them. A column with nothing shown in it (viewing as someone) is not there. Tab
+   goes down a column, then on to the next, as they are read. */
+@media (min-width: 1000px) {
+  .menu:has(> .cols) { width: max-content; }
+  .menu .cols { display: grid; grid-auto-flow: column; grid-auto-columns: calc(var(--spectrum-spacing-100) * 36);
+    border-top: var(--spectrum-border-width-100) solid var(--line); }
+  .menu .col { padding: 0 var(--spectrum-spacing-200); }
+  .menu .col:first-child { padding-left: 0; }
+  .menu .col:last-child { padding-right: 0; }
+  .menu .col:not(:has(> section:not([hidden]))) { display: none; }
+  .menu .col:has(> section:not([hidden])) ~ .col:has(> section:not([hidden])) { border-left: var(--spectrum-border-width-100) solid var(--line); }
+  .menu .col > section { border-top-width: 0; }
+  .menu .col > section:not([hidden]) ~ section { border-top-width: var(--spectrum-border-width-100); }
+}
 
 /* A touch screen: the same controls, taller, on every page. */
 @media (hover: none) and (pointer: coarse) {
@@ -547,6 +564,7 @@ header .note { white-space: nowrap; }
 }
 .spectrum .menu { font-size: var(--spectrum-font-size-100); }
 .spectrum .menu section { border-top-color: var(--spectrum-gray-200); }
+.spectrum .menu :is(.cols, .col) { border-color: var(--spectrum-gray-200); }
 .spectrum .menu h4 {
   color: var(--spectrum-neutral-subdued-content-color-default);
   font-size: var(--spectrum-font-size-75);

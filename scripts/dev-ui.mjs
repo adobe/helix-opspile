@@ -142,10 +142,15 @@ const adminApi = createAdmin(store, { manager: MANAGER, member: MEMBER, bases: k
 let vocabNames = { tech: {}, topics: {} };
 const ME = store.me.id;
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
-// Dana's notification settings (src/settings.js): mentions and threads on, and a bell on Edge ops'
-// incidents, so the user menu lists one.
+// Dana's notification settings (src/settings.js): mentions and threads on, and bells on Edge ops'
+// incidents, on Platform ops' and on her personal view, so the user menu lists a few (and is as
+// long as someone's who uses them).
 let settings = withDefaults(store.me, {
-  bells: [{ view: 'edge', sel: { type: ['conversation'], kind: ['incident'] } }],
+  bells: [
+    { view: 'edge', sel: { type: ['conversation'], kind: ['incident'] } },
+    { view: 'platform', sel: {} },
+    { view: '~personal', sel: {} },
+  ],
 });
 // The technologies Dana follows (src/follows.js), and her teams', which the admin pages keep.
 let follows = ['da'];

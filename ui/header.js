@@ -80,16 +80,20 @@ window.Header = (() => {
       b.setAttribute('aria-checked', String(b.dataset.scheme === s));
     }
   }
-  /** Appearance in your menu, before the keyboard's shortcuts and logging out. */
+  /**
+   * Appearance in your menu, before the keyboard's shortcuts and logging out: in the column
+   * they are in, where the menu has columns (the inbox's, on a wide screen).
+   */
   function schemeMenu() {
     const menu = $('menu');
     if (!menu || $('schemes')) return;
     const box = document.createElement('section');
     box.innerHTML = `<h4 id="schemesLabel">Appearance</h4><div id="schemes" role="radiogroup" aria-labelledby="schemesLabel">${
       SCHEMES.map((o) => `<button class="item" role="radio" aria-checked="false" data-scheme="${o.id}"${o.title ? ` title="${o.title}"` : ''}><span class="ck s2-check" aria-hidden="true"></span>${o.label}</button>`).join('')}</div>`;
-    const sections = [...menu.querySelectorAll(':scope > section')];
+    const sections = [...menu.querySelectorAll('section')];
     const before = sections.find((s) => s.querySelector('.keys')) || sections.at(-1);
-    menu.insertBefore(box, before || null);
+    if (before) before.before(box);
+    else menu.append(box);
     box.addEventListener('click', (e) => {
       const b = e.target.closest('[data-scheme]');
       if (!b) return;

@@ -696,7 +696,10 @@ Forward step through them; going between the admin sections is one too. The edit
 always the admin's own, also when they came from a "view as" inbox. On a phone the switch is
 the page you are on, with a menu of the others.
 Your menu, on every page, has **Appearance**: the color scheme, the system's (the default),
-light or dark, kept per browser.
+light or dark, kept per browser. The inbox's menu is three columns under who you are (you and
+your view; notifications and the Thread Agent; Appearance, the keyboard and logging out): side by
+side on a screen 1000px wide or more, one under the other below that, so a phone has the single
+column it always had.
 
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is
