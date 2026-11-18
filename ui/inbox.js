@@ -4547,10 +4547,10 @@ const DRAFT_ICONS = {
 };
 // What the draft line's buttons say with a part of the draft selected (`markPart`).
 const DRAFT_PART = {
-  add: ['Add selection to reply', 'Add selection to reply: the part of the draft you selected, after what you wrote'],
-  edit: ['Edit selection', 'Edit selection: put the part of the draft you selected in the reply box'],
-  bot: ['Send selection as bot', 'Post the part of the draft you selected in the thread, as the bot; the draft stays'],
-  me: ['Send selection as me', 'Post the part of the draft you selected in the thread, as you; the draft stays'],
+  add: ['Add selection to reply', 'Add selection to reply: the part of the draft you selected, after what you wrote; sending it uses up the draft'],
+  edit: ['Edit selection', 'Edit selection: put the part of the draft you selected in the reply box; sending it uses up the draft'],
+  bot: ['Send selection as bot', 'Post the part of the draft you selected in the thread, as the bot, and drop the rest'],
+  me: ['Send selection as me', 'Post the part of the draft you selected in the thread, as you, and drop the rest'],
 };
 const draftPartLabels = (k) => ` data-part="${DRAFT_PART[k][0]}" data-part-title="${DRAFT_PART[k][1]}"`;
 /** A quiet, icon-only button of the draft line: what it does is its label (and tooltip). */
@@ -4785,14 +4785,14 @@ function adoptDraft(key) {
 }
 
 /**
- * Sends the draft as it is, as you or as the opspile app: that uses it up. A `part` of it
- * (`draftPart`) is a reply of its own, and the draft stays, for the rest.
+ * Sends the draft as it is, as you or as the opspile app: that uses it up. Sending a `part` of
+ * it (`draftPart`) uses it up too: the rest goes.
  */
 async function sendDraft(key, asApp, part = null) {
   const data = state.cache.get(key)?.data;
   const d = data?.draft;
   if (!d) return;
-  const out = part ? { body: part.body, mentions: part.mentions, updated_at: null } : d;
+  const out = part ? { body: part.body, mentions: part.mentions, updated_at: d.updated_at } : d;
   $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   if (part) getSelection()?.removeAllRanges();
   if (asApp) {
@@ -4861,14 +4861,17 @@ document.addEventListener('selectionchange', () => {
   if (el?.__key) markPart(el, Boolean(lineDraft(el.__key) && draftSelection(el)));
 });
 
-/** Takes a part of the draft into the reply box, after what you typed: the draft stays. */
+/**
+ * Takes a part of the draft into the reply box, after what you typed: the draft taken in and
+ * cut down to it, so that sending it uses the draft up, as sending the part from the line does.
+ */
 function adoptPart(key, part) {
+  const d = state.cache.get(key)?.data?.draft;
   const box = $('reply');
-  if (!box || state.open !== key) return;
+  if (!d || !box || state.open !== key) return;
   pickMentions(key, part.mentions);
-  const c = state.composers.get(key) || { text: '', from: '', base: null };
   const text = box.value.trim() ? `${box.value.trimEnd()}\n\n${part.body}` : part.body;
-  state.composers.set(key, { ...c, text });
+  state.composers.set(key, { text, from: d.body, base: d.updated_at });
   getSelection()?.removeAllRanges();
   box.value = text;
   box.dispatchEvent(new Event('input'));

@@ -17,7 +17,8 @@
  * for the pointer (that changed the layout under it, which left the line, hid the draft and came
  * back, over and over); a double click on its text does, as Edit does. Open or closed, the draft
  * is rendered as the message will be, and text selected in it stays: the pointer leaving does not
- * close the line on it. With a part of it selected, Edit and the sends take that part.
+ * close the line on it. With a part of it selected, Edit and the sends take that part, and
+ * sending it uses the draft up.
  */
 
 import assert from 'node:assert/strict';
@@ -119,7 +120,7 @@ describe('draft line', () => {
     const html = draftLine(draft, { editable: true, asMe: true, asBot: true });
     const parts = [...html.matchAll(/data-draft="(\w+)"[^>]*data-part="([^"]+)" data-part-title="([^"]+)"/g)];
     assert.deepEqual(parts.map((m) => [m[1], m[2]]), [['edit', 'Edit selection'], ['bot', 'Send selection as bot'], ['me', 'Send selection as me']]);
-    assert.ok(parts.slice(1).every((m) => /the draft stays/.test(m[3])));
+    assert.ok(parts.slice(1).every((m) => /drop the rest/.test(m[3])));
     assert.match(draftLine(draft, { editable: true, own: true }), /data-part="Add selection to reply"/);
     assert.doesNotMatch(html.match(/data-draft="view"[^>]*>/)[0], /data-part/);
   });
@@ -303,7 +304,7 @@ describe('draft line', () => {
     assert.ok(sel && sel !== card, 'the draft line needs a ::selection of its own');
   });
 
-  it('sends a part of the draft as a reply of its own: the draft stays', async () => {
+  it('sends a part of the draft as the draft, cut down to it: that uses it up', async () => {
     const d = { ...draft, mentions: [{ id: 'u1', name: 'Sam Reyes' }] };
     const sent = [];
     const { sendDraft } = piece('async function sendDraft', '/**\n * Where the selection', 'sendDraft', {
@@ -323,8 +324,8 @@ describe('draft line', () => {
     await sendDraft('k', false, part);
     await sendDraft('k', false);
     assert.deepEqual(sent, [
-      ['bot', 'Thanks @Sam Reyes', null, d.mentions],
-      ['me', 'Thanks @Sam Reyes', null, d.mentions],
+      ['bot', 'Thanks @Sam Reyes', d.updated_at, d.mentions],
+      ['me', 'Thanks @Sam Reyes', d.updated_at, d.mentions],
       ['me', d.body, d.updated_at, d.mentions],
     ]);
   });
