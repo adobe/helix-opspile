@@ -40,6 +40,7 @@ import {
 } from './bashrequest.js';
 import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
+import { setWakeup, wakeupDue } from './wakeups.js';
 import {
   COMPUTER_CWD, computerEnv, ensureCwd, KERNEL_OUTPUT_DIR,
 } from './computer.js';
@@ -193,6 +194,8 @@ export class ThreadAgent extends Agent {
           pinned: (session) => seedPin(this, session),
           // For request_bash: the deadline of what it asks for.
           schedule: (when, callback, payload) => this.schedule(when, callback, payload),
+          // wakeup_after and wakeup_after_idle (src/agent/wakeups.js).
+          wakeup: (kind, args) => setWakeup(this, kind, args),
           // What the computer's shell is and has, for the agent's prompt.
           shell: () => this.shellInfo(),
         };
@@ -666,6 +669,12 @@ export class ThreadAgent extends Agent {
   async idle(payload) {
     this.meterModel();
     return idle(this, payload);
+  }
+
+  /** Schedule callback: a wake-up the agent set itself (src/agent/wakeups.js). */
+  async wakeupDue(payload) {
+    this.meterModel();
+    return wakeupDue(this, payload);
   }
 
   /** Knowledge shared by a staff member, to be filed in the knowledge bases. */
