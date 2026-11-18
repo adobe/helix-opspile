@@ -4687,13 +4687,22 @@ function resizeDraft(el, from) {
  * all of the draft, the same with a mouse and on touch; a mouse resting on the line for
  * HOVER_DELAY_MS opens it too, until it leaves (`draftPeek`). Opening grows the line upwards,
  * so it stays under the pointer instead of leaving it, closing and opening again, over and over.
+ * Text selected in it keeps a line the pointer opened open, as View draft does: closing it (or
+ * opening it) draws the text again, and the selection would go with it, nothing left to copy. A
+ * drag that selects often goes past the line's edge.
  */
 function wireDraftBar(el) {
   el.__wired = true;
   wireSources(el);
+  const selected = () => {
+    const sel = getSelection();
+    return Boolean(sel && !sel.isCollapsed && (el.contains(sel.anchorNode) || el.contains(sel.focusNode)));
+  };
   const unpeek = () => {
     clearTimeout(draftPeek.timer);
     if (!draftPeek.key) return;
+    // Selecting in it, the line stays open until Hide draft or Escape, as if View draft opened it.
+    if (selected()) { draftPeek.key = null; return; }
     draftOpen.delete(draftPeek.key);
     draftPeek.key = null;
     renderDraftBar(el.__key);
@@ -4703,7 +4712,7 @@ function wireDraftBar(el) {
     const key = el.__key;
     clearTimeout(draftPeek.timer);
     draftPeek.timer = setTimeout(() => {
-      if (el.__key !== key || state.open !== key || draftOpen.has(key) || !el.matches(':hover')) return;
+      if (el.__key !== key || state.open !== key || draftOpen.has(key) || !el.matches(':hover') || selected()) return;
       draftPeek.key = key;
       draftOpen.add(key);
       renderDraftBar(key);
