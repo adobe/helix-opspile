@@ -1031,6 +1031,8 @@ describe('inbox page', () => {
       // A line in the thread opens the panel at its conversation, for anyone who sees it.
       assert.match(html, /if \(side\.wide\) \{ enterSide\(state\.open, \{ at: id \}\); return; \}/);
       assert.match(html, /if \(!key \|\| !\(canSide\(key\) \|\| \(side\.wide && sideList\(key\)\.length\)\)\) return;/);
+      // The icon beside the reply box, still there while the panel is open, closes it again.
+      assert.match(html, /if \(enter\.matches\('\.sidebtn'\) && side\.key === state\.open\) exitSide\(\); else enterSide\(\);/);
     });
   });
 
