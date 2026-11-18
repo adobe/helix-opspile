@@ -322,6 +322,17 @@ short, and entering again turns it around.
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned
 sessions and never an unpinned one.
 
+**Dream.** due → started → taken → ended (done, unanswered or timeout) (`kb_dreams`, `src/dreams.js`;
+the session in the knowledge-base agent, `src/agent/dream.js`). The row is written before the agent
+is asked, in one statement with the check that there is no open dream for the customer and none
+started since its latest message, so a quiet spell dreams once. Then the agent is asked
+(`submitted_at`); a refusal keeps the error and leaves the row open, and every cron run asks an
+unsubmitted row again, the same dream (its session and operation, `dream-session:<id>` and
+`dream:<id>`, accepted once). A taken row is asked where it stands; settled, it ends with the
+knowledge base's entries. A row open for three hours ends as `timeout`, whatever the agent still
+does. The session's pin (`seed-pin:<session>`) and what it is (`dream-of:<session>`) are written
+before its pointer, as a seed's.
+
 **Agent experiment arm.** before → in an arm → after (`src/experiments.js`). Not stored: worked
 out from the clock and the agent's name at every model request (the retention and model it asks
 for) and at every metering (the tag on its tokens), so a deploy or an eviction cannot leave an agent

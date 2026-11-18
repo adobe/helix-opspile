@@ -296,9 +296,10 @@ function wakeupTools(ctx) {
  * `{ env, target(): Promise<Target>, verdicts(messages): Promise<Map>, pinned(conversation) }`,
  * where a target is `{ key, team, org, channelName, source, permalink }` (`key` is null for an
  * agent that only files seeded knowledge, `org` too when that is for no customer), and
- * `pinned` says which knowledge base a conversation alone may write, if any (src/agent/seed.js).
- * A thread's agent has `wakeup(kind, args)` too, for wakeup_after and wakeup_after_idle
- * (src/agent/wakeups.js `setWakeup`).
+ * `pinned` says which knowledge base a conversation alone may write, if any (src/agent/seed.js),
+ * and `dreamOf` which dream a conversation is, if one (src/agent/dream.js). A thread's agent
+ * has `wakeup(kind, args)` too, for wakeup_after and wakeup_after_idle (src/agent/wakeups.js
+ * `setWakeup`).
  */
 export function opspileExtension(ctx) {
   const { env } = ctx;
@@ -484,13 +485,16 @@ export function opspileExtension(ctx) {
           return fail(`${r.id} is read only for you: only the knowledge bases of your team, your customer and the teams your channel is shared with can be written. Nothing was written.`);
         }
         const t = await ctx.target();
-        let from = 'knowledge shared by staff';
+        const dream = ctx.dreamOf ? await ctx.dreamOf(api.conversationId) : null;
+        let from = dream ? 'a dream, consolidating it' : 'knowledge shared by staff';
         if (t.key) {
           from = t.permalink ? `[thread](${t.permalink})` : `thread ${t.key}`;
         }
         const message = String(args.message || '').split('\n')[0].slice(0, 200) || 'Update';
+        const trailers = [t.key && `Opspile-Thread: ${t.key}\n`, dream && `Opspile-Dream: ${dream}\n`]
+          .filter(Boolean).join('');
         const res = await writeKnowledge(env, r.artifact, args.changes, {
-          message: `${message}\n\n${t.key ? `Opspile-Thread: ${t.key}\n` : ''}Opspile-Agent: ${by()}`,
+          message: `${message}\n\n${trailers}Opspile-Agent: ${by()}`,
           by: by(),
           logEntry: `**Update**: ${message} (${from})`,
         });

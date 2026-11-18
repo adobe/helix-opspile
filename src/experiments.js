@@ -13,8 +13,10 @@
 /*
  * Experiments on the thread agents: for a fixed window, each thread is in one arm, by a hash of
  * its agent's name salted with the experiment's id, so a thread stays in its arm and a new
- * experiment splits the threads afresh. Outside the window no thread is in an arm. Knowledge-base
- * agents (`kb:…`) are not threads and take no part.
+ * experiment splits the threads afresh; in one by customer (`unit: 'org'`), by its customer's
+ * slug instead, the threads and the knowledge-base agents of a customer together. Outside the
+ * window no thread is in an arm. Knowledge-base agents (`kb:…`) are not threads and take no part
+ * but in one by customer.
  *
  * What an agent in an arm uses is counted for COGS with the arm in the metric's detail
  * (`us.anthropic.claude-sonnet-5-5#model=sonnet`, `armTags`), so the dashboard can set the arms
@@ -64,7 +66,30 @@ export const MODEL = {
   applies: (env) => /(?:^|\.)anthropic\.claude-opus-/.test(String(env?.AGENT_MODEL || '')),
 };
 
-export const EXPERIMENTS = [CACHE, MODEL];
+/**
+ * Dreaming: once a customer's channels have been quiet for 8 hours, with no dream since their
+ * latest message, the customer's knowledge-base agent reviews kb-org, merges what is duplicated,
+ * moves what is misfiled and resolves what contradicts itself (src/dreams.js,
+ * src/agent/dream.js); against customers whose knowledge base only grows. By customer, not by
+ * thread (`unit: 'org'`): a dream changes what every thread of the customer reads. Judged by the
+ * cost per accepted draft, the dreams' cost included (their knowledge-base agent's model use is
+ * tagged with its customer's arm, as its threads' is).
+ */
+export const DREAM = {
+  id: 'dream',
+  title: 'Dreaming: consolidating a customer\'s knowledge base when it is quiet',
+  from: '2026-11-18T15:00:00Z',
+  until: '2026-12-02T15:00:00Z',
+  measure: 'drafts',
+  unit: 'org',
+  arms: [
+    { id: 'off', label: 'Knowledge base as written' },
+    { id: 'dream', label: 'Dreams after 8 quiet hours' },
+  ],
+  default: 'off',
+};
+
+export const EXPERIMENTS = [CACHE, MODEL, DREAM];
 
 const TAG = /#([a-z0-9_-]+)=([a-z0-9_-]+)/g;
 
@@ -86,7 +111,8 @@ export const running = (experiment, now = Date.now()) => now >= Date.parse(exper
 
 /**
  * The arm the agent `name` is assigned to (`{ id, label }`), whenever it is asked, or null for
- * an agent that is not a thread's: what its drafts are counted by.
+ * an agent that is not a thread's: what its drafts are counted by. For an experiment by customer
+ * (`unit: 'org'`), `name` is the customer's slug.
  */
 export function assignedArm(experiment, name) {
   if (!name || String(name).startsWith('kb:')) {
@@ -125,15 +151,20 @@ export function armModel(env, arm) {
   return def && def.model && geo && MODEL.applies(env) ? `${geo[1]}${def.model}` : null;
 }
 
+/** Who is in an experiment's arms: the agent `name`, or for one by customer its `org`. */
+export const unitOf = (experiment, { name, org } = {}) => (experiment.unit === 'org' ? org || null : name);
+
 /**
  * What the agent `name`'s model use is tagged with for COGS now: the arms it is in
  * (`#model=sonnet`), or ''. A pinned experiment's arm is the agent's pin (`pins`, by
- * experiment), whenever it is; the others' by the window.
+ * experiment), whenever it is; the others' by the window, an experiment by customer's by the
+ * agent's customer (`org`; a knowledge-base agent's too).
  */
-export function armTags(name, now = Date.now(), env = undefined, pins = {}) {
+export function armTags(name, now = Date.now(), env = undefined, pins = {}, org = null) {
   return EXPERIMENTS.map((x) => {
     if (!x.pinned) {
-      return [x, armOf(x, name, now, env)?.id];
+      const unit = unitOf(x, { name, org });
+      return [x, unit ? armOf(x, unit, now, env)?.id : null];
     }
     return [x, pins[x.id] && (!x.applies || x.applies(env)) ? pins[x.id] : null];
   }).filter(([, arm]) => arm).map(([x, arm]) => `#${x.id}=${arm}`).join('');

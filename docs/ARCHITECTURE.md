@@ -1984,6 +1984,28 @@ agent names alone: `{ team, kb: "team" }` needs no customer and reaches `kb:<tea
 left empty), which has no kb-org at all, and only the chosen knowledge base is created when it
 is missing.
 
+**Dreams.** Agents write the knowledge bases a thread at a time, so over time a customer's
+kb-org gathers the same site, issue or person under two names, facts repeated across concepts, and
+claims a later thread contradicted. The **dream experiment** (from 2026-11-18 15:00 to 2026-12-02
+15:00 UTC) consolidates it while nobody is talking: for half the customers (by a hash of the org
+slug, `unit: 'org'`, since a dream changes what every thread of the customer reads), once their
+channels have had no message for eight hours and there has been no dream since their latest one,
+the cron (`src/dreams.js`) hands kb-org to the customer's knowledge-base agent
+(`kb:<team>:<org>`, the team of its latest channel with an agent). Only customers with a message in
+the last week, a kb-org of at least five concepts and a channel with an agent take part, and at
+most three dreams start per cron run. The agent dreams in a session of its own, pinned to kb-org as
+a seed is (`src/agent/dream.js`), without the context of earlier dreams: it reads the index and the
+files, finds duplicates, misfiled concepts and contradictions, merges them into one concept at the
+path of its type and deletes the rest in the same commit, keeping every source, footnote and alias,
+and resolves a contradiction by the newest dated source (or keeps both and says so). It adds
+nothing, looks nothing up elsewhere, and leaves `stack.md` and `systemprompt.md` alone. Its commits
+land on `main` as every agent's do, each with an `Opspile-Dream: <id>` trailer, and `log.md` says
+they came from a dream, so a bad one is reverted from the history. Each dream is a row of
+`kb_dreams` (migration 0077): the knowledge base's entries before and after, when it was taken and
+ended, its outcome and the agent's closing sentences. The knowledge-base agent's model use is tagged
+with its customer's arm, as the customer's threads' is, so the arms' cost per accepted draft
+includes the dreams.
+
 **Discarded drafts.** When a person discards a draft the agent saved (`DELETE /api/draft`, the
 inbox's **Discard**), the agent is told who did and what the draft said, as feedback: it looks
 for why it was not wanted, does not save it again, and files a lesson in kb-team when there is
