@@ -21,7 +21,7 @@ const ORIGIN = 'https://pile.example';
  * ui/header.js on a page at `path`, with a browser tab's sessionStorage and history, and the
  * browser's localStorage (`local`).
  */
-function tab(path, storage = new Map(), local = new Map()) {
+function tab(path, storage = new Map(), local = new Map(), preset = {}) {
   const location = new URL(path, ORIGIN);
   const element = () => ({
     dataset: {},
@@ -43,6 +43,9 @@ function tab(path, storage = new Map(), local = new Map()) {
     { dataset: {}, media: '(prefers-color-scheme: light)' },
   ];
   const byId = (id) => {
+    if (id in preset) {
+      return preset[id];
+    }
     if (!elements.has(id)) {
       elements.set(id, element());
     }
@@ -65,6 +68,7 @@ function tab(path, storage = new Map(), local = new Map()) {
     matchMedia: () => ({ matches: false }),
     addEventListener: (type, fn) => { listeners[type] = fn; },
     document: {
+      createElement: (tag) => ({ tag, innerHTML: '', addEventListener() {} }),
       documentElement: root,
       getElementById: byId,
       querySelector: element,
@@ -105,6 +109,38 @@ describe('the header', () => {
 
     const odd = tab('/inbox', new Map(), new Map([['opspile.scheme', 'sepia']]));
     assert.equal(odd.Header.scheme(), 'system');
+  });
+
+  it('puts Appearance in your menu before the keyboard, in its column where the menu has columns', () => {
+    /** A menu of sections (`keys`: the keyboard's), each noting what is put before it. */
+    const menu = (names) => {
+      const placed = [];
+      const sections = names.map((name) => ({
+        name,
+        querySelector: (sel) => (sel === '.keys' && name === 'keys' ? {} : null),
+        before: (box) => placed.push({ before: name, box }),
+      }));
+      return {
+        placed,
+        querySelectorAll: (sel) => (sel === 'section' ? sections : []),
+        append: (box) => placed.push({ before: null, box }),
+        addEventListener() {},
+      };
+    };
+    // The inbox's: its sections in columns, which `section` finds as it finds them on the menu.
+    const inbox = menu(['asBox', 'expertBox', 'followBox', 'notifyBox', 'tracesBox', 'keys', 'logout']);
+    tab('/inbox', new Map(), new Map(), { menu: inbox, schemes: null });
+    assert.equal(inbox.placed.length, 1);
+    assert.equal(inbox.placed[0].before, 'keys');
+    assert.match(inbox.placed[0].box.innerHTML, /^<h4 id="schemesLabel">Appearance<\/h4><div id="schemes" role="radiogroup"/);
+    assert.deepEqual([...inbox.placed[0].box.innerHTML.matchAll(/data-scheme="(\w+)"/g)].map((m) => m[1]), ['system', 'light', 'dark']);
+    // A page with no keyboard section: before logging out; one with no section at all: at its end.
+    const admin = menu(['logout']);
+    tab('/inbox/admin', new Map(), new Map(), { menu: admin, schemes: null });
+    assert.deepEqual(admin.placed.map((p) => p.before), ['logout']);
+    const bare = menu([]);
+    tab('/inbox/cogs', new Map(), new Map(), { menu: bare, schemes: null });
+    assert.deepEqual(bare.placed.map((p) => p.before), [null]);
   });
 
   it('knows which page an address is, on this origin only', () => {

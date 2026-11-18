@@ -35,6 +35,7 @@
   </button>
   <div id="menu" class="menu" popover>
     <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
+    <div class="cols"><div class="col">
     <section id="asBox" hidden><h4><label for="as">View as</label></h4><select id="as"></select>
       <p class="hint">See the inbox as someone else, read-only.</p></section>
     <section id="expertBox" hidden><h4>Personal view</h4>
@@ -42,6 +43,7 @@
       <p class="hint">Every filter, and each thread's status, people and reactions.</p></section>
     <section id="followBox" hidden><h4>Following</h4><div id="followList"></div>
       <p class="hint" id="followHint"></p></section>
+    </div><div class="col">
     <section id="notifyBox" hidden><h4>Notifications</h4>
       <button class="item" id="notifyMentions" role="switch" aria-checked="true"><span class="ck s2-check" aria-hidden="true"></span>When someone mentions me</button>
       <button class="item" id="notifyThreads" role="switch" aria-checked="true" title="Threads you posted in, were mentioned in or put 👀 on"><span class="ck s2-check" aria-hidden="true"></span>When someone writes in my threads</button>
@@ -54,6 +56,7 @@
       <div id="tracesHere" hidden><label class="hint" for="tracesChannel" id="tracesChannelLabel"></label><select id="tracesChannel">
         <option value="">As everywhere</option><option value="on">Shown</option><option value="off">Hidden</option></select></div>
       <p class="hint" id="tracesHint"></p></section>
+    </div><div class="col">
     <section><h4>Keyboard</h4><dl class="keys">
       <dt>Search, on every platform</dt><dd><kbd>/</kbd></dd>
       <dt>Next / previous thread</dt><dd><kbd>j</kbd> <kbd>k</kbd></dd>
@@ -62,6 +65,7 @@
       <dt title="or the ≠ beside it; click it again to stop excluding">Exclude a filter value</dt><dd><kbd>⇧</kbd> click</dd>
     </dl><button class="item" id="keysAll" aria-keyshortcuts="Meta+/ Control+/">All keyboard shortcuts<kbd class="end">⌘/</kbd></button></section>
     <section><a class="item" id="logout" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
+    </div></div>
   </div>
 </header>
 <script src="header.js"></script>
