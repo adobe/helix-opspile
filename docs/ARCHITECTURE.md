@@ -109,8 +109,11 @@ team): the channel's threads are in their inboxes, and their members read, reply
 and draft there; read state in a thread is that of the team it is looked at from. Adding a team
 to a channel moves the channel only for its first team, when the admin team (or nobody) holds
 it; added to a channel another team holds, the new team shares it and nothing moves. Handing a
-channel back to the admin team is always a move. The shares are configuration, like the rules,
-so a replay of pile 1 keeps them.
+channel back to the admin team is always a move. Which team a shared channel is filed under can
+be swapped (`POST /api/admin/swap`, **Make primary** on the sharing team's page, for the admin team
+and whoever manages both teams): the channel moves to the team it was shared with, by hand, and its
+former team shares it. The shares are configuration, like the rules, so a replay of pile 1 keeps
+them.
 
 **Following technologies.** A team follows technologies of the tech stack (`team_follows`, migration
 0072; its managers and the admin team pick them on its page, `PUT /api/admin/follows`), and so does a
