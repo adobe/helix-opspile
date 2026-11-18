@@ -151,6 +151,18 @@ describe('Spectrum 2', () => {
     assert.match(SCRIPTS['admin.js'], /dlg\.setAttribute\('role', 'alertdialog'\)/);
   });
 
+  it('moves a channel to the team picked under its name, in a Popover the table does not cut off', () => {
+    const js = SCRIPTS['admin.js'];
+    // The admin team's channel names open the list of teams; picking one moves, never shares.
+    assert.match(js, /<button class="link chan" data-move="\$\{esc\(c\.channelId\)\}" aria-haspopup="dialog"/);
+    assert.match(js, /el\.popover = 'auto';/);
+    assert.match(js, /assignHere\(c, t\.slug, \{ move: true \}\)/);
+    assert.match(js, /target, value, channelId, source, \.\.\.\(move \? \{ move: true \} : \{\}\),/);
+    // Only open is it displayed: a `display` of its own would show it closed too.
+    assert.match(SCRIPTS['spectrum-admin.css'], /\.movepop:popover-open \{ display: flex; \}/);
+    assert.doesNotMatch(SCRIPTS['spectrum-admin.css'], /\.movepop \{[^}]*display:/);
+  });
+
   it('shows what a filter\'s value or a thread is with Spectrum 2\'s workflow icons, not emoji', () => {
     const js = SCRIPTS['inbox.js'];
     const css = SCRIPTS['spectrum-inbox.css'];

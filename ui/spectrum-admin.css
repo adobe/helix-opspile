@@ -98,6 +98,17 @@ td input { width: 100%; }
 .picks .pickrow .name { white-space: normal; display: flex; flex-direction: column; gap: var(--spectrum-border-width-100); }
 .picks .pickrow .ch { font-weight: 600; }
 .picks .pickrow .where { flex: none; text-align: right; font-size: var(--spectrum-font-size-100); padding-top: var(--spectrum-border-width-100); }
+/* The teams a channel moves to (ui/admin.js, `moveMenu`): a Popover under the channel's name,
+   in the top layer, since the table it is in scrolls sideways and would cut it off. The script
+   places it; its filter stays, the teams scroll under it. */
+.movepop { position: fixed; inset: auto; margin: 0; flex-direction: column; overflow: hidden;
+  width: calc(var(--spectrum-spacing-100) * 36); max-width: calc(100vw - var(--spectrum-spacing-200));
+  max-height: min(calc(var(--spectrum-spacing-100) * 50), calc(100vh - var(--spectrum-spacing-200))); }
+.movepop:popover-open { display: flex; }
+.movepop .opts { flex: 1; min-height: 0; overflow: auto; }
+.movepop .row { gap: var(--spectrum-spacing-100); }
+.movepop .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td button.chan { text-align: start; white-space: normal; }
 mark { padding: 0 var(--spectrum-border-width-100); }
 
 td.nw { white-space: nowrap; }
@@ -464,6 +475,32 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .picks .pickrow .ch { font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .picks .pickrow .where { font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-200); }
 .spectrum .picks .empty { color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* The teams a channel moves to: the same Popover, with a SearchField over its Menu items. */
+.spectrum .movepop {
+  gap: var(--spectrum-spacing-100);
+  padding: var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .movepop .what { margin: 0; padding: 0 var(--spectrum-component-edge-to-text-100); font-size: var(--spectrum-font-size-75); }
+.spectrum .movepop .hint { margin: 0; padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum .movepop .row {
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .movepop .row:hover, .spectrum .movepop .row.on { background: var(--s2-down); }
+.spectrum .movepop .empty { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* A channel's name that opens it: its text, a Link when the pointer is on it. */
+.spectrum td button.link.chan {
+  min-height: 0; margin: 0; padding: 0;
+  color: inherit; font: inherit; background: none;
+  border-radius: var(--spectrum-corner-radius-75);
+}
+.spectrum td button.link.chan:hover:not(:disabled) { color: var(--spectrum-accent-content-color-hover); background: none; text-decoration: underline; }
 
 /* ---- an org: icon suggestions ------------------------------------------------------------ */
 

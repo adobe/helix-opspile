@@ -22,7 +22,8 @@
  *
  * Teams: create, rename and delete teams; add members (found by name or email) and remove
  * them; the rules that file channels under the team (a channel-name prefix like `aem-`, a
- * Teams team name, a Slack Connect team id); and manual assignments of single channels. Orgs: display name, icon and
+ * Teams team name, a Slack Connect team id); and manual assignments of single channels, one of
+ * which moves a channel to the team picked under its name (`moveMenu`). Orgs: display name, icon and
  * type (customer, partner, vendor), and manual assignments. Changes apply at once, without
  * asking (the status line names the channels a rule change moved), and go to the API one
  * after the other, so many can be made in a row (see `serial`). Text fields save when they
@@ -610,7 +611,7 @@ function channelsCard(target) {
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
     <div class="form picker"><label class="fld grow"><span>${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}</span><input id="pick" autocomplete="off"></label><div class="picks s2-float" id="picks" hidden></div></div>
     <p class="hint">Search by channel, Teams team, customer, team or id. ${target === 'team'
-    ? `A channel has one team it is filed under (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. Adding a channel ${esc(teamLabel('admin'))} holds files it under this team whatever the rules say (a channel-id rule with priority 10); adding one another team holds shares it with this team, and it stays where it is. <b>Make primary</b> files a channel shared with this team under it instead, and the team it was filed under keeps it, shared.${state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team.` : ''}`
+    ? `A channel has one team it is filed under (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. Adding a channel ${esc(teamLabel('admin'))} holds files it under this team whatever the rules say (a channel-id rule with priority 10); adding one another team holds shares it with this team, and it stays where it is. <b>Make primary</b> files a channel shared with this team under it instead, and the team it was filed under keeps it, shared. Click a channel's name to move it to another team.${state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team.` : ''}`
     : 'A manual assignment files one channel under this org whatever the rules say (a channel-id rule with priority 10).'}</p></div>`;
 }
 
@@ -620,14 +621,14 @@ function channelsCard(target) {
  * assignment twice at once is made once; others queue up behind it (see `serial`).
  */
 const assignKey = (target, channelId, value) => `assign:${target}:${channelId}:${value}`;
-function assignHere(c, value = state.view.value) {
+function assignHere(c, value = state.view.value, { move = false } = {}) {
   const v = state.view;
   const { target } = v;
   const { channelId, source } = c;
   return once(assignKey(target, channelId, value), async () => {
     const what = `${plainName(c)} → ${target === 'team' ? teamLabel(value) : orgLabel(value)}`;
     const res = await ruleChange('POST', '/api/admin/assign', {
-      target, value, channelId, source,
+      target, value, channelId, source, ...(move ? { move: true } : {}),
     }, what);
     if (!res) return null;
     if (res.shared) {
@@ -644,6 +645,12 @@ function assignHere(c, value = state.view.value) {
       status('ok', `Shared: ${plainName(c)} is in ${teamLabel(value)}'s inbox too, and stays filed under ${teamLabel(res.shared.from)}.`);
     }
     applyMoves(res.moves, v);
+    // Moved away with no thread to re-file: the API names no move, but it left all the same.
+    if (move && target === 'team' && value !== v.value) {
+      for (const row of v.channels.filter((x) => x.channelId === channelId && !x.left && x.team !== value)) {
+        row.left = { team: value, org: row.org, kind: row.kind };
+      }
+    }
     // A channel that came here: what the move does not say about it.
     for (const row of v.channels.filter((x) => x.channelId === channelId)) {
       row.groupName = row.groupName || c.groupName || null;
@@ -677,6 +684,8 @@ function renderChannels() {
   // On another team's page, a way to hand a channel back to the admin team.
   const back = target === 'team' && state.me.admin && state.view.value !== 'admin'
     && state.teams.some((t) => t.slug === 'admin');
+  // The admin team moves a channel from any team's page to any other team.
+  const movable = target === 'team' && state.me.admin && state.teams.length > 1;
   // A channel shared with this team can be filed under it instead, its team sharing it then:
   // for the admin team, and for whoever manages both teams.
   const manages = (slug) => state.me.admin || (state.me.manages || []).includes(slug);
@@ -696,7 +705,11 @@ function renderChannels() {
       ? ` <span class="tag" title="Shared: in these teams' inboxes too">also ${esc(also.map(teamLabel).join(', '))}</span>` : '';
     const teamCell = `${esc(teamLabel(c.team))}${shares.length ? ` <span class="tag" title="Shared: in these teams' inboxes too">+ ${esc(shares.map(teamLabel).join(', '))}</span>` : ''}`;
     const pick = triage && c.clef && c.clef.team !== 'none' && c.clef.team !== 'admin' && state.teams.some((t) => t.slug === c.clef.team) ? c.clef.team : null;
-    return `<tr><td>${channelName(c)}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
+    // The admin team moves a channel filed here to any team: its name opens the list of them.
+    const name = movable && !sharedHere
+      ? `<button class="link chan" data-move="${esc(c.channelId)}" aria-haspopup="dialog" title="Move it to another team">${channelName(c)}</button>`
+      : channelName(c);
+    return `<tr><td>${name}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
       <td>${other === 'org' ? esc(orgLabel(c.org)) : teamCell}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}${alsoTag}</td>
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
       ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}"${off(assignKey(target, c.channelId, pick))} title="Assign it to ${esc(teamLabel(pick))} by hand">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
@@ -722,6 +735,9 @@ function renderChannels() {
       if (v === state.view) renderChannels();
       renderList();
     });
+  }
+  for (const b of $('channelsTable').querySelectorAll('[data-move]')) {
+    b.onclick = () => moveMenu(b, find(b.dataset.move));
   }
   for (const b of $('channelsTable').querySelectorAll('[data-give]')) {
     b.onclick = () => press(b, () => assignHere(find(b.dataset.give), b.dataset.team));
@@ -770,6 +786,106 @@ function renderChannels() {
       renderList();
     });
   }
+}
+
+/**
+ * The admin team's list of teams for a channel of the table, under its name: a Popover with a
+ * filter, Clef's pick first. Picking one files the channel under that team by hand (a move: its
+ * folders, knowledge base and agents go there; the teams it is shared with keep it), not a
+ * share. Arrow keys and Enter pick; Escape and a click elsewhere close it.
+ */
+const movePop = { el: null, button: null, shut: 0 };
+function moveMenu(button, c) {
+  if (!c) return;
+  // The click that closed it, on its own name: closed it stays.
+  if (movePop.button === button && Date.now() - movePop.shut < 300) return;
+  let el = movePop.el;
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'movepop';
+    el.popover = 'auto';
+    el.setAttribute('role', 'dialog');
+    // Closed from within (Escape), the focus goes back to the name it was opened from; a click
+    // elsewhere has moved it already.
+    let inside = false;
+    el.addEventListener('beforetoggle', (e) => {
+      if (e.newState !== 'closed') return;
+      movePop.shut = Date.now();
+      inside = el.contains(document.activeElement);
+    });
+    el.addEventListener('toggle', (e) => {
+      const b = movePop.button;
+      if (e.newState === 'closed' && inside && b && b.isConnected) b.focus();
+    });
+    document.body.append(el);
+    movePop.el = el;
+  }
+  if (el.matches(':popover-open')) el.hidePopover();
+  movePop.button = button;
+  const v = state.view;
+  const clef = c.clef && c.clef.team !== 'none' && c.clef.team !== c.team ? c.clef : null;
+  const teams = state.teams.filter((t) => t.slug !== c.team)
+    .sort((a, b) => (b.slug === clef?.team) - (a.slug === clef?.team) || a.name.localeCompare(b.name));
+  let list = teams;
+  let at = 0;
+  el.setAttribute('aria-label', `Move ${plainName(c)} to a team`);
+  el.innerHTML = `<p class="what">Move ${channelName(c)} to</p>
+    <label class="s2-search"><input class="search" type="search" aria-label="Find a team" autocomplete="off"></label>
+    <div class="opts" role="listbox" aria-label="Teams"></div>
+    <p class="hint">Filed there by hand, whatever the rules say; its threads are re-filed. The teams it is shared with keep it.</p>`;
+  const input = el.querySelector('input');
+  const opts = el.querySelector('.opts');
+  const go = (t) => {
+    if (!t) return;
+    el.hidePopover();
+    if (v === state.view) assignHere(c, t.slug, { move: true });
+  };
+  const render = () => {
+    opts.innerHTML = list.map((t, i) => `<div class="row${i === at ? ' on' : ''}" role="option" aria-selected="${i === at}" data-i="${i}">
+      <span class="name">${esc(t.name)} <span class="sub mono">${esc(t.slug)}</span></span>
+      ${t.slug === clef?.team ? clefTag(clef, clef.p) : ''}</div>`).join('')
+      || '<div class="empty pad">No team matches.</div>';
+    for (const row of opts.querySelectorAll('[data-i]')) {
+      // The list shown when the row is picked.
+      // eslint-disable-next-line no-loop-func
+      row.onclick = () => go(list[Number(row.dataset.i)]);
+    }
+    const on = opts.querySelector('.on');
+    if (on) on.scrollIntoView({ block: 'nearest' });
+  };
+  input.oninput = () => {
+    const words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
+    list = teams.filter((t) => words.every((w) => `${t.name} ${t.slug}`.toLowerCase().includes(w)));
+    at = 0;
+    render();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!list.length) return;
+      at = (at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length;
+      render();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      go(list[at]);
+    } else if (e.key === 'Escape') {
+      // A search field takes Escape for itself: the list closes all the same.
+      e.preventDefault();
+      el.hidePopover();
+    }
+  };
+  render();
+  // Under the name, or above it when there is no room below; inside the window either way.
+  const r = button.getBoundingClientRect();
+  el.classList.remove('up');
+  el.showPopover();
+  const { width, height } = el.getBoundingClientRect();
+  const gap = 4;
+  const up = r.bottom + gap + height > innerHeight && r.top - gap - height > 0;
+  el.classList.toggle('up', up);
+  el.style.left = `${Math.max(gap, Math.min(r.left, innerWidth - width - gap))}px`;
+  el.style.top = `${up ? r.top - gap - height : Math.min(r.bottom + gap, Math.max(gap, innerHeight - height - gap))}px`;
+  input.focus();
 }
 
 /**
