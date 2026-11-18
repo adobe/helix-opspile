@@ -656,7 +656,8 @@ question: it is one channel, and switches back as easily). The switch is a row i
 default, **On by default** (`agent_teams`, after a question in the page, since it switches many
 channels at once): on, every channel of the team that nobody switched has an agent, the
 channels it gets later too. A new team starts with it on (the admin team's name for it in
-`changed_by`), and with the [agent tools](#agent-tools) `computer` and `extraction_rules` and
+`changed_by`), and with the [agent tools](#agent-tools) `computer`, `extraction_rules` and
+`web_search` and
 the [global servers](#global-mcp-servers) `browser` and `github` on for the team (those marked
 `newTeams`; `fluffyjaws`, which acts as a person, is not); the teams from before that have them as they had them, and deleting a team
 deletes them. A channel nobody switched has an agent when its team's default or
@@ -2002,8 +2003,9 @@ pile 3 (git history); replaying pile 1 pokes them, but they find nothing past th
 
 ### Agent tools
 
-Four tools are off until they are turned on (a new team starts with `computer` and
-`extraction_rules` on for the team). Three by the admin team or a team's managers, as
+Six tools are off until they are turned on (a new team starts with `computer`,
+`extraction_rules` and `web_search` on for the team, and migration 0077 turned `web_search` on
+for every team before it). All but `any_thread` by the admin team or a team's managers, as
 the global MCP servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
 over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
@@ -2366,6 +2368,23 @@ Cloudflare account; a named entrypoint answers no HTTP, so no secret is shared:
   otherwise.
 
 Nobody is added until it is approved, and the prompt says not to tell anyone otherwise.
+
+**`web_search`.** The agent has a browser (the global `browser` MCP server) and a computer, but
+nothing that finds a page it has no address for. With this tool it searches the public web
+(`src/agent/websearch.js`): Cloudflare's Web Search API, through the Workers AI binding
+(`env.AI.websearch()`) and AI Gateway (`WEB_SEARCH_GATEWAY`, default `AGENT_GATEWAY`, which keeps
+no logs), with the deployment's provider (`WEB_SEARCH_PROVIDER`: Ceramic.ai, the default, and
+Linkup keep no data; Exa does). The search source and the rendering of results (numbered: title,
+address, a description cut to 600 characters) are the Agents SDK's `agents/websearch`, which
+imports nothing of `cloudflare:workers`. It answers with up to 10 results, not pages: the prompt
+has the agent read a page (browser or curl) before relying on it, and give `update_draft` only
+pages it read as sources. A query leaves Adobe, so the prompt has it write general queries in the
+product's words, never the customer's name, people, hosts, ids or the thread's words, and the
+Worker logs a search's team, provider, result count or error, never its query. A failed search
+(no gateway credits and no provider key, a timeout) tells the agent to fix the query, retry once,
+or go on without searching. Each search that answered is counted for COGS as the thread's
+(`web_search`, per provider, at the provider's list price). It is on for every team: new teams
+get it (`newTeams`) and migration 0077 switched it on for the teams before.
 
 ## COGS
 

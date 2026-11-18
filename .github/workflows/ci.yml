@@ -62,6 +62,9 @@ jobs:
       SIGNIN_DOMAINS: ${{ secrets.SIGNIN_DOMAINS }}
       AGENT_GATEWAY: ${{ secrets.AGENT_GATEWAY }}
       AGENT_REGION: ${{ secrets.AGENT_REGION }}
+      # The agents' web_search (optional; ceramic and AGENT_GATEWAY while empty).
+      WEB_SEARCH_PROVIDER: ${{ secrets.WEB_SEARCH_PROVIDER }}
+      WEB_SEARCH_GATEWAY: ${{ secrets.WEB_SEARCH_GATEWAY }}
       # The opspile Teams app (catalog id): turns on agents' post_message in Teams.
       TEAMS_APP_ID: ${{ secrets.TEAMS_APP_ID }}
       # The agents' request_membership (src/agent/membership.js): the admins' bot Workers, bound

@@ -18,9 +18,9 @@ import { DIMENSIONS } from './prices.js';
  *
  * A `Meter` belongs to one invocation (a request, a queue batch, a cron run) or to a Durable
  * Object. Its `env(subject)` is the environment one piece of work runs with: the same bindings,
- * counted (D1 rows, R2 operations, queue operations, Workers AI tokens, Vectorize dimensions, AI
- * Search queries and ingested tokens), and `env.meter`, where code adds what the bindings do not
- * show (an agent's Bedrock tokens, its browser time) and names whom the work is for
+ * counted (D1 rows, R2 operations, queue operations, Workers AI tokens and web searches, Vectorize
+ * dimensions, AI Search queries and ingested tokens), and `env.meter`, where code adds what the
+ * bindings do not show (an agent's Bedrock tokens, its browser time) and names whom the work is for
  * (`attribute`). A subject is a thread (whose customer and team D1 knows), or a customer and a
  * team, or nobody: shared work, which the dashboard spreads over the customers by their
  * messages. `flush()` resolves the subjects and writes one data point per customer, team,
@@ -200,6 +200,14 @@ function ai(binding, scope) {
           scope.add('workers_ai', 'requests', id, 1);
           scope.add('workers_ai', 'input_tokens', id, input);
           scope.add('workers_ai', 'output_tokens', id, output);
+        });
+      }
+      // Web Search API (src/agent/websearch.js): a search is billed once it answered.
+      if (prop === 'websearch') {
+        return counted(target, v, (res, [opts]) => {
+          if (res && res.ok) {
+            scope.add('web_search', String((opts && opts.provider) || 'ceramic'), '', 1);
+          }
         });
       }
       if (prop === 'toMarkdown') {

@@ -90,9 +90,12 @@ const CLICKHOUSE_VARS = ['CLICKHOUSE_URL', 'CLICKHOUSE_DATABASE', 'CLICKHOUSE_US
 // TEAMS_APP_ID: the opspile Teams app's id in the org catalog, which turns the Teams bot on
 // (agents' post_message in Teams threads; src/teamsbot.js). TEAMS_BOT_SERVICE_URL: the Bot
 // Connector to post through, default the public cloud's.
+// WEB_SEARCH_PROVIDER (ceramic, linkup or exa; default ceramic) and WEB_SEARCH_GATEWAY (default
+// AGENT_GATEWAY): the agents' web_search (src/agent/websearch.js), through the AI binding.
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL', 'TEAMS_APP_ID', 'TEAMS_BOT_SERVICE_URL',
+  'WEB_SEARCH_PROVIDER', 'WEB_SEARCH_GATEWAY',
 ] as const;
 
 // Membership requests, optional (the agents' request_membership tool, src/agent/membership.js):
@@ -174,7 +177,8 @@ function resources(mode: string | undefined) {
     IMAGES: bindings.r2({ name: `helix-opspile-images${suffix}` }),
     NORMALIZE: bindings.queue({ name: `helix-opspile-normalize${suffix}` }),
     DB: bindings.d1({ name: `helix-opspile${suffix}` }),
-    // Workers AI: Clef (thread labels) and Clairic (facts).
+    // Workers AI: Clef (thread labels) and Clairic (facts), and the agents' web_search (Web
+    // Search API, through AI Gateway).
     AI: bindings.ai(),
     // Root messages, for re-threading. Created by hand (768 dimensions, cosine, metadata
     // indexes on `channel` and `at`); see README.
