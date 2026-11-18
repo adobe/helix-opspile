@@ -18,11 +18,27 @@
  * The text the page shows is the source without its markup, more or less: mentions and
  * links read as written, emoji and the page's cards do not. So the two are aligned as a
  * diff (Myers'), where the markup is what only the source has; the selection's first and last
- * characters say where in the source it starts and ends. Markup right at its edges (the
- * backticks of a code span selected whole, the brackets and address of a link) comes along
- * when the result still reads as what was selected (`textOf`, the page's rendering as text),
- * and stays out when it does not (half of a bold word is not bold).
+ * characters say where in the source it starts and ends. A selection that starts or ends
+ * inside some formatting (bold, code, a link) would leave half of its markup: the markup that is
+ * missing is added at its ends, from the source's tree (mdast), so the formatting
+ * is closed again. The markup right at its edges comes along when the part still reads as what
+ * was selected (`textOf`, the page's rendering as text): the backticks of a code span selected
+ * whole, the brackets and address of a link. All of what comes out is the source's, as written.
  */
+
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfmStrikethroughFromMarkdown } from 'mdast-util-gfm-strikethrough';
+import { gfmStrikethrough } from 'micromark-extension-gfm-strikethrough';
+
+/**
+ * Markdown as a tree, with what a selection can start or end inside of: CommonMark and GFM's
+ * strike-through. Bare links have no markup, and tables are not cut (src/mdast.js reads all of
+ * GFM, but bundled into the page it would bring the writer along).
+ */
+const readMarkdown = (src) => fromMarkdown(src, {
+  extensions: [gfmStrikethrough()],
+  mdastExtensions: [gfmStrikethroughFromMarkdown()],
+});
 
 /** At most this many characters of markup between the two: past it, the selection as text. */
 const MAX_EDITS = 4000;
@@ -92,6 +108,53 @@ export function align(a, b, max = MAX_EDITS) {
   return at;
 }
 
+/** The formatting whose markup is around its text: what a selection may start or end in. */
+const WRAPS = new Set(['strong', 'emphasis', 'delete', 'link', 'inlineCode', 'code']);
+
+/**
+ * Where the markup of `node` (read from `source`) ends before its text, and starts again after
+ * it: its children's, or its value's (code).
+ */
+function inner(node, source) {
+  const from = node.position.start.offset;
+  const to = node.position.end.offset;
+  if (node.children?.length) {
+    return [node.children[0].position.start.offset, node.children.at(-1).position.end.offset];
+  }
+  const at = source.slice(from, to).indexOf(node.value ?? '');
+  return at < 0 ? null : [from + at, from + at + node.value.length];
+}
+
+/**
+ * `source.slice(s, e)`, with the markup of the formatting it starts or ends inside of added
+ * at its ends: the opening markup of what starts before it (outermost first), and the closing
+ * markup of what ends after it (innermost first). All of it is the source's.
+ */
+function closed(source, tree, s, e) {
+  const open = [];
+  const close = [];
+  const walk = (node) => {
+    const at = node.position;
+    if (!at || at.end.offset <= s || at.start.offset >= e) {
+      return;
+    }
+    const text = WRAPS.has(node.type) && inner(node, source);
+    if (text) {
+      if (at.start.offset < s && s >= text[0]) {
+        open.push(source.slice(at.start.offset, text[0]));
+      }
+      if (at.end.offset > e && e <= text[1]) {
+        close.unshift(source.slice(text[1], at.end.offset));
+      }
+    }
+    for (const c of node.children || []) {
+      walk(c);
+    }
+  };
+  walk(tree);
+  return `${open.join('')}${source.slice(s, e)}${close.join('')}`.trim();
+}
+
 /**
  * The Markdown of `text.slice(start, end)`, where `text` is source `src` as the page shows it
  * (without tags), and `textOf` shows Markdown as that text. All of the text selected is the
@@ -139,12 +202,12 @@ export function pickSource(src, text, start, end, textOf) {
   while (e2 < source.length && !taken[e2] && source[e2] !== '\n') {
     e2 += 1;
   }
-  const tries = [[s2, e2], [s2, e], [s, e2]];
-  for (const [a, b] of tries) {
-    const md = source.slice(a, b).trim();
+  const tree = readMarkdown(source);
+  for (const [a, b] of [[s2, e2], [s2, e], [s, e2]]) {
+    const md = closed(source, tree, a, b);
     if (norm(textOf(md)) === want) {
       return md;
     }
   }
-  return source.slice(s, e).trim();
+  return closed(source, tree, s, e) || want;
 }

@@ -1575,7 +1575,8 @@ Admins, who can open any thread, see its draft but change only their own teams' 
 - With a part of the draft's text selected, Edit and the sends take that part
   (**Edit selection**, **Add selection to reply**, **Send selection as me** and **as bot**): its
   Markdown, found by aligning the text selected with the draft's source (src/mdpick.js), so its
-  links, code and mentions come along. Sending a part uses the draft up, as sending all of it
+  links, code and mentions come along; formatting the selection starts or ends inside of (bold,
+  code, a link) is closed around the part, never left half open. Sending a part uses the draft up, as sending all of it
   does: the rest goes. A part taken into the box is the draft cut down to it, so sending it from
   the box does the same. Double-clicking the draft's text edits all of it, as Edit (or Add to reply) does.
 - Sending a reply written from the draft uses it up (unless it changed since), from the line or

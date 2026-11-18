@@ -12,8 +12,8 @@
 
 /*
  * The Markdown of a part of a draft, from what was selected of it as the page shows it
- * (src/mdpick.js, `Markdown.pick`): the part of the source, its markup kept where the selection
- * takes all of what the markup marks.
+ * (src/mdpick.js, `Markdown.pick`): the part of the source, the formatting a selection starts
+ * or ends inside of closed around it, never half of its markup.
  */
 
 import assert from 'node:assert/strict';
@@ -64,10 +64,11 @@ describe('mdpick', () => {
     assert.equal(picked('14:00 cache flush'), '**14:00 cache flush**');
   });
 
-  it('leaves it out when the selection has only some of it', () => {
-    assert.equal(picked('in the'), 'in the');
-    assert.equal(picked('14:00'), '14:00');
-    assert.equal(picked('know so'), 'know so');
+  it('keeps the formatting a selection is inside of, closed around the part', () => {
+    assert.equal(picked('in the'), '[in the](https://docs.example.com/purge)');
+    assert.equal(picked('14:00'), '**14:00**');
+    assert.equal(picked('know so'), '**know so**');
+    assert.equal(picked('request'), '`request`');
   });
 
   it('keeps mentions and bare links as written, and list items a list', () => {
@@ -78,6 +79,28 @@ describe('mdpick', () => {
       picked('the 503s started', 'are affected'),
       '- the 503s started with the **14:00 cache flush**\n- only `/en/*` and `/de/*` are affected',
     );
+  });
+
+  it('closes formatting that a selection starts or ends inside of, leaving no half of its markup', () => {
+    const of = (src, from, to = from) => {
+      const text = shown(src);
+      const start = text.indexOf(from);
+      return pick(src, text, start, text.indexOf(to, start) + to.length);
+    };
+    assert.equal(of('Please **check the logs** and retry.', 'the logs and'), '**the logs** and');
+    assert.equal(of('Use `x-request-id` header', 'request-id header'), '`request-id` header');
+    assert.equal(of('See [the docs](https://e.com/a) for more', 'docs for'), '[docs](https://e.com/a) for');
+    assert.equal(of('Start **bold words** then end.', 'words then'), '**words** then');
+    assert.equal(of('Use [the docs](https://example.com) for help.', 'docs for help'), '[docs](https://example.com) for help');
+    assert.equal(of('Mail https://e.com/very/long/path now', 'long/path now'), 'long/path now');
+    assert.equal(of('A **bold and `code` here** end', 'and co'), '**and `co`**');
+    assert.equal(of('Run:\n\n```sh\nnpm ci\nnpm test\n```\n\nthen', 'Run:', 'npm ci'), 'Run:\n\n```sh\nnpm ci\n```');
+    // The heading and the first list item of the draft, from inside its bold.
+    assert.equal(
+      picked('know so far:', 'cache flush'),
+      '**know so far:**\n- the 503s started with the **14:00 cache flush**',
+    );
+    assert.equal(picked('503s started with the 14:00', 'cache'), '503s started with the **14:00 cache**');
   });
 
   it('is all of the draft when all of its text is selected, and nothing when none is', () => {
