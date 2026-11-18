@@ -805,7 +805,9 @@ export class ThreadAgent extends Agent {
   async latestTurn() {
     const pending = await this.harness.pending();
     // The turn is the thread's; a pinned seed session works beside it, and is in `pending`.
-    const busy = pending.some((p) => p.session === ROOT_SESSION && p.status !== 'parked');
+    // A compaction's summary waits in it to be placed (`compaction:<task>`): not the turn's work.
+    const busy = pending.some((p) => p.session === ROOT_SESSION && p.status !== 'parked'
+      && !String(p.operationId || '').startsWith('compaction:'));
     const entries = await this.harness.messages().catch(() => []);
     const turn = latestTurn(entries, { busy });
     return { pending, turn, cut: !turn && Boolean(entries[0] && entries[0].kind === 'pi.compaction') };

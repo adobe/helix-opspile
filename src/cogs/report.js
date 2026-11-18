@@ -489,6 +489,8 @@ export function experimentsOf(rows, drafts = {}) {
       until: def?.until || null,
       default: def?.default || null,
       measure,
+      pinned: Boolean(def?.pinned),
+      unit: def?.unit || 'thread',
       arms: list.map((a) => {
         const v = score(a);
         return { ...a, vs: a !== base && v !== null && b ? v / b - 1 : null };

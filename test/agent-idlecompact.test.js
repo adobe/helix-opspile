@@ -12,7 +12,9 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { armOf, armTags, COMPACT } from '../src/experiments.js';
+import {
+  armOf, armTags, assignedArm, COMPACT, MODEL,
+} from '../src/experiments.js';
 import {
   armCompact, COMPACT_IDLE_SECONDS, COMPACT_INSTRUCTIONS, COMPACT_MIN_TOKENS, compactIdle,
   compacting, contextTokens,
@@ -91,6 +93,18 @@ describe('the compaction experiment', () => {
     assert.equal(compacting(IDLE, ENV, Date.parse(COMPACT.until)), false);
     assert.equal(compacting(IDLE, ENV, DURING), true);
     assert.equal(compacting(OFF, ENV, DURING), false);
+  });
+
+  it('crosses the model experiment: each of its arms half in each', () => {
+    const cells = {};
+    for (const n of names) {
+      const cell = `${assignedArm(MODEL, n).id}/${assignedArm(COMPACT, n).id}`;
+      cells[cell] = (cells[cell] || 0) + 1;
+    }
+    assert.deepEqual(Object.keys(cells).sort(), ['opus/idle', 'opus/off', 'sonnet/idle', 'sonnet/off']);
+    for (const count of Object.values(cells)) {
+      assert.ok(Math.abs(count - names.length / 4) < 40, JSON.stringify(cells));
+    }
   });
 
   it('tags model use with the arm, both arms', () => {

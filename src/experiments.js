@@ -89,7 +89,6 @@ export const DREAM = {
   default: 'off',
 };
 
-
 /**
  * Compacting an idle thread: an agent whose thread has been quiet for 65 minutes, past the
  * one-hour prompt cache, summarizes what it has done so far (src/agent/idlecompact.js), so that
@@ -109,6 +108,9 @@ export const COMPACT = {
     { id: 'idle', label: 'Compacted after 65 min idle' },
   ],
   default: 'off',
+  // FNV-1a's lowest bit is the parity of the name's odd characters, whatever the salt: split in
+  // two by it, the arms would be the model experiment's, or their opposite. Mixed, they cross.
+  mixed: true,
 };
 
 export const EXPERIMENTS = [CACHE, MODEL, DREAM, COMPACT];
@@ -124,6 +126,17 @@ function fnv(text) {
     h = Math.imul(h, 0x01000193) >>> 0;
   }
   return h;
+}
+
+/** murmur3's finalizer: every bit of `h` moves every bit of the result. */
+function fmix(value) {
+  let h = value;
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35) >>> 0;
+  h ^= h >>> 16;
+  return h >>> 0;
 }
 /* eslint-enable no-bitwise */
 
@@ -141,7 +154,9 @@ export function assignedArm(experiment, name) {
     return null;
   }
   const { arms } = experiment;
-  return arms[fnv(`${experiment.id}:${name}`) % arms.length];
+  const h = fnv(`${experiment.id}:${name}`);
+  // The experiments before `mixed` keep the arms their threads were assigned.
+  return arms[(experiment.mixed ? fmix(h) : h) % arms.length];
 }
 
 /**
