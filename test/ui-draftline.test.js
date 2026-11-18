@@ -218,4 +218,13 @@ describe('draft line', () => {
     timers[2][0]();
     assert.ok(!draftOpen.has('k'));
   });
+
+  it('shows what is selected in it: not in the card\'s own fill, the page\'s selection', () => {
+    const css = SCRIPTS['spectrum-inbox.css'];
+    const page = SCRIPTS['spectrum.css'].match(/:where\(\.spectrum\) ::selection \{ background: ([^;]+);/)[1];
+    const card = css.match(/\.spectrum \.draftbar \{[^}]*background: ([^;]+);/)[1];
+    const sel = css.match(/\.spectrum \.draftbar ::selection \{ background: ([^;]+);/)?.[1];
+    assert.equal(page, card);
+    assert.ok(sel && sel !== card, 'the draft line needs a ::selection of its own');
+  });
 });
