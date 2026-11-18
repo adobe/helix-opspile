@@ -839,6 +839,9 @@ describe('thread agents', () => {
     await harness.close(ctx);
 
     assert.match(system, /You are the opspile agent/);
+    // Only the draft is in the customer's language; the note is in English, a sidebar answer in
+    // the sidebar message's.
+    assert.match(system, /only the draft is in the customer's language\. Write your note to the team in English/);
     assert.match(system, /Customer: acme/);
     assert.match(system, /kb-org: knowledge base of the customer acme\n# Knowledge base\n\n\* \[Main site\]/);
     assert.match(system, /adobe\/helix-opspile: GitHub https:\/\/github.com\/adobe\/helix-opspile \(opspile itself\) \(read only\)/);
