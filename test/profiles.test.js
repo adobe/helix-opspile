@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { inbox } from '../src/api.js';
 import {
-  mentionCandidates, mentionKinds, partnerOf, profiles, relationOf,
+  mentionCandidates, mentionKinds, mentionedPeople, partnerOf, profiles, relationOf,
 } from '../src/profiles.js';
 import { indexMessage } from '../src/threads.js';
 import { d1 } from './d1.js';
@@ -120,6 +120,23 @@ describe('profiles', () => {
       Ada: 'adobe', Pat: 'partner', 'Cy Young': 'customer', Alerts: 'bot',
     });
     assert.deepEqual(await mentionKinds({ ...env, DB }, { source: 'slack', tenant: 'E1' }, ['no one']), {});
+  });
+
+  it('finds the accounts of the names a thread mentions', async () => {
+    const DB = fresh();
+    DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, email, person,
+        fetched_at) VALUES
+      ('slack', 'E1', 'U3', 'person', 'Cy Young', 'cy@acme.example', NULL, '2026-10-21'),
+      ('slack', 'E1', 'U4', 'person', 'Dee Same', 'dee@acme.example', NULL, '2026-10-21'),
+      ('slack', 'E1', 'U5', 'person', 'Dee Same', 'dee@staff.example', NULL, '2026-10-21'),
+      ('teams', 'T9', 'g-9', 'person', 'Eve Elsewhere', 'eve@acme.example', NULL, '2026-10-21')`);
+    const { kinds, keys } = await mentionedPeople({ ...env, DB }, {
+      source: 'slack', tenant: 'E1', threads: ['t1'],
+    }, ['@Ada and @Alerts: cc @Cy Young, @Dee Same and @Eve Elsewhere']);
+    assert.equal(kinds['Cy Young'], 'customer');
+    // Ada by her name as a person, at her account here; two people go by Dee Same; Eve has no
+    // account in this workspace.
+    assert.deepEqual(keys, { Ada: 'slack:E1:U1', Alerts: 'slack:E1:B1', 'Cy Young': 'slack:E1:U3' });
   });
 
   it('finds the names after each @', () => {

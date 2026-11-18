@@ -48,7 +48,7 @@ import {
   filePoster, openThreadFile, streamFile, threadFile,
 } from './fileview.js';
 import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
-import { mentionKinds, profiles, relationOf } from './profiles.js';
+import { mentionedPeople, profiles, relationOf } from './profiles.js';
 import { channelLinks, channelRefs, nameChannelIds } from './channelrefs.js';
 import { slackMessageLinks } from './slacklinks.js';
 import { json, text } from './http.js';
@@ -938,15 +938,18 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   // Slack permalinks the messages name, in this thread's workspace. Profiles wait for the
   // authors those links add; the mention and channel lookups run alongside the link lookup.
   const linksP = slackMessageLinks(env, me, bodies, row.tenant);
-  const [cards, mentioned, channels, links, channelLinked] = await Promise.all([
-    linksP.then((linked) => profiles(env, [
+  // Who the people the messages mention are: Adobe, a partner or the customer, and their
+  // accounts, whose cards the mentions show.
+  const mentionedP = mentionedPeople(env, {
+    source: row.source, tenant: row.tenant, threads: group.map((m) => m.thread),
+  }, bodies);
+  const [cards, named, channels, links, channelLinked] = await Promise.all([
+    Promise.all([linksP, mentionedP]).then(([linked, { keys: mentionKeys }]) => profiles(env, [
       ...messages.map((m) => m.authorKey),
       ...linked.map((l) => l.authorKey),
+      ...Object.values(mentionKeys),
     ])),
-    // Who the people the messages mention are: Adobe, a partner or the customer.
-    mentionKinds(env, {
-      source: row.source, tenant: row.tenant, threads: group.map((m) => m.thread),
-    }, bodies),
+    mentionedP,
     // The channels the messages name (`#name`, `#C…`): their names, and where they are.
     channelRefs(env, row, [...bodies, row.title, anchorLabel && anchorLabel.title,
       label && label.title], me),
@@ -982,7 +985,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // How many members are `left_out`: the least recent posts.
     earlier_posts: group.length - read.length,
     profiles: cards,
-    mentioned,
+    mentioned: named.kinds,
+    mention_keys: named.keys,
     channels,
     channel_links: channelLinked,
     links,

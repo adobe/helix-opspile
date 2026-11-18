@@ -556,25 +556,49 @@ const SIGNAL_HINT = {
 // Full names of people the open thread may mention, so "@Ada Lovelace" shows as one mention,
 // and who they are (Adobe, partner, customer, bot), so mentions of people outside Adobe stand
 // out. Teams mentions some people as "@Last, First": that form is known too.
+// A mention shows the person's profile card, as their avatar does: their account's (`keys`, a
+// name to a profile key: the thread's authors, then the accounts the server found for the
+// names), else one from who the name says they are.
 let mentionNames = null;
 let mentionKinds = new Map();
+let mentionKeys = new Map();
 const mentionKindOf = (name) => mentionKinds.get(String(name).toLowerCase());
+const nameForms = (name) => {
+  const parts = String(name).trim().split(/\s+/);
+  return parts.length < 2 ? [name] : [name, `${parts[parts.length - 1]}, ${parts[0]}`];
+};
+/** The profile key of the card a mention of `name` shows, or undefined: none. */
+function mentionKeyOf(name) {
+  const key = mentionKeys.get(String(name).toLowerCase());
+  if (key) return key;
+  const kind = mentionKindOf(name);
+  if (!kind) return undefined;
+  const k = profileKey(null, { name, staff: kind === 'adobe', kind: kind === 'bot' ? 'bot' : 'person' });
+  const p = state.profiles.get(k);
+  if (p.local) p.relation = kind;
+  return k;
+}
 // Each distinct set of names gets a short id, for the cache of rendered messages below.
 let mentionSet = '';
 const mentionSets = new Map();
-function setMentionNames(names, kinds = new Map()) {
+function setMentionNames(names, kinds = new Map(), keys = new Map()) {
   mentionNames = Markdown.mentionPattern(names);
   mentionKinds = new Map();
   for (const [name, kind] of kinds) {
-    const parts = String(name).trim().split(/\s+/);
-    const forms = parts.length < 2 ? [name] : [name, `${parts[parts.length - 1]}, ${parts[0]}`];
-    for (const f of forms) {
+    for (const f of nameForms(name)) {
       const k = f.toLowerCase();
       // A name that stands for people of different kinds says nothing.
       mentionKinds.set(k, mentionKinds.has(k) && mentionKinds.get(k) !== kind ? undefined : kind);
     }
   }
-  const source = `${mentionNames ? mentionNames.source : ''}\u0000${[...mentionKinds].join(';')}`;
+  mentionKeys = new Map();
+  for (const [name, key] of keys) {
+    for (const f of nameForms(name)) {
+      const k = f.toLowerCase();
+      if (!mentionKeys.has(k)) mentionKeys.set(k, key);
+    }
+  }
+  const source = `${mentionNames ? mentionNames.source : ''}\u0000${[...mentionKinds].join(';')}\u0000${[...mentionKeys].join(';')}`;
   if (!mentionSets.has(source)) mentionSets.set(source, String(mentionSets.size));
   mentionSet = mentionSets.get(source);
 }
@@ -736,7 +760,7 @@ function md(src, thread = '') {
     // A message's video and audio files play in the page, through the Worker (src/fileview.js).
     const fileUrl = (u, what) => (thread ? `/api/file/${what}?t=${encodeURIComponent(thread)}&u=${encodeURIComponent(u)}` : undefined);
     html = Markdown.render(src, {
-      mentions: mentionNames, emoji: (name, alone) => emojiHtml(name, { alone }), proxy, kindOf: mentionKindOf, channel: channelOf, channelUrl: channelUrlOf, fileUrl, slack: slackOf, highlight: highlightCode,
+      mentions: mentionNames, emoji: (name, alone) => emojiHtml(name, { alone }), proxy, kindOf: mentionKindOf, person: mentionKeyOf, channel: channelOf, channelUrl: channelUrlOf, fileUrl, slack: slackOf, highlight: highlightCode,
     }).replace(/data-quote-author="([^"]*)"/g, (_, name) => {
       const key = profileKey(null, { name: attrText(name), platform: 'slack' });
       return `data-p="${esc(key)}"`;
@@ -2502,6 +2526,13 @@ const continues = (prev, m) => Boolean(prev) && m.author?.kind !== 'system' && p
 
 // A run of one author's messages: the name above the first, the avatar beside the last
 // (`followed`: the next message goes on from this one).
+/** The profile key of message `m`'s author: their card, on their avatar, name and mentions. */
+function authorCardKey(m) {
+  const a = m.author || {};
+  return profileKey(m.authorKey, {
+    name: a.name, staff: a.staff, kind: a.kind, domain: a.org, avatar: m.avatar, platform: m.source,
+  });
+}
 function message(m, prev, fresh, followed = false, dated = false) {
   const a = m.author || {};
   const id = `${m.thread}|${m.id}`;
@@ -2512,9 +2543,7 @@ function message(m, prev, fresh, followed = false, dated = false) {
   // sent as the bot looks like the bot's.
   const own = Boolean(m.mine || (m.pending && !m.app));
   const cont = continues(prev, m);
-  const key = profileKey(m.authorKey, {
-    name: a.name, staff: a.staff, kind: a.kind, domain: a.org, avatar: m.avatar, platform: m.source,
-  });
+  const key = authorCardKey(m);
   const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' && !m.unnamed ? ' bot' : ''} · ${timeTag(m.at, dated)}`;
   const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? `<img class="badge-ico" src="${esc(favicon(a.org))}" alt="" title="${esc(a.org)}" loading="lazy">` : ''}</span>`;
   // Reactions, on the bubble's bottom edge: who reacted on hover; a click adds yours, or takes
@@ -4047,10 +4076,16 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // thread's authors, the inbox's people, the picked mentions and the replies being sent say.
   const kinds = new Map(Object.entries(data.mentioned || {}));
   const known = (name, kind) => { if (name && kind && !kinds.has(name)) kinds.set(name, kind); };
+  // Whose cards the mentions show: the authors', then the accounts the server found.
+  const keys = new Map();
   for (const m of shown) {
     const a = m.author || {};
     if (a.kind === 'system') continue;
     known(a.name, state.profiles.get(m.authorKey)?.relation || (a.kind === 'bot' ? 'bot' : (a.staff ? 'adobe' : 'customer')));
+    if (a.name && !keys.has(a.name)) keys.set(a.name, authorCardKey(m));
+  }
+  for (const [name, k] of Object.entries(data.mention_keys || {})) {
+    if (!keys.has(name) && state.profiles.has(k)) keys.set(name, k);
   }
   for (const p of Object.values(state.data?.people || {})) known(p.name, p.relation || (p.staff ? 'adobe' : null));
   for (const p of mention.picked.get(key)?.values() || []) known(p.name, pickedKind(p));
@@ -4063,7 +4098,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     ...Object.values(state.data?.people || {}).map((p) => p.name),
     ...mention.names,
     ...kinds.keys(),
-  ], kinds);
+  ], kinds, keys);
   // The feed, one element per item; `enter` marks the messages that just arrived.
   const items = thread.root_at ? [] : [{ html: '<div class="sys">Earlier messages were posted before the inbox started listening.</div>' }];
   // A very large group shows some of its posts only (the server's MAX_READ_MEMBERS): where
