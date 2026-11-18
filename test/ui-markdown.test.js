@@ -255,6 +255,21 @@ describe('ui markdown', () => {
     );
   });
 
+  it('gives mentions the profile card of the person they name', () => {
+    const keys = { 'ada lovelace': 'slack:E1:U"1', someone: 'local:person:0::Someone' };
+    const out = render('@Ada Lovelace, @Someone and @Nobody', {
+      ...opts,
+      kindOf: (name) => (name === 'Ada Lovelace' ? 'adobe' : undefined),
+      person: (name) => keys[name.toLowerCase()],
+    });
+    assert.equal(
+      out,
+      '<p><span class="mention adobe" data-p="slack:E1:U&quot;1" role="button" tabindex="0">@Ada Lovelace</span>, '
+        + '<span class="mention" data-p="local:person:0::Someone" role="button" tabindex="0">@Someone</span> and '
+        + '<span class="mention">@Nobody</span></p>',
+    );
+  });
+
   it('renders tables and task lists', () => {
     assert.equal(
       md('| a | b |\n|---|---|\n| 1 | 2 |'),

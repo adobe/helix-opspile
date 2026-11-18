@@ -918,6 +918,14 @@ function thread(asked) {
   const { ch } = entry;
   const teamName = ch.teamId
     ? ch.groupName || store.teams.find((t) => t.slug === ch.team)?.name : null;
+  const named = mentionCandidates(messages.map((m) => m.body))
+    .map((name) => [name, [...store.people.values(), ...store.members]
+      .find((p) => p.name === name)])
+    .filter(([, p]) => p);
+  // Channel members who never posted have no card here.
+  const mentionKeys = Object.fromEntries(named
+    .filter(([, p]) => [...store.people.values()].includes(p))
+    .map(([name, p]) => [name, keyOf(p, entry.row.source)]));
   return {
     thread: { ...entry.row, channel_group: teamName || null },
     members: group.map(({ row: m }) => ({
@@ -930,14 +938,16 @@ function thread(asked) {
     })),
     messages,
     earlier_posts: group.length - read.length,
-    profiles: profiles([...messages.map((m) => m.authorKey), ...links.map((l) => l.authorKey)]),
-    // As src/profiles.js's mentionKinds: who the people the messages mention are, people and
-    // the platform's accounts (a channel member who never posted) alike.
-    mentioned: Object.fromEntries(mentionCandidates(messages.map((m) => m.body))
-      .map((name) => [name, [...store.people.values(), ...store.members]
-        .find((p) => p.name === name)])
-      .filter(([, p]) => p)
+    profiles: profiles([
+      ...messages.map((m) => m.authorKey),
+      ...links.map((l) => l.authorKey),
+      ...Object.values(mentionKeys),
+    ]),
+    // As src/profiles.js's mentionedPeople: who the people the messages mention are, people and
+    // the platform's accounts (a channel member who never posted) alike, and their accounts.
+    mentioned: Object.fromEntries(named
       .map(([name, p]) => [name, relationOf({}, p, store.partners)])),
+    mention_keys: mentionKeys,
     channels: channelRefs(entry.row.source, [...messages.map((m) => m.body), entry.row.title]),
     channel_links: channelLinksFor(messages.filter((m) => !m.deletedAt).map((m) => m.body)),
     links,

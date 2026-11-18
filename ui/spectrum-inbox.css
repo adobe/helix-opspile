@@ -1158,6 +1158,9 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 [data-p]:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
 .msg .who b[data-p] { cursor: default; }
 .msg .who b[data-p]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
+/* A mention with a profile card, as the author's name: the card shows on hover. */
+.bubble .mention[data-p] { cursor: default; }
+.bubble .mention[data-p]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
 /* The time says its whole date when pointed at, as the name shows its card: in the thread, and
    in the sidebar's messages wherever they show. */
 .feed time[title], .sc-body time[title] { cursor: default; }

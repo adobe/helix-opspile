@@ -550,17 +550,22 @@ const highlighted = (html, highlight) => (typeof highlight !== 'function' ? html
  * @param {(code: string, lang: string) => string|null} [options.highlight] a code block's text
  *   as HTML, highlighted (src/ui-highlight.js), for its text and the fence's language ('' when
  *   it names none); null leaves it plain text
+ * @param {(name: string) => string|undefined} [options.person] the profile card a mentioned
+ *   name shows (its key, as `data-p`); without one the mention is text
  */
 export function render(src, {
   mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
   channel = () => undefined, fileUrl = () => undefined, slack = null, highlight = null,
-  channelUrl = null,
+  channelUrl = null, person = () => undefined,
 } = {}) {
   const mark = (_, before, at) => {
-    const kind = MENTION_KINDS[kindOf(decode(at.slice(1)))];
-    return kind
-      ? `${before}<span class="mention ${kind.cls}" title="${kind.title}">${at}</span>`
-      : `${before}<span class="mention">${at}</span>`;
+    const name = decode(at.slice(1));
+    const kind = MENTION_KINDS[kindOf(name)];
+    const key = person(name);
+    // With a card, the card says who they are: no title.
+    const card = key ? ` data-p="${encode(key)}" role="button" tabindex="0"` : '';
+    const hint = kind && !key ? ` title="${kind.title}"` : '';
+    return `${before}<span class="mention${kind ? ` ${kind.cls}` : ''}"${hint}${card}>${at}</span>`;
   };
   // The files listed at the end: images as images (one paragraph each, so two or more are a
   // gallery), the others as cards, without the "Attachments:" line.
