@@ -40,7 +40,7 @@ import { api } from './api.js';
 import { deliver, pruneEvents } from './events.js';
 import { pruneFiles } from './files.js';
 import {
-  again, avatar, decline, edit, file, logo, open, post, react, upload,
+  again, avatar, decline, edit, file, logo, open, post, react, typing, upload,
 } from './platform.js';
 import { refreshTech, techStale } from './tech.js';
 
@@ -133,6 +133,11 @@ export class PortalPlatform extends WorkerEntrypoint {
   /** `{ domain, channel, root?, text, author }`: posts a message. */
   post(args) {
     return this.#told(post(this.env, args));
+  }
+
+  /** `{ domain, channel, root, author }`: someone at Adobe is writing a reply in a thread. */
+  typing(args) {
+    return typing(this.env, args);
   }
 
   /** `{ domain, channel, name, type, bytes, author }`: keeps a file for a message. */

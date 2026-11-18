@@ -16,7 +16,7 @@ import {
 } from './files.js';
 import {
   channelOf, declineLobby, editMessage, ensureBot, ensureUser, openChannel, reactTo, resend,
-  writeMessage,
+  setTyping, writeMessage,
 } from './store.js';
 
 /**
@@ -111,6 +111,22 @@ export async function logo(env, args = {}) {
   const row = await env.DB.prepare('SELECT logo_key FROM lobbies WHERE domain = ?')
     .bind(String(args.domain || '').toLowerCase()).first();
   return pictureResponse(env, row && row.logo_key);
+}
+
+/**
+ * `{ domain, channel, root, author }`: `author` is writing a reply in thread `root`, which the
+ * thread's readers are shown for a few seconds. `{ ok }`.
+ */
+export async function typing(env, args = {}, now = Date.now()) {
+  const channel = await place(env, args);
+  if (!channel) {
+    return fail('no such channel', 404);
+  }
+  const author = await actor(env, args.author, now);
+  if (!author) {
+    return fail('say who writes: author { email, name }');
+  }
+  return setTyping(env, channel, author, args.root, now);
 }
 
 /** `{ domain, channel, id, text, author }`: changes the text of a message `author` wrote. */

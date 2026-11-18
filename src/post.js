@@ -1180,6 +1180,30 @@ export async function post(env, me, request, inTeam, files = []) {
   });
 }
 
+/**
+ * POST /api/typing `{ thread }`: the signed-in person is writing a reply in the thread. Only the
+ * customer portal is told (src/portal/platform.js `typing`), which shows its customers who is
+ * writing for a few seconds; Slack and Teams take no such word from an app. Staff only, in
+ * their teams; 204 whether or not anyone was told.
+ */
+export async function typing(env, me, request, inTeam) {
+  const key = request && request.thread;
+  const t = key ? await target(env, key) : null;
+  if (!t || !await inTeam(await teamsOf(env, t), t)) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (t.source === 'portal' && isStaffDomain(env, me.email) && portalBound(env)) {
+    // Who writes, by their mail address: the portal keeps the picture it has of them.
+    await portalCall(env, 'typing', {
+      domain: t.tenant,
+      channel: t.channel_id,
+      root: t.root_id,
+      author: { email: me.email, name: me.name || undefined },
+    });
+  }
+  return new Response(null, { status: 204 });
+}
+
 export async function disconnect(env, me, platform) {
   if (platform === 'discord') {
     // The link was the point of connecting; it goes with the token.

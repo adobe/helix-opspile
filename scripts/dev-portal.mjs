@@ -30,9 +30,14 @@
  * Files, pictures and logos are kept in memory, and the pictures of Adobe's people are made up
  * (the portal would fetch the ones the inbox knows).
  *
+ * Adobe's side of a thread (how many listen, the typical wait, what happens right now) is made
+ * up too, from the thread's own messages: the inbox's is src/portalstatus.js.
+ *
  * `POST /__dev/reply` posts an answer from Adobe in the latest thread (the page shows it
- * within its 15 seconds), `POST /__dev/open` opens a channel for a lobby that waits, and
- * `POST /__dev/decline` declines it, as the inbox's admins do.
+ * within seconds), `POST /__dev/open` opens a channel for a lobby that waits, and
+ * `POST /__dev/decline` declines it, as the inbox's admins do. `POST /__dev/typing` has someone
+ * at Adobe write in the latest thread for ten seconds, and `POST /__dev/working` and
+ * `POST /__dev/draft` turn the agent's work and a draft on and off.
  */
 
 import { readFileSync } from 'node:fs';
@@ -44,6 +49,7 @@ import { ICONS } from '../src/icons.js';
 import { PORTAL_FILES, portalPage } from '../src/portal/page.js';
 import { api } from '../src/portal/api.js';
 import * as platform from '../src/portal/platform.js';
+import { standing } from '../src/portalstatus.js';
 import { d1, PORTAL } from '../test/d1.js';
 import { fakeBucket } from '../test/fakes.js';
 
@@ -61,6 +67,33 @@ const STAFF = [
 const ME = has('closed') ? 'dana.diaz@elsewhere.example'
   : (has('outsider') && `ravi.rao@${DOMAIN}`) || DANA;
 
+/** What the preview's Adobe does right now (`POST /__dev/working`, `/__dev/draft`). */
+const adobe = { working: false, draft: false };
+
+/** Adobe's side of a thread as the inbox would say it, made up from the thread's messages. */
+async function status({ root: thread }) {
+  if (!thread) {
+    return {
+      listening: 14, estimate: { minutes: 95, asked: null }, working: false, draft: false,
+    };
+  }
+  // eslint-disable-next-line no-use-before-define
+  const { results } = await env.DB.prepare(`SELECT m.at, u.kind != 'customer' AS staff,
+      1 AS counted FROM messages m JOIN users u ON u.id = m.author
+    WHERE m.root = ? AND m.deleted_at IS NULL ORDER BY m.at`).bind(thread).all();
+  const { asked, gap, last } = standing(results);
+  const since = asked === null ? (last !== null && (Date.now() - last) / 60000) : gap;
+  return {
+    listening: 14,
+    estimate: {
+      minutes: since !== null && since !== false && since <= 30 ? 6 : 95,
+      asked: asked === null ? null : new Date(asked).toISOString(),
+    },
+    working: adobe.working,
+    draft: adobe.draft && asked !== null,
+  };
+}
+
 const env = {
   DB: d1({ migrations: PORTAL }),
   // The portal's bucket, in memory: files, pictures and logos.
@@ -68,7 +101,7 @@ const env = {
   PORTAL_DOMAINS: DOMAIN,
   PUBLIC_ORIGIN: `http://localhost:${PORT}`,
   PORTAL_NAME: 'dev',
-  OPSPILE: { events: async () => ({ ok: true }), technologies: async () => [] },
+  OPSPILE: { events: async () => ({ ok: true }), technologies: async () => [], status },
 };
 
 /** One call of the portal's API as `email`. */
@@ -267,6 +300,25 @@ async function dev(pathname) {
       author: STAFF[1],
       text: 'We are on it. More in a minute.',
     }) : { error: 'no thread yet' };
+  }
+  if (pathname === '/__dev/typing') {
+    const latest = await env.DB.prepare(`SELECT c.id AS channel, m.root FROM messages m
+      JOIN channels c ON c.id = m.channel ORDER BY m.at DESC LIMIT 1`).first();
+    if (!latest) {
+      return { error: 'no thread yet' };
+    }
+    // As the inbox says it: again every few seconds while they write.
+    const say = () => platform.typing(env, {
+      domain: DOMAIN, channel: latest.channel, root: latest.root, author: STAFF[1],
+    });
+    const again = setInterval(say, 3000);
+    setTimeout(() => clearInterval(again), 10000);
+    return say();
+  }
+  if (pathname === '/__dev/working' || pathname === '/__dev/draft') {
+    const what = pathname.slice('/__dev/'.length);
+    adobe[what] = !adobe[what];
+    return { [what]: adobe[what] };
   }
   return null;
 }

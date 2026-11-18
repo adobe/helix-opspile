@@ -102,6 +102,17 @@ export async function entryFollows(env, thread) {
   return results || [];
 }
 
+/** The people who follow a technology inbox entry `thread` shows, as it counts: their ids. */
+export async function entryFollowers(env, thread) {
+  if (!env.DB || !thread) {
+    return [];
+  }
+  const { results } = await env.DB.prepare(`${ENTRY_TECH}
+      JOIN (SELECT person AS who, tech FROM (${COUNTED_PERSON_FOLLOWS})) f ON f.tech = g.tech
+    WHERE x.kind = 'channel' ORDER BY f.who`).bind(String(thread)).all();
+  return (results || []).map((r) => r.who);
+}
+
 /** Which of `people` (ids) follow a technology inbox entry `thread` shows. A Set of ids. */
 export async function followersOf(env, people, thread) {
   const ids = [...new Set([].concat(people || []).filter(Boolean))];

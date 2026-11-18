@@ -1771,6 +1771,11 @@ async function api(req, res, url) {
       ok: true, platform: entry.row.source, id, text: sent, ...invitedFor(entry, mentions),
     });
   }
+  // Writing a reply in a customer portal's thread: the portal is told, which is not here.
+  if (url.pathname === '/api/typing' && req.method === 'POST') {
+    res.writeHead(204).end();
+    return true;
+  }
   if (url.pathname === '/api/edit' && req.method === 'POST') {
     // As src/edit.js: the platform takes the edit, and its event brings it back a moment later.
     const { thread: key, id, text: changed } = await readJson(req);

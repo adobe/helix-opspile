@@ -19,7 +19,8 @@ const PLACEHOLDER = '/* PORTAL_EMOJI */ { names: {}, skin: [], aliases: {} }';
 
 /** The scripts and stylesheets ui/portal.html names, besides the markdown renderer. */
 export const PORTAL_FILES = [
-  'portal.js', 'app.js', 'writing.js', 'spectrum-fonts.css', 'spectrum.css', 'spectrum-portal.css',
+  'portal.js', 'app.js', 'writing.js', 'richtext.js', 'spectrum-fonts.css', 'spectrum.css',
+  'spectrum-portal.css',
 ];
 
 /**
