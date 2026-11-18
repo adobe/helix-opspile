@@ -539,6 +539,14 @@ rows stay where they are. Unread only lets go of the read threads it holds once 
 away (tab hidden or window not focused) for `AWAY_MS` (`forgetRead`, `away`): never the open thread,
 and not after a shorter look elsewhere.
 
+**Customer column.** placed → held → let go (`state.column`, `columnPlace` and `forgetColumn` in
+`ui/inbox.js`). The simple personal view's customers go by their place: the highest they have had
+(unread mentions of you, then unread, then the rest) since the inbox was last away. Something new
+moves a customer up at once; reading it moves it down only once the inbox has been away for
+`AWAY_MS`, as the thread list does, but never the open thread's customer. Its badge and bold are
+what it has now. Another view, the expert view, viewing as someone and a reload start afresh;
+excluding a customer puts it at the end at once and drops its place.
+
 **List row.** shown → leaving → kept aside, or shown again (`.leaving` and `__leave` on the row's
 node, `leaveRow` in `ui/inbox.js`). While the list is the same (`state.list`), a row on screen whose
 thread the list no longer shows folds away before it is removed; until then it is inert, out of

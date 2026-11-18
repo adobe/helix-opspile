@@ -1106,6 +1106,10 @@ describe('inbox page', () => {
         forgets += 1;
         return true;
       },
+      forgetColumn: () => {
+        forgets += 1;
+        return false;
+      },
       render: () => {},
     });
     // Another window for a minute, and back: nothing is let go of.
@@ -1122,10 +1126,10 @@ describe('inbox page', () => {
     assert.equal(timer.at, now + 5 * 60 * 1000);
     now = timer.at;
     timer.f();
-    assert.equal(forgets, 1);
+    assert.equal(forgets, 2);
     focused = true;
     awayOrBack();
-    assert.equal(forgets, 2);
+    assert.equal(forgets, 4);
   });
 
   it('outlines neighboring picked values as one, with no edge between them', () => {
