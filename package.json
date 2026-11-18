@@ -24,6 +24,7 @@
     "graphviz:dev": "node scripts/dev-graphviz/dev.mjs",
     "graphviz:check": "node scripts/dev-graphviz/check.mjs",
     "rank": "node scripts/rank.mjs",
+    "response:waits": "node scripts/wait-backtest.mjs",
     "build": "node scripts/ui-markdown.mjs",
     "prelint": "npm run build --silent",
     "pretest": "npm run build --silent",

@@ -4140,7 +4140,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
       // Saving, loading or discarding replaces the thread's composer state: update the current one.
       const now = state.composers.get(key);
       if (now) now.text = box.value; else state.composers.set(key, { text: box.value, from: '', base: null });
-      grow(); suggest(key); renderDraftBar(key);
+      grow(); suggest(key); renderDraftBar(key); tellTyping(key, box.value);
     };
     box.onclick = () => suggest(key);
     box.onblur = () => setTimeout(closeMentions, 150);
@@ -6833,6 +6833,20 @@ function toastOut(el) {
   const gone = () => { if (!done) { done = true; el.remove(); } };
   Promise.allSettled(going.map((a) => a.finished)).then(gone);
   setTimeout(gone, end + 100);
+}
+
+/**
+ * Tells a customer portal's thread that you are writing a reply there (POST /api/typing), every
+ * few seconds while you type: its customers see who writes. The other platforms take no such
+ * word from an app, and someone you only look as writes nothing.
+ */
+const TYPING_MS = 4000;
+let typingAt = 0;
+function tellTyping(key, text) {
+  if (!String(key).startsWith('portal:') || state.as || !text.trim() || Date.now() - typingAt < TYPING_MS) return;
+  typingAt = Date.now();
+  // eslint-disable-next-line no-use-before-define
+  request('POST', '/api/typing', { thread: key }).catch(() => {});
 }
 
 // ---------------------------------------------------------------- reactions, resolving

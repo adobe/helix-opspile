@@ -19,11 +19,12 @@ import { parse } from '../src/channels.js';
 import { normalize } from '../src/normalize.js';
 import { processKey } from '../src/normalizer.js';
 import { PLATFORMS, platformName } from '../src/platforms.js';
-import { api as portalApi } from '../src/portal/api.js';
+import { api as portalApi, clearStatuses } from '../src/portal/api.js';
 import { deliver } from '../src/portal/events.js';
 import { portalUserId } from '../src/portal/ids.js';
 import * as platform from '../src/portal/platform.js';
 import { recordLobby } from '../src/portalrequests.js';
+import { clearWaitModel, portalStatus, standing } from '../src/portalstatus.js';
 import {
   portalCall, portalKey, portalMarkdown, portalTechnologies, receive,
 } from '../src/portalsource.js';
@@ -78,6 +79,7 @@ function world({ bound = true } = {}) {
     OPSPILE: {
       events: (list) => receive(inbox, list),
       technologies: () => portalTechnologies(inbox),
+      status: (a) => portalStatus(inbox, a),
     },
   };
   if (bound) {
@@ -92,6 +94,7 @@ function world({ bound = true } = {}) {
       file: (a) => platform.file(portal, a),
       avatar: (a) => platform.avatar(portal, a),
       logo: (a) => platform.logo(portal, a),
+      typing: (a) => platform.typing(portal, a),
     };
   }
   const results = [];
@@ -778,5 +781,225 @@ describe('files, mentions and pictures between the portal and the inbox', () => 
     await w.customer(CY, 'DELETE', '/api/logo', {});
     await w.pump();
     assert.equal((await w.staff(viewer(ADMIN), 'GET', '/api/admin/requests')).body.portal[0].logo, null);
+  });
+});
+
+describe('Adobe\'s side of a thread, for the customer', () => {
+  /** What the portal tells `email` of a thread, asked anew. */
+  const statusOf = async (w, email, root) => {
+    clearStatuses();
+    const q = root ? `&thread=${root}` : '';
+    return (await w.customer(email, 'GET', `/api/status?channel=${w.channel}${q}`)).body;
+  };
+
+  it('knows where a thread stands: who waits, since when, and after what', () => {
+    const at = (minutes) => new Date(Date.UTC(2026, 10, 2, 9, minutes)).toISOString();
+    const customer = (minutes) => ({ at: at(minutes), staff: 0, counted: 1 });
+    const adobe = (minutes) => ({ at: at(minutes), staff: 1, counted: 1 });
+    // Nobody at Adobe wrote yet: the customer waits since their first message.
+    assert.deepEqual(standing([customer(0), customer(5)]), {
+      asked: Date.parse(at(0)), gap: null, last: null,
+    });
+    // Adobe answered: nobody waits.
+    assert.deepEqual(standing([customer(0), adobe(9)]), {
+      asked: null, gap: null, last: Date.parse(at(9)),
+    });
+    // The customer wrote again four minutes after: a live conversation.
+    assert.deepEqual(standing([customer(0), adobe(9), customer(13), customer(20)]), {
+      asked: Date.parse(at(13)), gap: 4, last: Date.parse(at(9)),
+    });
+    // The inbox's app answers for Adobe too: its message is nobody's, and ends the wait.
+    assert.equal(standing([customer(0), { at: at(3), staff: 0, counted: 0 }]).asked, null);
+  });
+
+  it('says how many at Adobe listen: the thread\'s teams\' people and its followers, once', async () => {
+    const w = await openedWorld();
+    clearWaitModel();
+    // The channel is the edge team's, opened by an admin: Max is on it.
+    assert.equal((await statusOf(w, CY, w.root)).listening, 1);
+    // Shared with another team, its people listen too; someone who follows what the thread
+    // shows as well, and someone on both counts once.
+    w.inbox.DB.sqlite.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_at)
+      VALUES ('portal', ?, 'helix', '2026-11-01T00:00:00Z')`).run(w.channel);
+    assert.equal((await statusOf(w, CY, w.root)).listening, 2);
+    w.inbox.DB.sqlite.prepare("INSERT INTO thread_tech (thread, tech, p) VALUES (?, 'eds', 0.9)").run(w.thread);
+    w.inbox.DB.sqlite.prepare(`INSERT INTO person_follows (person, tech, added_at)
+      VALUES (1, 'eds', '2026-11-01T00:00:00Z'), (3, 'eds', '2026-11-01T00:00:00Z')`).run();
+    assert.equal((await statusOf(w, CY, w.root)).listening, 3);
+    // The channel, for a thread about to be written: its teams, without a thread's followers.
+    assert.equal((await statusOf(w, CY)).listening, 2);
+    // A number, and nothing of who: no name, no team.
+    const said = JSON.stringify(await statusOf(w, CY, w.root));
+    assert.doesNotMatch(said, /Max|Olga|Ada|edge|helix/);
+    // Not a channel of this customer's: nothing, and another domain's customer is not asked.
+    assert.deepEqual(await portalStatus(w.inbox, { domain: 'elsewhere.example', channel: w.channel, root: w.root }), {
+      listening: 0, estimate: null, working: false, draft: false,
+    });
+  });
+
+  it('estimates the next answer from how Adobe answered before, once someone waits', async () => {
+    const w = await openedWorld();
+    clearWaitModel();
+    // Nothing to learn from yet: Adobe wrote first, nobody has waited.
+    assert.equal((await statusOf(w, CY, w.root)).estimate, null);
+    // Thirty conversations of the team's, each answered after about an hour.
+    const insert = w.inbox.DB.sqlite.prepare(`INSERT INTO messages
+      (source, tenant, channel_id, id, thread, at, author, staff, counted, deleted)
+      VALUES ('portal', 'customer.example', ?1, ?2, ?3, ?4, 'x', ?5, 1, 0)`);
+    const thread = w.inbox.DB.sqlite.prepare(`INSERT INTO threads
+      (thread, source, tenant, channel_id, root_id, kind, org, team, path, updated_at)
+      VALUES (?1, 'portal', 'customer.example', ?2, ?3, 'channel', 'customer-inc', 'edge', ?1, ?4)`);
+    const now = Date.now();
+    for (let i = 1; i <= 30; i += 1) {
+      const began = now - i * 24 * 60 * 60 * 1000;
+      const key = `portal:customer.example:${w.channel}:old${i}`;
+      thread.run(key, w.channel, `old${i}`, new Date(began).toISOString());
+      insert.run(w.channel, `q${i}`, key, new Date(began).toISOString(), 0);
+      insert.run(w.channel, `a${i}`, key, new Date(began + 60 * 60 * 1000).toISOString(), 1);
+    }
+    clearWaitModel();
+    // Adobe wrote last in the welcome thread: what a reply written now would wait.
+    const idle = (await statusOf(w, CY, w.root)).estimate;
+    assert.equal(idle.asked, null);
+    assert.ok(idle.minutes > 5 && idle.minutes < 600, `a reply now: ${idle.minutes}`);
+    // The customer asks: they wait since then.
+    const reply = await w.customer(CY, 'POST', '/api/post', { channel: w.channel, thread: w.root, text: 'How long?' });
+    await w.pump();
+    const waiting = (await statusOf(w, CY, w.root)).estimate;
+    assert.ok(Math.abs(Date.parse(waiting.asked) - Date.now()) < 60000, waiting.asked);
+    assert.ok(Number.isInteger(waiting.minutes) && waiting.minutes > 5 && waiting.minutes < 600);
+    assert.ok(reply.body.id);
+    // A new thread in the channel has an estimate too.
+    assert.ok((await statusOf(w, CY)).estimate.minutes > 5);
+    // Adobe answers: nobody waits.
+    await w.staff(viewer(MANAGER), 'POST', '/api/post', { thread: w.thread, text: 'Not long.' });
+    await w.pump();
+    assert.equal((await statusOf(w, CY, w.root)).estimate.asked, null);
+  });
+
+  it('fits the model once per isolate, then again behind an answer when it is an hour old', async () => {
+    const w = await openedWorld();
+    clearWaitModel();
+    let reads = 0;
+    const { prepare } = w.inbox.DB;
+    w.inbox.DB.prepare = (sql) => {
+      reads += /FROM messages x JOIN threads t/.test(sql) ? 1 : 0;
+      return prepare.call(w.inbox.DB, sql);
+    };
+    const args = { domain: DOMAIN, channel: w.channel, root: w.root };
+    const now = Date.now();
+    const behind = [];
+    const options = (at) => ({ now: at, waitUntil: (p) => behind.push(p) });
+    // Two pages at once on a new isolate: one read.
+    await Promise.all([
+      portalStatus(w.inbox, args, options(now)), portalStatus(w.inbox, args, options(now)),
+    ]);
+    assert.deepEqual([reads, behind.length], [1, 0]);
+    await portalStatus(w.inbox, args, options(now + 59 * 60 * 1000));
+    assert.equal(reads, 1);
+    // An hour on: answered with the model it has, the next one fitted behind the answer.
+    await portalStatus(w.inbox, args, options(now + 61 * 60 * 1000));
+    assert.equal(behind.length, 1);
+    await Promise.all(behind);
+    assert.equal(reads, 2);
+    await portalStatus(w.inbox, args, options(now + 62 * 60 * 1000));
+    assert.deepEqual([reads, behind.length], [2, 1]);
+  });
+
+  it('says when the agent works on the thread, or a draft waits, and nothing of what they say', async () => {
+    const w = await openedWorld();
+    clearWaitModel();
+    await w.customer(CY, 'POST', '/api/post', { channel: w.channel, thread: w.root, text: 'Anyone?' });
+    await w.pump();
+    const idle = await statusOf(w, CY, w.root);
+    assert.deepEqual([idle.working, idle.draft], [false, false]);
+    const live = w.inbox.DB.sqlite.prepare(`INSERT INTO agent_live (thread, turn, at) VALUES (?1, ?2, ?3)
+      ON CONFLICT (thread) DO UPDATE SET turn = excluded.turn, at = excluded.at`);
+    const turn = (t) => live.run(w.thread, JSON.stringify(t), new Date().toISOString());
+    turn({ state: 'working', text: 'Reading the secret runbook', startedAt: Date.now() });
+    let said = await statusOf(w, CY, w.root);
+    assert.equal(said.working, true);
+    assert.doesNotMatch(JSON.stringify(said), /runbook/);
+    // A sidebar message is the team's own: the customer hears nothing of it.
+    turn({
+      state: 'working', text: 'Looking', startedAt: Date.now(), sidebar: 'm1',
+    });
+    assert.equal((await statusOf(w, CY, w.root)).working, false);
+    turn({
+      state: 'done', text: 'Drafted', startedAt: Date.now(), endedAt: Date.now(),
+    });
+    assert.equal((await statusOf(w, CY, w.root)).working, false);
+    // A draft, an agent's or a person's, while the customer waits.
+    w.inbox.DB.sqlite.prepare(`INSERT INTO drafts (thread, body, person, created_at, updated_at)
+      VALUES (?, 'An internal draft', 2, '2026-11-02T00:00:00Z', '2026-11-02T00:00:00Z')`).run(w.thread);
+    said = await statusOf(w, CY, w.root);
+    assert.equal(said.draft, true);
+    assert.doesNotMatch(JSON.stringify(said), /internal/);
+    // Once Adobe answered, a draft left behind is nobody's business.
+    await w.staff(viewer(MANAGER), 'POST', '/api/post', { thread: w.thread, text: 'Here.' });
+    await w.pump();
+    assert.equal((await statusOf(w, CY, w.root)).draft, false);
+  });
+
+  it('shows who at Adobe is writing, for a few seconds, and that something is new', async () => {
+    const w = await openedWorld();
+    clearWaitModel();
+    const before = await statusOf(w, CY, w.root);
+    assert.deepEqual(before.typing, []);
+    // Max types in the inbox: the portal is told, and Cy sees it.
+    const typing = (me, thread = w.thread) => w.staffRaw(viewer(me), '/api/typing', {
+      method: 'POST', body: JSON.stringify({ thread }),
+    });
+    assert.equal((await typing(MANAGER)).status, 204);
+    assert.deepEqual((await statusOf(w, CY, w.root)).typing, ['Max Manager']);
+    // Not somebody outside the thread's teams, and not in a thread that is not there.
+    assert.equal((await typing(OTHER)).status, 404);
+    assert.equal((await typing(MANAGER, 'portal:customer.example:nowhere:m0')).status, 404);
+    // It is over after a few seconds without another word.
+    w.portal.DB.sqlite.prepare("UPDATE typing SET at = '2026-01-01T00:00:00.000Z'").run();
+    assert.deepEqual((await statusOf(w, CY, w.root)).typing, []);
+    // And when their message arrives; the stamp says the thread changed.
+    await typing(MANAGER);
+    await w.staff(viewer(MANAGER), 'POST', '/api/post', { thread: w.thread, text: 'Here it is.' });
+    const after = await statusOf(w, CY, w.root);
+    assert.deepEqual(after.typing, []);
+    assert.notEqual(after.stamp, before.stamp);
+    // An edit and a reaction change it too, so the page loads the thread again.
+    await w.customer(CY, 'POST', '/api/react', { channel: w.channel, id: w.root, emoji: '👍' });
+    const reacted = await statusOf(w, CY, w.root);
+    assert.notEqual(reacted.stamp, after.stamp);
+    // Without the inbox, the portal still says what it knows itself.
+    delete w.portal.OPSPILE.status;
+    w.portal.OPSPILE = undefined;
+    const alone = await statusOf(w, CY, w.root);
+    assert.deepEqual([alone.listening, alone.typing, alone.stamp], [undefined, [], reacted.stamp]);
+  });
+
+  it('asks the inbox once in ten seconds for a thread, however many pages ask', async () => {
+    const w = await openedWorld();
+    clearStatuses();
+    let calls = 0;
+    w.portal.OPSPILE.status = async () => {
+      calls += 1;
+      return {
+        listening: 4, estimate: { minutes: 12.4, asked: null }, working: true, draft: false, more: 'x',
+      };
+    };
+    const get = () => w.customer(CY, 'GET', `/api/status?channel=${w.channel}&thread=${w.root}`);
+    const first = (await get()).body;
+    await get();
+    await w.customer(DEE, 'GET', '/api/me');
+    await w.customer(DEE, 'GET', `/api/status?channel=${w.channel}&thread=${w.root}`);
+    assert.equal(calls, 1);
+    // Only what the page shows comes through.
+    assert.deepEqual([first.listening, first.estimate, first.working, first.draft, first.more], [
+      4, { minutes: 12.4, asked: null }, true, false, undefined,
+    ]);
+    // An inbox that fails is no error of the page's.
+    clearStatuses();
+    w.portal.OPSPILE.status = () => Promise.reject(new Error('down'));
+    const failed = await quiet(() => get());
+    assert.equal(failed.status, 200);
+    assert.equal(failed.body.listening, undefined);
   });
 });

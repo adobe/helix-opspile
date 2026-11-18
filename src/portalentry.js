@@ -13,6 +13,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { Meter } from './cogs/meter.js';
 import { portalTechnologies, receive } from './portalsource.js';
+import { portalStatus } from './portalstatus.js';
 
 /**
  * Where the customer portal (src/portal/worker.js) reaches the inbox: its `OPSPILE` binding is
@@ -40,5 +41,14 @@ export class PortalSource extends WorkerEntrypoint {
   /** The technologies a lobby picks from: the tech stack's entries marked for the portal. */
   async technologies() {
     return portalTechnologies(this.env);
+  }
+
+  /**
+   * `{ domain, channel, root? }`: what a customer is told of Adobe's side of a thread, or of a
+   * channel (src/portalstatus.js): how many listen, the typical wait for the next answer,
+   * whether the thread's agent is at work and whether a draft waits.
+   */
+  async status(args) {
+    return portalStatus(this.env, args, { waitUntil: (p) => this.ctx.waitUntil(p) });
   }
 }

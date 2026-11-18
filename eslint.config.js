@@ -76,6 +76,8 @@ export default [
         Table: 'readonly',
         // Markdown formatting in a text box, ui/writing.js (the inbox, the customer portal).
         Writing: 'readonly',
+        // A rich text box, ui/richtext.js (the customer portal).
+        RichText: 'readonly',
         // A customer's stack drawing, ui/stack.js (the inbox).
         Stack: 'readonly',
         // The Topics page's graph, ui/topicgraph.js.

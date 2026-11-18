@@ -31,7 +31,7 @@ import { experts } from './experts.js';
 import { cachedGraph } from './graph.js';
 import {
   attachable, connections, disconnect, editable, finishAuth, mentionable, post,
-  postableChannels, reactable, startAuth,
+  postableChannels, reactable, startAuth, typing,
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
 import { closestEmoji, rankEmoji, workspaceEmoji } from './shortcodes.js';
@@ -1252,6 +1252,11 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   if (bash && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return decideBash(env, me, body, working, { run: bash[1] === 'run' });
+  }
+  // Someone is writing a reply: the customer portal shows its customers (src/post.js).
+  if (url.pathname === '/api/typing' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return typing(env, me, body, working);
   }
   if (url.pathname === '/api/edit' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));

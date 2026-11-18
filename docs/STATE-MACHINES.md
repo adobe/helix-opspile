@@ -500,6 +500,24 @@ send the same events, and one that failed is sent again by the cron (`attempts`,
 inbox keys each by its `seq`, so both are one object in pile 1. An unbound portal delivers
 nothing and keeps everything.
 
+**Writing in a portal thread.** absent → writing → absent (`typing.at` in the portal,
+`src/portal/store.js`). The inbox says that someone types a reply every four seconds while they
+do (`POST /api/typing`), and each word writes the row's `at` again; a row counts for eight seconds
+after it (`TYPING_MS`), so someone who stops is gone without anything saying so, and a lost word
+is made up for by the next. Their message deletes the row in the batch that writes it; rows ten
+times older than that are deleted with the next one written. Nothing of it is an event: the
+inbox's pile 1 never hears who typed.
+
+**Adobe's side of a thread.** asked → kept for ten seconds → asked again (`statuses` in
+`src/portal/api.js`, per isolate). What the inbox says of a thread (how many listen, the typical
+wait, whether the agent works, whether a draft waits) is the present, read from the inbox's own
+tables when asked and stored nowhere; an inbox that does not answer leaves the page without
+it, and with what the portal knows itself (who writes, the thread's `stamp`). The **wait model**
+behind the estimate is absent → fitted → stale → fitted again, per isolate of the inbox
+(`src/portalstatus.js`): fit from the last 180 days by the first status asked, one read however
+many ask at once; an hour old it is stale, still answered with, and fitted again behind that
+answer. A fit that fails leaves the one there is. No wait at all is no estimate.
+
 **Portal technologies.** the built-in list → the inbox's, an hour old at most (`tech`, `meta.tech_at`
 in the portal, `src/portal/tech.js`). An empty or failed answer leaves the list as it is: "the
 inbox said nothing" is not "there are none". A lobby's picks are checked against the list when

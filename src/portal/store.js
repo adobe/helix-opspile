@@ -663,10 +663,11 @@ export async function writeMessage(env, channel, author, { root, text, files }, 
       .bind(m.id, channel.id, m.root, author.id, m.body, m.at, mentions.length ? m.mentions : null),
     ...attached.map((f) => env.DB.prepare(`UPDATE files SET message = ? WHERE id = ?
       AND message IS NULL`).bind(m.id, f.id)),
-    // Its author has read their own message.
+    // Its author has read their own message, and is done writing it.
     env.DB.prepare(`INSERT INTO reads (user, root, at) VALUES (?, ?, ?)
       ON CONFLICT (user, root) DO UPDATE SET at = MAX(reads.at, excluded.at)`)
       .bind(author.id, m.root, m.at),
+    env.DB.prepare('DELETE FROM typing WHERE root = ? AND user = ?').bind(m.root, author.id),
     eventStatement(env, await messageEvent(env, channel, author, m, attached), new Date(now)),
   ]);
   return { ok: true, id: m.id, root: m.root };
@@ -730,6 +731,60 @@ export async function deleteMessage(env, channel, user, { id }, now = Date.now()
   // Its files go with it, once it is gone: a deleted message shows none meanwhile.
   await deleteFilesOf(env, m.id);
   return { ok: true, id: m.id, root: m.root };
+}
+
+/** Someone who is writing counts as writing for this long after they last said so. */
+export const TYPING_MS = 8000;
+
+/**
+ * `user` (an account row) is writing in thread `root` of `channel`: kept for a few seconds
+ * (`TYPING_MS`), until they say so again or their message arrives. `{ ok }`, or `{ error }` for
+ * a thread the channel does not have.
+ */
+export async function setTyping(env, channel, user, root, now = Date.now()) {
+  const thread = await env.DB.prepare('SELECT root FROM messages WHERE id = ? AND channel = ?')
+    .bind(String(root || ''), channel.id).first();
+  if (!thread) {
+    return { error: 'no such thread in this channel', status: 404 };
+  }
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM typing WHERE at < ?').bind(iso(now - 10 * TYPING_MS)),
+    env.DB.prepare(`INSERT INTO typing (root, user, at) VALUES (?, ?, ?)
+      ON CONFLICT (root, user) DO UPDATE SET at = excluded.at`)
+      .bind(thread.root, user.id, iso(now)),
+  ]);
+  return { ok: true };
+}
+
+/**
+ * What `user` polls of a thread while it is on screen: who else is writing in it now (`typing`:
+ * names), and a `stamp` that changes with anything a reader would see anew (a message, an
+ * edit, a deletion, a reaction), so the page loads the thread again only then. Null for a
+ * thread `channel` does not have: a thread's id says nothing to who is not in its channel.
+ */
+export async function threadPulse(env, channel, root, user, now = Date.now()) {
+  const id = String(root || '');
+  const [thread, writing, stamp] = await env.DB.batch([
+    env.DB.prepare('SELECT 1 AS there FROM messages WHERE id = ?1 AND root = ?1 AND channel = ?2')
+      .bind(id, channel.id),
+    // Of this channel's thread only, whatever the first query said.
+    env.DB.prepare(`SELECT u.name FROM typing t JOIN users u ON u.id = t.user
+      WHERE t.root = ?1 AND t.user != ?2 AND t.at > ?3
+        AND t.root IN (SELECT id FROM messages WHERE id = ?1 AND channel = ?4)
+      ORDER BY t.at`).bind(id, user.id, iso(now - TYPING_MS), channel.id),
+    env.DB.prepare(`SELECT COUNT(*) AS n, MAX(at) AS latest, SUM(rev) AS revs,
+        (SELECT COUNT(*) || '.' || COALESCE(MAX(at), '') FROM reactions WHERE message IN
+          (SELECT id FROM messages WHERE channel = ?1 AND root = ?2)) AS reactions
+      FROM messages WHERE channel = ?1 AND root = ?2`).bind(channel.id, id),
+  ]);
+  if (!(thread.results || []).length) {
+    return null;
+  }
+  const s = (stamp.results || [])[0] || {};
+  return {
+    typing: (writing.results || []).map((r) => r.name),
+    stamp: `${s.n || 0}:${s.latest || ''}:${s.revs || 0}:${s.reactions || 0}`,
+  };
 }
 
 /** A reaction as the portal keeps it: the emoji itself, up to a few characters. */

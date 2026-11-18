@@ -16,10 +16,11 @@ import {
   avatarResponse, fileResponse, fileRow, MAX_FILE_BYTES, MAX_PICTURE_BYTES, pictureResponse,
   uploadFile,
 } from './files.js';
+import { richMarkdown } from './richtext.js';
 import {
   allowed, channelOf, channelsOf, clearAvatar, clearLogo, deleteMessage, editMessage, invite,
   lobbyOf, membersOf, peopleOf, reactTo, rename, requestChannel, setAvatar, setLogo, signIn,
-  threadOf, threadsOf, uninvite, updateLobby, writeMessage,
+  threadOf, threadPulse, threadsOf, uninvite, updateLobby, writeMessage,
 } from './store.js';
 import { listTech, refreshTech, techStale } from './tech.js';
 
@@ -42,13 +43,67 @@ import { listTech, refreshTech, techStale } from './tech.js';
  * | `GET /api/people?channel=` | who can be mentioned there |
  * | `POST /api/upload?channel=&name=&w=&h=` | a file for a message, as the request's body |
  * | `GET /api/file/<id>/<name>` | a file of one's lobby |
- * | `POST /api/post` | `{ channel, thread?, text, files? }` (`files`: ids of uploads) |
- * | `POST /api/edit`, `/api/delete` | `{ channel, id, text? }`, one's own message |
+ * | `GET /api/status?channel=&thread=` | Adobe's side of a thread, and what is new in it |
+ * | `POST /api/post` | `{ channel, thread?, html \| text, files? }` (`files`: ids of uploads) |
+ * | `POST /api/edit`, `/api/delete` | `{ channel, id, html \| text }`, one's own message |
  * | `POST /api/react` | `{ channel, id, emoji, remove? }` |
  * | `PUT`, `DELETE /api/avatar` | one's picture, an image as the request's body |
  * | `GET /api/avatar/<account>` | the picture of a colleague or of someone at Adobe |
  * | `PUT`, `DELETE /api/logo`, `GET /api/logo` | the customer's logo |
  */
+
+/**
+ * A message's text from a request: the rich text of the page's text box (`html`,
+ * src/portal/richtext.js) as markdown, else `text`, markdown as it is. Null for rich text too
+ * long to read.
+ */
+const textOf = (body) => (body.html !== undefined ? richMarkdown(body.html) : body.text);
+const TOO_LONG = { error: 'this message is too long', status: 400 };
+
+/** Adobe's side of a thread is asked of the inbox this often at most, per isolate. */
+const STATUS_MS = 10 * 1000;
+const statuses = new Map();
+
+/** Forgets what the inbox said (tests). */
+export function clearStatuses() {
+  statuses.clear();
+}
+
+/**
+ * What the inbox says of Adobe's side of a thread, or of a channel (`OPSPILE.status`,
+ * src/portalstatus.js): how many listen, the typical wait, whether the agent works on it and
+ * whether a draft waits. Kept for ten seconds, since every open page asks every few; nothing
+ * where the inbox is not bound or does not answer.
+ */
+async function adobeSide(env, domain, channel, root, now = Date.now()) {
+  if (!env.OPSPILE) {
+    return {};
+  }
+  const key = `${domain}:${channel}:${root || ''}`;
+  const kept = statuses.get(key);
+  if (kept && now - kept.at < STATUS_MS) {
+    return kept.value;
+  }
+  let value = {};
+  try {
+    const said = await env.OPSPILE.status({ domain, channel, root: root || undefined });
+    value = {
+      listening: Number(said && said.listening) || 0,
+      estimate: said && said.estimate && Number.isFinite(said.estimate.minutes) ? {
+        minutes: said.estimate.minutes, asked: said.estimate.asked || null,
+      } : null,
+      working: Boolean(said && said.working),
+      draft: Boolean(said && said.draft),
+    };
+  } catch (e) {
+    console.warn(JSON.stringify({ route: 'portal', status: 'error', error: e.message }));
+  }
+  if (statuses.size > 500) {
+    statuses.clear();
+  }
+  statuses.set(key, { at: now, value });
+  return value;
+}
 
 /** The writes whose body is a file's bytes, not JSON. */
 const UPLOADS = ['POST upload', 'PUT avatar', 'PUT logo'];
@@ -233,6 +288,17 @@ export async function api(request, env, url, { email, waitUntil = () => {} } = {
       return thread ? json({ thread }) : json({ error: 'no such thread' }, 404);
     }
     case 'GET people': return json({ people: await peopleOf(env, channel) });
+    case 'GET status': {
+      // Adobe's side from the inbox, and from here who is writing and whether anything is new.
+      // The thread is the channel's before anything is said of it, here or by the inbox.
+      const root = url.searchParams.get('thread') || null;
+      const pulse = root ? await threadPulse(env, channel, root, user)
+        : { typing: [], stamp: null };
+      if (!pulse) {
+        return json({ error: 'no such thread' }, 404);
+      }
+      return json({ ...await adobeSide(env, domain, channel.id, root), ...pulse });
+    }
     case 'POST upload': {
       const file = await upload(request, MAX_FILE_BYTES);
       return answer(file.error ? file : await uploadFile(env, channel, user, {
@@ -242,10 +308,17 @@ export async function api(request, env, url, { email, waitUntil = () => {} } = {
         height: url.searchParams.get('h'),
       }));
     }
-    case 'POST post': return told(await writeMessage(env, channel, user, {
-      root: body.thread, text: body.text, files: body.files,
-    }));
-    case 'POST edit': return told(await editMessage(env, channel, user, body));
+    case 'POST post': {
+      const text = textOf(body);
+      return text === null ? answer(TOO_LONG) : told(await writeMessage(env, channel, user, {
+        root: body.thread, text, files: body.files,
+      }));
+    }
+    case 'POST edit': {
+      const text = textOf(body);
+      return text === null ? answer(TOO_LONG)
+        : told(await editMessage(env, channel, user, { id: body.id, text }));
+    }
     case 'POST delete': return told(await deleteMessage(env, channel, user, body));
     case 'POST react': return told(await reactTo(env, channel, user, {
       id: body.id, emoji: body.emoji, removed: Boolean(body.remove),

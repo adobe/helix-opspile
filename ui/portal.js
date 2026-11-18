@@ -18,10 +18,17 @@
  * the left, the one picked on the right, as the inbox's personal view is for Adobe's people,
  * without the rest.
  *
- * Writing is as in the inbox: markdown with Slack's formatting shortcuts and a toolbar for
- * them (ui/writing.js), `@` for the people of the channel, `:` for emoji, files attached,
- * pasted or dropped, with a preview of what will be sent. Messages show their author's
- * picture, their images and their files.
+ * A thread is a conversation: the customer's own people's messages on the right, a bubble
+ * each, Adobe's on the left. Under them, what Adobe does right now (someone writes, the agent
+ * works on an answer, a draft waits to be read); over the text box, how many at Adobe listen
+ * and how long an answer usually takes (`GET /api/status`, asked every few seconds, which also
+ * says when the thread changed).
+ *
+ * Writing is rich text (ui/richtext.js): what is bold is bold, with Slack's formatting
+ * shortcuts and a toolbar for them (ui/writing.js names the keys), `@` for the people of the
+ * channel, `:` for emoji, files attached, pasted or dropped. Enter sends, Shift+Enter starts a
+ * new line; on a touch screen Enter is the new line. Messages show their author's picture,
+ * their images and their files.
  *
  * The address keeps what is on screen: `/?c=<channel>&t=<thread>`.
  */
@@ -37,6 +44,10 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
 
 /** How often the page asks for what is new while it is on screen. */
 const POLL_MS = 15 * 1000;
+// Adobe's side of the thread on screen is asked this often: who writes, whether anything is new.
+const STATUS_MS = 4 * 1000;
+// Where there is a keyboard, Enter sends; on a touch screen its key is a new line.
+const ENTER_SENDS = matchMedia('(hover: hover)').matches;
 /** The channel's people are asked for again when the list is this old. */
 const PEOPLE_MS = 60 * 1000;
 /** What a message's file may weigh, and how many it carries (src/portal/files.js). */
@@ -66,7 +77,8 @@ const state = {
   drafts: new Map(), // what is being written, by thread id ('new' for a new one)
   uploads: new Map(), // the files being attached to it, by the same key
   editing: null, // the message being changed
-  suggest: null, // the composer's open suggestions: { kind, from, items, at }
+  suggest: null, // the composer's open suggestions: { kind, length, items, at }
+  status: null, // Adobe's side of what is on screen (GET /api/status), and which thread's (`for`)
   error: '',
 };
 let uploadSeq = 0;
@@ -505,16 +517,26 @@ function reactionChips(m) {
   return `<div class="reactions">${chips}<button type="button" class="chip add" data-pick="${esc(m.id)}" aria-haspopup="true" aria-expanded="false" aria-label="React" title="React">+</button></div>`;
 }
 
+/** The box a message is changed in: rich text, as the one it was written in. */
+const editForm = (m) => `<form class="edit" data-save="${esc(m.id)}">
+  <div class="fld"><span id="editLabel">Your message</span>
+    <div class="field"><div class="rich" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="editLabel"></div></div></div>
+  <div class="actions"><button type="button" data-cancel>Cancel</button><button class="primary">Save</button></div></form>`;
+
+/**
+ * A message: the customer's own people's on the right, each a bubble (one's own without a
+ * name), Adobe's on the left, as the page's own text.
+ */
 function messageHtml(m) {
-  const adobe = m.author.kind !== 'customer';
-  if (m.deleted) return `<li class="msg gone" id="${esc(m.id)}"><span class="sub">This message was deleted.</span></li>`;
+  const ours = m.author.kind === 'customer';
+  const side = ours ? 'ours' : 'adobe';
+  if (m.deleted) return `<li class="msg gone ${side}" id="${esc(m.id)}"><span class="sub">This message was deleted.</span></li>`;
   const editing = state.editing === m.id;
-  return `<li class="msg${m.mine ? ' mine' : ''}${m.mentionsMe ? ' names-me' : ''}" id="${esc(m.id)}">${avatar(m.author)}
-    <div class="what"><div class="by"><span class="nm">${esc(m.author.name)}</span>${adobe ? '<span class="tag adobe">Adobe</span>' : ''}${when(m.at)}${m.editedAt ? '<span class="sub">edited</span>' : ''}
+  return `<li class="msg ${side}${m.mine ? ' mine' : ''}${m.mentionsMe ? ' names-me' : ''}${editing ? ' editing' : ''}" id="${esc(m.id)}">${m.mine ? '' : avatar(m.author)}
+    <div class="what"><div class="by">${m.mine ? '' : `<span class="nm">${esc(m.author.name)}</span>${ours ? '' : '<span class="tag adobe">Adobe</span>'}`}${when(m.at)}${m.editedAt ? '<span class="sub">edited</span>' : ''}
       ${m.mine && !editing ? `<span class="own"><button type="button" class="link" data-edit="${esc(m.id)}">Edit</button><button type="button" class="link" data-delete="${esc(m.id)}">Delete</button></span>` : ''}</div>
-    ${editing ? `<form class="edit" data-save="${esc(m.id)}"><label class="fld"><span>Your message</span><textarea rows="4" maxlength="8000">${esc(m.body)}</textarea></label>
-        <div class="actions"><button type="button" data-cancel>Cancel</button><button class="primary">Save</button></div></form>`
-    : `${m.body ? `<div class="body">${bodyHtml(m.body)}</div>` : ''}${filesHtml(m.files || [])}${reactionChips(m)}`}</div></li>`;
+    ${editing ? editForm(m)
+    : `${m.body ? `<div class="body${ours ? ' bubble' : ''}">${bodyHtml(m.body)}</div>` : ''}${filesHtml(m.files || [])}${reactionChips(m)}`}</div></li>`;
 }
 
 // ---- writing ------------------------------------------------------------------------------------
@@ -530,25 +552,44 @@ const FORMATS = [
   ['bullet', 'Bulleted list', `${MOD}⇧8`, ICON('M6 4h8M6 8h8M6 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01')],
   ['number', 'Numbered list', `${MOD}⇧7`, ICON('M7 4h7M7 8h7M7 12h7M2 3l1.2-.6V6M2 10.2c.4-.6 2.2-.6 2 .6-.1.7-1.3 1.2-2 2.2h2.2')],
   ['quote', 'Quote', `${MOD}⇧9`, ICON('M3 3v10M6.5 5h7M6.5 8h7M6.5 11h4')],
+  ['block', 'Code block', `${MOD}⌥⇧C`, ICON('M2.5 2.5h11v11h-11zM6 6 4.5 8 6 10M10 6l1.5 2L10 10')],
 ];
-const TOOLS = `${FORMATS.map(([kind, label, keys, glyph]) => `<button type="button" class="tool" data-format="${kind}" title="${label} (${keys})" aria-label="${label}">${glyph}</button>`).join('')}
+const TOOLS = `${FORMATS.map(([kind, label, keys, glyph]) => `<button type="button" class="tool" data-format="${kind}" aria-pressed="false" title="${label} (${keys})" aria-label="${label}">${glyph}</button>`).join('')}
   <span class="gap"></span>
   <button type="button" class="tool" data-tool="mention" title="Mention someone (@)" aria-label="Mention someone"><b>@</b></button>
   <button type="button" class="tool" data-tool="emoji" title="Emoji (:)" aria-label="Emoji" aria-haspopup="true" aria-expanded="false">${ICON('M8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12ZM5.5 9.5c.6 1 1.5 1.5 2.5 1.5s1.9-.5 2.5-1.5M6 6.5h.01M10 6.5h.01')}</button>
-  <button type="button" class="tool" data-tool="attach" title="Attach files" aria-label="Attach files">${ICON('M13 7.5 7.8 12.7a3.1 3.1 0 0 1-4.4-4.4l5.6-5.6a2.1 2.1 0 0 1 2.9 2.9l-5.5 5.6a1 1 0 0 1-1.5-1.5l5-5')}</button>
-  <button type="button" class="tool text" data-tool="preview" aria-pressed="false" title="See it as it will be sent">Preview</button>`;
+  <button type="button" class="tool" data-tool="attach" title="Attach files" aria-label="Attach files">${ICON('M13 7.5 7.8 12.7a3.1 3.1 0 0 1-4.4-4.4l5.6-5.6a2.1 2.1 0 0 1 2.9 2.9l-5.5 5.6a1 1 0 0 1-1.5-1.5l5-5')}</button>`;
+const SEND = ICON('M8 13V3M3.5 7.5 8 3l4.5 4.5');
 
-/** The field a message is written in, with its toolbar, its files and what sends it. */
+/**
+ * The field a message is written in: rich text over its files and its toolbar, which ends in
+ * what sends it; above it, who at Adobe listens.
+ */
 function composer(key, label, action) {
   return `<form class="composer" id="composer" data-key="${esc(key)}">
     <ul class="suggest s2-float s2-up" id="suggest" role="listbox" aria-label="Suggestions" hidden></ul>
-    <div class="tools" role="toolbar" aria-label="Formatting">${TOOLS}</div>
-    <label class="fld"><span>${esc(label)}</span>
-    <textarea id="text" rows="${key === 'new' ? 8 : 3}" maxlength="8000" role="combobox" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false">${esc(state.drafts.get(key) || '')}</textarea></label>
-    <div class="preview body" id="preview" hidden></div>
-    <div class="tray" id="tray" hidden></div>
+    <div class="over"><span class="lbl" id="textLabel">${esc(label)}</span><p class="listening" id="listening" hidden></p></div>
+    <div class="field">
+      <div class="rich${key === 'new' ? ' tall' : ''}" id="text" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="textLabel" aria-autocomplete="list" aria-controls="suggest"></div>
+      <div class="tray" id="tray" hidden></div>
+      <div class="tools" role="toolbar" aria-label="Formatting">${TOOLS}
+        <button class="send" id="send" title="${esc(action)}${ENTER_SENDS ? ' (Enter)' : ''}" aria-label="${esc(action)}">${SEND}</button></div>
+    </div>
     <input type="file" id="files" multiple hidden>
-    <div class="actions"><span class="status err" id="sendStatus" role="alert"></span><button class="primary" id="send">${esc(action)}</button></div></form>`;
+    <div class="foot"><span class="status err" id="sendStatus" role="alert"></span>${ENTER_SENDS ? '<span class="sub hint">Enter sends, Shift+Enter starts a new line</span>' : ''}</div></form>`;
+}
+
+/** The composer's box with what was being written at its key, as it was left. */
+function fillComposer() {
+  RichText.set(RichText.setup($('text')), state.drafts.get($('composer').dataset.key) || '');
+}
+
+/** Which formatting the caret is in, on the toolbar's buttons. */
+function showFormats() {
+  const box = $('text');
+  if (!box) return;
+  const on = document.activeElement === box ? RichText.state(box) : {};
+  for (const b of $('composer').querySelectorAll('[data-format]')) b.setAttribute('aria-pressed', String(Boolean(on[b.dataset.format])));
 }
 
 /** The files being attached to what is written at `key`: each with how far its upload is. */
@@ -592,8 +633,9 @@ function addFiles(key, files) {
  * the words of a name), or an emoji's name (`:` and two letters or more).
  */
 function suggestFor(box) {
-  if (box.selectionStart !== box.selectionEnd) return null;
-  const before = box.value.slice(0, box.selectionStart);
+  const caret = RichText.caret(box);
+  if (!caret) return null;
+  const before = caret.text;
   const at = /(?:^|[\s(>])@([^\s@][^@\n]{0,40})?$/.exec(before);
   const q = at ? at[1] || '' : null;
   if (q !== null && !/\s$/.test(q)) {
@@ -604,13 +646,13 @@ function suggestFor(box) {
     const named = (p) => typed.every((w) => p.name.toLowerCase().split(/\s+/).some((n) => n.startsWith(w)));
     const items = Markdown.suggestMentions({ accounts: pool.filter(named) }, q)
       .map((r) => pool.find((p) => p.id === r.id));
-    if (items.length) return { kind: 'mention', from: before.length - q.length - 1, items };
+    if (items.length) return { kind: 'mention', length: q.length + 1, items };
   }
   const colon = /(?:^|[\s(>]):([a-z0-9_+-]{2,30})$/i.exec(before);
   if (colon) {
     const items = Markdown.matchEmoji(EMOJI.names, EMOJI.aliases, colon[1], 8)
       .map((name) => ({ name, char: emojiChar(name) })).filter((e) => e.char);
-    if (items.length) return { kind: 'emoji', from: before.length - colon[1].length - 1, items };
+    if (items.length) return { kind: 'emoji', length: colon[1].length + 1, items };
   }
   return null;
 }
@@ -621,7 +663,6 @@ function renderSuggest() {
   if (!ul || !box) return;
   const s = state.suggest;
   ul.hidden = !s;
-  box.setAttribute('aria-expanded', String(Boolean(s)));
   if (!s) { box.removeAttribute('aria-activedescendant'); return; }
   ul.innerHTML = s.items.map((item, i) => `<li role="option" id="sg-${i}" data-i="${i}" aria-selected="${i === s.at}">${s.kind === 'mention'
     ? `${avatar(item)}<span class="nm">${esc(item.name)}</span>${item.kind === 'staff' ? '<span class="tag adobe">Adobe</span>' : ''}`
@@ -635,26 +676,15 @@ function updateSuggest() {
   renderSuggest();
 }
 
-/** Takes suggestion `i`: the name typed becomes the person's `@Name`, or the emoji itself. */
+/** Takes suggestion `i`: the name typed becomes a mention of the person, or the emoji itself. */
 function takeSuggestion(i) {
   const s = state.suggest;
   const box = $('text');
-  if (!s || !box || !s.items[i]) return;
-  const insert = s.kind === 'mention' ? `@${s.items[i].name} ` : `${s.items[i].char} `;
-  const at = s.from + insert.length;
-  Writing.applyText(box, {
-    from: s.from, to: box.selectionStart, insert, start: at, end: at,
-  });
+  const caret = box ? RichText.caret(box) : null;
+  if (!s || !caret || !s.items[i]) return;
+  RichText.replace(box, caret, s.length, s.kind === 'mention' ? { mention: s.items[i].name } : { text: s.items[i].char });
   state.suggest = null;
   renderSuggest();
-}
-
-/** Puts `text` where the caret of the text box is. */
-function insertAtCaret(box, text) {
-  const at = box.selectionStart + text.length;
-  Writing.applyText(box, {
-    from: box.selectionStart, to: box.selectionEnd, insert: text, start: at, end: at,
-  });
 }
 
 /**
@@ -702,30 +732,62 @@ function closePicker() {
   open.remove();
 }
 
-/** Shows what is written as it will be sent, or the text box again. */
-function togglePreview(button) {
-  const on = button.getAttribute('aria-pressed') !== 'true';
-  button.setAttribute('aria-pressed', String(on));
-  button.textContent = on ? 'Write' : 'Preview';
-  $('preview').hidden = !on;
-  $('text').closest('.fld').hidden = on;
-  if (on) $('preview').innerHTML = bodyHtml($('text').value) || '<span class="sub">Nothing to preview yet.</span>';
-  else $('text').focus();
+/**
+ * The address of a link, asked for over `anchor`: the words selected in `box` become its
+ * label; a link the caret is in is taken off instead.
+ */
+function linkPicker(anchor, box) {
+  const sel = document.getSelection();
+  const kept = sel.rangeCount && box.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
+  const open = document.querySelector('.picker');
+  const again = open && open.previousElementSibling === anchor;
+  closePicker();
+  if (again) return;
+  if (RichText.state(box).link) { RichText.format(box, 'link'); return; }
+  const panel = document.createElement('div');
+  panel.className = 'picker linker s2-float s2-up';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', 'Link');
+  panel.innerHTML = '<input type="url" aria-label="The link\'s address" value="https://" autocomplete="off"><button type="button" class="primary">Add</button>';
+  anchor.after(panel);
+  const input = panel.querySelector('input');
+  const add = () => {
+    const url = input.value.trim();
+    const href = /^(https?:\/\/|mailto:)/i.test(url) ? url : `https://${url}`;
+    if (!/^(https?:\/\/|mailto:)?[^\s/]+\.[^\s]+$/i.test(url)) { input.focus(); return; }
+    closePicker();
+    box.focus();
+    if (kept) { sel.removeAllRanges(); sel.addRange(kept); }
+    RichText.format(box, 'link', href);
+  };
+  panel.querySelector('button').onclick = add;
+  panel.onkeydown = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); closePicker(); box.focus(); }
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); add(); }
+  };
+  input.focus();
+}
+
+/** Formats what is selected in `box` as `kind`: a link asks for its address first. */
+function formatBox(box, kind) {
+  if (kind !== 'link') { RichText.format(box, kind); showFormats(); return; }
+  const anchor = box.id === 'text' ? $('composer').querySelector('[data-format="link"]') : null;
+  if (anchor) linkPicker(anchor, box);
 }
 
 /** Sends what is written at the composer's key, with the files uploaded for it. */
 async function submitComposer(form) {
   const { key } = form.dataset;
-  const text = $('text').value;
+  const box = $('text');
   const list = state.uploads.get(key) || [];
   const status = (s) => { $('sendStatus').textContent = s; };
   if (list.some((u) => u.status === 'error')) { status('A file did not upload: remove it, or attach it again.'); return; }
   if (list.some((u) => u.status === 'uploading')) return;
-  if (!text.trim() && !list.length) { $('text').focus(); return; }
+  if (RichText.empty(box) && !list.length) { box.focus(); return; }
   $('send').disabled = true;
   status('');
   const res = await call('/api/post', 'POST', {
-    channel: state.channel.id, thread: key === 'new' ? undefined : key, text, files: list.map((u) => u.id),
+    channel: state.channel.id, thread: key === 'new' ? undefined : key, html: RichText.html(box), files: list.map((u) => u.id),
   });
   if (!res.ok) {
     $('send').disabled = false;
@@ -740,12 +802,12 @@ async function submitComposer(form) {
     return;
   }
   // The same thread: the box is empty again, and what was sent is under the others.
-  $('text').value = '';
-  if (!$('preview').hidden) togglePreview(form.querySelector('[data-tool="preview"]'));
+  box.replaceChildren();
   renderTray(key);
   $('send').disabled = false;
   await refresh({ toEnd: true });
   $('text')?.focus();
+  showFormats();
 }
 
 // ---- the thread picked: its pane ----------------------------------------------------------------
@@ -761,8 +823,73 @@ function renderMessages({ toEnd = false } = {}) {
   const at = scroll.scrollTop;
   closePicker();
   $('paneTitle').innerHTML = `<h2>${esc(emojify(t.title))}</h2>${t.resolved ? '<span class="tag resolved" title="Adobe marked this resolved. Write again if it is not.">resolved</span>' : ''}`;
-  scroll.innerHTML = `<ol class="messages">${t.messages.map(messageHtml).join('')}</ol>`;
+  scroll.innerHTML = `<ol class="messages">${t.messages.map(messageHtml).join('')}</ol><p class="activity" id="activity" role="status" hidden></p>`;
+  // The message being changed, in its box as it reads.
+  const editing = scroll.querySelector('form.edit .rich');
+  const mine = editing && t.messages.find((m) => m.id === state.editing);
+  if (mine) RichText.set(RichText.setup(editing), bodyHtml(mine.body));
+  renderStatus();
   scroll.scrollTop = toEnd || atEnd ? scroll.scrollHeight : at;
+}
+
+/** About how long `minutes` are, in words: an estimate is no promise to the minute. */
+function about(minutes) {
+  if (minutes < 8) return 'a few minutes';
+  if (minutes < 50) return `about ${Math.round(minutes / 5) * 5} minutes`;
+  if (minutes < 90) return 'about an hour';
+  if (minutes < 20 * 60) return `about ${Math.round(minutes / 60)} hours`;
+  if (minutes < 36 * 60) return 'about a day';
+  return `about ${Math.round(minutes / 60 / 24)} days`;
+}
+
+/**
+ * Adobe's side of what is on screen (`GET /api/status`): over the text box, how many at Adobe
+ * listen and how long an answer usually takes; under the messages, what happens right now:
+ * someone writes, the agent works on an answer, a draft waits to be read.
+ */
+function renderStatus() {
+  const s = state.status || {};
+  const line = $('listening');
+  if (line) {
+    const e = s.estimate;
+    const parts = [];
+    if (s.listening) parts.push(`<span class="live" aria-hidden="true"></span>${s.listening === 1 ? '1 person at Adobe is' : `${s.listening} people at Adobe are`} listening`);
+    // An estimate is for a wait that is still within it: past twice the usual (a "thank you"
+    // nobody answers, a thread Adobe resolved), there is nothing honest left to estimate.
+    const waited = e && e.asked ? (Date.now() - Date.parse(e.asked)) / 60000 : 0;
+    if (e && state.sel === 'new') parts.push(`New threads are usually answered in ${about(e.minutes)}`);
+    else if (e && e.asked && !state.thread?.resolved && waited <= Math.max(2 * e.minutes, 30)) parts.push(`Usually answered in ${about(e.minutes)}`);
+    else if (e && !e.asked) parts.push(`A reply now is usually answered in ${about(e.minutes)}`);
+    line.hidden = !parts.length;
+    line.innerHTML = parts.join('<span class="sep" aria-hidden="true">·</span>');
+  }
+  const now = $('activity');
+  if (!now) return;
+  const names = s.typing || [];
+  let text = '';
+  if (names.length) text = `${esc(names.length > 2 ? `${names[0]} and ${names.length - 1} others` : names.join(' and '))} ${names.length > 1 ? 'are' : 'is'} writing`;
+  else if (s.working) text = 'Adobe\'s agent is working on an answer';
+  else if (s.draft) text = 'Adobe is reviewing a draft of the answer';
+  const scroll = now.parentElement;
+  const atEnd = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
+  now.hidden = !text;
+  now.innerHTML = text ? `<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>${text}` : '';
+  if (text && atEnd) scroll.scrollTop = scroll.scrollHeight;
+}
+
+/** Asks for Adobe's side of what is on screen; a thread that changed is loaded again. */
+async function loadStatus() {
+  const id = state.sel;
+  if (!id || !state.channel || document.visibilityState !== 'visible') return;
+  const q = new URLSearchParams({ channel: state.channel.id });
+  if (id !== 'new') q.set('thread', id);
+  const res = await call(`/api/status?${q}`);
+  if (state.sel !== id || !res.ok) return;
+  const before = state.status?.for === id ? state.status.stamp : null;
+  state.status = { ...res.body, for: id };
+  renderStatus();
+  // eslint-disable-next-line no-use-before-define
+  if (before && res.body.stamp !== before && !state.editing) await refresh();
 }
 
 /** The pane of what is picked: nothing, a new thread being written, or a thread. */
@@ -776,18 +903,23 @@ function renderPane() {
   }
   if (pane.dataset.for === state.sel) return;
   pane.dataset.for = state.sel;
+  state.status = null;
   if (state.sel === 'new') {
     pane.innerHTML = `<div class="title">${back}<span class="fill"><h2>New thread in ${esc(state.channel.name)}</h2></span></div>
       <div class="scroll">${composer('new', 'What is it about? The first line is the thread\'s title.', 'Start thread')}</div>`;
+    fillComposer();
     renderTray('new');
     $('text').focus();
+    loadStatus();
     return;
   }
   pane.innerHTML = `<div class="title">${back}<span class="fill" id="paneTitle"></span></div>
     <div class="scroll"><div class="empty">Loading…</div></div>
     ${composer(state.sel, 'Reply', 'Send')}`;
+  fillComposer();
   renderTray(state.sel);
   if (state.thread) renderMessages({ toEnd: true });
+  loadStatus();
 }
 
 async function loadThread({ toEnd = false } = {}) {
@@ -851,7 +983,7 @@ const react = (id, emoji, remove = false) => call('/api/react', 'POST', {
 
 $('main').addEventListener('click', async (e) => {
   const on = (sel) => e.target.closest?.(sel);
-  if (!on('.picker, [data-pick], [data-tool="emoji"]')) closePicker();
+  if (!on('.picker, [data-pick], [data-tool="emoji"], [data-format="link"]')) closePicker();
   const row = on('[data-thread]');
   if (row) { select(row.dataset.thread); return; }
   if (on('#newThread')) { select('new'); return; }
@@ -863,7 +995,7 @@ $('main').addEventListener('click', async (e) => {
   const more = on('[data-pick]');
   if (more) { emojiPicker(more, REACTIONS, (c) => react(more.dataset.pick, c)); return; }
   const edit = on('[data-edit]');
-  if (edit) { state.editing = edit.dataset.edit; renderMessages(); $('pane').querySelector('form.edit textarea')?.focus(); return; }
+  if (edit) { state.editing = edit.dataset.edit; renderMessages(); $('pane').querySelector('form.edit .rich')?.focus(); return; }
   if (on('[data-cancel]')) { state.editing = null; renderMessages(); return; }
   const del = on('[data-delete]');
   if (del) {
@@ -885,17 +1017,12 @@ $('main').addEventListener('click', async (e) => {
     return;
   }
   const format = on('[data-format]');
-  if (format && $('text')) {
-    const box = $('text');
-    Writing.applyText(box, Writing.formatText(box.value, box.selectionStart, box.selectionEnd, format.dataset.format));
-    return;
-  }
+  if (format && $('text')) { formatBox($('text'), format.dataset.format); return; }
   const tool = on('[data-tool]');
   if (!tool) return;
   if (tool.dataset.tool === 'attach') $('files').click();
-  if (tool.dataset.tool === 'preview') togglePreview(tool);
-  if (tool.dataset.tool === 'mention') { $('text').focus(); insertAtCaret($('text'), '@'); }
-  if (tool.dataset.tool === 'emoji') emojiPicker(tool, COMMON, (c) => { $('text').focus(); insertAtCaret($('text'), c); });
+  if (tool.dataset.tool === 'mention') RichText.insert($('text'), '@');
+  if (tool.dataset.tool === 'emoji') emojiPicker(tool, COMMON, (c) => RichText.insert($('text'), c));
 });
 // A suggestion is taken before the text box loses the focus to it.
 $('main').addEventListener('mousedown', (e) => {
@@ -908,7 +1035,7 @@ $('main').addEventListener('submit', async (e) => {
   if (form.matches('form.edit')) {
     e.preventDefault();
     const res = await call('/api/edit', 'POST', {
-      channel: state.channel.id, id: form.dataset.save, text: form.querySelector('textarea').value,
+      channel: state.channel.id, id: form.dataset.save, html: RichText.html(form.querySelector('.rich')),
     });
     if (res.ok) state.editing = null;
     act(res);
@@ -916,8 +1043,13 @@ $('main').addEventListener('submit', async (e) => {
 });
 
 $('main').addEventListener('input', (e) => {
-  if (e.target.id !== 'text') return;
-  state.drafts.set($('composer').dataset.key, e.target.value);
+  const box = e.target;
+  if (!box.classList?.contains('rich')) return;
+  RichText.rule(box, e);
+  // What is dropped on the box comes as its page wrote it: only what a message has stays.
+  if (e.inputType === 'insertFromDrop') RichText.set(box, box.innerHTML);
+  if (box.id !== 'text') return;
+  state.drafts.set($('composer').dataset.key, RichText.html(box));
   updateSuggest();
 });
 $('main').addEventListener('change', (e) => {
@@ -926,12 +1058,16 @@ $('main').addEventListener('change', (e) => {
   e.target.value = '';
 });
 // The suggestions follow the caret, and close when the text box is left.
-document.addEventListener('selectionchange', () => { if (document.activeElement?.id === 'text' && state.suggest) updateSuggest(); });
-$('main').addEventListener('focusout', (e) => { if (e.target.id === 'text') { state.suggest = null; renderSuggest(); } });
+document.addEventListener('selectionchange', () => {
+  if (document.activeElement?.id !== 'text') return;
+  showFormats();
+  if (state.suggest) updateSuggest();
+});
+$('main').addEventListener('focusout', (e) => { if (e.target.id === 'text') { state.suggest = null; renderSuggest(); showFormats(); } });
 
 $('main').addEventListener('keydown', (e) => {
   const box = e.target;
-  if (box.tagName !== 'TEXTAREA' || e.isComposing || !box.closest('#pane')) return;
+  if (!box.classList?.contains('rich') || e.isComposing) return;
   const s = box.id === 'text' ? state.suggest : null;
   if (s) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -943,25 +1079,33 @@ $('main').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); takeSuggestion(s.at); return; }
     if (e.key === 'Escape') { e.preventDefault(); state.suggest = null; renderSuggest(); return; }
   }
-  // Enter with Ctrl or ⌘ sends; Enter alone is a new line, as in any text.
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); box.closest('form').requestSubmit(); return; }
+  // Enter sends, and Shift+Enter is a new line; on a touch screen, whose keyboard has no
+  // Shift+Enter, Enter is the new line and the button sends. Ctrl or ⌘ with Enter always sends.
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (e.metaKey || e.ctrlKey || (ENTER_SENDS && !e.shiftKey)) box.closest('form').requestSubmit();
+    else RichText.newline(box);
+    return;
+  }
+  if (e.key === 'Escape' && box.closest('form.edit')) { state.editing = null; renderMessages(); return; }
   const kind = Writing.formatKind(e);
   if (!kind) return;
   e.preventDefault();
-  Writing.applyText(box, Writing.formatText(box.value, box.selectionStart, box.selectionEnd, kind));
+  formatBox(box, kind);
 });
 
-// Files pasted into the text box, or dropped on the thread, are attached; a link pasted over
-// words makes them its label.
+// Files pasted into the text box, or dropped on the thread, are attached; what else is pasted
+// keeps the formatting a message has, and a link pasted over words makes them its label.
 $('main').addEventListener('paste', (e) => {
-  if (e.target.tagName !== 'TEXTAREA' || !e.target.closest('#pane')) return;
+  const box = e.target.closest?.('.rich');
+  if (!box) return;
   const files = [...(e.clipboardData?.files || [])];
-  if (files.length && e.target.id === 'text') {
+  if (files.length && box.id === 'text' && !e.clipboardData.getData('text/plain')) {
     e.preventDefault();
     addFiles($('composer').dataset.key, files);
     return;
   }
-  Writing.pasteLink(e);
+  RichText.paste(box, e);
 });
 const dragged = (e) => $('composer') && [...(e.dataTransfer?.types || [])].includes('Files');
 $('main').addEventListener('dragover', (e) => {
@@ -1027,7 +1171,8 @@ async function poll() {
   await refresh();
 }
 setInterval(poll, POLL_MS);
-document.addEventListener('visibilitychange', poll);
+setInterval(loadStatus, STATUS_MS);
+document.addEventListener('visibilitychange', () => { poll(); loadStatus(); });
 window.addEventListener('opspile:signedin', () => (state.data ? poll() : start()));
 
 start();

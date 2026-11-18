@@ -2554,12 +2554,13 @@ own page, its own D1 database (`portal/migrations`) and nothing else. To the inb
 flowchart LR
   C[Customer<br/>signed in by Access] --> PW[portal Worker<br/>page, API, D1]
   PW -- "events (OPSPILE: PortalSource)" --> IN[inbox Worker<br/>pile 1, then the queue]
-  IN -- "post, edit, react, open, decline,<br/>resend (PORTAL: PortalPlatform)" --> PW
+  IN -- "post, edit, react, typing, open,<br/>decline, resend (PORTAL: PortalPlatform)" --> PW
+  PW -. "status (OPSPILE: PortalSource)" .-> IN
 ```
 
 Neither Worker reads the other's database. Each reaches the other through a service binding to
 one named entrypoint, which only a Worker of the same account can bind: the portal's `OPSPILE` is
-the inbox's `PortalSource` (`src/portalentry.js`: `events`, `technologies`), the inbox's `PORTAL`
+the inbox's `PortalSource` (`src/portalentry.js`: `events`, `technologies`, `status`), the inbox's `PORTAL`
 the portal's `PortalPlatform` (`src/portal/platform.js`). Both bindings are optional, so either
 Worker deploys without the other: an unbound portal keeps what happens in it in its outbox, and
 an unbound inbox shows the portal's threads it has, and says that it cannot post there.
@@ -2605,14 +2606,27 @@ managers see it on their team's page.
 **In the channel.** The customer's page is the personal inbox without the rest: the lobby's
 channels (a picker when there is more than one), a channel's threads with what is new to you
 and what Adobe resolved, and the thread picked, with a reply box. A thread is its first message
-(its first line is the title) and the replies to it; messages are markdown, and one's own can be
+(its first line is the title) and the replies to it, shown as a **conversation**: the
+customer's own people's messages on the right, a bubble each (one's own without a name),
+Adobe's on the left, people and the app alike. Messages are markdown, and one's own can be
 edited and deleted. Reactions are emoji; Adobe's ✅ on a thread's first message shows it
 **resolved**, and writing again reopens it in the inbox as on any platform. The page asks for
-what is new every 15 seconds while it is on screen.
+the channel's threads every 15 seconds while it is on screen, and for the open thread's
+status every four (see [Listening and the next answer](#listening-and-the-next-answer)),
+which says when the thread changed: only then is it loaded again.
 
-**Writing** there is as in the inbox. The text box takes Slack's formatting shortcuts, with a
-toolbar for them (`ui/writing.js`, which the inbox's reply box uses too), and shows what will
-be sent (Preview). `@` suggests the people of the channel (the lobby's who signed in, and the
+**Writing** there is **rich text** (`ui/richtext.js`): what is bold is bold in the box, a list
+is a list, and nobody types markdown's marks, though a line that starts with `- `, `1. `, `> `
+or three backticks becomes what it would be in markdown. The box takes Slack's formatting
+shortcuts, with a toolbar for them (`ui/writing.js` names the keys, as for the inbox's reply
+box). **Enter sends** and Shift+Enter starts a new line; on a touch screen, whose keyboard has
+no Shift+Enter, Enter is the new line and the button sends. The page sends the box's HTML,
+and the portal makes markdown of it (`src/portal/richtext.js`) through the syntax tree that
+Teams' HTML goes through (`src/html.js`): what was typed stays as typed (a `*` is escaped),
+and nothing of the HTML is kept, no image, no script, no link but to the web or a mail address.
+A message is stored, delivered and shown as markdown, as before; `POST /api/post` still takes
+`text` (markdown) from anything that is not the page. `@` suggests the people of the channel
+(the lobby's who signed in, and the
 Adobe people who wrote there), and a message **mentions** those whose `@Name` it has
 (`messages.mentions`): the thread says "@ you" in their list until they read it. `:` suggests
 emoji, by the names the inbox knows, and a `:name:` typed out shows as its emoji. **Files** are
@@ -2678,6 +2692,54 @@ in the same batch as the change, then sent through `OPSPILE.events` behind the r
 made it, and by the portal's cron (every other minute) for what that left: at least once, the
 inbox's pile-1 key making a second delivery the same object. Delivered events are deleted after
 a week.
+
+### Listening and the next answer
+
+A customer who writes into a portal sees nobody: no presence, no channel full of people. The
+thread says what Slack would have shown them, and no more. The portal asks the inbox
+(`OPSPILE.status`, `src/portalstatus.js`) for **Adobe's side** of the thread on screen, at most
+once in ten seconds per thread however many pages ask, and adds what it knows itself
+(`GET /api/status`):
+
+| The page shows | From | What it is |
+|---|---|---|
+| "14 people at Adobe are listening" | the inbox | The staff who have the thread in their inbox: the members of its teams (the one its channel is filed under, those the channel is shared with, those that follow a technology it shows, `teamsOf`) and the people who follow such a technology themselves, each once. For a thread about to be written, the channel's teams. **A number, never who**: no name, no team |
+| "Usually answered in about 2 hours" | the inbox | The typical wait until Adobe's next post, from the wait model below. While a customer waits, for their wait (and gone once the wait is past twice that, or the thread is resolved: a "thank you" nobody answers has no estimate); otherwise for a reply written now, or a new thread |
+| "Grace Hopper is writing" | the portal | Someone at Adobe types a reply in the inbox, which tells the portal every four seconds (`POST /api/typing`, `PORTAL.typing`, the `typing` table); it shows for eight seconds after the last word, and goes when their message arrives. Only portal threads are told: Slack and Teams take no such word from an app |
+| "Adobe's agent is working on an answer" | the inbox | The thread agent's turn is `working` (`agent_live`), and not on a sidebar message, which is the team's own. Only that it works: what it does stays in the inbox |
+| "Adobe is reviewing a draft of the answer" | the inbox | The thread has a draft (`drafts`), an agent's or a person's, while the customer waits. Not what it says |
+
+Nothing of this is in pile 1 or pile 2: it is the present, asked for, and gone when nobody asks.
+It is a thread's own people's: the portal answers only for a thread of the channel asked for,
+which is one of the caller's lobby (`404` otherwise, as `GET /api/thread`), and asks the inbox
+nothing before it knows that.
+
+**The wait model** (`src/wait-model.js`) estimates the customer's **wait**: from their first
+message since Adobe's last post to Adobe's next post in the conversation. That is not the time
+an expert takes to join (`src/response-model.js`, the same model, measures that one for the
+expert list): a customer does not care who answers. Two things say most about a wait:
+
+- its **phase**, how the conversation stood when the customer wrote: `new` (Adobe has not
+  written yet), `live` (Adobe wrote in the last 30 minutes), `day` (in the last day) or `old`.
+  A live conversation is answered in minutes, a new thread in hours;
+- the **team** the channel is filed under, and its **clock**: the hours and weekdays its people
+  post in, so that a question at their night waits for their morning.
+
+It is the response model with other keys, unchanged: the phase where that has the channel, the
+team where it has the person, minutes counted on the team's clock and both shrunk towards
+everyone's, so a team with few waits says what everyone's say. The inbox fits it from the last
+180 days' conversations and keeps it for an hour per isolate; after that it answers with the
+one it has and fits the next behind the answer, so only an isolate's first status waits for
+the read.
+
+Checked against production, walking forward a day at a time over four weeks (1,836 waits,
+`npm run response:waits`), it beats one number for everyone: the mean error on the log of the
+minutes is 2.00 against 2.35 (−0.35, 95% interval −0.44 to −0.29, resampled by channel), and
+58% of waits end within the estimate. The error is still large, a factor of seven, because
+most of what decides a wait is not in the data: whether the question is hard, whether the one
+who knows is at lunch. So the page says "usually" and "about", rounds to what a person would
+say (a few minutes, about an hour, about a day), and never counts down. Per-channel and
+per-person variants did no better; the phase alone does most of it (2.01).
 
 **What it does not do yet.** Nothing is mailed: not the invitations, and not a notice that
 Adobe answered or mentioned somebody, so a customer sees an answer when they look. No channel

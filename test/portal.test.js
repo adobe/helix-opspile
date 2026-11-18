@@ -11,6 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { api } from '../src/portal/api.js';
 import { deliver, pruneEvents } from '../src/portal/events.js';
@@ -21,6 +22,7 @@ import {
   portalUserId,
 } from '../src/portal/ids.js';
 import * as platform from '../src/portal/platform.js';
+import { MAX_HTML, richMarkdown } from '../src/portal/richtext.js';
 import {
   companyFromDomain, mentionsIn, nameFromMail, titleOf,
 } from '../src/portal/store.js';
@@ -280,6 +282,55 @@ describe('the customer portal: a channel', () => {
     })).status, 404);
     // Someone of the domain who was not invited reads nothing either.
     assert.equal((await call(env, 'cy@customer.example', 'GET', `/api/threads?channel=${channel}`)).status, 403);
+  });
+
+  it('says nothing of a thread to another customer who knows its id', async () => {
+    const { env, channel } = await opened();
+    const { root } = await platform.post(env, {
+      domain: 'customer.example', channel, text: 'Welcome!', author: STAFF,
+    });
+    const asked = [];
+    env.OPSPILE.status = async (args) => {
+      asked.push(args);
+      return {
+        listening: 3, estimate: null, working: true, draft: true,
+      };
+    };
+    // Another customer, with a channel of its own.
+    await call(env, EVE, 'GET', '/api/me');
+    await call(env, EVE, 'POST', '/api/lobby/request', {});
+    const theirs = (await platform.open(env, { domain: 'other.example', name: 'other', by: STAFF })).channel.id;
+    const own = await platform.post(env, {
+      domain: 'other.example', channel: theirs, text: 'Welcome, too!', author: STAFF,
+    });
+    // Adobe writes in the first customer's thread: its people see it.
+    assert.deepEqual(await platform.typing(env, {
+      domain: 'customer.example', channel, root, author: STAFF,
+    }), { ok: true });
+    const seen = await call(env, ADA, 'GET', `/api/status?channel=${channel}&thread=${root}`);
+    assert.deepEqual([seen.status, seen.body.typing, seen.body.working], [200, ['Sam Staff'], true]);
+    // The other customer, in their own channel, with that thread's id: no such thread, as
+    // GET /api/thread says, and the inbox is not asked about it.
+    asked.length = 0;
+    const path = `channel=${theirs}&thread=${root}`;
+    assert.equal((await call(env, EVE, 'GET', `/api/thread?${path}`)).status, 404);
+    const leaked = await call(env, EVE, 'GET', `/api/status?${path}`);
+    assert.equal(leaked.status, 404);
+    assert.doesNotMatch(JSON.stringify(leaked.body), /Sam|typing|stamp|working/);
+    assert.deepEqual(asked, []);
+    // Nor with the first customer's channel, which is not theirs.
+    assert.equal((await call(env, EVE, 'GET', `/api/status?channel=${channel}&thread=${root}`)).status, 404);
+    // A reply's id is no thread's either; their own thread answers, with nobody writing.
+    const reply = await platform.post(env, {
+      domain: 'other.example', channel: theirs, root: own.root, text: 'More.', author: STAFF,
+    });
+    assert.equal((await call(env, EVE, 'GET', `/api/status?channel=${theirs}&thread=${reply.id}`)).status, 404);
+    const mine = await call(env, EVE, 'GET', `/api/status?channel=${theirs}&thread=${own.root}`);
+    assert.deepEqual([mine.status, mine.body.typing], [200, []]);
+    // And nobody is said to write in a thread through a channel that does not have it.
+    assert.equal((await platform.typing(env, {
+      domain: 'other.example', channel: theirs, root, author: STAFF,
+    })).status, 404);
   });
 
   it('holds threads: Adobe and the customer write, read, react, edit and delete', async () => {
@@ -606,19 +657,111 @@ describe('the customer portal: its page', () => {
     const html = portalPage(PAGES['portal.html'], Object.fromEntries(PORTAL_FILES.map((f) => [f, SCRIPTS[f]])));
     assert.doesNotMatch(html, /<script[^>]* src=|<link rel="stylesheet"/);
     assert.ok(html.includes('globalThis.Writing = '));
+    assert.ok(html.includes('globalThis.RichText = '));
     assert.ok(html.includes('var Markdown='));
     assert.doesNotMatch(html, /PORTAL_EMOJI \*\/ \{ names: \{\}/);
     assert.match(html, /const EMOJI = \{"names":\{"100":"💯"/);
     assert.throws(() => portalPage('<p>no script</p>', {}), /PORTAL_EMOJI/);
   });
 
-  it('writes as the inbox does: its formatting is the inbox\'s, its files are checked first', () => {
+  it('is put together by the Worker from every file it names', () => {
+    // The Worker imports `cloudflare:workers`, so Node reads it as text: a file the page
+    // names and the Worker does not hand over fails only when the Worker is deployed.
+    const worker = readFileSync(new URL('../src/portal/worker.js', import.meta.url), 'utf8');
+    for (const name of PORTAL_FILES) {
+      assert.match(worker, new RegExp(`from '../../ui/${name.replace('.', '\\.')}' with \\{ type: 'text' \\}`), name);
+      assert.match(worker, new RegExp(`'${name.replace('.', '\\.')}': \\w+,`), name);
+    }
+  });
+
+  it('writes rich text with the inbox\'s shortcuts, and checks its files first', () => {
     const js = SCRIPTS['portal.js'];
-    assert.match(js, /Writing\.formatText\(box\.value, box\.selectionStart, box\.selectionEnd, kind\)/);
+    // The inbox's shortcuts (ui/writing.js), on a rich text box (ui/richtext.js): what is
+    // sent is the box's HTML, which the portal makes markdown of.
+    assert.match(js, /const kind = Writing\.formatKind\(e\);/);
+    assert.match(js, /formatBox\(box, kind\);/);
+    assert.match(js, /html: RichText\.html\(box\), files: list\.map/);
+    assert.doesNotMatch(js, /<textarea[^>]* id="text"|form\.querySelector\('textarea'\)/);
+    // Enter sends where there is a keyboard, Shift+Enter is a new line; Ctrl or ⌘ always sends.
+    assert.match(js, /const ENTER_SENDS = matchMedia\('\(hover: hover\)'\)\.matches;/);
+    assert.match(js, /if \(e\.metaKey \|\| e\.ctrlKey \|\| \(ENTER_SENDS && !e\.shiftKey\)\) box\.closest\('form'\)\.requestSubmit\(\);\n\s+else RichText\.newline\(box\);/);
+    // A suggestion that is open takes Enter first.
+    assert.ok(js.indexOf("if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); takeSuggestion(s.at); return; }") < js.indexOf('ENTER_SENDS && !e.shiftKey'));
     assert.match(js, /Markdown\.suggestMentions\(/);
     assert.match(js, /Markdown\.matchEmoji\(EMOJI\.names, EMOJI\.aliases/);
     // Nothing is sent while a file is still on its way, or did not arrive.
     assert.match(js, /if \(list\.some\(\(u\) => u\.status === 'error'\)\)/);
     assert.match(js, /if \(list\.some\(\(u\) => u\.status === 'uploading'\)\) return;/);
+  });
+
+  it('shows the customer\'s own people on the right, Adobe on the left, and what Adobe does now', () => {
+    const js = SCRIPTS['portal.js'];
+    const css = SCRIPTS['spectrum-portal.css'];
+    assert.match(js, /const side = ours \? 'ours' : 'adobe';/);
+    assert.match(js, /<div class="body\$\{ours \? ' bubble' : ''\}">/);
+    assert.match(css, /\.msg\.ours \{ flex-direction: row-reverse; \}/);
+    assert.match(css, /\.msg \.bubble \{ width: fit-content; \}/);
+    // Who listens and the usual wait over the text box; who writes, the agent, a draft under
+    // the messages, the first of them that is so.
+    assert.match(js, /people at Adobe are`\} listening/);
+    assert.match(js, /Usually answered in \$\{about\(e\.minutes\)\}/);
+    assert.match(js, /if \(names\.length\) text = .* writing`;\n\s+else if \(s\.working\) text = 'Adobe\\'s agent is working on an answer';\n\s+else if \(s\.draft\) text = /);
+    // The thread is loaded again when its stamp changes, not on every look.
+    assert.match(js, /if \(before && res\.body\.stamp !== before && !state\.editing\) await refresh\(\);/);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{ \.dots i \{ animation: none; \} \}/);
+  });
+});
+
+describe('the customer portal: rich text', () => {
+  it('becomes the markdown that shows what the box showed', () => {
+    assert.equal(richMarkdown('<p>Hello <strong>bold</strong>, <em>it</em>, <s>gone</s> and <code>x_y</code></p>'), 'Hello **bold**, *it*, ~~gone~~ and `x_y`');
+    assert.equal(richMarkdown('Intro<ul><li>one</li><li>two<ol><li>deep</li></ol></li></ul>'), 'Intro\n\n- one\n- two\n  1. deep');
+    assert.equal(richMarkdown('<blockquote>quoted<br>more</blockquote><p>after</p>'), '> quoted\n> more\n\nafter');
+    assert.equal(richMarkdown('<pre>const a = 1;<br>  b();</pre>'), '```\nconst a = 1;\n  b();\n```');
+    assert.equal(richMarkdown('<p>see <a href="https://a.example/x">this</a></p>'), 'see [this](https://a.example/x)');
+    // A mention is its name, which the portal finds among the channel's people.
+    assert.equal(richMarkdown('<p><span class="mention" contenteditable="false">@Sam Staff</span>&nbsp;hi</p>'), '@Sam Staff hi');
+    // What the browser writes for spaces and an empty element's caret was not typed.
+    assert.equal(richMarkdown('<p>a&nbsp;b\u200b&nbsp;</p><p><br></p>'), 'a b');
+    assert.equal(richMarkdown('<p><br></p>'), '');
+    assert.equal(richMarkdown(undefined), '');
+  });
+
+  it('keeps what was typed as typed: markdown\'s marks are text', () => {
+    assert.equal(richMarkdown('<p>2 * 3 * 4 and _not_ italic</p>'), '2 \\* 3 \\* 4 and \\_not\\_ italic');
+    assert.equal(richMarkdown('<p># no heading</p>'), '\\# no heading');
+    assert.equal(richMarkdown('<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>'), '\\<script>alert(1)\\</script>');
+  });
+
+  it('keeps nothing that loads or runs', () => {
+    const md = richMarkdown(`<p onclick="x()">a <img src="https://tracker.example/p.png" onerror="x()"> b</p>
+      <script>alert(1)</script><style>p { color: red }</style><iframe src="https://evil.example"></iframe>
+      <p><a href="javascript:alert(1)">click</a> <a href="data:text/html,x">data</a> <a href="mailto:a@b.example">mail</a></p>`);
+    assert.doesNotMatch(md, /tracker|script|alert|color|evil|javascript|data:|onclick|onerror|!\[/);
+    assert.match(md, /click data \[mail\]\(mailto:a@b\.example\)/);
+    // Too long to read is refused, not cut.
+    assert.equal(richMarkdown('x'.repeat(MAX_HTML + 1)), null);
+  });
+
+  it('is what a message is written and changed in', async () => {
+    const { env, channel } = await opened();
+    const post = await call(env, ADA, 'POST', '/api/post', {
+      channel, html: '<p>The <strong>cache</strong> is stale</p><ul><li>since <em>Monday</em></li></ul><img src="https://tracker.example/p.png">',
+    });
+    assert.equal(post.status, 200, JSON.stringify(post.body));
+    const read = async () => (await call(env, ADA, 'GET', `/api/thread?channel=${channel}&thread=${post.body.root}`)).body.thread;
+    let thread = await read();
+    assert.equal(thread.messages[0].body, 'The **cache** is stale\n\n- since *Monday*');
+    // The first line is the thread's title, without its formatting.
+    assert.equal(thread.title, 'The cache is stale');
+    const edit = await call(env, ADA, 'POST', '/api/edit', { channel, id: post.body.id, html: '<p>The cache is <code>stale</code></p>' });
+    assert.equal(edit.status, 200, JSON.stringify(edit.body));
+    thread = await read();
+    assert.equal(thread.messages[0].body, 'The cache is `stale`');
+    // Nothing typed is nothing to send, and markdown as text still is (the inbox's side).
+    assert.equal((await call(env, ADA, 'POST', '/api/post', { channel, html: '<p><br></p>' })).status, 400);
+    assert.equal((await call(env, ADA, 'POST', '/api/post', { channel, html: 'x'.repeat(MAX_HTML + 1) })).status, 400);
+    const plain = await call(env, ADA, 'POST', '/api/post', { channel, thread: post.body.root, text: 'Plain **markdown**' });
+    assert.equal((await read()).messages.find((m) => m.id === plain.body.id).body, 'Plain **markdown**');
   });
 });

@@ -170,16 +170,30 @@ const fromHast = {
 };
 
 /**
- * Teams message HTML to markdown.
+ * What a person's own rich text may say (the customer portal's text box): no image, since a
+ * message's images are its files, and no link but to the web or a mail address; its words stay.
+ */
+const typed = {
+  ...fromHast,
+  img: () => undefined,
+  a: (state, node) => (/^(https?:\/\/|mailto:)/i.test(String(node.properties.href || ''))
+    ? fromHast.a(state, node) : state.all(node)),
+};
+
+/**
+ * Teams message HTML to markdown. With `typed`, the HTML is a text box's, which a person (or
+ * whatever writes in their name) sends: its images and its links to anything but the web or a
+ * mail address are left out.
  *
  * @param {string} html
+ * @param {{ typed?: boolean }} [options]
  */
-export function htmlToMarkdown(html) {
+export function htmlToMarkdown(html, options = {}) {
   if (!html) {
     return '';
   }
   const tree = fromHtml(String(html), { fragment: true });
   prepare(tree);
-  const mdast = toMdast(tree, { handlers: fromHast });
+  const mdast = toMdast(tree, { handlers: options.typed ? typed : fromHast });
   return writeMarkdown(mdast);
 }

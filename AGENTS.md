@@ -58,8 +58,15 @@ code and docs, is the decision model that labels threads and channels.
   `npm run portal:dev` previews it (README, "Customer portal"). What people upload there (files,
   pictures, logos) is served so that a browser runs none of it (`src/portal/files.js`,
   `openThreadFile` in `src/fileview.js`): keep it so, and never serve SVG or HTML inline.
-- `ui/writing.js` (the global `Writing`) is the markdown formatting of a text box, the inbox's
-  and the portal's: change a shortcut there, not in either page.
+- `ui/writing.js` (the global `Writing`) is the markdown formatting of a text box and the keys
+  that format, the inbox's and the portal's: change a shortcut there, not in either page. The
+  portal's box is rich text (`ui/richtext.js`, the global `RichText`): it sends HTML, and
+  `src/portal/richtext.js` makes the markdown a message is kept in, through `src/html.js`'s
+  tree. Nothing but that markdown is stored or shown: never render what a box sent as HTML.
+- What a customer is told of Adobe's side of a thread (`src/portalstatus.js`: how many listen,
+  the typical wait, the agent at work, a draft) is a number or a yes, never who or what: no
+  name, team, agent step or draft text goes to the portal. `src/wait-model.js` is the estimate;
+  `npm run response:waits` checks it against production before it is changed.
 - Generated files: `src/emoji.js` (from `scripts/emoji.mjs`, do not edit it by hand),
   `src/ui-markdown.bundle.js`, `src/ui-editor.bundle.js` (CodeMirror, the knowledge-base
   editor's text field) and `src/ui-highlight.bundle.js` (@pierre/highlights, the code
