@@ -1324,11 +1324,11 @@ function filterCards() {
   syncList();
   if (simple()) {
     const html = simpleCustomers();
-    const box = $('filters');
+    const box = $('facets');
     if (box.__html !== html) { box.innerHTML = html; box.__html = html; }
     return;
   }
-  $('filters').__html = undefined;
+  $('facets').__html = undefined;
   const cards = viewFacets().filter((f) => !f.into).map((f) => {
     const parts = cardFacets(f.id);
     const on = parts.some((x) => filterCount(x.id));
@@ -1336,8 +1336,9 @@ function filterCards() {
     return `<div class="card${on ? ' active' : ''}" data-f="${f.id}"><h3>${esc(f.title)}${on ? '<span class="clear" data-clear="1">Clear</span>' : ''}${at}</h3>
       ${parts.map((x) => `${x === f ? '' : `<div class="fg">${esc(x.title)}</div>`}${facetRows(x)}`).join('')}</div>`;
   });
-  // Only the cards whose counts or selection changed are rebuilt.
-  const box = $('filters');
+  // Only the cards whose counts or selection changed are rebuilt. They are in `#facets`, which
+  // flows them into as many columns as the filters' width has room for (ui/spectrum-inbox.css).
+  const box = $('facets');
   const old = [...box.children];
   if (old.length !== cards.length || old.some((c) => c.__html === undefined)) {
     box.innerHTML = cards.join('');
@@ -4534,6 +4535,7 @@ const ICON = (paths) => `<svg viewBox="0 0 16 16" aria-hidden="true" fill="none"
 const DRAFT_ICONS = {
   draft: ICON('<path d="M9.2 1.8H4.3a1 1 0 0 0-1 1v10.4a1 1 0 0 0 1 1h7.4a1 1 0 0 0 1-1V5.3z"/><path d="M9.2 1.8v3.5h3.5M5.6 8.5h4.8M5.6 11h3"/>'),
   view: ICON('<path d="M1.5 8S3.9 3.5 8 3.5 14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>'),
+  pin: ICON('<path d="M5.5 1.8h5M6.3 1.8v4.4L3.8 9h8.4L9.7 6.2V1.8M8 9v5.2"/>'),
   hide: ICON('<path d="M6.4 3.7A6.6 6.6 0 0 1 8 3.5c4.1 0 6.5 4.5 6.5 4.5a11 11 0 0 1-1.7 2.3M4.3 4.9A10.6 10.6 0 0 0 1.5 8S3.9 12.5 8 12.5a6.4 6.4 0 0 0 3.5-1"/><path d="M6.6 6.6a2 2 0 0 0 2.8 2.8M2 2l12 12"/>'),
   edit: ICON('<path d="M10.9 2.3a1.5 1.5 0 0 1 2.1 2.1L5.6 11.8l-2.9.8.8-2.9z"/><path d="M9.6 3.6l2.1 2.1M8.5 13.7h5"/>'),
   add: ICON('<path d="M2.5 3.5h9M2.5 7h9M2.5 10.5h5M12 9.5v4.5M9.8 11.8h4.4"/>'),
@@ -4547,14 +4549,18 @@ const draftTool = (act, icon, label, title, more = '') => `<button class="ico ${
 /**
  * The draft line's markup: who saved draft `d` and when, how it starts, or all of it once
  * viewed (`open`), and what to do with it. Its tools are icons: View draft (opens and closes
- * it), `editable` (taking it into the reply box: Edit, or Add to reply after your `own` text)
+ * it; open only while the pointer rests on it, `peek`, it is Keep draft open instead), `editable` (taking it into the reply box: Edit, or Add to reply after your `own` text)
  * and `discard`. Sending it is labelled, the person's own Send as me last: `asBot` and `asMe`.
  * `note` says where the draft stands; `thread` is the draft's, for the images it shows.
  */
 function draftLine(d, {
-  thread = '', open = false, own = false, note = '', editable = false, asMe = false, asBot = false, discard = false,
+  thread = '', open = false, peek = false, own = false, note = '', editable = false, asMe = false, asBot = false, discard = false,
 } = {}) {
-  const tools = [draftTool('view', open ? 'hide' : 'view', open ? 'Hide draft' : 'View draft', open ? 'Hide draft: show only how it starts' : 'View draft: all of it, here', ` aria-expanded="${open}" aria-controls="draft-text"`)];
+  const view = ` aria-expanded="${open}" aria-controls="draft-text"`;
+  let tools;
+  if (open && peek) tools = [draftTool('view', 'pin', 'Keep draft open', 'Keep draft open: all of it stays, wherever the pointer goes, until you hide it', `${view} aria-pressed="false"`)];
+  else if (open) tools = [draftTool('view', 'hide', 'Hide draft', 'Hide draft: show only how it starts', view)];
+  else tools = [draftTool('view', 'view', 'View draft', 'View draft: all of it, here, until you hide it', view)];
   if (editable) {
     tools.push(own
       ? draftTool('edit', 'add', 'Add to reply', 'Add to reply: the draft after what you wrote, to edit it')
@@ -4602,6 +4608,7 @@ function renderDraftBar(key, force = false) {
     html = draftLine(d, {
       thread: key,
       open: draftOpen.has(key),
+      peek: draftPeek.key === key,
       own: Boolean(box && !took && c?.text.trim()),
       note,
       editable: Boolean(box && !took && !readonly),
@@ -4684,8 +4691,10 @@ function resizeDraft(el, from) {
 
 /**
  * What the draft line answers: clicks and Escape, and the pointer resting on it. View draft opens
- * all of the draft, the same with a mouse and on touch; a mouse resting on the line for
- * HOVER_DELAY_MS opens it too, until it leaves (`draftPeek`). Opening grows the line upwards,
+ * all of the draft, the same with a mouse and on touch, and it stays open (in the thread, the
+ * sidebar, wherever the pointer goes) until Hide draft or Escape; a mouse resting on the line
+ * for HOVER_DELAY_MS opens it too, until it leaves (`draftPeek`), and the button then keeps it
+ * open: Keep draft open, which was Hide draft and closed what the pointer had just opened. Opening grows the line upwards,
  * so it stays under the pointer instead of leaving it, closing and opening again, over and over.
  */
 function wireDraftBar(el) {
@@ -4716,10 +4725,13 @@ function wireDraftBar(el) {
     if (!b || b.disabled) return;
     const act = b.dataset.draft;
     if (act === 'view') {
-      // It does what it says: Hide draft closes a line the pointer opened, too, until it comes back.
+      // It does what it says: opened by the pointer, it is Keep draft open, which keeps it open.
       clearTimeout(draftPeek.timer);
+      const peeked = draftPeek.key === key;
       draftPeek.key = null;
-      if (draftOpen.has(key)) draftOpen.delete(key); else draftOpen.add(key);
+      if (peeked) draftOpen.add(key);
+      else if (draftOpen.has(key)) draftOpen.delete(key);
+      else draftOpen.add(key);
       renderDraftBar(key);
       el.querySelector('.view')?.focus();
       return;
@@ -8191,6 +8203,114 @@ function wireSideRoom() {
   panel.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); exitSide(); } };
 }
 
+// ---------------------------------------------------------------- the columns' widths
+/*
+ * Wide screens come in bands (ui/spectrum-inbox.css, "Wide screens"): from 2400px (a 2560px
+ * ultrawide), 3200px (megawide, 3440px) and 4800px (hyperwide, 5120px) the filters flow into
+ * more columns and the list takes a smaller share. The grips between the filters, the list, the
+ * thread and the sidebar size them, by dragging or with the arrow keys (Shift: by more), and a
+ * double click gives the column back to the band. The widths are kept per band in localStorage
+ * (`opspile.columns`), so a laptop's screen and the ultrawide it is plugged into each keep their
+ * own; the stylesheet keeps the thread from getting narrower than --pane-least either way.
+ */
+const BANDS = [['hyperwide', 4800], ['megawide', 3200], ['ultrawide', 2400]]
+  .map(([name, px]) => [name, matchMedia(`(min-width: ${px}px)`)]);
+const COLUMNS_KEY = 'opspile.columns';
+const COLUMN_STEP = 16;
+// Each grip's column: the element whose width it sets, which way a drag grows it, its least.
+const GRIPS = {
+  filters: { grip: 'grip-filters', col: 'filters', grows: 1, least: 240 },
+  list: { grip: 'grip-list', col: 'threads', grows: 1, least: 380 },
+  side: { grip: 'grip-side', col: 'side', grows: -1, least: 360 },
+};
+const bandOf = () => BANDS.find(([, mq]) => mq.matches)?.[0] || 'wide';
+const storedColumns = () => { try { return JSON.parse(localStorage.getItem(COLUMNS_KEY) || '{}'); } catch { return {}; } };
+/** The band's widths, `{ filters, list, side }` in px, with `name` set to `width` (or unset: null). */
+function keepColumn(name, width) {
+  const all = storedColumns();
+  const band = { ...all[bandOf()] };
+  if (width == null) delete band[name]; else band[name] = Math.round(width);
+  all[bandOf()] = band;
+  try { localStorage.setItem(COLUMNS_KEY, JSON.stringify(all)); } catch { /* storage is off */ }
+  return band;
+}
+/** Sizes the columns as `sizes` says (`main.sized-f`, `.sized-l`, `.sized-s`); the rest are the band's. */
+function sizeColumns(sizes = storedColumns()[bandOf()] || {}) {
+  const main = document.querySelector('main');
+  for (const name of Object.keys(GRIPS)) {
+    const w = sizes[name];
+    main.classList.toggle(`sized-${name[0]}`, w > 0);
+    if (w > 0) main.style.setProperty(`--user-${name}-w`, `${w}px`);
+    else main.style.removeProperty(`--user-${name}-w`);
+  }
+}
+/** The most a column may be: the filters half the page, the list what leaves the thread its least, the sidebar half the thread's column. */
+function mostColumn(name) {
+  const main = document.querySelector('main').getBoundingClientRect();
+  if (name === 'filters') return main.width / 2;
+  const pane = $('pane').getBoundingClientRect();
+  const sideW = $('side').hidden ? 0 : $('side').getBoundingClientRect().width;
+  if (name === 'side') return (pane.width + sideW) / 2;
+  return $('threads').getBoundingClientRect().width + pane.width - 440;
+}
+const columnWidth = (name) => $(GRIPS[name].col).getBoundingClientRect().width;
+/** The grips say how wide their columns are (`aria-valuenow`), for a screen reader. */
+function syncGrips() {
+  for (const [name, g] of Object.entries(GRIPS)) {
+    const el = $(g.grip);
+    if (!el) continue;
+    el.setAttribute('aria-valuenow', String(Math.round(columnWidth(name))));
+    el.setAttribute('aria-valuemin', String(g.least));
+    el.setAttribute('aria-valuemax', String(Math.round(Math.max(g.least, mostColumn(name)))));
+  }
+}
+function setColumn(name, width) {
+  const w = Math.max(GRIPS[name].least, Math.min(width, mostColumn(name)));
+  sizeColumns({ ...storedColumns()[bandOf()], [name]: w });
+  return w;
+}
+function wireColumns() {
+  const main = document.querySelector('main');
+  for (const [name, g] of Object.entries(GRIPS)) {
+    const el = $(g.grip);
+    if (!el) continue;
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      const from = { x: e.clientX, width: columnWidth(name) };
+      let width = from.width;
+      main.classList.add('resizing');
+      el.classList.add('dragging');
+      const follow = (m) => { width = setColumn(name, from.width + (m.clientX - from.x) * g.grows); };
+      const end = () => {
+        el.removeEventListener('pointermove', follow);
+        main.classList.remove('resizing');
+        el.classList.remove('dragging');
+        if (Math.abs(width - from.width) >= 1) keepColumn(name, columnWidth(name));
+        syncGrips();
+      };
+      el.addEventListener('pointermove', follow);
+      el.addEventListener('lostpointercapture', end, { once: true });
+    });
+    el.addEventListener('dblclick', () => { sizeColumns(keepColumn(name, null)); syncGrips(); });
+    el.addEventListener('keydown', (e) => {
+      const by = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+      if (!by) return;
+      e.preventDefault();
+      setColumn(name, columnWidth(name) + by * g.grows * COLUMN_STEP * (e.shiftKey ? 4 : 1));
+      keepColumn(name, columnWidth(name));
+      syncGrips();
+    });
+  }
+  const band = () => { sizeColumns(); syncGrips(); };
+  for (const [, mq] of BANDS) mq.addEventListener('change', band);
+  // Another tab of the inbox sized them.
+  addEventListener('storage', (e) => { if (e.key === COLUMNS_KEY) band(); });
+  new ResizeObserver(syncGrips).observe(main);
+  band();
+}
+
 // The filter drawer's swipes: one to the right over the list pulls it in, one to the left over
 // it (or over the dimmed page beside it) pushes it out. The drawer follows the finger; when it
 // lifts, a flick goes the way it went, a slow drag to the nearer end. Safari keeps a swipe from
@@ -8686,6 +8806,7 @@ async function start() {
   wireHeadAway();
   wireRail();
   wireSideRoom();
+  wireColumns();
   wireLogos();
   // Another thread (or the new conversation) fades in; a live update of the same one does not
   // (ui/app.js). Where the pane slides in over the list (phones), the slide is the motion.

@@ -70,8 +70,11 @@
 </header>
 <script src="header.js"></script>
 <main>
-  <section id="filters" aria-label="Filters"></section>
+  <section id="filters" aria-label="Filters"><div id="facets"></div></section>
   <section id="threads" aria-label="Threads"><div class="empty">Loading…</div></section>
+  <div class="grip" id="grip-filters" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="filters" aria-label="Width of the filters" title="Drag to size the filters; double-click for the screen's own"></div>
+  <div class="grip" id="grip-list" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="threads" aria-label="Width of the thread list" title="Drag to size the thread list; double-click for the screen's own"></div>
+  <div class="grip" id="grip-side" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="side" aria-label="Width of the sidebar" title="Drag to size the sidebar; double-click for the screen's own"></div>
   <section id="pane" aria-label="Messages"><div class="empty pick">Pick a thread.</div></section>
   <section id="side" aria-label="Sidebar with Thread Agent" hidden></section>
   <div id="side-join" aria-hidden="true" hidden><svg><clipPath id="side-join-clip"><rect></rect><rect></rect></clipPath><path clip-path="url(#side-join-clip)"></path></svg></div>

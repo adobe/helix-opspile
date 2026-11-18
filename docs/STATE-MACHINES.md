@@ -161,8 +161,9 @@ when the platform refused it, or after a minute. A second click on the same emoj
 
 **Draft line.** closed → open → closed (`draftOpen`, `ui/inbox.js`): **View draft**, a click, shows
 all of the draft on its line, rendered; a mouse resting on the line for `HOVER_DELAY_MS` opens it
-too (`draftPeek` names the thread it opened), and leaving closes only what it opened. Hide draft and
-Escape close either; a new line not under the pointer, or another thread's, drops the pointer's. The
+too (`draftPeek` names the thread it opened), and leaving closes only what it opened. While the
+pointer's is open its button is Keep draft open, which makes it View draft's (`draftPeek` cleared):
+it stays open wherever the pointer goes, the sidebar too. Hide draft and Escape close either; a new line not under the pointer, or another thread's, drops the pointer's. The
 open line grows upwards from the pane's bottom edge, so it stays under the pointer. The state changes
 at once; only the line's height follows, growing or shrinking (`resizeDraft`), and a re-render while
 it moves goes on from where it is. The reply box

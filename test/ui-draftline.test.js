@@ -12,7 +12,8 @@
 
 /*
  * The draft line (ui/inbox.js, `draftLine` and `wireDraftBar`): "View draft" is a click, the
- * same with a mouse and on touch, and a mouse resting on the line opens it too, after a delay.
+ * same with a mouse and on touch, and a mouse resting on the line opens it too, after a delay;
+ * the button then keeps it open (Keep draft open), as View draft does, until Hide draft.
  * Taking the draft into the reply box is a button of its own; the reply box never shows the draft
  * for the pointer (that changed the layout under it, which left the line, hid the draft and came
  * back, over and over). Open or closed, the draft is rendered as the message will be.
@@ -89,6 +90,12 @@ describe('draft line', () => {
     assert.ok(html.includes('<div class="tx md bubble"><p>md:Thanks, &lt;b&gt;we&lt;/b&gt; are on it.'));
   });
 
+  it('opened by the pointer, offers to keep it open instead of hiding what it just opened', () => {
+    const html = draftLine(draft, { open: true, peek: true });
+    assert.match(html, /data-draft="view" aria-label="Keep draft open" title="[^"]+" aria-expanded="true" aria-controls="draft-text" aria-pressed="false"/);
+    assert.doesNotMatch(html, /Hide draft/);
+  });
+
   it('keeps View draft even when nothing else may be done', () => {
     const html = draftLine(draft, {});
     assert.match(html, /data-draft="view"/);
@@ -159,5 +166,36 @@ describe('draft line', () => {
     assert.ok(draftOpen.has('k'));
     on.pointerenter({ pointerType: 'touch' });
     assert.equal(timers.length, 1);
+  });
+
+  it('keeps the draft the pointer opened open once its button is clicked, wherever the pointer goes', () => {
+    const on = {};
+    const button = { dataset: { draft: 'view' }, disabled: false };
+    const el = {
+      __key: 'k', matches: () => true, querySelector: () => null, addEventListener: (t, f) => { on[t] = f; },
+    };
+    const draftOpen = new Set(['k']);
+    const draftPeek = { key: 'k', timer: 0 };
+    const { wireDraftBar } = piece('function wireDraftBar', '/** Takes the draft into', 'wireDraftBar', {
+      wireSources: () => {},
+      setTimeout: () => {},
+      clearTimeout: () => {},
+      TOUCH_ONLY: { matches: false },
+      state: { open: 'k' },
+      draftPeek,
+      draftOpen,
+      HOVER_DELAY_MS: 300,
+      renderDraftBar: () => {},
+    });
+    wireDraftBar(el);
+    on.click({ target: { closest: () => button } });
+    assert.equal(draftPeek.key, null);
+    assert.ok(draftOpen.has('k'));
+    // The pointer leaves for the sidebar: it stays open.
+    on.pointerleave();
+    assert.ok(draftOpen.has('k'));
+    // Clicked again (Hide draft), it closes.
+    on.click({ target: { closest: () => button } });
+    assert.ok(!draftOpen.has('k'));
   });
 });
