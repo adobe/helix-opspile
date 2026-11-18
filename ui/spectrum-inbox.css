@@ -542,6 +542,85 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 #side-join[hidden] { display: none; }
 .sidechat.emerging { position: relative; z-index: 3; clip-path: inset(0px 0px 0px 100%); }
 #side-join svg { display: block; width: 100%; height: 100%; }
+
+/* ==== Wide screens: the bands, and the columns you size =======================================
+   Three bands past a desktop's screen: ultrawide from 2400px (a 2560px screen), megawide from
+   3200px (3440px) and hyperwide from 4800px (5120px). In each the filters flow into one more
+   column (2, 3, 4: `#facets`, in reading order, balanced, a group never split), the list takes
+   a smaller share of what is left (30%, 26%, 22%), as its rows need no more, and the sidebar may
+   grow wider, so the thread keeps most of the room. The simple personal view keeps one column
+   of filters: it has one group.
+   Wherever the filters are a column (from 1100px, not folded to the rail) the edges between the
+   filters, the list, the thread and the sidebar are grips (`.grip`, wireColumns in
+   ui/inbox.js): dragging one sizes its column (`main.sized-f`, `.sized-l`, `.sized-s`, with
+   `--user-filters-w`, `--user-list-w`, `--user-side-w`), kept per band. The filters flow into as
+   many columns as their width has room for, so widening them is what adds one. The thread never
+   gets narrower than --pane-least, the sidebar no wider than half of the thread's column. */
+:root { --facet-w: calc(var(--filters-w) - var(--spectrum-spacing-300) - var(--frame-gap)); --facet-gap: var(--spectrum-spacing-500);
+  --list-least: calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)); --pane-least: calc(var(--spectrum-spacing-100) * 55); --list-share: 34%; }
+#facets { display: contents; }
+@media (min-width: 1100px) {
+  main:not(.rail):not(.simple) #facets { display: block; columns: auto var(--facet-w); column-gap: var(--facet-gap); }
+  main:not(.rail):not(.simple) #facets > .card { break-inside: avoid; margin-bottom: var(--spectrum-spacing-200); }
+}
+@media (min-width: 2400px) {
+  main:not(.simple) { --filters-w: calc(var(--facet-w) * 2 + var(--facet-gap) + var(--spectrum-spacing-300) + var(--frame-gap)); }
+  main { --list-share: 30%; --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 80));
+    grid-template-columns: var(--nav-w) minmax(var(--list-least), var(--list-share)) 1fr; }
+  main.siding { grid-template-columns: var(--nav-w) minmax(var(--list-least), calc(var(--list-share) + ((100% - var(--nav-w)) * 3 / 11 - var(--list-share)) * var(--side-open, 1))) 1fr; }
+}
+@media (min-width: 3200px) {
+  main:not(.simple) { --filters-w: calc(var(--facet-w) * 3 + var(--facet-gap) * 2 + var(--spectrum-spacing-300) + var(--frame-gap)); }
+  main { --list-share: 26%; --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 90)); }
+}
+@media (min-width: 4800px) {
+  main:not(.simple) { --filters-w: calc(var(--facet-w) * 4 + var(--facet-gap) * 3 + var(--spectrum-spacing-300) + var(--frame-gap)); }
+  main { --list-share: 22%; --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 110)); }
+}
+/* A reading width for the two conversations, the thread and the sidebar: past --read-w their
+   content keeps to a column in the middle, with the room left over as padding on either side, so
+   the people on the left and Adobe on the right stay within a glance of each other. That holds
+   for all of the thread's column: its header, the messages, the reply box and the rows over it
+   (the draft, the commands the agent asks to run and the ones it ran). The edges, dividers and
+   scrollbars stay where they are. */
+:root { --read-w: calc(var(--spectrum-spacing-100) * 130); }
+@media (min-width: 1100px) {
+  :is(#pane > .ph, #pane .feed, #pane .composer) { --read-edge: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50));
+    padding-left: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); padding-right: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); }
+  :is(#side .sc-body, #side .composer) { --read-edge: var(--spectrum-spacing-300);
+    padding-left: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); padding-right: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); }
+  #side .sp-head { padding-left: max(var(--spectrum-spacing-300), calc((100% - var(--read-w)) / 2));
+    padding-right: max(var(--spectrum-spacing-200), calc((100% - var(--read-w)) / 2)); }
+}
+/* Sized by hand, only where the grips are (from 1100px): under it the drawer's and the phone's
+   layouts are as they are, whatever was sized on a wider screen. Whatever is sized, the thread
+   keeps --pane-room: --pane-least, and with the sidebar out room for it as well. Wider filters
+   leave the list its least and the thread its room, and the list gives way to them. */
+@media (min-width: 1100px) {
+  main { --pane-room: var(--pane-least); }
+  main.siding { --pane-room: calc(var(--spectrum-spacing-100) * 110); }
+  main.sized-f:not(.rail) { --filters-w: min(var(--user-filters-w), 100% - var(--list-least) - var(--pane-room)); }
+  main.sized-f { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(var(--list-share), 100% - var(--nav-w) - var(--pane-room))) 1fr; }
+  main.sized-f.siding { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(calc(var(--list-share) + ((100% - var(--nav-w)) * 3 / 11 - var(--list-share)) * var(--side-open, 1)), 100% - var(--nav-w) - var(--pane-room))) 1fr; }
+  main.sized-l.sized-l { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(var(--user-list-w), 100% - var(--nav-w) - var(--pane-room))) 1fr; }
+  main.sized-s { --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), var(--user-side-w), 50%); }
+}
+/* The grips: a strip on the edge, which shows the edge in the accent color under the pointer,
+   focused or dragged. The list's and the sidebar's sit on the thread's and the sidebar's side
+   of their edge, off the scrollbar beside it. While one is dragged nothing eases or selects. */
+.grip { display: none; }
+@media (min-width: 1100px) {
+  .grip { display: block; grid-row: 1; position: relative; z-index: 5; width: var(--spectrum-spacing-100); cursor: col-resize; touch-action: none; outline: none; }
+  .grip::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(50% - var(--spectrum-border-width-100)); width: var(--spectrum-border-width-200);
+    background: var(--accent); opacity: 0; transition: opacity var(--spectrum-animation-duration-100) var(--spectrum-animation-ease-out); }
+  .grip:hover::after, .grip.dragging::after { opacity: 1; }
+  .grip:focus-visible::after { opacity: 1; width: var(--spectrum-focus-indicator-thickness); left: calc(50% - var(--spectrum-focus-indicator-thickness) / 2); }
+  #grip-filters { grid-column: 2; justify-self: start; translate: -50% 0; }
+  #grip-list { grid-column: 3; justify-self: start; }
+  #grip-side { grid-column: 3; justify-self: end; margin-right: calc(var(--side-w) * var(--side-open, 1) - var(--spectrum-spacing-100)); }
+  main.rail #grip-filters, main:not(.siding) #grip-side, main:has(> #side[hidden]) #grip-side { display: none; }
+  main.resizing, main.resizing * { cursor: col-resize; user-select: none; transition: none !important; }
+}
 #side .sp-head { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
 #side .sp-close { flex: none; display: grid; place-items: center; padding: 0; cursor: pointer; }
 #side .scroller { flex: 1; overflow: hidden auto; overscroll-behavior: contain; }

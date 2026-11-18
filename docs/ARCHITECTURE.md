@@ -1564,10 +1564,12 @@ Admins, who can open any thread, see its draft but change only their own teams' 
 - The draft waits on its own line under the reply box, never in it: who saved it (a colleague,
   you, or the thread agent), when, and how it starts, on one line, rendered as the message will
   be (its Markdown, mentions and emoji, as in the thread). **View draft** opens the line to all
-  of it, and **Hide draft** closes it again, with a click or a tap alike; a mouse resting on the
-  line for 300 ms opens it too, until it leaves (or until Hide draft, once some of its text is
-  selected, to copy). The line grows upwards, so it stays under the
-  pointer, instead of moving away from it and closing again, over and over.
+  of it, and **Hide draft** closes it again, with a click or a tap alike; open, it stays open
+  while you read the thread or talk to the agent in the sidebar. A mouse resting on the line for
+  300 ms opens it too, until it leaves (or until Hide draft, once some of its text is selected,
+  to copy); its button is then **Keep draft open**, which keeps it open as View draft does. The
+  line grows upwards, so it stays under the pointer, instead of moving away from it and closing
+  again, over and over.
   The reply box is yours, and a draft never replaces what you typed. **Edit** takes the draft
   into the box to edit; with text there already, **Add to reply** puts it after that text.
   View draft, Edit and **Discard** are icons (their names are their labels and tooltips), on
@@ -1741,7 +1743,8 @@ thread in the inbox. Where the conversation itself shows depends on the room (`u
   the panel's least 360), measured, because the filters fold to a rail on some screens. While
   the panel shows, the content area is shared 3 : 5 : 3 between the list, the thread and the
   panel, so the thread stays the widest by far and the list gives up room too, down to its
-  least width; the panel is 360px to 560px. The panel (`#side`) has every sidebar
+  least width; the panel is 360px to 560px (up to 640px, 720px and 880px on wide
+  screens). The panel (`#side`) has every sidebar
   conversation of the thread, each under when it started, the agent working on its answer, and
   a box of its own, so the thread keeps its reply box and can be read and answered meanwhile.
   A line in the thread opens the panel at its conversation, also for someone who may not talk
@@ -1753,6 +1756,22 @@ thread in the inbox. Where the conversation itself shows depends on the room (`u
 Both are purple, say that only the team sees it and that nothing goes to the platform, and are
 left by **✕** (and Esc, and opening another thread). A window that grows or shrinks moves the
 sidebar you are in from one to the other, with what is typed in its box.
+
+**Wide screens.** Past a desktop's screen the inbox has three bands (`ui/spectrum-inbox.css`,
+"Wide screens"): ultrawide from 2400px (a 2560px screen), megawide from 3200px (3440px) and
+hyperwide from 4800px (5120px). The filters flow into 2, 3 and 4 columns, in reading order and
+never splitting a group, so all of them show without scrolling; the list takes 30%, 26% and
+22% of the page, and the panel may grow to 640px, 720px and 880px. On any screen where the filters
+are a column (from 1100px, not the rail), the edges between the filters, the list, the thread
+and the panel are grips: dragging one (or its arrow keys) sizes the column, and a double click
+gives it back to the band. The widths are kept in the browser per band (`opspile.columns`), and
+the filters flow into as many columns as their width has room for; whatever is sized, the list
+keeps 380px and the thread 440px (and the sidebar's width beside it), also as the window
+shrinks. Under 1100px (the drawer, the phone) nothing sized on a wider screen applies.
+Both conversations keep to a reading width (`--read-w`, 1040px): past it the thread's header,
+messages, reply box, draft and command cards, and the sidebar's messages and box, stay in a
+column in the middle, padded on either side, so neither side of a conversation is a head turn
+away from the other.
 
 **Traces.** The admin team sees everything an agent did with the MCP tool `get_thread_trace`:
 the thread's messages and the agent's steps in one timeline (`src/agent/trace.js`, read from the
