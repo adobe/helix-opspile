@@ -53,6 +53,7 @@ const COLORS = {
   browser_run: '#e5534b',
   analytics_engine: '#b9c7d8',
   zero_trust: '#0da8b6',
+  web_search: '#c5813b',
 };
 const color = (id) => COLORS[id] || '#8b929b';
 /**

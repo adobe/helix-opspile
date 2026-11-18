@@ -14,6 +14,7 @@ import { discordEnabled } from '../discord.js';
 import { portalBound } from '../portalsource.js';
 import { teamsBotEnabled } from '../teamsbot.js';
 import { membershipOn } from './membership.js';
+import { searchProblem } from './websearch.js';
 
 /**
  * Tools of the thread agents that are off until someone turns them on: for an ops team, or
@@ -43,6 +44,10 @@ import { membershipOn } from './membership.js';
  *   or remove them, where someone asked for it in the thread (src/agent/membership.js): on Teams
  *   admin-bot (teams-admin-agent), on Slack AEM Ops Automation (the slack-automation relay), each
  *   through a service binding. The admins approve, as when a person asks the bot.
+ * - `web_search`: the agent searches the public web, through Cloudflare's Web Search API and AI
+ *   Gateway (src/agent/websearch.js), for pages it has no address for; it reads them with the
+ *   global browser MCP server or its computer. On for every team (migration 0077) and every new
+ *   one; its managers turn it off.
  *
  * Those marked `newTeams` are turned on for a team when it is created (src/admin.js).
  *
@@ -123,6 +128,21 @@ export const AGENT_TOOLS = [
     platforms: ['slack', 'teams'],
     needs: membershipOn,
   },
+  {
+    tool: 'web_search',
+    title: 'Web search',
+    names: ['web_search'],
+    description: 'The agent searches the public web for what the knowledge bases, the channel\'s'
+      + ' threads and the repositories do not have (documentation, error messages, release notes),'
+      + ' through Cloudflare\'s Web Search API, and reads the pages it finds with its other tools',
+    note: 'Each query goes through AI Gateway to the deployment\'s search provider (Ceramic.ai,'
+      + ' unless WEB_SEARCH_PROVIDER says otherwise), outside Adobe: the agents are told to write'
+      + ' general queries, never with the customer\'s name, people, hosts or the thread\'s text.'
+      + ' Searches are billed to the account\'s AI Gateway credits, or to a provider key stored'
+      + ' on the gateway.',
+    platforms: null,
+    newTeams: true,
+  },
 ];
 
 const BY_NAME = new Map(AGENT_TOOLS.map((t) => [t.tool, t]));
@@ -164,6 +184,9 @@ export function toolProblem(env, tool) {
   }
   if (tool === 'computer' && !env.LOADER) {
     return 'The Worker Loader binding (LOADER) is missing in this deployment.';
+  }
+  if (tool === 'web_search') {
+    return searchProblem(env);
   }
   return null;
 }

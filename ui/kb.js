@@ -985,13 +985,17 @@ const TOOL_CONFIRM = {
     on: (where) => `From their next message, the agents of ${where} can file add-user and remove-user requests that people make in their threads with the admins' bot: admin-bot on Teams, AEM Ops Automation in #general on Slack. Nobody is added until the request is approved.`,
     off: (where) => `Agents of ${where} stop filing membership requests with their next message. Requests they filed stay with the admins.`,
   },
+  web_search: {
+    on: (where) => `From their next message, the agents of ${where} can search the public web. Their queries go to an outside search provider, through AI Gateway; they are told to keep the customer's name, people and hosts out of them.`,
+    off: (where) => `Agents of ${where} stop searching the web with their next message.`,
+  },
 };
 
 /** The built-in tools, as the first group of the tools and MCP servers page. */
 function toolsSection() {
   const b = base();
   if (!state.tools) return '<div class="empty">Could not list the agent tools.</div>';
-  const note = b.kind === 'team' ? `Built-in tools: on or off for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). New teams start with Computer and Extraction rules on.`
+  const note = b.kind === 'team' ? `Built-in tools: on or off for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). New teams start with Computer, Extraction rules and Web search on.`
     : `Built-in tools: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
   return `<h3 class="group">Tools</h3><div class="sub intro">${esc(note)}</div>${state.tools.map(toolRow).join('')}`;
 }

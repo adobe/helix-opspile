@@ -51,7 +51,7 @@ still answer.
 | `POST /api/kb/mcp/oauth/start`, `GET /api/kb/mcp/oauth/callback`, `POST /api/kb/mcp/oauth/disconnect` | The OAuth sign-in of an agents' MCP server (`auth: oauth`), for whoever may edit it: `start { id }` answers with the URL of the server's sign-in (discovery, client registration and PKCE done); the server sends the browser back to `callback?code&state`, which only the person who started may finish, keeps the grant (sealed with `TOKEN_KEY`), lists the tools and returns to the editor; `disconnect { id }` revokes the grant where the server can, and forgets it. The callback also finishes the global FluffyJaws server's sign-in (below). |
 | `POST /teams/bot` | The messaging endpoint of the opspile Teams bot. The bot is notification-only and opspile reads Teams through Graph, so it answers every activity with 200 and keeps nothing. |
 | `GET /api/kb/extraction?repo=`, `POST`/`DELETE /api/kb/extraction/rule`, `POST`/`DELETE /api/kb/extraction/tech`, `POST /api/kb/extraction/test` | A team's extraction rules and tech stack (src/extract.js), from its knowledge base (`?repo=`, or `{ repo, … }`): `GET` the team's and the admin team's, which apply to every channel (the members of the team, read-only: `may: false`); `rule { id?, name, kind, target, field, pattern, flags, value, transform, exclude, script, enabled }` adds a rule or changes rule `id`, `DELETE rule { id }`; `tech { tech, name, description, enabled }` adds or changes a technology, `DELETE tech { tech }`; `test { rule, text }` what a rule finds, unsaved too. For the admin team and the team's managers. |
-| `GET /api/kb/tools?repo=`, `PUT /api/kb/tools` | The agents' switchable tools (`post_message`, `computer`, `extraction_rules`, `any_thread`, `membership`) of a knowledge base's team or customer: whether this deployment can run each, the team's switch and the channels' switches; `PUT { tool, team, enabled }` for a team, `{ tool, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `any_thread` only for the admin team, per channel, in internal channels. The `computer` comes with the secrets of the team or customer (`secrets`: names and hosts, never values) and, for a team, the image of its computers (`image`, one of `images`), which `PUT { tool: "computer", team, image }` chooses, for the admin team only. |
+| `GET /api/kb/tools?repo=`, `PUT /api/kb/tools` | The agents' switchable tools (`post_message`, `computer`, `extraction_rules`, `any_thread`, `membership`, `web_search`) of a knowledge base's team or customer: whether this deployment can run each, the team's switch and the channels' switches; `PUT { tool, team, enabled }` for a team, `{ tool, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers; `any_thread` only for the admin team, per channel, in internal channels. The `computer` comes with the secrets of the team or customer (`secrets`: names and hosts, never values) and, for a team, the image of its computers (`image`, one of `images`), which `PUT { tool: "computer", team, image }` chooses, for the admin team only. |
 | `POST`, `PUT`, `DELETE /api/kb/tools/secrets` | The secrets of the agents' computers, for whoever may edit the knowledge base: `POST { repo, name, value, hosts, description? }` adds one (`name` is the shell's variable, `ACME_API_KEY`; `hosts` the only hosts it is sent to, `api.example.com` or `*.example.com`), `PUT { id, … }` changes it (`value` absent: kept), `DELETE { id }` removes it. The value is sealed with `TOKEN_KEY` and never shown again. |
 | `PUT /api/kb/mcp/global`, `POST /api/kb/mcp/global/check` | A global MCP server (`browser`, `github`, `fluffyjaws`, `slack_channels`) on or off: `{ server, team, enabled }` for a team, `{ server, channel, enabled }` for one channel (`enabled: null`: the channel follows its team again), for the admin team and the team's managers (`slack_channels` for the admin team only); `check { server }` connects to it and lists its tools again. |
 | `POST /api/kb/mcp/global/connect`, `POST /api/kb/mcp/global/disconnect` | FluffyJaws' sign-in, for the admin team, where it signs in as a person (`FLUFFYJAWS_CLIENT_ID`): `connect { server: 'fluffyjaws', repo }` answers with the URL of the sign-in at FluffyJaws' Okta (opspile's own client, PKCE; no client registration), which comes back to `/api/kb/mcp/oauth/callback`, keeps the grant (sealed with `TOKEN_KEY`), lists the tools and returns to `repo`; `disconnect { server }` revokes the grant at Okta and forgets it. Every agent where it is on then acts as that person, whom the list of servers shows to everyone. |
@@ -135,6 +135,8 @@ Nothing below is committed; set it on the Worker.
 | `AI_GATEWAY_ACCOUNT` | var | Optional: the gateway's account id; the deploy fills in `CLOUDFLARE_ACCOUNT_ID` |
 | `AGENT_ANTHROPIC_BETA` | var | Optional: the `anthropic-beta` features to ask for instead of pi's defaults, `none` for none |
 | `AGENT_BASE_URL` | var | Optional, for development: an Anthropic Messages endpoint to use instead of the gateway |
+| `WEB_SEARCH_PROVIDER` | var | Optional: the search provider of the agents' `web_search` (Cloudflare's Web Search API, through the `AI` binding): `ceramic` (the default, zero data retention), `linkup` or `exa`. See "Agent tools" |
+| `WEB_SEARCH_GATEWAY` | var | Optional: the AI Gateway (id, in the Worker's account) `web_search` goes through, default `AGENT_GATEWAY`. It pays with the account's AI Gateway credits, or a key of the provider stored on the gateway (alias `default`) |
 | `TEAMS_APP_ID` | var | Optional: the opspile Teams app's id in the tenant's org catalog. With it, the opspile Teams bot (the Entra app, registered with the Bot Framework) posts the agents' replies in Teams threads (`post_message`); see "The opspile Teams bot" |
 | `TEAMS_EDITS` | var | Optional: set (`1`) once the tenant's admins have consented to the delegated `ChannelMessage.ReadWrite` for the Entra app. Connecting Microsoft then asks for it too (tokens from before are upgraded on refresh, or connect again), so people can edit their own Teams messages from the inbox (`POST /api/edit`); without it, Teams messages are edited in Teams |
 | `TEAMS_BOT_SERVICE_URL` | var | Optional: the Bot Connector the Teams bot posts through, default `https://smba.trafficmanager.net/teams/` |
@@ -446,7 +448,7 @@ only), for the team (in the team's knowledge base, **MCP servers**) or for one c
 See ARCHITECTURE, "Global MCP servers".
 
 **Agent tools.** Some of the agents' tools are off until the admin team or a team's managers
-turn them on (a new team starts with **`computer`** and **`extraction_rules`** on), the same way and on the same page (**Tools and MCP servers**, group **Tools**):
+turn them on (a new team starts with **`computer`**, **`extraction_rules`** and **`web_search`** on), the same way and on the same page (**Tools and MCP servers**, group **Tools**):
 for the team, or for one channel (**Per channel**; a channel's switch wins over its team's):
 
 - **`post_message`**: the agent posts a reply in its thread right away, as the opspile bot of
@@ -497,6 +499,17 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   an admin clicks. Each bot ignores what other bots post, so opspile reaches both through
   service bindings (`TEAMS_ADMIN_WORKER`, `SLACK_AUTOMATION_WORKER`); deploy those Workers with
   their `MembershipRequests` entrypoint first. A platform whose bot is not bound does not get it.
+- **`web_search`**: the agent searches the public web (`web_search`) through Cloudflare's
+  [Web Search API](https://developers.cloudflare.com/web-search/), on the `AI` binding: titles,
+  addresses and short descriptions of up to 10 pages, which it reads with the `browser` MCP
+  server or its computer. On for every team (migration 0077) and every new one. Each query
+  leaves Adobe for the search provider (`WEB_SEARCH_PROVIDER`, Ceramic.ai unless set), so the
+  prompt has the agent write general queries, never the customer's name, people, hosts or the
+  thread's words; the Worker logs that a search ran, never its query. AI Gateway bills it, at
+  the provider's list price ($0.25 per 1,000 searches for Ceramic.ai): load **credits** on the
+  account, or store the provider's key on the gateway (`WEB_SEARCH_GATEWAY`, default
+  `AGENT_GATEWAY`) with the alias `default`. Without either, every search fails and the agent
+  goes on without it.
 
 **The opspile Teams bot.** Microsoft Graph lets no app post to a channel; a Bot Framework bot
 can, in the teams it is installed in. The bot is the opspile Entra app itself:
