@@ -14,7 +14,9 @@ import {
   costOf, isStock, metricOf, priceList, serviceOf, SERVICES, unitPrice, VOLUME,
 } from './prices.js';
 import { dayOf, HOUR_DAYS } from './rollup.js';
-import { assignedArm, EXPERIMENTS, tagsOf } from '../experiments.js';
+import {
+  assignedArm, EXPERIMENTS, tagsOf, unitOf,
+} from '../experiments.js';
 import { draftCounts, draftsSince, openDrafts } from '../draftevents.js';
 
 /*
@@ -354,7 +356,8 @@ const noDrafts = () => ({
 /**
  * The drafts of the experiments measured by them (`measure: 'drafts'`), by arm: the agents'
  * drafts started in the period, by the arm their thread is pinned to (`agent_arms`, for a pinned
- * experiment; else by its thread's arm, started in the window), and what became of them, whenever
+ * experiment; else by its thread's arm, or its customer's for one by customer, started in the
+ * window), and what became of them, whenever
  * it did (a draft sent after the period still counts); the agents' own posts by when they were
  * posted. Of what `pick` selects (customer and team). `{ [experiment]: { [arm]: counts } }`.
  */
@@ -382,7 +385,8 @@ export async function experimentDrafts(env, { from, to }, pick = () => true) {
       .catch(() => ({ results: [] }));
     const arms = {};
     for (const r of (results || []).filter(pick)) {
-      const id = r.arm || assignedArm(x, r.thread)?.id;
+      const unit = unitOf(x, { name: r.thread, org: r.org });
+      const id = r.arm || (unit && assignedArm(x, unit)?.id);
       if (id) {
         const c = arms[id] || (arms[id] = noDrafts());
         if (r.action === 'saved' && r.first) {

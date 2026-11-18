@@ -50,6 +50,7 @@ import { sweepLabels } from './label.js';
 import { sweepRethreads } from './rethread.js';
 import { diagTeams } from './diag.js';
 import { discordEnabled } from './discord.js';
+import { runDreams } from './dreams.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
 import { SOUNDS } from './sound.js';
@@ -332,6 +333,10 @@ const handlers = {
     ctx.waitUntil(keepOAuthAlive(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', mcpOauth: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', mcpOauth: 'error', error: e.message }))));
+    // Customers quiet for eight hours consolidate their knowledge base, in the dream experiment.
+    ctx.waitUntil(runDreams(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', dreams: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', dreams: 'error', error: e.message }))));
     ctx.waitUntil(refreshGlobalTools(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', mcpGlobals: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', mcpGlobals: 'error', error: e.message }))));

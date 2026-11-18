@@ -32,6 +32,7 @@ import {
   accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
 import { seed, seedNote, seedPin } from '../src/agent/seed.js';
+import { dream, dreamOf } from '../src/agent/dream.js';
 import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
 import {
   agentStatus, pokeAgent, seedAgent, talkToAgent, tellDiscarded,
@@ -1483,6 +1484,7 @@ describe('seeds with a chosen knowledge base', () => {
       target: async () => target,
       verdicts: async () => new Map(),
       pinned: (session) => seedPin(agent, session),
+      dreamOf: (session) => dreamOf(agent, session),
     }));
     registry.install(codemodeExtension({ fingerprint: '', at: 0, servers: [] }, sandbox));
     harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
@@ -1556,6 +1558,30 @@ describe('seeds with a chosen knowledge base', () => {
       await h.run(h.call('kb_write', write('team', 'sites/nope.md')));
       assert.match(h.results.at(-1), /kb-org only: kb-team cannot be written here/);
       assert.ok(!srv.files('kb-team-helix').includes('sites/nope.md'));
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
+
+  it('dreams of kb-org only, and says so in its log', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
+      key: null, team: 'helix', org: 'acme', threads: [],
+    });
+    h.agent.name = 'kb:helix:acme';
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-org-acme');
+      assert.deepEqual(await dream(h.agent, { id: 5 }), { ok: true, accepted: true });
+      await h.run(
+        h.call('kb_write', write('team', 'playbooks/purge.md')),
+        h.call('kb_write', write('org', 'playbooks/purge.md')),
+      );
+      const [refused, written] = h.results;
+      assert.match(refused, /kb-org only: kb-team cannot be written here/);
+      assert.match(written, /^committed [0-9a-f]{12} to kb-org: playbooks\/purge\.md/);
+      assert.match(srv.show('kb-org-acme', 'log.md'), /\(a dream, consolidating it\)/);
     } finally {
       await h.close();
       await srv.close();

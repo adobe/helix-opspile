@@ -37,6 +37,7 @@ import {
 } from './bashrequest.js';
 import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
+import { dream, dreamOf, dreamState } from './dream.js';
 import { setWakeup, wakeupDue } from './wakeups.js';
 import {
   COMPUTER_CWD, computerEnv, ensureCwd, KERNEL_OUTPUT_DIR,
@@ -187,6 +188,8 @@ export class ThreadAgent extends Agent {
           // Which sidebar message it answers, for what it files for its author.
           sidebarMessage: () => currentSidebar(this),
           pinned: (session) => seedPin(this, session),
+          // Which dream a session is, if one (src/agent/dream.js).
+          dreamOf: (session) => dreamOf(this, session),
           // For request_bash: the deadline of what it asks for.
           schedule: (when, callback, payload) => this.schedule(when, callback, payload),
           // wakeup_after and wakeup_after_idle (src/agent/wakeups.js).
@@ -636,6 +639,16 @@ export class ThreadAgent extends Agent {
     return seed(this, note);
   }
 
+  /** A dream of the customer's knowledge base starts (src/agent/dream.js, src/dreams.js). */
+  async dream(note) {
+    return dream(this, note);
+  }
+
+  /** Where a dream stands (src/agent/dream.js). */
+  async dreamState(query) {
+    return dreamState(this, query);
+  }
+
   /** A person on the team talks to the agent in the inbox's sidebar (src/agent/sidebar.js). */
   async sidebar(note) {
     return talk(this, note);
@@ -710,11 +723,13 @@ export class ThreadAgent extends Agent {
     }
     const pi = await this.harness.pi();
     const ledger = await pi.usage(BACKGROUND_CONTEXT);
+    // The customer, for the experiments by customer (the dreams'); none when it cannot be read.
+    const org = await this.target().then((t) => t.org).catch(() => null);
     const { now, adds } = modelUsage(
       await this.ctx.storage.get('cogs:usage'),
       ledger,
       armModel(this.env, await this.currentArm()) || this.env.AGENT_MODEL,
-      armTags(this.name, Date.now(), this.env, { model: await this.currentArm() }),
+      armTags(this.name, Date.now(), this.env, { model: await this.currentArm() }, org),
     );
     for (const [metric, model, q] of adds) {
       scope.add('bedrock', metric, model, q);
