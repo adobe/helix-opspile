@@ -557,7 +557,7 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
    many columns as their width has room for, so widening them is what adds one. The thread never
    gets narrower than --pane-least, the sidebar no wider than half of the thread's column. */
 :root { --facet-w: calc(var(--filters-w) - var(--spectrum-spacing-300) - var(--frame-gap)); --facet-gap: var(--spectrum-spacing-500);
-  --list-least: calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)); --pane-least: calc(var(--spectrum-spacing-100) * 55); }
+  --list-least: calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)); --pane-least: calc(var(--spectrum-spacing-100) * 55); --list-share: 34%; }
 #facets { display: contents; }
 @media (min-width: 1100px) {
   main:not(.rail):not(.simple) #facets { display: block; columns: auto var(--facet-w); column-gap: var(--facet-gap); }
@@ -592,11 +592,19 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
   #side .sp-head { padding-left: max(var(--spectrum-spacing-300), calc((100% - var(--read-w)) / 2));
     padding-right: max(var(--spectrum-spacing-200), calc((100% - var(--read-w)) / 2)); }
 }
-/* Sized by hand. With the sidebar out the thread's column has to hold it as well. */
-main.sized-f:not(.rail) { --filters-w: var(--user-filters-w); }
-main.sized-l, main.sized-l.siding { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(var(--user-list-w), 100% - var(--nav-w) - var(--pane-least))) 1fr; }
-main.sized-l.siding { --pane-least: calc(var(--spectrum-spacing-100) * 110); }
-main.sized-s { --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), var(--user-side-w), 50%); }
+/* Sized by hand, only where the grips are (from 1100px): under it the drawer's and the phone's
+   layouts are as they are, whatever was sized on a wider screen. Whatever is sized, the thread
+   keeps --pane-room: --pane-least, and with the sidebar out room for it as well. Wider filters
+   leave the list its least and the thread its room, and the list gives way to them. */
+@media (min-width: 1100px) {
+  main { --pane-room: var(--pane-least); }
+  main.siding { --pane-room: calc(var(--spectrum-spacing-100) * 110); }
+  main.sized-f:not(.rail) { --filters-w: min(var(--user-filters-w), 100% - var(--list-least) - var(--pane-room)); }
+  main.sized-f { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(var(--list-share), 100% - var(--nav-w) - var(--pane-room))) 1fr; }
+  main.sized-f.siding { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(calc(var(--list-share) + ((100% - var(--nav-w)) * 3 / 11 - var(--list-share)) * var(--side-open, 1)), 100% - var(--nav-w) - var(--pane-room))) 1fr; }
+  main.sized-l.sized-l { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(var(--user-list-w), 100% - var(--nav-w) - var(--pane-room))) 1fr; }
+  main.sized-s { --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), var(--user-side-w), 50%); }
+}
 /* The grips: a strip on the edge, which shows the edge in the accent color under the pointer,
    focused or dragged. The list's and the sidebar's sit on the thread's and the sidebar's side
    of their edge, off the scrollbar beside it. While one is dragged nothing eases or selects. */

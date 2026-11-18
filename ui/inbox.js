@@ -8269,7 +8269,7 @@ function wireSideRoom() {
  * (`opspile.columns`), so a laptop's screen and the ultrawide it is plugged into each keep their
  * own; the stylesheet keeps the thread from getting narrower than --pane-least either way.
  */
-const BANDS = [['hyperwide', 4800], ['megawide', 3200], ['ultrawide', 2400]]
+const BANDS = [['hyperwide', 4800], ['megawide', 3200], ['ultrawide', 2400], ['wide', 1100]]
   .map(([name, px]) => [name, matchMedia(`(min-width: ${px}px)`)]);
 const COLUMNS_KEY = 'opspile.columns';
 const COLUMN_STEP = 16;
@@ -8279,7 +8279,8 @@ const GRIPS = {
   list: { grip: 'grip-list', col: 'threads', grows: 1, least: 380 },
   side: { grip: 'grip-side', col: 'side', grows: -1, least: 360 },
 };
-const bandOf = () => BANDS.find(([, mq]) => mq.matches)?.[0] || 'wide';
+// Under 1100px (the drawer, the phone) there are no grips and nothing is sized.
+const bandOf = () => BANDS.find(([, mq]) => mq.matches)?.[0] || 'narrow';
 const storedColumns = () => { try { return JSON.parse(localStorage.getItem(COLUMNS_KEY) || '{}'); } catch { return {}; } };
 /** The band's widths, `{ filters, list, side }` in px, with `name` set to `width` (or unset: null). */
 function keepColumn(name, width) {
@@ -8291,7 +8292,8 @@ function keepColumn(name, width) {
   return band;
 }
 /** Sizes the columns as `sizes` says (`main.sized-f`, `.sized-l`, `.sized-s`); the rest are the band's. */
-function sizeColumns(sizes = storedColumns()[bandOf()] || {}) {
+function sizeColumns(asked = storedColumns()[bandOf()] || {}) {
+  const sizes = bandOf() === 'narrow' ? {} : asked;
   const main = document.querySelector('main');
   for (const name of Object.keys(GRIPS)) {
     const w = sizes[name];
@@ -8300,12 +8302,16 @@ function sizeColumns(sizes = storedColumns()[bandOf()] || {}) {
     else main.style.removeProperty(`--user-${name}-w`);
   }
 }
-/** The most a column may be: the filters half the page, the list what leaves the thread its least, the sidebar half the thread's column. */
+/**
+ * The most a column may be: the filters half the page, and no more than leaves the list its least
+ * and the thread its own (and the sidebar's), the list what leaves the thread its least, the
+ * sidebar half the thread's column. The stylesheet holds the same as the window shrinks.
+ */
 function mostColumn(name) {
   const main = document.querySelector('main').getBoundingClientRect();
-  if (name === 'filters') return main.width / 2;
   const pane = $('pane').getBoundingClientRect();
   const sideW = $('side').hidden ? 0 : $('side').getBoundingClientRect().width;
+  if (name === 'filters') return Math.min(main.width / 2, main.width - GRIPS.list.least - 440 - sideW);
   if (name === 'side') return (pane.width + sideW) / 2;
   return $('threads').getBoundingClientRect().width + pane.width - 440;
 }

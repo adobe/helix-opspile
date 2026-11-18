@@ -1760,7 +1760,9 @@ never splitting a group, so all of them show without scrolling; the list takes 3
 are a column (from 1100px, not the rail), the edges between the filters, the list, the thread
 and the panel are grips: dragging one (or its arrow keys) sizes the column, and a double click
 gives it back to the band. The widths are kept in the browser per band (`opspile.columns`), and
-the filters flow into as many columns as their width has room for; the thread keeps 440px.
+the filters flow into as many columns as their width has room for; whatever is sized, the list
+keeps 380px and the thread 440px (and the sidebar's width beside it), also as the window
+shrinks. Under 1100px (the drawer, the phone) nothing sized on a wider screen applies.
 Both conversations keep to a reading width (`--read-w`, 1040px): past it the thread's header,
 messages, reply box, draft and command cards, and the sidebar's messages and box, stay in a
 column in the middle, padded on either side, so neither side of a conversation is a head turn

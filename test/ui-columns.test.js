@@ -58,6 +58,7 @@ function columns(width, rect = {}) {
 
 describe('wide screens', () => {
   it('has three bands past a desktop: ultrawide, megawide and hyperwide', () => {
+    assert.equal(columns(900).bandOf(), 'narrow');
     assert.equal(columns(1920).bandOf(), 'wide');
     assert.equal(columns(2560).bandOf(), 'ultrawide');
     assert.equal(columns(3440).bandOf(), 'megawide');
@@ -97,6 +98,12 @@ describe('wide screens', () => {
     laptop.store.set(c.COLUMNS_KEY, c.store.get(c.COLUMNS_KEY));
     laptop.sizeColumns();
     assert.deepEqual([...laptop.classes], []);
+    // Under 1100px (the drawer, the phone) nothing sized on a wider screen applies.
+    const half = columns(900);
+    half.store.set(c.COLUMNS_KEY, JSON.stringify({ narrow: { list: 700 }, wide: { list: 700 } }));
+    half.sizeColumns();
+    assert.deepEqual([...half.classes], []);
+    assert.ok(!half.props.has('--user-list-w'));
   });
 
   it('keeps the thread its least, the filters half the page, the sidebar half the thread\'s column', () => {
@@ -105,6 +112,9 @@ describe('wide screens', () => {
     });
     assert.equal(c.mostColumn('list'), 800 + 1600 - 440);
     assert.equal(c.mostColumn('filters'), 1700);
+    // Wider filters leave the list its least and the thread its own, the sidebar's too.
+    assert.equal(columns(1600, { main: 1600, pane: 800, side: 0 }).mostColumn('filters'), 1600 - 380 - 440);
+    assert.equal(c.mostColumn('filters'), Math.min(1700, 3400 - 380 - 440 - 600));
     assert.equal(c.mostColumn('side'), 1100);
     assert.equal(c.setColumn('list', 5000), 1960);
     assert.equal(c.setColumn('list', 10), 380);
@@ -125,7 +135,13 @@ describe('wide screens', () => {
     for (const [id, controls] of [['grip-filters', 'filters'], ['grip-list', 'threads'], ['grip-side', 'side']]) {
       assert.match(PAGES['inbox.html'], new RegExp(`<div class="grip" id="${id}" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="${controls}" aria-label="[^"]+"`));
     }
-    assert.match(css, /main\.sized-l, main\.sized-l\.siding \{ grid-template-columns: var\(--nav-w\) minmax\(var\(--list-least\), min\(var\(--user-list-w\), 100% - var\(--nav-w\) - var\(--pane-least\)\)\) 1fr; \}/);
+    // Only where the grips are, and always leaving the thread its room.
+    const sized = css.match(/\/\* Sized by hand[\s\S]*?\*\/\n@media \(min-width: 1100px\) \{\n([\s\S]*?)\n\}\n/)[1];
+    assert.match(sized, /main\.sized-l\.sized-l \{ grid-template-columns: var\(--nav-w\) minmax\(var\(--list-least\), min\(var\(--user-list-w\), 100% - var\(--nav-w\) - var\(--pane-room\)\)\) 1fr; \}/);
+    assert.match(sized, /main\.sized-f:not\(\.rail\) \{ --filters-w: min\(var\(--user-filters-w\), 100% - var\(--list-least\) - var\(--pane-room\)\); \}/);
+    assert.match(sized, /main\.sized-f \{ grid-template-columns: [^}]*min\(var\(--list-share\), 100% - var\(--nav-w\) - var\(--pane-room\)\)/);
+    assert.match(sized, /main\.sized-s \{/);
+    assert.doesNotMatch(css.replace(sized, '').replace(/\/\*[\s\S]*?\*\//g, ''), /main\.sized-[fls]/);
     assert.match(css, /main\.sized-s \{ --side-w: clamp\(calc\(var\(--spectrum-spacing-100\) \* 45\), var\(--user-side-w\), 50%\); \}/);
     // Under 1100px the filters are a drawer: no grips. Folded to the rail, none for them.
     assert.match(css, /\.grip \{ display: none; \}\n@media \(min-width: 1100px\) \{\n {2}\.grip \{ display: block;/);
