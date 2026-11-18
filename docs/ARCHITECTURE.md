@@ -1177,7 +1177,11 @@ account (delegated `ChannelMessage.Send`, which also allows reactions) once. The
 email); tokens are encrypted with `TOKEN_KEY`, Microsoft tokens are refreshed when they expire.
 A reply goes to the latest platform thread of an inbox entry and comes back through the
 normal ingestion path, like any other message. Replies are written in Markdown; on Slack they
-are sent in mrkdwn (`**bold**` as `*bold*`, links as `<url|label>`, bullets as `•`).
+are sent in mrkdwn (`**bold**` as `*bold*`, links as `<url|label>`, bullets as `•`). Mrkdwn has
+no tables: a reply or edit with one goes as a `markdown` block too, which Slack renders, table
+and all, with the mrkdwn as its `text` (`slackBlocks` in `src/post.js`); where Slack refuses the
+block (`invalid_blocks`, `block_mismatch`), it goes once more as the text alone. A reply with
+files goes in mrkdwn still: `files.completeUploadExternal` takes its comment in mrkdwn.
 
 A reply shows in the thread at once, as it will look once sent (the person's name, avatar and
 blue bubble from their latest message on the platform), with a thin bar under it, as in

@@ -178,6 +178,29 @@ describe('editing sent messages', () => {
     assert.equal(sent.body.text, 'oops :face_palm:');
   });
 
+  it('edits a table into a markdown block, and back into text alone', async () => {
+    const e = env();
+    await connect(e, 1, 'slack', 'U1', 'xoxp-ada', 'chat:write');
+    const table = 'per minute:\n\n| UTC | total |\n|---|---|\n| 13:18 | 16,172 |';
+    assert.equal((await editing(e, ADA, { thread: SLACK, id: '1.2', text: table })).status, 200);
+    const updates = () => calls.filter((c) => c.u.endsWith('/chat.update')).map((c) => c.body);
+    assert.deepEqual(updates()[0].blocks, [{ type: 'markdown', text: table }]);
+    await editing(e, ADA, { thread: SLACK, id: '1.2', text: 'no table' });
+    assert.deepEqual(updates()[1], { channel: 'C1', ts: '1.2', text: 'no table' });
+  });
+
+  it('edits as text alone where Slack takes no blocks for the message', async () => {
+    const e = env();
+    await connect(e, 1, 'slack', 'U1', 'xoxp-ada', 'chat:write');
+    answer = (u, init) => (u.endsWith('/chat.update') && JSON.parse(init.body).blocks
+      ? Response.json({ ok: false, error: 'block_mismatch' }) : null);
+    const res = await editing(e, ADA, { thread: SLACK, id: '1.2', text: '| a |\n|---|\n| 1 |' });
+    assert.equal(res.status, 200);
+    const updates = calls.filter((c) => c.u.endsWith('/chat.update')).map((c) => c.body);
+    assert.equal(updates.length, 2);
+    assert.equal(updates[1].blocks, undefined);
+  });
+
   it('only edits your own messages, from the account that posted them', async () => {
     const e = env();
     await connect(e, 1, 'slack', 'U1', 'xoxp-ada', 'chat:write');

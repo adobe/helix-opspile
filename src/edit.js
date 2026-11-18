@@ -16,7 +16,8 @@ import { parse } from './channels.js';
 import { json } from './http.js';
 import { isStaffDomain } from './lookup.js';
 import {
-  knownMentions, mentionsByName, personalToken, slackText, TEAMS_EDIT_SCOPE, teamsMessage,
+  knownMentions, mentionsByName, personalToken, slackBlocks, slackText, slackWithBlocks,
+  TEAMS_EDIT_SCOPE, teamsMessage,
 } from './post.js';
 import { portalAccount, portalAuthor, portalCall } from './portalsource.js';
 import { mentionCandidates } from './profiles.js';
@@ -101,15 +102,14 @@ async function editAsUser(env, me, t, msg, body, ids) {
   }
   const mentions = await mentionsFor(env, t, msg.id, ids);
   if (t.source === 'slack') {
-    const res = await fetch('https://slack.com/api/chat.update', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${tok.token}`, 'content-type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({ channel: t.channel_id, ts: msg.id, text: slackText(body, mentions) }),
-    });
-    const data = await res.json().catch(() => ({}));
+    // As a reply goes: a table as a `markdown` block. Without blocks, the `text` replaces the
+    // ones the message had.
+    const data = await slackWithBlocks(tok.token, 'chat.update', {
+      channel: t.channel_id, ts: msg.id, text: slackText(body, mentions),
+    }, slackBlocks(body, mentions));
     if (!data.ok) {
       return {
-        error: SLACK_SAYS[data.error] || `Slack: ${data.error || res.status}`,
+        error: SLACK_SAYS[data.error] || `Slack: ${data.error || data.status}`,
         status: SLACK_SAYS[data.error] ? 409 : 502,
         connect: SLACK_RECONNECT.includes(data.error) ? 'slack' : undefined,
       };

@@ -22,6 +22,7 @@ import { getIdentity, isStaffDomain } from './lookup.js';
 import { threadExperts } from './expertise.js';
 import { suggestMentions } from './mention-match.js';
 import { markdownToMrkdwn } from './markdown.js';
+import { readMarkdown } from './mdast.js';
 import { mentionCandidates } from './profiles.js';
 import {
   inPersonalView, personalChannels, sharesByChannel, teamsOf,
@@ -526,6 +527,46 @@ const markMentions = (body, mentions, mark) => splitMentions(body, mentions)
  * which the block keeps as mentions.
  */
 export const slackMarkdown = (body, mentions = []) => markMentions(body, mentions, (p) => `<@${p.id}>`);
+
+/** Whether a markdown tree has a table anywhere (in a list item or a quote too). */
+const hasTable = (node) => node.type === 'table' || (node.children || []).some(hasTable);
+
+/**
+ * The `blocks` of a person's Slack post or edit: a reply with a table is a `markdown` block,
+ * which Slack renders itself, tables too, where mrkdwn has none (the `text` keeps its pipes);
+ * any other reply has none, and its mrkdwn `text` is the message. Undefined for none.
+ */
+export function slackBlocks(body, mentions = []) {
+  return hasTable(readMarkdown(body))
+    ? [{ type: 'markdown', text: slackMarkdown(body, mentions) }] : undefined;
+}
+
+/** Slack refusing the blocks of a message, which it takes as text alone. */
+export const SLACK_BLOCKS_REFUSED = [
+  'invalid_blocks', 'invalid_blocks_format', 'msg_blocks_too_long', 'block_mismatch',
+];
+
+/**
+ * Calls Slack `method` with `payload` and its `blocks` (src/post.js `slackBlocks`); when Slack
+ * refuses those, which posts nothing, once more as `text` alone. Slack's answer, as JSON, or
+ * `{ status }` when it gave none.
+ */
+export async function slackWithBlocks(token, method, payload, blocks) {
+  const call = async (b) => {
+    const res = await fetch(`https://slack.com/api/${method}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ ...payload, ...(b ? { blocks: b } : {}) }),
+    });
+    return res.json().catch(() => ({ status: res.status }));
+  };
+  const data = await call(blocks);
+  if (blocks && !data.ok && SLACK_BLOCKS_REFUSED.includes(data.error)) {
+    console.warn(JSON.stringify({ route: 'slack', method, blocks: data.error }));
+    return call();
+  }
+  return data;
+}
 
 /**
  * A Discord message's `content` and `allowed_mentions` (the opspile bot's posts): mentions as
@@ -1127,17 +1168,15 @@ export async function post(env, me, request, inTeam, files = []) {
         ok: true, platform: 'slack', id: null, files: up.files, text: sent, ...invited,
       });
     }
-    const res = await fetch('https://slack.com/api/chat.postMessage', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({
-        channel: t.channel_id, thread_ts: t.root_id, text: slackText(sent, mentions),
-      }),
-    });
-    const data = await res.json();
+    // A table goes as a `markdown` block, which Slack renders (mrkdwn has no tables).
+    const data = await slackWithBlocks(token, 'chat.postMessage', {
+      channel: t.channel_id, thread_ts: t.root_id, text: slackText(sent, mentions),
+    }, slackBlocks(sent, mentions));
     if (!data.ok) {
       const reconnect = SLACK_RECONNECT.includes(data.error);
-      return json({ error: `Slack: ${data.error}`, connect: reconnect ? 'slack' : undefined }, 502);
+      return json({
+        error: `Slack: ${data.error || data.status}`, connect: reconnect ? 'slack' : undefined,
+      }, 502);
     }
     return json({
       ok: true, platform: 'slack', id: data.ts, text: sent, ...started(data.ts), ...invited,
