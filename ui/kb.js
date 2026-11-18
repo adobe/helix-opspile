@@ -1363,8 +1363,9 @@ function bindExtraction() {
 // ---- global MCP servers ---------------------------------------------------------------
 //
 // opspile's own servers (src/agent/globals.js): the browser (Cloudflare Browser Run), GitHub
-// (read-only, as the opspile GitHub App) and FluffyJaws (as the person the admin team connected,
-// or a service app). Set up once; on or off for a team here (new teams start with the browser and
+// (read-only, as the opspile GitHub App), FluffyJaws (as the person the admin team connected,
+// or a service app) and Slack channel management (the slack-automation relay; the admin team
+// switches it, on Slack channels only). Set up once; on or off for a team here (new teams start with the browser and
 // GitHub on), or for one channel (a channel's switch wins over its team's).
 
 const toolTags = (tools) => tools.map((t) => `<span class="src" title="${esc(t.description || '')}${t.readOnly ? ' (read-only)' : ''}">${esc(t.name)}</span>`).join('');
@@ -1400,8 +1401,15 @@ function githubSetup(g) {
     ${rows ? `<div class="per">${rows}</div>` : ''}`;
 }
 
+// A server the admin team alone switches (`may: false` for others), or on some platforms only.
 const perChannel = (g) => channelSwitches({
-  kind: 'gch', id: g.server, title: g.server, switches: g.channels, team: g.team,
+  kind: 'gch',
+  id: g.server,
+  title: g.server,
+  switches: g.channels,
+  team: g.team,
+  works: (c) => g.may !== false && (!g.platforms || g.platforms.includes(c.source)),
+  unworkable: g.may === false ? 'the admin team switches it' : null,
 });
 
 /**
@@ -1435,9 +1443,11 @@ function globalRow(g) {
   const errors = g.instances.filter((i) => i.checkError).map((i) => `<div class="sub err">${esc(i.name)}: ${esc(i.checkError)}</div>`).join('');
   const on = Boolean(g.team && g.team.enabled);
   const by = g.team && g.team.by ? `Turned ${on ? 'on' : 'off'} for ${esc(b.name)} by ${esc(g.team.by)}, ${esc(ago(g.team.at))}` : '';
+  const may = mayEdit() && g.may !== false;
+  const only = g.may === false ? 'Only the admin team changes it.' : `Only ${esc(whoEdits())} change it.`;
   const sw = g.team ? `<span class="state${on ? ' on' : ''}">${on ? 'On' : 'Off'}</span>
     <button class="switch" role="switch" aria-checked="${on}" aria-label="${esc(g.title)} for ${esc(b.name)}"
-      title="${mayEdit() ? (on ? `Agents of ${esc(b.name)} use it; turn it off` : `Turn it on for every channel of ${esc(b.name)}`) : `Only ${esc(whoEdits())} change it.`}" data-gteam="${esc(g.server)}"${mayEdit() ? '' : ' disabled'}></button>` : '';
+      title="${may ? (on ? `Agents of ${esc(b.name)} use it; turn it off` : `Turn it on for every channel of ${esc(b.name)}`) : only}" data-gteam="${esc(g.server)}"${may ? '' : ' disabled'}></button>` : '';
   return `<div class="ch global">
     <div class="head">
       <div class="nm">${esc(g.title)}<span class="src mono">${esc(names)}</span>${status}</div>
@@ -1744,9 +1754,10 @@ function bindGlobals() {
     el.onclick = async () => {
       const g = find(el.dataset.gteam);
       const on = !(g.team && g.team.enabled);
+      const kind = g.platforms ? `${g.platforms.map((p) => SOURCES[p] || p).join(' and ')} channel` : 'channel';
       const yes = await ask(
         on ? `Turn on ${g.title} for ${b.name}?` : `Turn off ${g.title} for ${b.name}?`,
-        on ? `The agents of every channel of ${b.name} can use it from their next message, except in channels switched off on their own.`
+        on ? `The agents of every ${kind} of ${b.name} can use it from their next message, except in channels switched off on their own.`
           : `Agents of ${b.name} stop using it with their next message, except in channels switched on on their own.`,
         on ? 'Turn on' : 'Turn off',
       );

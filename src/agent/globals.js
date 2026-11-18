@@ -14,6 +14,9 @@ import {
   approved, currentApp, installationsWithApprovals, installationToken,
 } from '../github.js';
 import { fluffyConnection, fluffyInstances } from './fluffyjaws.js';
+import {
+  INSTRUCTIONS as SLACK_INSTRUCTIONS, slackConnection, slackGuide, slackInstances,
+} from './slackmcp.js';
 
 /**
  * Global MCP servers: set up once for the whole deployment, not per team or customer, and
@@ -32,6 +35,17 @@ import { fluffyConnection, fluffyInstances } from './fluffyjaws.js';
  *   knowledge, Slack, the wiki, Jira, GitHub, support tickets), as a person a member of the
  *   admin team connected once, or as a FluffyJaws service app (src/agent/fluffyjaws.js). Off for
  *   new teams: the agents of a team where it is on see what that person sees there.
+ * - `slack_channels`: the slack-automation relay's channel management in Slack (AEM Ops
+ *   Automation), through the service binding SLACK_MCP (src/agent/slackmcp.js): who is in a
+ *   channel, and guest and Slack Connect invitations, adding, removing, disconnecting and
+ *   archiving, at once and without a confirmation. Off for new teams, on Slack only, and only
+ *   the admin team switches it.
+ *
+ * A server marked `admins` is switched by the admin team only; one with `platforms` is listed
+ * for agents whose thread is on one of them only. One with a `guide(target, ns)` has rules of its
+ * own in the agent's prompt (src/agent/mcp.js), beyond the instructions `describeNamespace`
+ * shows. Only these definitions reach a service binding (a connection's `fetch`): a team's or
+ * a customer's server is a row of `mcp_servers`, with a URL on the internet.
  *
  * A server's agents see it as `mcp__<name>`, like the team's and the customer's servers
  * (src/agent/mcp.js); its id there is `global:<key>`.
@@ -76,6 +90,18 @@ export const GLOBAL_SERVERS = [
       + ' never quote another customer\'s name or data into this thread.',
     // Saves a conversation at FluffyJaws: agents only read there.
     exclude: ['content_compass_recommend'],
+    newTeams: false,
+  },
+  {
+    server: 'slack_channels',
+    title: 'Slack channel management',
+    description: 'The slack-automation relay\'s MCP server (AEM Ops Automation): who is in a'
+      + ' Slack channel and how, one person\'s account, and guest and Slack Connect invitations,'
+      + ' adding and removing people, disconnecting organisations and archiving channels, at once',
+    instructions: SLACK_INSTRUCTIONS,
+    guide: slackGuide,
+    platforms: ['slack'],
+    admins: true,
     newTeams: false,
   },
 ];
@@ -131,6 +157,9 @@ export async function instancesOf(env, server) {
   if (server === 'fluffyjaws') {
     return fluffyInstances(env);
   }
+  if (server === 'slack_channels') {
+    return slackInstances(env);
+  }
   return { instances: [], problem: 'unknown server' };
 }
 
@@ -173,15 +202,20 @@ export async function setGlobalSwitch(env, {
 /** Whether a global server is on: the channel's switch if it has one, else the team's. */
 export const effective = ({ team, channel }) => Boolean((channel || team || {}).enabled);
 
+/** Whether a global server is for a thread on `source` (one without `platforms` is for all). */
+export const forSource = (g, source) => !g.platforms || g.platforms.includes(source);
+
 /**
- * The global servers on for an agent's target (its team and channel), as `mcp_servers`-shaped
+ * The global servers on for an agent's target (its team, channel and platform: `source`; a
+ * server with `platforms` needs one of them), as `mcp_servers`-shaped
  * entries: `{ id: 'global:<key>', scope: 'global', slug: <server>, name, description, allow,
  * updated_at }`. `updated_at` changes with the switch and the last check, so the agent's
  * catalog follows both.
  */
 export async function globalServersFor(env, target) {
   const switches = await switchesFor(env, target);
-  const on = GLOBAL_SERVERS.filter((g) => effective(switches.get(g.server)));
+  const on = GLOBAL_SERVERS.filter((g) => effective(switches.get(g.server))
+    && forSource(g, target.source));
   if (!on.length) {
     return [];
   }
@@ -211,8 +245,9 @@ export async function globalServersFor(env, target) {
 
 /**
  * A global server to connect to, by its id (`global:<key>`): `{ id, name, url, headers,
- * expiresAt?, authProvider? }`, null when it is gone. `authProvider` (fluffyjaws) gives the
- * transport a token before each request, and another when the server refuses it.
+ * expiresAt?, authProvider?, fetch? }`, null when it is gone. `authProvider` (fluffyjaws) gives
+ * the transport a token before each request, and another when the server refuses it; `fetch`
+ * (slack_channels) is how its requests go, through a service binding.
  */
 export async function globalConnection(env, id) {
   const key = String(id).replace(/^global:/, '');
@@ -226,6 +261,9 @@ export async function globalConnection(env, id) {
   }
   if (key === 'fluffyjaws') {
     return fluffyConnection(env, id);
+  }
+  if (key === 'slack_channels') {
+    return slackConnection(env, id);
   }
   const m = /^github:(\d+)$/.exec(key);
   if (m) {
@@ -287,6 +325,15 @@ export async function storeTools(env, key, res) {
 
 /** The definition of a global server. */
 export const globalServer = (server) => BY_NAME.get(String(server)) || null;
+
+/**
+ * A global server's rules in the prompt of an agent on `target`, whose scripts call it as
+ * `mcp__<ns>`, if it has any.
+ */
+export function globalGuide(server, target, ns) {
+  const g = globalServer(server);
+  return g && g.guide ? g.guide(target || {}, ns) : null;
+}
 
 /** The tools of a global server agents may call: all but those it excludes. */
 export function usableTools(server, tools) {
