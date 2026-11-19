@@ -1143,7 +1143,8 @@ and an unchanged thread is never labeled twice):
   **Requests** (counted with the other requests) and with the MCP server's `list_tech_conflicts`
   and `resolve_tech_conflict` (src/techconflicts.js). They are computed from `tech_stack` each
   time: an id two teams define otherwise (`diverging`: name, description, layer, product, or on
-  in one and off in another; each team's is asked in its channels, so it may be meant), and a
+  in one and off in another; each team's is asked in its channels, so it may be meant; a team
+  that only turns the admin team's off opts out, which is none), and a
   name or alias two ids that are on share (`name`: a thread that names it matches either). An
   admin keeps one as it is (with a note; hidden while its definitions stay what they were kept
   with, `tech_conflict_keeps.fingerprint`, migration 0082), uses one team's definition everywhere

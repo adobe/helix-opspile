@@ -47,6 +47,9 @@ describe('conflicts between the teams\' technologies', () => {
       row({
         team: 'cdn', tech: 'adobe/aem-sites/managed-cdn', name: 'Adobe Managed CDN', aliases: 'managed  CDN',
       }),
+      // A team that only turns the admin team's off opts out: no conflict.
+      row({ tech: 'gdrive' }),
+      row({ team: 'helix', tech: 'gdrive', enabled: 0 }),
       // Off: a name nobody asks about matches nothing.
       row({ tech: 'old', aliases: 'Helix', enabled: 0 }),
     ]);
