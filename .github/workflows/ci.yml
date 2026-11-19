@@ -62,7 +62,7 @@ jobs:
       SIGNIN_DOMAINS: ${{ secrets.SIGNIN_DOMAINS }}
       AGENT_GATEWAY: ${{ secrets.AGENT_GATEWAY }}
       AGENT_REGION: ${{ secrets.AGENT_REGION }}
-      # The agents' web_search (optional; ceramic and AGENT_GATEWAY while empty).
+      # The agents' web_search (optional; Web IQ where WEBIQ_API_KEY is set, else ceramic).
       WEB_SEARCH_PROVIDER: ${{ secrets.WEB_SEARCH_PROVIDER }}
       WEB_SEARCH_GATEWAY: ${{ secrets.WEB_SEARCH_GATEWAY }}
       # The opspile Teams app (catalog id): turns on agents' post_message in Teams.

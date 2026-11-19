@@ -90,8 +90,9 @@ const CLICKHOUSE_VARS = ['CLICKHOUSE_URL', 'CLICKHOUSE_DATABASE', 'CLICKHOUSE_US
 // TEAMS_APP_ID: the opspile Teams app's id in the org catalog, which turns the Teams bot on
 // (agents' post_message in Teams threads; src/teamsbot.js). TEAMS_BOT_SERVICE_URL: the Bot
 // Connector to post through, default the public cloud's.
-// WEB_SEARCH_PROVIDER (ceramic, linkup or exa; default ceramic) and WEB_SEARCH_GATEWAY (default
-// AGENT_GATEWAY): the agents' web_search (src/agent/websearch.js), through the AI binding.
+// WEB_SEARCH_PROVIDER (webiq, ceramic, linkup or exa; default webiq where the secret
+// WEBIQ_API_KEY is set, else ceramic) and WEB_SEARCH_GATEWAY (default AGENT_GATEWAY, for all but
+// webiq): the agents' web_search (src/agent/websearch.js).
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL', 'TEAMS_APP_ID', 'TEAMS_BOT_SERVICE_URL',
@@ -152,6 +153,9 @@ const SECRETS = [
   // when they are not in it (src/invite.js). Optional; SLACK_ADMIN_TOKEN_REQUIRED=1 at deploy
   // has `cf` check it exists.
   ...(process.env.SLACK_ADMIN_TOKEN_REQUIRED ? ['SLACK_ADMIN_TOKEN'] : []),
+  // The agents' web_search on Microsoft Web IQ (src/agent/websearch.js). Optional; with
+  // WEB_SEARCH_PROVIDER=webiq at deploy, `cf` checks it exists.
+  ...(process.env.WEB_SEARCH_PROVIDER === 'webiq' ? ['WEBIQ_API_KEY'] : []),
   // Access sync: required only where it is configured.
   ...(process.env.ACCESS_APP_ID ? ['ACCESS_API_TOKEN'] : []),
   // Discord: the bot's token where the poller is on, the app's secret where people connect.

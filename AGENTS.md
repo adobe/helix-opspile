@@ -120,13 +120,15 @@ code and docs, is the decision model that labels threads and channels.
 
 ## Debugging
 
-- **The inbox in a browser: `playwright-cli --cdp=9222`.** Chrome runs with remote debugging
-  on port 9222 and is signed in to the inbox (Cloudflare Access), so `goto`, `snapshot`,
-  `eval`, `click` and `screenshot` work on the production inbox as the user sees it.
+- **The inbox in a browser: `playwright-cli`, without `--cdp`.** Chrome runs with remote
+  debugging on a port of its choosing, which `playwright-cli` finds by itself (`tab-list`,
+  then `tab-select`; never assume 9222), and is signed in to the inbox (Cloudflare Access),
+  so `goto`, `snapshot`, `eval`, `click` and `screenshot` work on the production inbox as the
+  user sees it.
   `screenshot` and `drop` take refs from `snapshot` (`e492`), not CSS selectors. To check a
   fix before it is deployed, run `npm run ui:dev` (`PORT=` for another port) and open it in
-  the same browser; `npm run ui:session -- <inbox origin>` points it at production's API,
-  read-only.
+  the same browser; `npm run ui:session -- <inbox origin> --cdp http://127.0.0.1:<port>`
+  points it at production's API, read-only.
 - **Screenshots for pull requests** come from `npm run ui:dev`, never from production. To
   attach one, `drop` the files onto the PR's comment box. GitHub writes their
   `user-attachments` URLs into the box: read them with `eval`, clear the box, and put them in
