@@ -154,6 +154,19 @@ user agent (many answer a bot's with an error page); an `.ico` of bitmaps, which
 read, is decoded into a PNG for it (`src/ico.js`), and an SVG icon is offered without Clef's
 verdict.
 
+**Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
+(an agent that provisions access, say) would show on the customer's side of a thread. The admin
+pages' **Bots** (`src/ourbots.js`) list every bot opspile knows (`identities` of kind `bot`:
+written when one posts or is mentioned, a Slack bot or Teams app the first time it posts,
+`botIdentity` in `src/lookup.js`), with its messages and where it posted last, and the admin team
+says which are Adobe's (`identities.ours`: 1, 0, or NULL while nobody said; with who said it and
+when). An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
+messages in D1 follow at once (`messages.staff`), and so do the ones written before in the thread
+view (`botAuthor` in `src/api.js`, since their frontmatter says what was so then). Looking the
+account up again keeps the say. Its messages stay a bot's: they are not counted (a bot does not
+answer the customer, `last_staff`), and the agents fence them as every bot's
+(`untrusted` in `src/agent/deliver.js`, which trusts staff people only).
+
 **Administration.** The admin team manages all of this at `/inbox/admin`: ops teams and
 their members (found by name or email among the people and platform accounts opspile knows;
 names come from the platforms and are not edited there), the rules that file channels under a team (a name prefix like `aem-`, a Teams
@@ -2645,7 +2658,8 @@ what opspile knows about the person: name, picture, platform account, job title 
 (Slack profile title, Graph `jobTitle` and `companyName`, cached with the identity), mail
 domain, ops teams, the channel's org, and above all who they are to us:
 
-- **Adobe**: staff (a person marked staff, or a mail domain in `STAFF_DOMAINS`);
+- **Adobe**: staff (a person marked staff, or a mail domain in `STAFF_DOMAINS`); a bot an
+  admin said is Adobe's is staff too, but its card still says **Bot**;
 - **Partner**: their mail domain, or a parent domain, is in the `partner_domains` table
   (agencies and system integrators, maintained by hand, like the rules);
 - **Customer**: anyone else; the card notes when their domain is not the usual customer

@@ -36,7 +36,9 @@ import {
 import { appPostCheck, postApp } from './postapp.js';
 import { closestEmoji, rankEmoji, workspaceEmoji } from './shortcodes.js';
 import { rankEvents, recordPick } from './rankevents.js';
-import { isSignInDomain, isStaffDomain, personAvatar } from './lookup.js';
+import {
+  isSignInDomain, isStaffDomain, personAvatar, toAuthor,
+} from './lookup.js';
 import { appRule, readPost } from './attach.js';
 import { openPortalFile, portalFetch, portalFileOf } from './portalsource.js';
 import { react, resolve } from './react.js';
@@ -86,6 +88,24 @@ const MAX_PARTICIPANTS = 5;
 
 const identityJoin = "LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key";
 const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
+
+/**
+ * A bot's message author as its account says now (`account`: the message's row, with its
+ * identity's `account_kind`, `ours`, `account_staff` and `account_email`): an admin who says a
+ * bot is Adobe's, or takes it back (the admin page's Bots), moves the messages it wrote before
+ * to that side too, whose frontmatter says what was so when they were written. A bot nobody
+ * decided on (`ours` NULL) keeps its frontmatter.
+ */
+export function botAuthor(env, author, account) {
+  if (!author || author.kind !== 'bot' || !account || account.account_kind !== 'bot'
+    || account.ours === null || account.ours === undefined) {
+    return author;
+  }
+  const { staff } = toAuthor(env, {
+    kind: 'bot', staff: account.account_staff, email: account.account_email, ours: account.ours,
+  });
+  return staff === Boolean(author.staff) ? author : { ...author, staff };
+}
 
 /**
  * People in each thread, in order of first post (up to five), and the customer's mail
@@ -839,7 +859,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     Promise.all(read.map((m) => folderFiles(env.CHANNELS, m.path, { waitUntil })))
       .then((lists) => lists.flat()),
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
-        || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key, m.person = ? AS mine
+        || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key, m.person = ? AS mine,
+        i.kind AS account_kind, i.ours, i.staff AS account_staff, i.email AS account_email
       FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
       .bind(me.id, readKeys).all(),
     env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
@@ -922,6 +943,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       const m = byId.get(`${meta.thread}|${meta.id}`) || {};
       return {
         ...meta,
+        author: botAuthor(env, meta.author, m),
         body,
         avatar: m.avatar || null,
         authorKey: m.author_key || null,

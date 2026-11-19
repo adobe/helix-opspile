@@ -24,7 +24,8 @@
  * them; the rules that file channels under the team (a channel-name prefix like `aem-`, a
  * Teams team name, a Slack Connect team id); and manual assignments of single channels, one of
  * which moves a channel to the team picked under its name (`moveMenu`). Orgs: display name, icon and
- * type (customer, partner, vendor), and manual assignments. Changes apply at once, without
+ * type (customer, partner, vendor), and manual assignments. Bots: which of the bots in the
+ * threads are Adobe's, and so on Adobe's side in the inbox (src/ourbots.js). Changes apply at once, without
  * asking (the status line names the channels a rule change moved), and go to the API one
  * after the other, so many can be made in a row (see `serial`). Text fields save when they
  * change. A change updates the open page in place (see "view state"); nothing reloads.
@@ -32,6 +33,8 @@
 const state = {
   me: null, tab: 'teams', listError: '', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '', view: null,
   requests: [], openRequests: 0, names: {}, noIcon: false,
+  // The bots the inbox knows (GET /api/admin/bots), and whether the list shows only Adobe's.
+  bots: [], onlyOurs: false,
   // The customers waiting in the customer portal, and whether it is connected to this inbox.
   portal: [], portalBound: false,
 };
@@ -222,8 +225,12 @@ async function ruleChange(method, path, body, what = 'Rule change') {
 // ---- navigation ---------------------------------------------------------------------------
 
 // What is picked on each tab, in the URL.
-const PARAM = { teams: 'team', orgs: 'org', requests: 'request' };
-const PICK = { teams: 'a team', orgs: 'an org', requests: 'a request' };
+const PARAM = {
+  teams: 'team', orgs: 'org', bots: 'bot', requests: 'request',
+};
+const PICK = {
+  teams: 'a team', orgs: 'an org', bots: 'a bot', requests: 'a request',
+};
 function toUrl() {
   const q = new URLSearchParams({ tab: state.tab });
   if (state.sel) q.set(PARAM[state.tab], state.sel);
@@ -239,7 +246,7 @@ function toUrl() {
  */
 function openUrl(url, { push = true, instant = false } = {}) {
   const q = new URL(url, location.origin).searchParams;
-  const tab = ['orgs', 'requests'].includes(q.get('tab')) && state.me.admin ? q.get('tab') : 'teams';
+  const tab = ['orgs', 'bots', 'requests'].includes(q.get('tab')) && state.me.admin ? q.get('tab') : 'teams';
   if (push) history.pushState(null, '', url);
   const sel = q.get(PARAM[tab]);
   const open = () => {
@@ -271,9 +278,10 @@ function instantly(fn) {
 
 async function load() {
   // Team managers see their teams only, and no orgs.
-  const [teams, orgs, requests] = await Promise.all([call('/api/admin/teams'),
+  const [teams, orgs, requests, bots] = await Promise.all([call('/api/admin/teams'),
     state.me.admin ? call('/api/admin/orgs') : Promise.resolve({ body: {} }),
-    state.me.admin ? call('/api/admin/requests') : Promise.resolve({ body: {} })]);
+    state.me.admin ? call('/api/admin/requests') : Promise.resolve({ body: {} }),
+    state.me.admin ? call('/api/admin/bots') : Promise.resolve({ body: {} })]);
   if (!teams.ok) { $('list').innerHTML = `<div class="empty">${esc(teams.body.error || 'Could not load.')}</div>`; return false; }
   state.teams = teams.body.teams;
   state.names = teams.body.names || {};
@@ -285,6 +293,7 @@ async function load() {
   state.unassigned = teams.body.unassigned;
   state.orgs = orgs.body.orgs || [];
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
+  state.bots = bots.body.bots || [];
   return true;
 }
 
@@ -370,6 +379,8 @@ function drawList() {
       state.teams.sort((x, y) => x.name.localeCompare(y.name));
       select(r.body.team.slug);
     };
+  } else if (state.tab === 'bots') {
+    drawBots(f);
   } else if (state.tab === 'requests') {
     const match = (r) => !f || `${plainName(r.channel)} ${r.channel.channelId} ${teamLabel(r.team)} ${r.requestedBy.name || ''} ${r.requestedBy.email}`
       .toLowerCase().includes(f);
@@ -431,6 +442,7 @@ function select(sel) {
   if (state.tab === 'teams') showTeam(sel);
   else if (state.tab === 'requests' && String(sel).startsWith(PORTAL)) showPortalRequest(String(sel).slice(PORTAL.length));
   else if (state.tab === 'requests') showRequest(sel);
+  else if (state.tab === 'bots') showBot(sel);
   else showOrg(sel);
 }
 
@@ -1945,6 +1957,75 @@ async function showOrg(slug) {
   });
 }
 
+// ---- bots -------------------------------------------------------------------------------
+//
+// The bots in the threads (src/ourbots.js): Adobe's own count as staff, so the inbox shows them
+// on Adobe's side, as a colleague; the others on the customer's. Bots have no mail address,
+// which is how the inbox tells people apart, so an admin says which are Adobe's.
+
+const botName = (b) => b.name || b.handle || b.id;
+/** A bot's picture, where the platform gave one (Slack, Discord), else an empty square. */
+const botIco = (b) => (/^(https:\/\/|\/)/.test(b.avatar || '')
+  ? `<img class="ico" src="${esc(b.avatar)}" alt="">` : '<span class="ico none"></span>');
+const oursTag = (b) => (b.ours ? '<span class="tag ours" title="Adobe\'s: on Adobe\'s side in the inbox">Adobe</span>' : '');
+const botPosts = (b) => (b.messages ? `${b.messages} ${b.messages === 1 ? 'message' : 'messages'}` : 'mentioned only');
+
+function drawBots(f) {
+  const match = (b) => !f || `${b.name || ''} ${b.handle || ''} ${b.id} ${platform(b)} ${b.channel || ''}`.toLowerCase().includes(f);
+  const shown = state.bots.filter((b) => match(b) && (!state.onlyOurs || b.ours));
+  const ours = state.bots.filter((b) => b.ours).length;
+  const rows = shown.map((b) => `
+      <div class="row${state.sel === b.key ? ' on' : ''}" data-sel="${esc(b.key)}" title="${esc(botName(b))} (${esc(platform(b))})">
+        ${botIco(b)}<span class="name">${esc(botName(b))} <span class="sub">${esc(platform(b))}</span></span>
+        ${oursTag(b)}<span class="sub">${esc(botPosts(b))}</span></div>`).join('');
+  $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter bots" value="${esc(state.filter)}"></label>
+    <label class="only"><input type="checkbox" id="onlyOurs"${state.onlyOurs ? ' checked' : ''}> ${ours === 1 ? 'Only the one that is Adobe\'s' : `Only the ${ours} that are Adobe's`}</label>
+    ${rows || `<div class="empty">${state.bots.length ? 'Nothing matches.' : 'No bot has posted or been mentioned yet.'}</div>`}
+    <p class="hint">The bots that posted in a thread, or were mentioned, latest first. Adobe's show on Adobe's side in the inbox, as your colleagues do.</p>`;
+  $('onlyOurs').onchange = (e) => {
+    state.onlyOurs = e.target.checked;
+    renderList();
+  };
+}
+
+function showBot(key) {
+  const b = state.bots.find((x) => x.key === key);
+  if (!b) { $('detail').innerHTML = `<div class="empty">${backButton()} No such bot.</div>`; return; }
+  note = { kind: '', text: '' };
+  state.view = { target: 'bot', value: key, bot: b };
+  const v = state.view;
+  const draw = () => {
+    const channel = b.channel && (b.source === 'teams' ? [b.group, b.channel].filter(Boolean).join(' › ') : `#${b.channel}`);
+    const where = [b.latest ? `latest ${ago(b.latest)}` : '', channel ? `in ${channel}` : '', b.org ? `(${orgLabel(b.org)})` : ''].filter(Boolean).join(' ');
+    $('detail').innerHTML = `
+      <div class="title">${backButton()}${botIco(b)}<h1 class="fill">${esc(botName(b))}</h1><span class="sub">${esc(platform(b))} bot</span></div>
+      <div class="status" id="status"></div>
+      <div class="card"><div class="field">
+        <label>Whose</label><span class="seg" id="bOurs">
+          <button type="button" data-ours="1" aria-pressed="${b.ours === true}"${off(`bot:${key}`)}>Adobe's</button>
+          <button type="button" data-ours="0" aria-pressed="${b.ours !== true}"${off(`bot:${key}`)}>Not Adobe's</button></span>
+        <label>Posted</label><span>${b.messages ? `${esc(botPosts(b))} in ${b.threads} ${b.threads === 1 ? 'thread' : 'threads'}${where ? `, ${esc(where)}` : ''}` : 'Nothing yet: it was mentioned'}</span>
+        ${b.handle && b.handle !== b.name ? `<label>Mentioned as</label><span>@${esc(b.handle)}</span>` : ''}
+        <label>Id</label><span class="mono">${esc(b.id)}</span>
+        ${b.oursBy ? `<label>Said by</label><span class="sub">${esc(b.oursBy)}, ${esc(ago(b.oursAt))}</span>` : ''}
+      </div><p class="hint">Bots have no mail address, which is how the inbox tells Adobe people from customers, so an admin says which bots are Adobe's. An Adobe bot's messages show on Adobe's side, as your colleagues' do, the ones it wrote before too${b.staff && !b.ours ? '; this one is there already, by its Discord role' : ''}. They stay a bot's: they are not an answer to the customer, and the thread agents read them as they read every bot's.</p></div>`;
+    showStatus();
+    for (const btn of $('bOurs').querySelectorAll('[data-ours]')) {
+      btn.onclick = () => hold(btn, `bot:${key}`, async () => {
+        const ours = btn.dataset.ours === '1';
+        if (ours === (b.ours === true)) return;
+        const res = await call('/api/admin/bots', 'PUT', { key, ours });
+        if (!res.ok) { failed('Save', res); return; }
+        Object.assign(b, res.body.bot);
+        status('ok', ours ? `${botName(b)} is Adobe's now.` : `${botName(b)} is not Adobe's now.`);
+        renderList();
+        if (v === state.view) draw();
+      });
+    }
+  };
+  draw();
+}
+
 // ---- start ------------------------------------------------------------------------------
 
 (async () => {
@@ -1961,7 +2042,7 @@ async function showOrg(slug) {
   }
   Header.init(state.me, {
     count: false, // renderCount, from the requests loaded here
-    go: (id, url) => (['teams', 'orgs', 'requests'].includes(id) ? openUrl(url) : location.assign(url)),
+    go: (id, url) => (['teams', 'orgs', 'bots', 'requests'].includes(id) ? openUrl(url) : location.assign(url)),
   });
   if (!(await load())) return;
   // An icon that does not load: Google has no favicon for the domain (or the image is gone).

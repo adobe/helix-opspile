@@ -21,7 +21,7 @@ import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
 import { VECTORIZE_DELAY_SECONDS, vectorizeThread } from './vectors.js';
 import { dethread, rethread, RETHREAD_DELAY_SECONDS } from './rethread.js';
 import {
-  getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
+  botIdentity, getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
 } from './lookup.js';
 import { discordApi } from './discord.js';
 import { quoteMarkdown, withoutQuotes } from './markdown.js';
@@ -113,14 +113,27 @@ async function botName(env, ref) {
   }
 }
 
-/** `{ author, person }`: the frontmatter author and the D1 person id, if known. */
-async function resolveAuthor(env, ref) {
+/**
+ * `{ author, person }`: the frontmatter author and the D1 person id, if known. A bot with a bot
+ * id (`message`'s platform and tenant, as its author key) is staff when an admin said it is
+ * Adobe's (`ours`, src/lookup.js botIdentity).
+ */
+async function resolveAuthor(env, ref, message = {}) {
   if (!ref.userId) {
     const slackBot = ref.botId && ref.source !== 'teams';
     const name = ref.name || (slackBot ? await botName(env, ref) : null);
+    const kind = ref.kind || 'bot';
+    const bot = ref.botId && kind === 'bot' && message.source && message.tenant
+      ? await botIdentity(env, {
+        source: message.source, tenant: message.tenant, botId: ref.botId, name,
+      })
+      : null;
     return {
       author: {
-        kind: ref.kind || 'bot', name: name || ref.botId || null, org: null, staff: false,
+        kind,
+        name: name || ref.botId || null,
+        org: null,
+        staff: Boolean(bot) && toAuthor(env, bot).staff,
       },
       person: null,
     };
@@ -455,7 +468,7 @@ export async function processKey(env, key, cache = {}) {
   await ensureChannelKnowledgeBases(env, cls, cache);
 
   const deleted = op.op === 'delete';
-  const { author, person } = await resolveAuthor(env, message.authorRef);
+  const { author, person } = await resolveAuthor(env, message.authorRef, message);
   // The portal names whom a message mentions: their accounts, before they are looked up.
   for (const ref of (message.mentionRefs || []).slice(0, MAX_MENTIONS)) {
     // eslint-disable-next-line no-await-in-loop

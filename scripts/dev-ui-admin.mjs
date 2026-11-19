@@ -486,6 +486,63 @@ function seedAdminChannels(DB) {
   });
 }
 
+/**
+ * The admin page's Bots (src/ourbots.js): the fake inbox's bots with their messages, one an
+ * admin said is Adobe's (Provisioning Agent, on Adobe's side in its thread), and one only
+ * mentioned. Made up.
+ */
+function seedBots(DB, store) {
+  const db = DB.sqlite;
+  const saidBy = [...store.people.values()].find((p) => p.staff) || {};
+  const BOTS = [
+    {
+      name: 'Provisioning Agent', source: 'teams', id: 'BOT-PROVISIONING', ours: 1, at: 3,
+    },
+    { name: 'Alertmanager', source: 'slack', id: 'B0ALERTMANAGER' },
+    { name: 'opspile', source: 'slack', id: 'B0OPSPILE' },
+    {
+      name: 'Deploy Notifier', handle: 'deploy', source: 'teams', id: 'BOT-DEPLOY', ours: 0, at: 9,
+    },
+  ];
+  for (const b of BOTS) {
+    const tenants = new Set();
+    for (const entry of store.threads.values()) {
+      for (const m of entry.messages.filter((x) => x.author.kind === 'bot' && x.author.name === b.name
+        && entry.row.source === b.source)) {
+        tenants.add(entry.row.tenant);
+        db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at, staff,
+            counted, deleted, author_key, author_kind) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'bot')`)
+          .run(
+            entry.row.source,
+            entry.row.tenant,
+            entry.row.channel_id,
+            m.id,
+            entry.key,
+            m.at,
+            b.ours ? 1 : 0,
+            `${entry.row.source}:${entry.row.tenant}:${b.id}`,
+          );
+      }
+    }
+    const said = b.ours === undefined ? null : new Date(Date.now() - b.at * 86400000).toISOString();
+    for (const tenant of tenants.size ? tenants : ['T-FAKE']) {
+      db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, handle,
+          fetched_at, ours, ours_by, ours_at) VALUES (?, ?, ?, 'bot', ?, ?, ?, ?, ?, ?)`)
+        .run(
+          b.source,
+          tenant,
+          b.id,
+          b.name,
+          b.handle || null,
+          new Date().toISOString(),
+          b.ours ?? null,
+          said && saidBy.email,
+          said,
+        );
+    }
+  }
+}
+
 export function createAdmin(store, { manager = false, member = false, bases = [] } = {}) {
   const teamRows = store.teams.some((t) => t.slug === 'admin')
     ? store.teams.map(({ slug, name }) => ({ slug, name }))
@@ -553,6 +610,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     }
   }
   seedAdminChannels(DB);
+  seedBots(DB, store);
   // What the preview costs: the COGS dashboard's made-up usage (dev-ui-cogs.mjs).
   seedCogs(DB);
   // The Topics page's map (dev-ui-topics.mjs).

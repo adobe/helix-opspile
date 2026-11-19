@@ -129,6 +129,12 @@ a failed assignment opens it again, unless the rule was saved by then. `move` (m
 request is made: a move request confirms as a move whoever holds the channel, the others move it
 only out of the admin team and share it otherwise.
 
+**Adobe's bot.** undecided → Adobe's ⇄ not Adobe's (`identities.ours`: NULL, 1, 0; `src/ourbots.js`).
+Only the admin page writes it, never back to NULL, and the identity's refresh (`getIdentity`) leaves
+it out of its upsert. The bot's messages are not rewritten: a message's frontmatter keeps the side it
+was written with, and the thread view follows the flag over it once it is decided (`botAuthor` in
+`src/api.js`); `messages.staff` is set to match on every change.
+
 ## Drafts and replies
 
 **Shared draft.** none → version N → used or discarded → undo window → agent told (`src/drafts.js`,

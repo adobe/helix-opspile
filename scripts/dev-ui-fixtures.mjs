@@ -109,6 +109,13 @@ const KLICKHAUS = { KLICKHAUS_URL: 'https://klickhaus.example', KLICKHAUS_TEAMS:
 const BOT = {
   kind: 'bot', name: 'Alertmanager', org: null, staff: false,
 };
+/**
+ * A bot of Adobe's own (made up), which an admin said is Adobe's on the admin page's Bots
+ * (src/ourbots.js): staff, so the thread shows it on Adobe's side.
+ */
+const OURBOT = {
+  kind: 'bot', name: 'Provisioning Agent', org: null, staff: true,
+};
 /** The opspile app, which posts what someone sends as it (POST /api/post/app). */
 const APP = {
   kind: 'bot', name: 'opspile', org: null, staff: false,
@@ -470,6 +477,9 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     }
     if (key === 'app') {
       return APP;
+    }
+    if (key === 'ourbot') {
+      return OURBOT;
     }
     if (key === 'system') {
       return SYSTEM;
@@ -961,6 +971,20 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     ],
     label: {
       kind: 'meeting', next_actor: 'nobody', urgency: 0.4, resolved_p: 0.8, topics: ['project'],
+    },
+  });
+
+  // A bot of Adobe's (an admin said so on the admin page's Bots) answers the customer: on
+  // Adobe's side, as a colleague would, not on the customer's.
+  seed({
+    ch: CHANNELS.cdn,
+    messages: [
+      ['mei', 130, 'Could someone add our new developer to this team? Their address is in the ticket.'],
+      ['ourbot', 128, 'Added 1 guest to Globex CDN. They get an invitation by mail within a few minutes.'],
+      ['mei', 110, 'Thanks, they are in.'],
+    ],
+    label: {
+      kind: 'access', next_actor: 'nobody', urgency: 0.2, resolved_p: 0.8, topics: ['auth'],
     },
   });
 
