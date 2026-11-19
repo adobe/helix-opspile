@@ -331,6 +331,8 @@ The admin team gets more tools, which nobody else sees in `tools/list` (for them
 | Tool | What |
 | --- | --- |
 | `get_thread_trace` | Any thread like `get_thread`, with its agent's work in the same timeline, oldest first: what it was told, what it thought and said, every tool call with its arguments and result, and every MCP server call a code mode script made (`mcp_call`: arguments and status, not results; the agent keeps its latest 200); its prompt and tool changes; its model, tools, MCP servers, latest turn and token use. From the agent's transcript since its last reset; `limit`, `before` (paging) and `max_chars`. A channel without agents has no trace (its agent is not started to look). |
+| `list_tech_conflicts` | The conflicts between the teams' technologies, as Requests lists them: an id two teams define otherwise (`diverging`), or a name or alias two ids share (`name`); each with its `key`, the definitions, and `kept` when an admin kept it as it is. |
+| `resolve_tech_conflict` | Settles one, by `key`, as you: `keep` (a `note`), `use` (a team's definition everywhere), `delete` (one definition), `unalias` (a shared name off one technology) or `merge` (`from` into `into`: every file of `from` goes and `into` lists it in `moved_from`, which rewrites what D1 keeps under it for good). Writes the teams' catalog files, or the D1 rows. |
 
 It speaks MCP `2026-07-28`
 over Streamable HTTP: stateless, `server/discover`, version and capabilities in each

@@ -1121,6 +1121,19 @@ and an unchanged thread is never labeled twice):
   rewrote (`route: 'catalog'`, `action: 'move'`), so one nobody meant can be traced. Files (a
   stack drawing's Tech) and labels from before are read through the map (src/catalog.js
   `techMoves`), and their technologies keep a name.
+  **Conflicts** between the teams' technologies are the admin team's to settle, under
+  **Requests** (counted with the other requests) and with the MCP server's `list_tech_conflicts`
+  and `resolve_tech_conflict` (src/techconflicts.js). They are computed from `tech_stack` each
+  time: an id two teams define otherwise (`diverging`: name, description, layer, product, or on
+  in one and off in another; each team's is asked in its channels, so it may be meant), and a
+  name or alias two ids that are on share (`name`: a thread that names it matches either). An
+  admin keeps one as it is (with a note; hidden while its definitions stay what they were kept
+  with, `tech_conflict_keeps.fingerprint`, migration 0082), uses one team's definition everywhere
+  (the others' files and rows of it are deleted), deletes one definition, takes a shared name off
+  one technology's aliases, or merges one technology into another (its files go, then the other's
+  file lists it in `moved_from`, so the compile rewrites what D1 keeps under it). Each writes the
+  teams' catalog files as the admin, through the same write path as the editor, or the D1 row of
+  one saved there.
   An entry also has **aliases** (`tech_stack.aliases`, migration 0057): the names it goes by in
   threads ("AEMaaCS", "IMS Org", "EdgeWorkers"), which match product names to it and are not
   asked of Clef. A feature people ask about by its own name is an entry, not an alias: the AEM

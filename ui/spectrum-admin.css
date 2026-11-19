@@ -142,6 +142,9 @@ tr.left td { opacity: .55; }
 .portalopen textarea { width: 100%; resize: vertical; }
 .portalopen fieldset { display: flex; flex-wrap: wrap; min-width: 0; margin: 0; padding: 0; border: 0; }
 .portalopen input[type="checkbox"] { min-width: 0; }
+/* A conflict between technologies: each team's definition, what differs marked, its actions. */
+.conflict .acts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-300); }
+.spectrum .conflict .field > .differs { background: var(--spectrum-notice-subtle-background-color-default); font-weight: var(--spectrum-bold-font-weight); }
 /* A text field under 16px makes iOS zoom in on it when it is focused: the large scale's body
    size (17px), on a touch screen. */
 @media (hover: none) and (pointer: coarse) {
