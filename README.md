@@ -1015,7 +1015,7 @@ of the minutes, so 0.7 is about a factor of two.
 The technologies a thread involves come from three pipelines: Clef's tech questions and the
 extraction rules' detections (`labels.tech`, `thread_tech`), and the products Clairic names
 (`product` facts, matched to the tech stack by src/products.js `coveredBy`; docs/ARCHITECTURE.md,
-"Labels and facts"). `scripts/truth.mjs` scores them against about 150 channel threads marked
+"Labels and facts"), which Clairic is no longer asked for: what is left of them scores as it is. `scripts/truth.mjs` scores them against about 150 channel threads marked
 by hand. The set is kept in `.truth/`, which is never committed (`.gitignore`): it has thread
 titles, customers and the marks.
 

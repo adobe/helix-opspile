@@ -1193,22 +1193,13 @@ and an unchanged thread is never labeled twice):
   the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
   the error, a deadline and a go-live date. Only values at or above a confidence threshold are
-  kept (0.8, and 0.6 for the free-text problem). In the same call it lists the **products** the
-  thread names (`product` facts), for the [topic map](#topic-maps) to match against the tech
-  stack. Clairic lists nearly every name in the state, so `productFacts` (src/label.js) keeps
-  few of them: only its spans count (counted in code points, as Clairic counts; a string here
-  counts UTF-16 units, one more per emoji), not those in the header or an author line, not a
-  mention (`@Name`) or a piece of a word, not the names of the thread's people and customer, nor
-  generic words (src/products.js `GENERIC`). Of the rest it keeps what the tech stack covers, one
-  name per entry, and at most six it does not, the most named first, when they look like the
-  name of a product (`productLike`: a proper name of at most four words, not an id, a variable, a
-  header, a host name, a short acronym, a possessive, a phrase that ends in a lower-case noun, or
-  a word the thread also writes in lower case). The list's one confidence says nothing (it
-  shrinks as the list grows) and is not used. On the census's 822 threads: two names a thread
-  instead of six, two in three of them names of known products (two in five before, and a sixth
-  generic words), the names nobody knows yet a third, and 83% of the products a hand-made alias
-  table finds. A product name says the thread mentions it; Clef's tech questions still say what
-  the customer uses.
+  kept (0.8, and 0.6 for the free-text problem). It was also asked for the **products** a thread
+  names, for the topic map to match against the tech stack, until the teams' catalogs and Clef's
+  "about" replaced it: on the ground-truth set (`npm run truth`) Clef's answers found two in three
+  of the technologies marked by hand and Clairic's names a sixth to a third, and adding them to
+  Clef's added three points of recall and nothing to F1. The `product` facts from before stay
+  until a thread is labeled again; a topic map built before lists the names no entry covered as
+  gaps.
 
 **Label review.** Members of the admin team can review labels in the inbox: a queue of
 current labels nobody has reviewed, least confident first, and per question the right
