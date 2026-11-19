@@ -171,3 +171,6 @@ src/ui-spectrum.bundle.js
 graphviz/node_modules
 # So does the customer portal's Worker, from portal/ (npm run deploy:portal:*)
 portal/node_modules
+
+# The ground truth of the product labels: thread titles, customers and marks (scripts/truth.mjs)
+.truth/

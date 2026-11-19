@@ -1007,6 +1007,45 @@ forward a day at a time over the last `--days`, estimating each wait from what w
 before it, and prints counts and errors only, no message and no name. The error is on the log
 of the minutes, so 0.7 is about a factor of two.
 
+### Score the product labels
+
+The technologies a thread involves come from three pipelines: Clef's tech questions and the
+extraction rules' detections (`labels.tech`, `thread_tech`), and the products Clairic names
+(`product` facts, matched to the tech stack by src/products.js `coveredBy`; docs/ARCHITECTURE.md,
+"Labels and facts"). `scripts/truth.mjs` scores them against about 150 channel threads marked
+by hand. The set is kept in `.truth/`, which is never committed (`.gitignore`): it has thread
+titles, customers and the marks.
+
+```sh
+npm run truth -- sample --database <D1 id> [--profile <cf profile>] [--n 150] [--seed truth-1]
+npm run truth -- score --database <D1 id> [--profile <cf profile>] [--json]
+npm run truth -- review --database <D1 id> --origin <inbox origin> [--out file.html]
+```
+
+- `sample` draws the threads into `.truth/sample.json`: channel threads of three messages or
+  more, filed under a team, not `meeting` or `people`, split over the teams and, within a team,
+  over the layer of what Clef and the rules saw (the rarest of a thread's layers, or `none`),
+  both by the square root of their size, seeded, at most a tenth from one customer. It keeps
+  the population it drew from, so `--from .truth/sample.json` draws the same threads again
+  whatever changed in production since; `--before` leaves out the threads that started later.
+- `.truth/marks.json` is written by hand: per thread, every entry of the tech stack it involves
+  as `uses` (the thread shows the customer uses it) or `about` (the question, the problem or
+  the work concerns it, which implies `uses`), the products no entry covers (`missing`, the
+  vendor's product name), the parts the customer built (`own`) and a `note`:
+  `{ "threads": { "<thread>": { "tech": { "eds": "about" }, "missing": [{ "name": "…" }], "own": [], "note": "" } } }`.
+- `score` prints, per pipeline (and their union), the precision and recall of `uses` and of
+  `about`, over all marked threads and over those Clef was asked about (a label from before
+  migration 0059 has no `labels.tech`), per entry and overall (micro and macro), the hub share
+  (the share of the threads that name each entry), and the long-tail recall (of the `missing`
+  names, how many each pipeline names in that thread). A pipeline that does not tell `about`
+  apart is scored with its `uses`. Ids are read through `tech_moves` where the table exists, so
+  the marks' ids from before a catalog move score against labels from after it. `--json` also
+  writes `.truth/score-<date>.json`.
+- `review` writes `.truth/review.html`, one page with no dependencies: per thread its title
+  (a link into the inbox), team, customer and layer, the marks with controls to change them,
+  and what Clef and Clairic said. It exports the corrected marks as JSON (a download, else the
+  clipboard, else a text box), in the format of `marks.json`.
+
 ### Agents in the browser (WebMCP)
 
 The inbox registers [WebMCP](https://developer.chrome.com/docs/ai/webmcp) tools, so an agent

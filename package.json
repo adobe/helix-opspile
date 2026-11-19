@@ -25,6 +25,7 @@
     "graphviz:check": "node scripts/dev-graphviz/check.mjs",
     "rank": "node scripts/rank.mjs",
     "response:waits": "node scripts/wait-backtest.mjs",
+    "truth": "node scripts/truth.mjs",
     "build": "node scripts/ui-markdown.mjs",
     "prelint": "npm run build --silent",
     "pretest": "npm run build --silent",
@@ -33,7 +34,8 @@
     "preportal:dev": "npm run build --silent",
     "precomputer:dev": "npm run build --silent",
     "precomputer:check": "npm run build --silent",
-    "pregraphviz:dev": "npm run build --silent"
+    "pregraphviz:dev": "npm run build --silent",
+    "pretruth": "npm run build --silent"
   },
   "devDependencies": {
     "@adobe/eslint-config-helix": "^3.0.33",
