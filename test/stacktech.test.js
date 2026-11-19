@@ -51,7 +51,7 @@ describe('a stack drawing\'s technologies', () => {
     assert.deepEqual(r.moved, [{ part: 'Edge Delivery', from: 'eds', tech: 'adobe/aem-sites/edge-delivery' }]);
     assert.deepEqual(r.unknown, [{ part: 'Something else', tech: 'nope' }]);
     // Only the Tech cells: a person's description, and text where they put it, stay.
-    const hand = `---\ntype: Stack Drawing\ntitle: T\ndescription: Written by hand.\n---\n\nSummary.\n\n## Parts\n\n| Layer | Part |\n| --- | --- |\n| edge | Cloudflare |\n\nA note under the parts.\n\n## Flows\n\n| From | To |\n| --- | --- |\n`;
+    const hand = '---\ntype: Stack Drawing\ntitle: T\ndescription: Written by hand.\n---\n\nSummary.\n\n## Parts\n\n| Layer | Part |\n| --- | --- |\n| edge | Cloudflare |\n\nA note under the parts.\n\n## Flows\n\n| From | To |\n| --- | --- |\n';
     const kept = fixStackTech(hand, ROWS).text;
     assert.match(kept, /description: Written by hand\./);
     assert.match(kept, /\| edge +\| Cloudflare +\| cloudflare\/cdn +\|\n\nA note under the parts\.\n\n## Flows/);
