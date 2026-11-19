@@ -452,7 +452,10 @@ export function productFacts(answer, state, thread = {}, tech = []) {
   const squash = (v) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
   const own = squash(org);
   const isOrg = (v) => own.length > 3 && (squash(v) === own || squash(v).startsWith(own));
-  const spans = Array.isArray(answer?.spans) && answer.spans.length ? answer.spans : null;
+  // A span Clairic could not place is null (or not a pair): it names nothing in the text.
+  const placed = (Array.isArray(answer?.spans) ? answer.spans : [])
+    .filter((x) => Array.isArray(x) && Number.isInteger(x[0]) && Number.isInteger(x[1]));
+  const spans = placed.length ? placed : null;
   let items = Array.isArray(answer?.value) ? answer.value : [];
   if (spans) {
     // Not a mention of someone (`@Name`), nor a piece of a word: Clairic's spans now and then
@@ -741,12 +744,17 @@ async function labelAlert(env, thread, now) {
  * (`force`), five seconds apart. `{ queued, next }`: `next` is the `after` of the next batch, or
  * null when there are no more.
  */
-export async function queueRelabel(env, { after = '', limit = 100, minMessages = 3 } = {}) {
+export async function queueRelabel(env, {
+  after = '', limit = 100, minMessages = 3, threads = null,
+} = {}) {
   const n = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  // `threads`: these, of the labeled channel threads (those a relabel left behind, say).
+  const only = Array.isArray(threads) ? JSON.stringify(threads.map(String).slice(0, 500)) : null;
   const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
     JOIN labels l ON l.thread = t.thread
-    WHERE t.kind = 'channel' AND t.messages >= ? AND t.thread > ?
-    ORDER BY t.thread LIMIT ?`).bind(Math.max(Number(minMessages) || 1, 1), String(after || ''), n).all();
+    WHERE t.kind = 'channel' AND t.messages >= ?1 AND t.thread > ?2
+      AND (?4 IS NULL OR t.thread IN (SELECT value FROM json_each(?4)))
+    ORDER BY t.thread LIMIT ?3`).bind(Math.max(Number(minMessages) || 1, 1), String(after || ''), n, only).all();
   const keys = (results || []).map((r) => r.thread);
   for (const [i, thread] of keys.entries()) {
     // eslint-disable-next-line no-await-in-loop

@@ -143,6 +143,10 @@ describe('Clairic facts', () => {
     const many = productFacts({ value: Array.from({ length: 30 }, (_, i) => `Toolbox ${String.fromCharCode(65 + i)}`) }, STATE);
     assert.equal(many.length, MAX_GAPS);
     assert.deepEqual(productFacts(undefined, STATE), []);
+    // A span Clairic could not place (null, or not a pair) names nothing, and breaks nothing.
+    const odd = productFacts({ spans: [null, at('Akamai'), [3], 'x'], value: [] }, STATE, {}, TECH);
+    assert.deepEqual(odd.map((f) => f.value), ['Akamai']);
+    assert.deepEqual(productFacts({ spans: [null], value: ['Akamai'] }, STATE, {}, TECH).map((f) => f.value), ['Akamai']);
   });
 
   it('keeps Adobe products whose names are generic words without "Adobe" or "AEM"', () => {
