@@ -16,7 +16,7 @@ import { describe, it } from 'node:test';
 import { agentTool, toolProblem, toolsFor } from '../src/agent/agenttools.js';
 import { agentToolsExtension } from '../src/agent/tools.js';
 import {
-  gatewayOf, providerOf, searchProblem, webSearch,
+  gatewayOf, MAX_QUERY, providerOf, searchProblem, webSearch,
 } from '../src/agent/websearch.js';
 import { Meter } from '../src/cogs/meter.js';
 import { costOf } from '../src/cogs/prices.js';
@@ -109,11 +109,82 @@ describe('web search', () => {
     await assert.rejects(pending, /cancelled/);
   });
 
+  it('searches Microsoft Web IQ where its key is set, with the passages that answer the query', async () => {
+    const calls = [];
+    const fetch = async (url, init) => {
+      calls.push({ url, init });
+      return Response.json({
+        webResults: [
+          {
+            title: 'Publishing a page', url: 'https://docs.example/publishing', content: `${'passage '.repeat(300)}end`, lastUpdatedAt: '2026-11-01T00:00:00.0000000',
+          },
+          { url: 'https://status.example/', content: 'All systems operational' },
+          { title: 'no address, left out' },
+        ],
+        traceId: 'trace-1',
+      });
+    };
+    const env = { WEBIQ_API_KEY: 'k-1', AI: fakeAI(() => assert.fail('not Cloudflare')) };
+    assert.equal(providerOf(env), 'webiq');
+    assert.equal(providerOf({ ...env, WEB_SEARCH_PROVIDER: 'ceramic' }), 'ceramic');
+    assert.equal(searchProblem({ WEBIQ_API_KEY: 'k-1' }), null);
+    assert.match(searchProblem({ AI: {}, WEB_SEARCH_PROVIDER: 'webiq' }), /Web IQ API key \(secret WEBIQ_API_KEY\) is missing/);
+
+    const res = await webSearch(env, { query: ' eds publish 404 ', limit: 3 }, { fetch });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://api.microsoft.ai/v3/search/web');
+    assert.equal(calls[0].init.headers['x-apikey'], 'k-1');
+    assert.deepEqual(JSON.parse(calls[0].init.body), {
+      query: 'eds publish 404', maxResults: 3, contentFormat: 'passage', maxLength: 1500,
+    });
+    assert.equal(res.ok, true);
+    assert.equal(res.results, 2);
+    assert.equal(res.requestId, 'trace-1');
+    const lines = res.text.split('\n');
+    assert.equal(lines[0], '2 results for "eds publish 404":');
+    assert.equal(lines[2], '1. Publishing a page');
+    assert.ok(lines[4].length > 600 && lines[4].length <= 1500 && lines[4].endsWith('…'), lines[4].length);
+    assert.equal(lines[5], 'Modified: 2026-11-01T00:00:00.0000000');
+    assert.match(res.text, /2\. https:\/\/status\.example\/\nhttps:\/\/status\.example\/\nAll systems operational/);
+
+    // Its own limit on a query, before anything is sent.
+    const long = await webSearch(env, { query: 'q'.repeat(MAX_QUERY + 1) }, { fetch });
+    assert.match(long.text, /refused \(Query must be at most 1000 characters\)/);
+    assert.equal(calls.length, 1);
+  });
+
+  it('tells the agent what Web IQ\'s errors mean: fix the query, retry once, or go on without it', async () => {
+    const run = (status, body) => webSearch({ WEBIQ_API_KEY: 'k' }, { query: 'q' }, {
+      fetch: async () => (typeof body === 'string' ? new Response(body, { status }) : Response.json(body, { status })),
+    });
+    let res = await run(401, {
+      errorCode: 'AuthInvalidApiKey', errorCategory: 'UserError', userMessage: 'Invalid API key provided.', technicalDetails: 'Invalid API key', traceId: 't-1',
+    });
+    assert.deepEqual([res.error.code, res.error.status, res.error.requestId], ['web_search_unauthorized', 401, 't-1']);
+    assert.match(res.text, /does not work here at the moment \(web_search_unauthorized\): do not search again/);
+    res = await run(400, { errorCode: 'HandlerInvalidInput', errorCategory: 'UserError', technicalDetails: 'query is required' });
+    assert.match(res.text, /refused \(HandlerInvalidInput: query is required\): fix the query/);
+    res = await run(429, { errorCode: 'AuthUserThrottled', errorCategory: 'UserError', retryAfter: '1s' });
+    assert.match(res.text, /failed for now \(web_search_rate_limited\): you may try once more/);
+    // The day's quota is spent: asking again would fail too.
+    res = await run(429, { errorCode: 'AuthUserDailyUsageExceeded', errorCategory: 'UserError' });
+    assert.deepEqual([res.error.code, res.error.retryable], ['web_search_rate_limited', false]);
+    assert.match(res.text, /does not work here at the moment \(web_search_rate_limited\)/);
+    res = await run(500, { errorCode: 'InternalServerError', errorCategory: 'SystemError' });
+    assert.match(res.text, /failed for now \(web_search_unavailable\)/);
+    res = await run(503, 'busy');
+    assert.deepEqual([res.error.code, res.error.retryable], ['web_search_unavailable', true]);
+    res = await run(200, 'not json');
+    assert.deepEqual([res.error.code, res.error.retryable], ['web_search_unavailable', true]);
+    res = await run(200, { webResults: [] });
+    assert.equal(res.text, 'No results for "q". Try a broader or rephrased query.');
+  });
+
   it('is a switchable tool, on for new teams, that needs the AI binding and a known provider', async () => {
     assert.equal(agentTool('web_search').newTeams, true);
     assert.equal(searchProblem({ AI: {} }), null);
     assert.match(searchProblem({}), /Workers AI binding \(AI\) is missing/);
-    assert.match(searchProblem({ AI: {}, WEB_SEARCH_PROVIDER: 'bing' }), /WEB_SEARCH_PROVIDER is bing: it is one of ceramic, linkup, exa/);
+    assert.match(searchProblem({ AI: {}, WEB_SEARCH_PROVIDER: 'bing' }), /WEB_SEARCH_PROVIDER is bing: it is one of webiq, ceramic, linkup, exa/);
     assert.equal(toolProblem({}, 'web_search'), searchProblem({}));
 
     const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }] });
@@ -184,6 +255,16 @@ describe('web search', () => {
     const counted = Object.fromEntries(points.filter((p) => p.blobs[0] === 'web_search')
       .map((p) => [p.blobs[1], p.doubles[0]]));
     assert.deepEqual(counted, { ceramic: 1, linkup: 1 });
+
+    // Web IQ's, once it answered.
+    const wpoints = [];
+    const wm = new Meter({ USAGE: { writeDataPoint: (p) => wpoints.push(p) }, WEBIQ_API_KEY: 'k' }, { via: 'queue' });
+    const wenv = wm.env({ org: 'acme', team: 'helix' });
+    await webSearch(wenv, { query: 'q' }, { fetch: async () => Response.json({ webResults: [] }) });
+    await webSearch(wenv, { query: 'q' }, { fetch: async () => Response.json({}, { status: 401 }) });
+    await wm.flush();
+    assert.deepEqual(wpoints.filter((p) => p.blobs[0] === 'web_search').map((p) => [p.blobs[1], p.doubles[0]]), [['webiq', 1]]);
+    assert.equal(costOf('web_search', 'webiq', '', 1000), 7);
     assert.equal(costOf('web_search', 'ceramic', '', 1000), 0.25);
     assert.equal(costOf('web_search', 'exa', '', 1000), 7);
   });

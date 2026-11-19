@@ -259,6 +259,10 @@ describe('a person decides on a tool request', () => {
       { viewer: ADA },
     ));
     const shown = (await res.json()).tool_requests;
-    assert.deepEqual(shown.map((x) => [x.id, x.status]), [[a.id, 'denied'], [b.id, 'revoked']]);
+    // Both asked in the same millisecond: their order is their random ids'.
+    assert.deepEqual(
+      shown.map((x) => [x.id, x.status]).sort(),
+      [[a.id, 'denied'], [b.id, 'revoked']].sort(),
+    );
   });
 });

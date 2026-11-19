@@ -2521,17 +2521,20 @@ Nobody is added until it is approved, and the prompt says not to tell anyone oth
 
 **`web_search`.** The agent has a browser (the global `browser` MCP server) and a computer, but
 nothing that finds a page it has no address for. With this tool it searches the public web
-(`src/agent/websearch.js`): Cloudflare's Web Search API, through the Workers AI binding
+(`src/agent/websearch.js`), with the deployment's provider (`WEB_SEARCH_PROVIDER`): Microsoft
+Web IQ's Web Search REST API (`webiq`, the default where the secret `WEBIQ_API_KEY` is set,
+billed to its Azure subscription), or Cloudflare's Web Search API, through the Workers AI binding
 (`env.AI.websearch()`) and AI Gateway (`WEB_SEARCH_GATEWAY`, default `AGENT_GATEWAY`, which keeps
-no logs), with the deployment's provider (`WEB_SEARCH_PROVIDER`: Ceramic.ai, the default, and
-Linkup keep no data; Exa does). The search source and the rendering of results (numbered: title,
-address, a description cut to 600 characters) are the Agents SDK's `agents/websearch`, which
-imports nothing of `cloudflare:workers`. It answers with up to 10 results, not pages: the prompt
+no logs): Ceramic.ai (the default otherwise) and Linkup keep no data; Exa does. Cloudflare's
+search source and the rendering of results (numbered: title, address, a description cut to 600
+characters; Web IQ's passages, which answer the query, to 1,500) are the Agents SDK's
+`agents/websearch`, which imports nothing of `cloudflare:workers`; Web IQ's source
+(`createWebIQSearch`) answers in the SDK's shape, so both read the same to the agent. It answers with up to 10 results, not pages: the prompt
 has the agent read a page (browser or curl) before relying on it, and give `update_draft` only
 pages it read as sources. A query leaves Adobe, so the prompt has it write general queries in the
 product's words, never the customer's name, people, hosts, ids or the thread's words, and the
 Worker logs a search's team, provider, result count or error, never its query. A failed search
-(no gateway credits and no provider key, a timeout) tells the agent to fix the query, retry once,
+(nothing to pay with, a rejected key, a timeout) tells the agent to fix the query, retry once,
 or go on without searching. Each search that answered is counted for COGS as the thread's
 (`web_search`, per provider, at the provider's list price). It is on for every team: new teams
 get it (`newTeams`) and migration 0077 switched it on for the teams before.

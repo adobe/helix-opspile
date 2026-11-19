@@ -280,11 +280,15 @@ export const SERVICES = [
   },
   {
     id: 'web_search',
-    name: 'Web Search API',
-    about: 'The agents\' web_search, through AI Gateway, billed at the provider\'s list price',
-    url: 'https://developers.cloudflare.com/web-search/providers/',
+    name: 'Web search',
+    about: 'The agents\' web_search: Microsoft Web IQ, on Azure, or Cloudflare\'s Web Search API,'
+      + ' through AI Gateway, at the provider\'s list price',
+    url: 'https://learn.microsoft.com/web-iq/resources/pricing',
     // One metric per provider: the deployment's (WEB_SEARCH_PROVIDER) is the one counted.
     metrics: [
+      {
+        id: 'webiq', label: 'Searches (Web IQ)', unit: 'searches', per: 1e3, usd: 7.00,
+      },
       {
         id: 'ceramic', label: 'Searches (Ceramic.ai)', unit: 'searches', per: 1e3, usd: 0.25,
       },

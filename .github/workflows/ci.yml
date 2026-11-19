@@ -62,7 +62,7 @@ jobs:
       SIGNIN_DOMAINS: ${{ secrets.SIGNIN_DOMAINS }}
       AGENT_GATEWAY: ${{ secrets.AGENT_GATEWAY }}
       AGENT_REGION: ${{ secrets.AGENT_REGION }}
-      # The agents' web_search (optional; ceramic and AGENT_GATEWAY while empty).
+      # The agents' web_search (optional; Web IQ where WEBIQ_API_KEY is set, else ceramic).
       WEB_SEARCH_PROVIDER: ${{ secrets.WEB_SEARCH_PROVIDER }}
       WEB_SEARCH_GATEWAY: ${{ secrets.WEB_SEARCH_GATEWAY }}
       # The opspile Teams app (catalog id): turns on agents' post_message in Teams.
@@ -118,8 +118,21 @@ jobs:
       # The renderer Worker first (graphviz/cloudflare.config.ts): the inbox Worker binds it.
       - name: Deploy the renderer
         run: npm run deploy:graphviz:prod -- --message "ci ${GITHUB_SHA::7}"
+      # Worker secrets kept as repository secrets go up with the version (`--secrets-file`);
+      # the others the Worker has stay as they are.
       - name: Deploy
-        run: npx cf deploy --mode prod --message "ci ${GITHUB_SHA::7}"
+        env:
+          # The agents' web_search on Microsoft Web IQ (optional).
+          WEBIQ_API_KEY: ${{ secrets.WEBIQ_API_KEY }}
+        run: |
+          secrets="$RUNNER_TEMP/worker-secrets.json"
+          node -e '
+            const out = {};
+            for (const name of ["WEBIQ_API_KEY"]) if (process.env[name]) out[name] = process.env[name];
+            require("fs").writeFileSync(process.argv[1], JSON.stringify(out), { mode: 0o600 });
+          ' "$secrets"
+          npx cf deploy --mode prod --message "ci ${GITHUB_SHA::7}" --secrets-file "$secrets"
+          rm -f "$secrets"
       # The images of the agents' computers on the SLICC kernel (scripts/computer-images.mjs),
       # into the bucket the deploy made: only what changed since the last upload.
       - name: Upload computer images

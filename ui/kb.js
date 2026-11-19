@@ -986,7 +986,7 @@ const TOOL_CONFIRM = {
     off: (where) => `Agents of ${where} stop filing membership requests with their next message. Requests they filed stay with the admins.`,
   },
   web_search: {
-    on: (where) => `From their next message, the agents of ${where} can search the public web. Their queries go to an outside search provider, through AI Gateway; they are told to keep the customer's name, people and hosts out of them.`,
+    on: (where) => `From their next message, the agents of ${where} can search the public web. Their queries go to an outside search provider (Microsoft Web IQ, or one through AI Gateway); they are told to keep the customer's name, people and hosts out of them.`,
     off: (where) => `Agents of ${where} stop searching the web with their next message.`,
   },
 };
