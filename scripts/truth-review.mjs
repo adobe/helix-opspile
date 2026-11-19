@@ -262,7 +262,9 @@ for (const id of ['q', 'team', 'layer', 'open', 'differ']) $(id).addEventListene
 function exported() {
   const threads = {};
   for (const [t, m] of marks) threads[t] = m;
-  return JSON.stringify({ version: 1, marked_by: 'agent', reviewed_at: new Date().toISOString(), threads }, null, 1);
+  // Marks someone changed on this page are theirs: "human" from the first edit on.
+  const by = DATA.markedBy === 'human' || DATA.threads.some((t) => changed(t.thread)) ? 'human' : (DATA.markedBy || 'agent');
+  return JSON.stringify({ version: 1, marked_by: by, reviewed_at: new Date().toISOString(), threads }, null, 1);
 }
 let toastTimer = 0;
 function toast(text) {
@@ -318,13 +320,14 @@ if (!DATA.threads.some((t) => t.said)) $('differ').closest('label').classList.ad
 render();
 `;
 
-/** `</` written so it cannot end the script element the data is in. */
-const inScript = (json) => json.replace(/<\//g, '<\\/').replace(/<!--/g, '<\\!--');
+/** JSON with every `<` escaped, so no `</script>` or `<!--` ends the element the data is in. */
+const inScript = (json) => json.replace(/</g, '\\u003c');
 
 /**
  * The review page.
  *
- * @param {{ origin: string, seed: string, vocabulary: object[], threads: object[] }} data
+ * @param {{ origin: string, seed: string, markedBy?: string, vocabulary: object[],
+ *   threads: object[] }} data  `markedBy`: marks.json's `marked_by`
  *   `threads`: `{ thread, team, org, title, layer, mark, said }`, `said` null or
  *   `{ clef: string[], clairic: string[], asked: boolean }`
  */

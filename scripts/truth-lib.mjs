@@ -269,7 +269,13 @@ export function labelSets(tech, rows = [], { min = 0.8, moves = null } = {}) {
 }
 
 const ratio = (a, b) => (b ? a / b : null);
-const f1 = (p, r) => (p === null || r === null || p + r === 0 ? null : (2 * p * r) / (p + r));
+/** F1 of a precision and a recall: 0 when both are 0 (nothing right), null when one is unknown. */
+const f1 = (p, r) => {
+  if (p === null || r === null) {
+    return null;
+  }
+  return p + r === 0 ? 0 : (2 * p * r) / (p + r);
+};
 
 /**
  * Precision and recall of a pipeline against the marks, per entry and overall, for one

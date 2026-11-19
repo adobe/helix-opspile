@@ -12,11 +12,61 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import vm from 'node:vm';
 import {
   NO_LAYER, allocate, drawSample, hubShare, labelSets, longTail, markSets, movesMap, pct,
   sameProduct, scoreRelation, stratumLayer,
 } from '../scripts/truth-lib.mjs';
 import { reviewPage } from '../scripts/truth-review.mjs';
+
+/**
+ * The review page's script, run on a stub of the DOM it uses: `edit(context)` changes marks as
+ * a click would, and the result is the JSON the page exports.
+ */
+function exportFrom(html, edit = () => {}) {
+  const data = /<script type="application\/json" id="data">([\s\S]*?)<\/script>/.exec(html)[1];
+  const script = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
+  const els = new Map();
+  const el = (id) => {
+    if (!els.has(id)) {
+      els.set(id, {
+        id,
+        textContent: id === 'data' ? data : '',
+        innerHTML: '',
+        value: '',
+        checked: false,
+        classList: { add() {}, remove() {} },
+        handlers: {},
+        addEventListener(type, fn) { this.handlers[type] = fn; },
+        closest: () => ({ classList: { add() {} } }),
+      });
+    }
+    return els.get(id);
+  };
+  let copied = null;
+  const context = {
+    JSON,
+    URLSearchParams,
+    Map,
+    Set,
+    Date,
+    Number,
+    Object,
+    String,
+    CSS: { escape: (s) => s },
+    document: {
+      getElementById: el, querySelector: () => null, createElement: () => ({}), body: {},
+    },
+    localStorage: { getItem: () => null, setItem() {} },
+    navigator: { clipboard: { writeText: async (text) => { copied = text; } } },
+    confirm: () => true,
+    setTimeout: () => 0,
+    clearTimeout() {},
+  };
+  vm.runInNewContext(`${script}\nglobalThis.marks = marks;`, context);
+  edit(context);
+  return el('copy').handlers.click().then(() => JSON.parse(copied));
+}
 
 // Made-up threads and technologies: nothing here is production's.
 const marks = {
@@ -51,6 +101,17 @@ describe('the ground truth (scripts/truth-lib.mjs)', () => {
     assert.equal(s.outside, 1, 'an id outside the vocabulary is counted apart');
     assert.equal(s.overall.macroRecall, (1 + 1 / 2) / 2, 'the entries marked somewhere');
     assert.equal(s.overall.macroPrecision, (1 / 1 + 1 + 0) / 3, 'the entries named somewhere');
+  });
+
+  it('gives F1 0, not null, where nothing a pipeline named was marked', () => {
+    const guess = new Map([['t1', new Set(['gamma'])], ['t2', new Set(['gamma'])]]);
+    const s = scoreRelation(sets('uses'), guess, ['alpha', 'beta', 'gamma']);
+    assert.deepEqual([s.overall.tp, s.overall.fp, s.overall.fn], [0, 2, 3]);
+    assert.equal(s.overall.precision, 0);
+    assert.equal(s.overall.recall, 0);
+    assert.equal(s.overall.f1, 0);
+    assert.equal(s.per.alpha.f1, null, 'no precision without a guess');
+    assert.equal(s.per.gamma.f1, null, 'no recall without a mark');
   });
 
   it('scores "about" against the about marks only', () => {
@@ -135,7 +196,7 @@ describe('the ground truth (scripts/truth-lib.mjs)', () => {
         thread: 'x:1',
         team: 'red',
         org: 'acme',
-        title: '</script><b>t</b>',
+        title: '</script><!--<b>t</b>',
         layer: 'site',
         mark: marks.t1,
         said: null,
@@ -144,7 +205,36 @@ describe('the ground truth (scripts/truth-lib.mjs)', () => {
     assert.ok(html.includes('--spectrum-background-base-color:'));
     assert.ok(html.includes('prefers-color-scheme: dark'));
     assert.equal(html.split('</script>').length - 1, 2, 'only the two script elements end');
+    assert.ok(!html.includes('<!--'));
+    const data = /id="data">([\s\S]*?)<\/script>/.exec(html)[1];
+    assert.equal(JSON.parse(data).threads[0].title, '</script><!--<b>t</b>', 'the data is JSON as written');
     assert.equal(pct(0.666), '67%');
     assert.equal(pct(null), '–');
+  });
+
+  it('exports marks as the agent’s until one is changed on the page, then as a human’s', async () => {
+    const html = reviewPage({
+      origin: 'https://inbox.example',
+      seed: 's',
+      markedBy: 'agent',
+      vocabulary: [{
+        tech: 'alpha', name: 'Alpha', layer: 'site', description: 'the Alpha',
+      }],
+      threads: [{
+        thread: 'x:1', team: 'red', org: 'acme', title: 't', layer: 'site', mark: marks.t2, said: null,
+      }],
+    });
+    assert.equal((await exportFrom(html)).marked_by, 'agent');
+    const reviewedOnly = await exportFrom(html, (c) => {
+      const mark = c.marks.get('x:1');
+      mark.reviewed = true;
+    });
+    assert.equal(reviewedOnly.marked_by, 'agent', 'ticking "Reviewed" changes no mark');
+    const edited = await exportFrom(html, (c) => {
+      const mark = c.marks.get('x:1');
+      mark.tech.beta = 'uses';
+    });
+    assert.equal(edited.marked_by, 'human');
+    assert.equal(edited.threads['x:1'].tech.beta, 'uses');
   });
 });

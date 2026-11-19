@@ -302,7 +302,8 @@ function score() {
 
 function review() {
   const sampled = read('sample.json');
-  const marks = existsSync(join(DIR, 'marks.json')) ? read('marks.json').threads : {};
+  const file = existsSync(join(DIR, 'marks.json')) ? read('marks.json') : { threads: {} };
+  const marks = file.threads;
   const threads = sampled.threads.filter((t) => marks[t.thread] || !Object.keys(marks).length);
   let said = {};
   if (!args.offline) {
@@ -316,6 +317,7 @@ function review() {
   const html = reviewPage({
     origin: args.origin.replace(/\/$/, ''),
     seed: sampled.seed,
+    markedBy: file.marked_by || 'agent',
     vocabulary: sampled.vocabulary,
     threads: threads.map((t) => ({
       thread: t.thread,
@@ -327,11 +329,11 @@ function review() {
       said: said[t.thread] || null,
     })),
   });
-  const file = args.out || write('review.html', html);
+  const out = args.out || write('review.html', html);
   if (args.out) {
     writeFileSync(args.out, html);
   }
-  console.log(`${threads.length} threads, ${file}`);
+  console.log(`${threads.length} threads, ${out}`);
 }
 
 ({ sample, score, review })[command]();
