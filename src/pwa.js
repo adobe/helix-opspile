@@ -27,6 +27,11 @@ export const MANIFEST = {
   start_url: '/inbox',
   scope: '/',
   display: 'standalone',
+  // Links to the inbox open in the app, where it is installed (Chromium on the desktop), in its
+  // window if one is open: that window takes the address (ui/app.js, Launch), and the inbox
+  // opens its thread there, at the message a message's link is for.
+  handle_links: 'preferred',
+  launch_handler: { client_mode: ['focus-existing', 'auto'] },
   // Spectrum 2's base background, dark (rgb 17, 17, 17), behind the app while it starts.
   background_color: '#111111',
   theme_color: ICON_EDGE,

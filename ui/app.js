@@ -198,3 +198,24 @@ window.Swap = (() => {
   };
   return { watch };
 })();
+
+/**
+ * A link to the app opened in it, installed (src/pwa.js: `handle_links`, with `launch_handler`
+ * focus-existing): the window it came to takes it. A page that can show it where it is says so
+ * (`Launch.take = (url) => …`, true where it did: the inbox opens a thread, at a message); any
+ * other page loads it, which asks first where something would be lost (beforeunload). The launch
+ * that loaded the page is its own address, shown already.
+ */
+window.Launch = (() => {
+  const landed = location.href;
+  let first = true;
+  const launch = { take: null };
+  window.launchQueue?.setConsumer?.((params) => {
+    const url = params?.targetURL;
+    const own = first && url === landed;
+    first = false;
+    if (!url || own) return;
+    if (!launch.take?.(url)) location.assign(url);
+  });
+  return launch;
+})();

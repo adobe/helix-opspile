@@ -883,8 +883,8 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   the filters, the list, the thread's messages, its reply box and the sidebar (⌘F6 too, as F6 is
   the browser's), ⌃1…9 (Ctrl+Shift+1…9 off a Mac) picks a view, ↑ or ⌘↑ in an empty reply box
   edits your last message (without one, puts the last message in focus) and ⌘⇧\ reacts to the
-  last one. On a message in focus ↑/↓ move, `e` edits it, `r` reacts and Esc goes back to the reply
-  box. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
+  last one. On a message in focus ↑/↓ move, `e` edits it, `r` reacts, `m` (or the menu key, ⇧F10)
+  opens its menu and Esc goes back to the reply box. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
   ⌘⇧7/8/9 write (or take off) markdown, and a link pasted over words becomes theirs. The inbox's
   own keys stay: `/`, `j`/`k`, `e` (resolve), `a` (the Thread Agent).
 
@@ -1641,6 +1641,31 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   a link to that message in a thread shows (src/ui-markdown.js), in a popover only as tall as
   the card. Its time shows the message in the inbox: where it is in the open thread, else its
   thread, opened at it. A message opspile does not have, or the viewer may not see, is a reason.
+
+### A message's menu and its links
+
+The quick reactions end in ⋮, which every message that has come in has, also where one may not
+react (viewing as someone, Discord): its menu (`openMessageMenu` in `ui/inbox.js`), as in Slack,
+a `role="menu"` under the ⋮ in the look of the other floating menus (`.linkpick`). ↑/↓, Home and
+End move in it, Esc and Tab close it, back to the ⋮. It copies the message's links:
+
+- **Copy Slack URL** (Teams, Discord, after the platform): the message's own `permalink`, where
+  it has one.
+- **Copy Opspile URL**: the inbox at the message, `/inbox?team=<view>&t=<thread>&m=<message id>`
+  (`messageHref`): the view on screen (none from Personal), and nothing else of it, no filters,
+  search or "view as". `t` is the message's own thread, not its group's: the Worker reads the
+  asked thread's messages also in a group too large to read them all (`MAX_READ_MEMBERS`), and
+  the inbox opens the group from it.
+
+The item says "Copied ✓" for a moment (and a status says so to a screen reader), then the menu
+closes. An address with `m` opens its thread at the message, also as it loads (the thread is drawn
+twice then, as it opens and as the workspace's emoji arrive: both are placed at it), and marks it
+(`.linked`: a ring that fades out over 3 s; with less motion it stays as long, then goes), and
+keeps it in view while what is above it settles (its images); a message the thread no longer has
+is said so. `m` is the page load's only: the address the inbox settles on has no `m`. The
+installed app captures the inbox's links (`handle_links`, `launch_handler` focus-existing in
+`src/pwa.js`): the window that is open takes the address (`Launch` in `ui/app.js`) and opens the
+thread there, at the message, as a notification's click does; the other pages load it.
 
 ### Steering reactions
 

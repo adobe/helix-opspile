@@ -86,6 +86,8 @@ export default [
         TopicGraph: 'readonly',
         // Content swaps that fade in, ui/app.js.
         Swap: 'readonly',
+        // Links to the app opened in it, installed, ui/app.js.
+        Launch: 'readonly',
       },
     },
     rules: {
