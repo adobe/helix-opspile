@@ -43,7 +43,7 @@ const TYPES = [
   { id: 'person', label: 'People', one: 'Person', title: 'Adobe people who posted in the threads' },
   { id: 'topic', label: 'Topics', one: 'Topic', title: 'What the threads are about, found from what was said in them' },
   { id: 'tag', label: 'Tags', one: 'Tag', title: 'Clef\'s topics on the threads, as the inbox\'s Topic filter has them' },
-  { id: 'product', label: 'Products', one: 'Product', title: 'The products and technologies the threads are about (Clairic); outlined ones are not in the tech stack yet' },
+  { id: 'product', label: 'Products', one: 'Product', title: 'The technologies of the tech stack Clef says the threads are about (on maps from before, the products Clairic named; outlined ones were not in the tech stack)' },
   { id: 'org', label: 'Customers', one: 'Customer', title: 'Who the threads are for: customers, partners and vendors' },
 ];
 const TYPE = Object.fromEntries(TYPES.map((t) => [t.id, t]));
@@ -524,10 +524,13 @@ function overview() {
 function gaps() {
   const all = [...state.graph.all.values()].filter((n) => n.type === 'product');
   if (!all.length) {
-    return '<h3>Products</h3><p class="hint">No products yet: Clairic names them when it labels a thread.</p>';
+    return '<h3>Products</h3><p class="hint">No products yet: Clef says which technologies a thread is about when it labels it.</p>';
   }
   const list = all.filter((n) => n.gap).sort((a, b) => b.threads.length - a.threads.length
     || a.label.localeCompare(b.label));
+  // Maps built from Clef's answers name only technologies of the tech stack: no gaps. Maps built
+  // before, from Clairic's product names, have them.
+  if (!list.length) return '';
   const named = all.reduce((s, n) => s + (n.gap ? 0 : n.threads.length), 0);
   const missed = list.reduce((s, n) => s + n.threads.length, 0);
   // Named in two threads or more: by two customers or more first, as products to add; by one

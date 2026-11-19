@@ -1240,17 +1240,14 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
   from the titles. No name names a customer; one given twice gets a number.
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
   messages), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
-  and the **products** Clairic named. Each product is matched against the tech stack (every
-  team's enabled entries, src/products.js `coveredBy`): an entry covers it when its id, name or
-  one of its aliases is the product's; or is in it as words, where the product is written as a
-  name ("Akamai Property Manager" is Akamai's, "en-to launch" is not Adobe Launch's); or its
-  description names it where it writes a name, cut at commas, "or", "such as" and brackets ("a
-  consent manager such as OneTrust or Cookiebot" names OneTrust and Cookiebot, not "consent
-  manager"). A word alone is no name. A covered product is named as its entry, and drawn as the
-  product the entry is part of (its features listed when it is picked); one no entry covers is a
-  **gap**, named as most threads write it. "AEM" and "Adobe" in front do not count, except where
-  a name is generic without them ("AEM Author"), and generic names (API, CDN, JSON, Slack, …)
-  are left out.
+  and the **products**: the technologies Clef says the thread is about (`thread_tech.about`), or,
+  for a label that was not asked that (from before migration 0083, or whose "about" call failed),
+  the ones it shows (src/topicmap.js `techProductsOf`). Each is named as its entry and drawn as the
+  product the entry is part of (its features listed when it is picked). Clef answers only about
+  the tech stack, so a map has no gaps: what no team's catalog lists yet shows as a stack
+  drawing's part without Tech instead. Maps built before were built from the products Clairic
+  named, matched to the tech stack (src/products.js `coveredBy`), and kept the ones no entry
+  covered as **gaps**, which the page still lists for those maps.
 - The cron builds one when the newest is a week old, and the admin team with **Rebuild**; a row
   of `topic_maps` each (the map as JSON), the newest five kept.
 - The [expert finder](#replying) reads the newest (`src/topicindex.js`): which topic each thread

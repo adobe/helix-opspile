@@ -29,7 +29,7 @@ export {
  * vectors (src/vectors.js, the mean of everything people wrote in them) are clustered with
  * k-means into topics, and a language model names each topic from the titles of its most typical
  * threads. With them come the Adobe people who posted in each thread, the customer it is for and
- * Clef's topics (labels.topics) and the products Clairic found in it (`product` facts), so the
+ * Clef's topics (labels.topics) and the technologies Clef says it is about (thread_tech), so the
  * Topics page (ui/topics.js) can draw people, topics, Clef's topics, products and customers as one
  * graph, and show what Clef's topics and the tech stack do not cover yet: topics that get no tag,
  * and products no tech stack entry names (the gaps).
@@ -224,9 +224,12 @@ async function threadsOf(env) {
     WHERE ${WHERE} AND m.staff = 1 AND m.counted = 1 AND m.deleted = 0
     GROUP BY m.thread, m.person`).bind(MIN_MESSAGES).all();
   const { results: orgs } = await env.DB.prepare('SELECT slug, name, type FROM orgs').all();
-  const { results: products } = await env.DB.prepare(`SELECT f.thread, f.value FROM facts f
-    JOIN threads t ON t.thread = f.thread LEFT JOIN labels l ON l.thread = t.thread
-    WHERE ${WHERE} AND f.source = 'clairic' AND f.field = 'product'`).bind(MIN_MESSAGES).all();
+  // What Clef says each thread is about (thread_tech.about), or, where it was not asked that,
+  // what it shows (src/label.js aboutOf).
+  const { results: products } = await env.DB.prepare(`SELECT g.thread, g.tech, g.about,
+      l.about IS NOT NULL AS asked FROM thread_tech g
+    JOIN threads t ON t.thread = g.thread LEFT JOIN labels l ON l.thread = t.thread
+    WHERE ${WHERE}`).bind(MIN_MESSAGES).all();
   const { results: tech } = await env.DB.prepare(`SELECT tech, name, description, product,
     aliases FROM tech_stack WHERE enabled = 1 ORDER BY team = 'admin' DESC`).all();
   return {
@@ -239,6 +242,33 @@ async function threadsOf(env) {
 }
 
 // ---- products and the tech stack (src/products.js) --------------------------------------
+
+/**
+ * The products of the threads, as Clef answered them (`thread_tech`): what a thread is about
+ * (`about` set), or, for a thread whose label was not asked that (`asked` false), what it shows.
+ * Each as its technology (`tech:<id>`, named as it, with the product it is part of). The same
+ * shape as productsOf: `{ of: thread → ids, products: id → { name, tech, product } }`; Clef's
+ * answers name only technologies of the tech stack, so none is a gap.
+ */
+export function techProductsOf(rows, techRows) {
+  const by = new Map();
+  for (const r of techRows) {
+    if (!by.has(r.tech)) {
+      by.set(r.tech, r);
+    }
+  }
+  const of = new Map();
+  const products = {};
+  for (const r of rows) {
+    const t = by.get(r.tech);
+    if (t && (r.asked ? typeof r.about === 'number' : true)) {
+      const id = `tech:${r.tech}`;
+      products[id] = { name: t.name || r.tech, tech: r.tech, product: t.product || null };
+      of.set(r.thread, [...new Set([...(of.get(r.thread) || []), id])]);
+    }
+  }
+  return { of, products };
+}
 
 /**
  * The products of the threads (Clairic's `product` facts), each as the tech stack entry that
@@ -487,8 +517,8 @@ const round = (x, digits = 3) => Math.round(x * 10 ** digits) / 10 ** digits;
  *   people who posted, by id, with their messages.
  * - `people` (id → name, Adobe staff only), `orgs` (slug → `{ name, type }`), `tags` (Clef's
  *   topic ids → the names the inbox shows), `products` (id → `{ name, tech, product }`: the
- *   products Clairic found in the threads, `tech` the tech stack entry that covers one (null for
- *   a gap), `product` the product that entry is part of; a thread's `products` are their ids).
+ *   technologies Clef says the threads are about, `tech` the entry, `product` the product that
+ *   entry is part of; a thread's `products` are their ids).
  */
 export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed = 1 } = {}) {
   if (!env.CONTENT || !env.AI) {
@@ -514,7 +544,7 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
   const clusters = members.filter((m) => m.length)
     .map((m) => m.sort((a, b) => sims[b] - sims[a]))
     .sort((a, b) => b.length - a.length);
-  const products = productsOf(facts, tech);
+  const products = techProductsOf(facts, tech);
   const top = (list) => [...list.reduce((c, v) => c.set(v, (c.get(v) || 0) + 1), new Map())]
     .sort((a, b) => b[1] - a[1]).slice(0, 5);
   const tagNames = topicNames();
