@@ -158,7 +158,8 @@ verdict.
 (an agent that provisions access, say) would show on the customer's side of a thread. The admin
 pages' **Bots** (`src/ourbots.js`) list every bot opspile knows (`identities` of kind `bot`:
 written when one posts or is mentioned, a Slack bot or Teams app the first time it posts,
-`botIdentity` in `src/lookup.js`), with its messages and where it posted last, and the admin team
+`botIdentity` in `src/lookup.js`), with its messages and where it posted last (a bot's page previews its latest three, each
+with a link to its thread), and the admin team
 says which are Adobe's (`identities.ours`: 1, 0, or NULL while nobody said; with who said it and
 when). An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
 messages in D1 follow at once (`messages.staff`), and so do the ones written before in the thread

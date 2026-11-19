@@ -18,6 +18,7 @@ import { SLACK_MCP_URL } from '../src/agent/slackmcp.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
+import { previewOf } from '../src/threads.js';
 import { seal } from '../src/post.js';
 import { d1 } from '../test/d1.js';
 import { IMAGES, layerNames } from './computer-images.mjs';
@@ -511,7 +512,8 @@ function seedBots(DB, store) {
         && entry.row.source === b.source)) {
         tenants.add(entry.row.tenant);
         db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at, staff,
-            counted, deleted, author_key, author_kind) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'bot')`)
+            counted, deleted, author_key, author_kind, preview)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'bot', ?)`)
           .run(
             entry.row.source,
             entry.row.tenant,
@@ -521,6 +523,7 @@ function seedBots(DB, store) {
             m.at,
             b.ours ? 1 : 0,
             `${entry.row.source}:${entry.row.tenant}:${b.id}`,
+            previewOf(m.body || ''),
           );
       }
     }

@@ -138,6 +138,31 @@ describe('Adobe\'s bots', () => {
     assert.ok(!body.bots.some((b) => b.key === 'teams:T:u-cy'));
   });
 
+  it('show their latest messages, where they were posted, to the admin team', async () => {
+    const e = env();
+    const said = (id, at, preview) => e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant,
+        channel_id, id, thread, at, staff, counted, deleted, author_key, author_kind, preview)
+      VALUES ('teams', 'T', '19:c', ?, ?, ?, 0, 0, ?, ?, 'bot', ?)`)
+      .run(id, THREAD, at, Number(id === '9'), HELPER, preview);
+    said('8', '2026-10-21T10:03:00Z', 'Added 1 guest.');
+    said('9', '2026-10-21T10:04:00Z', 'Gone.');
+    said('10', '2026-10-21T10:05:00Z', 'Removed 1 guest.');
+    said('11', '2026-10-21T10:06:00Z', 'Renamed the channel.');
+    assert.equal((await call(e, BO, 'GET', `/api/admin/bot?key=${HELPER}`)).status, 403);
+    assert.equal((await call(e, ADA, 'GET', '/api/admin/bot?key=teams:T:nobody')).status, 404);
+    assert.equal((await call(e, ADA, 'GET', '/api/admin/bot?key=teams:T:u-cy')).status, 404);
+    const { status, body } = await call(e, ADA, 'GET', `/api/admin/bot?key=${HELPER}`);
+    assert.equal(status, 200);
+    assert.equal(body.bot.key, HELPER);
+    // The latest three, the deleted one left out.
+    assert.deepEqual(body.recent.map((m) => [m.id, m.preview]), [
+      ['11', 'Renamed the channel.'], ['10', 'Removed 1 guest.'], ['8', 'Added 1 guest.'],
+    ]);
+    assert.deepEqual([body.recent[0].thread, body.recent[0].team, body.recent[0].channel], [
+      THREAD, 'helix', 'acme support',
+    ]);
+  });
+
   it('are said to be Adobe\'s by the admin team, which moves their messages to Adobe\'s side', async () => {
     const e = env();
     assert.deepEqual(await sides(e), { 5: false, 6: false, 7: false });

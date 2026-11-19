@@ -1992,8 +1992,21 @@ function showBot(key) {
   const b = state.bots.find((x) => x.key === key);
   if (!b) { $('detail').innerHTML = `<div class="empty">${backButton()} No such bot.</div>`; return; }
   note = { kind: '', text: '' };
-  state.view = { target: 'bot', value: key, bot: b };
+  state.view = { target: 'bot', value: key, bot: b, recent: null };
   const v = state.view;
+  // Its latest messages (GET /api/admin/bot), each a link to its thread in the inbox: what the
+  // bot says tells whose it is.
+  const recentCard = () => {
+    if (!b.messages) return '';
+    const items = v.recent === null ? '<div class="empty pad">Loading…</div>'
+      : v.recent.error ? `<div class="empty pad">${esc(v.recent.error)}</div>`
+        : v.recent.map((m) => {
+          const ch = m.channel && (b.source === 'teams' ? [m.group, m.channel].filter(Boolean).join(' › ') : `#${m.channel}`);
+          return `<li><div class="said">${esc(m.preview) || '<i>No text</i>'}</div>
+            <div class="sub"><time datetime="${esc(m.at)}">${esc(new Date(m.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}</time>${ch ? ` · ${esc(ch)}` : ''}${m.org ? ` · ${esc(orgLabel(m.org))}` : ''} · <a href="/inbox?team=${encodeURIComponent(m.team)}&t=${encodeURIComponent(m.thread)}">Open the thread</a>${m.permalink ? ` · <a href="${esc(m.permalink)}" target="_blank" rel="noopener">on ${esc(platform(b))}</a>` : ''}</div></li>`;
+        }).join('');
+    return `<div class="card"><h2>Latest messages</h2>${v.recent && !v.recent.error && !v.recent.length ? '<div class="empty pad">Its messages were deleted.</div>' : `<ul class="recent">${items}</ul>`}</div>`;
+  };
   const draw = () => {
     const channel = b.channel && (b.source === 'teams' ? [b.group, b.channel].filter(Boolean).join(' › ') : `#${b.channel}`);
     const where = [b.latest ? `latest ${ago(b.latest)}` : '', channel ? `in ${channel}` : '', b.org ? `(${orgLabel(b.org)})` : ''].filter(Boolean).join(' ');
@@ -2008,7 +2021,8 @@ function showBot(key) {
         ${b.handle && b.handle !== b.name ? `<label>Mentioned as</label><span>@${esc(b.handle)}</span>` : ''}
         <label>Id</label><span class="mono">${esc(b.id)}</span>
         ${b.oursBy ? `<label>Said by</label><span class="sub">${esc(b.oursBy)}, ${esc(ago(b.oursAt))}</span>` : ''}
-      </div><p class="hint">Bots have no mail address, which is how the inbox tells Adobe people from customers, so an admin says which bots are Adobe's. An Adobe bot's messages show on Adobe's side, as your colleagues' do, the ones it wrote before too${b.staff && !b.ours ? '; this one is there already, by its Discord role' : ''}. They stay a bot's: they are not an answer to the customer, and the thread agents read them as they read every bot's.</p></div>`;
+      </div><p class="hint">Bots have no mail address, which is how the inbox tells Adobe people from customers, so an admin says which bots are Adobe's. An Adobe bot's messages show on Adobe's side, as your colleagues' do, the ones it wrote before too${b.staff && !b.ours ? '; this one is there already, by its Discord role' : ''}. They stay a bot's: they are not an answer to the customer, and the thread agents read them as they read every bot's.</p></div>
+      ${recentCard()}`;
     showStatus();
     for (const btn of $('bOurs').querySelectorAll('[data-ours]')) {
       btn.onclick = () => hold(btn, `bot:${key}`, async () => {
@@ -2024,6 +2038,11 @@ function showBot(key) {
     }
   };
   draw();
+  if (!b.messages) return;
+  call(`/api/admin/bot?key=${encodeURIComponent(key)}`).then((r) => {
+    v.recent = r.ok ? r.body.recent : { error: r.body.error || `Could not load its messages (${r.status}).` };
+    if (v === state.view) draw();
+  });
 }
 
 // ---- start ------------------------------------------------------------------------------

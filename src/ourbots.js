@@ -99,6 +99,50 @@ export async function listBots(env) {
   return json({ bots });
 }
 
+/** How many of a bot's latest messages its page shows. */
+export const RECENT = 3;
+
+/**
+ * GET /api/admin/bot?key=: the bot `key` (its identity key), with its latest messages
+ * (`recent`, at most RECENT, deleted ones left out), each with its preview (the text the thread
+ * list shows, `messages.preview`) and where it was posted, so an admin sees what it says before
+ * saying whose it is.
+ */
+export async function getBot(env, key) {
+  const [source, tenant, userId] = splitKey(key);
+  if (!source || !tenant || !userId) {
+    return json({ error: 'give the bot\'s key' }, 400);
+  }
+  const row = await env.DB.prepare(`${SELECT} AND i.source = ? AND i.tenant = ? AND i.user_id = ?`)
+    .bind(source, tenant, userId).first();
+  if (!row) {
+    return json({ error: 'no such bot' }, 404);
+  }
+  const [where] = await whereFrom(env, [row]);
+  const { results } = await env.DB.prepare(`SELECT m.thread, m.id, m.at, m.preview, m.permalink,
+      t.team, t.org, t.channel_name, t.title, c.group_name
+    FROM messages m JOIN threads t ON t.thread = m.thread
+    LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant
+      AND c.channel_id = t.channel_id
+    WHERE m.author_key = ? AND m.deleted = 0 ORDER BY m.at DESC LIMIT ?`)
+    .bind(`${source}:${tenant}:${userId}`, RECENT).all();
+  return json({
+    bot: botOf(env, where),
+    recent: (results || []).map((m) => ({
+      thread: m.thread,
+      id: m.id,
+      at: m.at,
+      preview: m.preview || '',
+      permalink: m.permalink || null,
+      team: m.team,
+      org: m.org,
+      channel: m.channel_name || null,
+      group: m.group_name || null,
+      title: m.title || null,
+    })),
+  });
+}
+
 /**
  * PUT /api/admin/bots `{ key, ours }`: says whether the bot `key` (its identity key, the
  * messages' `author_key`) is Adobe's. Its messages in D1 follow at once (`messages.staff`, the
