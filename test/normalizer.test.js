@@ -1165,6 +1165,10 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual(e.queued.map((q) => q.body), [{ label: 'slack:E1:C1:1.1', force: true }]);
     const rest = await queueRelabel(e, { after: 'slack:E1:C1:1.1', minMessages: 1 });
     assert.deepEqual(rest, { queued: 0, next: null });
+    const none = await queueRelabel(e, { threads: ['slack:E1:C1:9.9'], minMessages: 1 });
+    assert.deepEqual(none, { queued: 0, next: null });
+    const named = await queueRelabel(e, { threads: ['slack:E1:C1:1.1'], minMessages: 1 });
+    assert.deepEqual(named, { queued: 1, next: null });
   });
 
   it('keeps "about" unasked, not empty, when its call fails', async () => {
