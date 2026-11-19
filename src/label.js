@@ -21,9 +21,6 @@ import { LAYERS } from './stack.js';
 import { threadTechStatements } from './follows.js';
 import { resolveTech, techMoves } from './catalog.js';
 import { questionKeys } from './techid.js';
-import {
-  coveredBy, GENERIC, nameKey, productKey, productLike, techIndex,
-} from './products.js';
 
 /**
  * Thread labels (Clef, a decision model) and facts (the teams' extraction rules, plus Clairic,
@@ -276,37 +273,12 @@ export const vocab = async (env, team = null) => {
   };
 };
 
-/**
- * Clairic's `products` field: the wording of the product census (docs/ARCHITECTURE.md, "Labels
- * and facts"), the fewest stray words of five at nearly the best recall. Clairic lists nearly
- * every name in the state, the header's and the authors' too, so productFacts reads its spans.
- */
-export const PRODUCTS_INSTRUCTIONS = 'Names of software products, cloud services, platforms and'
-  + ' developer tools that the customer uses or asks about, for example AEM Sites, Document'
-  + ' Authoring, Cloudflare, Algolia or GitHub. Not the names of people, customers or the channel,'
-  + ' and not generic words such as API, CDN, website or page.';
-/**
- * At most this many products per thread, each at most MAX_PRODUCT characters, of them at most
- * MAX_GAPS the tech stack does not cover.
- */
-export const MAX_PRODUCTS = 16;
-export const MAX_GAPS = 6;
-const MAX_PRODUCT = 60;
-
 export const FIELDS = {
   problem: { type: 'text', instructions: "The customer's problem or request, in their own words" },
   affected_url: { type: 'text', instructions: 'URL of the affected page, site or environment' },
   error: { type: 'text', instructions: 'An error message, status code or failing behaviour quoted in the thread' },
   deadline: { type: 'date', instructions: 'Date by which the customer needs this answered or done' },
   go_live: { type: 'date', instructions: 'Planned go-live or launch date' },
-  // What the thread is about, by name: the tech stack's vocabulary is a list someone wrote, and
-  // the Topics page (src/topicmap.js) shows the names it does not have yet. One `product` fact
-  // per name.
-  products: {
-    type: 'list',
-    items: 'text',
-    instructions: PRODUCTS_INSTRUCTIONS,
-  },
 };
 
 function who(m) {
@@ -405,97 +377,18 @@ async function threadReactions(env, key) {
 }
 
 /**
- * Clairic answers worth keeping: non-null, above the confidence threshold. Not the products,
- * whose list has one confidence that says nothing (it shrinks as the list grows): productFacts.
+ * Clairic answers worth keeping: non-null, above the confidence threshold, one value each (a
+ * list, which Clairic is no longer asked for, is not kept).
  */
 export function clairicFacts(answers) {
   const facts = [];
   for (const [field, a] of Object.entries(answers || {})) {
     const threshold = FIELD_CONFIDENCE[field] ?? MIN_CONFIDENCE;
-    if (field !== 'products' && a && a.value !== null && a.value !== undefined && a.value !== ''
+    if (a && a.value !== null && a.value !== undefined && a.value !== ''
       && !Array.isArray(a.value) && (a.confidence === undefined || a.confidence >= threshold)) {
       facts.push({ field, value: String(a.value), confidence: a.confidence ?? null });
     }
   }
-  return facts;
-}
-
-const PRODUCT_TRIM = /^[\s()[\]{}*?!,.:;"'`<>|/\\\-–—_=+~#$%&^•]+|[\s()[\]{}*?!,.:;"'`<>|/\\\-–—_=+~#$%&^•]+$/g;
-/** An author line of the state: `[time] Name (Adobe staff):`, as stateOf writes it. */
-const AUTHOR_LINE = /^\[[^\]\n]+\] ([^\n]*?) \((?:Adobe staff|customer[^)]*|[a-z]+)\):$/gm;
-
-/**
- * The products Clairic named in a thread (its `products` list), as `product` facts: the names
- * its spans point at in the messages, not in the header (the channel, the platform, the
- * customer) or an author line (people and bots), trimmed, without the names of the thread's
- * people and its customer; of those, the names the tech stack (`tech`, as techFor has it) covers,
- * and those that look like the name of a product (src/products.js productLike), each once, at most
- * MAX_PRODUCTS. Clairic lists nearly every name in the state; this keeps two in five of them, and
- * nine in ten of the products a hand-made table of aliases finds (docs/ARCHITECTURE.md).
- */
-export function productFacts(answer, state, thread = {}, tech = []) {
-  const index = techIndex(tech);
-  const text = String(state || '');
-  // Clairic's spans count code points, as Python does; a string here counts UTF-16 units, one
-  // more for every emoji. So the state is read as code points, and so are the places in it.
-  const chars = Array.from(text);
-  const at16 = (i) => Array.from(text.slice(0, i)).length;
-  const header = Math.max(0, at16(text.indexOf('\n\n')));
-  const authors = [...text.matchAll(AUTHOR_LINE)]
-    .map((m) => [at16(m.index), at16(m.index) + Array.from(m[0]).length]);
-  const inAuthor = (at) => authors.some(([from, to]) => at >= from && at < to);
-  const names = new Set([...text.matchAll(AUTHOR_LINE)].flatMap((m) => [m[1], ...m[1].split(/\s+/)])
-    .map((n) => n.toLowerCase()).filter((n) => n.length > 2));
-  const org = String(thread.org || '').toLowerCase();
-  [org, ...org.split(/[-_.]/)].filter((w) => w.length > 3).forEach((w) => names.add(w));
-  // The customer as written in a message: "Acme Corp" for acme-corp.
-  const squash = (v) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const own = squash(org);
-  const isOrg = (v) => own.length > 3 && (squash(v) === own || squash(v).startsWith(own));
-  // A span Clairic could not place is null (or not a pair): it names nothing in the text.
-  const placed = (Array.isArray(answer?.spans) ? answer.spans : [])
-    .filter((x) => Array.isArray(x) && Number.isInteger(x[0]) && Number.isInteger(x[1]));
-  const spans = placed.length ? placed : null;
-  let items = Array.isArray(answer?.value) ? answer.value : [];
-  if (spans) {
-    // Not a mention of someone (`@Name`), nor a piece of a word: Clairic's spans now and then
-    // start or end inside one ("zure Storage").
-    const inWord = (c) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
-    items = spans.filter(([at, end]) => at >= header && !inAuthor(at) && chars[at - 1] !== '@'
-      && !inWord(chars[at - 1]) && !inWord(chars[end]))
-      .map(([at, end]) => chars.slice(at, end).join(''));
-  }
-  // A word written in lower case elsewhere in the thread ("Release" at the start of a sentence,
-  // "release" in the next) is a word, not a name.
-  const words = new Set(text.match(/\b\p{Ll}[\p{Ll}-]+\b/gu) || []);
-  const aWord = (v) => /^\p{Lu}\p{Ll}+$/u.test(v) && words.has(v.toLowerCase());
-  // A name the tech stack covers, once per entry (its first name); one it does not, by how often
-  // the thread names it, then the first, at most MAX_GAPS of them.
-  const covered = new Map();
-  const others = new Map();
-  items.forEach((item, i) => {
-    const value = String(item ?? '').replace(/\s+/g, ' ').replace(PRODUCT_TRIM, '')
-      .slice(0, MAX_PRODUCT);
-    const key = value.toLowerCase();
-    if (value.length < 2 || !/[a-z]/i.test(value) || value.includes('@') || names.has(key)
-      || isOrg(value) || GENERIC.has(nameKey(value)) || GENERIC.has(key)) {
-      return;
-    }
-    const entry = coveredBy(value, index);
-    if (entry) {
-      if (!covered.has(entry)) {
-        covered.set(entry, value);
-      }
-    } else if (productLike(value) && !aWord(value)) {
-      const k = productKey(value);
-      const o = others.get(k) || { value, n: 0, i };
-      o.n += 1;
-      others.set(k, o);
-    }
-  });
-  const gaps = [...others.values()].sort((x, y) => y.n - x.n || x.i - y.i).slice(0, MAX_GAPS);
-  const facts = [...covered.values(), ...gaps.map((g) => g.value)].slice(0, MAX_PRODUCTS)
-    .map((value) => ({ field: 'product', value, confidence: null }));
   return facts;
 }
 
@@ -880,8 +773,7 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
   await recordTech(env, thread, shown);
   const was = (before || []).map((r) => r.tech).sort();
   const is = Object.keys(shown).sort();
-  const loose = [...clairicFacts(clairic.answers),
-    ...productFacts(clairic.answers?.products, state, thread, tech)];
+  const loose = clairicFacts(clairic.answers);
   await replaceFacts(env.DB, key, 'clairic', loose);
   return {
     result: 'labeled',
