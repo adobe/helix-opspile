@@ -28,6 +28,7 @@ import { toolAdmin } from './tooladmin.js';
 import { extractionAdmin } from './extractadmin.js';
 import { repoName } from './kb.js';
 import { parseStack, STACK_PATH, stackView } from './stack.js';
+import { resolveTech, techMoves } from './catalog.js';
 
 /**
  * The knowledge-base editor's API (`/inbox/kb`). The admin team and team managers list
@@ -408,6 +409,11 @@ async function stack(env, me, org) {
     return json({ ...out, drawing: null });
   }
   const parsed = parseStack(file.text);
+  if (!parsed.error) {
+    // A part named by an id from before the catalog is the technology that id moved to.
+    const moves = await techMoves(env);
+    parsed.parts = parsed.parts.map((x) => ({ ...x, tech: resolveTech(x.tech, moves) }));
+  }
   // `generated: { by: …, at: … }`, stamped by every write (src/agent/okf.js stampGenerated).
   const fm = splitFrontmatter(file.text);
   const stamp = /\{\s*by:\s*([^,}]+),\s*at:\s*([^}\s]+)\s*\}/.exec((fm && scalar(fm.yaml, 'generated')) || '');

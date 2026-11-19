@@ -58,6 +58,7 @@ import { SOUNDS } from './sound.js';
 import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { countEntries } from './kbadmin.js';
+import { syncCatalogs } from './catalogsync.js';
 import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
@@ -318,6 +319,10 @@ const handlers = {
     ctx.waitUntil(countEntries(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'entries', ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'entries', error: e.message }))));
+    // The teams' catalogs of products whose knowledge base moved on without a compile.
+    ctx.waitUntil(syncCatalogs(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'catalog', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'catalog', error: e.message }))));
     // The sign-in allow list follows the teams, in case a change in D1 bypassed the admin pages.
     ctx.waitUntil(syncAccessQuietly(env, 'cron'));
     ctx.waitUntil(refreshMirrors(env)

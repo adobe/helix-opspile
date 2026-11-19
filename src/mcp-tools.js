@@ -1054,7 +1054,7 @@ export const TOOLS = [
   {
     name: 'save_tech',
     title: 'Save a technology',
-    description: 'Adds a technology to an ops team\'s tech stack, or changes it (only the fields given): Clef asks "Does this thread show that the customer uses <description>?" about every thread of the team\'s channels (every channel, for the admin team), and the team\'s inbox shows `name`. Given another team, the id of one of the admin team\'s (list_extraction_rules: `inherited.tech`) changes it for that team\'s channels only, starting from the admin team\'s: `{ team, tech, enabled: false }` turns it off there, `{ team, tech, name }` renames it there. For the admin team and the team\'s managers.',
+    description: 'Adds a technology to an ops team\'s tech stack, or changes it (only the fields given): Clef asks "Does this thread show that the customer uses <description>?" about every thread of every channel (the team\'s own of an id replaces the others\' in its channels), and the team\'s inbox shows `name`. Given another team, the id of one of the admin team\'s (list_extraction_rules: `inherited.tech`) changes it for that team\'s channels only, starting from the admin team\'s: `{ team, tech, enabled: false }` turns it off there, `{ team, tech, name }` renames it there. A technology of a team\'s catalog (its id a path such as fastly/cdn, under products/ of the team\'s knowledge base) is changed in its file instead. For the admin team and the team\'s managers.',
     inputSchema: {
       type: 'object',
       properties: {

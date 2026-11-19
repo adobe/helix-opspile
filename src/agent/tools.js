@@ -70,6 +70,7 @@ import {
   checkStack, FLOW_KINDS, LAYERS, MAX_FLOWS, MAX_PARTS, PART_KINDS, parseStack, STACK_PATH,
   stackFile,
 } from '../stack.js';
+import { resolveTech, techMoves } from '../catalog.js';
 
 /**
  * The thread agent's extension: what it is told (sections) and what it can do (tools). It
@@ -153,7 +154,7 @@ async function channelTech(env, t) {
  * with the hash draw_stack takes as `base`, or that there is none; and the technologies Clef saw
  * in the channel that no part is (`seen`, `[{ tech, name, p }]`).
  */
-export function stackNote(file, seen = []) {
+export function stackNote(file, seen = [], moves = {}) {
   const lines = [];
   let drawn = new Set();
   if (file.error) {
@@ -163,7 +164,8 @@ export function stackNote(file, seen = []) {
     if (d.error) {
       lines.push(`kb-org's ${STACK_PATH} (hash ${file.hash}) cannot be drawn: ${d.error}. Draw it again.`);
     } else {
-      drawn = new Set(d.parts.map((x) => x.tech).filter(Boolean));
+      // A part named by an id from before the catalog is the technology it moved to.
+      drawn = new Set(d.parts.map((x) => resolveTech(x.tech, moves)).filter(Boolean));
       lines.push(`kb-org's ${STACK_PATH} (hash ${file.hash}, the base for draw_stack): ${d.parts.length} parts, ${d.flows.length} flows.`);
       for (const l of LAYERS) {
         const parts = d.parts.filter((x) => x.layer === l.id);
@@ -212,8 +214,10 @@ Trust:
 Each knowledge base may have a \`systemprompt.md\` with instructions from the admin team; they are at the end of this prompt. You cannot change it.
 
 Knowledge base format: Open Knowledge Format (OKF) v0.2. One markdown file per concept, with a lowercase path of words joined by hyphens. Every knowledge base is laid out the same way, by type: a concept of one of these types goes in its directory, and kb_write refuses it anywhere else.
-${LAYOUT.map((r) => `- \`${r.dir}/\`, type ${r.type}${r.org ? ' (kb-org only)' : ''}: ${r.what}`).join('\n')}
+${LAYOUT.map((r) => `- \`${r.dir}/\`, type ${r.type}${r.org ? ' (kb-org only)' : ''}${r.team ? ' (kb-team only)' : ''}: ${r.what}`).join('\n')}
 Another type only when none of these fits, in a directory named after it. A concept you find where its type does not go, move when you change it (delete the old path and fix the links to it you know of, in the same write).
+
+Products (kb-team only): \`products/\` is the team's catalog, and the union of every team's is what Clef asks about in every channel: "Does this thread show that the customer uses <description>?". A technology's id is its path without \`.md\` (\`fastly/cdn\`, \`adobe/aem-sites/edge-delivery\`), as stack.md's Tech and the inbox name it. Each has a \`title\` (the name the inbox shows), a \`description\` (what Clef is asked about, a noun phrase: "Fastly as CDN"), \`aliases\` (the other names it goes by in threads: matched, never asked) and a \`layer\` (${LAYERS.map((l) => l.id).join(', ')}). Add one the team supports when threads show customers use it and no team's catalog has it; a name that is a variant of one there (an abbreviation, an old name) is an alias of it, not a new entry: every entry is one more question in every label. \`enabled: false\` in the team's own file of a path turns it off in the team's channels. To move or rename one, delete the old path and write the new one in the same kb_write: its ids go with it (\`moved_from\`).
 
 People: one Contact per person, at \`${CONTACTS}/<first-last>.md\` from their full name as the platform shows it (its title: \`${CONTACTS}/dana-ops.md\` for "Dana Ops"), never a list of people in one file; split one you find into a Contact each. In kb-org, everyone who works on this customer's threads: the customer's people, partners' and Adobe's, with their role on this account. In kb-team, the colleagues and partners the team works with across customers, never a customer's people. Its description says who they are to us in one sentence (role, company, what they own or decide); the inbox shows it when someone points at their picture. \`aliases\` lists the other names they go by (a handle, a nickname), and \`resource: mailto:<address>\` their address when a message shows it. Asked about someone, read their Contact in both knowledge bases first.
 
@@ -364,12 +368,13 @@ export function opspileExtension(ctx) {
       if (!org) {
         return '';
       }
-      const [file, seen, names] = await Promise.all([
+      const [file, seen, names, moves] = await Promise.all([
         readText(env, org.artifact, STACK_PATH, { full: true }).catch(() => ({ error: 'unreadable' })),
         t.channelId ? channelTech(env, t) : [],
         techNames(env, t.team),
+        techMoves(env),
       ]);
-      return stackNote(file, seen.map((x) => ({ ...x, name: names[x.tech] || x.tech })));
+      return stackNote(file, seen.map((x) => ({ ...x, name: names[x.tech] || x.tech })), moves);
     }),
     section('repositories', async ({ conversationId }) => {
       const all = await accessibleRepos(env, await ctx.target());
@@ -1156,7 +1161,7 @@ function extractionTools(ctx) {
     }),
     defineTool({
       name: 'save_tech',
-      description: 'Adds a technology to your team\'s tech stack, or changes it: Clef asks "Does this thread show that the customer uses <description>?" about every thread of your team\'s channels, and the inbox shows `name`. The id of one of the admin team\'s replaces it in your team\'s channels; enabled false there removes it.',
+      description: 'Adds a technology to your team\'s tech stack, or changes it: Clef asks "Does this thread show that the customer uses <description>?" about every thread of every channel, and the inbox shows `name`. The id of one of the admin team\'s replaces it in your team\'s channels; enabled false there removes it. A technology of a team\'s catalog (an id that is a path, such as fastly/cdn) is changed in its file under products/ with kb_write instead (see Products).',
       parameters: Type.Object({
         tech: Type.String({ description: 'Id: lower case letters, digits and _' }),
         name: Type.Optional(Type.String()),

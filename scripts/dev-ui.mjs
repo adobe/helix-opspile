@@ -94,6 +94,7 @@ import {
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin } from './dev-ui-admin.mjs';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
+import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { findPerson } from '../src/kbpeople.js';
 import { createStore } from './dev-ui-fixtures.mjs';
 import { followable, followsOfTeams } from '../src/follows.js';
@@ -139,6 +140,18 @@ if (NO_TEAM) {
 }
 const kb = await createKnowledgeBases();
 const adminApi = createAdmin(store, { manager: MANAGER, member: MEMBER, bases: kb.list() });
+/** Compiles a team's catalog into the admin pages' D1, as a write of it does (src/catalog.js). */
+const compileKb = async (repo) => {
+  const b = kb.list().find((x) => x.repo === repo);
+  if (b && b.kind === 'team') {
+    const where = { team: b.slug, repo };
+    await storeCatalog(adminApi.env, where, compileCatalog(await kb.catalog(repo)));
+  }
+};
+for (const b of kb.list()) {
+  // eslint-disable-next-line no-await-in-loop
+  await compileKb(b.repo);
+}
 // The names of tech stack and topic ids (src/label.js vocab), from the teams' configuration on
 // the admin pages: read again on every request, so a change there shows on the next one.
 let vocabNames = { tech: {}, topics: {} };
@@ -1144,6 +1157,9 @@ async function kbApi(req, res, url) {
     if (r.conflict) {
       const current = await kb.read(repo, body.path);
       return json(res, { error: r.conflict, current: current.error ? null : current }, 409);
+    }
+    if (inCatalog(body.path)) {
+      await compileKb(repo);
     }
     const now = remove ? null : await kb.read(repo, body.path);
     return json(res, {

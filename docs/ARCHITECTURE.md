@@ -524,13 +524,15 @@ directories are the ones the agents had settled on most:
 | Playbook | `playbooks/` | |
 | Product Area | `product-areas/` | |
 | Reference | `reference/` | anything else worth looking up |
+| Vendor, Product, Feature, Category | `products/` | kb-team only: the team's catalog of products (see "Labels and facts") |
 | Stack Drawing | `stack.md` at the root | kb-org only, one per customer, written with `draw_stack` (below) |
 
 A type of its own goes in a directory named after it. The agents' prompt lists the table, and
 `kb_write` refuses an agent's concept of one of these types anywhere but its directory, a type
-spelled otherwise, a customer's type in a team's knowledge base, and a Contact that is not one
-person named after its title (a list of people, `contacts/people.md`); people's edits in the
-editor are not held to it. Concepts written before it stay where they are until an agent changes
+spelled otherwise, a customer's type in a team's knowledge base, a catalog type in a customer's,
+and a Contact that is not one person named after its title (a list of people,
+`contacts/people.md`); people's edits in the editor are not held to it (but for the catalog's
+own checks, which hold everyone). Concepts written before it stay where they are until an agent changes
 them, which moves them (the prompt says so). People are a Contact each, an
 [OKF concept](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md#4-concept-documents)
 like any other: its `title` their name as the platform shows it, its `description` who they are
@@ -587,7 +589,8 @@ prompt injection cannot change what later agents are told.
 type `Stack Drawing`, src/stack.js; a `Tech Stack` concept is one platform's setup, in
 `tech-stack/`, which a part's Note may link to): how their site is put together, as Markdown that reads as it
 is. A summary, then `## Parts`, a table of `| Layer | Part | Tech | Note |` (the layer by its
-name or id, Tech the id of a tech stack entry where one fits), then `## Flows`, a table of
+name or id, Tech the id of a tech stack entry where one fits, read through the catalog's moves, or
+`own` for what the customer built), then `## Flows`, a table of
 `| From | To | What |` between parts by name, then any notes. Two optional columns say more:
 a part's Kind (an agent, the default, a storage, a channel, a person or an external system)
 and Group (a frame in its layer), and a flow's Kind (by default what is named goes from From to
@@ -1075,15 +1078,49 @@ and an unchanged thread is never labeled twice):
 - Clef also answers yes/no questions about the **tech stack** the thread shows (Edge Delivery,
   Document Authoring, Universal Editor, the CDN, the content source, …): the technologies of
   the teams' configuration (`tech_stack`), each asked as "Does this thread show that the
-  customer uses <description>?". The admin team's are asked in every channel; a team's own are
-  asked in its channels too, and one with the id of an admin team's replaces it there (turned
-  off, it is not asked there). Clef gets at most 24 questions per call; the rest are asked in
-  calls of their own, at the same time. The channel keeps the highest probability any thread
+  customer uses <description>?". Every team's are asked in every channel, as one union
+  (src/extract.js `techFor`): where the channel's team has an entry of an id, its own is asked
+  there (turned off, it is not asked there); elsewhere the admin team's when it is on, else the
+  first team's by name that is on, with the aliases of every team's that is on (off only where
+  every team has it off). Clef gets at most 24 questions per call; the
+  rest are asked in calls of their own, at the same time, in the order of their ids. A question's
+  key in a call is a hash of the id (src/techid.js `questionKeys`: a catalog path is no key),
+  mapped back when Clef answers, and stored nowhere. The channel keeps the highest probability any thread
   showed (a rule's detection counts as 1), so every thread of a customer shows their stack;
   the label keeps what the thread itself showed (`labels.tech`, migration 0059), so its header
   can name that first.
   The inbox shows a team's own name for a technology in its inbox and threads, the admin
   team's elsewhere.
+  The entries are the teams' **catalog** (src/catalog.js, migration 0081): each team's
+  knowledge base lists the products the team supports under `products/`, one concept per file,
+  a `Vendor` at `products/<vendor>.md` (its name, never asked), a `Product` at
+  `products/<vendor>/<product>.md`, a `Feature` of it at
+  `products/<vendor>/<product>/<feature>.md`, and a `Category` at `products/categories/<name>.md`
+  (a kind of product any vendor makes, asked for the vendors no file lists). A technology's id is
+  its path without `.md` (`adobe/aem-sites/edge-delivery`, `fastly/cdn`); its `title` is its
+  name, its `description` what Clef is asked, `aliases` and `layer` as below, and `enabled: false`
+  turns it off. A product with features only groups them and is not asked, unless it says
+  `asked: true`. A feature is part of its product, an Adobe product is a product of its own and
+  another company's is its vendor's (`tech_stack.product`, `vendor`, `kind`), and the portal
+  offers Adobe's. The files are the source and `tech_stack` the compiled copy every reader
+  reads: a write of a team's knowledge base that touches `products/` compiles its catalog from
+  the work tree it pushed (src/agent/kbwrite.js), and the cron compiles one whose head is not the
+  commit it was compiled from (`knowledge_bases.catalog_commit`; src/catalogsync.js), so a revert
+  or a push from outside lands too. A write under `products/` that is not a catalog entry where
+  its type goes, with a title and (but for a vendor) a description, is refused, whoever writes it.
+  A row without a `path` was saved in D1 (with `save_tech`, or before the catalog) and is edited
+  there; a compiled one only in its file.
+  An id moves with its file: a write that deletes a catalog file and creates one of the same type
+  and title gives the new one the ids the old one had in `moved_from` (nothing else pairs them: a
+  file that replaces an unrelated one must not take its labels), and a file may list them itself:
+  a rename that changes the title, or the D1 entries' short ids (`eds`) when they are first
+  written as files. The compile keeps them (`tech_moves`), and when a move is new it rewrites
+  what D1 keeps under the old id, once: the D1 row of that id, follows, `thread_tech`,
+  `channel_tech`, extraction rules that detect it and the portal's lobbies. A move whose old id
+  is still a file of the catalog is only mapped. Each new move is logged with the rows it
+  rewrote (`route: 'catalog'`, `action: 'move'`), so one nobody meant can be traced. Files (a
+  stack drawing's Tech) and labels from before are read through the map (src/catalog.js
+  `techMoves`), and their technologies keep a name.
   An entry also has **aliases** (`tech_stack.aliases`, migration 0057): the names it goes by in
   threads ("AEMaaCS", "IMS Org", "EdgeWorkers"), which match product names to it and are not
   asked of Clef. A feature people ask about by its own name is an entry, not an alias: the AEM

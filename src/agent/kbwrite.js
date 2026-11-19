@@ -19,6 +19,9 @@ import {
   RESERVED,
   splitFrontmatter, stampGenerated, SYSTEM_PROMPT,
 } from './okf.js';
+import {
+  checkCatalog, compileCatalog, inCatalog, movesOf, storeCatalog, withMovedFrom,
+} from '../catalog.js';
 
 /**
  * Writes to a knowledge base: clone it into memory, apply the agent's changes, rewrite the
@@ -75,6 +78,8 @@ export function checkChanges(changes, { staff = false, kind = null } = {}) {
       }
     } else {
       const why = checkConcept(c.path, String(c.content ?? ''))
+        // What is under products/ of a team's is what Clef asks: people are held to it too.
+        || (kind === 'team' ? checkCatalog(c.path, String(c.content ?? '')) : null)
         || (!staff && kind ? checkLayout(c.path, String(c.content ?? ''), kind) : null);
       if (why) {
         return `${c.path}: ${why}`;
@@ -212,13 +217,32 @@ async function stageAll(fs) {
 }
 
 /**
+ * `changes` with what a move of a catalog file keeps (src/catalog.js): a file the write deletes
+ * and one it creates in its place, the new one listing the old one's ids in `moved_from`.
+ */
+async function keepMoves(fs, changes) {
+  const pairs = await movesOf(changes, {
+    old: (path) => fs.promises.readFile(`${DIR}/${path}`, 'utf8').catch(() => ''),
+    present: (path) => exists(fs, `${DIR}/${path}`),
+  });
+  if (!pairs.length) {
+    return changes;
+  }
+  return changes.map((c) => {
+    const pair = pairs.find((x) => x.to === c.path);
+    return pair ? { ...c, content: withMovedFrom(String(c.content ?? ''), pair.ids) } : c;
+  });
+}
+
+/**
  * Commits `changes` to the clone in `fs` (already cloned or initialised at `DIR`). Exported
- * for tests, which run it without a remote.
+ * for tests, which run it without a remote. `catalog`: a team's knowledge base, whose moved
+ * catalog files keep their ids.
  */
 export async function commitChanges(fs, changes, {
-  message, by, at, logEntry, author = AGENT_AUTHOR,
+  message, by, at, logEntry, author = AGENT_AUTHOR, catalog = false,
 }) {
-  const conflict = await apply(fs, changes, { by, at });
+  const conflict = await apply(fs, catalog ? await keepMoves(fs, changes) : changes, { by, at });
   if (conflict) {
     return { conflict };
   }
@@ -272,6 +296,30 @@ async function countEntries(env, artifact, fs) {
     })));
 }
 
+/**
+ * Compiles the catalog of a team's knowledge base from the work tree that was pushed
+ * (src/catalog.js): its products/ files into tech_stack. A failure leaves the rows as they were,
+ * and the cron compiles it again (its commit is not recorded).
+ */
+export async function compileTree(env, artifact, fs, commit) {
+  if (!env.DB) {
+    return null;
+  }
+  try {
+    const paths = fs.files(DIR).filter((f) => !f.startsWith('.git/') && inCatalog(f));
+    const files = await Promise.all(paths.map(async (path) => ({
+      path, text: await fs.promises.readFile(`${DIR}/${path}`, 'utf8'),
+    })));
+    const team = artifact.replace(/^kb-team-/, '');
+    return await storeCatalog(env, { team, repo: artifact, commit }, compileCatalog(files));
+  } catch (e) {
+    console.error(JSON.stringify({
+      route: 'kb', action: 'catalog', artifact, error: e.message,
+    }));
+    return null;
+  }
+}
+
 const rejected = (e) => /PushRejected|not a simple fast-forward|non-fast-forward|fetch first|failed to update ref/i
   .test(`${e && e.code} ${e && e.message}`);
 
@@ -303,7 +351,7 @@ export async function writeKnowledge(env, artifact, changes, {
       const fs = await cloneOrInit(remote, headers, empty);
       // eslint-disable-next-line no-await-in-loop
       const result = await commitChanges(fs, changes, {
-        message, by, at, logEntry, author,
+        message, by, at, logEntry, author, catalog: kindOf(artifact) === 'team',
       });
       if (!result.commit) {
         return result;
@@ -318,6 +366,10 @@ export async function writeKnowledge(env, artifact, changes, {
         }
         // eslint-disable-next-line no-await-in-loop
         await countEntries(env, artifact, fs);
+        if (kindOf(artifact) === 'team' && changes.some((c) => inCatalog(c.path))) {
+          // eslint-disable-next-line no-await-in-loop
+          await compileTree(env, artifact, fs, result.commit);
+        }
         return { commit: result.commit, files: changes.map((c) => c.path) };
       } catch (e) {
         if (!rejected(e) || attempt >= ATTEMPTS) {

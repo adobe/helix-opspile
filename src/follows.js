@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
+import { MAX_TECH_ID } from './techid.js';
+
 /**
  * Following technologies (migration 0072). A team follows technologies of the tech stack, and so
  * does a person: the threads that show one (`thread_tech`, the thread's own label, not its
@@ -225,7 +227,7 @@ export async function followable(env, team = null) {
 /** `tech`, checked against what one may follow: the id, or null. */
 async function known(env, tech) {
   const id = String(tech || '').trim();
-  if (!id || id.length > 64) {
+  if (!id || id.length > MAX_TECH_ID) {
     return null;
   }
   const row = await env.DB.prepare('SELECT 1 FROM tech_stack WHERE tech = ? AND enabled = 1 LIMIT 1')
