@@ -19,6 +19,8 @@ import {
 import { isStaffDomain } from './lookup.js';
 import { LAYERS } from './stack.js';
 import { threadTechStatements } from './follows.js';
+import { resolveTech, techMoves } from './catalog.js';
+import { questionKeys } from './techid.js';
 import {
   coveredBy, GENERIC, nameKey, productKey, productLike, techIndex,
 } from './products.js';
@@ -191,11 +193,17 @@ export const QUESTIONS = {
   },
 };
 
-/** The Clef questions about a channel's tech stack (src/extract.js techFor). */
-const techQuestions = (tech) => Object.fromEntries(tech.map((t) => [`tech.${t.tech}`, {
-  type: 'noul',
-  instructions: `Does this thread show that the customer uses ${t.description}?`,
-}]));
+/**
+ * The Clef questions about a channel's tech stack (src/extract.js techFor), each by the hash of
+ * its id (src/techid.js `questionKeys`): a catalog path is no key. `techOf` maps them back.
+ */
+export const techQuestions = (tech) => {
+  const keys = questionKeys(tech.map((t) => t.tech));
+  return Object.fromEntries(tech.map((t) => [`tech.${keys[t.tech]}`, {
+    type: 'noul',
+    instructions: `Does this thread show that the customer uses ${t.description}?`,
+  }]));
+};
 
 /**
  * Clef on `state`: each group of questions asked in calls of its own, of at most MAX_QUESTIONS,
@@ -634,8 +642,9 @@ export async function writeTitle(env, state, alert, thread) {
  */
 export function techOf(tech, answers, detected = []) {
   const out = {};
+  const keys = questionKeys(tech.map((t) => t.tech));
   for (const id of tech.map((t) => t.tech)) {
-    const p = detected.includes(id) ? 1 : answers && answers[`tech.${id}`]?.noul;
+    const p = detected.includes(id) ? 1 : answers && answers[`tech.${keys[id]}`]?.noul;
     if (typeof p === 'number' && p >= TECH_MIN) {
       out[id] = Math.round(p * 1000) / 1000;
     }
@@ -741,8 +750,12 @@ export async function labelThread(env, key, now = new Date()) {
     return { result: 'skip', reason: 'no messages' };
   }
 
-  const [rules, tech] = await Promise.all([rulesFor(env, thread.team), techFor(env, thread.team)]);
+  const [rules, tech, moves] = await Promise.all([
+    rulesFor(env, thread.team), techFor(env, thread.team), techMoves(env),
+  ]);
   const found = await extract(env, rules, thread, messages);
+  // A script may still detect a technology by an id it had (src/catalog.js).
+  found.tech = [...new Set(found.tech.map((id) => resolveTech(id, moves)))];
   await replaceFacts(env.DB, key, 'rule', found.facts);
 
   const state = stateOf(thread, messages, rx.by);

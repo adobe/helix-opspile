@@ -26,7 +26,8 @@ export const RESERVED = new Set(['index.md', 'log.md']);
 /**
  * Where the concepts of each type go, the same in every knowledge base, so that agents, people
  * and the inbox (src/kbpeople.js) find a concept by its type (docs/ARCHITECTURE.md, "Layout").
- * `org`: about one customer, so never in a team's. The agents' prompt lists them
+ * `org`: about one customer, so never in a team's; `team`: the team's catalog of products
+ * (src/catalog.js), never in a customer's. The agents' prompt lists them
  * (src/agent/tools.js), and their writes are held to them (`checkLayout`); other types go
  * anywhere, people's edits too.
  */
@@ -48,6 +49,19 @@ export const LAYOUT = [
   { type: 'Playbook', dir: 'playbooks', what: 'the steps of a recurring task' },
   { type: 'Product Area', dir: 'product-areas', what: 'a part of an Adobe product: how it works, its limits, who owns it' },
   { type: 'Reference', dir: 'reference', what: 'anything else worth looking up: links, terms, facts' },
+  // The team's catalog (src/catalog.js): what Clef asks about, in every channel.
+  {
+    type: 'Vendor', dir: 'products', team: true, what: 'a company whose products the team supports, at products/<vendor>.md (products/adobe.md): its name',
+  },
+  {
+    type: 'Product', dir: 'products', team: true, what: 'one product of a vendor, at products/<vendor>/<product>.md (products/fastly/cdn.md): Clef is asked whether a thread shows that the customer uses it, unless it only groups features',
+  },
+  {
+    type: 'Feature', dir: 'products', team: true, what: 'one feature of a product, at products/<vendor>/<product>/<feature>.md (products/adobe/aem-sites/edge-delivery.md): asked about on its own',
+  },
+  {
+    type: 'Category', dir: 'products', team: true, what: 'a kind of product any vendor makes, at products/categories/<category>.md (a consent manager): asked, for the vendors no file lists',
+  },
 ];
 
 /** The directory of the people, one Contact concept per person. */
@@ -175,6 +189,9 @@ export function checkLayout(path, content, kind) {
   }
   if (row.org && kind === 'team') {
     return `a ${row.type} is about one customer: it goes to kb-org, not to a team's knowledge base`;
+  }
+  if (row.team && kind === 'org') {
+    return `a ${row.type} is part of a team's catalog of products: it goes to kb-team, not to a customer's knowledge base`;
   }
   const p = String(path);
   if (!p.startsWith(`${row.dir}/`)) {

@@ -14,6 +14,7 @@ import git from 'isomorphic-git';
 import { checkChanges, commitChanges } from '../src/agent/kbwrite.js';
 import { memfs } from '../src/agent/memfs.js';
 import { isEntry, SYSTEM_PROMPT } from '../src/agent/okf.js';
+import { inCatalog } from '../src/catalog.js';
 import { stackFile } from '../src/stack.js';
 
 /**
@@ -157,6 +158,23 @@ const SEED = {
         '', '## Check', '', '1. The cache TTL: `curl -sI https://www.example.com/ | grep -i age`.',
         '2. A second CDN in front, see [the site](../sites/www.md).', '', '> Ask the customer before purging everything.', '',
       ].join('\n'),
+      // The team's catalog (src/catalog.js): what Clef asks about. Fastly was a technology of the
+      // admin team's (`fastly`) until it moved here; the managed CDN is a feature of its own.
+      'products/fastly/cdn.md': [
+        '---', 'type: Product', 'title: Fastly', 'description: Fastly as CDN, run by the customer',
+        'aliases: [Fastly CDN, Compute@Edge]', 'layer: edge', 'moved_from: [fastly]', '---', '',
+        'Customers who bring their own Fastly service in front of the site.', '',
+      ].join('\n'),
+      'products/adobe/aem-sites.md': [
+        '---', 'type: Product', 'title: Experience Manager Sites',
+        'description: Adobe Experience Manager Sites', '---', '', 'Its features, one file each.', '',
+      ].join('\n'),
+      'products/adobe/aem-sites/managed-cdn.md': [
+        '---', 'type: Feature', 'title: Adobe Managed CDN',
+        'description: the CDN Adobe runs for Edge Delivery or AEM as a Cloud Service',
+        'aliases: [Managed CDN]', 'layer: edge', '---', '',
+        'Adobe runs it; the customer points their domain at it.', '',
+      ].join('\n'),
       // A partner the team works with across customers.
       'contacts/ravi-kumar.md': [
         '---', 'type: Contact', 'title: Ravi Kumar',
@@ -267,8 +285,18 @@ export async function createKnowledgeBases() {
       return out;
     },
     async write(repo, changes, options) {
-      const invalid = checkChanges(changes, { staff: true });
-      return invalid ? { error: invalid } : commitChanges(repos.get(repo).fs, changes, options);
+      const { kind } = repos.get(repo);
+      const invalid = checkChanges(changes, { staff: true, kind });
+      return invalid ? { error: invalid }
+        : commitChanges(repos.get(repo).fs, changes, { ...options, catalog: kind === 'team' });
+    },
+    /** The catalog files of a team's knowledge base, `[{ path, text }]` (src/catalog.js). */
+    async catalog(repo) {
+      const r = repos.get(repo);
+      const paths = (await tracked(r)).filter(inCatalog);
+      return Promise.all(paths.map(async (path) => ({
+        path, text: await r.fs.promises.readFile(`${DIR}/${path}`, 'utf8'),
+      })));
     },
     async log(repo) {
       const commits = await git.log({ fs: repos.get(repo).fs, dir: DIR }).catch(() => []);

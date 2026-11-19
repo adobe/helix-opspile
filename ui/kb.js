@@ -1114,20 +1114,24 @@ function ruleRow(r, own) {
 function techRow(t, own) {
   const x = state.extraction;
   const mine = own ? null : x.tech.find((y) => y.tech === t.tech);
-  const edit = own && mayRules();
+  // Compiled from a team's catalog (src/catalog.js): its file is where it changes.
+  const filed = Boolean(t.path);
+  const edit = own && mayRules() && !filed;
   const by = t.by ? `Changed by ${t.by}, ${ago(t.at)}` : '';
   const replaced = mine ? `<div class="sub">${mine.enabled ? `Replaced for ${esc(base().name)} by its own` : `Turned off for ${esc(base().name)}`}</div>` : '';
-  const local = !own && !mine && mayRules() ? `<span class="acts"><button data-tlocal="${esc(t.tech)}">Change for ${esc(base().name)}</button><button data-toff="${esc(t.tech)}">Turn off here</button></span>` : '';
+  const kept = filed ? `<div class="sub">${own ? `In <button class="link" data-topen="${esc(t.path)}">${esc(t.path)}</button>` : `In kb-team-${esc(t.team)} at <span class="mono">${esc(t.path)}</span>: write the same path in this knowledge base to change it for ${esc(base().name)}'s channels`}</div>` : '';
+  const local = !own && !mine && mayRules() && !filed ? `<span class="acts"><button data-tlocal="${esc(t.tech)}">Change for ${esc(base().name)}</button><button data-toff="${esc(t.tech)}">Turn off here</button></span>` : '';
   return `<div class="ch rule${t.enabled ? '' : ' off'}${mine ? ' replaced' : ''}">
     <div class="who">
       <div class="nm">${esc(t.name)}<span class="src mono">${esc(t.tech)}</span>${t.product ? `<span class="src" title="The product it is part of">${esc(t.product)}</span>` : ''}${t.layer ? `<span class="src" title="Where in a customer's stack it is">${esc(layerName(t.layer))}</span>` : ''}</div>
       <div class="sub">Does this thread show that the customer uses ${esc(t.description)}?</div>
       ${replaced}
+      ${kept}
       ${by ? `<div class="sub by">${esc(by)}</div>` : ''}
     </div>
     ${edit ? `<span class="acts"><button data-tedit="${esc(t.tech)}">Edit</button><button class="danger" data-tdel="${esc(t.tech)}">Delete</button></span>` : local}
     <span class="state${t.enabled ? ' on' : ''}">${t.enabled ? 'On' : 'Off'}</span>
-    ${own ? `<button class="switch" role="switch" aria-checked="${t.enabled}" aria-label="Ask about ${esc(t.name)}" data-ton="${esc(t.tech)}"${edit ? '' : ' disabled'}></button>` : '<span class="switch-gap"></span>'}
+    ${own && !filed ? `<button class="switch" role="switch" aria-checked="${t.enabled}" aria-label="Ask about ${esc(t.name)}" data-ton="${esc(t.tech)}"${edit ? '' : ' disabled'}></button>` : '<span class="switch-gap"></span>'}
   </div>`;
 }
 
@@ -1229,6 +1233,9 @@ function renderExtraction(note) {
 
 function bindExtraction() {
   const x = state.extraction;
+  for (const el of $('editor').querySelectorAll('[data-topen]')) {
+    el.onclick = () => openFile(el.dataset.topen);
+  }
   if (!mayRules()) return;
   const repo = state.repo;
   const stale = () => state.repo !== repo || state.view !== 'extraction';

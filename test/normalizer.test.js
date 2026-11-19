@@ -24,6 +24,7 @@ import {
   consume, processKey, recordBots, teamsEventMarkdown,
 } from '../src/normalizer.js';
 import { d1 } from './d1.js';
+import { questionKeys } from '../src/techid.js';
 import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
 
 // Made-up ids, names and domains only.
@@ -1086,7 +1087,9 @@ describe('backfill, mentions and labels', () => {
     assert.ok(sizes.length > 1 && sizes.every((n) => n <= MAX_QUESTIONS));
     const asked = clef.flatMap((c) => Object.keys(c.input.questions));
     assert.deepEqual(asked.slice(0, 4), Object.keys(QUESTIONS));
-    assert.ok(asked.includes('tech.eds'));
+    // Each technology by the hash of its id (src/techid.js), mapped back in the call.
+    assert.ok(asked.includes(`tech.${questionKeys(['eds']).eds}`));
+    assert.ok(!asked.includes('tech.eds'));
     assert.ok(asked.includes('topic.cdn'));
     // The rules detected Edge Delivery, as sure as can be; Clef said nothing about it.
     assert.deepEqual(e.DB.rows('SELECT tech, p FROM channel_tech'), [{ tech: 'eds', p: 1 }]);

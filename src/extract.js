@@ -12,6 +12,7 @@
 
 import { sha256 } from './raw.js';
 import { LAYER_IDS, techLayers } from './stack.js';
+import { isTechId, MAX_TECH_ID } from './techid.js';
 
 /**
  * Extraction rules and the tech stack, as configuration of the ops teams (D1, migration 0043):
@@ -22,11 +23,14 @@ import { LAYER_IDS, techLayers } from './stack.js';
  *   relabel (src/label.js), exact and cheap; loose facts are left to Clairic.
  * - `tech_stack`: the technologies worth knowing at a glance for a customer, each one Clef
  *   yes/no question ("Does this thread show that the customer uses …?"). The channel keeps the
- *   highest probability any thread showed (channel_tech).
+ *   highest probability any thread showed (channel_tech). Most rows are compiled from the
+ *   teams' catalogs (src/catalog.js, `path` set); a row without a path was saved here.
  *
- * The admin team's rules and technologies apply to every channel; any other team's to the
- * channels it owns (threads.team), on top of the admin team's. A team's technology with the
- * same id as one of the admin team's replaces it in its channels, and turned off, removes it.
+ * The admin team's rules apply to every channel; any other team's to the channels it owns
+ * (threads.team), on top of the admin team's. Technologies are the union of every team's
+ * (`techFor`): a team's own of an id replaces the others' in its channels, and turned off,
+ * removes it there; elsewhere the admin team's is asked (else the first team's by name), with
+ * the aliases of them all.
  *
  * A regex rule has a `pattern` (JavaScript, always global; `flags` adds i, m, s or u), a `value`
  * template (`$0` the match, `$1`… its groups; `$0` when empty), a `transform` (lower or upper)
@@ -205,7 +209,7 @@ function results(list) {
   const facts = [];
   const tech = [];
   for (const r of (Array.isArray(list) ? list : []).slice(0, MAX_RESULTS)) {
-    if (r && typeof r === 'object' && typeof r.tech === 'string' && ID.test(r.tech)) {
+    if (r && typeof r === 'object' && typeof r.tech === 'string' && isTechId(r.tech)) {
       tech.push(r.tech);
     } else if (r && typeof r === 'object' && typeof r.field === 'string' && ID.test(r.field)
       && r.value != null && String(r.value).trim()) {
@@ -370,6 +374,10 @@ const techOut = (t) => ({
   aliases: t.aliases || null,
   layer: t.layer || null,
   enabled: Boolean(t.enabled),
+  // Compiled from the team's catalog (src/catalog.js): the file, what it is, whose it is.
+  path: t.path || null,
+  kind: t.kind || null,
+  vendor: t.vendor || null,
   by: t.changed_by || null,
   at: t.changed_at || null,
 });
@@ -396,21 +404,42 @@ export async function rulesFor(env, team) {
   return (rows || []).map(ruleOut);
 }
 
+/** Aliases, comma-separated, of `rows`, each name once (the first spelling). */
+function joinAliases(rows) {
+  const seen = new Map();
+  for (const r of rows) {
+    for (const a of String(r.aliases || '').split(',').map((x) => x.trim()).filter(Boolean)) {
+      if (!seen.has(a.toLowerCase())) {
+        seen.set(a.toLowerCase(), a);
+      }
+    }
+  }
+  return [...seen.values()].join(', ') || null;
+}
+
 /**
- * The technologies Clef asks about in the channels of `team`: the admin team's, each replaced
- * by the team's own of the same id (which may turn it off), and the team's own. On only.
+ * The technologies Clef asks about in the channels of `team`: the union of every team's. An id
+ * `team` has is its own (which may turn it off); any other is the admin team's, else the first
+ * team's by name, with the aliases of every team's that is on. On only, by id.
  */
 export async function techFor(env, team) {
   const { results: rows } = await env.DB.prepare(`SELECT * FROM tech_stack
-    WHERE team = ? OR team = ? ORDER BY team = ?, tech`)
-    .bind(GLOBAL_TEAM, team || GLOBAL_TEAM, GLOBAL_TEAM).all();
+    ORDER BY tech, team = ? DESC, team = ? DESC, team`).bind(team || GLOBAL_TEAM, GLOBAL_TEAM).all();
   const by = new Map();
-  // The team's rows come last and replace the admin team's.
-  for (const r of [...(rows || [])].reverse()) {
-    by.set(r.tech, r);
+  for (const r of rows || []) {
+    by.set(r.tech, [...(by.get(r.tech) || []), r]);
   }
-  return [...by.values()].filter((r) => r.enabled).map(techOut)
-    .sort((x, y) => x.tech.localeCompare(y.tech));
+  const out = [];
+  for (const list of by.values()) {
+    const [first] = list;
+    if (first.team === team && team !== GLOBAL_TEAM) {
+      out.push(first);
+    } else {
+      const others = list.filter((r) => r !== first && r.enabled);
+      out.push({ ...first, aliases: joinAliases([first, ...others]) });
+    }
+  }
+  return out.filter((r) => r.enabled).map(techOut).sort((x, y) => x.tech.localeCompare(y.tech));
 }
 
 /**
@@ -422,11 +451,21 @@ export async function techNames(env, team = null) {
     return {};
   }
   // `team`'s own names first: a team that renamed one of the admin team's sees its name.
-  const { results: rows } = await env.DB.prepare(`SELECT tech, name FROM tech_stack
-    ORDER BY team = ? DESC, team = ? DESC, team`).bind(team || GLOBAL_TEAM, GLOBAL_TEAM).all();
+  const [{ results: rows }, { results: moved }] = await Promise.all([
+    env.DB.prepare(`SELECT tech, name FROM tech_stack
+      ORDER BY team = ? DESC, team = ? DESC, team`).bind(team || GLOBAL_TEAM, GLOBAL_TEAM).all(),
+    // What labels from before a move name (src/catalog.js): the technology it is now.
+    env.DB.prepare('SELECT old, tech FROM tech_moves ORDER BY team = ? DESC, team')
+      .bind(GLOBAL_TEAM).all(),
+  ]);
   const out = {};
   for (const r of rows || []) {
     out[r.tech] = out[r.tech] || r.name;
+  }
+  for (const m of moved || []) {
+    if (!out[m.old] && out[m.tech]) {
+      out[m.old] = out[m.tech];
+    }
   }
   return out;
 }
@@ -452,7 +491,7 @@ export function checkRule(input, old = {}) {
     name: clean(get('name'), MAX_NAME),
     kind: clean(get('kind') || 'regex', 10),
     target: clean(get('target') || 'fact', 10),
-    field: clean(get('field'), 32),
+    field: clean(get('field'), MAX_TECH_ID),
     pattern: String(get('pattern') ?? '').trim(),
     flags: clean(get('flags'), 8),
     value: clean(get('value'), 120),
@@ -489,9 +528,9 @@ export function checkRule(input, old = {}) {
   if (!TARGETS.includes(rule.target)) {
     return { error: `target is ${TARGETS.join(' or ')}` };
   }
-  if (!ID.test(rule.field)) {
+  if (rule.target === 'tech' ? !isTechId(rule.field) : !ID.test(rule.field)) {
     return {
-      error: rule.target === 'tech' ? 'give the id of the technology it detects (lower case, digits and _)'
+      error: rule.target === 'tech' ? 'give the id of the technology it detects: its path in the catalog, such as fastly/cdn, or a short id (lower case, digits and _)'
         : 'give the field it writes: lower case letters, digits and _, such as site or ticket',
     };
   }
@@ -624,6 +663,11 @@ export async function deleteRule(env, team, id) {
   return meta && meta.changes ? { ok: true } : { error: `no rule ${id} in ${team}`, status: 404 };
 }
 
+/** Why a technology of the catalog is not changed here: its file is. */
+const catalogOnly = (row, team) => (row.team === team
+  ? `${row.name} is kept in kb-team-${row.team} at ${row.path}: change that file (enabled: false turns it off)`
+  : `${row.name} is kept in kb-team-${row.team} at ${row.path}: to change it for the channels of ${team}, write the same path in kb-team-${team}`);
+
 /** Saves technology `input.tech` of `team`, new or changed, as `by`: `{ tech }` or `{ error }`. */
 export async function saveTech(env, team, input, by) {
   const id = String(input.tech || '').trim();
@@ -634,6 +678,9 @@ export async function saveTech(env, team, input, by) {
   // turns it off for the team's channels, `{ tech, name }` renames it there.
   const shared = !old && id && team !== GLOBAL_TEAM ? await rowOf(GLOBAL_TEAM) : null;
   const base = old || shared;
+  if (base && base.path) {
+    return { error: catalogOnly(base, team) };
+  }
   const { tech, error } = checkTech(input, base ? { ...techOut(base), enabled: true } : {});
   if (error) {
     return { error };
@@ -670,6 +717,11 @@ export async function saveTech(env, team, input, by) {
 
 /** Deletes the technology `tech` of `team`: `{ ok }` or `{ error, status }`. */
 export async function deleteTech(env, team, tech) {
+  const row = await env.DB.prepare('SELECT * FROM tech_stack WHERE team = ? AND tech = ?')
+    .bind(team, String(tech || '')).first();
+  if (row && row.path) {
+    return { error: catalogOnly(row, team) };
+  }
   const { meta } = await env.DB.prepare('DELETE FROM tech_stack WHERE team = ? AND tech = ?')
     .bind(team, String(tech || '')).run();
   return meta && meta.changes ? { ok: true } : { error: `no technology ${tech} in ${team}`, status: 404 };
