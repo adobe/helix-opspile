@@ -1155,7 +1155,8 @@ describe('backfill, mentions and labels', () => {
     );
     assert.equal((await labelThread(e, 'slack:E1:C1:1.1')).result, 'unchanged');
     assert.equal(calls.length, clef.length + 2); // Clef, Clairic and the title, once
-    // Asked to (`POST /api/admin/relabel`), an unchanged thread is labeled again; queued, as a forced job.
+    // Asked to (`POST /api/admin/relabel`), an unchanged thread is labeled again; queued, as a
+    // forced job.
     const forced = await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO), { force: true });
     assert.equal(forced.result, 'labeled');
     e.queued.length = 0;
