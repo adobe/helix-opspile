@@ -976,6 +976,7 @@ function thread(asked) {
     draft: drafts.get(key) || null,
     // As src/api.js: the commands the agent asked a person to run (src/bashrequests.js).
     bash_requests: store.bashRequests.get(key) || [],
+    tool_requests: store.toolRequests.get(key) || [],
     // As src/api.js: the agent's latest finished turn, kept when it ended; one of the
     // sidebar's is not.
     agent_turn: (() => {
@@ -1597,6 +1598,55 @@ async function api(req, res, url) {
     console.log(`command ${id} on ${key}: ${bash[1]}`);
     broadcast(entry.row.team, { type: 'bash', thread: key });
     return json(res, { ok: true, request }, bash[1] === 'run' ? 202 : 200);
+  }
+  const tool = /^\/api\/agent\/tools\/(grant|deny|revoke)$/.exec(url.pathname);
+  if (tool && req.method === 'POST') {
+    // As src/agent/stub.js decideTool: a grant lasts a day; granting or denying says so to the
+    // agent as your sidebar message, which the made-up agent answers.
+    const { thread: key, id } = await readJson(req);
+    const entry = store.threads.get(key);
+    const request = entry && inTeam(entry.row.team)
+      && (store.toolRequests.get(key) || []).find((r) => r.id === id);
+    if (!request) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const me = store.people.get(ME);
+    const at = new Date().toISOString();
+    const from = tool[1] === 'revoke' ? 'granted' : 'pending';
+    if (request.status !== from) {
+      return json(res, { error: 'It was decided already', request }, 409);
+    }
+    if (tool[1] === 'revoke') {
+      Object.assign(request, { status: 'revoked', revoked_by: { id: ME, name: me.name }, revoked_at: at });
+      broadcast(entry.row.team, { type: 'sidebar', thread: key });
+      return json(res, { request });
+    }
+    const granted = tool[1] === 'grant';
+    Object.assign(request, {
+      status: granted ? 'granted' : 'denied',
+      by: { id: ME, name: me.name },
+      decided_at: at,
+      expires_at: granted ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null,
+    });
+    const message = {
+      id: `sb_${crypto.randomUUID()}`,
+      role: 'person',
+      by: { id: ME, name: me.name },
+      body: granted
+        ? `Granted: you have **${request.title}** in this thread for the next 24 hours (tool request ${request.id}), in every turn, not only in the sidebar. Go on with what you needed it for.`
+        : `Denied: you do not get **${request.title}** (tool request ${request.id}). Go on without it.`,
+      state: 'done',
+      reply_to: null,
+      at,
+    };
+    if (!store.sidebars.has(key)) {
+      store.sidebars.set(key, []);
+    }
+    store.sidebars.get(key).push(message);
+    sidebarLive.add(message.id);
+    console.log(`tool request ${id} on ${key}: ${tool[1]}`);
+    broadcast(entry.row.team, { type: 'sidebar', thread: key });
+    return json(res, { request, message }, 202);
   }
   if (url.pathname === '/api/agent/sidebar' && req.method === 'POST') {
     // As src/agent/stub.js talkToAgent: into the thread's sidebar and the agent's conversation,

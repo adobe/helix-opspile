@@ -15,11 +15,12 @@ import { admin } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
 import { personInKb } from './kbpeople.js';
 import {
-  agentStatus, decideBash, sawSidebar, seedAgent, talkToAgent, tellDiscarded,
+  agentStatus, decideBash, decideTool, sawSidebar, seedAgent, talkToAgent, tellDiscarded,
 } from './agent/stub.js';
 import { agentEnabled } from './agent/enabled.js';
 import { keptTurn } from './agent/kept.js';
 import { sidebarFor, unseenAnswers } from './sidebar.js';
+import { toolRequestsFor } from './toolrequests.js';
 import {
   discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
@@ -856,7 +857,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
     reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
     { results: appPosts }, agentOn, { results: memberTech }, { results: rootLinks }, place,
-    bashRequests, sidebar,
+    bashRequests, sidebar, toolRequests,
   ] = await Promise.all([
     // The first thread's root, else its first message, else (all of it deleted) the group's.
     env.DB.prepare(`SELECT permalink FROM messages
@@ -923,6 +924,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // What the team said to the agent in the inbox's sidebar, and its answers (src/sidebar.js):
     // shown between the messages, folded; never on the platform.
     sidebarFor(env, entryKeys),
+    // The tools the agent asked for in the sidebar, and how each stands (src/toolrequests.js).
+    toolRequestsFor(env, entryKeys),
   ]);
   const rootLink = new Map((rootLinks || []).map((r) => [r.thread, r.permalink]));
   const asApp = new Set((appPosts || []).map((p) => `${p.thread}|${p.id}`));
@@ -1030,6 +1033,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // Whether the thread has an agent, which the sidebar talks to.
     agent: Boolean(agentOn && agentOn.on),
     sidebar,
+    tool_requests: toolRequests,
     bash_requests: bashRequests,
   };
 }
@@ -1283,6 +1287,12 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   if (url.pathname === '/api/agent/sidebar/seen' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return sawSidebar(env, me, body, working);
+  }
+  // A tool the thread's agent asked for in its sidebar (src/agent/toolrequest.js).
+  const tool = /^\/api\/agent\/tools\/(grant|deny|revoke)$/.exec(url.pathname);
+  if (tool && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return decideTool(env, me, body, working, tool[1]);
   }
   // A command the thread's agent asked a person to run (src/agent/bashrequest.js).
   const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);

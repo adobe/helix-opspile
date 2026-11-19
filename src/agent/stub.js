@@ -20,6 +20,10 @@ import { notifyRoom } from '../notify.js';
 import {
   addSidebarMessage, MAX_SIDEBAR, seeSidebar, sidebarId,
 } from '../sidebar.js';
+import {
+  denyToolRequest, grantToolRequest, revokeToolRequest, toolRequestOf,
+} from '../toolrequests.js';
+import { denyText, grantText } from './toolrequest.js';
 import { switchedOn } from './enabled.js';
 import { liveTurn } from './kept.js';
 
@@ -276,6 +280,82 @@ export async function decideBash(env, me, body, inTeam, { run }) {
     : await agent.denyBash({ id: request.id, by });
   const { status, ...rest } = res;
   return json(rest, status || (run ? 202 : 200));
+}
+
+/** Why tool request `r` can no longer be decided as asked. */
+function toolDecided(r) {
+  const by = (p) => (p && p.name) || 'Someone';
+  return {
+    granted: `${by(r.by)} granted it already`,
+    denied: `${by(r.by)} denied it already`,
+    revoked: `${by(r.revoked_by)} ended it already`,
+    expired: 'Nobody decided before its deadline: the agent can ask again',
+    ended: 'Its day is over: the agent can ask again',
+    pending: 'It was not granted yet',
+  }[r.status] || 'It was decided already';
+}
+
+/**
+ * POST /api/agent/tools/grant, …/deny and …/revoke `{ thread, id }`: a person decides on a tool
+ * the thread's agent asked for in its sidebar (src/agent/toolrequest.js), or ends a grant. Only
+ * who may work the thread. A grant or a denial is said to the agent in the sidebar, as the
+ * person's sidebar message (`grantText`, `denyText`), and the agent answers it there; it has a
+ * granted tool from that message on, as its tools are read before each one. Ended early, the
+ * agent goes without it from its next message. Answers with the request, and the sidebar
+ * message when there is one.
+ */
+export async function decideTool(env, me, body, inTeam, action) {
+  if (me.readonly) {
+    return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  const t = await threadTarget(env, body && body.thread);
+  if (!t || !await inTeam(t.entry.teams, t.entry)) {
+    return json({ error: 'not found' }, 404);
+  }
+  const request = await toolRequestOf(env, body.id);
+  // The agent that asked is the one that gets it: the entry's.
+  if (!request || request.thread !== t.entry.key) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (action !== 'revoke' && !t.enabled) {
+    return json({ error: 'this thread has no agent', request }, 409);
+  }
+  const by = me.name || me.email || 'staff';
+  const change = {
+    grant: grantToolRequest, deny: denyToolRequest, revoke: revokeToolRequest,
+  }[action];
+  if (!await change(env, request.id, me.id)) {
+    const now = await toolRequestOf(env, request.id);
+    return json({ error: toolDecided(now), request: now }, 409);
+  }
+  const decided = await toolRequestOf(env, request.id);
+  console.log(JSON.stringify({
+    route: 'agent', action: `tool_${action}`, id: request.id, kind: request.kind, name: request.name,
+  }));
+  const agent = await agentStub(env, t.entry.key);
+  if (action === 'revoke') {
+    // At once where the agent is at work; else at its next message, which reads them anyway.
+    await Promise.all([agent.syncTools(), agent.syncMcp()]).catch(() => {});
+    await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+    return json({ request: decided });
+  }
+  const text = action === 'grant' ? grantText(decided) : denyText(decided);
+  const message = await addSidebarMessage(env, t.entry.key, {
+    id: sidebarId(), person: me.id, name: by, text,
+  });
+  const res = await agent.sidebar({ id: message.id, by, text })
+    .catch((e) => ({ error: e.message }));
+  if (res.error) {
+    // Decided all the same: the agent has a granted tool at its next message.
+    await env.DB.prepare('DELETE FROM sidebar_messages WHERE id = ?').bind(message.id).run();
+    await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+    return json({ request: decided, error: `the agent was not told: ${res.error}` });
+  }
+  await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+  return json({ request: decided, message }, 202);
 }
 
 /**

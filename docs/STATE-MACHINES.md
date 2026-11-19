@@ -1,7 +1,7 @@
 # State machines
 
-opspile has three status columns, `channel_requests.status`, `bash_requests.status` and
-`portal_requests.status` (and the customer portal, in its own database, `lobbies.status`). Everything
+opspile has four status columns, `channel_requests.status`, `bash_requests.status`,
+`tool_requests.status` and `portal_requests.status` (and the customer portal, in its own database, `lobbies.status`). Everything
 else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
@@ -302,6 +302,22 @@ took its whole timeout: the shell says it stopped a run no other way, and a comm
 same condition. `told_at` is written last, after the agent was
 told how the request ended; one that ended untold (the agent's storage failed) is told at its
 deadline, without what the command printed, which is kept nowhere.
+
+**Tool request.** pending → granted → revoked; pending → denied (`tool_requests.status`,
+`src/toolrequests.js`, `src/agent/toolrequest.js`, `decideTool` in `src/agent/stub.js`). The agent
+asks (`request_tool`) only while it answers a sidebar message, whose id the request keeps, and a
+person who may work the thread decides; `CHECK` keeps the status to those four, and every
+transition is `WHERE status = …` with its clock (`deadline` for a decision, `expires_at` for an
+end), so of two clicks one wins and the other is told who did. Two states are read off the clock
+and never written: a pending request past its `deadline` (24 hours) is `expired`, a grant past its
+`expires_at` (24 hours after it was granted) has `ended`; both let the agent ask again, and nothing
+wakes up for them. A grant is not installed by the decision: the agent reads its grants with its
+switches (`toolsFor`, `serversFor`, `serverWithHeaders`) before each input, and the person's
+sidebar message that says it was granted is one, so the agent has it from the turn that answers
+it. An ending is noticed the same way, at the next input (`revoke` also asks the agent to read
+them at once); a turn running across an ending keeps the tool until it ends. Granted or denied
+says so as a sidebar message of the person's; when the agent cannot be told, the message is
+deleted and the decision stands.
 
 **Sidebar message.** asked → answered (or failed → answered) (`sidebar_messages`, `src/sidebar.js`,
 `src/agent/sidebar.js`). The person's row is written before the agent is told, and deleted when the

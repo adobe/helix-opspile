@@ -3277,9 +3277,84 @@ function sideWorking(key, run, last) {
   return Boolean(last && t?.state === 'working' && !run.some((m) => m.reply_to === t.sidebar));
 }
 
+// ---------------------------------------------------------------- tool requests
+// While it answers a sidebar message, the agent may ask for a tool or an MCP server its channel
+// does not have (`request_tool`, src/agent/toolrequest.js). Each request is a card in the
+// conversation, under the agent's answer to the message it was asked in (under that message
+// while the answer is still to come): what it asks for, why, and Grant and Deny for whoever may
+// talk to the agent. A grant is the thread's for a day (src/toolrequests.js), and ends early by
+// End now. Granting or denying says so to the agent, as your sidebar message, which it answers.
+const toolBusy = new Set();
+const TOOL_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 2.2a3.3 3.3 0 0 0-3.9 4.3L2.3 10.6a1.4 1.4 0 0 0 2 2l4.1-4.1a3.3 3.3 0 0 0 4.3-3.9l-2 2-1.8-.5-.5-1.8z"/></svg>';
+
+/** How tool request `r` stands, once it is not waiting: a few words. */
+function toolState(r) {
+  const who = (p) => (p?.id === viewerId() ? 'you' : (p?.name || 'a colleague'));
+  if (r.status === 'granted') return `Granted by ${who(r.by)} · ${timeLeft(r.expires_at)} left`;
+  if (r.status === 'ended') return `Granted by ${who(r.by)} · ended ${ago(r.expires_at)}`;
+  if (r.status === 'revoked') return `Granted by ${who(r.by)} · ended early by ${who(r.revoked_by)}`;
+  if (r.status === 'denied') return `Denied by ${who(r.by)}`;
+  return 'Expired: nobody decided';
+}
+
+/** A tool request's card. Waiting, and you may decide: Grant and Deny, disabled while it is busy. */
+function toolCard(key, r) {
+  const decide = canSide(key);
+  const off = toolBusy.has(r.id) ? ' disabled' : '';
+  const head = `<div class="tq-head">${TOOL_ICON}<span><b>${AGENT_NAME}</b> asks for <b>${esc(r.title)}</b></span></div>`;
+  const about = r.about ? `<p class="tq-about">${esc(r.about)}</p>` : '';
+  let foot;
+  if (r.status === 'pending') {
+    const note = `<span class="tq-note" title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can grant it">For this thread, a day, in every turn of the agent · open for ${timeLeft(r.deadline)}</span>`;
+    const acts = decide ? `<span class="acts"><button type="button" class="deny" data-tool-act="deny"${off}>Deny</button><button type="button" class="grant" data-tool-act="grant"${off}>Grant for a day</button></span>` : '';
+    foot = `${note}${acts}`;
+  } else {
+    const end = r.status === 'granted' && decide ? `<button type="button" class="end" data-tool-act="revoke" title="The agent goes without it from its next message"${off}>End now</button>` : '';
+    foot = `<span class="tq-st">${esc(toolState(r))}</span>${end}`;
+  }
+  return `<div class="tq ${esc(r.status)}" data-tool-request="${esc(r.id)}">${head}<p class="tq-why">${esc(r.reason)}</p>${about}<div class="tq-foot">${foot}</div></div>`;
+}
+
 /**
- * What a run of sidebar messages shows, one element each: its messages, then the agent working
- * on its answer, or that it answers once it is done (`last`: the thread's latest run).
+ * The cards of the tool requests asked in answer to sidebar message `m` of `run`: under the
+ * agent's answer, or under the message itself while there is none yet.
+ */
+function toolCards(key, run, m) {
+  const list = state.cache.get(key)?.data?.tool_requests || [];
+  if (!list.length) return [];
+  let asked = null;
+  if (m.role === 'agent') asked = m.reply_to;
+  else if (!run.some((x) => x.reply_to === m.id)) asked = m.id;
+  return asked ? list.filter((r) => r.sidebar === asked).map((r) => toolCard(key, r)) : [];
+}
+
+/** Grant, Deny or End now on tool request `id` of thread `key`. */
+async function decideToolRequest(key, id, act) {
+  if (!key || toolBusy.has(id)) return;
+  toolBusy.add(id);
+  showSide(key);
+  const res = await request('POST', `/api/agent/tools/${act}`, { thread: key, id }).catch((e) => ({ ok: false, data: { error: e.message } }));
+  toolBusy.delete(id);
+  const data = state.cache.get(key)?.data;
+  const r = res.data?.request;
+  if (data && r) data.tool_requests = (data.tool_requests || []).map((x) => (x.id === r.id ? r : x));
+  // What you said to the agent by it, which it answers in the sidebar.
+  const said = res.ok && res.data.message;
+  if (data && said && !(data.sidebar || []).some((m) => m.id === said.id)) {
+    data.sidebar = [...(data.sidebar || []), said];
+    const entry = state.agents.get(key) || { turn: null, latest: null, timer: null };
+    entry.asked = { id: said.id, at: said.at };
+    state.agents.set(key, entry);
+  }
+  showSide(key);
+  if (said) loadAgent(key);
+  if (!res.ok || res.data?.error) toast(`${res.data?.error || `The inbox answered ${res.status}`}.`);
+}
+
+/**
+ * What a run of sidebar messages shows, one element each: its messages, each with the tools the
+ * agent asked for in answer to it, then the agent working on its answer, or that it answers once
+ * it is done (`last`: the thread's latest run).
  */
 function sideRun(key, run, last) {
   const working = sideWorking(key, run, last);
@@ -3287,7 +3362,7 @@ function sideRun(key, run, last) {
   const doing = working ? [`<div class="sm agent working" aria-live="polite"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
     <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble"><span class="spin" aria-hidden="true"></span>${esc(state.agents.get(key).side.text)}…</div></div></div>`] : [];
   const queued = waiting ? [`<div class="sc-wait">${AGENT_NAME} answers once it is done with what it is doing.</div>`] : [];
-  return [...run.map((m) => sideMessage(key, m)), ...doing, ...queued];
+  return [...run.flatMap((m) => [sideMessage(key, m), ...toolCards(key, run, m)]), ...doing, ...queued];
 }
 
 /**
@@ -8837,6 +8912,8 @@ function wireSideRoom() {
   $('pane').addEventListener('load', queueJoin, true);
   panel.onclick = (e) => {
     if (e.target.closest('[data-side-exit]')) { exitSide(); return; }
+    const tool = e.target.closest('[data-tool-act]');
+    if (tool) { decideToolRequest(panel.__key, tool.closest('[data-tool-request]').dataset.toolRequest, tool.dataset.toolAct); return; }
     followLink(e);
   };
   // Esc closes it from anywhere in it, as from its box (wireSide).
@@ -9475,6 +9552,8 @@ async function start() {
       return;
     }
     if (e.target.closest('[data-side-exit]')) { exitSide(); return; }
+    const tool = e.target.closest('[data-tool-act]');
+    if (tool) { decideToolRequest(state.open, tool.closest('[data-tool-request]').dataset.toolRequest, tool.dataset.toolAct); return; }
     const fold = e.target.closest('[data-side-toggle]');
     if (fold && fold.getAttribute('aria-disabled') !== 'true') {
       const id = fold.dataset.sideToggle;

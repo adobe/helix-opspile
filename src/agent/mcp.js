@@ -84,8 +84,8 @@ function catalogTool(t) {
 export const fingerprint = (servers) => servers.map((s) => `${s.id}@${s.updated_at}`).join(',');
 
 /** Connects to a server and lists its tools: `{ tools, instructions }` or `{ error }`. */
-async function ask(env, s, { fetch: fetchFn, channelId }) {
-  const full = await serverWithHeaders(env, s.id, { fetch: fetchFn, channelId })
+async function ask(env, s, { fetch: fetchFn, channelId, thread }) {
+  const full = await serverWithHeaders(env, s.id, { fetch: fetchFn, channelId, thread })
     .catch((e) => ({ error: e.message }));
   return full && !full.error
     ? probe(full, { fetch: fetchFn })
@@ -121,7 +121,7 @@ export async function buildCatalog(env, target, { fetch: fetchFn } = {}) {
   const listed = await Promise.all(servers.map(async (s) => {
     const res = s.scope === 'global'
       ? await globalTools(env, s, { fetch: fetchFn })
-      : await ask(env, s, { fetch: fetchFn, channelId: target.channelId });
+      : await ask(env, s, { fetch: fetchFn, channelId: target.channelId, thread: target.key });
     const allowed = allowList(s.allow);
     return {
       id: s.id,
@@ -339,9 +339,11 @@ export class AgentMcp {
       pending = null;
     }
     if (!pending) {
-      const opened = this.where().then(({ channelId }) => serverWithHeaders(this.env, server.id, {
-        fetch: this.fetch, channelId,
-      })).then((full) => {
+      const opened = this.where().then(({ channelId, key }) => serverWithHeaders(
+        this.env,
+        server.id,
+        { fetch: this.fetch, channelId, thread: key },
+      )).then((full) => {
         if (!full) {
           throw new Error(`the MCP server ${server.name} was removed or turned off`);
         }
