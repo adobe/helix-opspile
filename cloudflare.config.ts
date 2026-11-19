@@ -153,9 +153,11 @@ const SECRETS = [
   // when they are not in it (src/invite.js). Optional; SLACK_ADMIN_TOKEN_REQUIRED=1 at deploy
   // has `cf` check it exists.
   ...(process.env.SLACK_ADMIN_TOKEN_REQUIRED ? ['SLACK_ADMIN_TOKEN'] : []),
-  // The agents' web_search on Microsoft Web IQ (src/agent/websearch.js). Optional; with
-  // WEB_SEARCH_PROVIDER=webiq at deploy, `cf` checks it exists.
-  ...(process.env.WEB_SEARCH_PROVIDER === 'webiq' ? ['WEBIQ_API_KEY'] : []),
+  // The agents' web_search on Microsoft Web IQ (src/agent/websearch.js). Optional: a repository
+  // secret, which the deploy uploads with the version (.github/workflows/ci.yml); declared
+  // where it is set at deploy, or WEB_SEARCH_PROVIDER=webiq has `cf` check it exists.
+  ...(process.env.WEBIQ_API_KEY || process.env.WEB_SEARCH_PROVIDER === 'webiq'
+    ? ['WEBIQ_API_KEY'] : []),
   // Access sync: required only where it is configured.
   ...(process.env.ACCESS_APP_ID ? ['ACCESS_API_TOKEN'] : []),
   // Discord: the bot's token where the poller is on, the app's secret where people connect.

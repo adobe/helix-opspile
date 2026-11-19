@@ -138,7 +138,7 @@ Nothing below is committed; set it on the Worker.
 | `AGENT_ANTHROPIC_BETA` | var | Optional: the `anthropic-beta` features to ask for instead of pi's defaults, `none` for none |
 | `AGENT_BASE_URL` | var | Optional, for development: an Anthropic Messages endpoint to use instead of the gateway |
 | `WEB_SEARCH_PROVIDER` | var | Optional: the search provider of the agents' `web_search`: `webiq` (Microsoft Web IQ, the default where `WEBIQ_API_KEY` is set), or one of Cloudflare's Web Search API, through the `AI` binding: `ceramic` (the default otherwise, zero data retention), `linkup` or `exa`. See "Agent tools" |
-| `WEBIQ_API_KEY` | secret | Optional: an API key of a Microsoft Web IQ profile (the Web IQ portal, **Key Management & API access**), for `web_search` on Web IQ, billed to the Azure subscription of its Web IQ resource |
+| `WEBIQ_API_KEY` | secret | Optional: an API key of a Microsoft Web IQ profile (the Web IQ portal, **Key Management & API access**), for `web_search` on Web IQ, billed to the Azure subscription of its Web IQ resource. A repository secret: CI's deploy uploads it with the version |
 | `WEB_SEARCH_GATEWAY` | var | Optional: the AI Gateway (id, in the Worker's account) `web_search` goes through on Cloudflare's providers, default `AGENT_GATEWAY`. It pays with the account's AI Gateway credits, or a key of the provider stored on the gateway (alias `default`) |
 | `TEAMS_APP_ID` | var | Optional: the opspile Teams app's id in the tenant's org catalog. With it, the opspile Teams bot (the Entra app, registered with the Bot Framework) posts the agents' replies in Teams threads (`post_message`); see "The opspile Teams bot" |
 | `TEAMS_EDITS` | var | Optional: set (`1`) once the tenant's admins have consented to the delegated `ChannelMessage.ReadWrite` for the Entra app. Connecting Microsoft then asks for it too (tokens from before are upgraded on refresh, or connect again), so people can edit their own Teams messages from the inbox (`POST /api/edit`); without it, Teams messages are edited in Teams |
@@ -510,7 +510,8 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   thread's words; the Worker logs that a search ran, never its query. Two services can answer:
   - [Microsoft Web IQ](https://learn.microsoft.com/web-iq/) (`webiq`): create a Web IQ resource
     in an Azure subscription, an API key of its profile in the Web IQ portal, and set it as the
-    secret `WEBIQ_API_KEY` (`npx wrangler secret put WEBIQ_API_KEY --name helix-opspile-prod`).
+    repository secret `WEBIQ_API_KEY` (`gh secret set WEBIQ_API_KEY`): the deploy uploads it
+    with each version of the Worker (`--secrets-file`), so a redeploy keeps it.
     With the key, Web IQ is the provider unless `WEB_SEARCH_PROVIDER` says otherwise. Azure
     bills it, $7 per 1,000 searches.
   - Cloudflare's [Web Search API](https://developers.cloudflare.com/web-search/), on the `AI`
