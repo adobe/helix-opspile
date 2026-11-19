@@ -805,9 +805,18 @@ export async function labelThread(env, key, now = new Date()) {
   const shown = techOf(tech, a, found.tech);
   // Of what it shows, what it is about: a second call, only for those (src/label.js aboutOf).
   const asked = tech.filter((t) => shown[t.tech] !== undefined);
-  const about = asked.length
-    ? aboutOf(asked, (await askClef(env, state, aboutQuestions(asked)).catch(() => ({}))).answers)
-    : {};
+  // A call that failed is no answer: `about` stays NULL ("not asked"), not `{}` ("about none").
+  let about = {};
+  if (asked.length) {
+    try {
+      about = aboutOf(asked, (await askClef(env, state, aboutQuestions(asked))).answers);
+    } catch (e) {
+      about = null;
+      console.error(JSON.stringify({
+        route: 'label', thread: key, about: 'failed', error: e.message,
+      }));
+    }
+  }
   // What it showed before, for the inboxes that follow what it shows or showed (src/follows.js).
   const { results: before } = await env.DB.prepare('SELECT tech FROM thread_tech WHERE thread = ?')
     .bind(key).all();
@@ -834,10 +843,10 @@ export async function labelThread(env, key, now = new Date()) {
       title,
       topics ? JSON.stringify(topics) : null,
       JSON.stringify(shown),
-      JSON.stringify(about),
+      about ? JSON.stringify(about) : null,
     );
   // The label and what the thread shows by index (`thread_tech`) at once.
-  await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown, about)]);
+  await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown, about || {})]);
   await recordTech(env, thread, shown);
   const was = (before || []).map((r) => r.tech).sort();
   const is = Object.keys(shown).sort();

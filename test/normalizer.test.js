@@ -1154,6 +1154,38 @@ describe('backfill, mentions and labels', () => {
     assert.equal((await labelThread(e, 'slack:E1:C1:1.1')).result, 'unchanged');
     assert.equal(calls.length, clef.length + 2); // Clef, Clairic and the title, once
   });
+
+  it('keeps "about" unasked, not empty, when its call fails', async () => {
+    const AI = {
+      async run(model, input) {
+        if (model.endsWith('/clef')) {
+          if (Object.keys(input.questions).some((k) => k.startsWith('about.'))) {
+            throw new Error('3040: capacity');
+          }
+          return { model: 'clef', answers: {} };
+        }
+        return { model: 'clairic', answers: {} };
+      },
+    };
+    const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const e = env({
+      [root]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'see https://main--web--acme.aem.live',
+      }),
+    }, { AI });
+    await processKey(e, root);
+    const logged = [];
+    const { error } = console;
+    console.error = (line) => logged.push(line);
+    try {
+      assert.equal((await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO))).result, 'labeled');
+    } finally {
+      console.error = error;
+    }
+    assert.deepEqual(e.DB.rows('SELECT tech, about FROM labels'), [{ tech: '{"eds":1}', about: null }]);
+    assert.deepEqual(e.DB.rows('SELECT tech, about FROM thread_tech'), [{ tech: 'eds', about: null }]);
+    assert.ok(logged.some((l) => /"about":"failed"/.test(l)));
+  });
 });
 
 describe('recordBots', () => {

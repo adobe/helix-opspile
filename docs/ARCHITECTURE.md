@@ -1116,7 +1116,8 @@ and an unchanged thread is never labeled twice):
   `labels.about` and `thread_tech.about`, migration 0083). "Uses" is what follows, filters and
   the agents' evidence read; "about" is for the Topics page and the expert finder, where
   Edge Delivery, which a quarter of the threads show, would otherwise join everything. A thread
-  that shows nothing makes no second call.
+  that shows nothing makes no second call; one whose second call failed keeps `labels.about`
+  NULL (not asked), apart from `{}` (about none of them), and the failure is logged.
   The inbox shows a team's own name for a technology in its inbox and threads, the admin
   team's elsewhere.
   The entries are the teams' **catalog** (src/catalog.js, migration 0081): each team's
