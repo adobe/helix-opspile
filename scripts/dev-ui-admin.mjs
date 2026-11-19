@@ -53,13 +53,13 @@ const PREVIEW_TOKEN = 'preview-token';
 // know (the Worker answers 404 then, and the page shows the org without an icon).
 const NO_FAVICON = /(^|\.)(globex|initech|parked)\.example$/;
 const HUES = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f'];
-function devFavicon(domain) {
+export function devFavicon(domain) {
   const d = String(domain || '').replace(/^www\./, '');
   if (!/\.example$/.test(d) || NO_FAVICON.test(d)) {
     return new Response('no favicon', { status: 404, headers: { 'content-type': 'text/plain' } });
   }
   const hue = HUES[[...d].reduce((h, c) => h + c.charCodeAt(0), 0) % HUES.length];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="${hue}"/>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="${hue}"/>`
     + `<text x="32" y="44" font-family="sans-serif" font-size="36" font-weight="700" fill="#fff" text-anchor="middle">${d[0].toUpperCase()}</text></svg>`;
   return new Response(svg, { headers: { 'content-type': 'image/svg+xml' } });
 }

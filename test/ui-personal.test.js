@@ -102,7 +102,7 @@ function load() {
     customerName: (v) => NAMES[v] || v,
     orgName: (t) => t.org_name || t.org,
     orgIcon: (t) => t.customerDomain,
-    favicon: (d) => `https://icons.test/${d}`,
+    favImg: piece('const FAV_RETRY_MS', '// A favicon that failed', 'favImg', { esc, favicon: (d) => `https://icons.test/${d}` }).favImg,
     tile: (name) => `<span class="ico av">${esc(name[0])}</span>`,
     preview: () => null,
     ago: () => '1h',
@@ -305,7 +305,7 @@ describe('the simple personal view', () => {
       assert.doesNotMatch(rowOf('a2'), /class="cust"/);
       const head = page.groupHtml(list()[0]);
       assert.match(head, /^<div class="grp new sticky" data-group="acme"><button type="button" class="gn" data-group="acme" title="Only ACME">/);
-      assert.match(head, /<span class="logo"><span class="ico av">A<\/span><img src="https:\/\/icons.test\/acme.example" alt="" loading="lazy"><\/span>/);
+      assert.match(head, /<span class="logo"><span class="ico av">A<\/span><img src="https:\/\/icons.test\/acme.example" alt="" data-fav><\/span>/);
       assert.match(head, /<span class="nm">ACME<\/span>/);
       // A customer without an icon has its initial.
       assert.match(page.groupHtml(list().find((x) => x.head === 'initech')), /<span class="logo"><span class="ico av">I<\/span><\/span>/);

@@ -100,7 +100,7 @@ describe('emoji names', () => {
       QUICK: [],
       emoji,
       SIGNAL_HINT: {},
-      favicon: (x) => x,
+      favImg: (x) => x,
       sendState: () => '',
     });
     const author = { name: 'Ada', kind: 'person', staff: true };

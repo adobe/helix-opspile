@@ -142,9 +142,13 @@ the agents show the name and the type.
 The org list in the admin pages shows each org with the icon the inbox resolves for it (its
 own, else the favicon of its usual mail domain: the most common one among the people outside
 Adobe who post in its threads, free mail and tenant domains left out), and an empty square
-where there is none, so the orgs without an icon stand out (and can be listed alone). Favicons
-come through `/api/admin/favicon`, which answers 404 where Google's favicon service has only
-its globe. An org's page suggests icons (`src/favicons.js`): the favicons of the websites its
+where there is none, so the orgs without an icon stand out (and can be listed alone). Favicons,
+in the admin pages and the inbox, come through `/api/favicon` (`faviconProxy`), at one address per
+domain on the inbox's origin: Google's favicon service answers with a redirect to one of several
+hosts, a different one each time, which a browser does not keep. The Worker follows it, keeps the
+image in the data center's cache for a week and the browser keeps it as long; it answers 404
+where Google has only its globe (for an hour), and 502 where Google did not answer (for a
+minute). An org's page suggests icons (`src/favicons.js`): the favicons of the websites its
 mail domains, slug and name suggest (`<slug>.com`, `www.<slug>.com`, `<name>.com`, …) and the
 icons those sites name (`<link rel="icon">`, `apple-touch-icon`), each image with what Clef
 thinks of it: whether the site is the org's own (not a namesake's, an agency's or a parked

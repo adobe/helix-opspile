@@ -19,6 +19,7 @@ import {
   registrable, sniff,
 } from '../src/favicons.js';
 import { CLEF } from '../src/label.js';
+import { api } from '../src/api.js';
 
 const ENV = { STAFF_DOMAINS: 'staff.example' };
 const PNG = (n) => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, n, n, n, n]);
@@ -212,5 +213,126 @@ describe('favicons: finding an org\'s', () => {
     assert.equal((await faviconProxy('acme.example')).status, 200);
     assert.equal((await faviconProxy('nothing.example')).status, 404);
     assert.equal((await faviconProxy('not a domain')).status, 400);
+  });
+});
+
+describe('favicons: the proxy', () => {
+  const WEEK = 7 * 24 * 60 * 60;
+  /** A Cache API stand-in: what is put, by key. */
+  const memoryCache = () => {
+    const kept = new Map();
+    return {
+      kept,
+      match: async (key) => kept.get(String(key))?.clone() || undefined,
+      put: async (key, res) => { kept.set(String(key), res); },
+    };
+  };
+  /** Google as the Worker sees it: a favicon, its globe (404), busy (503) or gone (a throw). */
+  const google = (answers) => {
+    const asked = [];
+    const impl = async (url, init) => {
+      const d = new URL(url).searchParams.get('domain');
+      asked.push({ d, init });
+      const a = answers[d];
+      if (a instanceof Error) {
+        throw a;
+      }
+      return typeof a === 'function' ? a() : a || new Response(PNG(9), { status: 404 });
+    };
+    return Object.assign(impl, { asked });
+  };
+  const png = () => new Response(PNG(1), { headers: { 'content-type': 'image/png' } });
+
+  it('follows Google\'s redirects and answers a week of browser caching, the same address each time', async () => {
+    const fetchImpl = google({ 'acme.example': png });
+    const res = await faviconProxy('ACME.example', { cache: null, fetchImpl });
+    assert.equal(res.status, 200);
+    assert.equal(fetchImpl.asked[0].d, 'acme.example');
+    assert.equal(fetchImpl.asked[0].init.redirect, 'follow');
+    assert.ok(fetchImpl.asked[0].init.signal, 'given up after a while');
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    assert.equal(res.headers.get('cache-control'), `private, max-age=${WEEK}, stale-while-revalidate=${WEEK}`);
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(res.headers.get('etag'), /^"[0-9a-f]{24}"$/);
+    assert.deepEqual(new Uint8Array(await res.arrayBuffer()), PNG(1));
+  });
+
+  it('answers 404 for Google\'s globe for an hour, and 502 for a minute when Google fails', async () => {
+    const fetchImpl = google({ 'busy.example': () => new Response(null, { status: 503 }), 'down.example': new Error('reset') });
+    const none = await faviconProxy('nothing.example', { cache: null, fetchImpl });
+    assert.equal(none.status, 404);
+    assert.equal(none.headers.get('cache-control'), 'private, max-age=3600');
+    for (const d of ['busy.example', 'down.example']) {
+      // eslint-disable-next-line no-await-in-loop
+      const failed = await faviconProxy(d, { cache: null, fetchImpl });
+      assert.equal(failed.status, 502, d);
+      assert.equal(failed.headers.get('cache-control'), 'private, max-age=60');
+    }
+  });
+
+  it('passes on raster images only, by their bytes, never an SVG', async () => {
+    const fetchImpl = google({
+      'svg.example': () => new Response('<svg xmlns="http://www.w3.org/2000/svg"></svg>', { headers: { 'content-type': 'image/png' } }),
+      'ico.example': () => new Response(ico(32), { headers: { 'content-type': 'image/png' } }),
+    });
+    assert.equal((await faviconProxy('svg.example', { cache: null, fetchImpl })).status, 404);
+    const res = await faviconProxy('ico.example', { cache: null, fetchImpl });
+    assert.equal(res.headers.get('content-type'), 'image/x-icon');
+  });
+
+  it('keeps favicons and Google\'s globes in the data center\'s cache, not its failures', async () => {
+    const cache = memoryCache();
+    let busy = true;
+    const fetchImpl = google({
+      'acme.example': png,
+      'busy.example': () => (busy ? new Response(null, { status: 503 }) : png()),
+    });
+    const first = await faviconProxy('acme.example', { cache, fetchImpl });
+    const again = await faviconProxy('acme.example', { cache, fetchImpl });
+    assert.equal(again.status, 200);
+    assert.equal(again.headers.get('etag'), first.headers.get('etag'));
+    assert.deepEqual(new Uint8Array(await again.arrayBuffer()), PNG(1));
+    assert.equal((await faviconProxy('nothing.example', { cache, fetchImpl })).status, 404);
+    assert.equal((await faviconProxy('nothing.example', { cache, fetchImpl })).status, 404);
+    assert.equal((await faviconProxy('busy.example', { cache, fetchImpl })).status, 502);
+    busy = false;
+    assert.equal((await faviconProxy('busy.example', { cache, fetchImpl })).status, 200);
+    assert.deepEqual(fetchImpl.asked.map((a) => a.d), ['acme.example', 'nothing.example', 'busy.example', 'busy.example']);
+    assert.equal(cache.kept.size, 3);
+  });
+
+  it('keeps the cache in waitUntil where it is given', async () => {
+    const cache = memoryCache();
+    const later = [];
+    await faviconProxy('acme.example', { cache, fetchImpl: google({ 'acme.example': png }), waitUntil: (p) => later.push(p) });
+    assert.equal(later.length, 1);
+    await Promise.all(later);
+    assert.equal(cache.kept.size, 1);
+  });
+
+  it('fetches a favicon asked for many times at once only once', async () => {
+    const fetchImpl = google({ 'acme.example': png });
+    const all = await Promise.all([1, 2, 3].map(() => faviconProxy('acme.example', { cache: null, fetchImpl })));
+    assert.deepEqual(all.map((r) => r.status), [200, 200, 200]);
+    assert.equal(fetchImpl.asked.length, 1);
+    const bodies = await Promise.all(all.map(async (r) => new Uint8Array(await r.arrayBuffer())));
+    bodies.forEach((b) => assert.deepEqual(b, PNG(1)));
+  });
+
+  it('answers 304 to a browser that has it', async () => {
+    const fetchImpl = google({ 'acme.example': png });
+    const first = await faviconProxy('acme.example', { cache: null, fetchImpl });
+    const request = new Request('https://opspile.test/api/favicon?domain=acme.example', { headers: { 'if-none-match': `W/${first.headers.get('etag')}` } });
+    const res = await faviconProxy('acme.example', { cache: null, fetchImpl, request });
+    assert.equal(res.status, 304);
+    assert.equal(res.headers.get('cache-control'), first.headers.get('cache-control'));
+  });
+
+  it('is at /api/favicon for anyone Access signed in, without looking them up', async () => {
+    const url = new URL('https://opspile.test/api/favicon?domain=not_a_domain');
+    assert.equal((await api(new Request(url), {}, url)).status, 403);
+    // No D1: the signed-in person is not looked up.
+    const res = await api(new Request(url), {}, url, { viewer: { id: 1 } });
+    assert.equal(res.status, 400);
   });
 });
