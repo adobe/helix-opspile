@@ -23,8 +23,8 @@ import {
 import { agentToolsExtension } from '../src/agent/tools.js';
 import { latestTurn, sidebarTurns, turnSidebar } from '../src/agent/turn.js';
 import {
-  addSidebarMessage, inputText, keepSidebarAnswer, MAX_ANSWER, sidebarFor, sidebarId,
-  sidebarNote, sidebarOf,
+  addSidebarMessage, inputText, keepSidebarAnswer, MAX_ANSWER, seeSidebar, sidebarFor, sidebarId,
+  sidebarNote, sidebarOf, unseenAnswers,
 } from '../src/sidebar.js';
 import { d1 } from './d1.js';
 
@@ -255,7 +255,15 @@ describe('the sidebar', () => {
     assert.equal(await keepSidebarAnswer(e, SLACK, turn({ state: 'working' })), false);
     // A failure first, then the answer of the next attempt; then nothing replaces it.
     assert.equal(await keepAnswer({ env: e, name: SLACK }, turn({ state: 'failed', text: 'The turn did not finish.' })), true);
+    const answer = `${asked.id}:answer`;
+    // Ada saw the failure (nobody else can mark it); the answer that replaces it is new to her.
+    assert.deepEqual(await unseenAnswers(e, [SLACK, OTHER], ADA.id), new Map([[SLACK, [answer]]]));
+    assert.equal(await seeSidebar(e, 2, [answer]), 0);
+    assert.equal(await seeSidebar(e, ADA.id, [answer, asked.id]), 1);
+    assert.equal(await seeSidebar(e, ADA.id, [answer]), 0);
+    assert.deepEqual(await unseenAnswers(e, [SLACK], ADA.id), new Map());
     assert.equal(await keepAnswer({ env: e, name: SLACK }, turn()), true);
+    assert.deepEqual(await unseenAnswers(e, [SLACK], ADA.id), new Map([[SLACK, [answer]]]));
     assert.equal(await keepAnswer({ env: e, name: SLACK }, turn({ text: 'Something else.' })), false);
     assert.deepEqual(notified, [
       ['helix', { type: 'sidebar', thread: SLACK }], ['helix', { type: 'sidebar', thread: SLACK }],
@@ -265,6 +273,8 @@ describe('the sidebar', () => {
       ['person', 'CDN?', 'done', null, 'Ada'],
       ['agent', 'The CDN.', 'done', asked.id, null],
     ]);
+    assert.deepEqual([list[1].to, list[1].unseen], [ADA.id, true]);
+    assert.equal('unseen' in list[0], false);
     assert.deepEqual(await sidebarFor(e, [OTHER]), []);
   });
 });

@@ -605,6 +605,13 @@ function inbox(team, before = null, personal = false, only = null) {
       resolution: resolutionOf(store.threads.get(t.thread)),
       draft: draftSummary(drafts.get(t.thread)) || null,
     })))
+    // As src/api.js: the agent's answers to the viewer in a sidebar they have not seen.
+    .map((t) => {
+      const sideNew = [t.thread, ...(t.members || []).map((m) => m.thread)]
+        .flatMap((k) => store.sidebars.get(k) || [])
+        .filter((m) => m.role === 'agent' && m.unseen && m.to === ME).map((m) => m.id);
+      return sideNew.length ? { ...t, sideNew: [...new Set(sideNew)] } : t;
+    })
     // src/api.js's `resolution` is made from these; here `resolutionOf` did it already.
     .map(({ resolutionFacts: _, ...t }) => ({
       ...t, waiting_on: waitingOn(t), title: nameIds(t.title), last_text: nameIds(t.last_text),
@@ -809,7 +816,7 @@ function sidebarTurn(entry) {
   const answer = answered ? answered.body : sidebarAnswer(asked.body);
   if (!answered) {
     list.push({
-      id: `${asked.id}:answer`, role: 'agent', by: null, body: answer, state: 'done', reply_to: asked.id, at: endedAt,
+      id: `${asked.id}:answer`, role: 'agent', by: null, body: answer, state: 'done', reply_to: asked.id, at: endedAt, to: asked.by?.id ?? null, unseen: true,
     });
     broadcast(entry.row.team, { type: 'sidebar', thread: key });
   }
@@ -1618,6 +1625,27 @@ async function api(req, res, url) {
     console.log(`sidebar message on ${key} (not posted)`);
     broadcast(entry.row.team, { type: 'sidebar', thread: key });
     return json(res, { message }, 202);
+  }
+  if (url.pathname === '/api/agent/sidebar/seen' && req.method === 'POST') {
+    // As src/agent/stub.js sawSidebar: only the viewer's own answers, once.
+    const { thread: key, ids } = await readJson(req);
+    const entry = store.threads.get(key);
+    if (!Array.isArray(ids) || !ids.length) {
+      return json(res, { error: 'name the answers seen' }, 400);
+    }
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const seen = (store.sidebars.get(key) || [])
+      .filter((m) => ids.includes(m.id) && m.role === 'agent' && m.to === ME && m.unseen);
+    for (const m of seen) {
+      m.unseen = false;
+    }
+    if (seen.length) {
+      broadcast(entry.row.team, { type: 'sidebar-seen', thread: key, person: ME });
+    }
+    res.writeHead(204).end();
+    return true;
   }
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
     // As src/drafts.js: `base` is the version the text was written from.

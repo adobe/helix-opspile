@@ -509,6 +509,10 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .sc-body :is(.sc-continue, .sc-wait) .bubble-ico { position: static; padding: 0; }
 .sc-body .sc-wait .bubble-ico { display: inline-block; vertical-align: middle; margin-right: var(--spectrum-spacing-75); }
 .sidechat.blank .sc-body { padding-top: var(--spectrum-spacing-200); }
+/* The purple badge (sideBadge): answers to you in a sidebar that you have not seen, on the
+   thread's row, and New on its folded line. */
+.sidebadge { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50); white-space: nowrap; }
+.sidebadge .bubble-ico { position: static; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); padding: 0; }
 .composer .sidebtn { position: relative; display: grid; place-items: center; cursor: pointer; }
 .composer .sidebtn .av { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); }
 .composer .sidebtn .bubble-ico { right: var(--spectrum-spacing-50); bottom: var(--spectrum-spacing-50); width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); padding: 0; }
@@ -1894,6 +1898,25 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 /* The one you are writing in has an edge, as a field with the focus has; so have the ones the
    panel beside the thread shows. */
 .spectrum .sidechat:is(.live, .paneled) { border-color: var(--spectrum-purple-visual-color); }
+/* An answer to you in it you have not seen: the edge too, and the purple badge (S2's
+   NotificationBadge, in the sidebar's purple) where the row and the line say so. */
+.spectrum .sidechat.fresh { border-color: var(--spectrum-purple-visual-color); }
+.spectrum .sidechat.fresh .sc-what { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .sidebadge {
+  min-width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-spacing-75);
+  box-sizing: border-box;
+  justify-content: center;
+  border-radius: calc(var(--spectrum-component-height-50) / 2);
+  background: var(--spectrum-purple-background-color-default);
+  color: var(--spectrum-white);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-component-height-50);
+}
+.spectrum .sidebadge .bubble-ico { color: inherit; background: none; }
 .spectrum .sidechat .sc-head {
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
   border: 0;
@@ -2770,6 +2793,8 @@ main.simple .t.dotted .l2 { padding-left: calc(var(--spectrum-spacing-300) + var
 main.simple .t .cust { flex: none; }
 main.simple .t .snip:empty { flex: 1; }
 main.simple .t .men { flex: none; margin-left: auto; }
+main.simple .t .sidebadge { margin-left: auto; }
+main.simple .t .sidebadge + .men { margin-left: 0; }
 main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: 50%; }
 /* The list by customer: a heading each, the threads it shows, "N more", and with nothing new. */
 #threads .rows > .grp { display: flex; align-items: center; gap: var(--spectrum-spacing-100); width: 100%;

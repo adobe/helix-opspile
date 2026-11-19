@@ -1784,7 +1784,13 @@ thread in the inbox. Where the conversation itself shows depends on the room (`u
   turns into the sidebar's.
 
 Both are purple, say that only the team sees it and that nothing goes to the platform, and are
-left by **✕** (and Esc, and opening another thread). A window that grows or shrinks moves the
+left by **✕** (and Esc, and opening another thread).
+The agent's answer to you that you have not seen yet (asked, then gone to another thread before it
+answered) puts a **purple badge** on the thread's row, with how many there are (`sideNew` from
+`GET /api/inbox`, `sidebar_messages.seen_at`), and keeps the thread in unread only; its line in
+the thread says *New* while it is folded. It goes once the conversation shows to you, in the
+panel or unfolded (`POST /api/agent/sidebar/seen`, `{ type: 'sidebar-seen' }` to your other
+inboxes). A window that grows or shrinks moves the
 sidebar you are in from one to the other, with what is typed in its box.
 
 **Wide screens.** Past a desktop's screen the inbox has three bands (`ui/spectrum-inbox.css`,

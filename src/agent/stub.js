@@ -17,7 +17,9 @@ import { requestOf } from '../bashrequests.js';
 import { json } from '../http.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
 import { notifyRoom } from '../notify.js';
-import { addSidebarMessage, MAX_SIDEBAR, sidebarId } from '../sidebar.js';
+import {
+  addSidebarMessage, MAX_SIDEBAR, seeSidebar, sidebarId,
+} from '../sidebar.js';
 import { switchedOn } from './enabled.js';
 import { liveTurn } from './kept.js';
 
@@ -196,6 +198,27 @@ export async function talkToAgent(env, me, body, inTeam) {
   }
   await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
   return json({ message }, 202);
+}
+
+/**
+ * POST /api/agent/sidebar/seen `{ thread, ids }`: the person was shown the agent's answers `ids`
+ * to them in the sidebar of thread `thread` (src/sidebar.js, seeSidebar), so the inbox marks it
+ * no more. Their other inboxes hear of it (`sidebar-seen`, with the person), and only they act on
+ * it. Answers 204.
+ */
+export async function sawSidebar(env, me, body, inTeam) {
+  const ids = body && body.ids;
+  if (!Array.isArray(ids) || !ids.length) {
+    return json({ error: 'name the answers seen' }, 400);
+  }
+  const t = await threadTarget(env, body.thread);
+  if (!t || !await inTeam(t.entry.teams, t.entry)) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (await seeSidebar(env, me.id, ids)) {
+    await notifyRoom(env, t.entry.teams, { type: 'sidebar-seen', thread: t.entry.key, person: me.id });
+  }
+  return new Response(null, { status: 204 });
 }
 
 /**

@@ -15,11 +15,11 @@ import { admin } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
 import { personInKb } from './kbpeople.js';
 import {
-  agentStatus, decideBash, seedAgent, talkToAgent, tellDiscarded,
+  agentStatus, decideBash, sawSidebar, seedAgent, talkToAgent, tellDiscarded,
 } from './agent/stub.js';
 import { agentEnabled } from './agent/enabled.js';
 import { keptTurn } from './agent/kept.js';
-import { sidebarFor } from './sidebar.js';
+import { sidebarFor, unseenAnswers } from './sidebar.js';
 import {
   discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
@@ -529,7 +529,7 @@ export async function inbox(env, me, team, {
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
-    { results: techRows }, techVocab, elsewhere, yours,
+    { results: techRows }, techVocab, elsewhere, yours, unseen,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
     // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
@@ -593,6 +593,8 @@ export async function inbox(env, me, team, {
     personal && !only && !more ? unreadElsewhere(env, me) : null,
     // What the red badge counts: unread mentions, and what is new in the viewer's threads.
     unreadInYours(env.DB, threadKeys, me.id),
+    // The agent's answers to the viewer in a sidebar they have not seen: the purple badge.
+    unseenAnswers(env, [...threadKeys, ...threads.map((t) => t.logical_thread)], me.id),
   ]);
   const by = (rows, f) => {
     const m = new Map();
@@ -669,7 +671,12 @@ export async function inbox(env, me, team, {
       // Totals over the whole group, not just the members loaded here.
       const sized = g && g.n > 1 ? { ...entry, occurrences: g.n, messages: g.total } : entry;
       const draft = draftSummary(draftOf(drafts, [t.thread, ...t.members.map((m) => m.thread)]));
-      return { ...sized, waiting_on: waitingOn(sized), draft };
+      // A sidebar is kept under the entry's key when it was talked in: a member's, before a fold.
+      const sideNew = [...new Set([t.thread, ...t.members.map((m) => m.thread)])]
+        .flatMap((k) => unseen.get(k) || []);
+      return {
+        ...sized, waiting_on: waitingOn(sized), draft, ...(sideNew.length ? { sideNew } : {}),
+      };
     })),
   };
 }
@@ -1250,6 +1257,10 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   if (url.pathname === '/api/agent/sidebar' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return talkToAgent(env, me, body, working);
+  }
+  if (url.pathname === '/api/agent/sidebar/seen' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return sawSidebar(env, me, body, working);
   }
   // A command the thread's agent asked a person to run (src/agent/bashrequest.js).
   const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);

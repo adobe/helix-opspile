@@ -310,6 +310,17 @@ ends it as failed (`sidebarTurns`). Answers are kept from every sidebar turn of 
 once per state and text (`sidebar-kept` in the agent's storage, written after them, and only when it changed), so a turn
 queued right behind one does not hide it.
 
+**Sidebar answer seen.** unseen → seen, and unseen again when a failed answer is replaced
+(`sidebar_messages.seen_at`, migration 0078, `seeSidebar` in `src/sidebar.js`). Only the person it
+answers (`person` on the agent's row) has it unseen, and only they mark it, by id: the inbox does
+when the answer shows to them (the panel beside the thread, or its conversation unfolded in it),
+on screen and not viewing as someone else (`seeSide`, `ui/inbox.js`). The write is conditional
+(`seen_at IS NULL`), so an answer that came after what was shown stays unseen, and the replace of
+a failed one clears it, since that is a new answer. The page hides what it marked at once
+(`sideSeen`), whatever a reload in between brings, and gives it back if the write failed; the
+answers kept before the migration count as seen. Unseen answers are the list's purple badge
+(`sideNew`), and keep the thread in unread only.
+
 **Sidebar mode.** off → on → off (`side.key`, `ui/inbox.js`): one thread at a time, left by ✕,
 Esc, or opening another thread. What was typed in the sidebar box stays per thread in the tab, and
 a message the inbox did not take goes back into it. Where it shows is not a state of its own: it

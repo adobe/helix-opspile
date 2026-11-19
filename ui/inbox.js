@@ -1289,6 +1289,15 @@ const atButton = () => `<button class="atme" type="button" data-atme aria-presse
 const youCount = (t) => (t.unread
   ? Math.max(t.unreadForYou || 0, mentionsMe(t) ? (t.unreadMentions || 1) : 0) : 0);
 /**
+ * The purple badge: the agent's answers to you in a thread's sidebar that you have not seen
+ * (`sideNew`, src/sidebar.js unseenAnswers), less those this page has shown you since (seeSide).
+ * Read or not, the thread has them: a question asked in the sidebar and left is not forgotten.
+ */
+const sideSeen = new Set();
+const sideCount = (t) => (t.sideNew || []).filter((id) => !sideSeen.has(id)).length;
+const sideTitle = (n) => `${n} new ${n === 1 ? 'answer' : 'answers'} from ${AGENT_NAME} to you in the sidebar`;
+const sideBadge = (n) => (n ? `<b class="sidebadge" title="${esc(sideTitle(n))}" aria-label="${esc(sideTitle(n))}">${SIDE_ICON}${n > 99 ? '99+' : n}</b>` : '');
+/**
  * A customer's logo: its icon (the admin team's, else its mail domain's favicon) over its
  * initial on its colour, which shows where there is no icon or it does not load (see wireLogos).
  */
@@ -1455,6 +1464,7 @@ function flags(t) {
   let out = '';
   if (isResolved(t)) out += ' resolved';
   if (youCount(t)) out += ' mention';
+  if (sideCount(t)) out += ' sidenew';
   if (status === 'critical' || status === 'hot') out += ' urgent';
   return out;
 }
@@ -1523,7 +1533,7 @@ function row(t, hit = null) {
     <div class="l2">${cust}
       <span class="faces">${faces}</span>
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
-      <span class="tags">${moods(t)}</span>
+      <span class="tags">${sideBadge(sideCount(t))}${moods(t)}</span>
     </div>${hit ? hitLine(hit) : ''}</div>`;
 }
 
@@ -1547,7 +1557,7 @@ function simpleRow(t, hit = null) {
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}${said}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
+    <div class="l2">${cust}${said}${sideBadge(sideCount(t))}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
 }
 /**
  * The list by customer (`shown` in the view's order, latest activity first): each customer
@@ -1566,7 +1576,7 @@ function groupPlan(shown) {
   const plan = [];
   const quiet = [];
   for (const [org, ts] of by) {
-    const stays = (t) => t.unread || L.grouped.has(t.thread) || t.thread === state.open;
+    const stays = (t) => t.unread || sideCount(t) > 0 || L.grouped.has(t.thread) || t.thread === state.open;
     let rows = ts;
     if (GROUPS.fold !== 'all' && !oneCustomer()) {
       const kept = new Set(ts.filter(stays));
@@ -2053,8 +2063,11 @@ function newList(key = null, open = null) {
     key, open, fresh: true, order: [], held: new Set(), seen: new Set(), arrived: new Set(), since: '',
   };
 }
-/** Whether unread only keeps `t`: unread, shown by the list already, or open when the list was opened. */
-const keptUnread = (t) => t.unread || state.list.held.has(t.thread) || t.thread === state.list.open;
+/**
+ * Whether unread only keeps `t`: unread, with an answer in its sidebar you have not seen (the
+ * purple badge), shown by the list already, or open when the list was opened.
+ */
+const keptUnread = (t) => t.unread || sideCount(t) > 0 || state.list.held.has(t.thread) || t.thread === state.list.open;
 const setsKey = (o) => Object.entries(o).filter(([, s]) => s?.size).map(([id, s]) => [id, [...s].sort()])
   .sort((a, b) => a[0].localeCompare(b[0]));
 const listKey = () => JSON.stringify([scopeOf(state.data), state.data.as || null, state.unread,
@@ -3121,6 +3134,9 @@ const side = {
   asked: null,
   // Whether the line joined to the panel is still to come out of it (joinLine, drawJoin).
   emerging: false,
+  // The open thread's conversations as it was last drawn, `{ key, runs }`: what the tab shows,
+  // seen once it is in front again (seeSide).
+  runs: null,
 };
 const SIDE_ICON = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
 const SIDE_HINT = `Talk to ${AGENT_NAME} in the sidebar: only your team sees it, nothing is posted (A)`;
@@ -3236,14 +3252,43 @@ function sideGroup(key, run, { last, trailing }) {
   const what = working ? `${esc(who)} ${who === 'You' ? 'are' : 'is'} in a sidebar conversation with <b>${AGENT_NAME}</b>`
     : `${esc(who)} had a sidebar conversation with <b>${AGENT_NAME}</b>`;
   const meta = `${n} ${n === 1 ? 'message' : 'messages'} · ${clock(run.at(-1).at)} · not posted`;
+  // Folded, with an answer to you in it that you have not seen: the list's purple badge here too.
+  const fresh = open || paneled ? 0 : run.filter(unseenByMe).length;
+  const badge = fresh ? `<b class="sidebadge" title="${esc(sideTitle(fresh))}">New</b>` : '';
   const more = !live && canSide(key) ? `<div class="sc-foot"><button type="button" class="sc-continue" data-side-enter>${SIDE_ICON}Continue in the sidebar</button></div>` : '';
   const body = open ? `<div class="sc-body">${sideRun(key, run, last).join('')}${more}</div>` : '';
   // What the line opens: its run under it, or the panel, which has every run.
   const shows = side.wide ? `aria-expanded="${paneled}" aria-controls="side"` : `aria-expanded="${open}"`;
-  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${paneled ? 'paneled' : ''} ${working ? 'working' : ''}${joined ? ' joined' : ''}${joined && side.emerging ? ' emerging' : ''}" data-side="${esc(id)}">
+  return `<div class="sidechat ${open ? 'open' : ''} ${live ? 'live' : ''} ${paneled ? 'paneled' : ''} ${working ? 'working' : ''}${fresh ? ' fresh' : ''}${joined ? ' joined' : ''}${joined && side.emerging ? ' emerging' : ''}" data-side="${esc(id)}">
     <button type="button" class="sc-head" data-side-toggle="${esc(id)}" ${shows}${live ? ' aria-disabled="true"' : ''}>
-      <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}${live ? '' : '<span class="chev s2-chevron right" aria-hidden="true"></span>'}</span>
+      <span class="faces">${faces}</span><span class="sc-what">${what}</span><span class="sc-meta">${badge}${working ? '<span class="spin" aria-hidden="true"></span>' : ''}${esc(meta)}${live ? '' : '<span class="chev s2-chevron right" aria-hidden="true"></span>'}</span>
     </button>${body}</div>`;
+}
+
+/** Whether `m` is the agent's answer to you that you have not seen (the purple badge). */
+const unseenByMe = (m) => m.role === 'agent' && m.unseen && m.to === state.me?.id && !sideSeen.has(m.id);
+
+/**
+ * You have seen the answers to you in the sidebar conversations of the open thread `key` that
+ * show now (`runs`, as openThread found them): all of them in the panel beside the thread, the
+ * unfolded ones in it. Only on screen, and not while you view as someone else. The list's purple
+ * badge goes at once; the API keeps it (POST /api/agent/sidebar/seen), and your other tabs hear.
+ */
+function seeSide(key, runs) {
+  if (hidden() || state.as || state.data?.me?.readonly) return;
+  const shows = ({ run, trailing }) => sidePaneled(key)
+    || (!side.wide && (side.open.has(run[0].id) || (trailing && sideInline(key))));
+  const ids = runs.filter(shows).flatMap(({ run }) => run.filter(unseenByMe).map((m) => m.id));
+  if (!ids.length) return;
+  for (const id of ids) sideSeen.add(id);
+  request('POST', '/api/agent/sidebar/seen', { thread: key, ids }).then((res) => {
+    if (!res.ok) throw new Error(res.status);
+  }).catch(() => {
+    // Not kept: the badge comes back, to be seen again.
+    for (const id of ids) sideSeen.delete(id);
+    render();
+  });
+  render();
 }
 
 /** The reply box in sidebar mode: to the agent, in purple, saying where it goes, with ✕ Exit. */
@@ -4174,6 +4219,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
     head, review, items, reply, patch: !switching,
   });
   placeSidePanel(key, thread, runs);
+  side.runs = { key, runs };
+  seeSide(key, runs);
   syncHeadMenus();
   restorePreviews(pane);
   state.shownIds = ids;
@@ -7290,6 +7337,8 @@ document.addEventListener('visibilitychange', () => {
   const { since } = away;
   awayOrBack();
   if (hidden() || !state.data) return;
+  // What the sidebar showed while the tab was in the background: seen now.
+  if (side.runs?.key === state.open) seeSide(state.open, side.runs.runs);
   const long = Boolean(since) && Date.now() - since >= AWAY_MS;
   const open = state.open;
   const agent = open && state.agents.get(open);
@@ -7623,6 +7672,8 @@ function listen(team, live, { again = false } = {}) {
     // before the inbox answers its POST, which shows it as sent in the thread it has (askSide),
     // and a tab in the background does not fetch it again until it is shown.
     if (ev.type === 'sidebar') { if (ev.thread !== state.open) state.cache.delete(ev.thread); reloadSoon(ev.thread); }
+    // You saw the agent's answers to you in a sidebar, here or in another tab: the purple badge goes.
+    if (ev.type === 'sidebar-seen' && ev.person === state.me?.id) { if (ev.thread !== state.open) state.cache.delete(ev.thread); reloadSoon(ev.thread); }
     if (ev.type === 'experts') { state.experts.delete(ev.thread); if (state.open === ev.thread) loadExperts(ev.thread); }
   };
 }

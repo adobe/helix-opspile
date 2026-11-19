@@ -628,7 +628,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
    * `open` more minutes; `status` (and `by`, a person key) for one that was decided `ended`
    * minutes ago (2, unless it says).
    * `sidebar`: what someone on the team said to the thread's agent in the inbox's sidebar, and
-   * its answers, `[who, minutesAgo, body]`, `who` a person key or 'agent' (src/sidebar.js).
+   * its answers, `[who, minutesAgo, body]`, `who` a person key or 'agent' (src/sidebar.js); an
+   * answer `[..., { unseen: true }]` its asker has not seen yet (the purple badge).
    */
   function seed({
     ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft, bash = [],
@@ -716,7 +717,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     }
     if (sidebar.length) {
       let asked = null;
-      sidebars.set(key, sidebar.map(([who, ago, body], i) => {
+      let asker = null;
+      sidebars.set(key, sidebar.map(([who, ago, body, { unseen = false } = {}], i) => {
         const p = who !== 'agent' && byKey.get(who);
         const id = `sb_${String(threads.size).padStart(8, '0')}-0000-4000-8000-${String(i).padStart(12, '0')}`;
         const m = {
@@ -727,9 +729,11 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
           state: 'done',
           reply_to: p ? null : asked,
           at: new Date(now - ago * MIN).toISOString(),
+          ...(p ? {} : { to: asker, unseen }),
         };
         if (p) {
           asked = id;
+          asker = p.id;
         }
         return m;
       }));
@@ -1082,6 +1086,12 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['priya', 500, 'Sure. Which branch should it build from?'],
     ],
     reads: { priya: 500, dana: 'latest' },
+    // Dana asked the agent in the sidebar and went on to another thread before it answered: read,
+    // but its answer to her waits, so the row has the purple badge until she opens it.
+    sidebar: [
+      ['dana', 498, 'Do we have a quota for preview environments on their plan?'],
+      ['agent', 497, 'Yes: their plan has **two** preview environments, and they use one (`main`). A second one for the campaign fits, no change to the contract needed.\n\nI left the draft as it is. Nothing went to the channel.', { unseen: true }],
+    ],
     label: {
       kind: 'request', next_actor: 'us', urgency: 0.8, resolved_p: 0.1,
     },

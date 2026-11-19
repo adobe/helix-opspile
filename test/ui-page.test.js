@@ -1448,6 +1448,7 @@ describe('inbox page', () => {
         activityOf: (t) => String(t.last_at || t.any_at || ''),
         smartScore: (t) => t.score,
         statusOf: (t) => t.status || 'quiet',
+        sideCount: (t) => (t.sideNew || []).length,
       });
       state.list = api.newList();
       const shown = () => {
@@ -1478,6 +1479,16 @@ describe('inbox page', () => {
       shown();
       state.unread = true;
       assert.deepEqual(shown(), ['b', 'c']);
+    });
+
+    it('keeps a read thread with an answer to you in its sidebar you have not seen in unread only', () => {
+      const { state, shown } = list();
+      state.unread = true;
+      state.data.threads = [
+        thread('a', { score: 3, unread: false, sideNew: ['sb_1:answer'] }),
+        thread('b', { score: 2, unread: false }),
+      ];
+      assert.deepEqual(shown(), ['a']);
     });
 
     it('lets go of the threads read meanwhile, after a while away, but not of the open one', () => {

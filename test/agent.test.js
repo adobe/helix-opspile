@@ -35,7 +35,7 @@ import { seed, seedNote, seedPin } from '../src/agent/seed.js';
 import { dream, dreamOf } from '../src/agent/dream.js';
 import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
 import {
-  agentStatus, pokeAgent, seedAgent, talkToAgent, tellDiscarded,
+  agentStatus, pokeAgent, sawSidebar, seedAgent, talkToAgent, tellDiscarded,
 } from '../src/agent/stub.js';
 import { keepSidebarAnswer } from '../src/sidebar.js';
 import { channelThreads, resolveAnyThread, resolveThread } from '../src/agent/history.js';
@@ -47,7 +47,7 @@ import {
 import {
   keepLive, keepTurn, keptTurn, liveDue, liveTurn,
 } from '../src/agent/kept.js';
-import { thread as inboxThread } from '../src/api.js';
+import { inbox, thread as inboxThread } from '../src/api.js';
 import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
@@ -378,6 +378,35 @@ describe('thread agents', () => {
       ['person', 'Is it the CDN?', 'Ada Staff'], ['agent', 'Yes: **the CDN**.', null],
     ]);
     assert.equal((await inboxThread({ ...e, AGENT_CHANNELS: '' }, me, THREAD)).agent, false);
+    // The answer is Ada's, and she has not seen it: the list has it for the purple badge.
+    const answer = data.sidebar[1];
+    assert.deepEqual([answer.to, answer.unseen], [me.id, true]);
+    const listed = async (who = me) => (await inbox(e, who, 'helix')).threads
+      .find((t) => t.thread === THREAD).sideNew;
+    assert.deepEqual(await listed(), [answer.id]);
+    assert.equal(await listed({ ...me, id: 8 }), undefined);
+    // Shown to her: marked seen, once, and only by her; her other inboxes hear of it.
+    const notified = [];
+    e.ROOMS = {
+      idFromName: (name) => name,
+      get: (name) => ({
+        async fetch(url, init) {
+          notified.push([name, JSON.parse(init.body)]);
+          return new Response('ok');
+        },
+      }),
+    };
+    const saw = (who, body, may = inTeam) => sawSidebar(e, who, body, may);
+    assert.equal((await saw(me, { thread: THREAD, ids: [] })).status, 400);
+    assert.equal((await saw(me, { thread: THREAD, ids: [answer.id] }, () => false)).status, 404);
+    assert.equal((await saw({ ...me, id: 8 }, { thread: THREAD, ids: [answer.id] })).status, 204);
+    assert.deepEqual(notified, []);
+    assert.deepEqual(await listed(), [answer.id]);
+    assert.equal((await saw(me, { thread: THREAD, ids: [answer.id, message.id] })).status, 204);
+    assert.equal((await saw(me, { thread: THREAD, ids: [answer.id] })).status, 204);
+    assert.deepEqual(notified, [['helix', { type: 'sidebar-seen', thread: THREAD, person: me.id }]]);
+    assert.equal(await listed(), undefined);
+    assert.equal((await inboxThread(e, me, THREAD)).sidebar[1].unseen, false);
   });
 
   it('keep their latest finished turn, which comes with the thread', async () => {

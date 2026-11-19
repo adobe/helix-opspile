@@ -71,6 +71,8 @@ const shape = (r) => ({
   state: r.state,
   reply_to: r.reply_to || null,
   at: r.at,
+  // The agent's answer: whom it answers, and whether they have not seen it yet (seeSidebar).
+  ...(r.role === 'agent' ? { to: r.person ?? null, unseen: !r.seen_at } : {}),
 });
 
 /** The sidebar messages of the entry's threads (`keys`), oldest first. */
@@ -113,7 +115,7 @@ export async function keepSidebarAnswer(env, key, turn) {
     SELECT ?, ?, 'agent', q.person, ?, ?, q.id, MAX(?, q.at)
     FROM sidebar_messages q WHERE q.id = ? AND q.thread = ? AND q.role = 'person'
     ON CONFLICT (id) DO UPDATE SET body = excluded.body, state = excluded.state,
-      at = excluded.at WHERE sidebar_messages.state = 'failed'`)
+      at = excluded.at, seen_at = NULL WHERE sidebar_messages.state = 'failed'`)
     .bind(
       `${turn.sidebar}:answer`,
       key,
@@ -124,4 +126,43 @@ export async function keepSidebarAnswer(env, key, turn) {
       key,
     ).run();
   return Boolean(res && res.meta && res.meta.changes);
+}
+
+/** At most this many answers are marked seen by one request. */
+export const MAX_SEEN = 100;
+
+/**
+ * The agent's answers to person `person` they have not seen yet, of the threads `keys` (the
+ * entries' keys, and their members'): thread to the answers' ids, oldest first.
+ */
+export async function unseenAnswers(env, keys, person) {
+  const list = [...new Set((keys || []).filter(Boolean))];
+  const by = new Map();
+  if (!env.DB || !list.length || !person) {
+    return by;
+  }
+  const { results } = await env.DB.prepare(`SELECT id, thread FROM sidebar_messages
+    WHERE person = ? AND role = 'agent' AND seen_at IS NULL
+      AND thread IN (SELECT value FROM json_each(?)) ORDER BY at`)
+    .bind(person, JSON.stringify(list)).all();
+  for (const r of results || []) {
+    by.set(r.thread, [...(by.get(r.thread) || []), r.id]);
+  }
+  return by;
+}
+
+/**
+ * Person `person` has seen the agent's answers `ids` to them (in the inbox's sidebar): only
+ * their own answers, once; a later one stays unseen. How many it marked.
+ */
+export async function seeSidebar(env, person, ids, now = new Date()) {
+  const list = [...new Set((Array.isArray(ids) ? ids : []).map(String))].slice(0, MAX_SEEN);
+  if (!env.DB || !person || !list.length) {
+    return 0;
+  }
+  const res = await env.DB.prepare(`UPDATE sidebar_messages SET seen_at = ?
+    WHERE id IN (SELECT value FROM json_each(?)) AND person = ? AND role = 'agent'
+      AND seen_at IS NULL`)
+    .bind(now.toISOString(), JSON.stringify(list), person).run();
+  return (res && res.meta && res.meta.changes) || 0;
 }
