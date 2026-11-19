@@ -97,7 +97,8 @@ import { faviconProxy } from '../src/favicons.js';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { findPerson } from '../src/kbpeople.js';
-import { createStore } from './dev-ui-fixtures.mjs';
+import { AGENT, createStore } from './dev-ui-fixtures.mjs';
+import { OFFER_AFTER } from '../src/postoffer.js';
 import { followable, followsOfTeams } from '../src/follows.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -157,6 +158,20 @@ for (const b of kb.list()) {
 // the admin pages: read again on every request, so a change there shows on the next one.
 let vocabNames = { tech: {}, topics: {} };
 const ME = store.me.id;
+// The agent's drafts Dana sent, by channel, as src/postoffer.js counts them: she sent all but
+// one before, so the next of the agent's she sends asks whether it may post there itself, where
+// she may switch it (--admin, or --manager in Edge ops) and it does not yet.
+const agentDraftsSent = new Map();
+const postingOfferFor = (entry) => {
+  const channel = entry.ch.channelId;
+  const sent = (agentDraftsSent.get(channel) ?? OFFER_AFTER - 1) + 1;
+  agentDraftsSent.set(channel, sent);
+  const may = ADMIN || (MANAGER && entry.row.team === 'edge');
+  return may && !entry.ch.appPosting && sent >= OFFER_AFTER
+    // eslint-disable-next-line no-use-before-define
+    && !settings.postingDeclined.includes(channel)
+    ? { postingOffer: { channel, team: entry.row.team, sent } } : {};
+};
 const sockets = new Map(); // team slug -> Set of WebSocket-ish sockets
 // Dana's notification settings (src/settings.js): mentions and threads on, and bells on Edge ops'
 // incidents, on Platform ops' and on her personal view, so the user menu lists a few (and is as
@@ -1089,6 +1104,14 @@ async function kbApi(req, res, url) {
       return true;
     }
     const out = await r.json();
+    // "Post messages" switched for a channel: the fixtures' channel lets the app post, or not.
+    if (url.pathname === '/api/kb/tools' && r.ok && body.tool === 'post_message' && body.channel) {
+      for (const e of store.threads.values()) {
+        if (e.ch.channelId === body.channel) {
+          e.ch.appPosting = body.enabled === true;
+        }
+      }
+    }
     if (url.pathname === '/api/kb') {
       const names = new Map(kb.list().map((b) => [b.repo, b.name]));
       out.bases = out.bases.map((b) => ({ ...b, name: names.get(b.repo) || b.name }));
@@ -1837,6 +1860,9 @@ async function api(req, res, url) {
     if (app && !store.threads.get(key)?.ch.appPosting) {
       return json(res, { error: 'the opspile app does not post in this channel: turn on "Post messages" for it or its team in the knowledge-base editor first' }, 409);
     }
+    // The agent's draft it sends, for the offer to let it post (src/postoffer.js).
+    const agentDraft = Boolean(base) && drafts.get(key)?.updated_at === base
+      && drafts.get(key).by.id === AGENT.id;
     if (base && drafts.get(key)?.updated_at === base) {
       drafts.delete(key);
     }
@@ -1892,7 +1918,12 @@ async function api(req, res, url) {
     // As the bot, it comes back later still in production (now and then after a minute).
     }, app ? ARRIVE_MS * 1.5 : ARRIVE_MS);
     return json(res, {
-      ok: true, platform: entry.row.source, id, text: sent, ...invitedFor(entry, mentions),
+      ok: true,
+      platform: entry.row.source,
+      id,
+      text: sent,
+      ...invitedFor(entry, mentions),
+      ...(agentDraft ? postingOfferFor(entry) : {}),
     });
   }
   // Writing a reply in a customer portal's thread: the portal is told, which is not here.

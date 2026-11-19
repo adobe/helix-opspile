@@ -2750,7 +2750,7 @@ const threadRow = (key) => state.cache.get(key)?.data?.thread || null;
 /** Whether you see the agent's thinking in a channel: its own setting, else yours everywhere. */
 function tracesShown(channel) {
   const own = state.settings?.channelTraces?.[channel];
-  return typeof own === 'boolean' ? own : state.settings?.traces !== false;
+  return typeof own === 'boolean' ? own : state.settings?.traces === true;
 }
 
 /** The agent settings of the thread's team, at its channel (ui/kb.js). */
@@ -5943,6 +5943,7 @@ async function deliver(p) {
   if (p.base && state.cache.get(p.thread)?.data?.draft?.updated_at === p.base) setCachedDraft(p.thread, null);
   const invited = invitedSaying(data);
   if (invited) toast(invited, null, { stay: missedMention(data) });
+  else if (data.postingOffer) offerPosting(p.thread, data.postingOffer);
   if (p.status === 'delivered' || reworded) showSending(p.thread);
   if (p.status !== 'delivered') animateSending();
   return true;
@@ -7279,9 +7280,10 @@ const missedMention = (data) => Boolean(data?.uninvited?.length);
 
 /**
  * A short note at the bottom; `action` adds a link (`href`) or a button (`run`). With `stay`, it
- * stays until it is dismissed (or the next note), for what someone has to read and act on.
+ * stays until it is dismissed (or the next note), for what someone has to read and act on;
+ * `dismiss` (`{ label, run }`) names its Dismiss button and what that does too.
  */
-function toast(text, action, { stay = false } = {}) {
+function toast(text, action, { stay = false, dismiss = null } = {}) {
   document.querySelectorAll('.toast:not(.leaving)').forEach(toastOut);
   const el = document.createElement('div');
   el.className = 'toast';
@@ -7296,8 +7298,8 @@ function toast(text, action, { stay = false } = {}) {
   }
   if (stay) {
     const close = document.createElement('button');
-    close.textContent = 'Dismiss';
-    close.onclick = () => toastOut(el);
+    close.textContent = dismiss?.label || 'Dismiss';
+    close.onclick = () => { toastOut(el); dismiss?.run?.(); };
     el.append(close);
   } else setTimeout(() => toastOut(el), action ? 8000 : 5000);
   document.body.append(el);
@@ -8105,7 +8107,8 @@ function bellHref(b) {
 
 /**
  * Changes settings at once here, then on the server; back as they were if that fails. As
- * src/settings.js: `channelTraces` changes the channels it names (null: as everywhere again).
+ * src/settings.js: `channelTraces` changes the channels it names (null: as everywhere again),
+ * `postingDeclined` adds the channels it lists.
  */
 async function saveSettings(patch) {
   const before = state.settings;
@@ -8116,6 +8119,7 @@ async function saveSettings(patch) {
       if (on === null) delete next.channelTraces[id]; else next.channelTraces[id] = on;
     }
   }
+  if (patch.postingDeclined) next.postingDeclined = [...new Set([...(before.postingDeclined || []), ...patch.postingDeclined])];
   state.settings = next;
   const shown = () => { renderNotify(); renderTraces(); renderExpert(); render(); };
   shown(); syncSockets(); tracesChanged(before);
@@ -8143,7 +8147,7 @@ function renderTraces() {
   const box = $('tracesBox');
   box.hidden = Boolean(state.as) || !state.settings;
   if (box.hidden) return;
-  const all = state.settings.traces !== false;
+  const all = state.settings.traces === true;
   $('tracesAll').setAttribute('aria-checked', String(all));
   const t = state.open && threadRow(state.open);
   $('tracesHere').hidden = !t?.channel_id;
@@ -8163,13 +8167,13 @@ function tracesChanged(before) {
   const key = state.open;
   const channel = key && threadRow(key)?.channel_id;
   if (!channel) return;
-  const was = typeof before?.channelTraces?.[channel] === 'boolean' ? before.channelTraces[channel] : before?.traces !== false;
+  const was = typeof before?.channelTraces?.[channel] === 'boolean' ? before.channelTraces[channel] : before?.traces === true;
   if (was === tracesShown(channel)) return;
   if (tracesShown(channel)) loadAgent(key); else placeAgent(key);
 }
 
 function wireTraces() {
-  $('tracesAll').onclick = () => saveSettings({ traces: state.settings.traces === false });
+  $('tracesAll').onclick = () => saveSettings({ traces: state.settings.traces !== true });
   $('tracesChannel').onchange = () => {
     const channel = state.open && threadRow(state.open)?.channel_id;
     if (!channel) return;
@@ -8189,6 +8193,31 @@ function renderExpert() {
 function wireExpert() {
   $('expertView').onclick = () => saveSettings({ expert: !expertOn() });
   renderExpert();
+}
+
+// ---------------------------------------------------------------- the agent posting itself
+// After the third of the agent's drafts you sent in a channel, the inbox asks whether it may post
+// its replies there itself (`postingOffer` of POST /api/post, src/postoffer.js): only the team's
+// managers and the admin team, where the channel's Post messages switch is off. Yes switches the
+// channel on (PUT /api/kb/tools, as Agents does); Keep drafts is kept (`postingDeclined`), and
+// the inbox does not ask there again. A note that went otherwise (the next one) asks next time.
+
+function offerPosting(key, offer) {
+  if (state.as || state.settings?.postingDeclined?.includes(offer.channel)) return;
+  const t = threadRow(key);
+  const where = t?.channel_id === offer.channel ? channelLabel(t) : 'this channel';
+  toast(`You have sent ${offer.sent} of the agent's drafts in ${where}. Let it post its replies there itself, as the bot?`, {
+    label: 'Let it post', run: () => allowPosting(key, offer, where),
+  }, { stay: true, dismiss: { label: 'Keep drafts', run: () => saveSettings({ postingDeclined: [offer.channel] }) } });
+}
+
+async function allowPosting(key, offer, where) {
+  const res = await request('PUT', '/api/kb/tools', { tool: 'post_message', channel: offer.channel, enabled: true })
+    .catch((e) => ({ ok: false, data: { error: e.message } }));
+  if (!res.ok) { toast(`Could not let the agent post: ${res.data.error || res.status}`); return; }
+  const href = agentHref(key);
+  toast(`The agent posts its replies in ${where} itself, from its next turn.`, href ? { label: 'Agent settings', href } : null);
+  if (state.open === key) openThread(key, { live: true });
 }
 
 /** Asks the browser to allow notifications (only on a click). True if they are allowed. */
@@ -9541,7 +9570,7 @@ async function start() {
   state.teams = state.me.teams;
   state.rooms = roomsOf(state.me);
   state.settings = state.me.settings || {
-    mentions: true, bells: [], traces: true, channelTraces: {},
+    mentions: true, bells: [], traces: false, channelTraces: {}, postingDeclined: [],
   };
   const q = new URLSearchParams(location.search);
   if (q.get('connected')) toast(q.get('connected') === 'discord' ? 'Connected your Discord account: your posts there count as yours.'

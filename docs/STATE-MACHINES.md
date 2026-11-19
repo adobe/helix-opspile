@@ -157,6 +157,16 @@ event and the draft goes on with its `created_at` and `origin`, as if it had not
 draft that is not its `origin_body` keeps that in `draft_undo` until the Undo takes it or its
 minute is over (pruned at the next discard and by the cron).
 
+**Offer to let the agent post.** not asked → asked → switched on, or declined (`src/postoffer.js`,
+`offerPosting` in `ui/inbox.js`). Nothing is stored for it but its end: it is worked out on every
+send of a draft whose `origin` is the agent, from the person's `sent` events in the channel
+(`OFFER_AFTER`, three), whether they may switch **Post messages** there, and the switches. Asked is
+a note in the inbox that stays until it is answered; a yes is the channel's switch on, which ends it
+for everyone, a no is the channel in the person's `postingDeclined` (`person_settings`), for them
+only. A note that goes any other way (the next note replaces it, the page is left) is no answer: the
+next of the agent's drafts they send asks again. Any switch row for the channel, on or off, ends it
+too: the channel was decided on.
+
 **Reply send.** sending → sent → delivered → settled, or failed → retried or discarded, or unknown →
 retried or sent again (`state.sending`, `ui/inbox.js`; `src/postkeys.js`). The same key on every retry
 makes a retry safe: `post_keys` goes claimed → answered, or is removed when the platform refused. A

@@ -127,7 +127,7 @@ const SYSTEM = {
 };
 
 /** The thread agent, which saves shared drafts as this person (src/agent/tools.js). */
-const AGENT = { id: 900, name: 'opspile agent' };
+export const AGENT = { id: 900, name: 'opspile agent' };
 
 /**
  * Channels: where a thread lives. `org` and `team` are what the rules would file it under.
@@ -1408,6 +1408,13 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['dana', 3990, 'Staging only, ask Tom for access.'],
     ],
     reads: { dana: 3990 },
+    // The agent's draft, in a channel where it does not post itself: sending it (with --manager
+    // or --admin) asks whether it may (src/postoffer.js; scripts/dev-ui.mjs counts the rest).
+    draft: {
+      by: 'agent',
+      ago: 30,
+      body: 'Tom gave you access to staging: the new rule set is there, on `waf-staging`.',
+    },
   });
 
   // Three unread mentions of the viewer: the red badge in the personal view's customer column,

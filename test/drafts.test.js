@@ -625,6 +625,51 @@ describe('shared drafts', () => {
         await call(again.e, ADA, 'DELETE', '/api/draft', { thread: ROOT, base: over.updated_at });
         assert.deepEqual(again.e.DB.rows('SELECT * FROM draft_undo'), []);
       });
+
+      it('offers a manager to let the agent post, after the third of its drafts they sent in the channel', async () => {
+        const BOSS = { ...BO, teams: [{ slug: 'helix', role: 'manager' }] };
+        const { e } = await withDraft();
+        /** Bo sends the agent's next draft (the first is there), and what the post answers. */
+        const sendOne = async (who = BOSS, text = 'Purges take up to 5 minutes.') => {
+          let d = await draftOf(e, who);
+          if (!d) {
+            const mine = { thread: ROOT, text, base: null };
+            const saved = await saveDraft(e, { id: AGENT }, mine, () => true);
+            d = (await saved.json()).draft;
+          }
+          return (await call(e, who, 'POST', '/api/post', { thread: ROOT, text: 'sent', draft: d.updated_at })).json();
+        };
+        // Bo (who manages nothing here) sends two of the agent's drafts, and one of Ada's.
+        assert.equal((await sendOne(BO)).postingOffer, undefined);
+        assert.equal((await sendOne(BO)).postingOffer, undefined);
+        await call(e, ADA, 'PUT', '/api/draft', { thread: ROOT, text: 'mine', base: null });
+        assert.equal((await sendOne(BOSS)).postingOffer, undefined);
+        // The agent's third: still no question, as he may not switch it.
+        assert.equal((await sendOne(BO)).postingOffer, undefined);
+        // As a manager of the channel's team, he is asked.
+        assert.deepEqual((await sendOne()).postingOffer, { channel: 'C1', team: 'helix', sent: 4 });
+        // Not without the platform's bot, nor where the channel or its team has it on already,
+        // nor where the channel was switched off on purpose.
+        const { SLACK_BOT_TOKEN: token } = e;
+        delete e.SLACK_BOT_TOKEN;
+        assert.equal((await sendOne()).postingOffer, undefined);
+        e.SLACK_BOT_TOKEN = token;
+        const sw = (scope, target, on) => e.DB.sqlite.prepare(`INSERT OR REPLACE INTO agent_tool_switches
+          (tool, scope, target, enabled, changed_by, changed_at) VALUES ('post_message', ?, ?, ?, 'Ada',
+          '2026-10-21T10:00:00Z')`).run(scope, target, on);
+        sw('channel', 'C1', 0);
+        assert.equal((await sendOne()).postingOffer, undefined);
+        e.DB.sqlite.exec('DELETE FROM agent_tool_switches');
+        sw('team', 'helix', 1);
+        assert.equal((await sendOne()).postingOffer, undefined);
+        e.DB.sqlite.exec('DELETE FROM agent_tool_switches');
+        assert.equal((await sendOne()).postingOffer.sent, 8);
+        // The admin team is asked too; not once they said no there.
+        const ADMIN = { ...BO, teams: [{ slug: 'helix' }, { slug: 'admin' }] };
+        assert.equal((await sendOne(ADMIN)).postingOffer.channel, 'C1');
+        await call(e, BOSS, 'PUT', '/api/settings', { postingDeclined: ['C1'] });
+        assert.equal((await sendOne()).postingOffer, undefined);
+      });
     });
   });
 });
