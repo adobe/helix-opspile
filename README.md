@@ -1048,6 +1048,24 @@ npm run truth -- review --database <D1 id> --origin <inbox origin> [--out file.h
   and what Clef and Clairic said. It exports the corrected marks as JSON (a download, else the
   clipboard, else a text box), in the format of `marks.json`.
 
+### Bootstrap the teams' catalogs
+
+The teams' catalogs (`products/` of their knowledge bases, docs/ARCHITECTURE.md "Labels and
+facts") start from the tech stack that D1 has: `scripts/catalog-bootstrap.mjs` writes each
+technology as a file at the path that will be its id, in the knowledge base of the team that
+supports it (`PLACES` in `scripts/catalog-bootstrap-lib.mjs`; the admin team's otherwise). Each
+file lists its D1 id in `moved_from`, so the compile rewrites what D1 stores under the old id
+once. It reads production and writes nothing there.
+
+```sh
+npm run catalog:bootstrap -- --database <D1 id> --out <dir> [--profile <cf profile>]
+```
+
+It writes the files under `<dir>/<team>/`, and `<dir>/changes.json` (`[{ repo, path, content }]`,
+one file each, as the knowledge-base editor's API takes them). It prints what each technology
+becomes and any field the compile would change. Applying them is a write to production: an
+admin writes them through the editor's API, one file at a time, so that each write compiles.
+
 ### Agents in the browser (WebMCP)
 
 The inbox registers [WebMCP](https://developer.chrome.com/docs/ai/webmcp) tools, so an agent
