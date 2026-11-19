@@ -736,7 +736,7 @@ async function labelAlert(env, thread, now) {
 }
 
 /**
- * `/diag/relabel`: the channel threads with a label and at least `minMessages` messages, by key
+ * `POST /api/admin/relabel`: the channel threads with a label and at least `minMessages` messages, by key
  * after `after`, `limit` of them, each queued to be labeled again though it did not change
  * (`force`), five seconds apart. `{ queued, next }`: `next` is the `after` of the next batch, or
  * null when there are no more.
@@ -783,7 +783,7 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
   const through = rx.latest && rx.latest > thread.any_at ? rx.latest : thread.any_at;
   const done = await env.DB.prepare('SELECT labeled_through FROM labels WHERE thread = ?')
     .bind(key).first();
-  // `force`: asked again though nothing changed (`/diag/relabel`: new questions, a new catalog).
+  // `force`: asked again though nothing changed (`POST /api/admin/relabel`: new questions, a new catalog).
   if (done && done.labeled_through === through && !force) {
     return { result: 'unchanged' };
   }
