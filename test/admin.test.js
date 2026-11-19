@@ -93,6 +93,16 @@ describe('admin: teams and members', () => {
     assert.equal((await call(e, { ...ADA, readonly: true }, 'POST', '/api/admin/teams', { slug: 'x', name: 'X' })).status, 403);
   });
 
+  it('relabels channel threads for the admin team only, and needs the queue', async () => {
+    const e = env();
+    assert.equal((await call(e, BO, 'POST', '/api/admin/relabel', {})).status, 403);
+    const r = await call(e, ADA, 'POST', '/api/admin/relabel', { limit: 10 });
+    assert.equal(r.status, 200);
+    assert.deepEqual(Object.keys(r.body).sort(), ['next', 'queued']);
+    const none = { ...e, NORMALIZE: undefined };
+    assert.equal((await call(none, ADA, 'POST', '/api/admin/relabel', {})).status, 503);
+  });
+
   it('creates, renames and deletes teams, and adds and removes members', async () => {
     const e = env();
     let r = await call(e, ADA, 'GET', '/api/admin/teams');
