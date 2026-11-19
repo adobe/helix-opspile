@@ -110,10 +110,11 @@ export function createWebIQSearch(env, { fetch: fetchFn } = {}) {
       throw new WebSearchError(said || `Web IQ answered HTTP ${res.status}.`, {
         status: res.status,
         code: res.ok ? 'web_search_unavailable' : webIQCode(res.status),
-        // Its `UserError`s (a key, a quota, the query) do not go away by asking again, but for
-        // a throttle; an answer that is not one (a 200 that is not JSON) may.
-        retryable: res.ok || res.status === 429 || (e.errorCategory
-          ? e.errorCategory === 'SystemError' : res.status >= 500),
+        // Its `UserError`s (a key, the day's quota, the query) do not go away by asking again,
+        // but for a throttle; an answer that is not one (a 200 that is not JSON) may.
+        retryable: e.errorCode === 'AuthUserDailyUsageExceeded' ? false
+          : res.ok || res.status === 429 || (e.errorCategory
+            ? e.errorCategory === 'SystemError' : res.status >= 500),
         requestId: e.requestId || e.traceId,
       });
     }

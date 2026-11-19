@@ -166,8 +166,10 @@ describe('web search', () => {
     assert.match(res.text, /refused \(HandlerInvalidInput: query is required\): fix the query/);
     res = await run(429, { errorCode: 'AuthUserThrottled', errorCategory: 'UserError', retryAfter: '1s' });
     assert.match(res.text, /failed for now \(web_search_rate_limited\): you may try once more/);
+    // The day's quota is spent: asking again would fail too.
     res = await run(429, { errorCode: 'AuthUserDailyUsageExceeded', errorCategory: 'UserError' });
-    assert.equal(res.error.code, 'web_search_rate_limited');
+    assert.deepEqual([res.error.code, res.error.retryable], ['web_search_rate_limited', false]);
+    assert.match(res.text, /does not work here at the moment \(web_search_rate_limited\)/);
     res = await run(500, { errorCode: 'InternalServerError', errorCategory: 'SystemError' });
     assert.match(res.text, /failed for now \(web_search_unavailable\)/);
     res = await run(503, 'busy');

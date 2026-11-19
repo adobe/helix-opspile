@@ -1487,7 +1487,7 @@ export function agentToolsExtension(ctx, tools) {
     sections.push(section('web-search', () => WEB_SEARCH));
     list.push(defineTool({
       name: 'web_search',
-      description: `Search the public web: up to ${MAX_RESULTS} results (${DEFAULT_RESULTS} unless you ask for more), each a page's title, address and a short description, not the page itself. For documentation, error messages and release notes the knowledge bases, your channel's threads and the repositories do not have. The query goes to a search provider outside Adobe: never put the customer's name, people, hosts, ids or the thread's words in it.`,
+      description: `Search the public web: up to ${MAX_RESULTS} results (${DEFAULT_RESULTS} unless you ask for more), each a page's title, address and a description or a passage of it, not the whole page. For documentation, error messages and release notes the knowledge bases, your channel's threads and the repositories do not have. The query goes to a search provider outside Adobe: never put the customer's name, people, hosts, ids or the thread's words in it.`,
       parameters: Type.Object({
         query: Type.String({ minLength: 1, maxLength: MAX_QUERY, description: 'What to search for, as a general question in the product\'s own words' }),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_RESULTS, description: `How many results (default ${DEFAULT_RESULTS})` })),
