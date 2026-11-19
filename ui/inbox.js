@@ -1906,22 +1906,79 @@ const messageTop = (scroller, el) => Math.max(0, el.offsetTop - scroller.offsetT
   - parseFloat(getComputedStyle(scroller).paddingTop || 0) - 80);
 /** Scrolls the thread to message `el`, a little below its top. */
 const scrollToMessage = (scroller, el) => { scroller.scrollTop = messageTop(scroller, el); };
-/** Marks message `el` for a moment: the one a search or a link was for. */
-function markFound(el) {
-  el.classList.add('found');
-  setTimeout(() => el.classList.remove('found'), 2400);
+/**
+ * The message marked for a moment (markFound), which stays marked where the thread is drawn
+ * again meanwhile (remark): `found`, the one a search was for, or `linked`, a link's (`?m=`).
+ */
+const mark = {
+  id: null, cls: '', at: 0, until: 0, timer: 0, els: new Set(),
+};
+// A link's message is marked for longer: it fades over 3 s (ui/spectrum-inbox.css, `.linked`).
+const MARK_MS = { found: 2400, linked: 3200 };
+function unmark() {
+  for (const n of mark.els) n.classList.remove(mark.cls);
+  mark.els.clear();
+  mark.id = null;
 }
-/** Shows message `id` of thread `thread`: where it is if the open thread has it, else opens its thread at it. */
-function openMessage(thread, id) {
+/** Marks message `el` for a moment: the one a search or (`linked`) a link was for. */
+function markFound(el, { linked = false } = {}) {
+  const cls = linked ? 'linked' : 'found';
+  clearTimeout(mark.timer);
+  unmark();
+  el.querySelector('.bubble')?.style.removeProperty('animation-delay');
+  const now = performance.now();
+  Object.assign(mark, {
+    id: el.dataset.id || null, cls, at: now, until: now + MARK_MS[cls],
+  });
+  el.classList.add(cls);
+  mark.els.add(el);
+  mark.timer = setTimeout(unmark, MARK_MS[cls]);
+}
+/** The marked message, drawn anew in `root`: marked still, its fade going on where it was. */
+function remark(root) {
+  if (!mark.id || performance.now() >= mark.until) return;
+  const el = root.querySelector(`.msg[data-id="${CSS.escape(mark.id)}"]`);
+  if (!el || el.classList.contains(mark.cls)) return;
+  el.classList.add(mark.cls);
+  mark.els.add(el);
+  el.querySelector('.bubble')?.style.setProperty('animation-delay', `${Math.round(mark.at - performance.now())}ms`);
+}
+/**
+ * Keeps message `id` where the thread was scrolled to for it while what is above it settles (its
+ * images come in, the workspace's emoji), for a few seconds, or until the reader scrolls.
+ */
+function holdAt(scroller, id, ms = 3000) {
+  const feed = scroller.querySelector(':scope > .feed');
+  if (!feed || typeof ResizeObserver !== 'function') return;
+  const ways = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+  let timer = 0;
+  const ro = new ResizeObserver(() => {
+    const el = scroller.querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+    if (el) scrollToMessage(scroller, el);
+  });
+  const stop = () => {
+    ro.disconnect();
+    clearTimeout(timer);
+    for (const w of ways) scroller.removeEventListener(w, stop);
+  };
+  for (const w of ways) scroller.addEventListener(w, stop, { passive: true });
+  ro.observe(feed);
+  timer = setTimeout(stop, ms);
+}
+/**
+ * Shows message `id` of thread `thread`: where it is if the open thread has it, else opens its
+ * thread at it. `linked`: a link's (`?m=`, messageHref), which says so where it is gone.
+ */
+function openMessage(thread, id, { linked = false } = {}) {
   const mid = `${thread}|${id}`;
   const scroller = $('pane').querySelector('.scroller');
   const el = scroller?.querySelector(`[data-id="${CSS.escape(mid)}"]`);
   if (el) {
     scroller.scrollTo({ top: messageTop(scroller, el), behavior: 'smooth' });
-    markFound(el);
+    markFound(el, { linked });
     return;
   }
-  state.jump = { key: thread, id: mid };
+  state.jump = { key: thread, id: mid, linked };
   openThread(thread);
 }
 
@@ -2547,6 +2604,8 @@ function authorCardKey(m) {
     name: a.name, staff: a.staff, kind: a.kind, domain: a.org, avatar: m.avatar, platform: m.source,
   });
 }
+// A message's ⋮ (its menu): three dots, drawn, so every system shows the same.
+const KEBAB = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>';
 function message(m, prev, fresh, followed = false, dated = false) {
   const a = m.author || {};
   const id = `${m.thread}|${m.id}`;
@@ -2578,10 +2637,13 @@ function message(m, prev, fresh, followed = false, dated = false) {
     const mine = (m.reactions || []).some((r) => r.mine && emoji(r.emoji) === emoji(n));
     return `<button data-pick="${n}" aria-pressed="${mine}" title="${esc(`${emoji(n)} ${SIGNAL_HINT[n] || `:${n}:`}${mine ? ' · click to take yours off' : ''}`)}">${emoji(n)}</button>`;
   }).join('')}<button class="more" data-picker="1" aria-haspopup="true" aria-expanded="false" title="More reactions">☺</button>` : '';
+  // ⋮, last: the message's menu (its links, openMessageMenu), on every message that has come in,
+  // also where one may not react.
+  const acts = m.pending ? '' : `<button class="acts" data-acts="1" aria-haspopup="menu" aria-expanded="false" title="More actions (m)" aria-label="More actions">${KEBAB}</button>`;
   // The quick reactions are the bubble's: pointing at the bubble shows them, beside the header
   // (or above it, where the line has no room), never over the name or the time, which have
   // their own (the profile card, the whole date).
-  const quick = (can && !editing) || pen ? `<div class="quick-at"><div class="quick" role="toolbar" aria-label="${can ? 'React, as you' : 'Message actions'}">${pen}${editing ? '' : picks}</div></div>` : '';
+  const quick = !editing && (can || pen || acts) ? `<div class="quick-at"><div class="quick" role="toolbar" aria-label="${can ? 'React, as you' : 'Message actions'}">${pen}${picks}${acts}</div></div>` : '';
   // The editor's text is set when it is shown (wireEditor), so typing does not change the HTML.
   const bubble = editing
     ? `<div class="bubble editing"><ul class="mentions s2-float s2-up" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
@@ -4010,7 +4072,9 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // The sidebar is the thread's you entered it in: another one opens to reply in.
   if (switching && side.key !== key) side.key = null;
   syncReading();
-  if (switching) prefetchAround(key);
+  if (switching) { prefetchAround(key); closeMessageMenu(); }
+  // Another thread than a search's or a link's: not at its message later.
+  if (switching && state.jump && state.jump.key !== key) state.jump = null;
   if (switching) toUrl(true, fromList ? { list: true } : null);
   renderThreads();
   const pane = $('pane');
@@ -4054,6 +4118,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
     state.composers.delete(key);
     for (const p of state.sending) if (p.thread === key) p.thread = entryKey;
     state.open = entryKey;
+    // A link to a message of the member: the entry opens at it.
+    if (state.jump?.key === key) state.jump.key = entryKey;
     toUrl(false);
     // The group has messages the member did not: shown as opened, not as new arrivals.
     await openThread(entryKey, { cached: true });
@@ -4215,6 +4281,11 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
   const reply = sideInline(key) ? sideComposer(key, thread)
     : composer(thread, resolveButton(thread, resolution), key);
+  // Drawn meanwhile by another call (a page opened at a thread draws it twice at once, as it
+  // opens and as the workspace's emoji come): a live one keeps it where that one put it.
+  const late = !prevScroller && live && !switching && pane.__key === key
+    ? pane.querySelector(':scope > .scroller') : null;
+  const lateTop = late ? late.scrollTop : 0;
   renderPane(pane, key, {
     head, review, items, reply, patch: !switching,
   });
@@ -4230,7 +4301,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const scroller = pane.querySelector('.scroller');
   // Shown for the first time (a fresh page, where the first render is a live one, for the
   // workspace's emoji): placed where it opens, not scrolled down from the top.
-  if (live && !switching && prevScroller) {
+  if (late) scroller.scrollTop = lateTop;
+  else if (live && !switching && prevScroller) {
     // New messages scroll up into view if I was at the bottom; otherwise stay put. Nothing new
     // (the same thread again, as the workspace's emoji arrive): it stays where it was, also
     // when that was the first unread message, a little above the bottom.
@@ -4242,16 +4314,23 @@ async function openThread(key, { live = false, cached = false } = {}) {
       scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
     }
   } else {
-    // Opened from a search result: at the message that matched, marked for a moment.
+    // Opened from a search result or a link: at the message that matched, marked for a moment.
+    // A page opened at a thread draws it twice, as the workspace's emoji come (live) and as it
+    // is opened, in either order: the one that opens it uses the jump up, so both are at it.
     const jump = state.jump?.key === key ? state.jump : null;
-    state.jump = null;
+    if (!live) state.jump = null;
     const found = jump && scroller.querySelector(`[data-id="${CSS.escape(jump.id)}"]`);
     const firstUnread = myRead && messages.find((m) => m.at > myRead && m.author?.name !== state.me.name);
     const el = found || (firstUnread && scroller.querySelector(`[data-id="${CSS.escape(`${firstUnread.thread}|${firstUnread.id}`)}"]`));
     if (el) scrollToMessage(scroller, el);
     else scroller.scrollTop = scroller.scrollHeight;
-    if (found) markFound(found);
+    const again = found && mark.id === jump.id && performance.now() < mark.until;
+    if (found && !again) markFound(found, { linked: jump.linked });
+    // A link's message, which the thread may still grow above (its images): kept in view.
+    if (found && !again && jump.linked) holdAt(scroller, jump.id);
+    if (jump?.linked && !found && !live) toast('The message the link is for is not in this thread anymore.');
   }
+  remark(scroller);
   wireEditor(key);
   // The message in focus, drawn again (a live update): in focus again.
   if (msgFocus.key === key && (!document.activeElement || document.activeElement === document.body)) {
@@ -7198,6 +7277,141 @@ function openPicker(button) {
   picker.querySelector('button').focus();
 }
 
+// ---------------------------------------------------------------- a message's menu
+// The ⋮ at the end of a message's quick reactions (or `m` on the message in focus): what else
+// there is to do with it, as in Slack. Its links, to copy: the message on its platform
+// (`permalink`, where it has one), and here, in the inbox (messageHref). One menu on the page,
+// as a Slack link's choice (`.linkpick`), under the ⋮; a copy says so in it for a moment.
+const msgMenu = {
+  el: null, id: null, acts: [], timer: 0,
+};
+
+/**
+ * The inbox's address of message `m`: its thread, at it (`m`, `state.jump`), in the view on
+ * screen. Nothing else of the view (its filters, a search, whom you view as): the one it is for
+ * has their own. The thread is the message's own, not its group's: the Worker always reads the
+ * messages of the thread asked for, also in a group too large to read them all
+ * (MAX_READ_MEMBERS), and the inbox opens the group from it.
+ */
+function messageHref(m) {
+  const q = new URLSearchParams();
+  if (!personal() && state.team) q.set('team', state.team);
+  q.set('t', m.thread);
+  q.set('m', m.id);
+  return `${location.origin}${location.pathname}?${q}`;
+}
+
+/** What message `m`'s menu offers, in its order: `{ label, url }`, the link it copies. */
+function messageActions(m) {
+  const where = PLATFORM[m.source];
+  return [
+    ...(m.permalink && where ? [{ label: `Copy ${where} URL`, url: m.permalink }] : []),
+    { label: 'Copy Opspile URL', url: messageHref(m) },
+  ];
+}
+
+/** The ⋮ the menu is open from, in the thread as it is drawn now. */
+const menuButton = () => (msgMenu.id
+  ? $('pane').querySelector(`.msg[data-id="${CSS.escape(msgMenu.id)}"] [data-acts]`) : null);
+
+function closeMessageMenu({ focus = false } = {}) {
+  clearTimeout(msgMenu.timer);
+  if (!msgMenu.id) return;
+  const button = menuButton();
+  // Back to the ⋮ while it says the menu is open: a bar not pointed at is hidden, and takes no
+  // focus, but for the bar whose menu is open or that has the focus.
+  if (focus && button) {
+    button.focus();
+    // Still hidden (as it arrives): the message takes it, as the picker's ☺ does.
+    if (document.activeElement !== button) focusMessage(button.closest('.msg'), false);
+  }
+  button?.setAttribute('aria-expanded', 'false');
+  msgMenu.id = null;
+  msgMenu.el.hidden = true;
+}
+
+/** Copies the link of item `i`, and says so in it; the menu goes a moment later. */
+async function copyAction(i) {
+  const a = msgMenu.acts[i];
+  const item = msgMenu.el.querySelector(`[data-i="${i}"]`);
+  if (!a || !item) return;
+  try {
+    await navigator.clipboard.writeText(a.url);
+  } catch {
+    closeMessageMenu({ focus: true });
+    toast('Could not copy the link: the browser did not let the page write to the clipboard.');
+    return;
+  }
+  item.textContent = 'Copied ✓';
+  item.classList.add('done');
+  $('msg-said').textContent = `Copied the ${a.label.replace(/^Copy /, '')}.`;
+  clearTimeout(msgMenu.timer);
+  msgMenu.timer = setTimeout(() => closeMessageMenu({ focus: true }), 900);
+}
+
+/** The menu's keys, as a menu's: ↑ ↓ Home End move, Esc and Tab close it; Enter is the item's. */
+function messageMenuKey(e) {
+  const items = [...msgMenu.el.querySelectorAll('[role="menuitem"]')];
+  const i = items.indexOf(document.activeElement);
+  const to = {
+    ArrowDown: (i + 1) % items.length,
+    ArrowUp: (i - 1 + items.length) % items.length,
+    Home: 0,
+    End: items.length - 1,
+  }[e.key];
+  if (to !== undefined) items[to]?.focus();
+  else if (e.key === 'Escape' || e.key === 'Tab') closeMessageMenu({ focus: true });
+  else return;
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+/** Opens the menu of the message `button` (its ⋮) is in, or closes it again. */
+function openMessageMenu(button) {
+  const id = button.closest('.msg')?.dataset.id;
+  const was = msgMenu.id;
+  closeMessageMenu();
+  const m = id && messageOf(state.open, id);
+  if (!m || was === id) return;
+  if (!msgMenu.el) {
+    const el = document.createElement('div');
+    el.className = 'linkpick msgacts s2-float';
+    el.id = 'msg-actions';
+    el.setAttribute('role', 'menu');
+    el.setAttribute('aria-label', 'Message actions');
+    el.hidden = true;
+    el.addEventListener('keydown', messageMenuKey);
+    el.addEventListener('click', (e) => {
+      const item = e.target.closest('[data-i]');
+      if (item) copyAction(Number(item.dataset.i));
+    });
+    // What a copy said, for a screen reader: a menu holds its items only.
+    const said = document.createElement('div');
+    said.className = 'said';
+    said.id = 'msg-said';
+    said.setAttribute('role', 'status');
+    document.body.append(el, said);
+    msgMenu.el = el;
+  }
+  const { el } = msgMenu;
+  msgMenu.id = id;
+  msgMenu.acts = messageActions(m);
+  $('msg-said').textContent = '';
+  el.innerHTML = msgMenu.acts.map((a, i) => `<button type="button" role="menuitem" tabindex="-1" data-i="${i}">${esc(a.label)}</button>`).join('');
+  button.setAttribute('aria-expanded', 'true');
+  button.setAttribute('aria-controls', 'msg-actions');
+  // Under the ⋮, its right edge at the ⋮'s (it is the bar's last); above it where there is no room.
+  el.hidden = false;
+  const r = button.getBoundingClientRect();
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  const up = r.bottom + 6 + h > window.innerHeight - 8;
+  el.classList.toggle('s2-up', up);
+  el.style.top = `${Math.max(8, up ? r.top - 6 - h : r.bottom + 6)}px`;
+  el.style.left = `${Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8))}px`;
+  el.querySelector('button')?.focus({ preventScroll: true });
+}
+
 // ---------------------------------------------------------------- read state, live
 /** A thread as seen from the open team's inbox (a shared channel is in several). */
 const threadUrl = (key) => `/api/thread?thread=${encodeURIComponent(key)}${state.team && !personal() ? `&team=${encodeURIComponent(state.team)}` : ''}`;
@@ -7910,6 +8124,14 @@ function wireNotify() {
     navigator.serviceWorker.addEventListener('message', (e) => { if (e.data?.type === 'opspile:open') openFromNote(e.data.url, e.data.views); });
     navigator.serviceWorker.startMessages?.();
   }
+  // A link to the inbox opened in the installed app (ui/app.js, Launch): its thread here, at
+  // its message, as a notification's click; the other pages' links load.
+  Launch.take = (url) => {
+    const u = new URL(url, location.href);
+    if (u.origin !== location.origin || u.pathname !== location.pathname) return false;
+    openFromNote(u.href);
+    return true;
+  };
   renderNotify();
   // /inbox?notify=help opens the troubleshooter; ?notify=seen is a click on its test (or the
   // welcome) when no inbox was open.
@@ -8252,7 +8474,9 @@ async function openFromNote(url, views) {
   if (!yourView(view)) return;
   window.focus();
   if (view !== scopeKey()) await switchView(view === PERSONAL_VIEW ? null : view);
-  if (key) openThread(key);
+  const msg = q.get('m');
+  if (key && msg) openMessage(key, msg, { linked: true });
+  else if (key) openThread(key);
 }
 
 /** Text for a notification: emoji as characters, without markup, on one line, clipped. */
@@ -8463,7 +8687,7 @@ function fromUrl() {
   state.mentions = q.get('mentions') === '1';
   state.as = Number(q.get('as')) || null;
   return {
-    open: q.get('t'), compose: q.get('compose') === '1' && !state.as, review: q.get('review') === '1', q: q.get('q') || '',
+    open: q.get('t'), msg: q.get('m'), compose: q.get('compose') === '1' && !state.as, review: q.get('review') === '1', q: q.get('q') || '',
   };
 }
 
@@ -8881,6 +9105,7 @@ const SHORTCUTS = [
     ['Previous / next message', '↑ ↓'],
     ['Edit it (one of yours)', 'e'],
     ['React to it', 'r'],
+    ['Its menu: copy its link', 'm'],
     ['Back to the reply box', 'Esc'],
   ]],
   ['Writing', [
@@ -9015,8 +9240,8 @@ function cycleSection(step) {
 
 /**
  * Keys on the message in focus, as Slack's: ↑ and ↓ move to the one before or after (↓ from the
- * last one is the reply box), e edits it (yours), r reacts, Esc goes back to the reply box.
- * Whether `e` was one.
+ * last one is the reply box), e edits it (yours), r reacts, m opens its menu (its links), Esc
+ * goes back to the reply box. Whether `e` was one.
  */
 function messageKey(e) {
   const msg = focusedMessage();
@@ -9038,6 +9263,11 @@ function messageKey(e) {
   if (e.key === 'r' && !e.shiftKey) {
     const button = msg.querySelector('[data-picker]');
     return run(() => { if (button) openPicker(button); });
+  }
+  // Its menu (its links): m, or the keyboard's menu key (⇧F10).
+  if ((e.key === 'm' && !e.shiftKey) || e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+    const button = msg.querySelector('[data-acts]');
+    return run(() => { if (button) openMessageMenu(button); });
   }
   return false;
 }
@@ -9164,6 +9394,8 @@ async function start() {
   // The thread the URL opens is open from the start: settling the URL keeps it, and opening it
   // adds no history entry (Back from here leaves the inbox, to where it came from).
   state.open = initial.open || null;
+  // A message's link (messageHref): the thread opens at it.
+  if (initial.open && initial.msg) state.jump = { key: initial.open, id: `${initial.open}|${initial.msg}`, linked: true };
   syncReading();
   await loadWho();
   toUrl(false);
@@ -9279,6 +9511,7 @@ async function start() {
     if (msg && e.target.closest('[data-edit-save]')) { saveEdit(); return; }
     if (msg && e.target.closest('[data-edit-cancel]')) { cancelEdit(); return; }
     if (msg && e.target.closest('[data-picker]')) { openPicker(e.target.closest('[data-picker]')); return; }
+    if (msg && e.target.closest('[data-acts]')) { openMessageMenu(e.target.closest('[data-acts]')); return; }
     if (msg && pick) {
       const same = [...msg.querySelectorAll('.rx button')].find((b) => emoji(b.dataset.emoji) === emoji(pick.dataset.pick));
       const mine = same?.dataset.mine;
@@ -9354,6 +9587,10 @@ async function start() {
     if (e.key === 'a' && state.open && canSide(state.open)) { e.preventDefault(); enterSide(); }
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.picker, [data-picker]')) closePicker(); });
+  // A message's menu stays where its ⋮ was: it goes when that moves, or for a click elsewhere.
+  document.addEventListener('click', (e) => { if (!e.target.closest('.msgacts, [data-acts]')) closeMessageMenu(); });
+  document.addEventListener('scroll', (e) => { if (e.target !== msgMenu.el) closeMessageMenu(); }, true);
+  window.addEventListener('resize', () => closeMessageMenu());
   document.addEventListener('click', (e) => { if (state.expertsOpen && !e.target.closest('#experts')) closeExperts(state.expertsOpen); });
   document.addEventListener('click', (e) => { if (state.headOpen && !e.target.closest('[data-hm]')) closeHeadMenus(); });
   // The Send button's menu closes on a tap or click anywhere else.
@@ -9368,7 +9605,7 @@ async function start() {
     main.classList.toggle('instant', Boolean(e.hasUAVisualTransition));
     const scope = scopeKey();
     const {
-      open, compose, review, q: query,
+      open, msg, compose, review, q: query,
     } = fromUrl();
     if (!compose) Object.assign(state, { compose: null, awaiting: null });
     renderUser();
@@ -9376,7 +9613,7 @@ async function start() {
     if (query !== state.search.q || !state.search.data) runSearch(query);
     showReview(review);
     render();
-    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; }
+    if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && msg) openMessage(open, msg, { linked: true }); else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; }
     syncReading();
     if (!compose && !open) emptyPane();
     // The styles are applied without transitions before they come back.

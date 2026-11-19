@@ -175,6 +175,19 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 /* The message a search result opened the thread at. */
 .msg .bubble { transition: box-shadow var(--spectrum-animation-duration-1000) ease-out; }
 .msg.found .bubble { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--yellow); }
+/* The message a link was for (a message's menu, "Copy Opspile URL"; `?m=`): ringed and lit
+   for a moment, which fades out over 3s (markFound keeps it 3.2s); with less motion it is
+   simply there for as long, and then gone. */
+.msg.linked .bubble { animation: linked var(--spectrum-animation-duration-6000) var(--spectrum-animation-ease-in) both; }
+@keyframes linked {
+  from, 40% { box-shadow: 0 0 0 var(--spectrum-border-width-400) var(--spectrum-notice-visual-color), 0 0 var(--spectrum-spacing-300) var(--spectrum-spacing-100) var(--spectrum-notice-subtle-background-color-default); }
+  to { box-shadow: 0 0 0 var(--spectrum-border-width-400) transparent, 0 0 var(--spectrum-spacing-300) var(--spectrum-spacing-100) transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg.linked .bubble { animation: none; box-shadow: 0 0 0 var(--spectrum-border-width-400) var(--spectrum-notice-visual-color); }
+}
+/* What a message's menu said (a copy), for a screen reader only. */
+.said { position: absolute; width: var(--spectrum-border-width-100); height: var(--spectrum-border-width-100); overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* Each of your teams, then Personal: one switch, the active one highlighted. */
 #threads .count .order { display: flex; min-width: 0;
  }
@@ -710,8 +723,10 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 .linkpick { position: fixed; z-index: 21; display: flex; flex-direction: column; min-width: calc(var(--spectrum-spacing-100) * 21); padding: var(--spectrum-spacing-75);
   background: var(--card); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-400) var(--spectrum-transparent-black-400); }
 .linkpick[hidden] { display: none; }
-.linkpick a { color: var(--ink); text-decoration: none; font-size: var(--spectrum-font-size-75); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-400); }
-.linkpick a:hover, .linkpick a:focus-visible { background: var(--sel); outline: none; }
+.linkpick :is(a, button) { color: var(--ink); text-decoration: none; font-size: var(--spectrum-font-size-75); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-400); }
+.linkpick :is(a, button):hover, .linkpick :is(a, button):focus-visible { background: var(--sel); outline: none; }
+/* A message's menu (its ⋮): its items are buttons, which copy. */
+.linkpick button { display: flex; align-items: center; border: 0; background: none; font-family: inherit; text-align: start; cursor: pointer; white-space: nowrap; }
 .bubble ul, .bubble ol { margin: var(--spectrum-spacing-75) 0; padding-left: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); }
 .bubble img.att { display: block; max-width: 100%; max-height: calc(var(--spectrum-spacing-100) * 45); border-radius: var(--spectrum-corner-radius-700); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; cursor: zoom-in; }
 /* Sized images keep their aspect ratio as the bubble narrows; the rest get a placeholder box. */
@@ -1162,6 +1177,10 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .msg .quick .more { font-size: var(--spectrum-font-size-100); }
 .msg .quick .edit { font-size: var(--spectrum-font-size-100); }
 .msg .quick .edit:not(:last-child) { margin-right: var(--spectrum-spacing-50); }
+/* The ⋮, last: the message's menu, set off from the reactions before it. */
+.msg .quick .acts { display: flex; align-items: center; justify-content: center; }
+.msg .quick .acts:not(:first-child) { margin-left: var(--spectrum-spacing-50); }
+.msg .quick .acts svg { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
 /* Editing one of your messages in place: the bubble is the editor. */
 .msg.editing .col { width: min(74%, calc(var(--spectrum-spacing-100) * 95)); }
 .bubble.editing { position: relative; width: 100%; box-sizing: border-box; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
@@ -2092,6 +2111,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum #pane .msg[data-id]:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); border-radius: var(--s2-radius); }
 .spectrum .msg .quick .edit { color: var(--spectrum-neutral-content-color-default); }
 .spectrum .msg .quick .edit:not(:last-child) { border-radius: var(--spectrum-corner-radius-100) 0 0 var(--spectrum-corner-radius-100); box-shadow: var(--spectrum-border-width-100) 0 0 var(--spectrum-gray-200); }
+.spectrum .msg .quick .acts { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .msg .quick .acts:not(:first-child) { border-radius: 0 var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) 0; box-shadow: calc(var(--spectrum-border-width-100) * -1) 0 0 var(--spectrum-gray-200); }
 
 /* Files on a message: a card each on the bubble's own overlay, the kind's badge in S2's
    categorical backgrounds (those that take white text), "Preview" a small ActionButton. */
@@ -2289,7 +2310,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   box-shadow: var(--s2-elevated);
 }
 .spectrum :is(.mentions, .chans, .expertlist, .linkpick) { padding: var(--spectrum-spacing-75); }
-.spectrum :is(.mentions li, .chans li, .expertlist button, .linkpick a) {
+.spectrum :is(.mentions li, .chans li, .expertlist button, .linkpick a, .linkpick button) {
   min-height: var(--s2-ctl);
   gap: var(--spectrum-text-to-visual-100);
   padding: var(--spectrum-spacing-75) var(--spectrum-component-edge-to-text-100);
@@ -2298,11 +2319,11 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   background: none;
   font-size: var(--spectrum-font-size-100);
 }
-.spectrum :is(.mentions li.on, .chans li.on, .chans li[data-i]:hover, .expertlist button:hover, .expertlist button:focus-visible, .linkpick a:hover, .linkpick a:focus-visible) {
+.spectrum :is(.mentions li.on, .chans li.on, .chans li[data-i]:hover, .expertlist button:hover, .expertlist button:focus-visible, .linkpick :is(a, button):hover, .linkpick :is(a, button):focus-visible) {
   color: var(--spectrum-neutral-content-color-hover);
   background: var(--s2-down);
 }
-.spectrum :is(.expertlist button, .linkpick a):focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum :is(.expertlist button, .linkpick a, .linkpick button):focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
 .spectrum .chans li.none { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum :is(.mentions, .chans) .hint { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .expertlist b { font-weight: var(--spectrum-medium-font-weight); color: var(--spectrum-neutral-content-color-default); }

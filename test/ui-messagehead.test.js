@@ -188,12 +188,17 @@ describe('message header', () => {
     assert.doesNotMatch(html.match(/<div class="bubble">(.*?)<\/div>/)[1], /quick|data-pick/);
   });
 
-  it('has the pen with them on your own message, and no bar where there is nothing to do', () => {
+  it('has the pen with them on your own message, and only the menu where one may not react', () => {
     const own = page().message(msg({ mine: true, editable: 'user', author: { kind: 'person', name: 'Dana Ops', staff: true } }), null, false);
     assert.match(own, /<div class="quick-at"><div class="quick" role="toolbar" aria-label="React, as you"><button class="edit" data-edit="1"/);
+    // Viewing as someone: no reactions, no pen, the message's menu (its links) still.
     const looking = page({ readonly: true }).message(msg(), null, false);
-    assert.doesNotMatch(looking, /quick/);
-    assert.match(looking, /<div class="col"><div class="head"><div class="who">.*?<\/div><\/div>\s*<div class="bubble">/);
+    assert.match(looking, /<div class="quick" role="toolbar" aria-label="Message actions"><button class="acts" data-acts="1"[^>]*>.*?<\/button><\/div>/);
+    assert.doesNotMatch(looking, /data-pick|data-edit/);
+    // A reply on its way has nothing yet: no bar.
+    const sending = page().message(msg({ pending: true, id: undefined }), null, false);
+    assert.doesNotMatch(sending, /quick/);
+    assert.match(sending, /<div class="col"><div class="head"><div class="who">.*?<\/div><\/div>\s*<div class="bubble">/);
   });
 
   it('keeps the header line of a message that goes on from the one before, for its reactions', () => {
