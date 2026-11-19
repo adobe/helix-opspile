@@ -2030,7 +2030,7 @@ function showBot(key) {
         <label>On ${esc(platform(b))}</label><span class="inline">${botIco({ avatar: b.avatar })}<span>${esc(b.name || b.handle || b.id)}</span>${b.avatar ? '' : '<span class="sub">no picture</span>'}</span>
         <label for="bName">Name</label><span class="inline"><input id="bName" class="fill" maxlength="80" value="${esc(b.displayName || '')}"></span>
         <label for="bAvatar">Picture</label><span class="inline"><input id="bAvatar" class="mono fill" maxlength="500" value="${esc(b.displayAvatar || '')}"></span>
-      </div><p class="hint">The inbox shows this name and picture instead of the ones from ${esc(platform(b))}, on the messages it wrote before too; left empty, the ones from ${esc(platform(b))}.${b.source === 'teams' ? ' Teams gives a bot\'s messages no picture, and names it by its registration, not by its app.' : ''} The picture is the https URL of an image.</p></div>
+      </div><p class="hint">The inbox shows this name and picture instead of the ones from ${esc(platform(b))}, on the messages it wrote before too; left empty, the ones from ${esc(platform(b))}.${b.source === 'teams' ? ' Teams gives a bot\'s messages no picture, so its picture there is its app\'s icon, and names it by its registration, not by its app.' : ''} The picture is the https URL of an image.</p></div>
       ${recentCard()}`;
     showStatus();
     // Each save sends both fields as the page shows them; only the answer to the last one is

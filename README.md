@@ -79,6 +79,7 @@ still answer.
 | `GET /api/auth/{slack,teams}/start`, `…/callback`, `DELETE /api/auth/{slack,teams}` | Connect or disconnect a person's Slack (user scopes `chat:write`, `reactions:write`) or Microsoft account (delegated `ChannelMessage.Send`, `offline_access`, `User.Read`). `start?files=1` also asks for file uploads (Slack `files:write`; Microsoft `Files.ReadWrite.All`, for files other than inline images on Teams), which the inbox offers when someone first attaches a file. The account must be the person's own (same person in D1, or same email). Tokens are stored encrypted with `TOKEN_KEY`. |
 | `GET /api/file/open?t=&u=` | A file of the [customer portal](#customer-portal) a message of thread `t` links to, through the portal's Worker: an image is shown, anything else is a download. The other platforms' files open on their platform. |
 | `GET /api/portal/avatar/<account>`, `/api/portal/logo/<domain>` | A picture someone uploaded in the customer portal, and a customer's logo there, through the portal's Worker, for anyone signed in: what the inbox shows as a portal account's avatar, on a customer's request and as the icon of a customer first met there. |
+| `GET /api/bots/icon?app=&def=` | A Teams app's color icon (the definition `def` of app `app`), its bot's picture, for anyone signed in: from Graph beta with `AppCatalog.Read.All` (a store app's from its public URL, without the token), PNG, JPEG, GIF or WebP only, cached a day; 404 otherwise (`src/bots.js`). |
 | `GET /api/media?u=` | Images attached to messages (Slack files, Teams hosted contents), fetched with the platform's credentials; nothing else is fetched. |
 | `GET /api/file?t=&u=` | A text file (CSV, log, JSON, HAR) a message of thread `t` links to, for the inbox's preview: fetched with the app's credentials as an agent's `read_file` does, and passed on only as `text/plain`, up to 10 MB (a HAR up to 150 MB). |
 | `GET /api/file/stream?t=&u=` | A video or audio file a message of thread `t` links to, streamed with the browser's `Range` for the inbox's player (Slack's MP4 copy of a video where it made one). |
@@ -581,6 +582,10 @@ bot scopes `channels:read` (and `groups:read` for private channels).
 messages (SharePoint and OneDrive) are copied into pile 1 and their images shown in the inbox;
 without it they stay links. Images pasted into a message (hosted contents) need only
 `ChannelMessage.Read.All`.
+`AppCatalog.Read.All` is optional as well: with it, Teams bots show their app's icon in the inbox
+(Graph beta's `colorIcon` of the app definition installed, `GET /api/bots/icon`, which the cron's
+list of installed bots points their picture at); without it they show their initials, unless an
+admin gave them a picture on the admin page's Bots.
 For replies and reactions it also needs the **delegated** permissions `ChannelMessage.Send`
 (which covers `setReaction`/`unsetReaction` on channel messages and inline images in replies),
 `offline_access` and `User.Read`, for files other than images in replies `Files.ReadWrite.All`

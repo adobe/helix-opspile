@@ -25,6 +25,7 @@ import {
   discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
 import { requestsFor } from './bashrequests.js';
+import { teamsBotIcon } from './bots.js';
 import { refreshAttachment } from './discord.js';
 import { edit } from './edit.js';
 import { expertEvents, recordExpertEvent } from './expertevents.js';
@@ -1420,6 +1421,13 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return json({ error: 'not found' }, 404);
     }
     return media(env, url.searchParams.get('u'), t);
+  }
+  // A Teams app's icon, its bot's picture (src/bots.js): for anyone signed in to the inbox.
+  if (url.pathname === '/api/bots/icon' && request.method === 'GET') {
+    return teamsBotIcon(env, url).catch((e) => {
+      console.warn(JSON.stringify({ route: 'bots', icon: 'failed', error: e.message }));
+      return json({ error: 'no icon' }, 404);
+    });
   }
   // What the customer portal keeps and the inbox shows: a picture someone uploaded there, a
   // customer's logo (src/portalsource.js). For anyone signed in to the inbox.
