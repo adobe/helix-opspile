@@ -444,6 +444,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   const drafts = new Map(); // thread -> its shared draft, as src/drafts.js reads it from D1
   // thread -> the commands its agent asked a person to run, as src/bashrequests.js shapes them
   const bashRequests = new Map();
+  // thread -> the tools its agent asked for in the sidebar (src/toolrequests.js)
+  const toolRequests = new Map();
   // thread -> what the team said to its agent in the sidebar, and its answers (src/sidebar.js)
   const sidebars = new Map();
   // How src/sources.js would show the fixtures' sources: a frame, Markdown; any other, not at all.
@@ -640,10 +642,13 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
    * `sidebar`: what someone on the team said to the thread's agent in the inbox's sidebar, and
    * its answers, `[who, minutesAgo, body]`, `who` a person key or 'agent' (src/sidebar.js); an
    * answer `[..., { unseen: true }]` its asker has not seen yet (the purple badge).
+   * `tools`: what the agent asked for there (src/toolrequests.js), `[{ asked, ago, kind, name,
+   * title, about, reason, status?, by? }]`: `asked` the index in `sidebar` of the message it
+   * answered, `ago` minutes ago; `status` (and `by`, a person key) for one that was decided.
    */
   function seed({
     ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft, bash = [],
-    sidebar = [],
+    sidebar = [], tools = [],
   }) {
     const ids = messages.map(([, ago]) => newId(ch.source, now - ago * MIN));
     const rootId = ids[0];
@@ -746,6 +751,33 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
           asker = p.id;
         }
         return m;
+      }));
+    }
+    if (tools.length) {
+      const said = sidebars.get(key) || [];
+      toolRequests.set(key, tools.map((r, i) => {
+        const who = r.by && byKey.get(r.by);
+        const at = now - r.ago * MIN;
+        const decided = r.status ? new Date(at + MIN).toISOString() : null;
+        return {
+          // Twelve hex digits, as src/agent/toolrequest.js makes them.
+          id: (0x4a1c0de51ab0 + threads.size * 0x10000 + i * 0x9e3779b1).toString(16).slice(-12),
+          thread: key,
+          sidebar: said[r.asked].id,
+          kind: r.kind,
+          name: r.name,
+          title: r.title,
+          about: r.about,
+          reason: r.reason,
+          status: r.status || 'pending',
+          created_at: new Date(at).toISOString(),
+          deadline: new Date(at + 24 * 60 * MIN).toISOString(),
+          by: who ? { id: who.id, name: who.name } : null,
+          decided_at: decided,
+          expires_at: r.status === 'granted' ? new Date(at + MIN + 24 * 60 * MIN).toISOString() : null,
+          revoked_by: null,
+          revoked_at: null,
+        };
       }));
     }
     if (bash.length) {
@@ -1253,7 +1285,20 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['agent', 81.5, 'Possibly: if it strips `/content/acme` before preview asks the content host, the paths would not resolve. I asked Sam for the rewrite in the draft. Nothing went to the channel.'],
       ['dana', 64, 'Does the rewrite Sam sent explain it?'],
       ['agent', 63.5, 'It does: `rewrite` drops `/content/acme`, and the content source\'s `url` ends in `/acme`, so preview asks the content host for `/en/index` under the wrong root.\n\nI put that in the draft, with the one-line fix. Nothing went to the channel.'],
+      ['dana', 62, 'Can you check what preview answers for `/en/index` right now?'],
+      ['agent', 61.5, 'Not from here: this channel gives me no browser. I asked for one, below. Once someone grants it, I load the preview page and tell you what it answers.'],
     ],
+    // The agent asked for a tool its channel does not have, in answer to Dana: it waits for
+    // someone on the team to grant or deny it.
+    tools: [{
+      asked: 6,
+      ago: 61.5,
+      kind: 'server',
+      name: 'global:browser',
+      title: 'MCP server Cloudflare Browser Run',
+      about: 'Cloudflare Browser Run\'s MCP server: load a web page in a real Chrome and get it as markdown or HTML, a screenshot or a PDF, its links, elements by CSS selector, or JSON extracted from it; or crawl a site',
+      reason: 'Dana asked what preview answers for /en/index right now. With a browser I can load the preview page and tell her, instead of asking Sam to try it.',
+    }],
   });
 
   // The customer portal: the welcome that opened the channel, and the customer's first question.
@@ -1542,6 +1587,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     appPosts,
     drafts,
     bashRequests,
+    toolRequests,
     sidebars,
     sourceViews,
     sourcePage,

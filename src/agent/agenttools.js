@@ -13,6 +13,7 @@
 import { discordEnabled } from '../discord.js';
 import { portalBound } from '../portalsource.js';
 import { teamsBotEnabled } from '../teamsbot.js';
+import { grantsOf } from '../toolrequests.js';
 import { membershipOn } from './membership.js';
 import { searchProblem } from './websearch.js';
 
@@ -53,6 +54,10 @@ import { searchProblem } from './websearch.js';
  *
  * A tool marked `internal` has no team switch, only the admin team switches it, and it works
  * only in an internal channel (`internalChannel`), however it got switched on.
+ *
+ * A thread's agent also has the tools a person granted it in the sidebar, for a day
+ * (src/toolrequests.js), on top of the switches: all but the `internal` ones, which are the
+ * admin team's to give.
  */
 
 export const AGENT_TOOLS = [
@@ -228,16 +233,21 @@ export async function internalChannel(env, channelId) {
 
 /**
  * The switchable tools an agent's target (its team, channel and platform) has, as a sorted
- * list of their keys: on, working in this deployment and on the thread's platform.
+ * list of their keys: on, or granted to its thread (src/toolrequests.js), working in this
+ * deployment and on the thread's platform.
  */
 export async function toolsFor(env, target) {
   if (!target || !target.key || !env.DB) {
     return [];
   }
-  const switches = await toolSwitches(env, target);
+  const [switches, granted] = await Promise.all([
+    toolSwitches(env, target),
+    grantsOf(env, target.key, 'tool'),
+  ]);
   const on = AGENT_TOOLS.filter((t) => {
     const { team, channel } = switches.get(t.tool);
-    return switchedOn(t.internal ? { channel } : { team, channel })
+    return (switchedOn(t.internal ? { channel } : { team, channel })
+      || (!t.internal && granted.has(t.tool)))
       && !toolProblem(env, t.tool) && onPlatform(env, t.tool, target.source);
   });
   const internal = on.some((t) => t.internal) && await internalChannel(env, target.channelId);

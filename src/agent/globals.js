@@ -13,6 +13,7 @@
 import {
   approved, currentApp, installationsWithApprovals, installationToken,
 } from '../github.js';
+import { grantsOf } from '../toolrequests.js';
 import { fluffyConnection, fluffyInstances } from './fluffyjaws.js';
 import {
   INSTRUCTIONS as SLACK_INSTRUCTIONS, slackConnection, slackGuide, slackInstances,
@@ -41,7 +42,8 @@ import {
  *   archiving, at once and without a confirmation. Off for new teams, on Slack only, and only
  *   the admin team switches it.
  *
- * A server marked `admins` is switched by the admin team only; one with `platforms` is listed
+ * A server marked `admins` is switched by the admin team only, and never granted in a sidebar;
+ * any other may be, to one thread for a day (src/toolrequests.js). One with `platforms` is listed
  * for agents whose thread is on one of them only. One with a `guide(target, ns)` has rules of its
  * own in the agent's prompt (src/agent/mcp.js), beyond the instructions `describeNamespace`
  * shows. Only these definitions reach a service binding (a connection's `fetch`): a team's or
@@ -207,14 +209,19 @@ export const forSource = (g, source) => !g.platforms || g.platforms.includes(sou
 
 /**
  * The global servers on for an agent's target (its team, channel and platform: `source`; a
- * server with `platforms` needs one of them), as `mcp_servers`-shaped
- * entries: `{ id: 'global:<key>', scope: 'global', slug: <server>, name, description, allow,
- * updated_at }`. `updated_at` changes with the switch and the last check, so the agent's
- * catalog follows both.
+ * server with `platforms` needs one of them), or granted to its thread (`key`), as
+ * `mcp_servers`-shaped entries: `{ id: 'global:<key>', scope: 'global', slug: <server>, name,
+ * description, allow, updated_at }`. `updated_at` changes with the switch (or the grant) and the
+ * last check, so the agent's catalog follows both.
  */
 export async function globalServersFor(env, target) {
-  const switches = await switchesFor(env, target);
-  const on = GLOBAL_SERVERS.filter((g) => effective(switches.get(g.server))
+  const [switches, granted] = await Promise.all([
+    switchesFor(env, target),
+    grantsOf(env, target.key, 'server'),
+  ]);
+  // Granted to the thread in its sidebar (src/toolrequests.js): all but the admin team's own.
+  const grant = (g) => (!g.admins && granted.get(`global:${g.server}`)) || null;
+  const on = GLOBAL_SERVERS.filter((g) => (effective(switches.get(g.server)) || grant(g))
     && forSource(g, target.source));
   if (!on.length) {
     return [];
@@ -224,7 +231,7 @@ export async function globalServersFor(env, target) {
   const out = [];
   for (const g of on) {
     const s = switches.get(g.server);
-    const at = (s.channel || s.team).changed_at;
+    const at = effective(s) ? (s.channel || s.team).changed_at : `granted ${grant(g)}`;
     // eslint-disable-next-line no-await-in-loop
     const { instances } = await instancesOf(env, g.server);
     for (const i of instances) {

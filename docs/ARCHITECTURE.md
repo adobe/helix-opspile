@@ -1775,6 +1775,31 @@ and only an input that starts with it is one: a customer quoting it is told insi
 The inboxes of the thread's teams hear of each message and answer through the team's room
 (`{ type: 'sidebar' }`).
 
+**Tool requests.** In the sidebar, the agent can ask for a tool its channel does not have
+(`request_tool`; the record is `tool_requests`, migration 0080, `src/toolrequests.js`, the agent's
+side `src/agent/toolrequest.js`): one of the switchable tools (see "Agent tools") that is off in
+its channel, works in this deployment and on its platform, and is not `internal`; an MCP server of
+its team or customer that is off in its channel; or a global server that is off and has an
+instance, but for those only the admin team switches (`admins`: `slack_channels`). Without `tool`
+it lists them; with one it asks, with a reason, for the person it talks to, and only while it
+answers a sidebar message (never on the thread's messages, which customers write), at most five
+waiting at a time, never twice for the same. The request is a card in the sidebar, under the
+agent's answer to the message it was asked in (`toolCard` in `ui/inbox.js`): what it asks for, the
+agent's reason, what the tool does, and **Grant for a day** and **Deny** for anyone who may work
+the thread (`POST /api/agent/tools/grant|deny`), until its deadline, a day. Nobody else's say is
+needed, and a team's managers have no veto: what is off is only off by default.
+
+A grant is the thread's, for 24 hours, for every turn of its agent, the turns on the thread's
+messages too: `toolsFor` (`src/agent/agenttools.js`) adds granted tools to the switches' (still
+checked against the deployment and the platform), and `serversFor` and `serverWithHeaders`
+(`src/agent/mcpclient.js`, and `globalServersFor` in `src/agent/globals.js`) add granted servers,
+so the agent's catalog changes with them. A granted `post_message` posts on the thread's messages,
+never in the sidebar, which refuses it as before. The decision goes to the agent as a sidebar
+message of the person who made it ("Granted: you have … in this thread for the next 24 hours"),
+which it answers in the sidebar: it reads its tools before each input, so it has the tool in that
+turn. **End now** on a granted card (`…/revoke`) ends it early; the agent goes without it from its
+next input. See docs/STATE-MACHINES.md, "Tool request".
+
 In the inbox, the agent's icon enters **sidebar mode**: its avatar on its note, the button with
 it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. Each run
 of sidebar messages is one line between the thread's messages where it happened ("Lena Berg had
@@ -1855,6 +1880,7 @@ written by people outside its control.
 | `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for any channel, by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `channel_assignment`, `list_teams`, `request_channel_reassignment` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"). The admin team decides |
+| `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
 | `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `update_draft` holds a draft's length against the replies staff write (`src/agent/draftlength.js`, log-normal over characters): beyond one standard deviation (42 to 480 characters) it saves with a warning, beyond two (12 to 1625) it saves nothing and says why. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app. As no person reads it first, it refuses a reply longer than one standard deviation of staff replies (480 characters, `src/agent/draftlength.js`), which goes into the draft instead, and takes a short one |
@@ -1892,8 +1918,8 @@ can have MCP servers (`mcp_servers`, maintained in the knowledge-base editor nex
 per-channel switch; credentials are request headers sealed with `TOKEN_KEY`, or an OAuth
 grant, below). Each server is on or off for every channel of its team or customer, and a
 channel can have a switch of its own that wins (`mcp_server_switches`), as the global servers'
-do. An agent gets the servers of its thread's team and customer that are on in its channel, and
-connects only to those: each tool becomes `mcp__<server>__<tool>`, callable **only from scripts**, never
+do. An agent gets the servers of its thread's team and customer that are on in its channel (or
+granted to its thread, see "Tool requests"), and connects only to those: each tool becomes `mcp__<server>__<tool>`, callable **only from scripts**, never
 offered to the model as a tool of its own, and each server is a code mode namespace that
 `describeNamespace()` and `searchTools()` find. So a server with a hundred tools costs the
 prompt a few lines, and a script can call several and filter what they return. A server's
@@ -2106,7 +2132,8 @@ over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/
 Before an agent is told anything it reads the switches of its thread's team and channel; the
 tools it has are kept in its storage and installed as their own extension (`opspile-tools`,
 right after opspile's own), which a change replaces in place. Each comes with a section of the
-system prompt on how to use it.
+system prompt on how to use it. A tool granted to the thread in its sidebar counts as on there,
+for a day (see "Tool requests"); `any_thread` is never granted.
 
 **`post_message`.** The agent posts a reply in the latest platform thread of its entry right
 away (`src/agent/posting.js`), as the opspile app, never as a person: on Slack with the bot

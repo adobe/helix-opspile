@@ -513,6 +513,19 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
    thread's row, and New on its folded line. */
 .sidebadge { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50); white-space: nowrap; }
 .sidebadge .bubble-ico { position: static; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); padding: 0; }
+/* A tool the agent asked for (toolCard, ui/inbox.js): a card under its answer, lined up with
+   its bubbles: what it asks for, why, what it does, and how it stands or Deny and Grant. */
+.sc-body .tq { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); min-width: 0;
+  max-width: min(80%, calc(var(--spectrum-spacing-100) * 95));
+  margin: 0 0 0 calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500) + var(--spectrum-spacing-100));
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
+.sc-body .tq-head { display: flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; }
+.sc-body .tq-head svg { flex: none; }
+.sc-body .tq :is(.tq-why, .tq-about) { margin: 0; overflow-wrap: anywhere; }
+.sc-body .tq-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
+.sc-body .tq-foot :is(.tq-note, .tq-st) { flex: 1 1 auto; min-width: 0; }
+.sc-body .tq-foot .acts { flex: none; display: flex; gap: var(--spectrum-spacing-100); margin-left: auto; }
+.sc-body .tq button { cursor: pointer; }
 .composer .sidebtn { position: relative; display: grid; place-items: center; cursor: pointer; }
 .composer .sidebtn .av { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); }
 .composer .sidebtn .bubble-ico { right: var(--spectrum-spacing-50); bottom: var(--spectrum-spacing-50); width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); padding: 0; }
@@ -1964,6 +1977,37 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   font-weight: var(--spectrum-bold-font-weight);
 }
 .spectrum .sc-body .sc-continue:hover { background: var(--spectrum-purple-subtle-background-color-default); }
+/* A tool request: in the notice color's subtle fill while it waits, as a command request's, since
+   granting it is a decision; in gray once that is made. Grant is the accent Button, Deny and End
+   now outline ones. */
+.spectrum .sc-body .tq {
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  background: var(--spectrum-notice-subtle-background-color-default);
+}
+.spectrum .sc-body .tq:not(.pending) { background: var(--spectrum-gray-75); }
+.spectrum .sc-body .tq-head { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sc-body .tq-head b { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .sc-body .tq-head svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .sc-body .tq-why { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sc-body .tq.granted .tq-st { color: var(--spectrum-positive-visual-color); }
+.spectrum .sc-body .tq button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-75);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-400);
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .sc-body .tq button:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
+.spectrum .sc-body .tq button.grant { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
+.spectrum .sc-body .tq button.grant:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-hover); }
+.spectrum .sc-body .tq button.grant:active:not(:disabled) { background: var(--spectrum-accent-background-color-down); }
+.spectrum .sc-body .tq button:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .sc-body .tq button:disabled { color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
 .spectrum .sc-body :is(.sc-continue, .sc-wait) .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
 .spectrum .composer .sidebtn {
   width: var(--spectrum-component-height-200);
