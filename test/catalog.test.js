@@ -64,6 +64,18 @@ const FILES = {
   'products/fastly/cdn.md': FASTLY,
   'products/categories/consent-manager.md': CONSENT,
 };
+
+/** `fn`'s result, with what it logs as an error kept out of the test's output. */
+async function quietly(fn) {
+  const { error } = console;
+  console.error = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.error = error;
+  }
+}
+
 const files = (map = FILES) => Object.entries(map).map(([path, text]) => ({ path, text }));
 
 describe('the catalog\'s files', () => {
@@ -175,9 +187,53 @@ describe('a compiled catalog', () => {
     assert.equal((await of('edge')).description, 'Fastly as CDN, in front of the site');
     assert.equal((await of('edge')).aliases, 'Compute@Edge');
     assert.equal(await of('helix'), undefined);
+    // Shared, the first team's that is on: one team's turned off does not take it from the others.
+    await storeCatalog(env, { team: 'admin', repo: 'kb-team-admin' }, compileCatalog(files({
+      'products/fastly/cdn.md': FASTLY.replace('type: Product', 'type: Product\nenabled: false'),
+    })));
+    assert.equal((await of('edge')).description, 'Fastly as CDN');
     // Every team's technology is asked everywhere: the one D1 row of a team too.
     await saveTech(env, 'cdn', { tech: 'stats', name: 'Stats', description: 'a stats tool' }, 'Bo');
     assert.ok((await techFor(env, 'helix')).some((t) => t.tech === 'stats'));
+  });
+
+  it('is left as it was when a file of it cannot be read, and compiled once it can', async () => {
+    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }] });
+    kb(DB, 'helix');
+    const env = { DB };
+    await storeCatalog(env, { team: 'helix', repo: 'kb-team-helix', commit: 'old' }, compileCatalog(files()));
+    let broken = true;
+    const repo = fakeRepo(FILES);
+    const flaky = {
+      ...repo,
+      readBlob: async (hash) => (broken ? null : repo.readBlob(hash)),
+    };
+    env.ARTIFACTS = { get: async () => flaky };
+    const was = DB.rows("SELECT tech FROM tech_stack WHERE team = 'helix' AND path IS NOT NULL ORDER BY tech");
+    assert.deepEqual(await quietly(() => syncCatalogs(env)), { compiled: [], failed: 1 });
+    assert.deepEqual(DB.rows("SELECT tech FROM tech_stack WHERE team = 'helix' AND path IS NOT NULL ORDER BY tech"), was);
+    assert.equal(DB.rows("SELECT catalog_commit FROM knowledge_bases WHERE repo = 'kb-team-helix'")[0].catalog_commit, 'old');
+    broken = false;
+    assert.deepEqual(await syncCatalogs(env), { compiled: ['helix'], failed: 0 });
+    assert.notEqual(DB.rows("SELECT catalog_commit FROM knowledge_bases WHERE repo = 'kb-team-helix'")[0].catalog_commit, 'old');
+  });
+
+  it('logs every new move with the rows it rewrote', async () => {
+    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }] });
+    kb(DB, 'helix');
+    DB.sqlite.exec("INSERT INTO thread_tech (thread, tech, p) VALUES ('t1', 'eds', 0.9)");
+    const logged = [];
+    const { log } = console;
+    console.log = (line) => logged.push(JSON.parse(line));
+    try {
+      await storeCatalog({ DB }, { team: 'helix', repo: 'kb-team-helix' }, compileCatalog(files()));
+    } finally {
+      console.log = log;
+    }
+    const eds = logged.find((l) => l.old === 'eds');
+    assert.deepEqual([eds.route, eds.action, eds.tech, eds.team], ['catalog', 'move', 'adobe/aem-sites/edge-delivery', 'helix']);
+    // The admin team's D1 row, the thread's label and the extraction rules that detect it.
+    assert.ok(eds.changed >= 3);
   });
 
   it('is compiled again by the cron when the knowledge base moved on, and dropped with products/', async () => {
@@ -196,6 +252,15 @@ describe('a compiled catalog', () => {
 });
 
 describe('a move of a catalog file', () => {
+  it('pairs a deleted file only with a created one of its title: an unrelated one inherits nothing', async () => {
+    const workfront = concept({ type: 'Product', title: 'Workfront', description: 'Adobe Workfront' });
+    const target = concept({ type: 'Product', title: 'Target', description: 'Adobe Target' });
+    assert.deepEqual(await movesOf([
+      { path: 'products/adobe/workfront.md', delete: true },
+      { path: 'products/adobe/target.md', content: target },
+    ], { old: async () => workfront, present: async () => false }), []);
+  });
+
   it('keeps the ids the file had', async () => {
     assert.match(withMovedFrom(FASTLY, ['fastly', 'akamai/x']), /moved_from: \[fastly, akamai\/x\]/);
     const pairs = await movesOf([
@@ -215,7 +280,7 @@ describe('a move of a catalog file', () => {
     await commitChanges(fs, [{ path: 'products/fastly/cdn.md', content: FASTLY }], opts);
     await commitChanges(fs, [
       { path: 'products/fastly/cdn.md', delete: true },
-      { path: 'products/fastly/edge.md', content: FASTLY.replace('title: Fastly', 'title: Fastly Compute') },
+      { path: 'products/fastly/edge.md', content: FASTLY },
     ], opts);
     const moved = await fs.promises.readFile('/kb/products/fastly/edge.md', 'utf8');
     assert.match(moved, /moved_from: \[fastly, fastly\/cdn\]/);

@@ -419,8 +419,9 @@ function joinAliases(rows) {
 
 /**
  * The technologies Clef asks about in the channels of `team`: the union of every team's. An id
- * `team` has is its own (which may turn it off); any other is the admin team's, else the first
- * team's by name, with the aliases of every team's that is on. On only, by id.
+ * `team` has is its own (which may turn it off); any other is shared: the admin team's when it
+ * is on, else the first team's by name that is on, with the aliases of every team's that is on.
+ * Off only where every team has it off. On only, by id.
  */
 export async function techFor(env, team) {
   const { results: rows } = await env.DB.prepare(`SELECT * FROM tech_stack
@@ -435,8 +436,11 @@ export async function techFor(env, team) {
     if (first.team === team && team !== GLOBAL_TEAM) {
       out.push(first);
     } else {
-      const others = list.filter((r) => r !== first && r.enabled);
-      out.push({ ...first, aliases: joinAliases([first, ...others]) });
+      // The admin team's first (ordered so), else the first team's by name: the first that is on.
+      const on = list.filter((r) => r.enabled);
+      if (on.length) {
+        out.push({ ...on[0], aliases: joinAliases(on) });
+      }
     }
   }
   return out.filter((r) => r.enabled).map(techOut).sort((x, y) => x.tech.localeCompare(y.tech));

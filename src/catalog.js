@@ -239,8 +239,10 @@ export function withMovedFrom(content, ids) {
 
 /**
  * The moves of one write of a team's knowledge base: each catalog file it deletes and one it
- * creates of the same type, paired by title (else the one of each left), `[{ from, to, ids }]`:
- * `to` keeps `from`'s id and the ids it had (`ids`). `old` reads a deleted file's text.
+ * creates of the same type and title, `[{ from, to, ids }]`: `to` keeps `from`'s id and the ids it
+ * had (`ids`). `old` reads a deleted file's text. Nothing else pairs them: a move rewrites what D1
+ * keeps under the old id for good, so a file that replaces an unrelated one (Target for Workfront)
+ * must not inherit its labels. A rename that changes the title lists the old id in `moved_from`.
  */
 export async function movesOf(changes, { old, present }) {
   const gone = [];
@@ -275,14 +277,14 @@ export async function movesOf(changes, { old, present }) {
       }
     }
   };
-  take((g, b) => g.title.toLowerCase() === b.title.toLowerCase());
-  if (gone.length === 1 && born.length === 1) {
-    take(() => true);
-  }
+  take((g, b) => same(g.title, b.title));
   return pairs;
 }
 
-/** What D1 keeps under id `old`, rewritten to `tech`: the statements of one move. */
+/**
+ * What D1 keeps under id `old`, rewritten to `tech`: the statements of one move, across every
+ * team's rows (the D1 rows of that id too, another team's own among them).
+ */
 function rewrites(db, old, tech) {
   const swap = (table) => [
     db.prepare(`UPDATE OR IGNORE ${table} SET tech = ?2 WHERE tech = ?1`).bind(old, tech),
@@ -349,10 +351,22 @@ export async function storeCatalog(env, kb, { rows, moves }, now = new Date()) {
     db.prepare('DELETE FROM tech_moves WHERE team = ?').bind(team),
     ...moves.map((m) => db.prepare('INSERT OR IGNORE INTO tech_moves (team, old, tech) VALUES (?, ?, ?)')
       .bind(team, m.old, m.tech)),
-    ...fresh.flatMap((m) => rewrites(db, m.old, m.tech)),
-    db.prepare('UPDATE knowledge_bases SET catalog_commit = ? WHERE repo = ?').bind(commit, repo),
   ];
-  await db.batch(statements);
+  let cursor = statements.length;
+  const each = fresh.map((m) => rewrites(db, m.old, m.tech));
+  statements.push(...each.flat());
+  statements.push(db.prepare('UPDATE knowledge_bases SET catalog_commit = ? WHERE repo = ?')
+    .bind(commit, repo));
+  const results = await db.batch(statements);
+  // Every new move, with the rows it rewrote: one nobody meant is traced, and reversed, from this.
+  for (const [i, m] of fresh.entries()) {
+    const changed = results.slice(cursor, cursor + each[i].length)
+      .reduce((n, r) => n + Number(r?.meta?.changes || 0), 0);
+    cursor += each[i].length;
+    console.log(JSON.stringify({
+      route: 'catalog', action: 'move', team, repo, commit, old: m.old, tech: m.tech, changed,
+    }));
+  }
   return { rows: rows.length, moves: moves.length, rewritten: fresh.length };
 }
 

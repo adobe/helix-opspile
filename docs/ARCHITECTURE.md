@@ -1080,8 +1080,9 @@ and an unchanged thread is never labeled twice):
   the teams' configuration (`tech_stack`), each asked as "Does this thread show that the
   customer uses <description>?". Every team's are asked in every channel, as one union
   (src/extract.js `techFor`): where the channel's team has an entry of an id, its own is asked
-  there (turned off, it is not asked there); elsewhere the admin team's, else the first team's by
-  name, with the aliases of every team's that is on. Clef gets at most 24 questions per call; the
+  there (turned off, it is not asked there); elsewhere the admin team's when it is on, else the
+  first team's by name that is on, with the aliases of every team's that is on (off only where
+  every team has it off). Clef gets at most 24 questions per call; the
   rest are asked in calls of their own, at the same time, in the order of their ids. A question's
   key in a call is a hash of the id (src/techid.js `questionKeys`: a catalog path is no key),
   mapped back when Clef answers, and stored nowhere. The channel keeps the highest probability any thread
@@ -1110,13 +1111,16 @@ and an unchanged thread is never labeled twice):
   A row without a `path` was saved in D1 (with `save_tech`, or before the catalog) and is edited
   there; a compiled one only in its file.
   An id moves with its file: a write that deletes a catalog file and creates one of the same type
-  (of the same title, else the one of each) gives the new one the ids the old one had in
-  `moved_from`, and a file may list them itself (the D1 entries' short ids, `eds`, when they were
-  first written as files). The compile keeps them (`tech_moves`), and when a move is new it
-  rewrites what D1 keeps under the old id, once: the D1 row of that id, follows, `thread_tech`,
+  and title gives the new one the ids the old one had in `moved_from` (nothing else pairs them: a
+  file that replaces an unrelated one must not take its labels), and a file may list them itself:
+  a rename that changes the title, or the D1 entries' short ids (`eds`) when they are first
+  written as files. The compile keeps them (`tech_moves`), and when a move is new it rewrites
+  what D1 keeps under the old id, once: the D1 row of that id, follows, `thread_tech`,
   `channel_tech`, extraction rules that detect it and the portal's lobbies. A move whose old id
-  is still a file of the catalog is only mapped. Files (a stack drawing's Tech) and labels from
-  before are read through the map (src/catalog.js `techMoves`), and their technologies keep a name.
+  is still a file of the catalog is only mapped. Each new move is logged with the rows it
+  rewrote (`route: 'catalog'`, `action: 'move'`), so one nobody meant can be traced. Files (a
+  stack drawing's Tech) and labels from before are read through the map (src/catalog.js
+  `techMoves`), and their technologies keep a name.
   An entry also has **aliases** (`tech_stack.aliases`, migration 0057): the names it goes by in
   threads ("AEMaaCS", "IMS Org", "EdgeWorkers"), which match product names to it and are not
   asked of Clef. A feature people ask about by its own name is an entry, not an alias: the AEM

@@ -55,8 +55,13 @@ export async function syncCatalogs(env, { parallel = 4 } = {}) {
         // eslint-disable-next-line no-await-in-loop
         Object.assign(texts, await readBlobs(env, kb.repo, hashes));
       }
-      const files = blobs.filter((b) => texts[b.hash] != null)
-        .map((b) => ({ path: b.path, text: texts[b.hash] }));
+      // A blob that could not be read is no file deleted: compile once every one is there, and
+      // keep the rows and the watermark until then.
+      const unread = blobs.filter((b) => texts[b.hash] == null);
+      if (unread.length) {
+        throw new Error(`${unread.length} of ${blobs.length} catalog files could not be read`);
+      }
+      const files = blobs.map((b) => ({ path: b.path, text: texts[b.hash] }));
       const where = { team: kb.slug, repo: kb.repo, commit: res.commit };
       await storeCatalog(env, where, compileCatalog(files));
       out.compiled.push(kb.slug);

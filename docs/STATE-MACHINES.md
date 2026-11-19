@@ -465,8 +465,8 @@ on the page; two at once both write a row, and the newer is shown.
 **Catalog compile.** files → compiled → behind → compiled again (src/catalog.js, src/catalogsync.js).
 A team's `products/` is the source; its `tech_stack` rows (`path` set) and `tech_moves` are replaced
 together in one batch, with `knowledge_bases.catalog_commit` the watermark, written in the same batch.
-A write compiles from what it pushed; a compile that fails leaves the rows and the watermark as they
-were, so the cron, which compiles every team whose head is not the watermark, takes it again. A move
+A write compiles from what it pushed; a compile that fails (a catalog file the cron could not read
+counts: it is no file deleted) leaves the rows and the watermark as they were, so the cron, which compiles every team whose head is not the watermark, takes it again. A move
 (`moved_from`) rewrites what D1 keeps under the old id only when it is new against the team's moves
 before, so compiling twice rewrites nothing; an old id that is still a file somewhere is only mapped.
 
