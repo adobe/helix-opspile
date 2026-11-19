@@ -954,7 +954,7 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
   const found = Promise.all([
     t.source === 'teams' && t.group_id
       ? env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name, i.name AS posts_as,
-          i.avatar ${BOTS} ORDER BY b.at DESC`).bind(t.tenant, t.group_id).all()
+          COALESCE(i.display_avatar, i.avatar) AS avatar ${BOTS} ORDER BY b.at DESC`).bind(t.tenant, t.group_id).all()
       : { results: [] },
     env.DB.prepare(`SELECT i.user_id AS id, i.person, ${NAME} AS name, i.name AS account_name,
         i.aliases, COALESCE(i.email, p.email) AS email, i.avatar,

@@ -117,6 +117,53 @@ describe('Adobe\'s bots', () => {
     const person = { kind: 'person', name: 'p', staff: false };
     assert.equal(botAuthor(ENV, person, { account_kind: 'person', ours: 1 }), person);
     assert.equal(botAuthor(ENV, bot, {}), bot);
+    // The name an admin gave it, whether or not anybody said whose it is.
+    assert.deepEqual(botAuthor(ENV, bot, account(null, { display_name: 'Helper' })), { ...bot, name: 'Helper' });
+    assert.deepEqual(botAuthor(ENV, bot, account(1, { display_name: 'Helper' })), {
+      ...bot, name: 'Helper', staff: true,
+    });
+    assert.equal(botAuthor(ENV, person, { account_kind: 'person', display_name: 'x' }), person);
+  });
+
+  it('go by the name an admin gave them, a person by theirs', () => {
+    assert.equal(toAuthor(ENV, { kind: 'bot', name: 'b-agent', display_name: 'B' }).name, 'B');
+    assert.equal(toAuthor(ENV, { kind: 'bot', name: 'b-agent' }).name, 'b-agent');
+    assert.equal(toAuthor(ENV, { kind: 'person', name: 'p', display_name: 'x' }).name, 'p');
+  });
+
+  it('are named and pictured by the admin team, their messages written before too', async () => {
+    const e = env();
+    const put = (body) => quiet(() => call(e, ADA, 'PUT', '/api/admin/bots', { key: HELPER, ...body }));
+    assert.equal((await call(e, BO, 'PUT', '/api/admin/bots', { key: HELPER, name: 'Helper' })).status, 403);
+    assert.equal((await put({ avatar: 'http://pictures.example/helper.png' })).status, 400);
+    assert.equal((await put({ avatar: 'data:image/png;base64,AA==' })).status, 400);
+    assert.equal((await put({ name: 7 })).status, 400);
+    assert.equal((await put({ name: 'x'.repeat(81) })).status, 400);
+    assert.equal((await quiet(() => call(e, ADA, 'PUT', '/api/admin/bots', {
+      key: 'teams:T:u-cy', name: 'Cy',
+    }))).status, 404);
+    const r = await put({ name: ' Helper ', avatar: 'https://pictures.example/helper.png' });
+    assert.equal(r.status, 200);
+    const { bot } = r.body;
+    assert.deepEqual([bot.name, bot.displayName, bot.displayAvatar, bot.ours], [
+      'helper-agent', 'Helper', 'https://pictures.example/helper.png', null,
+    ]);
+    const thread = async () => Object.fromEntries((await call(e, ADA, 'GET', `/api/thread?thread=${THREAD}`))
+      .body.messages.map((m) => [m.id, [m.author.name, m.avatar]]));
+    assert.deepEqual(await thread(), {
+      5: ['Cy', null], 6: ['Helper', 'https://pictures.example/helper.png'], 7: ['Their Deploy Bot', null],
+    });
+    assert.deepEqual(e.DB.rows('SELECT id, author FROM messages ORDER BY id'), [
+      { id: '5', author: null }, { id: '6', author: 'Helper' }, { id: '7', author: null },
+    ]);
+    // Who it is stays as it was, and the name stays when that is said.
+    const ours = await put({ ours: true });
+    assert.deepEqual([ours.body.bot.ours, ours.body.bot.displayName], [true, 'Helper']);
+    // Empty: the platform's again.
+    const back = await put({ name: '', avatar: null });
+    assert.deepEqual([back.body.bot.displayName, back.body.bot.displayAvatar], [null, null]);
+    assert.deepEqual((await thread())[6], ['helper-agent', null]);
+    assert.deepEqual(e.DB.rows("SELECT author FROM messages WHERE id = '6'"), [{ author: 'helper-agent' }]);
   });
 
   it('are listed for the admin team, those that posted last first', async () => {
@@ -168,6 +215,7 @@ describe('Adobe\'s bots', () => {
     assert.deepEqual(await sides(e), { 5: false, 6: false, 7: false });
     assert.equal((await call(e, BO, 'PUT', '/api/admin/bots', { key: HELPER, ours: true })).status, 403);
     assert.equal((await call(e, ADA, 'PUT', '/api/admin/bots', { key: HELPER })).status, 400);
+    assert.equal((await call(e, ADA, 'PUT', '/api/admin/bots', { key: HELPER, ours: 'yes' })).status, 400);
     assert.equal((await call(e, ADA, 'PUT', '/api/admin/bots', { key: 'nope', ours: true })).status, 400);
     // A person is not a bot to flag.
     assert.equal((await call(e, ADA, 'PUT', '/api/admin/bots', { key: 'teams:T:u-cy', ours: true })).status, 404);

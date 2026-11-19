@@ -17,7 +17,9 @@
  * migration 0078). Staff are decided by mail domain, and a bot has no mail address: an Adobe
  * bot counts as staff (src/lookup.js, toAuthor), so the inbox shows it on Adobe's side, as a
  * colleague, not as the customer. Its messages stay a bot's: the agents read them as untrusted
- * as any bot's (src/agent/deliver.js), and they do not count as a reply (`counted`).
+ * as any bot's (src/agent/deliver.js), and they do not count as a reply (`counted`). The admin
+ * team also gives a bot the name and picture the inbox shows (`display_name`, `display_avatar`,
+ * migration 0081), where the platform's say nothing to people (a Teams app has no picture).
  */
 
 import { json } from './http.js';
@@ -37,9 +39,12 @@ function botOf(env, r) {
     key: `${r.source}:${r.tenant}:${r.user_id}`,
     source: r.source,
     id: r.user_id,
+    // The platform's name and picture, and the ones an admin gave it, which the inbox shows.
     name: r.name || null,
     handle: r.handle || null,
     avatar: r.avatar || null,
+    displayName: r.display_name || null,
+    displayAvatar: r.display_avatar || null,
     // true, false (an admin said it is not), or null (nobody said).
     ours: r.ours === null || r.ours === undefined ? null : Boolean(r.ours),
     oursBy: r.ours_by || null,
@@ -56,7 +61,7 @@ function botOf(env, r) {
 }
 
 const SELECT = `SELECT i.source, i.tenant, i.user_id, i.name, i.handle, i.avatar, i.email, i.staff,
-    i.ours, i.ours_by, i.ours_at,
+    i.ours, i.ours_by, i.ours_at, i.display_name, i.display_avatar,
     (SELECT COUNT(*) FROM messages m WHERE m.author_key = ${KEY} AND m.deleted = 0) AS messages,
     (SELECT COUNT(DISTINCT m.thread) FROM messages m WHERE m.author_key = ${KEY}
       AND m.deleted = 0) AS threads,
@@ -94,8 +99,9 @@ async function whereFrom(env, rows) {
 export async function listBots(env) {
   const { results } = await env.DB.prepare(SELECT).all();
   const bots = (await whereFrom(env, results || [])).map((r) => botOf(env, r));
+  const named = (b) => String(b.displayName || b.name || b.id);
   bots.sort((a, b) => String(b.latest || '').localeCompare(String(a.latest || ''))
-    || String(a.name || a.id).localeCompare(String(b.name || b.id)));
+    || named(a).localeCompare(named(b)));
   return json({ bots });
 }
 
@@ -143,42 +149,130 @@ export async function getBot(env, key) {
   });
 }
 
+/** The longest name an admin may give a bot, and the longest picture URL. */
+const MAX_NAME = 80;
+const MAX_URL = 500;
+
 /**
- * PUT /api/admin/bots `{ key, ours }`: says whether the bot `key` (its identity key, the
- * messages' `author_key`) is Adobe's. Its messages in D1 follow at once (`messages.staff`, the
- * thread list's participants); the thread view reads the account for those written before
- * (src/api.js, botAuthor), and the ones it writes from now on say so themselves.
+ * `{ name, avatar }` of what an admin gave a bot, as given (`undefined`: left as it is; `null`:
+ * the platform's again), or `{ error }`. A picture is an https:// image URL.
  */
-export async function setOurs(env, me, body) {
-  if (typeof body.ours !== 'boolean') {
+function looks(body) {
+  const out = {};
+  for (const [field, max] of [['name', MAX_NAME], ['avatar', MAX_URL]]) {
+    if (body[field] === undefined) {
+      // eslint-disable-next-line no-continue
+      continue;
+    }
+    if (body[field] !== null && typeof body[field] !== 'string') {
+      return { error: `${field} is a string, or null for the platform's` };
+    }
+    const v = String(body[field] ?? '').trim();
+    if (v.length > max) {
+      return { error: `${field} is at most ${max} characters` };
+    }
+    out[field] = v || null;
+  }
+  if (out.avatar) {
+    let url;
+    try {
+      url = new URL(out.avatar);
+    } catch {
+      url = null;
+    }
+    if (!url || url.protocol !== 'https:') {
+      return { error: 'the picture is an https:// image URL' };
+    }
+    out.avatar = url.href;
+  }
+  return out;
+}
+
+/**
+ * PUT /api/admin/bots `{ key, ours?, name?, avatar? }`: what the admin team says of the bot
+ * `key` (its identity key, the messages' `author_key`).
+ *
+ * `ours`: whether it is Adobe's. Its messages in D1 follow at once (`messages.staff`, the thread
+ * list's participants); the thread view reads the account for those written before
+ * (src/api.js, botAuthor), and the ones it writes from now on say so themselves.
+ *
+ * `name` and `avatar`: the name and picture (an https:// image URL) the inbox shows for it,
+ * instead of the platform's (null: the platform's again). Teams gives an app's messages no
+ * picture, and names a bot by its registration. Its messages in D1 take the name at once
+ * (`messages.author`, and a thread's `last_author` that was the bot's); the thread view, the
+ * profile cards and the replies it writes from now on read it from the account.
+ */
+export async function setBot(env, me, body) {
+  const look = looks(body);
+  if (look.error) {
+    return json({ error: look.error }, 400);
+  }
+  const naming = Object.keys(look).length > 0;
+  if (body.ours !== undefined && typeof body.ours !== 'boolean') {
     return json({ error: 'say whether the bot is Adobe\'s: ours is true or false' }, 400);
+  }
+  if (body.ours === undefined && !naming) {
+    return json({ error: 'say whether the bot is Adobe\'s (ours), or give it a name or a picture' }, 400);
   }
   const [source, tenant, userId] = splitKey(body.key);
   if (!source || !tenant || !userId) {
     return json({ error: 'give the bot\'s key' }, 400);
   }
-  const { meta } = await env.DB.prepare(`UPDATE identities SET ours = ?, ours_by = ?, ours_at = ?
-    WHERE source = ? AND tenant = ? AND user_id = ? AND kind = 'bot'`)
-    .bind(
-      Number(body.ours),
-      me.email || String(me.id),
-      new Date().toISOString(),
-      source,
-      tenant,
-      userId,
-    )
-    .run();
-  if (!meta.changes) {
+  const where = 'WHERE source = ? AND tenant = ? AND user_id = ? AND kind = \'bot\'';
+  const before = await env.DB.prepare(`SELECT name, display_name FROM identities ${where}`)
+    .bind(source, tenant, userId).first();
+  if (!before) {
     return json({ error: 'no such bot' }, 404);
   }
+  const sets = [];
+  const args = [];
+  if (body.ours !== undefined) {
+    sets.push('ours = ?', 'ours_by = ?', 'ours_at = ?');
+    args.push(Number(body.ours), me.email || String(me.id), new Date().toISOString());
+  }
+  if (look.name !== undefined) {
+    sets.push('display_name = ?');
+    args.push(look.name);
+  }
+  if (look.avatar !== undefined) {
+    sets.push('display_avatar = ?');
+    args.push(look.avatar);
+  }
+  await env.DB.prepare(`UPDATE identities SET ${sets.join(', ')} ${where}`)
+    .bind(...args, source, tenant, userId).run();
   const row = await env.DB.prepare(`${SELECT} AND i.source = ? AND i.tenant = ? AND i.user_id = ?`)
     .bind(source, tenant, userId).first();
-  const [where] = await whereFrom(env, [row]);
-  const bot = botOf(env, where);
-  const { meta: moved } = await env.DB.prepare(`UPDATE messages SET staff = ?
-    WHERE author_key = ? AND staff != ?`).bind(Number(bot.staff), bot.key, Number(bot.staff)).run();
+  const [at] = await whereFrom(env, [row]);
+  const bot = botOf(env, at);
+  let moved = 0;
+  if (body.ours !== undefined) {
+    const { meta } = await env.DB.prepare(`UPDATE messages SET staff = ?
+      WHERE author_key = ? AND staff != ?`).bind(Number(bot.staff), bot.key, Number(bot.staff)).run();
+    moved = meta.changes || 0;
+  }
+  let renamed = 0;
+  const was = before.display_name || before.name;
+  const shown = bot.displayName || bot.name;
+  if (look.name !== undefined && shown && shown !== was) {
+    const { meta } = await env.DB.prepare(`UPDATE messages SET author = ?
+      WHERE author_key = ? AND author IS NOT ?`).bind(shown, bot.key, shown).run();
+    renamed = meta.changes || 0;
+    await env.DB.prepare(`UPDATE threads SET last_author = ?1 WHERE last_author = ?2
+      AND thread IN (SELECT thread FROM messages WHERE author_key = ?3)`)
+      .bind(shown, was, bot.key).run();
+  }
+  let said = 'look';
+  if (body.ours !== undefined) {
+    said = bot.ours ? 'ours' : 'not ours';
+  }
   console.log(JSON.stringify({
-    route: 'admin', bot: bot.ours ? 'ours' : 'not ours', by: me.id, messages: moved.changes || 0,
+    route: 'admin',
+    bot: said,
+    by: me.id,
+    messages: moved,
+    ...(naming ? {
+      named: look.name !== undefined, pictured: look.avatar !== undefined, renamed,
+    } : {}),
   }));
   return json({ ok: true, bot });
 }

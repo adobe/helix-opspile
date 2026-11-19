@@ -116,7 +116,7 @@ async function botName(env, ref) {
 /**
  * `{ author, person }`: the frontmatter author and the D1 person id, if known. A bot with a bot
  * id (`message`'s platform and tenant, as its author key) is staff when an admin said it is
- * Adobe's (`ours`, src/lookup.js botIdentity).
+ * Adobe's (`ours`, src/lookup.js botIdentity), and goes by the name an admin gave it.
  */
 async function resolveAuthor(env, ref, message = {}) {
   if (!ref.userId) {
@@ -125,13 +125,13 @@ async function resolveAuthor(env, ref, message = {}) {
     const kind = ref.kind || 'bot';
     const bot = ref.botId && kind === 'bot' && message.source && message.tenant
       ? await botIdentity(env, {
-        source: message.source, tenant: message.tenant, botId: ref.botId, name,
+        source: message.source, tenant: message.tenant, botId: ref.botId, name, avatar: ref.avatar,
       })
       : null;
     return {
       author: {
         kind,
-        name: name || ref.botId || null,
+        name: (bot && bot.display_name) || name || ref.botId || null,
         org: null,
         staff: Boolean(bot) && toAuthor(env, bot).staff,
       },

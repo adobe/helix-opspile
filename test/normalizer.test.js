@@ -208,6 +208,38 @@ describe('processKey', () => {
     ]);
   });
 
+  it('keeps a Slack bot\'s picture, and writes the name an admin gave it', async () => {
+    const at = (n) => `1792584000.00050${n}`;
+    const key = (n) => `slack/E1/C1/2026/10/21/${at(n)}-Ev${n}.json`;
+    const icon = (n) => `https://pictures.example/helper-${n}.png`;
+    const bot = (n) => event({
+      type: 'message',
+      subtype: 'bot_message',
+      channel: 'C1',
+      bot_id: 'B3',
+      bot_profile: { name: 'Helper', icons: { image_36: icon(36), image_72: icon(72) } },
+      ts: at(n),
+      text: 'Done.',
+    });
+    const e = env({ [key(1)]: bot(1), [key(2)]: bot(2), [key(3)]: bot(3) });
+    const author = (n) => parse(e.CHANNELS.objects.get(`channels/acme/helix/slack-C1/${at(n)}/${at(n)}.md`).body).meta.author;
+    // Written before by a bot's account without a picture: its next message gives it one.
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('slack', 'E1', 'B3', 'bot', 'Helper', '2026-10-01T00:00:00Z')`);
+    await processKey(e, key(1));
+    assert.deepEqual(e.DB.rows("SELECT avatar FROM identities WHERE user_id = 'B3'"), [{ avatar: icon(72) }]);
+    // A picture it has is kept.
+    e.DB.sqlite.exec("UPDATE identities SET avatar = 'https://pictures.example/kept.png' WHERE user_id = 'B3'");
+    await processKey(e, key(2));
+    assert.deepEqual(e.DB.rows("SELECT avatar FROM identities WHERE user_id = 'B3'"), [
+      { avatar: 'https://pictures.example/kept.png' },
+    ]);
+    assert.equal(author(2).name, 'Helper');
+    e.DB.sqlite.exec("UPDATE identities SET display_name = 'Helper Agent' WHERE user_id = 'B3'");
+    await processKey(e, key(3));
+    assert.equal(author(3).name, 'Helper Agent');
+  });
+
   it('keeps an admin\'s say on a bot user when the account is looked up again', async () => {
     const key = 'slack/E1/C1/2026/10/21/1792584000.000400-Ev4.json';
     const e = env({

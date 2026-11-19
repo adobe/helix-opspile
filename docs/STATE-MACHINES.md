@@ -135,6 +135,13 @@ it out of its upsert. The bot's messages are not rewritten: a message's frontmat
 was written with, and the thread view follows the flag over it once it is decided (`botAuthor` in
 `src/api.js`); `messages.staff` is set to match on every change.
 
+**A bot's name and picture.** the platform's ⇄ an admin's (`identities.display_name`,
+`display_avatar`: NULL or set; `src/ourbots.js`). Only the admin page writes them, and the
+identity's refresh leaves them out of its upsert. Setting or clearing the name rewrites
+`messages.author` of the bot's messages (and `threads.last_author` where it was the bot's old
+name); their frontmatter keeps the name they were written with, which `botAuthor` replaces in
+the thread view.
+
 ## Drafts and replies
 
 **Shared draft.** none → version N → used or discarded → undo window → agent told (`src/drafts.js`,

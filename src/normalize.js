@@ -113,9 +113,12 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
   if (msg.subtype && !SLACK_CONTENT.has(msg.subtype)) {
     authorRef = { kind: 'system', name: 'Slack' };
   } else if (msg.bot_id && !msg.user) {
+    const icons = (msg.bot_profile && msg.bot_profile.icons) || {};
     authorRef = {
       kind: 'bot',
       name: (msg.bot_profile && msg.bot_profile.name) || msg.username || null,
+      // The bot's picture, for its identity when it has none (src/lookup.js, botIdentity).
+      ...(icons.image_72 || icons.image_48 ? { avatar: icons.image_72 || icons.image_48 } : {}),
       botId: msg.bot_id,
       tenant,
       // Org-wide tokens need the workspace for bots.info.

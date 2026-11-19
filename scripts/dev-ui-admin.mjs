@@ -489,15 +489,22 @@ function seedAdminChannels(DB) {
 
 /**
  * The admin page's Bots (src/ourbots.js): the fake inbox's bots with their messages, one an
- * admin said is Adobe's (Provisioning Agent, on Adobe's side in its thread), and one only
- * mentioned. Made up.
+ * admin said is Adobe's (Provisioning Agent, on Adobe's side in its thread, which an admin also
+ * named and gave a picture: on Teams it posts as its registration, `provisioning-agent`, with
+ * none), and one only mentioned. Made up.
  */
 function seedBots(DB, store) {
   const db = DB.sqlite;
   const saidBy = [...store.people.values()].find((p) => p.staff) || {};
   const BOTS = [
     {
-      name: 'Provisioning Agent', source: 'teams', id: 'BOT-PROVISIONING', ours: 1, at: 3,
+      name: 'Provisioning Agent',
+      source: 'teams',
+      id: 'BOT-PROVISIONING',
+      ours: 1,
+      at: 3,
+      posts: 'provisioning-agent',
+      picture: '/icon-192.png',
     },
     { name: 'Alertmanager', source: 'slack', id: 'B0ALERTMANAGER' },
     { name: 'opspile', source: 'slack', id: 'B0OPSPILE' },
@@ -530,17 +537,20 @@ function seedBots(DB, store) {
     const said = b.ours === undefined ? null : new Date(Date.now() - b.at * 86400000).toISOString();
     for (const tenant of tenants.size ? tenants : ['T-FAKE']) {
       db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, handle,
-          fetched_at, ours, ours_by, ours_at) VALUES (?, ?, ?, 'bot', ?, ?, ?, ?, ?, ?)`)
+          fetched_at, ours, ours_by, ours_at, display_name, display_avatar)
+          VALUES (?, ?, ?, 'bot', ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           b.source,
           tenant,
           b.id,
-          b.name,
+          b.posts || b.name,
           b.handle || null,
           new Date().toISOString(),
           b.ours ?? null,
           said && saidBy.email,
           said,
+          b.posts ? b.name : null,
+          b.picture || null,
         );
     }
   }

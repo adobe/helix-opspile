@@ -168,6 +168,20 @@ account up again keeps the say. Its messages stay a bot's: they are not counted 
 answer the customer, `last_staff`), and the agents fence them as every bot's
 (`untrusted` in `src/agent/deliver.js`, which trusts staff people only).
 
+A bot's page also gives it the name and picture the inbox shows (`identities.display_name` and
+`display_avatar`, an https image URL; NULL shows the platform's), for bots the platform says
+little of: Teams gives an app's messages no picture, and names a bot by its registration, not
+by its app. Without an admin's, a Teams bot's picture is its app's icon: the cron's list of each
+Teams team's installed apps (`syncInstalledBots` in `src/bots.js`) points `identities.avatar`
+at `/api/bots/icon` for the app definition installed (a new version is a new URL), which
+fetches the definition's `colorIcon` from Graph beta (`AppCatalog.Read.All`) when an image asks,
+and caches it a day; without the permission the inbox shows the initials. The name goes on its messages in D1 at once (`messages.author`, and a thread's
+`last_author` that was the bot's), on those written before in the thread view (`botAuthor`),
+and in the frontmatter of the ones it writes from then on (`toAuthor`, `resolveAuthor`); the
+picture is read from the account (the thread view, profile cards, the bots a reply can
+mention). A Slack bot's own picture is the one its messages come with (`bot_profile.icons`),
+kept on its account when it has none (`botIdentity`).
+
 **Administration.** The admin team manages all of this at `/inbox/admin`: ops teams and
 their members (found by name or email among the people and platform accounts opspile knows;
 names come from the platforms and are not edited there), the rules that file channels under a team (a name prefix like `aem-`, a Teams

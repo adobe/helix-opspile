@@ -915,7 +915,10 @@ function thread(asked) {
     .map(({ meta, body }) => ({
       ...meta,
       body,
-      avatar: faceOf([...store.people.values()].find((p) => p.name === meta.author.name)),
+      // The bot an admin gave a picture (scripts/dev-ui-admin.mjs, seedBots), as src/api.js
+      // shows it: Teams gives a bot's messages none.
+      avatar: meta.author.kind === 'bot' && meta.author.name === 'Provisioning Agent' ? '/icon-192.png'
+        : faceOf([...store.people.values()].find((p) => p.name === meta.author.name)),
       authorKey: meta.author.kind === 'system' ? null : keyOf(
         [...store.people.values()].find((p) => p.name === meta.author.name),
         entry.row.source,

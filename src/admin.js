@@ -37,7 +37,7 @@ import {
   reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
-import { getBot, listBots, setOurs } from './ourbots.js';
+import { getBot, listBots, setBot } from './ourbots.js';
 import { followable, setTeamFollow, teamFollows } from './follows.js';
 import { portalAuthor, portalBound, portalCall } from './portalsource.js';
 import {
@@ -1354,7 +1354,7 @@ export async function admin(request, env, url, me) {
     case 'GET favicon': return faviconProxy(q('domain'));
     case 'GET bots': return listBots(env);
     case 'GET bot': return getBot(env, url.searchParams.get('key'));
-    case 'PUT bots': return setOurs(env, me, body);
+    case 'PUT bots': return setBot(env, me, body);
     case 'GET cogs': return json(await cogsReport(env, url));
     case 'POST cogs/rollup': return json(await rollupCogs(env));
     case 'GET topics': return json({
