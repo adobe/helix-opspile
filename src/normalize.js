@@ -512,12 +512,20 @@ export function teamsEventText(detail, name = (u) => u.displayName) {
   }
 }
 
+/** Slack's notices that a channel was archived or restored (message subtypes). */
+const SLACK_ARCHIVE_NOTICES = new Set([
+  'channel_archive', 'channel_unarchive', 'group_archive', 'group_unarchive',
+]);
+
 /**
- * Whether a message is a Teams system notice that its channel or its Teams team got a new name:
- * the normalizer looks the channel up again then (the rules read both names).
+ * Whether a message is a system notice that its channel changed in a way its row keeps: on
+ * Teams, that the channel or its Teams team got a new name (the rules read both names), or was
+ * archived or restored; on Slack, that the channel was archived or restored. The normalizer
+ * looks the channel up again then.
  */
-export const isRenameNotice = (message) => /^#?microsoft\.graph\.(channel|team)RenamedEventMessageDetail$/
-  .test(String((message && message.event && message.event['@odata.type']) || ''));
+export const isChannelNotice = (message) => /^#?microsoft\.graph\.(channel|team)(Renamed|Archived|Unarchived)EventMessageDetail$/
+  .test(String((message && message.event && message.event['@odata.type']) || ''))
+  || Boolean(message && message.source === 'slack' && SLACK_ARCHIVE_NOTICES.has(message.subtype));
 
 /** Text as an HTML attribute value (or element text). */
 const attr = (s) => String(s).replace(/[&"<>]/g, (c) => ({

@@ -67,6 +67,7 @@ import {
 } from './page.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
+import { sweepChannels } from './channelsweep.js';
 import { ensureSubscription } from './subscription.js';
 import { moved } from './moved.js';
 import { classifyChannels } from './suggest.js';
@@ -295,7 +296,8 @@ const handlers = {
  * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, check the global
  * MCP servers' tools once a day, keep the agents' MCP OAuth grants alive, classify a batch of
  * the admin team's channels for the channel suggestions, join the public Slack channels the app
- * is not in (SLACK_JOIN_TEAMS), enqueue the threads whose message and thread vectors are
+ * is not in (SLACK_JOIN_TEAMS), look up again the channels not looked up for a week (to learn
+ * which are archived), enqueue the threads whose message and thread vectors are
  * behind, fill in the latest message's text of threads indexed before it was kept, delete
  * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals
  * kept for an Undo of a discarded draft past its time (src/draftevents.js), and enqueue the
@@ -351,6 +353,10 @@ const handlers = {
     ctx.waitUntil(joinPublicChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', slackJoin: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', slackJoin: 'error', error: e.message }))));
+    // Channels looked up a week ago, again: archived ones get no messages to say so.
+    ctx.waitUntil(sweepChannels(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', channels: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', channels: 'error', error: e.message }))));
     ctx.waitUntil(sweepRethreads(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rethreads: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rethreads: 'error', error: e.message }))));

@@ -147,14 +147,15 @@ async function fetchSlackChannel(env, tenant, channelId, now) {
     connected: JSON.stringify(connected),
     topic: (c.purpose && c.purpose.value) || (c.topic && c.topic.value) || null,
     domain: team ? await slackDomain(env, team, now) : '',
+    archived: Boolean(c.is_archived),
   };
 }
 
 async function fetchTeamsChannel(env, teamId, channelId) {
   const t = encodeURIComponent(teamId);
   const [team, channel] = await Promise.all([
-    graphJson(env, `/teams/${t}?$select=displayName,description`),
-    graphJson(env, `/teams/${t}/channels/${encodeURIComponent(channelId)}?$select=displayName,description,membershipType`),
+    graphJson(env, `/teams/${t}?$select=displayName,description,isArchived`),
+    graphJson(env, `/teams/${t}/channels/${encodeURIComponent(channelId)}?$select=displayName,description,membershipType,isArchived`),
   ]);
   return {
     name: channel.displayName,
@@ -163,6 +164,9 @@ async function fetchTeamsChannel(env, teamId, channelId) {
     shared: channel.membershipType === 'shared' ? 1 : 0,
     connected: '[]',
     topic: channel.description || team.description || null,
+    // An archived team's channels are archived too.
+    archived: Boolean(channel.isArchived || team.isArchived),
+    teamArchived: Boolean(team.isArchived),
   };
 }
 
@@ -241,14 +245,16 @@ const classifiedChanged = (row, next) => CLASSIFIED
  * The channel's metadata, from D1 or the platform. A failed lookup is not fatal: the
  * message is filed with what is known, and the next message retries the lookup.
  *
- * `refresh` asks the platform even when the row is fresh (a Teams notice of a rename). When
+ * `refresh` asks the platform even when the row is fresh (a notice of a rename or an archive), and
+ * `at` (when the message it is looked up for was sent) does when the row has the channel archived
+ * before then. A lookup records whether the channel is archived (`archived_at`). When
  * the lookup changed what the rules read, `onChange(before, after)` (the channel as `toChannel`
  * gives it) runs before the row is written: `followChange` (src/refile.js) queues its threads'
  * moves there. The row is the guard, so it comes last; when `onChange` fails, so does this, with
  * the row as it was, and a retry finds the change again.
  */
 export async function getChannel(env, {
-  source, tenant, channelId, groupId, refresh, channelHint,
+  source, tenant, channelId, groupId, refresh, channelHint, at,
 }, now = Date.now(), { onChange } = {}) {
   const row = await env.DB.prepare(
     'SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?',
@@ -261,8 +267,10 @@ export async function getChannel(env, {
       .some((k) => (row[k] ?? null) !== (hinted[k] ?? null)))) {
       return toChannel(row, source, channelId);
     }
-  } else if (!refresh && fresh(row, now) && row.name && (source !== 'slack' || row.domain != null)) {
-    // Slack channels looked up before links named their workspace are looked up again.
+  } else if (!refresh && fresh(row, now) && row.name && (source !== 'slack' || row.domain != null)
+    && !(row.archived_at && at && at > row.archived_at)) {
+    // Slack channels looked up before links named their workspace are looked up again, and so
+    // are archived ones that get a message from after they were archived: they were restored.
     return toChannel(row, source, channelId);
   }
   let f;
@@ -290,14 +298,24 @@ export async function getChannel(env, {
     if (f.domain && f.domain !== (row && row.domain)) {
       await relinkSlackChannel(env, tenant, channelId, f.domain);
     }
+    if (f.teamArchived && f.group_id) {
+      // An archived Teams team's channels are all archived: the rest of them get no message to
+      // say so. A restored one's are left to their own lookups, since a channel can be archived
+      // on its own too.
+      await env.DB.prepare(`UPDATE channels SET archived_at = ?
+        WHERE source = 'teams' AND tenant = ? AND group_id = ? AND archived_at IS NULL`)
+        .bind(new Date(now).toISOString(), tenant, f.group_id).run();
+    }
     await env.DB.prepare(`INSERT INTO channels
       (source, tenant, channel_id, name, group_id, group_name, shared, connected, topic, domain,
-        fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        fetched_at, archived_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (source, tenant, channel_id) DO UPDATE SET name = excluded.name,
         group_id = excluded.group_id, group_name = excluded.group_name,
         shared = excluded.shared, connected = excluded.connected,
-        topic = excluded.topic, domain = excluded.domain, fetched_at = excluded.fetched_at`)
+        topic = excluded.topic, domain = excluded.domain, fetched_at = excluded.fetched_at,
+        archived_at = CASE WHEN excluded.archived_at IS NULL THEN NULL
+          ELSE COALESCE(channels.archived_at, excluded.archived_at) END`)
       .bind(
         source,
         tenant,
@@ -310,6 +328,8 @@ export async function getChannel(env, {
         f.topic ? String(f.topic).slice(0, 500) : null,
         f.domain ?? null,
         new Date(now).toISOString(),
+        // Archived since the first lookup that saw it so (the platforms do not say when).
+        f.archived ? new Date(now).toISOString() : null,
       )
       .run();
     return toChannel(f, source, channelId);

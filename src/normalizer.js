@@ -31,7 +31,7 @@ import {
 } from './slackmd.js';
 import { htmlDropped, htmlToMarkdown } from './html.js';
 import {
-  isRenameNotice, normalize, slackLinkIn, teamsEventText, teamsEventUsers,
+  isChannelNotice, normalize, slackLinkIn, teamsEventText, teamsEventUsers,
 } from './normalize.js';
 import { withSlackFiles } from './slackfiles.js';
 import { copyThreadFiles } from './threadfiles.js';
@@ -449,7 +449,7 @@ export async function processKey(env, key, cache = {}) {
   }
   // eslint-disable-next-line no-param-reassign
   cache.rules = cache.rules || await loadRules(env);
-  const lookup = { ...message, refresh: isRenameNotice(message) };
+  const lookup = { ...message, refresh: isChannelNotice(message) };
   const channel = await getChannel(env, lookup, undefined, {
     // The lookup found the channel renamed: its threads follow, from where they are now, before
     // this message is filed where the rules say now.
