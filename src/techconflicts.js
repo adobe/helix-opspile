@@ -18,7 +18,8 @@
  *
  * - `diverging`: one id that two teams define otherwise (name, description, layer, product, or
  *   on in one and off in another). Each team's is what Clef asks in its channels, so it may be
- *   meant (an override).
+ *   meant (an override). A team that only turns one of the admin team's off is opting out of it
+ *   in its channels, the documented way: that is none.
  * - `name`: a name or alias that two ids have, so a thread that names it matches either.
  *
  * Settling one changes the files (a team's catalog, written as the admin who settles it), or D1
@@ -64,7 +65,11 @@ export async function findConflicts(rows) {
     const defs = list.map(definition).sort((a, b) => (a.team === GLOBAL_TEAM ? -1 : 0)
       - (b.team === GLOBAL_TEAM ? -1 : 0) || a.team.localeCompare(b.team));
     const fields = FIELDS.filter((f) => new Set(defs.map((d) => JSON.stringify(d[f]))).size > 1);
-    if (defs.length > 1 && fields.length) {
+    // A team that turns one of the admin team's off for its channels opts out: no conflict.
+    const optOut = fields.length === 1 && fields[0] === 'enabled'
+      && defs.some((d) => d.team === GLOBAL_TEAM && d.enabled)
+      && defs.every((d) => d.enabled || d.team !== GLOBAL_TEAM);
+    if (defs.length > 1 && fields.length && !optOut) {
       out.push({
         key: `diverging:${tech}`, kind: 'diverging', tech, fields, definitions: defs,
       });
