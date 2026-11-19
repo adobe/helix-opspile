@@ -49,21 +49,31 @@ export const membershipOn = {
 /**
  * Who wrote message `id` of the agent's entry (`threads`: its platform threads): `{ name, email,
  * userId }`, their platform user id when opspile knows it, or null when no such message is there.
+ * The email and user id are the person's (opspile's people, staff and those in a team), else the
+ * author's platform account's: most customers are no person of opspile's, and the admins who
+ * approve want to see who asked, by address, as when a person asks the admins' bot.
  */
 async function askedBy(env, t, threads, id) {
-  const m = await env.DB.prepare(`SELECT m.author, m.person, p.name, p.email FROM messages m
+  const m = await env.DB.prepare(`SELECT m.author, m.person, p.name, p.email,
+      i.user_id AS author_id, i.kind AS author_kind, i.name AS author_name,
+      i.email AS author_email
+    FROM messages m
       LEFT JOIN people p ON p.id = m.person
+      LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
     WHERE m.source = ? AND m.tenant = ? AND m.id = ? AND m.deleted = 0
       AND m.thread IN (SELECT value FROM json_each(?))`)
     .bind(t.source, t.tenant, String(id || ''), JSON.stringify(threads)).first();
   if (!m) {
     return null;
   }
-  const who = m.person && await env.DB.prepare(`SELECT user_id FROM identities
+  const account = m.author_id && m.author_kind !== 'bot' ? m.author_id : null;
+  const who = !account && m.person && await env.DB.prepare(`SELECT user_id FROM identities
     WHERE source = ? AND tenant = ? AND person = ? AND kind != 'bot' LIMIT 1`)
     .bind(t.source, t.tenant, m.person).first();
   return {
-    name: m.name || m.author || null, email: m.email || null, userId: who ? who.user_id : null,
+    name: m.name || m.author || m.author_name || null,
+    email: m.email || (account && m.author_email) || null,
+    userId: account || (who ? who.user_id : null),
   };
 }
 

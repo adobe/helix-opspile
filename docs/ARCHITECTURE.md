@@ -2427,7 +2427,10 @@ channel, and on each platform the admins have a bot for that: admin-bot (teams-a
 Teams, AEM Ops Automation (the slack-automation relay) on Slack. A request that does not reach
 the bot properly (a plain "@admin, can you add …") is easy to miss, and the thread does not wait
 on us when Adobe posted last. With this tool the agent files it (`request_membership`,
-`src/agent/membership.js`), naming the author of the message that asked. Neither bot listens to
+`src/agent/membership.js`), naming the author of the message that asked: their name, and their
+mail address and platform account (opspile's person's, else the author's platform account's, as
+most customers are no person here), so the admins who approve see who asked as they do when a
+person asks the bot. Neither bot listens to
 other bots (Teams delivers no bot's message to another bot; the relay ignores bot messages), so
 opspile calls each through a service binding to its `MembershipRequests` entrypoint, on the same
 Cloudflare account; a named entrypoint answers no HTTP, so no secret is shared:
