@@ -18,7 +18,9 @@ import { parse } from '../src/channels.js';
 import {
   requestOf, runBackfill, slackBackfillKey, sweepBackfills,
 } from '../src/backfill.js';
-import { labelThread, MAX_QUESTIONS, QUESTIONS } from '../src/label.js';
+import {
+  labelThread, MAX_QUESTIONS, QUESTIONS, queueRelabel,
+} from '../src/label.js';
 import { getChannel, resetSlackDomains } from '../src/lookup.js';
 import {
   consume, processKey, recordBots, teamsEventMarkdown,
@@ -1153,6 +1155,13 @@ describe('backfill, mentions and labels', () => {
     );
     assert.equal((await labelThread(e, 'slack:E1:C1:1.1')).result, 'unchanged');
     assert.equal(calls.length, clef.length + 2); // Clef, Clairic and the title, once
+    // Asked to (`/diag/relabel`), an unchanged thread is labeled again; queued, as a forced job.
+    assert.equal((await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO), { force: true })).result, 'labeled');
+    e.queued.length = 0;
+    assert.deepEqual(await queueRelabel(e, { limit: 5, minMessages: 1 }), { queued: 1, next: null });
+    assert.deepEqual(e.queued.map((q) => q.body), [{ label: 'slack:E1:C1:1.1', force: true }]);
+    const rest = await queueRelabel(e, { after: 'slack:E1:C1:1.1', minMessages: 1 });
+    assert.deepEqual(rest, { queued: 0, next: null });
   });
 
   it('keeps "about" unasked, not empty, when its call fails', async () => {

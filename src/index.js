@@ -47,7 +47,7 @@ import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
 import { syncInstalledBots } from './bots.js';
 import { listDead, pruneDead, redrive } from './deadjobs.js';
-import { sweepLabels } from './label.js';
+import { queueRelabel, sweepLabels } from './label.js';
 import { sweepRethreads } from './rethread.js';
 import { diagTeams } from './diag.js';
 import { discordEnabled } from './discord.js';
@@ -176,6 +176,14 @@ const handlers = {
         return json(await redrive(env, { ids }));
       }
       return json(await listDead(env));
+    }
+    if (pathname === '/diag/relabel' && request.method === 'POST') {
+      // Channel threads labeled again though they did not change (src/label.js queueRelabel):
+      // POST `{ after?, limit?, minMessages? }`, a batch at a time.
+      if (!authorizedDiag(request, env) || !env.NORMALIZE) {
+        return text('forbidden\n', 403);
+      }
+      return json(await queueRelabel(env, await request.json().catch(() => ({}))));
     }
     if (pathname === '/diag/discord') {
       // The Discord poller: GET says how the last poll went; POST polls now (and reads the
