@@ -90,8 +90,10 @@ function load() {
     FACETS, state, pass: null, keptUnread: (t) => t.unread, viewerId: () => ME,
   });
   const activityOf = (t) => String(t.last_at || t.any_at || '');
-  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, forgetColumn, row, grouped, groupPlan, groupHtml, youCount, youBadge, stackLine, mergeStacks', {
+  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, forgetColumn, row, grouped, groupPlan, groupHtml, youCount, youBadge, sideCount, sideBadge, stackLine, mergeStacks', {
     state,
+    AGENT_NAME: 'Thread Agent',
+    SIDE_ICON: '<svg class="bubble-ico"/>',
     esc,
     notButton: views.notButton,
     listed: () => state.data.threads,
@@ -134,6 +136,8 @@ function load() {
     mentionsOn: views.mentionsOn,
     youCount: page.youCount,
     youBadge: page.youBadge,
+    sideCount: page.sideCount,
+    sideBadge: page.sideBadge,
     SLIDERS: '<svg/>',
     AT: '<svg/>',
   });
@@ -512,7 +516,7 @@ describe('the simple personal view', () => {
       }
       assert.doesNotMatch(columnRow(''), /data-not/);
       // Between the name and the badge, which stays the row's last.
-      assert.match(columnRow('acme'), /<\/span><button class="not"[^>]*>≠<\/button><b class="men"/);
+      assert.match(columnRow('acme'), /<\/span><button class="not"[^>]*>≠<\/button><span class="bdg"><b class="men"/);
     });
 
     it('leaves the customer out of the list, and strikes it through at the end of the column', () => {
@@ -658,6 +662,23 @@ describe('the simple personal view', () => {
       assert.equal(badge(columnRow('globex')), '2');
       state.data.threads.find((t) => t.thread === 'a1').unreadMentions = 120;
       assert.equal(badge(columnRow('acme')), '99+');
+    });
+
+    it('has the purple badge beside it, right of the name, for the sidebar\'s answers you have not seen', () => {
+      const side = (h) => (/<b class="sidebadge"[^>]*>(?:<svg[^>]*\/>)?([^<]*)<\/b>/.exec(h) || [])[1] || null;
+      // Read threads too: the answer waits whether or not the thread is unread.
+      Object.assign(state.data.threads.find((t) => t.thread === 'i1'), { unread: false, sideNew: ['sb_1:answer', 'sb_2:answer'] });
+      Object.assign(state.data.threads.find((t) => t.thread === 'a2'), { sideNew: ['sb_3:answer'] });
+      assert.equal(side(columnRow('initech')), '2');
+      assert.equal(side(columnRow('acme')), '1');
+      assert.equal(side(columnRow('globex')), null);
+      assert.equal(side(columnRow('')), '3');
+      assert.equal(side(bar.filtButton(0)), '3');
+      // Purple first, then red, both in the row's badges at its end.
+      assert.match(columnRow('acme'), /<span class="bdg"><b class="sidebadge"[^>]*>[\s\S]*?<\/b><b class="men"/);
+      exclude('initech');
+      assert.equal(side(columnRow('initech')), null);
+      assert.equal(side(columnRow('')), '1');
     });
 
     it('sets the names of customers with unread threads in bold, until they are read', () => {

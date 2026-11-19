@@ -813,7 +813,9 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   have not read yet, as Slack's badge does: those that mention you, and in a thread you posted or
   were mentioned in (any member of a re-threaded group), the messages of other people since
   you first were in it, each message once (`unreadForYou`, `unreadInYours` in `src/threads.js`).
-  The same count is on the customers of the personal view and on its rows, which it marks red;
+  The badge is at the row's right end, before the count, so a column of them reads at a glance,
+  and the purple one (the sidebar's answers to you that you have not seen, below) beside it. The
+  same counts are on the customers of the personal view and on its rows, which it marks red;
   a thread's
   "N replies" is bold and blue while it has replies you have not read.
 - **Channels a message names** (`#name`, or `#C…` where Slack sent the id without the name, as
@@ -1786,7 +1788,8 @@ thread in the inbox. Where the conversation itself shows depends on the room (`u
 Both are purple, say that only the team sees it and that nothing goes to the platform, and are
 left by **✕** (and Esc, and opening another thread).
 The agent's answer to you that you have not seen yet (asked, then gone to another thread before it
-answered) puts a **purple badge** on the thread's row, with how many there are (`sideNew` from
+answered) puts a **purple badge** on the thread's row, and on every filter value it is under (the
+customers of the personal view too), with how many there are (`sideNew` from
 `GET /api/inbox`, `sidebar_messages.seen_at`), and keeps the thread in unread only; its line in
 the thread says *New* while it is folded. It goes once the conversation shows to you, in the
 panel or unfolded (`POST /api/agent/sidebar/seen`, `{ type: 'sidebar-seen' }` to your other

@@ -41,7 +41,7 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .card h3::before { content: ""; border-radius: 50%; }
 .card h3 .clear { margin-left: auto; cursor: pointer; }
 .card h3 .clear:hover { color: var(--ink); }
-.fr { display: grid; grid-template-columns: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) 1fr auto calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-600)); align-items: center;
+.fr { display: grid; grid-template-columns: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) 1fr auto auto calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-600)); align-items: center;
   padding: var(--spectrum-spacing-75) var(--spectrum-spacing-75); cursor: pointer; }
 .fr:hover { background: var(--hover); }
 
@@ -74,7 +74,13 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .fr .ico { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
 .fr .lw { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; }
 .fr .lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Unread mentions of you, counted as Slack and Teams count them. */
+/* The row's badges (`badges`): at its right end, before the count, so a column of them is read at a
+   glance; the purple one (the sidebar's answers to you), then the red one (unread mentions of
+   you, counted as Slack and Teams count them). */
+.fr .bdg { grid-column: 4; grid-row: 1; justify-self: end; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
+.fr .bdg:empty { display: none; }
+.fr .n { grid-column: 5; grid-row: 1; }
+.fr .bar { grid-column: 6; grid-row: 1; }
 .fr .men { flex: none;
  text-align: center; }
 .fr .lab.dim { color: var(--faint); }
@@ -242,6 +248,10 @@ main.rail #filters h3 > *, main.rail #filters .fg, main.rail #filters .fr .lab, 
 main.rail #filters .fr .bar, main.rail #filters .fr .not { opacity: 0; transition: opacity var(--spectrum-animation-duration-100) var(--spectrum-animation-duration-100); }
 main.rail #filters h3 { color: transparent; transition: color var(--spectrum-animation-duration-100) var(--spectrum-animation-duration-100); }
 main.rail #filters .fr .lw { gap: 0; }
+/* Folded, the badges are beside the icon, where the label starts, and there is room for one: the
+   red, else the purple. Out, they are at the row's end again. */
+main.rail:not(.railopen) #filters:not(:hover, :has(:focus-visible)) .fr .bdg { grid-column: 3; justify-self: start; }
+main.rail:not(.railopen) #filters:not(:hover, :has(:focus-visible)) .fr .bdg .sidebadge:not(:only-child) { display: none; }
 main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-animation-duration-100) var(--spectrum-animation-duration-100), max-width var(--spectrum-animation-duration-300) ease-in var(--spectrum-animation-duration-100), margin var(--spectrum-animation-duration-300) var(--spectrum-animation-duration-100); }
 
 :is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) { margin-right: calc(var(--rail) - var(--filters-w) - var(--fg));
@@ -1554,7 +1564,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 }
 .spectrum .fr .bar { height: var(--spectrum-progress-bar-thickness-medium); border-radius: calc(var(--spectrum-progress-bar-thickness-medium) / 2); }
 .spectrum .fr .bar.stack { gap: var(--spectrum-border-width-100); }
-/* Unread mentions of you: S2's NotificationBadge (accent, white figures, a pill). */
+/* Unread mentions of you: S2's NotificationBadge (negative, as the personal view's, white
+   figures, a pill); how many filters are set, on the Filters button: the same, in accent. */
 .spectrum .fr .men, .spectrum #threads .count .filt b {
   min-width: var(--spectrum-component-height-50);
   height: var(--spectrum-component-height-50);
@@ -1567,6 +1578,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   font-weight: var(--spectrum-bold-font-weight);
   line-height: var(--spectrum-component-height-50);
 }
+.spectrum .fr .men { background: var(--spectrum-negative-background-color-default); text-align: center; }
+.spectrum #threads .count .filt b.sidebadge { background: var(--spectrum-purple-background-color-default); }
 /* Exclude (≠): a quiet, extra-small ActionButton over the label's end; red once it excludes. */
 .spectrum .fr .not {
   padding: 0 var(--spectrum-spacing-75);
@@ -2780,6 +2793,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
    it, as on the expert view's cards: over the end of its name, before the badge. */
 main.simple .fr { grid-template-columns: var(--spectrum-spacing-300) 1fr auto; gap: var(--spectrum-spacing-100); }
 main.simple .fr .lab, main.simple .fr .not { grid-column: 2; }
+main.simple .fr .bdg { grid-column: 3; }
 main.simple .fr.all { margin-bottom: var(--spectrum-spacing-75); }
 .spectrum main.simple .card.simple h3::before { display: none; }
 /* A logo: the icon over the customer's initial, which shows where there is none. */

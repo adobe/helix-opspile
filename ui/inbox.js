@@ -1211,12 +1211,15 @@ function facetRows(f) {
   const mix = new Map(); // value -> { red, yellow, green, none }
   const unread = new Set(); // values with threads the viewer has not read
   const mentions = new Map(); // value -> messages for the viewer they have not read (youCount)
+  const sides = new Map(); // value -> the agent's answers to the viewer they have not seen (sideCount)
   for (const t of pool) {
     for (const v of valuesOf(f, t)) {
       counts.set(v, (counts.get(v) || 0) + 1);
       if (t.unread) unread.add(v);
       const you = youCount(t);
       if (you) mentions.set(v, (mentions.get(v) || 0) + you);
+      const side = sideCount(t);
+      if (side) sides.set(v, (sides.get(v) || 0) + side);
       const m = mix.get(v) || {};
       m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
       mix.set(v, m);
@@ -1249,15 +1252,12 @@ function facetRows(f) {
     return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || label)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
       ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>'))}
-      <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${mentionBadge(mentions.get(v))}</span>
-      ${notButton(out)}
+      <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span></span>
+      ${notButton(out)}${badges(mentions.get(v), sides.get(v))}
       <span class="n">${n}</span>
       ${bar(f, v, n, max, mix.get(v), color)}</div>`;
   }).join('') || '<div class="fr"><span></span><span></span><span class="lab dim">nothing</span></div>';
 }
-
-/** How many messages for the viewer they have not read (youCount), as Slack's badge shows it. */
-const mentionBadge = (n) => (n ? `<b class="men" title="${esc(youTitle(n))}">${n > 99 ? '99+' : n}</b>` : '');
 
 const cardFacets = (id) => viewFacets().filter((f) => f.id === id || f.into === id);
 
@@ -1297,6 +1297,12 @@ const sideSeen = new Set();
 const sideCount = (t) => (t.sideNew || []).filter((id) => !sideSeen.has(id)).length;
 const sideTitle = (n) => `${n} new ${n === 1 ? 'answer' : 'answers'} from ${AGENT_NAME} to you in the sidebar`;
 const sideBadge = (n) => (n ? `<b class="sidebadge" title="${esc(sideTitle(n))}" aria-label="${esc(sideTitle(n))}">${SIDE_ICON}${n > 99 ? '99+' : n}</b>` : '');
+/**
+ * A filter row's badges, at its right end before the count, so a column of them is scanned at a
+ * glance: the purple one (sideCount) and the red one (youCount). Always there, empty or not, as
+ * the row's grid has a column for them.
+ */
+const badges = (you, side) => `<span class="bdg">${sideBadge(side || 0)}${youBadge(you || 0)}</span>`;
 /**
  * A customer's logo: its icon (the admin team's, else its mail domain's favicon) over its
  * initial on its colour, which shows where there is no icon or it does not load (see wireLogos).
@@ -1374,25 +1380,27 @@ function simpleCustomers() {
   const on = state.sel.customer || new Set();
   const off = state.not.customer || new Set();
   const by = new Map();
-  for (const v of off) by.set(v, { unread: false, you: 0, out: true });
+  for (const v of off) by.set(v, { unread: false, you: 0, side: 0, out: true });
   for (const t of all) {
-    const c = by.get(t.org) || { unread: false, you: 0 };
+    const c = by.get(t.org) || { unread: false, you: 0, side: 0 };
     if (!c.out) {
       c.unread ||= Boolean(t.unread);
       c.you += youCount(t);
+      c.side += sideCount(t);
     }
     by.set(t.org, c);
   }
-  for (const v of on) if (!by.has(v)) by.set(v, { unread: false, you: 0 });
+  for (const v of on) if (!by.has(v)) by.set(v, { unread: false, you: 0, side: 0 });
   for (const [v, c] of by) {
     c.name = customerName(v);
     c.at = columnPlace(v, c);
   }
   const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${c.out ? ' (excluded)' : ''}">
-      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${youBadge(c.you)}</div>`).join('');
+      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${badges(c.you, c.side)}</div>`).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
+  const side = [...by.values()].reduce((n, c) => n + c.side, 0);
   return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
-    <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
+    <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${badges(you, side)}</div>${rows}</div>`;
 }
 
 function renderFilters() { inPass(filterCards); }
@@ -2029,14 +2037,16 @@ function renderThreads() { inPass(threadRows); }
 
 /**
  * The Filters button of narrower screens, with how many filters are set. In the simple
- * personal view it opens the customers, and carries the red badge of them all but the
- * excluded ones.
+ * personal view it opens the customers, and carries the purple and the red badge of them all
+ * but the excluded ones.
  */
 function filtButton(on) {
   if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
-  const you = listed().filter((t) => passes(t, 'customer') && !state.not.customer?.has(t.org)).reduce((n, t) => n + youCount(t), 0);
+  const shown = listed().filter((t) => passes(t, 'customer') && !state.not.customer?.has(t.org));
+  const you = shown.reduce((n, t) => n + youCount(t), 0);
+  const side = shown.reduce((n, t) => n + sideCount(t), 0);
   const at = mentionsOn() ? `<span class="at" title="Showing only threads that mention you">${AT}</span>` : '';
-  return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${at}${youBadge(you)}</button>`;
+  return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${at}${sideBadge(side)}${youBadge(you)}</button>`;
 }
 
 /*
