@@ -13,6 +13,7 @@
 import { cogsReport } from './cogs/report.js';
 import { rollupCogs } from './cogs/rollup.js';
 import { buildTopicMap, latestTopicMap } from './topicmap.js';
+import { queueRelabel } from './label.js';
 import { PLATFORMS } from './platforms.js';
 import { json } from './http.js';
 import { likePattern } from './like.js';
@@ -1362,6 +1363,9 @@ export async function admin(request, env, url, me) {
     case 'POST portal/open': return openPortal(env, me, body);
     case 'POST portal/decline': return declinePortal(env, me, body);
     case 'POST conflicts': return settleConflict(env, me, body);
+    // Channel threads labeled again though they did not change (src/label.js queueRelabel).
+    case 'POST relabel': return env.NORMALIZE ? json(await queueRelabel(env, body))
+      : json({ error: 'no queue' }, 503);
     case 'POST classify': return json(await classifyChannels(env, {
       limit: Math.min(Math.max(Number(body.limit) || 10, 1), 25),
     }));

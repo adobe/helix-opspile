@@ -686,8 +686,9 @@ export async function consume(batch, baseEnv, meter = null) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await pokeAgent(env, body.agent, { retry: msg.attempts < LAST_ATTEMPT }) };
       } else if (body.label) {
+        const force = Boolean(body.force);
         // eslint-disable-next-line no-await-in-loop
-        r = { key, ...await labelThread(env, body.label) };
+        r = { key, ...await labelThread(env, body.label, new Date(), { force }) };
         if (r.result === 'labeled' || r.result === 'titled') {
           // eslint-disable-next-line no-await-in-loop
           await queueExport(env, body.label, { delaySeconds: 0 });

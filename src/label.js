@@ -735,6 +735,26 @@ async function labelAlert(env, thread, now) {
   return { result: 'titled', title: Boolean(title) };
 }
 
+/**
+ * `/diag/relabel`: the channel threads with a label and at least `minMessages` messages, by key
+ * after `after`, `limit` of them, each queued to be labeled again though it did not change
+ * (`force`), five seconds apart. `{ queued, next }`: `next` is the `after` of the next batch, or
+ * null when there are no more.
+ */
+export async function queueRelabel(env, { after = '', limit = 100, minMessages = 3 } = {}) {
+  const n = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
+    JOIN labels l ON l.thread = t.thread
+    WHERE t.kind = 'channel' AND t.messages >= ? AND t.thread > ?
+    ORDER BY t.thread LIMIT ?`).bind(Math.max(Number(minMessages) || 1, 1), String(after || ''), n).all();
+  const keys = (results || []).map((r) => r.thread);
+  for (const [i, thread] of keys.entries()) {
+    // eslint-disable-next-line no-await-in-loop
+    await env.NORMALIZE.send({ label: thread, force: true }, sweepDelay(i));
+  }
+  return { queued: keys.length, next: keys.length === n ? keys[keys.length - 1] : null };
+}
+
 const LABEL_SWEEP_AFTER_MS = 60 * 60 * 1000;
 const LABEL_SWEEP_DAYS = 14;
 const LABEL_SWEEP_LIMIT = 50;
@@ -743,7 +763,7 @@ const LABEL_SWEEP_LIMIT = 50;
  * Labels one thread. Skips threads that have not changed since they were last labeled,
  * and alert threads (their kind is known and nobody is waiting).
  */
-export async function labelThread(env, key, now = new Date()) {
+export async function labelThread(env, key, now = new Date(), { force = false } = {}) {
   const thread = await env.DB.prepare('SELECT * FROM threads WHERE thread = ?').bind(key).first();
   if (!thread) {
     return { result: 'missing' };
@@ -763,7 +783,8 @@ export async function labelThread(env, key, now = new Date()) {
   const through = rx.latest && rx.latest > thread.any_at ? rx.latest : thread.any_at;
   const done = await env.DB.prepare('SELECT labeled_through FROM labels WHERE thread = ?')
     .bind(key).first();
-  if (done && done.labeled_through === through) {
+  // `force`: asked again though nothing changed (`/diag/relabel`: new questions, a new catalog).
+  if (done && done.labeled_through === through && !force) {
     return { result: 'unchanged' };
   }
   const messages = await threadMessages(env, thread);
