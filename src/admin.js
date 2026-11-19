@@ -180,9 +180,9 @@ function matchScore(c, needle) {
 }
 
 /**
- * Every channel opspile has seen, with where its threads are filed, its manual rules and
- * Clef's suggestion. With `q`, only the channels every word of it matches (`channelMatch`),
- * the ones whose name or Teams team matches first.
+ * Every channel opspile has seen but the archived ones, with where its threads are filed, its
+ * manual rules and Clef's suggestion. With `q`, only the channels every word of it matches
+ * (`channelMatch`), the ones whose name or Teams team matches first.
  */
 async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}) {
   const filed = await rows(env, `SELECT c.source, c.tenant, c.channel_id, c.name, c.group_name, c.shared,
@@ -191,6 +191,7 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
     FROM channels c LEFT JOIN threads t ON t.source = c.source AND t.tenant = c.tenant
       AND t.channel_id = c.channel_id
     LEFT JOIN orgs o ON o.slug = t.org
+    WHERE c.archived_at IS NULL
     GROUP BY c.source, c.tenant, c.channel_id, t.team, t.org, t.kind
     ORDER BY latest DESC`);
   const labels = new Map((await rows(env, 'SELECT * FROM channel_labels'))
@@ -838,20 +839,26 @@ async function declinePortal(env, me, body) {
 
 // ---- teams and members ------------------------------------------------------------------
 
+/** SQL: the channel of the threads row `t` is not archived (the lists count no archived ones). */
+const LIVE = (t) => `NOT EXISTS (SELECT 1 FROM channels ac WHERE ac.source = ${t}.source
+  AND ac.tenant = ${t}.tenant AND ac.channel_id = ${t}.channel_id AND ac.archived_at IS NOT NULL)`;
+
 async function listTeams(env, me) {
   const all = await rows(env, `SELECT t.slug, t.name, t.self_managed,
       (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug) AS members,
       (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug AND m.role = 'manager') AS managers,
       (SELECT COUNT(*) FROM rules r WHERE r.target = 'team' AND r.value = t.slug) AS rules,
-      (SELECT COUNT(DISTINCT th.channel_id) FROM threads th WHERE th.team = t.slug) AS channels,
+      (SELECT COUNT(DISTINCT th.channel_id) FROM threads th WHERE th.team = t.slug
+        AND ${LIVE('th')}) AS channels,
       (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug) AS threads,
       (SELECT COUNT(*) FROM channel_teams s WHERE s.team = t.slug) AS shared
     FROM teams t ORDER BY t.name`);
   const everything = isAdmin(me);
   const teams = all.filter((t) => everything || managedTeams(me).includes(t.slug))
     .map((t) => ({ ...t, self_managed: Boolean(t.self_managed) }));
-  const unassigned = everything ? await env.DB.prepare(`SELECT COUNT(DISTINCT channel_id) AS channels,
-      COUNT(*) AS threads FROM threads WHERE team = ?`).bind(UNASSIGNED).first() : null;
+  const unassigned = everything ? await env.DB.prepare(`SELECT
+      COUNT(DISTINCT CASE WHEN ${LIVE('t')} THEN t.channel_id END) AS channels,
+      COUNT(*) AS threads FROM threads t WHERE t.team = ?`).bind(UNASSIGNED).first() : null;
   // The open assignment requests: the admin team's to decide, the managers' to wait for; and
   // the customers waiting in the portal, theirs to open a channel for.
   const scope = everything ? null : managedTeams(me);
@@ -1156,7 +1163,8 @@ async function mailDomains(env, slug = null) {
  */
 async function listOrgs(env) {
   const list = await rows(env, `SELECT s.slug, o.name, COALESCE(o.type, 'customer') AS type, o.icon,
-      (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug) AS channels,
+      (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug AND ${LIVE('t')})
+        AS channels,
       (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug) AS threads,
       (SELECT MAX(COALESCE(last_at, any_at)) FROM threads t WHERE t.org = s.slug) AS latest
     FROM (SELECT slug FROM orgs UNION SELECT DISTINCT org FROM threads

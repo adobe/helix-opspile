@@ -390,7 +390,8 @@ export async function classifyChannel(env, ch, ctx, now = Date.now()) {
 /**
  * Classifies up to `limit` of the admin team's channels: first the ones Clef has not seen,
  * then the ones that changed since (new activity, other ops teams to choose from) or whose
- * label is a week old. Their members are listed again when that is a week old too.
+ * label is a week old. Their members are listed again when that is a week old too. Archived
+ * channels are left out.
  *
  * `deps.slack` and `deps.graph` replace the platform calls (tests).
  */
@@ -408,8 +409,8 @@ export async function classifyChannels(env, { limit = BATCH, now = Date.now(), .
       GROUP BY source, tenant, channel_id) a
     JOIN channels c ON c.source = a.source AND c.tenant = a.tenant AND c.channel_id = a.channel_id
     LEFT JOIN channel_labels l ON l.source = a.source AND l.tenant = a.tenant AND l.channel_id = a.channel_id
-    WHERE l.labeled_at IS NULL OR l.options IS NOT ? OR l.labeled_through IS NOT COALESCE(a.through, '')
-      OR l.labeled_at < ?
+    WHERE c.archived_at IS NULL AND (l.labeled_at IS NULL OR l.options IS NOT ?
+      OR l.labeled_through IS NOT COALESCE(a.through, '') OR l.labeled_at < ?)
     ORDER BY l.labeled_at IS NOT NULL, a.through DESC`, ADMIN_TEAM, options.options, stale);
   out.pending = Math.max(0, due.length - limit);
   const ctx = {
@@ -518,7 +519,7 @@ export async function suggestionsFor(env, team) {
     FROM threads t
     LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
     LEFT JOIN channel_labels l ON l.source = t.source AND l.tenant = t.tenant AND l.channel_id = t.channel_id
-    WHERE t.team = ? GROUP BY t.source, t.tenant, t.channel_id`, ADMIN_TEAM);
+    WHERE t.team = ? AND c.archived_at IS NULL GROUP BY t.source, t.tenant, t.channel_id`, ADMIN_TEAM);
   // A channel shared with the team already is in its inbox (migration 0024): not suggested,
   // though it still counts in the corpus below.
   const shared = new Set((await rows(env, 'SELECT source, channel_id FROM channel_teams WHERE team = ?', team))
