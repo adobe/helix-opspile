@@ -1448,6 +1448,15 @@ through an approval flow of its own, and a message written in Slack itself is le
 which asks there; a thread agent still points out a mention of someone not in the channel
 (`src/agent/members.js`).
 
+**Posting in a channel you are not in.** Slack lets a person post only in a channel they are
+in, and a team answers channels in the inbox that not all of them joined in Slack. When Slack
+refuses a person's post (`POST /api/post`, text or files) with `not_in_channel`, the opspile
+app adds them to the channel the same way (`inviteAuthor` in `src/invite.js`, into the workspace
+first with `SLACK_ADMIN_TOKEN` where it must), and the post goes again, once. Only staff post as
+themselves, so this puts no customer anywhere. The answer has `joined` (and `joinedWorkspace`),
+and the page says so in a toast; when the app cannot add them, the error says why, with Slack's
+reason, and nothing went out.
+
 The suggestions that open with the `@` bring along everything they are picked from (`pool` of
 `GET /api/mentionable`: the accounts of the workspace, one a person, each marked as in the thread, in the
 channel or by its affinity, and the bots), and the page ranks what is typed after it itself,

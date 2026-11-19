@@ -70,8 +70,10 @@ const inTeam = (t) => [].concat(t).includes('helix');
  * admin.users.assign's (an error code, or nothing for added to the workspace, after which
  * conversations.invite adds them).
  */
-function slack(answers = {}, assign = {}) {
+function slack(answers = {}, assign = {}, outside = []) {
   const calls = [];
+  // Who may not post (`not_in_channel`) until the app adds them.
+  const out = new Set(outside);
   const joined = new Set();
   const fetch = async (url, init = {}) => {
     const u = String(url);
@@ -86,10 +88,14 @@ function slack(answers = {}, assign = {}) {
     }
     if (u.endsWith('/conversations.invite')) {
       const error = joined.has(body.users) ? null : answers[body.users];
+      if (!error) {
+        out.delete(body.users);
+      }
       return Response.json(error ? { ok: false, error } : { ok: true, channel: { id: 'C1' } });
     }
     if (u.endsWith('/chat.postMessage')) {
-      return Response.json({ ok: true, ts: '1.9' });
+      const who = { 'Bearer xoxp-ada': 'U1' }[init.headers?.authorization];
+      return Response.json(out.has(who) ? { ok: false, error: 'not_in_channel' } : { ok: true, ts: '1.9' });
     }
     throw new Error(`unexpected ${u}`);
   };
@@ -249,5 +255,50 @@ describe('posting adds the colleagues it mentions to the channel first', () => {
     assert.equal(res.status, 200, JSON.stringify(data));
     assert.deepEqual(data.invited, [{ id: 'U2', name: 'Bo Staff' }]);
     assert.equal(s.calls.at(-1).u.split('/').pop(), 'chat.postMessage');
+  });
+});
+
+describe('posting as someone not in the channel', () => {
+  const real = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = real;
+  });
+
+  async function postAsAda(s) {
+    globalThis.fetch = s.fetch;
+    const e = env();
+    await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      updated_at) VALUES (1, 'slack', 'U1', ?, '2026-10-21T10:00:00Z')`).run(await seal(e, 'xoxp-ada'));
+    return post(e, ME, { thread: 'slack:E1:C1:1.1', text: 'here' }, inTeam);
+  }
+
+  it('has the app add them, and posts again', async () => {
+    const s = slack({}, {}, ['U1']);
+    const res = await postAsAda(s);
+    const data = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(data));
+    assert.equal(data.joined, true);
+    assert.deepEqual(s.calls.map((c) => [c.u.split('/').pop(), c.auth]), [
+      ['chat.postMessage', 'Bearer xoxp-ada'],
+      ['conversations.invite', 'Bearer xoxb-made-up'],
+      ['chat.postMessage', 'Bearer xoxp-ada'],
+    ]);
+    assert.deepEqual(s.calls[1].body, { channel: 'C1', users: 'U1' });
+    assert.match(invitedNote(data), /the bot added you/);
+  });
+
+  it('asks nobody to add them when they are in', async () => {
+    const s = slack();
+    const data = await (await postAsAda(s)).json();
+    assert.equal(data.joined, undefined);
+    assert.deepEqual(s.calls.map((c) => c.u.split('/').pop()), ['chat.postMessage']);
+  });
+
+  it('says why, and posts once, when the app cannot add them', async () => {
+    const s = slack({ U1: 'cant_invite' }, {}, ['U1']);
+    const res = await postAsAda(s);
+    assert.equal(res.status, 502);
+    assert.match((await res.json()).error, /could not add you \(cant_invite\)/);
+    assert.equal(s.calls.filter((c) => c.u.endsWith('/chat.postMessage')).length, 1);
   });
 });
