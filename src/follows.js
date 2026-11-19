@@ -164,12 +164,12 @@ export async function teamsFollowing(env, techs) {
  * The statements that make thread `thread`'s rows of `thread_tech` what its label shows
  * (`shown`, `{ tech: p }`, as `labels.tech`), for the batch that writes the label.
  */
-export function threadTechStatements(db, thread, shown) {
+export function threadTechStatements(db, thread, shown, about = {}) {
   return [
     db.prepare('DELETE FROM thread_tech WHERE thread = ?').bind(thread),
     ...Object.entries(shown || {}).filter(([, p]) => typeof p === 'number')
-      .map(([tech, p]) => db.prepare('INSERT INTO thread_tech (thread, tech, p) VALUES (?, ?, ?)')
-        .bind(thread, tech, p)),
+      .map(([tech, p]) => db.prepare('INSERT INTO thread_tech (thread, tech, p, about) VALUES (?, ?, ?, ?)')
+        .bind(thread, tech, p, typeof about[tech] === 'number' ? about[tech] : null)),
   ];
 }
 

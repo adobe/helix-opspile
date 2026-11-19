@@ -637,6 +637,31 @@ export async function writeTitle(env, state, alert, thread) {
 }
 
 /**
+ * The Clef questions whether the thread is about each of `tech` (those it showed), by the hash
+ * of the id, as `techQuestions`; `aboutOf` maps them back.
+ */
+export const aboutQuestions = (tech) => {
+  const keys = questionKeys(tech.map((t) => t.tech));
+  return Object.fromEntries(tech.map((t) => [`about.${keys[t.tech]}`, {
+    type: 'noul',
+    instructions: `Is this thread about ${t.description}: is that what the question, the problem or the work in it concerns, not only something it mentions?`,
+  }]));
+};
+
+/** What the thread is about, of `tech`, as `{ id: probability }` at or above TECH_MIN. */
+export function aboutOf(tech, answers) {
+  const out = {};
+  const keys = questionKeys(tech.map((t) => t.tech));
+  for (const { tech: id } of tech) {
+    const p = answers && answers[`about.${keys[id]}`]?.noul;
+    if (typeof p === 'number' && p >= TECH_MIN) {
+      out[id] = Math.round(p * 1000) / 1000;
+    }
+  }
+  return out;
+}
+
+/**
  * The technologies a thread shows, as `{ id: probability }`: Clef's answers about `tech` at or
  * above TECH_MIN, and what the rules `detected` (as sure as can be, 1).
  */
@@ -778,16 +803,21 @@ export async function labelThread(env, key, now = new Date()) {
   const [kind, kindP] = choice('kind');
   const topics = topicsOf(a);
   const shown = techOf(tech, a, found.tech);
+  // Of what it shows, what it is about: a second call, only for those (src/label.js aboutOf).
+  const asked = tech.filter((t) => shown[t.tech] !== undefined);
+  const about = asked.length
+    ? aboutOf(asked, (await askClef(env, state, aboutQuestions(asked)).catch(() => ({}))).answers)
+    : {};
   // What it showed before, for the inboxes that follow what it shows or showed (src/follows.js).
   const { results: before } = await env.DB.prepare('SELECT tech FROM thread_tech WHERE thread = ?')
     .bind(key).all();
   const label = env.DB.prepare(`INSERT INTO labels (thread, next_actor, next_actor_p, kind, kind_p,
-      urgency, resolved_p, labeled_through, model, labeled_at, title, topics, tech)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      urgency, resolved_p, labeled_through, model, labeled_at, title, topics, tech, about)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (thread) DO UPDATE SET next_actor = excluded.next_actor,
       next_actor_p = excluded.next_actor_p, kind = excluded.kind, kind_p = excluded.kind_p,
       urgency = excluded.urgency, resolved_p = excluded.resolved_p, topics = excluded.topics,
-      tech = excluded.tech,
+      tech = excluded.tech, about = excluded.about,
       labeled_through = excluded.labeled_through, model = excluded.model,
       labeled_at = excluded.labeled_at, title = COALESCE(excluded.title, labels.title)`)
     .bind(
@@ -804,9 +834,10 @@ export async function labelThread(env, key, now = new Date()) {
       title,
       topics ? JSON.stringify(topics) : null,
       JSON.stringify(shown),
+      JSON.stringify(about),
     );
   // The label and what the thread shows by index (`thread_tech`) at once.
-  await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown)]);
+  await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown, about)]);
   await recordTech(env, thread, shown);
   const was = (before || []).map((r) => r.tech).sort();
   const is = Object.keys(shown).sort();

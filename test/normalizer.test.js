@@ -1122,6 +1122,10 @@ describe('backfill, mentions and labels', () => {
     // Each technology by the hash of its id (src/techid.js), mapped back in the call.
     assert.ok(asked.includes(`tech.${questionKeys(['eds']).eds}`));
     assert.ok(!asked.includes('tech.eds'));
+    // What it shows (Edge Delivery, by the rules), and only that, is asked "about" in a call after.
+    const about = clef.filter((c) => Object.keys(c.input.questions).some((k) => k.startsWith('about.')));
+    assert.deepEqual(about.map((c) => Object.keys(c.input.questions)), [[`about.${questionKeys(['eds']).eds}`]]);
+    assert.match(Object.values(about[0].input.questions)[0].instructions, /^Is this thread about /);
     assert.ok(asked.includes('topic.cdn'));
     // The rules detected Edge Delivery, as sure as can be; Clef said nothing about it.
     assert.deepEqual(e.DB.rows('SELECT tech, p FROM channel_tech'), [{ tech: 'eds', p: 1 }]);
