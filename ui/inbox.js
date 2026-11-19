@@ -7255,9 +7255,9 @@ const NOT_ADDED = {
 };
 
 /**
- * What a post's answer says about the colleagues it mentioned who were not in the Slack
- * channel (src/invite.js): who the bot added to it (and to the workspace), and whom Slack would
- * not let it add, or ''.
+ * What a post's answer says about who was not in the Slack channel (src/invite.js): you, when
+ * the bot added you so the post could go, the colleagues it mentioned whom the bot added to it
+ * (and to the workspace), and whom Slack would not let it add, or ''.
  */
 function invitedSaying(data) {
   const names = (list) => list.map((p) => p.name || 'someone').join(', ');
@@ -7269,6 +7269,8 @@ function invitedSaying(data) {
     return NOT_ADDED[w](names(list), list.length > 1 ? 'are' : 'is');
   });
   return [
+    data?.joinedWorkspace ? 'You were not in this Slack channel: the bot added you to its workspace and the channel, and sent it.' : '',
+    data?.joined && !data.joinedWorkspace ? 'You were not in this Slack channel: the bot added you, and sent it.' : '',
     added.length ? `Added ${names(added)} to the channel, so they see the mention.` : '',
     joined.length ? `Added ${names(joined)} to the Slack workspace and the channel, so they see the mention.` : '',
     ...refused,

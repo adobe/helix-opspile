@@ -17,7 +17,7 @@ import {
   CHANNEL_PEOPLE, kept, keptAccounts, placeArgs,
 } from './accounts.js';
 import { json } from './http.js';
-import { invitedFields, inviteMentioned } from './invite.js';
+import { inviteAuthor, invitedFields, inviteMentioned } from './invite.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
 import { threadExperts } from './expertise.js';
 import { suggestMentions } from './mention-match.js';
@@ -1048,6 +1048,9 @@ const SLACK_RECONNECT = ['invalid_auth', 'token_revoked', 'not_authed', 'missing
  * `@Name` of one of them in the text becomes a real platform mention, so the person is
  * notified. On Slack, the Adobe people among them who are not in the channel are added to it
  * first (src/invite.js): `invited` in the answer, and `uninvited` whom Slack would not add.
+ * When Slack refuses the post because the person is not in the channel, the opspile app adds
+ * them and it goes again, once: `joined` in the answer (`joinedWorkspace` when they were added
+ * to the channel's workspace too).
  * Emoji `:names:` go as the platform knows them (src/shortcodes.js); `text` in the answer is
  * the reply as sent. Files go with the text, in the same message. The reply then
  * arrives like any other message, through the platform's events.
@@ -1146,32 +1149,54 @@ export async function post(env, me, request, inTeam, files = []) {
   if (t.source === 'slack') {
     // Colleagues mentioned who are not in the channel are added first, so the mention reaches
     // them (src/invite.js).
-    const invited = invitedFields(await inviteMentioned(env, t, mentions, { except: userId }));
-    if (files.length) {
-      const up = await slackUpload(token, {
+    const invitedSome = await inviteMentioned(env, t, mentions, { except: userId });
+    const send = () => (files.length
+      ? slackUpload(token, {
         channel: t.channel_id, threadTs: t.root_id, comment: sent && slackText(sent, mentions),
-      }, files);
-      if (up.error === 'missing_scope') {
-        // A token from before files:write, or one it was taken from.
-        return json({
-          error: 'Slack: the inbox needs your permission to upload files: connect your Slack account again',
-          reconnect: 'slack',
-          files: true,
-        }, 409);
+      }, files)
+      // A table goes as a `markdown` block, which Slack renders (mrkdwn has no tables).
+      : slackWithBlocks(token, 'chat.postMessage', {
+        channel: t.channel_id, thread_ts: t.root_id, text: slackText(sent, mentions),
+      }, slackBlocks(sent, mentions)));
+    let data = await send();
+    // Slack lets a person post only where they are in: the app adds them, and it goes again.
+    let joined = null;
+    if (data.error === 'not_in_channel') {
+      joined = await inviteAuthor(env, t, { id: userId, name: me.name });
+      if (joined?.invited.length) {
+        data = await send();
       }
-      if (up.error) {
-        const connect = SLACK_RECONNECT.includes(up.error) ? 'slack' : undefined;
-        return json({ error: `Slack: ${up.error}`, connect }, 502);
+    }
+    const invited = {
+      ...invitedFields(invitedSome),
+      ...(joined?.invited.length ? { joined: true } : {}),
+      ...(joined?.invited[0]?.workspace ? { joinedWorkspace: true } : {}),
+    };
+    if (data.error === 'missing_scope' && files.length) {
+      // A token from before files:write, or one it was taken from.
+      return json({
+        error: 'Slack: the inbox needs your permission to upload files: connect your Slack account again',
+        reconnect: 'slack',
+        files: true,
+      }, 409);
+    }
+    if (data.error === 'not_in_channel' && joined && !joined.invited.length) {
+      // The app could not add them: Slack's reason, where it gave one.
+      const why = joined.refused[0]?.error;
+      return json({
+        error: `Slack: not_in_channel, and the bot could not add you${why ? ` (${why})` : ''}: join the channel in Slack`,
+      }, 502);
+    }
+    if (files.length) {
+      if (data.error) {
+        const connect = SLACK_RECONNECT.includes(data.error) ? 'slack' : undefined;
+        return json({ error: `Slack: ${data.error}`, connect }, 502);
       }
       // Slack names the files, not the message, which arrives through the events.
       return json({
-        ok: true, platform: 'slack', id: null, files: up.files, text: sent, ...invited,
+        ok: true, platform: 'slack', id: null, files: data.files, text: sent, ...invited,
       });
     }
-    // A table goes as a `markdown` block, which Slack renders (mrkdwn has no tables).
-    const data = await slackWithBlocks(token, 'chat.postMessage', {
-      channel: t.channel_id, thread_ts: t.root_id, text: slackText(sent, mentions),
-    }, slackBlocks(sent, mentions));
     if (!data.ok) {
       const reconnect = SLACK_RECONNECT.includes(data.error);
       return json({

@@ -28,6 +28,9 @@
  * and then to the channel; `invited` marks them `workspace: true`. Without it, Slack's refusal is
  * told as before.
  *
+ * The person posting is added the same way, when Slack refuses their post because they are not
+ * in the channel (`inviteAuthor`): the post then goes out again, once.
+ *
  * Slack says who is in already (`already_in_channel`), so nothing is looked up first, and a
  * listing of members that is out of date does not matter. Nothing here stops the post: a
  * refusal is logged, and what Slack refused for a person is told to whoever posted.
@@ -94,25 +97,10 @@ async function staffMentioned(env, t, mentions, except) {
 }
 
 /**
- * Adds the Adobe people `mentions` name to the channel of Slack thread `t` where they are not
- * in it yet: `{ invited, refused }`, each `[{ id, name }]` (`refused` with Slack's `error`), or
- * null when nobody was asked for. `refused` only has what Slack said about a person; a call
- * that failed as such (the app without the scope, Slack away) is logged and refuses nobody.
- *
- * @param {object} env
- * @param {{ source: string, tenant: string, channel_id: string }} t
- * @param {{ id: string, name?: string, kind?: string }[]} mentions
- * @param {{ except?: string, fetch?: typeof fetch }} [options]
+ * Adds `people` (`[{ id, name }]`, Slack user ids) to the channel of Slack thread `t`, with the
+ * opspile app: `{ invited, refused }` as `inviteMentioned` says them, or null for nobody.
  */
-export async function inviteMentioned(env, t, mentions, options = {}) {
-  if (!t || t.source !== 'slack' || !env.SLACK_BOT_TOKEN || !mentions || !mentions.length) {
-    return null;
-  }
-  const { except, fetch: fetcher = fetch } = options;
-  const people = (await staffMentioned(env, t, mentions, except)).slice(0, MAX_INVITES);
-  if (!people.length) {
-    return null;
-  }
+async function invitePeople(env, t, people, fetcher) {
   const invite = (p) => call(fetcher, env.SLACK_BOT_TOKEN, 'conversations.invite', {
     channel: t.channel_id, users: p.id,
   });
@@ -170,6 +158,48 @@ export async function inviteMentioned(env, t, mentions, options = {}) {
   return invited.length || refused.length ? { invited, refused } : null;
 }
 
+/**
+ * Adds the Adobe people `mentions` name to the channel of Slack thread `t` where they are not
+ * in it yet: `{ invited, refused }`, each `[{ id, name }]` (`refused` with Slack's `error`), or
+ * null when nobody was asked for. `refused` only has what Slack said about a person; a call
+ * that failed as such (the app without the scope, Slack away) is logged and refuses nobody.
+ *
+ * @param {object} env
+ * @param {{ source: string, tenant: string, channel_id: string }} t
+ * @param {{ id: string, name?: string, kind?: string }[]} mentions
+ * @param {{ except?: string, fetch?: typeof fetch }} [options]
+ */
+export async function inviteMentioned(env, t, mentions, options = {}) {
+  if (!t || t.source !== 'slack' || !env.SLACK_BOT_TOKEN || !mentions || !mentions.length) {
+    return null;
+  }
+  const { except, fetch: fetcher = fetch } = options;
+  const people = (await staffMentioned(env, t, mentions, except)).slice(0, MAX_INVITES);
+  return people.length ? invitePeople(env, t, people, fetcher) : null;
+}
+
+/**
+ * Adds the person posting, Slack user `userId`, to the channel of Slack thread `t`, when Slack
+ * refused their post there (`not_in_channel`): Slack lets a person post only in a channel they
+ * are in, and an inbox where a team answers a channel does not ask each of them to join it
+ * first. Only staff post as themselves (src/post.js), so this puts no customer anywhere. The
+ * opspile app adds them as it adds those mentioned, into the workspace first where it must:
+ * `{ invited, refused }` (`invited` empty when the app could not), or null without the app.
+ *
+ * @param {object} env
+ * @param {{ source: string, tenant: string, channel_id: string }} t
+ * @param {{ id: string, name?: string }} me
+ * @param {{ fetch?: typeof fetch }} [options]
+ */
+export async function inviteAuthor(env, t, me, options = {}) {
+  if (!t || t.source !== 'slack' || !env.SLACK_BOT_TOKEN || !me || !me.id) {
+    return null;
+  }
+  const { fetch: fetcher = fetch } = options;
+  return await invitePeople(env, t, [{ id: me.id, name: me.name }], fetcher)
+    || { invited: [], refused: [] };
+}
+
 /** The fields of an answer that say who was added (`invited`) or refused (`uninvited`). */
 export const invitedFields = (result) => ({
   ...(result && result.invited.length
@@ -183,13 +213,16 @@ export const invitedFields = (result) => ({
 });
 
 /**
- * What an answer's `invited` and `uninvited` (`invitedFields`) say, for an agent or an MCP
- * client, starting with a space: '' for nobody.
+ * What an answer's `invited` and `uninvited` (`invitedFields`), and `joined` (src/post.js), say,
+ * for an agent or an MCP client, starting with a space: '' for nobody.
  */
-export function invitedNote({ invited = [], uninvited = [] } = {}) {
+export function invitedNote({
+  invited = [], uninvited = [], joined = false, joinedWorkspace = false,
+} = {}) {
   const name = (p) => (p.workspace ? `${p.name || 'someone'} (to the Slack workspace too)`
     : p.name || 'someone');
   return [
+    joined ? ` You were not in the channel: the bot added you${joinedWorkspace ? ' (to the Slack workspace too)' : ''}, and it went again.` : '',
     invited.length ? ` Added to the channel first, so they see the mention: ${invited.map(name).join(', ')}.` : '',
     uninvited.length ? ` Not in the channel, and Slack would not add them, so they may not see it: ${uninvited.map((p) => `${name(p)} (${p.error})`).join(', ')}.` : '',
   ].join('');
