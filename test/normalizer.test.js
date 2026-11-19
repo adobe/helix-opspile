@@ -53,6 +53,9 @@ const USERS = {
     team_id: 'T9',
     is_restricted: true,
   },
+  UB: {
+    id: 'UB', real_name: 'Helper Bot', is_bot: true, profile: {}, team_id: 'T1',
+  },
 };
 
 function env(raw, extra = {}) {
@@ -177,6 +180,51 @@ describe('processKey', () => {
     assert.deepEqual(meta.raw, [key]);
     const [who] = e.DB.rows("SELECT title, guest FROM identities WHERE user_id = 'U2'");
     assert.deepEqual([who.title, who.guest], ['CTO', 1]);
+  });
+
+  it('counts a bot an admin said is Adobe\'s as staff, from its next message on', async () => {
+    const at = (n) => `1792584000.00030${n}`;
+    const key = (n) => `slack/E1/C1/2026/10/21/${at(n)}-Ev${n}.json`;
+    const bot = (n) => event({
+      type: 'message', subtype: 'bot_message', channel: 'C1', bot_id: 'B1', bot_profile: { name: 'Helper' }, ts: at(n), text: 'Done.',
+    });
+    const e = env({ [key(1)]: bot(1), [key(2)]: bot(2) });
+    const author = (n) => parse(e.CHANNELS.objects.get(`channels/acme/helix/slack-C1/${at(n)}/${at(n)}.md`).body).meta.author;
+    await processKey(e, key(1));
+    assert.deepEqual(author(1), {
+      kind: 'bot', name: 'Helper', org: null, staff: false,
+    });
+    // Its first message wrote its account, so the admin page lists it.
+    assert.deepEqual(e.DB.rows("SELECT kind, name, ours FROM identities WHERE user_id = 'B1'"), [
+      { kind: 'bot', name: 'Helper', ours: null },
+    ]);
+    e.DB.sqlite.exec("UPDATE identities SET ours = 1 WHERE user_id = 'B1'");
+    await processKey(e, key(2));
+    assert.equal(author(2).staff, true);
+    assert.deepEqual(e.DB.rows('SELECT id, staff, counted FROM messages ORDER BY id'), [
+      { id: at(1), staff: 0, counted: 0 },
+      { id: at(2), staff: 1, counted: 0 },
+    ]);
+  });
+
+  it('keeps an admin\'s say on a bot user when the account is looked up again', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000400-Ev4.json';
+    const e = env({
+      [key]: event({
+        type: 'message', channel: 'C1', user: 'UB', bot_id: 'B2', ts: '1792584000.000400', text: 'Done.',
+      }),
+    });
+    // Looked up long ago: the platform is asked again, and the flag stays.
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at, avatar, ours)
+      VALUES ('slack', 'E1', 'UB', 'bot', 'Helper Bot', '2020-01-01T00:00:00Z', '', 1)`);
+    await processKey(e, key);
+    const path = 'channels/acme/helix/slack-C1/1792584000.000400/1792584000.000400.md';
+    assert.deepEqual(parse(e.CHANNELS.objects.get(path).body).meta.author, {
+      kind: 'bot', name: 'Helper Bot', org: null, staff: true,
+    });
+    const [row] = e.DB.rows("SELECT ours, fetched_at FROM identities WHERE user_id = 'UB'");
+    assert.equal(row.ours, 1);
+    assert.notEqual(row.fetched_at, '2020-01-01T00:00:00Z');
   });
 
   it('writes a Slack message from its blocks, which say what Slack shows', async () => {

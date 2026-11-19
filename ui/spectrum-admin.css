@@ -417,6 +417,11 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .tag.manual { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-indigo-subtle-background-color-default); }
 .spectrum .tag.partner { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-purple-subtle-background-color-default); }
 .spectrum .tag.vendor { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-yellow-subtle-background-color-default); }
+.spectrum .recent { list-style: none; margin: 0; padding: 0; }
+.spectrum .recent li { padding: var(--spectrum-spacing-200) 0; border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .recent li:first-child { border-top: 0; padding-top: 0; }
+.spectrum .recent .said { overflow-wrap: anywhere; margin-bottom: var(--spectrum-spacing-75); }
+.spectrum .tag.ours { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-informative-subtle-background-color-default); }
 /* A request's status, and Clef's verdict when it is this team's. */
 .spectrum .tag.open { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); }
 .spectrum .tag.confirmed, .spectrum .tag.clef.yes { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }

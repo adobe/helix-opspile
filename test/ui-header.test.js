@@ -149,6 +149,7 @@ describe('the header', () => {
     assert.equal(Header.pageOf('/inbox/kb?repo=r'), 'agents');
     assert.equal(Header.pageOf('/inbox/admin'), 'teams');
     assert.equal(Header.pageOf('/inbox/admin?tab=orgs&org=o'), 'orgs');
+    assert.equal(Header.pageOf('/inbox/admin?tab=bots&bot=k'), 'bots');
     assert.equal(Header.pageOf('/inbox/admin?tab=requests'), 'requests');
     assert.equal(Header.pageOf('/inbox/cogs?range=7d'), 'cogs');
     assert.equal(Header.pageOf('/inbox/topics?team=helix'), 'topics');
@@ -212,8 +213,8 @@ describe('the header', () => {
     // Another site, in a new tab, with what it is in its title.
     assert.match(member.html, /<a data-page="stats" href="https:\/\/klickhaus\.example\/opspile\.html\?t=1mo" title="Statistics of all threads[^"]*klickhaus[^"]*new tab\)" target="_blank" rel="noopener">Stats/);
     assert.deepEqual(nav({ manages: ['edge'], stats }).pages, ['inbox', 'agents', 'teams', 'stats']);
-    assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'agents', 'teams', 'orgs', 'requests', 'topics', 'cogs', 'stats']);
-    assert.deepEqual(nav({ admin: true }).pages, ['inbox', 'agents', 'teams', 'orgs', 'requests', 'topics', 'cogs']);
+    assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'agents', 'teams', 'orgs', 'bots', 'requests', 'topics', 'cogs', 'stats']);
+    assert.deepEqual(nav({ admin: true }).pages, ['inbox', 'agents', 'teams', 'orgs', 'bots', 'requests', 'topics', 'cogs']);
   });
 
   it('opens Stats on the org and the team the page on screen sends', () => {

@@ -570,18 +570,43 @@ export async function getIdentity(env, ref, now = Date.now()) {
     person: person ? person.id : null,
     person_staff: person ? person.staff : null,
     person_name: person ? person.name : null,
+    // An admin's say (the admin page's Bots), which looking the account up again leaves alone.
+    ours: (row && row.ours) ?? null,
+  };
+}
+
+/**
+ * A bot that posts without a user account (a Slack bot's bot id, a Teams app's), as
+ * `identities` keeps it: `{ kind, name, email, staff, ours }`. Its row is written the first
+ * time it posts, if nothing wrote it before (`recordBots`, a Slack `bots.info`), so the admin
+ * page lists it and an admin can say it is Adobe's. The platform is not asked.
+ */
+export async function botIdentity(env, {
+  source, tenant, botId, name,
+}, now = Date.now()) {
+  const row = await env.DB.prepare(`SELECT kind, name, email, staff, ours FROM identities
+    WHERE source = ? AND tenant = ? AND user_id = ?`).bind(source, tenant, botId).first();
+  if (row) {
+    return row;
+  }
+  await env.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+    VALUES (?, ?, ?, 'bot', ?, ?) ON CONFLICT (source, tenant, user_id) DO NOTHING`)
+    .bind(source, tenant, botId, name || null, new Date(now).toISOString()).run();
+  return {
+    kind: 'bot', name: name || null, email: null, staff: null, ours: null,
   };
 }
 
 /**
  * `{ kind, name, org, staff }` for the frontmatter. Staff are people marked as staff in
- * D1, or whose mail domain is one of STAFF_DOMAINS; the org of everyone else is their
- * mail domain (on Teams everyone is a guest, so the tenant says nothing).
+ * D1, or whose mail domain is one of STAFF_DOMAINS, and the bots an admin said are Adobe's
+ * (`ours`: a bot has no mail address); the org of everyone else is their mail domain (on
+ * Teams everyone is a guest, so the tenant says nothing).
  */
 export function toAuthor(env, identity) {
   const domain = domainOf(identity.email);
   const staff = Boolean(identity.person_staff) || Boolean(identity.staff)
-    || isStaffDomain(env, identity.email);
+    || Boolean(identity.ours) || isStaffDomain(env, identity.email);
   return {
     kind: identity.kind || 'person',
     name: identity.person_name || identity.name || null,
