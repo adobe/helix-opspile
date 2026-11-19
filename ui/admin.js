@@ -1963,15 +1963,18 @@ async function showOrg(slug) {
 // on Adobe's side, as a colleague; the others on the customer's. Bots have no mail address,
 // which is how the inbox tells people apart, so an admin says which are Adobe's.
 
-const botName = (b) => b.name || b.handle || b.id;
-/** A bot's picture, where the platform gave one (Slack, Discord), else an empty square. */
-const botIco = (b) => (/^(https:\/\/|\/)/.test(b.avatar || '')
-  ? `<img class="ico" src="${esc(b.avatar)}" alt="">` : '<span class="ico none"></span>');
+/** A bot's name as the inbox shows it: an admin's, else the platform's. */
+const botName = (b) => b.displayName || b.name || b.handle || b.id;
+/** A bot's picture: an admin's, else the platform's (Slack, Discord), else an empty square. */
+const botIco = (b) => {
+  const url = b.displayAvatar || b.avatar || '';
+  return /^(https:\/\/|\/)/.test(url) ? `<img class="ico" src="${esc(url)}" alt="">` : '<span class="ico none"></span>';
+};
 const oursTag = (b) => (b.ours ? '<span class="tag ours" title="Adobe\'s: on Adobe\'s side in the inbox">Adobe</span>' : '');
 const botPosts = (b) => (b.messages ? `${b.messages} ${b.messages === 1 ? 'message' : 'messages'}` : 'mentioned only');
 
 function drawBots(f) {
-  const match = (b) => !f || `${b.name || ''} ${b.handle || ''} ${b.id} ${platform(b)} ${b.channel || ''}`.toLowerCase().includes(f);
+  const match = (b) => !f || `${b.displayName || ''} ${b.name || ''} ${b.handle || ''} ${b.id} ${platform(b)} ${b.channel || ''}`.toLowerCase().includes(f);
   const shown = state.bots.filter((b) => match(b) && (!state.onlyOurs || b.ours));
   const ours = state.bots.filter((b) => b.ours).length;
   const rows = shown.map((b) => `
@@ -2007,11 +2010,12 @@ function showBot(key) {
         }).join('');
     return `<div class="card"><h2>Latest messages</h2>${v.recent && !v.recent.error && !v.recent.length ? '<div class="empty pad">Its messages were deleted.</div>' : `<ul class="recent">${items}</ul>`}</div>`;
   };
+  let saves = 0;
   const draw = () => {
     const channel = b.channel && (b.source === 'teams' ? [b.group, b.channel].filter(Boolean).join(' › ') : `#${b.channel}`);
     const where = [b.latest ? `latest ${ago(b.latest)}` : '', channel ? `in ${channel}` : '', b.org ? `(${orgLabel(b.org)})` : ''].filter(Boolean).join(' ');
     $('detail').innerHTML = `
-      <div class="title">${backButton()}${botIco(b)}<h1 class="fill">${esc(botName(b))}</h1><span class="sub">${esc(platform(b))} bot</span></div>
+      <div class="title">${backButton()}<span id="bIco">${botIco(b)}</span><h1 class="fill" id="bTitle">${esc(botName(b))}</h1><span class="sub">${esc(platform(b))} bot</span></div>
       <div class="status" id="status"></div>
       <div class="card"><div class="field">
         <label>Whose</label><span class="seg" id="bOurs">
@@ -2022,8 +2026,31 @@ function showBot(key) {
         <label>Id</label><span class="mono">${esc(b.id)}</span>
         ${b.oursBy ? `<label>Said by</label><span class="sub">${esc(b.oursBy)}, ${esc(ago(b.oursAt))}</span>` : ''}
       </div><p class="hint">Bots have no mail address, which is how the inbox tells Adobe people from customers, so an admin says which bots are Adobe's. An Adobe bot's messages show on Adobe's side, as your colleagues' do, the ones it wrote before too${b.staff && !b.ours ? '; this one is there already, by its Discord role' : ''}. They stay a bot's: they are not an answer to the customer, and the thread agents read them as they read every bot's.</p></div>
+      <div class="card"><h2>How the inbox shows it</h2><div class="field">
+        <label>On ${esc(platform(b))}</label><span class="inline">${botIco({ avatar: b.avatar })}<span>${esc(b.name || b.handle || b.id)}</span>${b.avatar ? '' : '<span class="sub">no picture</span>'}</span>
+        <label for="bName">Name</label><span class="inline"><input id="bName" class="fill" maxlength="80" value="${esc(b.displayName || '')}"></span>
+        <label for="bAvatar">Picture</label><span class="inline"><input id="bAvatar" class="mono fill" maxlength="500" value="${esc(b.displayAvatar || '')}"></span>
+      </div><p class="hint">The inbox shows this name and picture instead of the ones from ${esc(platform(b))}, on the messages it wrote before too; left empty, the ones from ${esc(platform(b))}.${b.source === 'teams' ? ' Teams gives a bot\'s messages no picture, and names it by its registration, not by its app.' : ''} The picture is the https URL of an image.</p></div>
       ${recentCard()}`;
     showStatus();
+    // Each save sends both fields as the page shows them; only the answer to the last one is
+    // shown, so an earlier answer does not take back what was changed after it.
+    const look = async () => {
+      const now = { name: $('bName').value.trim() || null, avatar: $('bAvatar').value.trim() || null };
+      if (now.name === (b.displayName || null) && now.avatar === (b.displayAvatar || null)) return;
+      const mine = ++saves;
+      const res = await call('/api/admin/bots', 'PUT', { key, ...now });
+      if (mine !== saves) return;
+      if (!res.ok) { failed('Save', res); return; }
+      Object.assign(b, res.body.bot);
+      status('ok', 'Saved.');
+      renderList();
+      if (v !== state.view) return;
+      $('bTitle').textContent = botName(b);
+      $('bIco').innerHTML = botIco(b);
+    };
+    $('bName').onchange = look;
+    $('bAvatar').onchange = look;
     for (const btn of $('bOurs').querySelectorAll('[data-ours]')) {
       btn.onclick = () => hold(btn, `bot:${key}`, async () => {
         const ours = btn.dataset.ours === '1';

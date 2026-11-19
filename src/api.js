@@ -92,20 +92,25 @@ const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop
 
 /**
  * A bot's message author as its account says now (`account`: the message's row, with its
- * identity's `account_kind`, `ours`, `account_staff` and `account_email`): an admin who says a
- * bot is Adobe's, or takes it back (the admin page's Bots), moves the messages it wrote before
- * to that side too, whose frontmatter says what was so when they were written. A bot nobody
- * decided on (`ours` NULL) keeps its frontmatter.
+ * identity's `account_kind`, `ours`, `account_staff`, `account_email` and `display_name`): an
+ * admin who says a bot is Adobe's, or takes it back (the admin page's Bots), moves the messages
+ * it wrote before to that side too, whose frontmatter says what was so when they were written,
+ * and the name an admin gives it goes on them too. A bot nobody decided on (`ours` NULL) keeps
+ * its frontmatter's side.
  */
 export function botAuthor(env, author, account) {
-  if (!author || author.kind !== 'bot' || !account || account.account_kind !== 'bot'
-    || account.ours === null || account.ours === undefined) {
+  if (!author || author.kind !== 'bot' || !account || account.account_kind !== 'bot') {
     return author;
+  }
+  const named = account.display_name && account.display_name !== author.name
+    ? { ...author, name: account.display_name } : author;
+  if (account.ours === null || account.ours === undefined) {
+    return named;
   }
   const { staff } = toAuthor(env, {
     kind: 'bot', staff: account.account_staff, email: account.account_email, ours: account.ours,
   });
-  return staff === Boolean(author.staff) ? author : { ...author, staff };
+  return staff === Boolean(named.staff) ? named : { ...named, staff };
 }
 
 /**
@@ -867,8 +872,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     Promise.all(read.map((m) => folderFiles(env.CHANNELS, m.path, { waitUntil })))
       .then((lists) => lists.flat()),
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
-        || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key, m.person = ? AS mine,
-        i.kind AS account_kind, i.ours, i.staff AS account_staff, i.email AS account_email
+        || ':' || m.channel_id || ':' || m.id AS mkey, COALESCE(i.display_avatar, i.avatar) AS avatar,
+        m.author_key, m.person = ? AS mine, i.kind AS account_kind, i.ours, i.display_name,
+        i.staff AS account_staff, i.email AS account_email
       FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
       .bind(me.id, readKeys).all(),
     env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,

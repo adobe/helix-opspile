@@ -592,28 +592,44 @@ export async function getIdentity(env, ref, now = Date.now()) {
     person_name: person ? person.name : null,
     // An admin's say (the admin page's Bots), which looking the account up again leaves alone.
     ours: (row && row.ours) ?? null,
+    display_name: (row && row.display_name) ?? null,
+    display_avatar: (row && row.display_avatar) ?? null,
   };
 }
 
 /**
  * A bot that posts without a user account (a Slack bot's bot id, a Teams app's), as
- * `identities` keeps it: `{ kind, name, email, staff, ours }`. Its row is written the first
- * time it posts, if nothing wrote it before (`recordBots`, a Slack `bots.info`), so the admin
- * page lists it and an admin can say it is Adobe's. The platform is not asked.
+ * `identities` keeps it: `{ kind, name, email, staff, ours, display_name, avatar }`. Its row
+ * is written the first time it posts, if nothing wrote it before (`recordBots`, a Slack
+ * `bots.info`), so the admin page lists it and an admin can say it is Adobe's, and name it. The
+ * platform is not asked: the picture is the one the message came with (a Slack `bot_profile`'s
+ * icon), kept when the row has none.
  */
 export async function botIdentity(env, {
-  source, tenant, botId, name,
+  source, tenant, botId, name, avatar,
 }, now = Date.now()) {
-  const row = await env.DB.prepare(`SELECT kind, name, email, staff, ours FROM identities
-    WHERE source = ? AND tenant = ? AND user_id = ?`).bind(source, tenant, botId).first();
+  const row = await env.DB.prepare(`SELECT kind, name, email, staff, ours, display_name, avatar
+    FROM identities WHERE source = ? AND tenant = ? AND user_id = ?`)
+    .bind(source, tenant, botId).first();
   if (row) {
+    if (avatar && !row.avatar) {
+      await env.DB.prepare(`UPDATE identities SET avatar = ?
+        WHERE source = ? AND tenant = ? AND user_id = ? AND (avatar IS NULL OR avatar = '')`)
+        .bind(avatar, source, tenant, botId).run();
+    }
     return row;
   }
-  await env.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
-    VALUES (?, ?, ?, 'bot', ?, ?) ON CONFLICT (source, tenant, user_id) DO NOTHING`)
-    .bind(source, tenant, botId, name || null, new Date(now).toISOString()).run();
+  await env.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at,
+      avatar) VALUES (?, ?, ?, 'bot', ?, ?, ?) ON CONFLICT (source, tenant, user_id) DO NOTHING`)
+    .bind(source, tenant, botId, name || null, new Date(now).toISOString(), avatar || null).run();
   return {
-    kind: 'bot', name: name || null, email: null, staff: null, ours: null,
+    kind: 'bot',
+    name: name || null,
+    email: null,
+    staff: null,
+    ours: null,
+    display_name: null,
+    avatar: avatar || null,
   };
 }
 
@@ -621,15 +637,17 @@ export async function botIdentity(env, {
  * `{ kind, name, org, staff }` for the frontmatter. Staff are people marked as staff in
  * D1, or whose mail domain is one of STAFF_DOMAINS, and the bots an admin said are Adobe's
  * (`ours`: a bot has no mail address); the org of everyone else is their mail domain (on
- * Teams everyone is a guest, so the tenant says nothing).
+ * Teams everyone is a guest, so the tenant says nothing). A bot's name is the one an admin gave
+ * it (`display_name`, the admin page's Bots), else its platform's.
  */
 export function toAuthor(env, identity) {
   const domain = domainOf(identity.email);
   const staff = Boolean(identity.person_staff) || Boolean(identity.staff)
     || Boolean(identity.ours) || isStaffDomain(env, identity.email);
+  const shown = identity.kind === 'bot' ? identity.display_name : null;
   return {
     kind: identity.kind || 'person',
-    name: identity.person_name || identity.name || null,
+    name: shown || identity.person_name || identity.name || null,
     org: domain,
     staff,
   };
