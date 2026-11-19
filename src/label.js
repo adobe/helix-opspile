@@ -737,8 +737,8 @@ async function labelAlert(env, thread, now) {
 
 /**
  * `POST /api/admin/relabel`: the channel threads with a label and at least `minMessages`
- * messages, by key after `after`, `limit` of them, each queued to be labeled again though it did not change
- * (`force`), five seconds apart. `{ queued, next }`: `next` is the `after` of the next batch, or
+ * messages, by key after `after`, `limit` of them, each queued to be labeled again though it did
+ * not change (`force`), five seconds apart. `{ queued, next }`: `next` is the `after` of the next batch, or
  * null when there are no more.
  */
 export async function queueRelabel(env, { after = '', limit = 100, minMessages = 3 } = {}) {
