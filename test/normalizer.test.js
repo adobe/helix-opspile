@@ -1122,6 +1122,10 @@ describe('backfill, mentions and labels', () => {
     // Each technology by the hash of its id (src/techid.js), mapped back in the call.
     assert.ok(asked.includes(`tech.${questionKeys(['eds']).eds}`));
     assert.ok(!asked.includes('tech.eds'));
+    // What it shows (Edge Delivery, by the rules), and only that, is asked "about" in a call after.
+    const about = clef.filter((c) => Object.keys(c.input.questions).some((k) => k.startsWith('about.')));
+    assert.deepEqual(about.map((c) => Object.keys(c.input.questions)), [[`about.${questionKeys(['eds']).eds}`]]);
+    assert.match(Object.values(about[0].input.questions)[0].instructions, /^Is this thread about /);
     assert.ok(asked.includes('topic.cdn'));
     // The rules detected Edge Delivery, as sure as can be; Clef said nothing about it.
     assert.deepEqual(e.DB.rows('SELECT tech, p FROM channel_tech'), [{ tech: 'eds', p: 1 }]);
@@ -1149,6 +1153,38 @@ describe('backfill, mentions and labels', () => {
     );
     assert.equal((await labelThread(e, 'slack:E1:C1:1.1')).result, 'unchanged');
     assert.equal(calls.length, clef.length + 2); // Clef, Clairic and the title, once
+  });
+
+  it('keeps "about" unasked, not empty, when its call fails', async () => {
+    const AI = {
+      async run(model, input) {
+        if (model.endsWith('/clef')) {
+          if (Object.keys(input.questions).some((k) => k.startsWith('about.'))) {
+            throw new Error('3040: capacity');
+          }
+          return { model: 'clef', answers: {} };
+        }
+        return { model: 'clairic', answers: {} };
+      },
+    };
+    const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const e = env({
+      [root]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'see https://main--web--acme.aem.live',
+      }),
+    }, { AI });
+    await processKey(e, root);
+    const logged = [];
+    const { error } = console;
+    console.error = (line) => logged.push(line);
+    try {
+      assert.equal((await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO))).result, 'labeled');
+    } finally {
+      console.error = error;
+    }
+    assert.deepEqual(e.DB.rows('SELECT tech, about FROM labels'), [{ tech: '{"eds":1}', about: null }]);
+    assert.deepEqual(e.DB.rows('SELECT tech, about FROM thread_tech'), [{ tech: 'eds', about: null }]);
+    assert.ok(logged.some((l) => /"about":"failed"/.test(l)));
   });
 });
 

@@ -25,7 +25,9 @@ import { checkChanges, commitChanges, writeKnowledge } from '../src/agent/kbwrit
 import { checkLayout } from '../src/agent/okf.js';
 import { memfs } from '../src/agent/memfs.js';
 import { isTechId, questionKeys } from '../src/techid.js';
-import { techOf, techQuestions } from '../src/label.js';
+import {
+  aboutOf, aboutQuestions, techOf, techQuestions,
+} from '../src/label.js';
 import { parseStack } from '../src/stack.js';
 import { d1 } from './d1.js';
 import { fakeRepo } from './fakes.js';
@@ -299,6 +301,16 @@ describe('Clef\'s questions about technologies', () => {
     assert.deepEqual(questionKeys(['eds']), questionKeys(['eds']));
     const answers = { [keys[0]]: { noul: 0.91 }, [keys[1]]: { noul: 0.2 } };
     assert.deepEqual(techOf(tech, answers, []), { 'adobe/aem-sites/edge-delivery': 0.91 });
+  });
+
+  it('ask "about" with the same keys, and map those back too', () => {
+    const tech = [{ tech: 'fastly/cdn', description: 'Fastly as CDN' }, { tech: 'github/github', description: 'GitHub' }];
+    const qs = aboutQuestions(tech);
+    const keys = Object.keys(qs);
+    assert.ok(keys.every((k) => /^about\.[0-9a-f]{8}$/.test(k)));
+    assert.equal(keys[0].slice(6), Object.keys(techQuestions(tech))[0].slice(5));
+    assert.deepEqual(aboutOf(tech, { [keys[0]]: { noul: 0.93 }, [keys[1]]: { noul: 0.4 } }), { 'fastly/cdn': 0.93 });
+    assert.deepEqual(aboutOf(tech, undefined), {});
   });
 });
 
