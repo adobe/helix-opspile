@@ -27,6 +27,7 @@ import {
   config, deleteRule, deleteTech, saveRule, saveTech, testRule,
 } from './extract.js';
 import { inTeam, isAdmin, managesTeam } from './review.js';
+import { resolveConflict, techConflicts } from './techconflicts.js';
 import { mayWork, memberOf, teamless } from './shares.js';
 import { LAYERS } from './stack.js';
 
@@ -612,6 +613,16 @@ async function saveTechTool(env, me, args) {
   return error ? { error } : fromExtract(await saveTech(env, team, args, byName(me)), 'tech');
 }
 
+async function listConflictsTool(env) {
+  const conflicts = await techConflicts(env);
+  return { data: { open: conflicts.filter((c) => !c.kept).length, conflicts } };
+}
+
+async function resolveConflictTool(env, me, args) {
+  const r = await resolveConflict(env, me, args);
+  return r.error ? { error: `${r.error}.` } : { data: { ok: true, done: r.done, changes: r.changes } };
+}
+
 async function deleteTechTool(env, me, args) {
   const { team, error } = ruleTeam(me, args, { write: true });
   return error ? { error } : fromExtract({ ...await deleteTech(env, team, args.tech), deleted: args.tech }, 'deleted');
@@ -1089,6 +1100,39 @@ export const TOOLS = [
       readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false,
     },
     run: deleteTechTool,
+  },
+  {
+    name: 'list_tech_conflicts',
+    title: 'List conflicts between the teams\' technologies',
+    admin: true,
+    description: 'Admin team only. The conflicts between the teams\' technologies (their catalogs under products/ of their knowledge bases, and the rows saved in D1), as the admin team\'s Requests lists them: `diverging`, one id two teams define otherwise (`fields` says which; each team\'s is asked in its channels), and `name`, a name or alias two ids share (`uses` says which team has it on which id, as name or alias). Each has a `key` for resolve_tech_conflict, and `kept` when an admin kept it as it is.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    run: listConflictsTool,
+  },
+  {
+    name: 'resolve_tech_conflict',
+    title: 'Settle a conflict between the teams\' technologies',
+    admin: true,
+    description: 'Admin team only. Settles a conflict list_tech_conflicts lists, by its `key`, as you, writing the teams\' catalog files (or the D1 rows): `keep` (with a `note`) leaves it as it is, hidden until a definition changes; `use` (`team`) makes a diverging id that team\'s everywhere, deleting the other teams\' files of it; `delete` (`team`, `tech`) deletes one definition; `unalias` (`team`, `tech`) takes a shared name off that technology\'s aliases; `merge` (`from`, `into`) makes two technologies of a shared name one: every file of `from` goes, and `into`\'s file lists `from` in moved_from, which rewrites the labels, follows, rules and lobbies D1 keeps under `from` for good.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'The conflict\'s key, as list_tech_conflicts gives it' },
+        action: { type: 'string', enum: ['keep', 'use', 'delete', 'unalias', 'merge'] },
+        team: { type: 'string', description: 'use, delete, unalias: the team whose definition it is' },
+        tech: { type: 'string', description: 'delete, unalias: the technology' },
+        from: { type: 'string', description: 'merge: the technology that goes' },
+        into: { type: 'string', description: 'merge: the technology that stays (one in a team\'s catalog)' },
+        note: { type: 'string', description: 'keep: why it is meant' },
+      },
+      required: ['key', 'action'],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false,
+    },
+    run: resolveConflictTool,
   },
   {
     name: 'get_thread_trace',

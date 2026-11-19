@@ -287,6 +287,7 @@ async function load() {
   state.names = teams.body.names || {};
   state.requests = requests.body.requests || [];
   state.portal = requests.body.portal || [];
+  state.conflicts = requests.body.conflicts || [];
   state.portalBound = Boolean(requests.body.portalBound);
   state.openRequests = requests.body.open ?? teams.body.requests ?? 0;
   renderCount();
@@ -393,10 +394,15 @@ function drawList() {
     const asks = state.portal.filter((r) => !f || `${r.company || ''} ${r.domain} ${r.requestedBy.name || ''} ${r.requestedBy.email || ''}`.toLowerCase().includes(f));
     const waiting = asks.filter((r) => r.status === 'open');
     const answered = asks.filter((r) => r.status !== 'open');
+    // The conflicts between the teams' technologies (src/techconflicts.js).
+    const clash = (state.conflicts || []).filter((c) => !f || conflictTitle(c).toLowerCase().includes(f));
+    const unsettled = clash.filter((c) => !c.kept);
+    const kept = clash.filter((c) => c.kept);
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter requests" value="${esc(state.filter)}"></label>
       ${waiting.length ? `<h2>Customers waiting in the portal</h2>${waiting.map(portalRow).join('')}` : ''}
       <h2>Waiting for a decision</h2>${open.map(row).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No request is waiting.'}</div>`}
-      ${decided.length || answered.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}` : ''}
+      ${unsettled.length ? `<h2>Conflicts between technologies</h2>${unsettled.map(conflictRow).join('')}` : ''}
+      ${decided.length || answered.length || kept.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${kept.map(conflictRow).join('')}` : ''}
       <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team.</p>`;
   } else {
     const rows = state.orgs.filter((o) => (!f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f))
@@ -441,6 +447,7 @@ function select(sel) {
   renderList();
   if (state.tab === 'teams') showTeam(sel);
   else if (state.tab === 'requests' && String(sel).startsWith(PORTAL)) showPortalRequest(String(sel).slice(PORTAL.length));
+  else if (state.tab === 'requests' && String(sel).startsWith(CONFLICT)) showConflict(String(sel).slice(CONFLICT.length));
   else if (state.tab === 'requests') showRequest(sel);
   else if (state.tab === 'bots') showBot(sel);
   else showOrg(sel);
@@ -1503,6 +1510,7 @@ async function refreshRequests() {
   if (!r.ok) return;
   state.requests = r.body.requests;
   state.portal = r.body.portal || [];
+  state.conflicts = r.body.conflicts || [];
   state.openRequests = r.body.open;
   renderCount();
   const v = state.view;
@@ -1832,6 +1840,125 @@ function renderPortal() {
       drawPortalRequest(r, v.value);
     };
   }
+}
+
+// ---- conflicts between the teams' technologies ---------------------------------------------
+//
+// Computed from the tech stack every time (src/techconflicts.js): an id two teams define
+// otherwise, or a name two ids share. Settling one writes the teams' catalog files as you.
+
+const CONFLICT = 'conflict:';
+const FIELD_NAMES = {
+  name: 'name', description: 'what Clef is asked', layer: 'layer', product: 'product', enabled: 'on or off',
+};
+
+function conflictTitle(c) {
+  return c.kind === 'diverging' ? `${c.tech}: ${c.fields.map((x) => FIELD_NAMES[x] || x).join(', ')}`
+    : `"${c.name}": ${c.techs.join(', ')}`;
+}
+
+function conflictRow(c) {
+  const sel = `${CONFLICT}${c.key}`;
+  return `<div class="row${String(state.sel) === sel ? ' on' : ''}" data-sel="${esc(sel)}">
+    <span class="name">${esc(c.kind === 'diverging' ? c.tech : `"${c.name}"`)} <span class="sub">${esc(c.kind === 'diverging' ? `${c.definitions.map((d) => teamLabel(d.team)).join(' · ')}` : c.techs.join(' · '))}</span></span>
+    ${c.kept ? '<span class="tag confirmed">kept</span>' : ''}</div>`;
+}
+
+/**
+ * Where a definition is asked: in its team's channels, and the shared one (the admin team's if it
+ * is on, else the first team's by name that is on, as src/extract.js `techFor`) everywhere else.
+ */
+function askedWhere(c, d) {
+  if (!d.enabled) return 'no, turned off';
+  if (c.kind !== 'diverging') return 'yes';
+  const shared = c.definitions.find((x) => x.enabled);
+  return `in ${esc(teamLabel(d.team))}'s channels${shared === d ? ', and in every channel of a team without its own' : ''}`;
+}
+
+/** One team's definition of a technology: where it is kept, and what it says. */
+function definitionCard(c, d) {
+  const where = d.path ? `<a href="/inbox/kb?repo=${encodeURIComponent(`kb-team-${d.team}`)}&path=${encodeURIComponent(d.path)}">${esc(d.path)}</a>`
+    : '<span class="sub">saved in D1</span>';
+  const differs = (f) => (c.kind === 'diverging' && c.fields.includes(f) ? ' class="differs"' : '');
+  const k = c.kind === 'name' ? c.key.slice('name:'.length) : null;
+  const asAlias = k && d.aliases.some((a) => a.toLowerCase().replace(/[^a-z0-9.+#@]+/g, ' ').trim() === k);
+  const acts = [];
+  if (c.kind === 'diverging') acts.push(`<button class="primary" data-act="use" data-team="${esc(d.team)}">Use this one everywhere</button>`);
+  if (asAlias) acts.push(`<button data-act="unalias" data-team="${esc(d.team)}" data-tech="${esc(d.tech)}">Take "${esc(c.name)}" off its aliases</button>`);
+  if (c.kind === 'name' && d.path) acts.push(...c.techs.filter((t) => t !== d.tech).map((t) => `<button data-act="merge" data-from="${esc(t)}" data-into="${esc(d.tech)}">Merge ${esc(t)} into this</button>`));
+  acts.push(`<button class="danger" data-act="delete" data-team="${esc(d.team)}" data-tech="${esc(d.tech)}">Delete</button>`);
+  return `<div class="card conflict"><h2>${esc(d.name)} <span class="sub mono">${esc(d.tech)}</span> <span class="sub">${esc(teamLabel(d.team))}</span></h2>
+    <div class="field">
+      <label>Kept in</label><span>${where}</span>
+      <label${differs('description')}>Clef is asked</label><span${differs('description')}>Does this thread show that the customer uses ${esc(d.description)}?</span>
+      <label${differs('name')}>Name</label><span${differs('name')}>${esc(d.name)}</span>
+      <label${differs('product')}>Product</label><span${differs('product')}>${esc(d.product || '–')}</span>
+      <label${differs('layer')}>Layer</label><span${differs('layer')}>${esc(d.layer || '–')}</span>
+      <label${differs('enabled')}>Asked</label><span${differs('enabled')}>${askedWhere(c, d)}</span>
+      <label>Also called</label><span>${d.aliases.length ? d.aliases.map((a) => esc(a)).join(', ') : '–'}</span>
+    </div>
+    <div class="acts">${acts.join('')}</div></div>`;
+}
+
+function drawConflict(c) {
+  const what = c.kind === 'diverging'
+    ? `${c.definitions.length} teams define <span class="mono">${esc(c.tech)}</span> otherwise (${esc(c.fields.map((x) => FIELD_NAMES[x] || x).join(', '))}). Each team's is what Clef asks in its channels. Keep it if that is meant, or use one of them everywhere.`
+    : `"${esc(c.name)}" is a name or alias of ${c.techs.map((t) => `<span class="mono">${esc(t)}</span>`).join(' and ')}: a thread that names it matches either. Take it off the aliases of one, merge them into one technology, or keep it.`;
+  $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(c.kind === 'diverging' ? c.tech : `"${c.name}"`)}</h1>${c.kept ? '<span class="tag confirmed">kept</span>' : ''}</div>
+    <div class="status" id="status"></div>
+    <div class="card"><p class="lead">${what}</p>
+      ${c.kept ? `<p class="hint">Kept by ${esc(c.kept.by)} ${esc(ago(c.kept.at))}${c.kept.note ? `: <span class="note">${esc(c.kept.note)}</span>` : ''}. It shows again once a definition changes.</p>`
+    : '<form class="form" id="cfKeep"><label class="fld grow"><span>Why it is meant (optional)</span><input id="cfNote" maxlength="300"></label><button id="cfKeepBtn">Keep as it is</button></form>'}
+      <p class="hint">Settling it writes the teams' catalog files as you (or the rows saved in D1). A merge also rewrites the labels, follows, rules and lobbies that name the technology that goes: that cannot be undone by reverting the file.</p></div>
+    ${c.definitions.map((d) => definitionCard(c, d)).join('')}`;
+  showStatus();
+  const settle = (btn, body, done) => hold(btn, `conflict:${c.key}`, () => call('/api/admin/conflicts', 'POST', { key: c.key, ...body })).then((res) => {
+    if (!res) return;
+    if (!res.ok) { failed(`Settle ${conflictTitle(c)}`, res); return; }
+    state.conflicts = res.body.conflicts || [];
+    refreshRequests();
+    status('ok', done);
+    const now = state.conflicts.find((x) => x.key === c.key);
+    if (now) drawConflict(now);
+    else $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(conflictTitle(c))}</h1></div><div class="status" id="status"></div><div class="empty">Settled: ${esc(done)}</div>`;
+    showStatus();
+    renderList();
+  });
+  if ($('cfKeep')) {
+    $('cfKeep').onsubmit = (e) => {
+      e.preventDefault();
+      settle($('cfKeepBtn'), { action: 'keep', note: $('cfNote').value.trim() || undefined }, 'Kept as it is.');
+    };
+  }
+  for (const b of $('detail').querySelectorAll('[data-act]')) {
+    b.onclick = async () => {
+      const { act } = b.dataset;
+      const body = {
+        action: act, team: b.dataset.team, tech: b.dataset.tech, from: b.dataset.from, into: b.dataset.into,
+      };
+      const ask = {
+        use: [`Use ${teamLabel(b.dataset.team)}'s ${c.tech} everywhere?`, 'The other teams\' files and rows of it are deleted.', 'Use it'],
+        delete: [`Delete ${teamLabel(b.dataset.team)}'s ${b.dataset.tech}?`, 'Its file (or row) goes; Clef asks the others\' where they are.', 'Delete'],
+        merge: [`Merge ${b.dataset.from} into ${b.dataset.into}?`, `Every file of ${b.dataset.from} goes, and what was labeled, followed or detected as ${b.dataset.from} becomes ${b.dataset.into}, for good.`, 'Merge'],
+      }[act];
+      if (ask && !(await confirmFirst(...ask))) return;
+      const done = {
+        use: `${c.tech} is ${teamLabel(b.dataset.team)}'s everywhere.`,
+        delete: `Deleted ${teamLabel(b.dataset.team)}'s ${b.dataset.tech}.`,
+        unalias: `"${c.name}" is not an alias of ${b.dataset.tech} any more.`,
+        merge: `Merged ${b.dataset.from} into ${b.dataset.into}.`,
+      }[act];
+      settle(b, body, done);
+    };
+  }
+}
+
+function showConflict(key) {
+  loadingPage();
+  state.view = null;
+  const c = (state.conflicts || []).find((x) => x.key === key);
+  if (!c) { $('detail').innerHTML = '<div class="empty">No such conflict: it may be settled already.</div>'; return; }
+  drawConflict(c);
 }
 
 // ---- orgs ---------------------------------------------------------------------------------

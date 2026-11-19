@@ -477,6 +477,13 @@ counts: it is no file deleted) leaves the rows and the watermark as they were, s
 (`moved_from`) rewrites what D1 keeps under the old id only when it is new against the team's moves
 before, so compiling twice rewrites nothing; an old id that is still a file somewhere is only mapped.
 
+**Technology conflicts.** open → kept → open again (src/techconflicts.js). Computed from
+`tech_stack` on every read, so settling one by changing the definitions closes it with no state of
+its own. Kept is the only stored state: a row in `tech_conflict_keeps` with the fingerprint of the
+definitions it was kept with; once one of them changes, the fingerprint no longer matches and it is
+open again. A merge deletes the files of the technology that goes before the other lists it in
+`moved_from`, so the compile sees a new move (src/catalog.js) and rewrites D1.
+
 **Lazy fill-ins.** NULL means "not done yet" (`threads.last_text`, `messages.author_kind`,
 `knowledge_bases.entries`). Each has a batch on the cron. NULL must not also mean "nothing there", or
 the same rows stay at the head of the batch.

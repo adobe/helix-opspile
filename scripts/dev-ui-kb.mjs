@@ -183,7 +183,17 @@ const SEED = {
       ].join('\n'),
     },
   },
-  'kb-team-edge': { name: 'Edge ops', kind: 'team', files: {} },
+  // Edge ops words Fastly otherwise: a conflict for the admin team (src/techconflicts.js).
+  'kb-team-edge': {
+    name: 'Edge ops',
+    kind: 'team',
+    files: {
+      'products/fastly/cdn.md': [
+        '---', 'type: Product', 'title: Fastly', 'description: Fastly as CDN, with Compute at the edge',
+        'layer: edge', '---', '', 'Edge ops\' own words for it, in its channels.', '',
+      ].join('\n'),
+    },
+  },
   // The admin team's: its extraction rules and tech stack apply to every channel.
   'kb-team-admin': { name: 'Admin', kind: 'team', files: {} },
   'kb-org-acme': {

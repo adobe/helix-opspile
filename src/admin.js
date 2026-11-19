@@ -40,6 +40,7 @@ import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
 import { getBot, listBots, setBot } from './ourbots.js';
 import { followable, setTeamFollow, teamFollows } from './follows.js';
 import { portalAuthor, portalBound, portalCall } from './portalsource.js';
+import { openConflictCount, resolveConflict, techConflicts } from './techconflicts.js';
 import {
   getPortalRequest, listPortalRequests, portalOpenCount, recordDeclined, recordOpened,
   reopenDeclined,
@@ -569,8 +570,11 @@ async function swapChannel(env, me, body) {
  */
 async function requestList(env, me, { status, count }) {
   const teams = isAdmin(me) ? null : managedTeams(me);
-  // The customers waiting in the portal count too: they are the admin team's to answer.
-  const open = await openCount(env, teams) + await portalOpenCount(env, teams);
+  // The customers waiting in the portal count too: they are the admin team's to answer; and so do
+  // the conflicts between the teams' technologies (src/techconflicts.js), the admin team's only.
+  const conflicts = isAdmin(me) ? await techConflicts(env) : [];
+  const open = await openCount(env, teams) + await portalOpenCount(env, teams)
+    + conflicts.filter((c) => !c.kept).length;
   if (count) {
     return json({ open });
   }
@@ -578,8 +582,22 @@ async function requestList(env, me, { status, count }) {
     requests: await listRequests(env, { teams, status: ['open', 'decided'].includes(status) ? status : null }),
     portal: await listPortalRequests(env, { teams }),
     portalBound: portalBound(env),
+    conflicts,
     open,
   });
+}
+
+/**
+ * POST /api/admin/conflicts `{ key, action, … }`: the admin team settles a conflict between the
+ * teams' technologies (src/techconflicts.js `resolveConflict`); the answer has the conflicts as
+ * they are after it.
+ */
+async function settleConflict(env, me, body) {
+  const r = await resolveConflict(env, me, body);
+  if (r.error) {
+    return json({ error: r.error, changes: r.changes || [] }, r.status || 400);
+  }
+  return json({ ...r, conflicts: await techConflicts(env) });
 }
 
 /** An open request, or the answer that says why it cannot be decided. */
@@ -862,7 +880,8 @@ async function listTeams(env, me) {
   // The open assignment requests: the admin team's to decide, the managers' to wait for; and
   // the customers waiting in the portal, theirs to open a channel for.
   const scope = everything ? null : managedTeams(me);
-  const requests = await openCount(env, scope) + await portalOpenCount(env, scope);
+  const requests = await openCount(env, scope) + await portalOpenCount(env, scope)
+    + (everything ? await openConflictCount(env) : 0);
   // Every team's name, for a manager's page to say where a channel is now.
   const names = Object.fromEntries(all.map((t) => [t.slug, t.name]));
   return json({
@@ -1342,6 +1361,7 @@ export async function admin(request, env, url, me) {
     case 'POST requests/decline': return declineRequest(env, me, body);
     case 'POST portal/open': return openPortal(env, me, body);
     case 'POST portal/decline': return declinePortal(env, me, body);
+    case 'POST conflicts': return settleConflict(env, me, body);
     case 'POST classify': return json(await classifyChannels(env, {
       limit: Math.min(Math.max(Number(body.limit) || 10, 1), 25),
     }));
