@@ -2116,8 +2116,9 @@ async function commit(f) {
   f.problem = null;
   f.baseline = content;
   if (body.hash) f.hash = body.hash;
-  // The listing has the hash it was read at: the next opening shows this text, not that one.
-  keepFile(path, body.hash, content);
+  // The listing has the hash it was read at: the next opening shows this text, not that one;
+  // a stack drawing whose Tech the catalog set (src/stacktech.js) is what was saved instead.
+  keepFile(path, body.hash, typeof body.content === 'string' ? body.content : content);
   const created = f.isNew;
   f.isNew = false;
   if (f.choosePath) {
@@ -2144,7 +2145,14 @@ async function commit(f) {
     relist();
   }
   showHash();
-  setNote('ok', body.unchanged ? 'Saved (nothing changed).' : `Saved · ${String(body.commit).slice(0, 12)}`);
+  if (body.filled && body.filled.length) {
+    const set = body.filled.map((x) => `${x.part}: ${x.tech}`).join(', ');
+    setNote('ok', `Saved · ${String(body.commit).slice(0, 12)}. Tech set from the catalog: ${set}.`, [
+      ['Show what was saved', () => openFile(path, { force: true, nav: 'replace' })],
+    ]);
+  } else {
+    setNote('ok', body.unchanged ? 'Saved (nothing changed).' : `Saved · ${String(body.commit).slice(0, 12)}`);
+  }
   // Typed on while the save was in flight: save that too.
   if (edited()) schedule();
 }

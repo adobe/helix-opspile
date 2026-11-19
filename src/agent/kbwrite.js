@@ -19,6 +19,7 @@ import {
   RESERVED,
   splitFrontmatter, stampGenerated, SYSTEM_PROMPT,
 } from './okf.js';
+import { checkStackTech } from '../stacktech.js';
 import {
   checkCatalog, compileCatalog, inCatalog, movesOf, storeCatalog, withMovedFrom,
 } from '../catalog.js';
@@ -339,6 +340,17 @@ export async function writeKnowledge(env, artifact, changes, {
   if (invalid) {
     return { error: invalid };
   }
+  // A customer's stack drawing names its technologies as the catalog does (src/stacktech.js).
+  let filled = [];
+  if (kindOf(artifact) === 'org') {
+    const fixed = await checkStackTech(env, changes, { staff });
+    if (fixed.error) {
+      return { error: fixed.error };
+    }
+    ({ filled } = fixed);
+    // eslint-disable-next-line no-param-reassign
+    changes = fixed.changes;
+  }
   const repo = await env.ARTIFACTS.get(artifact);
   try {
     const { remote } = await repo.info();
@@ -370,7 +382,8 @@ export async function writeKnowledge(env, artifact, changes, {
           // eslint-disable-next-line no-await-in-loop
           await compileTree(env, artifact, fs, result.commit);
         }
-        return { commit: result.commit, files: changes.map((c) => c.path) };
+        const files = changes.map((c) => c.path);
+        return { commit: result.commit, files, ...(filled.length ? { filled } : {}) };
       } catch (e) {
         if (!rejected(e) || attempt >= ATTEMPTS) {
           throw e;

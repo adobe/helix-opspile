@@ -608,7 +608,10 @@ type `Stack Drawing`, src/stack.js; a `Tech Stack` concept is one platform's set
 `tech-stack/`, which a part's Note may link to): how their site is put together, as Markdown that reads as it
 is. A summary, then `## Parts`, a table of `| Layer | Part | Tech | Note |` (the layer by its
 name or id, Tech the id of a tech stack entry where one fits, read through the catalog's moves, or
-`own` for what the customer built), then `## Flows`, a table of
+`own` for what the customer built; every write sets it as the catalog has it, src/stacktech.js: an
+id that moved becomes the one it moved to, a part without one whose name a technology covers,
+src/products.js `coveredBy`, gets that one, and an id no team has is refused for an agent and kept
+for a person; only the Tech cells change, and the agent or the editor is told what was set), then `## Flows`, a table of
 `| From | To | What |` between parts by name, then any notes. Two optional columns say more:
 a part's Kind (an agent, the default, a storage, a channel, a person or an external system)
 and Group (a frame in its layer), and a flow's Kind (by default what is named goes from From to
