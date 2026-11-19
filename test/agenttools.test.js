@@ -769,6 +769,37 @@ describe('requesting channel members', () => {
     assert.equal(calls.posts.length, 0);
   });
 
+  it('names a customer who asked by their account\'s address, though they are no person here', async () => {
+    const { e, calls, run } = setup();
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author,
+        author_key) VALUES ('teams', 'TN1', '19:abc@thread.tacv2', '1792584000100', ?, ?, 'Cu',
+        'teams:TN1:aad-cu')`).run(TEAMS, '2026-10-21T10:01:00Z');
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, email, fetched_at)
+      VALUES ('teams', 'TN1', 'aad-cu', 'person', 'Cu Stomer', 'cu@client.example',
+        '2026-10-21T10:00:00Z')`);
+    const r = await run(target(TEAMS, 'teams', '19:abc@thread.tacv2'), {
+      action: 'add', emails: ['colleague@client.example'], message: '1792584000100',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.deepEqual(calls.teams[0].requester, {
+      name: 'Cu', email: 'cu@client.example', aadObjectId: 'aad-cu',
+    });
+  });
+
+  it('takes no address or account of a bot that wrote the message', async () => {
+    const { e, calls, run } = setup();
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author,
+        author_key) VALUES ('teams', 'TN1', '19:abc@thread.tacv2', '1792584000200', ?, ?, 'Flow',
+        'teams:TN1:bot-flow')`).run(TEAMS, '2026-10-21T10:02:00Z');
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, email, fetched_at)
+      VALUES ('teams', 'TN1', 'bot-flow', 'bot', 'Flow', 'flow@client.example',
+        '2026-10-21T10:00:00Z')`);
+    await run(target(TEAMS, 'teams', '19:abc@thread.tacv2'), {
+      action: 'add', emails: ['colleague@client.example'], message: '1792584000200',
+    });
+    assert.deepEqual(calls.teams[0].requester, { name: 'Flow', email: null, aadObjectId: null });
+  });
+
   it('posts a Slack request in #general for AEM Ops Automation, and hands it to the relay', async () => {
     const { calls, run } = setup();
     const r = await run(target(SLACK, 'slack', 'C1'), {
