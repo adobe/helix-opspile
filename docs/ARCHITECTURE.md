@@ -1681,6 +1681,15 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   `POST /api/post/app`) where the thread says the viewer may (`can_post_as_bot`: the channel's
   **Post messages** switch is on and its platform's bot is set up). On Discord, and before the
   Slack or Teams account is connected, Send as bot is the only way to send it from the inbox.
+- Once someone has sent three of the thread agent's drafts in a channel (`OFFER_AFTER`,
+  `src/postoffer.js`; as they were or edited, as themselves or as the bot), the inbox asks them
+  whether the agent may post its replies there itself: `POST /api/post` answers with
+  `postingOffer` (`{ channel, team, sent }`), and the note offers **Let it post** and **Keep
+  drafts**. Only those who may switch **Post messages** for the channel are asked (the admin team,
+  the managers of the channel's team), only where it is off by the team's switch and nobody
+  switched the channel, and the platform's bot is set up. Let it post switches the channel on
+  (`PUT /api/kb/tools`); Keep drafts adds the channel to their `postingDeclined` setting, and
+  they are not asked there again.
 - With a part of the draft's text selected, Edit and the sends take that part
   (**Edit selection**, **Add selection to reply**, **Send selection as me** and **as bot**): its
   Markdown, found by aligning the text selected with the draft's source (src/mdpick.js), so its
@@ -1857,7 +1866,7 @@ has said `working` for 15 minutes without a word, is asked itself. Its avatar op
 thread's channel).
 
 Whether it shows is each person's own choice, in their settings (`person_settings`): `traces`,
-on unless they turn it off, for every channel, and `channelTraces`, by channel id, where they
+off unless they turn it on, for every channel, and `channelTraces`, by channel id, where they
 chose otherwise, which wins. The inbox's user menu changes both (the open thread's channel);
 Agents does too, a select on each channel with an agent. Hidden, the page does not ask
 `GET /api/agent` at all.

@@ -68,6 +68,7 @@ import {
 } from './follows.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { claimPost, settlePost } from './postkeys.js';
+import { postingOffer } from './postoffer.js';
 import {
   ATTENTION, latestMember, readState, unreadInYours, waitingOn,
 } from './threads.js';
@@ -1254,9 +1255,18 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     if (res.ok && typeof body.draft === 'string') {
       const sent = { how: url.pathname === '/api/post' ? 'me' : 'app', text: body.text };
       const used = { thread: body.thread, base: body.draft };
-      await discardDraft(env, me, used, inMine, { sent }).catch((e) => {
-        console.log(JSON.stringify({ route: 'post', action: 'draft', error: e.message }));
-      });
+      const done = await discardDraft(env, me, used, inMine, { sent })
+        .then((r) => r.json())
+        .catch((e) => {
+          console.log(JSON.stringify({ route: 'post', action: 'draft', error: e.message }));
+          return null;
+        });
+      // The third of the agent's drafts sent in a channel: ask to let it post there itself.
+      const offer = done && done.discarded
+        && await postingOffer(env, me, body.thread, done.draft);
+      if (offer) {
+        return json({ ...await res.json(), postingOffer: offer }, res.status);
+      }
     }
     return res;
   }

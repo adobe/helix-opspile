@@ -455,13 +455,13 @@ function teamDefaultRow() {
 function tracesIn(channel) {
   const s = state.settings || {};
   const own = s.channelTraces?.[channel];
-  return { on: typeof own === 'boolean' ? own : s.traces !== false, own: typeof own === 'boolean' };
+  return { on: typeof own === 'boolean' ? own : s.traces === true, own: typeof own === 'boolean' };
 }
 
 /** The switch above the channels: the agent's thinking, for you, in every channel. */
 function tracesRow() {
   if (!state.settings) return '';
-  const on = state.settings.traces !== false;
+  const on = state.settings.traces === true;
   const set = Object.keys(state.settings.channelTraces || {}).length;
   return `<div class="ch default mine">
       <div class="who">
@@ -481,7 +481,7 @@ function tracesSelect(c) {
   if (!state.settings || c.kind !== 'channel') return '';
   const { own, on } = tracesIn(c.channelId);
   if (!c.agent.enabled && !own) return '';
-  const all = state.settings.traces !== false ? 'shown' : 'hidden';
+  const all = state.settings.traces === true ? 'shown' : 'hidden';
   const value = own ? (on ? 'on' : 'off') : '';
   return `<label class="sub mine">The agent's thinking, for you
       <select data-traces="${esc(c.channelId)}" aria-label="The agent's thinking in ${esc(channelName(c))}, for you">
@@ -504,8 +504,8 @@ async function saveTraces(patch, done) {
 function bindTraces() {
   if ($('tracesAll')) {
     $('tracesAll').onclick = () => {
-      const on = state.settings.traces === false;
-      saveTraces({ traces: on }, on ? 'Your inbox shows the agent\'s thinking again, except in channels set to hide it.'
+      const on = state.settings.traces !== true;
+      saveTraces({ traces: on }, on ? 'Your inbox shows the agent\'s thinking, except in channels set to hide it.'
         : 'Your inbox hides the agent\'s thinking, except in channels set to show it.');
     };
   }
