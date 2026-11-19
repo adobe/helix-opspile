@@ -291,8 +291,14 @@ async function change(env, me, body, remove) {
   if (res.unchanged) {
     return json({ ok: true, unchanged: true });
   }
-  const now = remove ? null : await readText(env, body.repo, path).catch(() => null);
-  return json({ ok: true, commit: res.commit, hash: now && !now.error ? now.hash : null });
+  const now = remove ? null : await readText(env, body.repo, path, { full: true }).catch(() => null);
+  const saved = now && !now.error ? now : null;
+  // A stack drawing's Tech set from the catalog (src/stacktech.js): what was saved is not what
+  // was typed, so the editor is told, with the saved text.
+  const filled = res.filled?.length ? { filled: res.filled, content: saved ? saved.text : null } : {};
+  return json({
+    ok: true, commit: res.commit, hash: saved ? saved.hash : null, ...filled,
+  });
 }
 
 // ---- thread agents ----------------------------------------------------------------------

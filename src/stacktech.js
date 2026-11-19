@@ -19,10 +19,10 @@
  * is for a person (who sees it on the drawing).
  */
 
-import { splitFrontmatter, scalar } from './agent/okf.js';
+import { splitFrontmatter } from './agent/okf.js';
 import { resolveTech, techMoves } from './catalog.js';
 import { coveredBy, techIndex } from './products.js';
-import { parseStack, stackFile, STACK_PATH } from './stack.js';
+import { parseStack, STACK_PATH, withPartTech } from './stack.js';
 
 export const OWN = 'own';
 
@@ -73,7 +73,8 @@ export function fixStackTech(text, rows, moves = {}) {
       text, filled, moved, unknown,
     };
   }
-  const out = stackFile({ ...drawing, parts }, { title: scalar(fm.yaml, 'title') || undefined, keep: fm.yaml });
+  // Only the Tech cells: a person's description, and text where they put it, stay as they were.
+  const out = withPartTech(text, parts.map((p) => p.tech));
   return {
     text: out, filled, moved, unknown,
   };

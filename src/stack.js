@@ -352,6 +352,38 @@ export function stackFile(drawing, { title = 'Tech stack', keep = '' } = {}) {
 }
 
 /**
+ * `text` (a stack.md) with the Tech of its parts set from `techs`, `[tech]` in the parts table's
+ * order (null: empty), and nothing else changed: its frontmatter as it is, and its body through
+ * its markdown tree, the Tech column added when it has none. The parts table must parse.
+ */
+export function withPartTech(text, techs) {
+  const m = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(String(text));
+  const head = m ? m[0] : '';
+  const tree = readMarkdown(String(text).slice(head.length), { tasks: false });
+  let section = null;
+  const table = tree.children.find((node) => {
+    if (node.type === 'heading') {
+      section = key(textOf(node));
+    }
+    return section === 'parts' && node.type === 'table';
+  });
+  const { at, rows } = columns(table);
+  let col = at.tech;
+  if (col === undefined) {
+    col = (at.part ?? 0) + 1;
+    table.children.forEach((r, i) => r.children.splice(col, 0, textCell(i ? '' : 'Tech')));
+    if (table.align) {
+      table.align.splice(col, 0, null);
+    }
+  }
+  rows.forEach((r, i) => {
+    // eslint-disable-next-line no-param-reassign
+    r.children[col] = textCell(techs[i] || '');
+  });
+  return `${head}${writeMarkdown(tree)}`;
+}
+
+/**
  * A drawing as the inbox draws it: the layers that have parts, in order, each with its name and
  * its parts, and the flows. `{ summary, layers: [{ id, name, parts }], flows, notes }`.
  */
