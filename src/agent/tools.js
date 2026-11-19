@@ -182,6 +182,10 @@ export function stackNote(file, seen = [], moves = {}) {
   return lines.join('\n');
 }
 
+/** What a write set as a stack part's Tech (src/stacktech.js), for the agent to know. */
+const techFilled = (res) => (res.filled?.length
+  ? `; Tech set from the catalog: ${res.filled.map((f) => `${f.part} = ${f.tech}`).join(', ')}` : '');
+
 /** The person drafts by agents are saved as; created on first use. */
 export async function agentPerson(env) {
   await env.DB.prepare('INSERT OR IGNORE INTO people (email, name, staff) VALUES (?, ?, 0)')
@@ -512,7 +516,7 @@ export function opspileExtension(ctx) {
         if (res.unchanged) {
           return text('nothing changed');
         }
-        return text(`committed ${res.commit.slice(0, 12)} to ${r.id}: ${res.files.join(', ')}`);
+        return text(`committed ${res.commit.slice(0, 12)} to ${r.id}: ${res.files.join(', ')}${techFilled(res)}`);
       },
     }),
     defineTool({
@@ -585,7 +589,7 @@ export function opspileExtension(ctx) {
         if (res.unchanged) {
           return text('nothing changed');
         }
-        return text(`committed ${res.commit.slice(0, 12)} to ${r.id}: ${STACK_PATH}, ${args.parts.length} parts, ${(args.flows || []).length} flows`);
+        return text(`committed ${res.commit.slice(0, 12)} to ${r.id}: ${STACK_PATH}, ${args.parts.length} parts, ${(args.flows || []).length} flows${techFilled(res)}`);
       },
     }),
   ];
