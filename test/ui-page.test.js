@@ -1055,7 +1055,7 @@ describe('inbox page', () => {
     assert.equal(rowLabel(customer, 'unknown'), 'unknown');
     assert.equal(rowLabel({ label: { open: 'Unresolved' } }, 'open'), 'Unresolved');
     assert.equal(rowLabel({}, 'Slack'), 'Slack');
-    const rows = html.slice(html.indexOf('function facetRows'), html.indexOf('const mentionBadge'));
+    const rows = html.slice(html.indexOf('function facetRows'), html.indexOf('const cardFacets'));
     assert.match(rows, /title="\$\{esc\(\(f\.hint && f\.hint\[v\]\) \|\| label\)\}/);
   });
 
