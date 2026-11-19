@@ -83,11 +83,15 @@ async function setup({ perGroup = 10 } = {}) {
         label: 'question',
       });
       if (g === 0) {
-        // The cache threads name a CDN the tech stack has, one it does not, and generic words.
-        DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value, confidence)
-          VALUES (?, 'clairic', 'product', ?, 0.9)`).run(key, i % 2 ? 'Akamai' : 'Contentstack');
-        DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value, confidence)
-          VALUES (?, 'clairic', 'product', 'CDN', 0.9)`).run(key);
+        // The cache threads: Clef says half are about Akamai, the other half show Fastly but are
+        // not about it; GitHub, on a label that was never asked "about", counts as it shows.
+        DB.sqlite.prepare("UPDATE labels SET about = '{}' WHERE thread = ?").run(key);
+        DB.sqlite.prepare('INSERT INTO thread_tech (thread, tech, p, about) VALUES (?, ?, 0.9, ?)')
+          .run(key, i % 2 ? 'akamai' : 'fastly', i % 2 ? 0.9 : null);
+        if (i === 2) {
+          DB.sqlite.prepare('UPDATE labels SET about = NULL WHERE thread = ?').run(key);
+          DB.sqlite.prepare("INSERT INTO thread_tech (thread, tech, p) VALUES (?, 'github', 1)").run(key);
+        }
       }
       post(key, 'a', group.staff, 1);
       post(key, 'b', group.staff, 1);
@@ -317,13 +321,15 @@ describe('topic map: building', () => {
       acme: { name: 'ACME', type: 'customer' }, globex: { name: 'Globex', type: 'partner' },
     });
     assert.equal(map.tags.cdn, 'Caching and delivery');
-    // The products: Akamai is the tech stack's (migration 0043), Contentstack a gap, CDN generic.
+    // The products: what Clef says a thread is about, or shows where it was not asked that.
     assert.deepEqual(map.products, {
       'tech:akamai': { name: 'Akamai', tech: 'akamai', product: 'CDN' },
-      'new:contentstack': { name: 'Contentstack', tech: null, product: null },
+      'tech:fastly': { name: 'Fastly', tech: 'fastly', product: 'CDN' },
+      'tech:github': { name: 'GitHub', tech: 'github', product: 'Code hosting' },
     });
     assert.deepEqual(one.products, ['tech:akamai']);
-    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').products, ['new:contentstack']);
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').products.sort(), ['tech:fastly', 'tech:github']);
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.4').products, []);
     assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:1.2').products, []);
     assert.equal(map.built_by, 'Ada');
 
@@ -346,7 +352,7 @@ describe('topic map: building', () => {
     const [user] = env.calls.all;
     assert.match(user, /^Topic 0 \(10 titles shown\):\n- /);
     assert.match(user, /Concerns: Caching and delivery \(5\)/);
-    assert.match(user, /Products: (?=.*Akamai \(CDN\) \(5\))(?=.*Contentstack \(5\))/);
+    assert.match(user, /Products: (?=.*Akamai \(CDN\) \(5\))(?=.*Fastly \(CDN\) \(1\))/);
     const topicOf = (word) => map.threads.find((t) => t.title.startsWith(word)).topic;
     const label = (word) => map.topics[topicOf(word)].label;
     // Its name, in sentence case; the vague one and the missing one named on their own.
