@@ -40,7 +40,8 @@ const state = {
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const favicon = (icon) => (/^https:\/\//.test(icon) ? icon : `/api/admin/favicon?domain=${encodeURIComponent(icon)}`);
+// The inbox's address of a favicon (GET /api/favicon), so the browser keeps one copy for both.
+const favicon = (icon) => (/^https:\/\//.test(icon) ? icon : `/api/favicon?domain=${encodeURIComponent(icon)}`);
 // The domains whose favicon did not load: Google has none (the Worker answers 404 for its
 // globe, src/favicons.js). Learned as the icons load (the error listener at the start).
 const missing = new Set();

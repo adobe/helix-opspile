@@ -663,6 +663,15 @@ once it is out, or once the slide is cut short (the screen grown past the phone'
 over, and `paneLeave` tells the slide that ended it is not the latest. No slide (reduced motion,
 `main.instant`, a wider screen): emptied at once.
 
+**Favicon.** loading → shown, or failed → its stand-in → loading again (`favImg`, `favFailed`,
+`keepFavicons` and `wireFavicons` in `ui/inbox.js`). Drawn again, a favicon keeps the image it had
+(the same address, one per domain from `GET /api/favicon`), so a click does not fetch or flash it.
+One that does not load (an error event, or found complete without an image when its place is
+drawn again, as one that failed out of the page) gives way to the stand-in its place has (an
+initial, an empty slot, nothing), and every favicon of its address is drawn as that stand-in for
+`FAV_RETRY_MS`: a failure may pass (the Worker answers a Google that failed with a 502 for a minute,
+src/favicons.js), so it is not final, and the next drawing after that asks again.
+
 **Search.** idle → loading → results or error (`state.search`). `seq` drops the answer to anything but
 the latest question.
 

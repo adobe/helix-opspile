@@ -125,8 +125,72 @@ const lastOf = (t) => (t.kind === 'alert' ? t.any_at : t.last_at);
 // bots or apps posted) its last message at all, as the inbox API orders it. Never null: a
 // thread without a time would sort above every date ("null" > "2026-…").
 const activityOf = (t) => String(lastOf(t) || t.any_at || '');
+// A domain's favicon comes from the Worker (GET /api/favicon, src/favicons.js): one address per
+// domain, which the browser keeps for a week. An https URL (an org's own icon) is as it is.
 const favicon = (domain) => (/^https:\/\//.test(domain) ? domain
-  : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`);
+  : `/api/favicon?domain=${encodeURIComponent(domain)}`);
+// The favicons that did not load (Google has none, or it failed), until they are asked again:
+// their stand-in is drawn instead, not a broken image each time their place is drawn anew.
+const FAV_RETRY_MS = 10 * 60 * 1000;
+const favFailed = new Map();
+/**
+ * A favicon (`favicon(domain)`), as `img[data-fav]`: not lazy, as the icons are small and
+ * mostly on screen, and the same domain is one address. `fallback` stands in its place where
+ * there is no domain or its image does not load (wireFavicons); re-rendered, it keeps its
+ * image (keepFavicons).
+ */
+function favImg(domain, { cls = '', title = '', alt = '', fallback = '' } = {}) {
+  if (!domain) return fallback;
+  const src = favicon(domain);
+  if (favFailed.get(src) > Date.now()) return fallback;
+  return `<img${cls ? ` class="${cls}"` : ''} src="${esc(src)}" alt="${esc(alt)}"${title ? ` title="${esc(title)}"` : ''} data-fav${fallback ? ` data-fb="${esc(fallback)}"` : ''}>`;
+}
+// A favicon that failed: from the Worker it is never an image without a size (src/favicons.js
+// passes on no SVG), so one that is complete without one is broken, also where it failed
+// while out of the page (no error event reached the page then).
+const favBroken = (img) => img.complete && !img.naturalWidth && img.getAttribute('src').startsWith('/api/favicon');
+/** A favicon that does not load gives way to its stand-in, and is not asked again for a while. */
+function failFavicon(img) {
+  favFailed.set(img.getAttribute('src'), Date.now() + FAV_RETRY_MS);
+  if (img.parentNode) img.replaceWith(document.createRange().createContextualFragment(img.dataset.fb || ''));
+}
+function wireFavicons() {
+  addEventListener('error', (e) => { if (e.target.matches?.('img[data-fav]')) failFavicon(e.target); }, true);
+}
+/**
+ * Favicons kept through a re-render: each `img[data-fav]` of `next` (a node or nodes, in the
+ * page) gives way to one of `prev` (what it replaced, out of the page now) with the same
+ * address, which keeps its image; a new one would be fetched and drawn anew, a flash on every
+ * click. Called in the same task as the replacement, before the page is drawn. A broken one
+ * gives way to its stand-in instead; `prev` may be null, to mend `next` only (a row back in
+ * the page).
+ */
+function keepFavicons(prev, next) {
+  const all = (x) => [x].flat().filter(Boolean).flatMap((n) => (n.querySelectorAll ? [...n.querySelectorAll('img[data-fav]')] : []));
+  const pool = new Map();
+  for (const img of all(prev)) {
+    if (favBroken(img)) { favFailed.set(img.getAttribute('src'), Date.now() + FAV_RETRY_MS); continue; }
+    const k = img.getAttribute('src');
+    if (!pool.has(k)) pool.set(k, []);
+    pool.get(k).push(img);
+  }
+  for (const img of all(next)) {
+    const k = img.getAttribute('src');
+    const old = pool.get(k)?.pop();
+    if (old) {
+      for (const a of [...old.attributes]) if (!img.hasAttribute(a.name)) old.removeAttribute(a.name);
+      for (const a of [...img.attributes]) if (a.name !== 'src' && old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value);
+      img.replaceWith(old);
+    } else if ((!prev && favBroken(img)) || favFailed.get(k) > Date.now()) failFavicon(img);
+  }
+}
+/** `el.innerHTML = html`, keeping the favicons that stay (keepFavicons). */
+function setHtml(el, html) {
+  const was = document.createDocumentFragment();
+  was.append(...el.childNodes);
+  el.innerHTML = html;
+  keepFavicons(was, el);
+}
 // An org as the admin team set it up (/inbox/admin): its name and icon, else the slug and
 // the favicon of the customer's usual mail domain. `favicon()` takes either.
 const orgName = (t) => t.org_name || t.org;
@@ -242,7 +306,7 @@ function cardHtml(p, ctx, found) {
   const label = rel === 'partner' && p.partner ? `Partner · ${p.partner}` : RELATION_LABEL[rel];
   const where = PLATFORM[p.platform] ? `${PLATFORM[p.platform]} account` : '';
   const rows = [];
-  const ico = (d) => (d ? `<img src="${esc(favicon(d))}" alt="" loading="lazy" onerror="this.remove()">` : '');
+  const ico = (d) => favImg(d);
   if (p.domain) rows.push(['Mail', `${ico(p.domain)}${esc(p.domain)}`]);
   if (p.teams?.length) rows.push(['Ops teams', esc(p.teams.join(', '))]);
   if (ctx.org) {
@@ -325,7 +389,7 @@ function drawCard(target) {
   const ctx = cardContext(target);
   const found = ctx.thread && p.kind !== 'bot' ? kbPerson(ctx.thread, target.dataset.p, p) : null;
   if (found?.pending) found.asked.then(() => { if (card.target === target && !el.hidden) drawCard(target); });
-  el.innerHTML = cardHtml(p, ctx, found);
+  setHtml(el, cardHtml(p, ctx, found));
   card.target = target;
   target.setAttribute('aria-describedby', 'pcard');
   // Below the name or avatar, or above it when there is no room; always on screen.
@@ -1248,7 +1312,7 @@ function facetRows(f) {
     const label = rowLabel(f, v);
     return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || label)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
-      ${ic ? `<img class="ico" src="${esc(favicon(ic))}" alt="" loading="lazy">` : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>'))}
+      ${ic ? favImg(ic, { cls: 'ico', fallback: '<span></span>' }) : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>'))}
       <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${mentionBadge(mentions.get(v))}</span>
       ${notButton(out)}
       <span class="n">${n}</span>
@@ -1299,16 +1363,11 @@ const sideTitle = (n) => `${n} new ${n === 1 ? 'answer' : 'answers'} from ${AGEN
 const sideBadge = (n) => (n ? `<b class="sidebadge" title="${esc(sideTitle(n))}" aria-label="${esc(sideTitle(n))}">${SIDE_ICON}${n > 99 ? '99+' : n}</b>` : '');
 /**
  * A customer's logo: its icon (the admin team's, else its mail domain's favicon) over its
- * initial on its colour, which shows where there is no icon or it does not load (see wireLogos).
+ * initial on its colour, which shows where there is no icon or it does not load (wireFavicons).
  */
 function logo(org, ts) {
   const t = ts.find((x) => x.org === org && orgIcon(x));
-  const img = t ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : '';
-  return `<span class="logo">${tile(customerName(org))}${img}</span>`;
-}
-/** A logo that does not load leaves its initial. */
-function wireLogos() {
-  addEventListener('error', (e) => { if (e.target.matches?.('.logo img')) e.target.remove(); }, true);
+  return `<span class="logo">${tile(customerName(org))}${t ? favImg(orgIcon(t)) : ''}</span>`;
 }
 /**
  * The customers' order in the column: those the red badge counts first (youCount), most
@@ -1401,7 +1460,7 @@ function filterCards() {
   if (simple()) {
     const html = simpleCustomers();
     const box = $('facets');
-    if (box.__html !== html) { box.innerHTML = html; box.__html = html; }
+    if (box.__html !== html) { setHtml(box, html); box.__html = html; }
     return;
   }
   // The column holds its places only while it is on screen (columnPlace).
@@ -1419,7 +1478,7 @@ function filterCards() {
   const box = $('facets');
   const old = [...box.children];
   if (old.length !== cards.length || old.some((c) => c.__html === undefined)) {
-    box.innerHTML = cards.join('');
+    setHtml(box, cards.join(''));
     [...box.children].forEach((c, i) => { c.__html = cards[i]; });
     return;
   }
@@ -1428,6 +1487,7 @@ function filterCards() {
     const node = toNode(html);
     node.__html = html;
     old[i].replaceWith(node);
+    keepFavicons(old[i], node);
   });
 }
 
@@ -1525,7 +1585,7 @@ function row(t, hit = null) {
   const p = replies && !hit ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
   const cust = oneCustomer() ? ''
-    : `<span class="cust">${orgIcon(t) ? `<img src="${esc(favicon(orgIcon(t)))}" alt="" loading="lazy">` : ''}${esc(orgName(t))}</span>`;
+    : `<span class="cust">${favImg(orgIcon(t))}${esc(orgName(t))}</span>`;
   return `${rowOpen(t, hit, oneCustomer() ? ' nocust' : '')}
     <div class="l1">${statusMark(t, status)}
       <span class="title">${titleHtml(t, hit)}</span>
@@ -2444,11 +2504,15 @@ function threadRows() {
         old.querySelector('.l1').outerHTML = /<div class="l1">[\s\S]*?<\/div>/.exec(body)[0];
         old.__body = body;
       }
-      if (!old.isConnected) preload.observe(old);
+      if (!old.isConnected) { preload.observe(old); keepFavicons(null, old); }
       return old;
     }
-    return { html, body, l2, thread: t.thread };
+    return {
+      html, body, l2, thread: t.thread, old,
+    };
   });
+  // Rows and headings drawn anew, each with what it replaces: their favicons stay (keepFavicons).
+  const redrawn = [];
   // New rows are parsed together, in one go.
   const fresh = nodes.map((n, i) => i).filter((i) => !(nodes[i] instanceof Element));
   if (fresh.length) {
@@ -2460,6 +2524,7 @@ function threadRows() {
       node.__body = n.body;
       node.__l2 = n.l2;
       preload.observe(node);
+      if (n.old) redrawn.push([n.old, node]);
       existing.set(n.thread, node);
       nodes[i] = node;
     }
@@ -2475,7 +2540,13 @@ function threadRows() {
       else if (x.quiet) key = 'quiet';
       const html = groupHtml(x);
       let node = heads.get(key);
-      if (!node || node.__html !== html) { node = toNode(html); node.__html = html; heads.set(key, node); }
+      if (!node || node.__html !== html) {
+        const was = node;
+        node = toNode(html);
+        node.__html = html;
+        heads.set(key, node);
+        if (was) redrawn.push([was, node]);
+      }
       return node;
     });
     nodes.splice(0, nodes.length, ...seq);
@@ -2511,6 +2582,7 @@ function threadRows() {
     const seq = leaving.size ? [...(leaving.get(null) || [])] : nodes;
     if (leaving.size) for (const n of nodes) seq.push(n, ...(leaving.get(n) || []));
     seq.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
+    for (const [was, node] of redrawn) if (!was.isConnected && node.isConnected) keepFavicons(was, node);
     if (before) moveRows(list, before, band, timing);
   }
   // The end of the list: older threads, while there are any.
@@ -2618,7 +2690,7 @@ function message(m, prev, fresh, followed = false, dated = false) {
   const cont = continues(prev, m);
   const key = authorCardKey(m);
   const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' && !m.unnamed ? ' bot' : ''} · ${timeTag(m.at, dated)}`;
-  const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? `<img class="badge-ico" src="${esc(favicon(a.org))}" alt="" title="${esc(a.org)}" loading="lazy">` : ''}</span>`;
+  const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? favImg(a.org, { cls: 'badge-ico', title: a.org }) : ''}</span>`;
   // Reactions, on the bubble's bottom edge: who reacted on hover; a click adds yours, or takes
   // it off again.
   const can = canReact(m);
@@ -3036,7 +3108,7 @@ function techMenu(data) {
 }
 
 /** A link's favicon (Google's, as the customers' icons are), for the header's links. */
-const linkIcon = (l) => (l.host ? `<img class="fav" src="${esc(favicon(l.host))}" alt="" loading="lazy">` : '<span class="fav"></span>');
+const linkIcon = (l) => favImg(l.host, { cls: 'fav', fallback: '<span class="fav"></span>' });
 
 /**
  * The links dropdown: the pill names the first link's host (its whole address is the tooltip),
@@ -3076,9 +3148,9 @@ function headSource(thread, members, entry) {
   const name = orgName(thread) || '';
   const type = ORG_TYPE[thread.org_type];
   const icon = orgIcon({ ...entry, ...thread });
-  const face = icon ? `<img class="org" src="${esc(favicon(icon))}" alt="">` : avatar(name || '?', null, 'org');
+  const face = favImg(icon, { cls: 'org', fallback: avatar(name || '?', null, 'org') });
   const p = platform(thread);
-  const badge = `<img class="plat" src="${esc(favicon(PLATFORM_SITE[p]))}" alt="">`;
+  const badge = favImg(PLATFORM_SITE[p], { cls: 'plat' });
   const who = [name, type].filter(Boolean).join(' · ');
   const linked = members.filter((m) => m.permalink);
   if (members.length > 1 && linked.length > 1) {
@@ -4086,14 +4158,18 @@ function patchItems(feed, items) {
     if (!spare.has(n.__html)) spare.set(n.__html, []);
     spare.get(n.__html).push(n);
   }
+  const made = [];
   const nodes = items.map((item) => {
-    const node = spare.get(item.html)?.shift() || htmlNode(item.html);
+    let node = spare.get(item.html)?.shift();
+    if (!node) { node = htmlNode(item.html); made.push(node); }
     if (item.enter && !node.isConnected) node.classList.add('enter');
     return node;
   });
   const keep = new Set(nodes);
-  [...feed.children].forEach((n) => { if (!keep.has(n)) n.remove(); });
+  const gone = [...feed.children].filter((n) => !keep.has(n));
+  for (const n of gone) n.remove();
   nodes.forEach((n, i) => { if (feed.children[i] !== n) feed.insertBefore(n, feed.children[i] || null); });
+  if (made.length && gone.length) keepFavicons(gone, made);
 }
 
 /**
@@ -4107,6 +4183,9 @@ function renderPane(pane, key, {
 }) {
   const feed = patch && pane.__key === key && pane.querySelector(':scope > .scroller > .feed');
   if (!feed) {
+    // Another thread: its favicons that the last one had too (the customer's, the platform's)
+    // stay as they were drawn.
+    const was = [...pane.children];
     pane.innerHTML = `${head}<div class="scroller">${review}<div class="feed">${items.map((i) => i.html).join('')}</div></div>${reply}`;
     pane.__key = key;
     const [ph, scroller, box] = pane.children;
@@ -4115,6 +4194,7 @@ function renderPane(pane, key, {
     if (review) scroller.firstElementChild.__html = review;
     const nodes = [...scroller.lastElementChild.children];
     if (nodes.length === items.length) nodes.forEach((n, i) => { n.__html = items[i].html; if (items[i].enter) n.classList.add('enter'); });
+    keepFavicons(was, [...pane.children]);
     keepHaloTurning(scroller);
     return;
   }
@@ -4122,6 +4202,7 @@ function renderPane(pane, key, {
   if (ph.__html !== head) {
     const node = htmlNode(head);
     ph.replaceWith(node);
+    keepFavicons(ph, node);
     keepShown(ph, node);
   }
   const rv = feed.parentElement.querySelector(':scope > .rv');
@@ -6058,7 +6139,7 @@ function channelOptions(channels, inView, q) {
   return [...found.filter((c) => inView.includes(c)), ...found.filter((c) => !inView.includes(c))];
 }
 
-const channelIcon = (c) => `<img src="${esc(favicon(PLATFORM_SITE[PLATFORM[c.source]]))}" alt="${esc(PLATFORM[c.source])}" title="${esc(PLATFORM[c.source])}">`;
+const channelIcon = (c) => favImg(PLATFORM_SITE[PLATFORM[c.source]], { alt: PLATFORM[c.source], title: PLATFORM[c.source] });
 /** Where a channel is, after its name: the customer, and on Teams the team it is in. */
 const channelWhere = (c) => [c.orgName, c.group].filter(Boolean).map(esc).join(' · ');
 
@@ -6098,8 +6179,8 @@ function renderChannels(open = true) {
   ul.hidden = !open;
   input.setAttribute('aria-expanded', String(open));
   if (!open) { input.removeAttribute('aria-activedescendant'); return; }
-  ul.innerHTML = c.options.slice(0, CHANNEL_MAX).map((o, i) => `<li role="option" id="chan-${i}" data-i="${i}" class="${i === c.i ? 'on' : ''}" aria-selected="${i === c.i}">${channelIcon(o)}<span class="nm">${esc(o.name)}</span><span class="hint">${channelWhere(o)}</span></li>`).join('')
-    || `<li class="none">${input.value.trim() ? 'No channel of yours matches.' : 'You have no channel to post in.'}</li>`;
+  setHtml(ul, c.options.slice(0, CHANNEL_MAX).map((o, i) => `<li role="option" id="chan-${i}" data-i="${i}" class="${i === c.i ? 'on' : ''}" aria-selected="${i === c.i}">${channelIcon(o)}<span class="nm">${esc(o.name)}</span><span class="hint">${channelWhere(o)}</span></li>`).join('')
+    || `<li class="none">${input.value.trim() ? 'No channel of yours matches.' : 'You have no channel to post in.'}</li>`);
   if (c.options.length) input.setAttribute('aria-activedescendant', `chan-${c.i}`);
   else input.removeAttribute('aria-activedescendant');
   ul.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
@@ -9538,7 +9619,7 @@ async function start() {
   wireRail();
   wireSideRoom();
   wireColumns();
-  wireLogos();
+  wireFavicons();
   // Another thread (or the new conversation) fades in; a live update of the same one does not
   // (ui/app.js). Where the pane slides in over the list (phones), the slide is the motion.
   Swap.watch($('pane'), () => (state.compose ? 'compose' : state.open), { skip: () => TAKING_TURNS.matches });

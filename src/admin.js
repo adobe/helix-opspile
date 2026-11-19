@@ -1371,7 +1371,7 @@ export async function admin(request, env, url, me) {
     case 'DELETE orgs': return deleteOrg(env, body);
     case 'GET org': return org(env, q('slug'));
     case 'GET org-icons': return orgIcons(env, q('slug'), Boolean(q('fresh')));
-    case 'GET favicon': return faviconProxy(q('domain'));
+    case 'GET favicon': return faviconProxy(q('domain'), { request });
     case 'GET bots': return listBots(env);
     case 'GET bot': return getBot(env, url.searchParams.get('key'));
     case 'PUT bots': return setBot(env, me, body);

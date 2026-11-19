@@ -143,7 +143,7 @@ function page({ readonly = false } = {}) {
     timeTag: (iso, dated) => `<time datetime="${iso}" title="whole">${dated ? 'day and time' : 'time'}</time>`,
     profileKey: (key, { name }) => key || `local:${name}`,
     avatar: (name) => `<span class="av">${esc(name[0])}</span>`,
-    favicon: (d) => `/favicon/${d}`,
+    favImg: piece('const FAV_RETRY_MS', '// A favicon that failed', 'favImg', { esc, favicon: (d) => `/favicon/${d}` }).favImg,
     canReact: (m) => !readonly && !m.pending && m.author?.kind !== 'system',
     canEdit: (m) => !readonly && Boolean(m.editable),
     emojiChip: emoji,

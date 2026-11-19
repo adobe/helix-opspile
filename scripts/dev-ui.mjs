@@ -92,7 +92,8 @@ import {
   fold, orgStacks, readMembers, threadTech,
 } from '../src/api.js';
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
-import { createAdmin } from './dev-ui-admin.mjs';
+import { createAdmin, devFavicon } from './dev-ui-admin.mjs';
+import { faviconProxy } from '../src/favicons.js';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { findPerson } from '../src/kbpeople.js';
@@ -1237,6 +1238,15 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
     return kbApi(req, res, url);
+  }
+  if (url.pathname === '/api/favicon') {
+    // The fake customers' favicons (dev-ui-admin.mjs), and the platforms' from Google through
+    // the Worker's proxy (src/favicons.js).
+    const d = url.searchParams.get('domain') || '';
+    const r = /\.example$/.test(d) ? devFavicon(d) : await faviconProxy(d, { cache: null });
+    const headers = Object.fromEntries(['content-type', 'cache-control', 'etag'].map((k) => [k, r.headers.get(k)]).filter(([, v]) => v));
+    res.writeHead(r.status, headers).end(Buffer.from(await r.arrayBuffer()));
+    return true;
   }
   if (url.pathname.startsWith('/api/admin/')) {
     const body = req.method === 'GET' ? null : await readJson(req);

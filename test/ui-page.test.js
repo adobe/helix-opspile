@@ -392,7 +392,7 @@ describe('inbox page', () => {
       QUICK: [],
       emoji: (x) => x,
       SIGNAL_HINT: {},
-      favicon: (x) => x,
+      favImg: (x) => x,
       sendState: () => '',
     });
     const classes = (m) => /class="([^"]*)"/.exec(message({
@@ -421,7 +421,7 @@ describe('inbox page', () => {
       QUICK: ['eyes'],
       emoji: (x) => x,
       SIGNAL_HINT: {},
-      favicon: (x) => x,
+      favImg: (x) => x,
     });
     const staff = { name: 'Ada', kind: 'person', staff: true };
     const m = {

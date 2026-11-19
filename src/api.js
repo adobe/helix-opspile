@@ -26,6 +26,7 @@ import {
 } from './drafts.js';
 import { requestsFor } from './bashrequests.js';
 import { teamsBotIcon } from './bots.js';
+import { faviconProxy } from './favicons.js';
 import { refreshAttachment } from './discord.js';
 import { edit } from './edit.js';
 import { expertEvents, recordExpertEvent } from './expertevents.js';
@@ -1121,6 +1122,14 @@ function room(env, team) {
 
 /** `/api/*` with the viewer known; see `api`. */
 async function route(request, env, url, { viewer: injected, waitUntil } = {}, timing = null) {
+  // A customer's favicon (src/favicons.js), which the inbox shows on many rows at once. It is
+  // Google's, no one's secret: someone Access signed in is enough, without looking them up.
+  if (url.pathname === '/api/favicon' && (request.method === 'GET' || request.method === 'HEAD')) {
+    if (!injected && !await accessEmail(request, env)) {
+      return json({ error: 'not signed in' }, 403);
+    }
+    return faviconProxy(url.searchParams.get('domain'), { request, waitUntil });
+  }
   // `viewer` can be injected by tests; in the Worker it always comes from Access.
   const me = injected || await viewer(request, env);
   timing?.mark('auth');
