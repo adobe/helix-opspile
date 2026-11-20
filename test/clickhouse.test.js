@@ -558,6 +558,14 @@ describe('klickhaus export', () => {
     });
     assert.deepEqual(env.DB.rows('SELECT team FROM threads'), [{ team: 'sites' }]);
     assert.deepEqual(env.queued.map((q) => q.body), [{ export: [KEY] }]);
+    // One that has vectors (replay.mjs made them) has them moved, under the new team.
+    env.queued.length = 0;
+    env.DB.sqlite.prepare(`UPDATE threads SET team = 'other', embedded = 'h',
+      vectorized_through = any_at`).run();
+    await refile(env, {
+      source: 'slack', tenant: 'E1', channelId: 'C1', threads: [[KEY, PATH]],
+    });
+    assert.deepEqual(env.queued.map((q) => q.body), [{ vectorize: KEY }, { export: [KEY] }]);
   });
 
   it('keeps a re-filed thread behind for the sweep when the jobs cannot be queued', async () => {
