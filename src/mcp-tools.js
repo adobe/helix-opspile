@@ -140,6 +140,10 @@ function summary(t, me) {
   if (t.unseenByAdobe) {
     out.unseen_by_adobe = true;
   }
+  if (Number(t.imported)) {
+    // From the history import: over before the inbox began, so read and waiting on nobody.
+    out.imported = true;
+  }
   if ((t.posters || []).includes(me.id)) {
     out.posted_in = true;
   }

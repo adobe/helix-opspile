@@ -956,7 +956,7 @@ function waitedFor(from, to) {
  *   weekends do not count for normal and low urgency (waitedFor)
  * - silent: waits on the customer or vendor longer than its urgency allows (purple)
  * - team: your team is in it, you were not mentioned, all is well (green)
- * - quiet: everything else (grey)
+ * - quiet: everything else (grey), and the threads of the history import (src/history.js)
  */
 /**
  * What the steering reactions say, for the viewer: `mine` 👀 by the viewer (on it),
@@ -980,6 +980,8 @@ function statusOf(t) {
   return pass.status.get(t);
 }
 function computeStatus(t) {
+  // From the history import: over before the inbox began, nobody waits on it.
+  if (t.imported) return 'quiet';
   const me = viewerId();
   const u = urgencyOf(t);
   const alert = t.kind === 'alert';

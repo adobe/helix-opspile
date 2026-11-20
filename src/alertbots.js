@@ -11,7 +11,7 @@
  */
 
 /**
- * Bots that only post alerts (`identities.alerts`, migration 0089; an admin says so under
+ * Bots that only post alerts (`identities.alerts`, migration 0090; an admin says so under
  * Requests, src/ourbots.js). A thread one of them starts is an alert, whatever its channel's
  * rules say: a channel the rules make a conversation (`kind: channel`) can have both, the
  * people's conversations and a monitoring bot's alerts. Only the thread's root decides, so a

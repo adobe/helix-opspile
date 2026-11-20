@@ -495,9 +495,21 @@ itself: a sweep would apply today's rules to every channel.
 that may pass leaves it open, for the queue and then `sweepBackfills`, until the thread has been quiet
 for a week.
 
+**History import.** requested → page by page → done, or ended by an error that stays
+(`history_imports`, `src/history.js`). A page moves the row on only from the cursor and skip it
+started from (`WHERE cursor IS ? AND skip = ?`), so a duplicate does nothing and sends no next
+page; a newer `run` replaces the row and stops the older one's pages. An error that may pass is
+kept on the open row and thrown for the queue; one that outlives the retries is left open for
+`scripts/import.mjs --resume`, which nothing runs by itself.
+
+**Imported thread.** imported → live (`messages.imported`, `threads.imported`, src/threads.js).
+A message is imported while every pile-1 object of it is the import's (`MIN` on upsert), a thread
+while all its messages are, so the same in any order; once live, never imported again.
+
 **Derived-data sync.** behind → caught up, per pipeline (`vectorized_through`, `indexed_through`,
 `exported_through`). A sweep compares each with the thread. An edit does not move `any_at`, so a dead
-job for an edit is not swept; it is in `dead_jobs`.
+job for an edit is not swept; it is in `dead_jobs`. Imported threads stay behind on vectors and
+full-text items until asked for (`scripts/replay.mjs`); they are exported.
 
 **Topic map.** none → built → a week old → built again (`topic_maps`, `src/topicmap.js`). No state in
 between: the cron or Rebuild builds one in a single request, a row when it is done, and the newest

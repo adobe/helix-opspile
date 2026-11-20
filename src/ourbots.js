@@ -24,7 +24,7 @@
  * The admin page has no list of bots of its own: they are under Requests. A bot nobody said
  * anything of yet (`ours` NULL) that has posted is a request there, until an admin says it is
  * Adobe's or external; the others are listed below the requests. A bot may also only post
- * alerts (`alerts`, migration 0089): the threads it starts are alerts (src/alertbots.js).
+ * alerts (`alerts`, migration 0090): the threads it starts are alerts (src/alertbots.js).
  */
 
 import { json } from './http.js';
