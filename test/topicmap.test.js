@@ -368,6 +368,13 @@ describe('topic map: building', () => {
     assert.equal(areaTopics(vectors, idx, {}).length, 2);
     // Everywhere is no concentration: a team on every thread splits nothing.
     assert.equal(areaTopics(vectors, idx, { team: idx.map(() => ['helix']) }).length, 2);
+    // An area that could not split says what it is concentrated on, if anything.
+    assert.equal(kept[0].concentrated, null);
+    const one = areaTopics(vectors, idx.slice(0, 12), { customer: idx.slice(0, 12).map(() => ['acme']) });
+    assert.deepEqual([one.length, one[0].concentrated], [1, 'customer:acme']);
+    // A thread with no customer is nobody's: no `customer:null`.
+    const none = areaTopics(vectors, idx, { customer: idx.map((i) => (i < 12 ? [] : ['hooli'])) });
+    assert.ok(none.every((t) => t.concentrated !== 'customer:null'));
   });
 
   it('names every topic in one call, from titles, concerns and products, and fixes what it misses', async () => {
