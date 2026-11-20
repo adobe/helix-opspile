@@ -11,6 +11,8 @@
  */
 
 import { slug as toSlug } from './rules.js';
+import { resolveTech, techMoves } from './catalog.js';
+import { MAX_TECH_ID } from './techid.js';
 
 /**
  * Portal requests (migration 0074): what a customer's lobby in the customer portal asks for.
@@ -63,8 +65,11 @@ export async function recordLobby(env, lobby) {
     email: clean(m && m.email).toLowerCase(),
     joined: Boolean(m && m.joined),
   }));
-  const tech = (Array.isArray(lobby.tech) ? lobby.tech : []).map((t) => clean(t, 64))
-    .filter(Boolean).slice(0, 100);
+  // The portal keeps the ids a lobby picked: one from before a catalog move is the one it moved
+  // to (src/catalog.js), so what the lobby picked stays followed.
+  const moves = await techMoves(env);
+  const tech = [...new Set((Array.isArray(lobby.tech) ? lobby.tech : [])
+    .map((t) => resolveTech(clean(t, MAX_TECH_ID), moves)).filter(Boolean))].slice(0, 100);
   const { meta } = await env.DB.prepare(`INSERT INTO portal_requests (portal, domain, company,
       tech, note, members, requested_by, requested_name, requested_at, seq, status, logo)
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)

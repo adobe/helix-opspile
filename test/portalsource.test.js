@@ -307,6 +307,15 @@ describe('the portal as a source', () => {
     assert.ok(tech.some((t) => t.tech === 'eds' && t.product === 'Experience Manager Sites'));
     // Nothing the customer does not have from Adobe.
     assert.ok(!tech.some((t) => ['akamai', 'github', 'sharepoint'].includes(t.tech)));
+    // Every team's: one a product team keeps in its catalog is offered, once, as the admin team
+    // has it where both have it; a team turning one off for its channels changes nothing here.
+    inbox.DB.sqlite.exec(`INSERT INTO tech_stack (team, tech, name, description, product, portal)
+      VALUES ('commerce', 'adobe/commerce/b2b', 'B2B', 'Adobe Commerce B2B', 'Commerce', 1);
+      INSERT INTO tech_stack (team, tech, name, description, enabled, portal)
+      VALUES ('helix', 'eds', 'Helix sites', 'x', 0, 1)`);
+    const union = await portalTechnologies(inbox);
+    assert.ok(union.some((t) => t.tech === 'adobe/commerce/b2b' && t.name === 'B2B'));
+    assert.deepEqual(union.filter((t) => t.tech === 'eds').map((t) => t.name), ['Edge Delivery']);
     inbox.DB.sqlite.prepare("UPDATE tech_stack SET enabled = 0 WHERE tech = 'eds'").run();
     assert.ok(!(await portalTechnologies(inbox)).some((t) => t.tech === 'eds'));
   });
@@ -359,6 +368,14 @@ describe('portal requests', () => {
     [row] = (await w.staff(viewer(ADMIN), 'GET', '/api/admin/requests')).body.portal;
     assert.deepEqual(row.tech.map((t) => t.tech), ['da']);
     assert.equal((await recordLobby(w.inbox, { domain: DOMAIN, status: 'draft' })).result, 'skip');
+    // An id from before a catalog move, as the portal still keeps it, is the one it moved to.
+    w.inbox.DB.sqlite.exec(`INSERT INTO tech_moves (team, old, tech) VALUES
+      ('helix', 'da', 'adobe/aem-sites/document-authoring')`);
+    await recordLobby(w.inbox, {
+      portal: 'test', domain: DOMAIN, seq: 99, status: 'requested', tech: ['da', 'adobe/aem-sites/document-authoring'], members: [],
+    });
+    const stored = w.inbox.DB.rows('SELECT tech FROM portal_requests WHERE domain = ?', DOMAIN)[0].tech;
+    assert.deepEqual(JSON.parse(stored), ['adobe/aem-sites/document-authoring']);
   });
 
   it('are declined by the admin team, with a reason the customer reads, and asked again', async () => {

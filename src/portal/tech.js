@@ -14,36 +14,37 @@
  * The technologies a lobby picks from. They are the inbox's tech stack (`tech_stack`, the
  * entries marked for the portal), which the portal asks the inbox for (`OPSPILE.technologies`)
  * and keeps in its own database for an hour. Until the inbox has answered once (a portal
- * deployed before the inbox is bound to it), the list below stands in: the admin team's
- * entries as the inbox's migrations made them.
+ * deployed before the inbox is bound to it), the list below stands in: Adobe's technologies of
+ * the teams' catalogs as the catalog bootstrap wrote them (src/catalog.js, ids as paths).
  */
 
 export const DEFAULT_TECH = [
-  ['eds', 'Edge Delivery', 'Experience Manager Sites'],
-  ['aemcs', 'AEM Cloud Service', 'Experience Manager Sites'],
-  ['aem65', 'AEM 6.5 or AMS', 'Experience Manager Sites'],
-  ['da', 'Document Authoring', 'Experience Manager Sites'],
-  ['ue', 'Universal Editor', 'Experience Manager Sites'],
-  ['xw', 'Experience Workspace', 'Experience Manager Sites'],
-  ['sidekick', 'AEM Sidekick', 'Experience Manager Sites'],
-  ['aemcontent', 'Content Fragments and AEM APIs', 'Experience Manager Sites'],
-  ['msm', 'MSM and language copies', 'Experience Manager Sites'],
-  ['edgefunctions', 'AEM Edge Functions', 'Experience Manager Sites'],
-  ['rum', 'Operational telemetry', 'Experience Manager Sites'],
-  ['aso', 'Sites Optimizer', 'Experience Manager Sites Optimizer'],
-  ['assets', 'Assets', 'Experience Manager Assets'],
-  ['dm', 'Dynamic Media', 'Experience Manager Assets'],
-  ['forms', 'Forms', 'Experience Manager Forms'],
-  ['commerce', 'Commerce', 'Commerce'],
-  ['aco', 'Commerce Optimizer', 'Commerce Optimizer'],
-  ['analytics', 'Analytics', 'Adobe Analytics suite'],
-  ['target', 'Target', 'Target'],
-  ['rtcdp', 'Real-Time CDP', 'Real-Time CDP'],
-  ['ajo', 'Journey Optimizer', 'Journey Optimizer'],
-  ['campaign', 'Campaign', 'Campaign'],
-  ['workfront', 'Workfront', 'Workfront'],
-  ['genstudio', 'GenStudio and Firefly', 'GenStudio'],
-  ['appbuilder', 'App Builder', 'Adobe Developer platform'],
+  ['adobe/aem-sites/edge-delivery', 'Edge Delivery', 'Experience Manager Sites'],
+  ['adobe/aem-sites/cloud-service', 'AEM Cloud Service', 'Experience Manager Sites'],
+  ['adobe/aem-sites/aem-65', 'AEM 6.5 or AMS', 'Experience Manager Sites'],
+  ['adobe/aem-sites/document-authoring', 'Document Authoring', 'Experience Manager Sites'],
+  ['adobe/aem-sites/universal-editor', 'Universal Editor', 'Experience Manager Sites'],
+  ['adobe/aem-sites/experience-workspace', 'Experience Workspace', 'Experience Manager Sites'],
+  ['adobe/aem-sites/sidekick', 'AEM Sidekick', 'Experience Manager Sites'],
+  ['adobe/aem-sites/managed-cdn', 'Adobe Managed CDN', 'Experience Manager Sites'],
+  ['adobe/aem-sites/content-fragments', 'Content Fragments and AEM APIs', 'Experience Manager Sites'],
+  ['adobe/aem-sites/msm', 'MSM and language copies', 'Experience Manager Sites'],
+  ['adobe/aem-sites/edge-functions', 'AEM Edge Functions', 'Experience Manager Sites'],
+  ['adobe/aem-sites/operational-telemetry', 'Operational telemetry', 'Experience Manager Sites'],
+  ['adobe/aem-sites-optimizer', 'Sites Optimizer', 'Sites Optimizer'],
+  ['adobe/aem-assets/assets', 'Assets', 'Experience Manager Assets'],
+  ['adobe/aem-assets/dynamic-media', 'Dynamic Media', 'Experience Manager Assets'],
+  ['adobe/aem-forms', 'Forms', 'Forms'],
+  ['adobe/commerce', 'Commerce', 'Commerce'],
+  ['adobe/commerce-optimizer', 'Commerce Optimizer', 'Commerce Optimizer'],
+  ['adobe/analytics', 'Analytics', 'Analytics'],
+  ['adobe/target', 'Target', 'Target'],
+  ['adobe/real-time-cdp', 'Real-Time CDP', 'Real-Time CDP'],
+  ['adobe/journey-optimizer', 'Journey Optimizer', 'Journey Optimizer'],
+  ['adobe/campaign', 'Campaign', 'Campaign'],
+  ['adobe/workfront', 'Workfront', 'Workfront'],
+  ['adobe/genstudio', 'GenStudio and Firefly', 'GenStudio and Firefly'],
+  ['adobe/developer-platform/app-builder', 'App Builder', 'Adobe Developer platform'],
 ].map(([tech, name, product], position) => ({
   tech, name, product, position,
 }));
@@ -79,7 +80,8 @@ export async function refreshTech(env, now = Date.now()) {
   const answer = await env.OPSPILE.technologies();
   const list = (Array.isArray(answer) ? answer : [])
     .map((t) => ({
-      tech: clean(t && t.tech, 64),
+      // An id is a catalog path (adobe/aem-sites/edge-delivery), as long as the inbox's ids are.
+      tech: clean(t && t.tech, 160),
       name: clean(t && t.name, 120),
       product: clean(t && t.product, 120),
     }))
@@ -87,7 +89,16 @@ export async function refreshTech(env, now = Date.now()) {
   if (!list.length) {
     return { result: 'empty' };
   }
+  // A lobby's picks under an id a technology had before a catalog move are its id now, so what
+  // the lobby picked stays picked (the page shows it, a save keeps it).
+  const moves = (Array.isArray(answer) ? answer : []).flatMap((t) => (Array.isArray(t?.moved_from)
+    ? t.moved_from.map((old) => [clean(old, 160), clean(t.tech, 160)]) : []))
+    .filter(([old, id]) => old && id && old !== id);
   await env.DB.batch([
+    ...moves.map(([old, id]) => env.DB.prepare(`UPDATE lobbies SET tech = (SELECT
+        json_group_array(DISTINCT CASE WHEN value = ?1 THEN ?2 ELSE value END)
+        FROM json_each(lobbies.tech))
+      WHERE EXISTS (SELECT 1 FROM json_each(lobbies.tech) WHERE value = ?1)`).bind(old, id)),
     env.DB.prepare('DELETE FROM tech'),
     ...list.map((t, i) => env.DB.prepare(`INSERT OR REPLACE INTO tech (tech, name, product,
       position) VALUES (?, ?, ?, ?)`).bind(t.tech, t.name, t.product || null, i)),

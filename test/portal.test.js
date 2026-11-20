@@ -523,6 +523,25 @@ describe('the customer portal: its outbox', () => {
     env.OPSPILE = { technologies: async () => [{ tech: 'eds', name: 'Edge Delivery', product: 'Sites' }, { tech: '', name: 'x' }] };
     assert.deepEqual(await refreshTech(env), { result: 'refreshed', tech: 1 });
     assert.deepEqual(await listTech(env), [{ tech: 'eds', name: 'Edge Delivery', product: 'Sites' }]);
+    // A lobby's pick under an id from before a catalog move is the technology's id now.
+    env.DB.sqlite.prepare(`INSERT INTO lobbies (domain, tech, created_by, created_at, updated_at)
+      VALUES ('acme.example', '["eds","da"]', 'x', 'x', 'x')`).run();
+    env.OPSPILE = {
+      technologies: async () => [
+        {
+          tech: 'adobe/aem-sites/edge-delivery', name: 'Edge Delivery', product: 'Sites', moved_from: ['eds'],
+        },
+        {
+          tech: 'adobe/aem-sites/document-authoring', name: 'Document Authoring', product: 'Sites', moved_from: ['da'],
+        },
+      ],
+    };
+    assert.deepEqual(await refreshTech(env), { result: 'refreshed', tech: 2 });
+    const [{ tech }] = env.DB.rows("SELECT tech FROM lobbies WHERE domain = 'acme.example'");
+    assert.deepEqual(JSON.parse(tech).sort(), ['adobe/aem-sites/document-authoring', 'adobe/aem-sites/edge-delivery']);
+    // Refreshed again, nothing left to map: the picks stay.
+    await refreshTech(env);
+    assert.equal(JSON.parse(env.DB.rows("SELECT tech FROM lobbies WHERE domain = 'acme.example'")[0].tech).length, 2);
   });
 });
 
