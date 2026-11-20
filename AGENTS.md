@@ -120,6 +120,12 @@ code and docs, is the decision model that labels threads and channels.
   `src/discordmd.js` build mdast, and `src/mdast.js` writes it. A platform's quirk goes into its
   module's tree; what every platform needs (spacing around bold, link form) into `src/mdast.js`.
 
+- **A merged org is a rule:** `loadRules` (src/lookup.js) adds every row of `org_merges` as a
+  rule of target `merge`, and `classify` files what the other rules give a merged slug under the
+  org it went into (`mergedOrg` in src/rules.js). Get the rules from `loadRules`, never from
+  `SELECT * FROM rules`, or a merged org comes back. The duplicate search, the merge and its
+  requests are src/orgmerge.js.
+
 - **Most lifecycles here are implicit:** a nullable timestamp, a watermark, whether a row exists.
   [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md) lists them, with the rules they follow. Read the
   entry before changing one, and add one for anything new with a lifecycle.

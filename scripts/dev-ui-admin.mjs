@@ -49,6 +49,13 @@ import { fakeMcpServers } from '../test/mcp-server.js';
 
 const PREVIEW_TOKEN = 'preview-token';
 
+/** Clef on two orgs, made up: one when their names are (src/orgmerge.js). */
+const DEV_CLEF = {
+  run: async (model, { state }) => ({
+    answers: { one: { type: 'noul', noul: /same name|called|starts with|spelled alike/.test(state) ? 0.93 : 0.18 } },
+  }),
+};
+
 // The preview's favicons: a letter on a colour, per domain; none for the ones Google would not
 // know (the Worker answers 404 then, and the page shows the org without an icon).
 const NO_FAVICON = /(^|\.)(globex|initech|parked)\.example$/;
@@ -400,6 +407,30 @@ const ADMIN_CHANNELS = [
     clef: { edge: 0.83, platform: 0.12, none: 0.05 },
     kind: ['channel', 0.66],
   },
+  // Duplicate customers (src/orgmerge.js): ACME again, under acme-co, by its Workfront channel;
+  // Wonka again, under wonkaindustries, by a Teams team of its own (a merge of it is asked for).
+  {
+    id: 'C0ACMECO',
+    source: 'slack',
+    name: 'workfront-acme-co',
+    org: 'acme-co',
+    topic: 'Workfront proofing for the ACME marketing team',
+    titles: ['Proofing links expire after a day'],
+    members: [1],
+    clef: { platform: 0.7, edge: 0.2, none: 0.1 },
+    kind: ['channel', 0.9],
+  },
+  {
+    id: 'CH-WONKAIND',
+    source: 'teams',
+    group: 'xyz-wonkaindustries',
+    name: 'Main',
+    org: 'wonkaindustries',
+    titles: ['SSO for the new authors'],
+    members: [1, 6],
+    clef: { edge: 0.6, platform: 0.3, none: 0.1 },
+    kind: ['channel', 0.85],
+  },
   {
     id: 'C0SOYLENT1',
     source: 'slack',
@@ -693,7 +724,9 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('hooli', 'Hooli Inc.', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('wonka', 'Wonka Industries', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('soylent', 'Soylent Corporation', 'customer', NULL, '2026-10-20T09:00:00Z'),
-    ('opspile', 'opspile', 'internal', NULL, '2026-10-20T09:00:00Z')`);
+    ('opspile', 'opspile', 'internal', NULL, '2026-10-20T09:00:00Z'),
+    ('acme-co', 'ACME Corporation', 'customer', 'acme.example', '2026-10-20T09:00:00Z'),
+    ('wonkaindustries', 'Wonka Industries Ltd', 'customer', NULL, '2026-10-20T09:00:00Z')`);
   // Channels Lena (a member of Edge ops) asked the admin team for: one the admin team holds
   // (confirming moves it), one Platform ops holds (confirming shares it), and one declined; and
   // one her thread's agent asked to move for her.
@@ -714,6 +747,11 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       requested_name, requested_at, move, thread) VALUES ('slack', 'C0UMBRELLA', 'edge', ?, 'open',
       'lena@example.com', 'Lena Berg', ?, 1, ?)`)
     .run('Lena says Umbrella is an Edge ops customer: the channel is filed by the aem- rule, which every EDS channel matches.', ago(0.05), umbrella ? umbrella.row.thread : null);
+
+  // Lena asks for Wonka's two orgs to be one (src/orgmerge.js): it waits under Requests.
+  DB.sqlite.prepare(`INSERT INTO org_merge_requests (slug, into_slug, note, requested_by, requested_name,
+      requested_at) VALUES ('wonkaindustries', 'wonka', ?, 'lena@example.com', 'Lena Berg', ?)`)
+    .run('Their second Teams team: the same company, the same people.', ago(0.3));
 
   // Edge ops follows Universal Editor and Experience Workspace (src/follows.js): its page lists
   // them, and the inbox's tech stack dropdown says so.
@@ -964,7 +1002,9 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     if (url.pathname === '/api/admin/org-icons') {
       return Response.json({ icons: devIcons(url.searchParams.get('slug')) });
     }
-    const res = await admin(toRequest(req, url, body), env, url, me);
+    // Clef, made up, for the duplicate customers (src/orgmerge.js): two orgs of one name are one.
+    const asked = url.pathname === '/api/admin/org-duplicates' ? { ...env, AI: DEV_CLEF } : env;
+    const res = await admin(toRequest(req, url, body), asked, url, me);
     // Re-filing runs right away here.
     while (queued.length) {
       const messages = queued.splice(0).map((b) => ({ body: b, ack() {}, retry() {} }));

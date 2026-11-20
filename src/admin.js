@@ -31,7 +31,11 @@ import {
   isHolding, share, sharesByChannel, sharesOf, unshare,
 } from './shares.js';
 import { syncAccessQuietly } from './accesssync.js';
-import { faviconProxy, findIcons, orgDomain } from './favicons.js';
+import { faviconProxy, findIcons } from './favicons.js';
+import {
+  closeMergeRequest, dismissPair, listMergeRequests, mailDomains, mergeOrgs, openMergeCount,
+  orgDuplicates, requestMerge, unmergeOrg,
+} from './orgmerge.js';
 import {
   claimRequest, closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf,
   recordOutcome,
@@ -325,12 +329,14 @@ async function ruleFrom(env, body) {
 /**
  * Saves a rule change, or with `dryRun` only says what it would move. `extra` goes with the
  * answer, either way. The follow rules' shares follow the change (src/followrules.js): a failure
- * there is left to the cron, since the rules are saved.
+ * there is left to the cron, since the rules are saved. `only` keeps the moves a change is about
+ * (a merge: the merged org's channels), and leaves the channels filed otherwise than the rules
+ * say for some other reason where they are.
  */
 async function applyRules(env, me, {
-  next, dryRun, write, extra = {},
+  next, dryRun, write, extra = {}, only = null,
 }) {
-  const moves = await plan(env, next);
+  const moves = (await plan(env, next)).filter(only || (() => true));
   if (dryRun) {
     return json({ dryRun: true, moves, ...extra });
   }
@@ -618,8 +624,10 @@ async function requestList(env, me, { status, count }) {
   const conflicts = isAdmin(me) ? await techConflicts(env) : [];
   // And the conflicts between team rules (src/ruleconflicts.js), the admin team's too.
   const rules = isAdmin(me) ? await ruleConflicts(env) : [];
+  // And the merges of customers asked for (src/orgmerge.js), the admin team's too.
+  const merges = isAdmin(me) ? await openMergeCount(env) : 0;
   const open = await openCount(env, teams) + await portalOpenCount(env, teams)
-    + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length;
+    + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length + merges;
   if (count) {
     return json({ open });
   }
@@ -629,6 +637,7 @@ async function requestList(env, me, { status, count }) {
     portalBound: portalBound(env),
     conflicts,
     ruleConflicts: rules,
+    orgMerges: isAdmin(me) ? await listMergeRequests(env, me, { limit: 30 }) : [],
     open,
   });
 }
@@ -1006,7 +1015,7 @@ async function listTeams(env, me) {
   const scope = everything ? null : managedTeams(me);
   const requests = await openCount(env, scope) + await portalOpenCount(env, scope)
     + (everything ? await openConflictCount(env)
-      + (await ruleConflicts(env, { kept: false })).length : 0);
+      + (await ruleConflicts(env, { kept: false })).length + await openMergeCount(env) : 0);
   // Every team's name, for a manager's page to say where a channel is now.
   const names = Object.fromEntries(all.map((t) => [t.slug, t.name]));
   return json({
@@ -1358,31 +1367,6 @@ async function removeMember(env, me, body) {
 // ---- orgs -------------------------------------------------------------------------------
 
 /**
- * The mail domains of the people outside Adobe who post in an org's threads (all orgs', or
- * `slug`'s), most people first: `Map<org, [domain]>`. Free mail and tenant domains are left
- * out; the first is the org's usual mail domain, whose favicon it has without an icon.
- */
-async function mailDomains(env, slug = null) {
-  const list = await rows(env, `SELECT t.org, LOWER(SUBSTR(i.email, INSTR(i.email, '@') + 1)) AS domain,
-      COUNT(DISTINCT m.thread || ' ' || m.author_key) AS n
-    FROM messages m JOIN threads t ON t.thread = m.thread
-    JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
-    WHERE m.staff = 0 AND m.deleted = 0 AND m.counted = 1 AND i.email LIKE '%_@_%'
-      AND (?1 IS NULL OR t.org = ?1)
-    GROUP BY t.org, domain ORDER BY t.org, n DESC, domain`, slug);
-  const by = new Map();
-  for (const r of list) {
-    if (orgDomain(env, r.domain)) {
-      if (!by.has(r.org)) {
-        by.set(r.org, []);
-      }
-      by.get(r.org).push(r.domain);
-    }
-  }
-  return by;
-}
-
-/**
  * Every org: the ones with a row, and every slug the rules filed threads or a base under.
  * `domain` is its usual mail domain, whose favicon it is shown with when it has no icon.
  */
@@ -1395,7 +1379,7 @@ async function listOrgs(env) {
     FROM (SELECT slug FROM orgs UNION SELECT DISTINCT org FROM threads
       UNION SELECT slug FROM knowledge_bases WHERE kind = 'org') s
     LEFT JOIN orgs o ON o.slug = s.slug
-    WHERE s.slug != ?
+    WHERE s.slug != ? AND s.slug NOT IN (SELECT slug FROM org_merges)
     ORDER BY COALESCE(o.name, s.slug)`, UNASSIGNED);
   const domains = await mailDomains(env);
   for (const o of list) {
@@ -1405,6 +1389,11 @@ async function listOrgs(env) {
 }
 
 async function org(env, slug) {
+  // A merged org is the one it was merged into now (src/orgmerge.js).
+  const merged = await env.DB.prepare('SELECT into_slug FROM org_merges WHERE slug = ?').bind(slug).first();
+  if (merged) {
+    return json({ error: `${slug} was merged into ${merged.into_slug}`, mergedInto: merged.into_slug }, 404);
+  }
   const row = await env.DB.prepare('SELECT slug, name, type, icon, updated_at FROM orgs WHERE slug = ?').bind(slug).first();
   const rules = await loadRules(env);
   const channels = await channelList(env, rules, { org: slug });
@@ -1424,6 +1413,9 @@ async function org(env, slug) {
     rules: orgRules,
     channels,
     types: TYPES,
+    // The orgs merged into this one, which an admin may take out again.
+    merged: await rows(env, `SELECT slug, name, merged_by, merged_at FROM org_merges
+      WHERE into_slug = ? ORDER BY merged_at DESC`, slug),
   });
 }
 
@@ -1450,6 +1442,10 @@ async function saveOrg(env, body, create) {
     return bad(f.error);
   }
   const now = new Date().toISOString();
+  const merged = await env.DB.prepare('SELECT into_slug FROM org_merges WHERE slug = ?').bind(slug).first();
+  if (merged) {
+    return json({ error: `${slug} was merged into ${merged.into_slug}; undo that on ${merged.into_slug}'s page first` }, 409);
+  }
   if (create) {
     const { meta } = await env.DB.prepare(`INSERT INTO orgs (slug, name, type, icon, updated_at)
       VALUES (?, ?, ?, ?, ?) ON CONFLICT (slug) DO NOTHING`).bind(slug, f.name, f.type, f.icon, now).run();
@@ -1516,6 +1512,12 @@ async function withAccessSync(env, why, pending) {
   return json({ ...body, access }, res.status);
 }
 
+/**
+ * The routes of `/api/admin/*` for every member of an ops team, not only the admin team and
+ * team managers: the duplicate customers they see, and asking for a merge (src/orgmerge.js).
+ */
+export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests'];
+
 export async function admin(request, env, url, me) {
   const p = url.pathname;
   if (!p.startsWith('/api/admin/')) {
@@ -1532,7 +1534,9 @@ export async function admin(request, env, url, me) {
     'POST portal/open', 'POST swap'];
   // Every manager may search channels; the requests they see are their teams' (`requests`).
   const anyTeam = ['GET teams', 'GET channels', 'GET requests'];
-  if (!isAdmin(me)) {
+  // Duplicate customers: anyone on a team sees those of the customers it owns, and asks for a
+  // merge (src/orgmerge.js checks which).
+  if (!isAdmin(me) && !STAFF_ROUTES.includes(route)) {
     if (!forManagers.includes(route)) {
       return json({ error: 'for the admin team' }, 403);
     }
@@ -1555,7 +1559,10 @@ export async function admin(request, env, url, me) {
       ? json({ ok: true }) : json({ error: 'no such group of channels now' }, 404);
     case 'DELETE team-wizard/dismiss': return json({ ok: await dismissGroup(env, clean(body.prefix).toLowerCase(), null, false) });
     case 'DELETE members': return withAccessSync(env, 'member removed', removeMember(env, me, body));
-    case 'GET rules': return json({ rules: await loadRules(env), fields: FIELDS, kinds: KINDS });
+    case 'GET rules': return json({
+      // The merges are the orgs' (GET org-duplicates), not rules anyone edits.
+      rules: (await loadRules(env)).filter((r) => r.target !== 'merge'), fields: FIELDS, kinds: KINDS,
+    });
     case 'POST rules': return createRule(env, me, body);
     case 'PUT rules': return updateRule(env, me, body);
     case 'DELETE rules': return deleteRule(env, me, body);
@@ -1585,6 +1592,13 @@ export async function admin(request, env, url, me) {
     case 'PUT orgs': return saveOrg(env, body, false);
     case 'DELETE orgs': return deleteOrg(env, body);
     case 'GET org': return org(env, q('slug'));
+    case 'GET org-duplicates': return orgDuplicates(env, me, { pair: q('pair'), fresh: Boolean(q('fresh')) });
+    case 'POST org-duplicates/dismiss': return dismissPair(env, me, body);
+    case 'POST org-merge': return mergeOrgs(env, me, body, { applyRules });
+    case 'DELETE org-merge': return unmergeOrg(env, me, body, { applyRules });
+    case 'POST org-merge-requests': return requestMerge(env, me, body);
+    case 'DELETE org-merge-requests': return closeMergeRequest(env, me, body, 'withdrawn');
+    case 'POST org-merge-requests/decline': return closeMergeRequest(env, me, body, 'declined');
     case 'GET org-icons': return orgIcons(env, q('slug'), Boolean(q('fresh')));
     case 'GET favicon': return faviconProxy(q('domain'), { request });
     case 'GET bots': return listBots(env);

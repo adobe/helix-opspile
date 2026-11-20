@@ -16,6 +16,11 @@
  *
  * A rule of target `follow` (migration 0086) files nothing: every one that matches a channel
  * shares it with its team (`followers`), which src/followrules.js keeps in `channel_teams`.
+ *
+ * A merged org (migration 0090, src/orgmerge.js) is a rule of target `merge` that `loadRules`
+ * adds (`mergeRule`): the org the other rules give is looked up among them last (`mergedOrg`), so
+ * what they file under the merged slug, by a template or by hand, is filed under the one it was
+ * merged into.
  */
 
 export const UNASSIGNED = '_unassigned';
@@ -68,6 +73,36 @@ function compile(pattern) {
   return compiled.get(pattern);
 }
 
+/** A merge (an `org_merges` row) as the rules carry it: `slug` is filed under `into`. */
+export const mergeRule = (m, i = 0) => ({
+  id: -1 - i,
+  target: 'merge',
+  priority: 0,
+  source: null,
+  field: 'org',
+  pattern: m.slug,
+  value: m.into_slug ?? m.into,
+  note: 'merged org',
+});
+
+/** Most merges followed one after another: a chain longer than this is a loop. */
+const MAX_MERGES = 8;
+
+/** The org `org` is filed under, after the merges among `rules`: itself when it was not merged. */
+export function mergedOrg(rules, org) {
+  const merges = rules.filter((r) => r.target === 'merge');
+  let out = org;
+  for (let i = 0; i < MAX_MERGES && merges.length; i += 1) {
+    const from = out;
+    const next = merges.find((r) => r.pattern === from);
+    if (!next || next.value === out) {
+      break;
+    }
+    out = next.value;
+  }
+  return out;
+}
+
 const ordered = (rules) => [...rules].sort((a, b) => (a.priority - b.priority) || (a.id - b.id));
 
 /** What `rule` gives `channel` for `target`, or null when it does not apply or match. */
@@ -104,6 +139,7 @@ export function classify(rules, channel) {
       }
     }
   }
+  result.org = mergedOrg(rules, result.org);
   return result;
 }
 
@@ -114,7 +150,10 @@ export function classify(rules, channel) {
 export function matching(rules, channel, target) {
   return ordered(rules).flatMap((rule) => {
     const value = valueOf(rule, channel, target);
-    return value === null ? [] : [{ rule, value }];
+    if (value === null) {
+      return [];
+    }
+    return [{ rule, value: target === 'org' ? mergedOrg(rules, value) : value }];
   });
 }
 
