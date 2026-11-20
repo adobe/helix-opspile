@@ -299,7 +299,17 @@ of the file (its parts, or `[]`); one missing is filled in by the cron. The inbo
 answer of `GET /api/kb/stack` for a minute (`stackOf`, `ui/inbox.js`).
 
 **Agent polling.** idle → polling → due while hidden (`loadAgent`, `ui/inbox.js`). A failed request
-asks again; after five in a row the spinner goes.
+asks again; after five in a row the spinner goes. It polls also where the agent's note is hidden
+(`traces` off): only drawing the note depends on that setting.
+
+**Sidebar's tab.** at rest → pressed → pulling → let go (`wireSideTab`, `ui/inbox.js`). A press
+that moves less than `PULL_SLOP` is a click, which opens or closes the panel as `a` does. Pulling
+takes the panel's motion over (`side.pulling`; `sideMotion.p` follows the pointer, and a thread
+drawn again meanwhile leaves it there, `placeSidePanel`); a pull on a closed panel enters the
+sidebar first. Let go, the panel opens or goes from where it is (`moveSide`, `exitSide`): by the
+flick's direction when it was quick, else by whether it was more than half out. Its wiggle is
+`tabSaw`: the open thread's agent as the tab last knew it (the latest turn's start and whether it
+works); a change wiggles it, the thread just opened sets it without one.
 
 **Injection verdict.** unchecked → passed or flagged (`verdict:<id>`, `src/agent/delivery.js`). A
 failed check is not a verdict: it is not stored, the queue retries the delivery, and reading the
