@@ -547,6 +547,13 @@ admin pages and Clef leave archived channels out.
 **Channel label.** unlabeled → labeled → stale (`channel_labels`, `src/suggest.js`). Due when the
 channel has activity, the ops teams change, or the label is a week old.
 
+**Team wizard group.** suggested → dismissed → suggested again → gone (`team_prefix_dismissals`,
+`src/teamwizard.js`). A group is computed on every read from the admin team's channels, so it has no
+state of its own: it is gone once a rule files its channels elsewhere, or they are renamed or
+archived. Dismissed is the only stored state, a row with the group's channel count then; a group
+with more channels than that is suggested again (the row stays, and a later dismissal writes the new
+count). Making the group a team deletes the row, so a prefix that comes back later starts afresh.
+
 **GitHub mirror.** absent → importing → ready → refreshing → ready, or given up after an hour
 (`repo_mirrors`, `src/agent/repos.js`). Reads stay on the old mirror until the new one is readable. A
 repository taken off `agent_repos` keeps its mirror.
