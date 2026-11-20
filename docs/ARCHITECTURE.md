@@ -2060,6 +2060,11 @@ gives it back to the band. The widths are kept in the browser per band (`opspile
 the filters flow into as many columns as their width has room for; whatever is sized, the list
 keeps 380px and the thread 440px (and the sidebar's width beside it), also as the window
 shrinks. Under 1100px (the drawer, the phone) nothing sized on a wider screen applies.
+Where the filters are a column they are one table: every row has the same tracks in every
+card (color, icon, label, unread mentions, count, bar), the count's as wide as the list's
+length has digits, so the bars start at one edge and the mention badges stand in a column; and
+rows, titles and the gaps between cards are each one row high, so the rows of neighboring
+columns line up. In the wide bands each column of filters is 32px wider than the one column.
 Both conversations keep to a reading width (`--read-w`, 1040px): past it the thread's header,
 messages, reply box, draft and command cards, and the sidebar's messages and box, stay in a
 column in the middle, padded on either side, so neither side of a conversation is a head turn

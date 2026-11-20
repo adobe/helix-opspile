@@ -81,6 +81,22 @@ describe('wide screens', () => {
     }
   });
 
+  it('lines the filters up as one table: the same tracks in every card, the rows on one grid', () => {
+    // The mentions have a track of their own, before the count, where the filters are a column.
+    assert.match(css, /#facets \.fr \.lw \{ display: contents; \}/);
+    assert.match(css, /#facets \.fr \{ height: var\(--fr-h\);[^}]*grid-template-columns: [^;]*minmax\(0px, 1fr\) auto\s+minmax\(calc\(var\(--fr-digits, 2\) \* 1ch\), max-content\) max\(var\(--fr-bar\), 22%\); \}/);
+    for (const [el, col] of [['men', 4], ['n', 5], ['bar', 6]]) {
+      assert.match(css, new RegExp(`#facets \\.fr \\.${el} \\{ grid-column: ${col}; grid-row: 1;`));
+    }
+    // The count's track is as wide as the list's length has digits, in every card alike.
+    assert.match(js, /const digits = String\(String\(listed\(\)\.length\)\.length\);/);
+    assert.match(js, /box\.style\.setProperty\('--fr-digits', digits\)/);
+    // A card's title, a group's title and a card's gap are each one row high.
+    assert.match(css, /#facets > \.card \{ break-inside: avoid; margin-bottom: var\(--fr-h\); \}/);
+    assert.match(css, /#facets \.card h3 \{ height: var\(--fr-h\); margin: 0px;/);
+    assert.match(css, /#facets \.fg \{ height: var\(--fr-h\);/);
+  });
+
   it('keeps the widths sized by hand per band, and gives a column back to its band', () => {
     const c = columns(3440);
     c.keepColumn('list', 700.4);

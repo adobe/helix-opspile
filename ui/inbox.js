@@ -1479,7 +1479,10 @@ function filterCards() {
   });
   // Only the cards whose counts or selection changed are rebuilt. They are in `#facets`, which
   // flows them into as many columns as the filters' width has room for (ui/spectrum-inbox.css).
+  // Their counts' column is as wide as the most any value can have: every thread listed.
   const box = $('facets');
+  const digits = String(String(listed().length).length);
+  if (box.style.getPropertyValue('--fr-digits') !== digits) box.style.setProperty('--fr-digits', digits);
   const old = [...box.children];
   if (old.length !== cards.length || old.some((c) => c.__html === undefined)) {
     setHtml(box, cards.join(''));
