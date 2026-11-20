@@ -445,6 +445,48 @@ const ADMIN_CHANNELS = [
     clef: { platform: 0.81, edge: 0.15, none: 0.04 },
     kind: ['channel', 0.97],
   },
+  // Channels no rule files under an org (Customers' Unassigned, src/orgassign.js): one in Wonka's
+  // Teams team, one with Hooli in its name, one whose people write from a domain no org has (a
+  // new org), and one that says nothing.
+  {
+    id: 'CH-WONKAPLAN',
+    source: 'teams',
+    group: 'xyz-wonka',
+    name: 'Planning',
+    org: '_unassigned',
+    titles: ['Q3 roadmap review'],
+    clef: { edge: 0.5, platform: 0.4, none: 0.1 },
+    kind: ['channel', 0.8],
+  },
+  {
+    id: 'C0HOOLISYNC',
+    source: 'slack',
+    name: 'hooli-adobe-sync',
+    org: '_unassigned',
+    titles: ['Weekly sync notes'],
+    clef: { edge: 0.5, platform: 0.4, none: 0.1 },
+    kind: ['channel', 0.8],
+  },
+  {
+    id: 'C0ZORGCO',
+    source: 'slack',
+    name: 'zorg-and-adobe',
+    org: '_unassigned',
+    shared: 1,
+    titles: ['Kick-off', 'SSO setup'],
+    accounts: [['U-ZORG1', 'Jean-Baptiste Zorg', 'jbz@zorg.example'], ['U-ZORG2', 'Right Arm', 'arm@zorg.example']],
+    clef: { platform: 0.6, edge: 0.3, none: 0.1 },
+    kind: ['channel', 0.9],
+  },
+  {
+    id: 'C0DDAUTOM',
+    source: 'slack',
+    name: 'dd-autom-t1',
+    org: '_unassigned',
+    titles: ['ping'],
+    clef: { none: 0.5, platform: 0.3, edge: 0.2 },
+    kind: ['channel', 0.6],
+  },
   {
     id: 'C0SANDBOX3',
     source: 'slack',

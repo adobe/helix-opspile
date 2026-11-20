@@ -42,6 +42,7 @@ import {
   reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
+import { unassignedSuggestions } from './orgassign.js';
 import {
   dismissGroup, teamGroup, teamGroups, wizardRules,
 } from './teamwizard.js';
@@ -1391,10 +1392,37 @@ async function listOrgs(env) {
   for (const o of list) {
     o.domain = (domains.get(o.slug) || [])[0] || null;
   }
-  return json({ orgs: list, types: TYPES });
+  // The channels no rule files under an org, which Unassigned lists to be given one.
+  const unassigned = await env.DB.prepare(`SELECT
+      COUNT(DISTINCT CASE WHEN ${LIVE('t')} THEN t.channel_id END) AS channels,
+      COUNT(*) AS threads FROM threads t WHERE t.org = ? AND t.kind != 'ignore'`).bind(UNASSIGNED).first();
+  return json({ orgs: list, types: TYPES, unassigned });
+}
+
+/**
+ * GET /api/admin/org?slug=_unassigned: the channels no rule files under an org (not the ignored
+ * ones), each with the orgs it may belong to, or a new org it may be (`suggestions` by channel
+ * id, src/orgassign.js). The admin team gives each one an org by hand (`assign`).
+ */
+async function unassignedOrg(env) {
+  const rules = await loadRules(env);
+  const channels = (await channelList(env, rules, { org: UNASSIGNED }))
+    .filter((c) => c.kind !== 'ignore');
+  return json({
+    org: {
+      slug: UNASSIGNED, name: null, type: 'customer', icon: null,
+    },
+    unassigned: true,
+    channels,
+    suggestions: await unassignedSuggestions(env, channels, rules),
+    types: TYPES,
+  });
 }
 
 async function org(env, slug) {
+  if (slug === UNASSIGNED) {
+    return unassignedOrg(env);
+  }
   // A merged org is the one it was merged into now (src/orgmerge.js).
   const merged = await env.DB.prepare('SELECT into_slug FROM org_merges WHERE slug = ?').bind(slug).first();
   if (merged) {

@@ -54,6 +54,8 @@ const state = {
   // The pairs of orgs that may be one (GET /api/admin/org-duplicates), whether the list shows the
   // less likely ones too, and the merges asked for (the admin team's, under Requests).
   dups: null, dupsMore: false, orgMerges: [],
+  // The channels no rule files under an org (GET /api/admin/orgs `unassigned`): how many.
+  orgsUnassigned: null,
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -390,6 +392,7 @@ async function load() {
   renderCount();
   state.unassigned = teams.body.unassigned;
   state.orgs = orgs.body.orgs || [];
+  state.orgsUnassigned = orgs.body.unassigned || null;
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
   state.bots = bots.body.bots || [];
   if (state.me.admin) loadGroups();
@@ -571,10 +574,14 @@ function drawList() {
         ${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
         ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
         <span class="sub">${channelCount(o.channels)}</span></div>`).join('');
+    // The channels without an org, to be given one (see "unassigned channels").
+    const un = state.orgsUnassigned && state.orgsUnassigned.channels && (!f || 'unassigned'.includes(f))
+      ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}"><span class="ico none"></span>
+        <span class="name"><i>Unassigned</i></span><span class="sub">${channelCount(state.orgsUnassigned.channels)}</span></div>` : '';
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter orgs" value="${esc(state.filter)}"></label>
       ${dupSection(f)}${state.dups && state.dups.pairs.length ? '<h2>Every org</h2>' : ''}
       <label class="only"><input type="checkbox" id="noIcon"${state.noIcon ? ' checked' : ''}> Only the ${state.orgs.filter(iconless).length} without an icon</label>
-      ${rows || '<div class="empty">Nothing matches.</div>'}
+      ${un}${rows || (un ? '' : '<div class="empty">Nothing matches.</div>')}
       <h2>New org</h2><form class="form" id="newOrg"><label class="fld grow"><span>Display name</span><input id="noName" required></label>
         <select id="noType">${state.types.map((t) => `<option>${t}</option>`).join('')}</select><button class="primary">Create</button></form>
       <p class="hint">Channels are filed under an org by the rules (<code>aem-&lt;slug&gt;</code>) or a manual assignment.</p>
@@ -792,10 +799,11 @@ function openSection(section, { path = null, channel = null, flash = null } = {}
 
 /** Adds `n` channels and `threads` threads to a team's or an org's counts in the list. */
 function count(kind, slug, n, threads) {
-  if (kind === 'team' && slug === UNASSIGNED) {
-    if (state.unassigned) {
-      state.unassigned.channels += n;
-      state.unassigned.threads += threads;
+  if (slug === UNASSIGNED) {
+    const un = kind === 'team' ? state.unassigned : state.orgsUnassigned;
+    if (un) {
+      un.channels = Math.max(0, un.channels + n);
+      un.threads = Math.max(0, un.threads + threads);
     }
     return;
   }
@@ -1126,31 +1134,8 @@ function renderChannels() {
 const movePop = { el: null, button: null, shut: 0 };
 function moveMenu(button, c) {
   if (!c) return;
-  // The click that closed it, on its own name: closed it stays.
-  if (movePop.button === button && Date.now() - movePop.shut < 300) return;
-  let el = movePop.el;
-  if (!el) {
-    el = document.createElement('div');
-    el.className = 'movepop';
-    el.popover = 'auto';
-    el.setAttribute('role', 'dialog');
-    // Closed from within (Escape), the focus goes back to the name it was opened from; a click
-    // elsewhere has moved it already.
-    let inside = false;
-    el.addEventListener('beforetoggle', (e) => {
-      if (e.newState !== 'closed') return;
-      movePop.shut = Date.now();
-      inside = el.contains(document.activeElement);
-    });
-    el.addEventListener('toggle', (e) => {
-      const b = movePop.button;
-      if (e.newState === 'closed' && inside && b && b.isConnected) b.focus();
-    });
-    document.body.append(el);
-    movePop.el = el;
-  }
-  if (el.matches(':popover-open')) el.hidePopover();
-  movePop.button = button;
+  const el = openPop(button);
+  if (!el) return;
   const v = state.view;
   const clef = c.clef && c.clef.team !== 'none' && c.clef.team !== c.team ? c.clef : null;
   const teams = state.teams.filter((t) => t.slug !== c.team)
@@ -1204,7 +1189,45 @@ function moveMenu(button, c) {
     }
   };
   render();
-  // Under the name, or above it when there is no room below; inside the window either way.
+  placePop(el, button);
+  input.focus();
+}
+
+/**
+ * The page's one popover of choices under a button (a channel's teams, a channel's orgs), made
+ * the first time: null when the click is the one that closed it, on the same button.
+ */
+function openPop(button) {
+  // The click that closed it, on its own name: closed it stays.
+  if (movePop.button === button && Date.now() - movePop.shut < 300) return null;
+  let el = movePop.el;
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'movepop';
+    el.popover = 'auto';
+    el.setAttribute('role', 'dialog');
+    // Closed from within (Escape), the focus goes back to the name it was opened from; a click
+    // elsewhere has moved it already.
+    let inside = false;
+    el.addEventListener('beforetoggle', (e) => {
+      if (e.newState !== 'closed') return;
+      movePop.shut = Date.now();
+      inside = el.contains(document.activeElement);
+    });
+    el.addEventListener('toggle', (e) => {
+      const b = movePop.button;
+      if (e.newState === 'closed' && inside && b && b.isConnected) b.focus();
+    });
+    document.body.append(el);
+    movePop.el = el;
+  }
+  if (el.matches(':popover-open')) el.hidePopover();
+  movePop.button = button;
+  return el;
+}
+
+/** Shows the popover under `button`, or above it when there is no room below; in the window. */
+function placePop(el, button) {
   const r = button.getBoundingClientRect();
   el.classList.remove('up');
   el.showPopover();
@@ -1214,7 +1237,6 @@ function moveMenu(button, c) {
   el.classList.toggle('up', up);
   el.style.left = `${Math.max(gap, Math.min(r.left, innerWidth - width - gap))}px`;
   el.style.top = `${up ? r.top - gap - height : Math.min(r.bottom + gap, Math.max(gap, innerHeight - height - gap))}px`;
-  input.focus();
 }
 
 /**
@@ -2681,6 +2703,7 @@ async function showOrg(slug) {
     return;
   }
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
+  if (r.body.unassigned) { showUnassigned(r.body); return; }
   const {
     org, rules, channels, types, domains = [], merged = [],
   } = r.body;
@@ -2799,6 +2822,166 @@ async function showOrg(slug) {
     $('oIcon').value = '';
     show(v.org);
   });
+}
+
+// ---- unassigned channels ---------------------------------------------------------------------
+//
+// A channel no rule files under an org (its name is not `<product>-<org>`, nor is it assigned by
+// hand) is in the org `_unassigned`. Customers lists them under Unassigned, each with the orgs it
+// may belong to (src/orgassign.js: a Slack Connect or Teams team, its people's mail domain, a
+// word of its name) or the new org it may be. Picking one assigns the channel there by hand, as
+// the channel picker of an org's page does; a new org is made first, with the name and type given.
+
+function showUnassigned(body) {
+  const v = {
+    target: 'org', value: UNASSIGNED, org: body.org, channels: body.channels, suggestions: body.suggestions || {},
+  };
+  state.view = v;
+  $('detail').innerHTML = `<div class="title">${backButton()}<span class="ico none"></span><h1 class="fill">Unassigned</h1></div>
+    <div class="status" id="status"></div>
+    <div class="card"><h2>Channels without an org</h2><div id="unassignedTable"></div>
+    <p class="hint">No rule files these channels under an org: their names are not <code>&lt;product&gt;-&lt;org&gt;</code>, and nobody assigned them. Give each one an org: one the inbox suggests (its Slack Connect or Teams team, its people's mail domain, a word of its name), any other, or a new one. It is assigned there by hand (a channel-id rule with priority 10), and its threads are re-filed. Ignored channels are not listed.</p></div>`;
+  showStatus();
+  renderUnassigned(v);
+}
+
+function renderUnassigned(v) {
+  if (v !== state.view || !$('unassignedTable')) return;
+  const rows = v.channels.map((c) => {
+    const where = `<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div>`;
+    if (c.left) {
+      return `<tr class="left"><td>${channelName(c)}${where}</td><td colspan="4" class="sub">Filed under ${esc(orgLabel(c.left.org))} now; its threads are re-filed in the background.</td></tr>`;
+    }
+    const sug = v.suggestions[c.channelId] || { orgs: [], fresh: null };
+    const key = (slug) => `assign:org:${c.channelId}:${slug}`;
+    const picks = [
+      ...sug.orgs.map((o) => `<button class="link" data-org="${esc(o.org)}" data-ch="${esc(c.channelId)}" title="${esc(o.why)}"${off(key(o.org))}>→ ${esc(orgLabel(o.org))}</button>`),
+      ...(sug.fresh ? [`<button class="link" data-new="${esc(sug.fresh.name)}" data-ch="${esc(c.channelId)}" title="${esc(`A new org: ${sug.fresh.why}`)}"${off(key(sug.fresh.slug))}>+ ${esc(sug.fresh.name)}</button>`] : []),
+      `<button class="link" data-pick="${esc(c.channelId)}" aria-haspopup="dialog">${sug.orgs.length || sug.fresh ? 'Another…' : 'Pick an org…'}</button>`,
+    ];
+    return `<tr><td>${channelName(c)}${where}</td><td>${esc(teamLabel(c.team))}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}</td>
+      <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td><td class="picks-cell">${picks.join(' ')}</td></tr>`;
+  }).join('');
+  $('unassignedTable').innerHTML = rows
+    ? `<table><tr><th>Channel</th><th>Team</th><th>Threads</th><th>Latest</th><th>Org</th></tr>${rows}</table>`
+    : '<div class="empty">Every channel has an org.</div>';
+  const find = (id) => v.channels.find((c) => c.channelId === id && !c.left);
+  for (const b of $('unassignedTable').querySelectorAll('[data-org]')) {
+    b.onclick = () => press(b, () => assignOrg(v, find(b.dataset.ch), b.dataset.org));
+  }
+  for (const b of $('unassignedTable').querySelectorAll('[data-new]')) {
+    b.onclick = () => press(b, () => newOrgFor(v, find(b.dataset.ch), b.dataset.new, 'customer'));
+  }
+  for (const b of $('unassignedTable').querySelectorAll('[data-pick]')) {
+    b.onclick = () => orgMenu(b, v, find(b.dataset.pick));
+  }
+}
+
+/** Assigns channel `c` of the unassigned ones to org `slug` by hand. */
+function assignOrg(v, c, slug) {
+  if (!c) return null;
+  return once(`assign:org:${c.channelId}:${slug}`, async () => {
+    const res = await ruleChange('POST', '/api/admin/assign', {
+      target: 'org', value: slug, channelId: c.channelId, source: c.source,
+    }, `${plainName(c)} → ${orgLabel(slug)}`);
+    if (!res) return null;
+    applyMoves(res.moves, v);
+    // Nothing to re-file (no thread yet): it is that org's all the same.
+    for (const row of v.channels.filter((x) => x.channelId === c.channelId && !x.left)) {
+      row.left = { team: row.team, org: slug, kind: row.kind };
+    }
+    renderUnassigned(v);
+    renderList();
+    return res;
+  });
+}
+
+/** Makes a new org called `name` (of `type`) and assigns channel `c` to it. */
+async function newOrgFor(v, c, name, type) {
+  if (!c || !name.trim()) return;
+  const slug = slugFrom(name);
+  if (!state.orgs.some((o) => o.slug === slug)) {
+    const r = await call('/api/admin/orgs', 'POST', { name: name.trim(), type });
+    // There is one of that slug already (known to the Worker, not to the page): it is the one.
+    if (!r.ok && r.status !== 409) { failed(`New org ${name}`, r); return; }
+    if (r.ok) {
+      state.orgs.push({ ...r.body.org, channels: 0, threads: 0 });
+      state.orgs.sort((x, y) => (x.name || x.slug).localeCompare(y.name || y.slug));
+    }
+  }
+  await assignOrg(v, c, slug);
+}
+
+/**
+ * The orgs for an unassigned channel, in the page's popover: the suggested ones first, then
+ * every org, filtered as you type, and a new org of the name typed, with its type.
+ */
+function orgMenu(button, v, c) {
+  if (!c) return;
+  const el = openPop(button);
+  if (!el) return;
+  const sug = (v.suggestions[c.channelId] || {}).orgs || [];
+  const why = new Map(sug.map((o) => [o.org, o.why]));
+  const all = [...state.orgs].sort((a, b) => (why.has(b.slug) - why.has(a.slug))
+    || (a.name || a.slug).localeCompare(b.name || b.slug));
+  let list = all;
+  let at = 0;
+  el.setAttribute('aria-label', `An org for ${plainName(c)}`);
+  el.innerHTML = `<p class="what">File ${channelName(c)} under</p>
+    <label class="s2-search"><input class="search" type="search" aria-label="Find an org, or name a new one" autocomplete="off"></label>
+    <div class="opts" role="listbox" aria-label="Orgs"></div>
+    <div class="newtype" hidden><span class="sub">A new org, a</span><select aria-label="Its type">${state.types.map((t) => `<option>${t}</option>`).join('')}</select></div>
+    <p class="hint">Assigned there by hand, whatever the rules say; its threads are re-filed.</p>`;
+  const input = el.querySelector('input');
+  const opts = el.querySelector('.opts');
+  const typeOf = el.querySelector('select');
+  const go = (o) => {
+    if (!o) return;
+    el.hidePopover();
+    if (v !== state.view) return;
+    if (o.create) newOrgFor(v, c, o.name, typeOf.value);
+    else assignOrg(v, c, o.slug);
+  };
+  const render = () => {
+    const typed = input.value.trim();
+    const fresh = typed && slugFrom(typed) && !state.orgs.some((o) => o.slug === slugFrom(typed))
+      ? [{ create: true, name: typed, slug: slugFrom(typed) }] : [];
+    list = [...list.filter((o) => !o.create), ...fresh];
+    el.querySelector('.newtype').hidden = !fresh.length;
+    opts.innerHTML = list.map((o, i) => `<div class="row${i === at ? ' on' : ''}" role="option" aria-selected="${i === at}" data-i="${i}">
+      ${o.create ? `<span class="name">New org “${esc(o.name)}” <span class="sub mono">${esc(o.slug)}</span></span>`
+    : `${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)} <span class="sub mono">${esc(o.slug)}</span></span>${why.has(o.slug) ? `<span class="tag clef yes" title="${esc(why.get(o.slug))}">suggested</span>` : ''}`}</div>`).join('')
+      || '<div class="empty pad">Type a name to make a new org.</div>';
+    for (const row of opts.querySelectorAll('[data-i]')) {
+      // eslint-disable-next-line no-loop-func
+      row.onclick = () => go(list[Number(row.dataset.i)]);
+    }
+    const on = opts.querySelector('.on');
+    if (on) on.scrollIntoView({ block: 'nearest' });
+  };
+  input.oninput = () => {
+    const words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
+    list = all.filter((o) => words.every((w) => `${o.name || ''} ${o.slug}`.toLowerCase().includes(w)));
+    at = 0;
+    render();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!list.length) return;
+      at = (at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length;
+      render();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      go(list[at]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      el.hidePopover();
+    }
+  };
+  render();
+  placePop(el, button);
+  input.focus();
 }
 
 // ---- duplicate customers ---------------------------------------------------------------------

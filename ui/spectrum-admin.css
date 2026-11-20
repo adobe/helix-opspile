@@ -153,6 +153,10 @@ tr.left td { opacity: .55; }
 .sub.pad { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
 details.dismissed > summary { cursor: pointer; padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
 @media (max-width: 699px) { .pair { grid-template-columns: 1fr; } }
+/* An unassigned channel's orgs: the suggested ones, then the popover; a new org's type in it. */
+td.picks-cell { white-space: normal; }
+.movepop .newtype { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
+.movepop .newtype[hidden] { display: none; }
 /* A conflict between technologies: each team's definition, what differs marked, its actions. */
 .conflict .acts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-300); }
 .spectrum .conflict .field > .differs { background: var(--spectrum-notice-subtle-background-color-default); font-weight: var(--spectrum-bold-font-weight); }
@@ -653,3 +657,5 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .pair .side a { color: inherit; }
 .spectrum .row.dup .ico + .ico { margin-inline-start: calc(-1 * var(--spectrum-spacing-100)); }
 .spectrum .asks li + li, .spectrum .dups li + li { margin-top: var(--spectrum-spacing-100); }
+.spectrum .movepop .newtype { padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum td.picks-cell .link + .link { margin-inline-start: var(--spectrum-spacing-100); }

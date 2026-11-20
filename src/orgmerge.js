@@ -201,7 +201,7 @@ async function loadFacts(env) {
 let cachedFacts = null;
 
 /** The facts (`loadFacts`), from this isolate's last five minutes when it has them. */
-async function facts(env, { fresh = false } = {}) {
+export async function facts(env, { fresh = false } = {}) {
   const c = cachedFacts;
   if (!fresh && c && c.env === env.DB && Date.now() - c.at < FACTS_MS) {
     return c.facts;

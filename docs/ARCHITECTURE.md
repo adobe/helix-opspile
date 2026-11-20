@@ -174,6 +174,19 @@ user agent (many answer a bot's with an error page); an `.ico` of bitmaps, which
 read, is decoded into a PNG for it (`src/ico.js`), and an SVG icon is offered without Clef's
 verdict.
 
+**Unassigned channels.** A channel no rule files under an org (its name is not
+`<product>-<org>`, nobody assigned it) is in the org `_unassigned`, which Customers lists as
+Unassigned, with how many channels it has (`unassigned` of `GET /api/admin/orgs`; the ignored ones
+are not counted). Its page (`GET /api/admin/org?slug=_unassigned`) lists them, each with the orgs
+it may belong to (`src/orgassign.js`): a Slack Connect team or Teams team it shares with the
+channels of an org and few others (the inbox's own Enterprise Grid is in every Connect channel), the
+usual mail domain of an org that the people outside Adobe in it or posting there write from, and an
+org's slug or name as a word of its name, or a few words together (`home-depot`), the products the
+org rules name in their `^(?:aem|…)-` and words such as `adobe` or `alerts` aside. Where none fits,
+it suggests a new org: its people's mail domain, else the first word of its name. Picking one, any
+other org, or a new one named in the same list (made with its type first, `POST /api/admin/orgs`)
+assigns the channel there by hand (`POST /api/admin/assign`, target `org`).
+
 **Duplicate customers.** An org is a slug the rules give a channel (`aem-<slug>`,
 `<product>-<slug>`, a manual assignment), so one company can end up under two: a channel named
 `workfront-acmeco` and one named `aem-acme`. The admin pages' Customers list the pairs of orgs
