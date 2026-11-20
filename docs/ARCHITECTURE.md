@@ -216,6 +216,24 @@ and whether it is a conversation, an alert feed or not worth following. Clef is 
 name, its Teams team, its topic, its customer, how busy it is, the Adobe people who post in it
 and are in it with their ops teams, the technologies seen, and its recent threads' titles; it
 looks again when the channel has new activity, the ops teams change, or the label is a week old.
+
+**The team wizard** (`src/teamwizard.js`) goes the other way: from the admin team's channels to
+teams that do not exist yet. Channels are named by convention (`<product>-<customer>`), so a
+prefix that three or more of the admin team's channels share (up to the first or second `-` or
+`_` of a Slack or Discord channel's name, or of a Teams team's name, which is what is named so
+on Teams) is often a product without a rule. The list of teams has each such group under
+**Suggested teams**, as they come up; its page lists its channels, the rules that would file them
+(channel name starts with the prefix, and the Teams team's name for its Teams channels), what a
+dry run of them moves, and the Adobe people present in them (members, posting or reacting; staff
+with a mail address), those in the most first. Checked are the ones in at least half of the
+group's channels and there more than twice as often as in the admin team's channels at large,
+so that an admin in all of them does not count. When most of those are on one ops team already,
+the page offers to give that team the rules instead. **Create** makes the team (with what new
+teams start with), adds the checked people as members, and saves the rules, which re-file the
+channels as any rule change does (`POST /api/admin/team-wizard`, `dryRun` for the preview). A
+group that is no team is dismissed (`team_prefix_dismissals`, migration 0088), with its channel
+count, and suggested again once more channels start with it.
+
 Every rule change applies at once (the page names the channels it
 moved; the API still answers `dryRun` with what a change would move), and the page sends its
 changes one after the other, so many can be made in a row. Applied, each moved channel is **re-filed** by a `refile` job on the

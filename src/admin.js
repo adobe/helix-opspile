@@ -38,6 +38,9 @@ import {
   reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
+import {
+  dismissGroup, teamGroup, teamGroups, wizardRules,
+} from './teamwizard.js';
 import { getBot, listBots, setBot } from './ourbots.js';
 import { followable, setTeamFollow, teamFollows } from './follows.js';
 import { portalAuthor, portalBound, portalCall } from './portalsource.js';
@@ -84,7 +87,10 @@ import {
  * move. Applied, the moves go to the NORMALIZE queue as `refile` jobs (src/refile.js).
  *
  * A team's page also suggests channels the admin team holds that the team might want: where
- * its members are active, or where Clef says they belong (src/suggest.js).
+ * its members are active, or where Clef says they belong (src/suggest.js). And the team wizard
+ * suggests teams: the admin team's channels grouped by the prefix of their names, with the
+ * people in most of them (src/teamwizard.js); `team-wizard` makes one a team, its members and
+ * its rules in one go, or gives a team that exists the rules.
  */
 
 export const MANUAL_PRIORITY = 10;
@@ -1213,6 +1219,86 @@ async function setRole(env, body) {
 }
 
 /**
+ * POST /api/admin/team-wizard `{ prefix, slug, name } | { prefix, team }, people, dryRun`: the
+ * team wizard's group of `prefix` (src/teamwizard.js) made a team: a new one (`slug`, `name`)
+ * or one that exists (`team`), with `people` (`[{ email, name }]`) as its members and the rules
+ * that file the group's channels under it. With `dryRun`, only what the rules would move.
+ */
+async function teamWizard(env, me, body) {
+  const prefix = clean(body.prefix).toLowerCase();
+  const group = prefix && await teamGroup(env, prefix);
+  if (!group) {
+    return json({ error: `no channel of the admin team starts with ${prefix || 'that'} now` }, 404);
+  }
+  const existing = clean(body.team);
+  const slug = existing || clean(body.slug).toLowerCase();
+  if (existing) {
+    if (existing === ADMIN_TEAM) {
+      return bad('the admin team has these channels already');
+    }
+    if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(existing).first()) {
+      return json({ error: 'no such team' }, 404);
+    }
+  } else if (!SLUG.test(slug)) {
+    return bad('a team slug is lowercase letters, digits and -, like edge-ops');
+  } else if (!clean(body.name)) {
+    return bad('give the team a name');
+  }
+  const rules = wizardRules(group, slug);
+  const current = await loadRules(env);
+  const next = [...current, ...rules.map((r, i) => ({ ...r, id: Number.MAX_SAFE_INTEGER - i }))];
+  if (body.dryRun) {
+    return json({ dryRun: true, moves: await plan(env, next), rules });
+  }
+  if (!existing) {
+    const made = await createTeam(env, me, { slug, name: body.name });
+    if (!made.ok) {
+      return made;
+    }
+  }
+  const members = [];
+  const refused = [];
+  const asked = (Array.isArray(body.people) ? body.people : []).slice(0, 100);
+  for (const p of asked) {
+    // One after the other: each reads what the one before wrote (the person, the identities).
+    // eslint-disable-next-line no-await-in-loop
+    const res = await addMember(env, { team: slug, email: p && p.email, name: p && p.name });
+    // eslint-disable-next-line no-await-in-loop
+    const answer = await res.json();
+    if (res.ok) {
+      members.push(answer.person);
+    } else {
+      refused.push({ email: clean(p && p.email), error: answer.error });
+    }
+  }
+  const done = await applyRules(env, me, {
+    next,
+    write: async () => {
+      const saved = [];
+      for (const rule of rules) {
+        // eslint-disable-next-line no-await-in-loop
+        saved.push(await env.DB.prepare(`INSERT INTO rules (target, priority, source, field, pattern,
+            value, note, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
+          .bind(...ruleValues(rule), ...stamp(me)).first());
+      }
+      return { rules: saved };
+    },
+    extra: { team: { slug, existing: Boolean(existing) }, members, refused },
+  });
+  // Done with it, whatever it had been.
+  await dismissGroup(env, prefix, null, false);
+  console.log(JSON.stringify({
+    route: 'admin', teamWizard: prefix, team: slug, existing: Boolean(existing), members: members.length, by: me.id,
+  }));
+  if (!members.length || !done.ok) {
+    return done;
+  }
+  // The sign-in allow list follows the new members, as for one added on the team's page.
+  const access = await syncAccessQuietly(env, 'team wizard');
+  return json({ ...await done.json(), access }, done.status);
+}
+
+/**
  * GET /api/admin/people?q=&team=: people to add to a team, for the autocomplete. Everyone
  * opspile knows by name or email: people in D1, and platform accounts with an email that
  * are not linked to one yet (somebody who posted but was never added). Staff first; the
@@ -1463,6 +1549,11 @@ export async function admin(request, env, url, me) {
     case 'POST members': return withAccessSync(env, 'member added', addMember(env, body));
     case 'PUT members': return setRole(env, body);
     case 'GET people': return people(env, clean(url.searchParams.get('q')), q('team'));
+    case 'GET team-groups': return json(await teamGroups(env));
+    case 'POST team-wizard': return teamWizard(env, me, body);
+    case 'POST team-wizard/dismiss': return await dismissGroup(env, clean(body.prefix).toLowerCase(), me.email || String(me.id))
+      ? json({ ok: true }) : json({ error: 'no such group of channels now' }, 404);
+    case 'DELETE team-wizard/dismiss': return json({ ok: await dismissGroup(env, clean(body.prefix).toLowerCase(), null, false) });
     case 'DELETE members': return withAccessSync(env, 'member removed', removeMember(env, me, body));
     case 'GET rules': return json({ rules: await loadRules(env), fields: FIELDS, kinds: KINDS });
     case 'POST rules': return createRule(env, me, body);

@@ -196,6 +196,12 @@ body main.instant :is(#list, #detail) { transition: none; }
 .empty.pad { padding: var(--spectrum-spacing-100); }
 #ntSlug { width: calc(var(--spectrum-spacing-100) * 13 + var(--spectrum-spacing-75) + var(--spectrum-spacing-50)); }
 #rPriority { width: var(--spectrum-spacing-900); }
+/* The team wizard (ui/admin.js, `showGroup`): a checkbox per person, and the two ways to make
+   the team, one under the other. */
+#gPeople td:first-child { width: var(--spectrum-spacing-400); }
+#gPeople td input[type="checkbox"] { width: auto; }
+.wizteam .inline { margin: var(--spectrum-spacing-200) 0 var(--spectrum-spacing-100); }
+.wizteam .form { margin-left: var(--spectrum-spacing-400); }
 
 /* ==== Its look ================================================================================= */
 

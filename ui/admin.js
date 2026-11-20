@@ -37,6 +37,9 @@ const state = {
   bots: [], onlyOurs: false,
   // The customers waiting in the customer portal, and whether it is connected to this inbox.
   portal: [], portalBound: false,
+  // The team wizard's groups of the admin team's channels (GET /api/admin/team-groups): the
+  // ones offered, the dismissed ones, and how much of the admin team's channels it saw.
+  groups: [], dismissedGroups: [], groupCoverage: null,
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -297,7 +300,25 @@ async function load() {
   state.orgs = orgs.body.orgs || [];
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
   state.bots = bots.body.bots || [];
+  if (state.me.admin) loadGroups();
   return true;
+}
+
+/**
+ * The team wizard's groups, after the rest: they take a while to find, and the list shows them
+ * once they are there.
+ */
+async function loadGroups() {
+  const r = await call('/api/admin/team-groups');
+  if (!r.ok) return;
+  state.groups = r.body.groups || [];
+  state.dismissedGroups = r.body.dismissed || [];
+  state.groupCoverage = r.body.coverage || null;
+  if (state.tab === 'teams') {
+    renderList();
+    // A link to a group, opened before the groups were there.
+    if (String(state.sel || '').startsWith(GROUP) && state.view?.target === 'group-pending') showGroup(state.sel.slice(GROUP.length));
+  }
 }
 
 function wireFilter() {
@@ -347,8 +368,9 @@ function drawList() {
         <span class="sub">${t.self_managed ? '<span title="Every member is a team manager">Self-managed</span> · ' : ''}${t.members} ${t.members === 1 ? 'person' : 'people'} · ${channelCount(t.channels)}${t.shared ? ` + ${t.shared} shared` : ''} · ${esc(t.slug)}</span></div>`).join('');
     const un = state.unassigned && state.unassigned.channels ? `<div class="row two${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
         <span class="name"><i>Unassigned</i></span><span class="sub">${channelCount(state.unassigned.channels)}</span></div>` : '';
+    const groups = state.me.admin ? groupList(f) : '';
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter teams" value="${esc(state.filter)}"></label>
-      <h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}
+      <h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}${groups}
       ${state.me.admin ? `<h2>New team</h2><form class="form" id="newTeam"><label class="fld grow"><span>Name</span><input id="ntName" required></label>
         <label class="fld"><span>Slug</span><input id="ntSlug" pattern="[a-z0-9][a-z0-9-]*" required></label><button class="primary">Create</button></form>` : ''}
       <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
@@ -454,7 +476,8 @@ function select(sel) {
   state.sel = sel;
   toUrl();
   renderList();
-  if (state.tab === 'teams') showTeam(sel);
+  if (state.tab === 'teams' && String(sel).startsWith(GROUP)) showGroup(String(sel).slice(GROUP.length));
+  else if (state.tab === 'teams') showTeam(sel);
   else if (state.tab === 'requests' && String(sel).startsWith(PORTAL)) showPortalRequest(String(sel).slice(PORTAL.length));
   else if (state.tab === 'requests' && String(sel).startsWith(CONFLICT)) showConflict(String(sel).slice(CONFLICT.length));
   else if (state.tab === 'requests' && String(sel).startsWith(RULE_CONFLICT)) showRuleConflict(String(sel).slice(RULE_CONFLICT.length));
@@ -1470,6 +1493,212 @@ async function showTeam(slug) {
       if (state.tab === 'teams' && state.sel === slug) switchTab('teams'); else renderList();
     });
   }
+}
+
+// ---- the team wizard ----------------------------------------------------------------------
+//
+// The admin team's channels, grouped by the prefix of their names (src/teamwizard.js), each a
+// team it might make: listed under the teams as they come up. A group's page makes it a team
+// (or gives an existing one its rules) with the people checked as members, in one go; or
+// dismisses it, until it has more channels.
+
+const GROUP = 'group:';
+const peopleCount = (n) => `${n} ${n === 1 ? 'person' : 'people'}`;
+
+/** The groups in the list of teams: the ones offered, then the dismissed ones folded away. */
+function groupList(f) {
+  const match = (g) => !f || `${g.prefix} ${g.name}`.toLowerCase().includes(f);
+  const row = (g) => {
+    const checked = g.people.filter((p) => p.suggested).length;
+    const fits = g.team ? ` · likely ${esc(teamLabel(g.team.slug))}` : '';
+    return `<div class="row two${state.sel === `${GROUP}${g.prefix}` ? ' on' : ''}" data-sel="${esc(GROUP + g.prefix)}" title="Channels starting with ${esc(g.prefix)}">
+      <span class="name"><span class="mono">${esc(g.prefix)}</span>…</span>
+      <span class="sub">${channelCount(g.size)} · ${checked ? peopleCount(checked) : 'nobody in most of them'}${fits}</span></div>`;
+  };
+  const offered = state.groups.filter(match);
+  const dismissed = state.dismissedGroups.filter(match);
+  if (!offered.length && !dismissed.length) return '';
+  return `<h2>Suggested teams</h2>${offered.map(row).join('') || '<div class="empty">None now.</div>'}
+    ${dismissed.length ? `<details class="dismissed"${dismissed.some((g) => state.sel === `${GROUP}${g.prefix}`) ? ' open' : ''}><summary class="sub">${dismissed.length} dismissed</summary>${dismissed.map(row).join('')}</details>` : ''}`;
+}
+
+const slugFrom = (name) => name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+function renderGroupPeople() {
+  const v = state.view;
+  const { group: g } = v;
+  const total = state.groupCoverage && state.groupCoverage.channels;
+  const did = (p) => [p.posted ? `${p.posted} post${p.posted === 1 ? '' : 's'}` : '', p.reacted ? `${p.reacted} reaction${p.reacted === 1 ? '' : 's'}` : '']
+    .filter(Boolean).join(', ');
+  $('gPeople').innerHTML = g.people.length
+    ? `<table><tr><th></th><th>Name</th><th>In these channels</th><th>In the admin team's</th><th>Teams</th></tr>${g.people.map((p, i) => `<tr>
+      <td><input type="checkbox" id="gp${i}" data-email="${esc(p.email)}"${v.checked.has(p.email) ? ' checked' : ''}></td>
+      <td><label for="gp${i}">${esc(p.name || p.email)}</label><div class="sub">${esc(p.email)}${did(p) ? ` · ${esc(did(p))}` : ''}</div></td>
+      <td class="nw">${p.channels} of ${g.size}</td>
+      <td class="nw">${p.everywhere}${total ? ` of ${total}` : ''}</td>
+      <td>${esc(p.teams.map(teamLabel).join(', '))}</td></tr>`).join('')}</table>`
+    : '<div class="empty">Nobody from Adobe is known in these channels yet.</div>';
+  for (const box of $('gPeople').querySelectorAll('[data-email]')) {
+    box.onchange = () => {
+      if (box.checked) v.checked.add(box.dataset.email); else v.checked.delete(box.dataset.email);
+      renderGroupApply();
+    };
+  }
+}
+
+/** What the rules would move, from their dry run: the group's channels, and any others. */
+function renderGroupMoves() {
+  const v = state.view;
+  const el = $('gMoves');
+  if (!el) return;
+  if (!v.moves) { el.innerHTML = `<span class="sub">${v.movesError ? esc(v.movesError) : 'Looking at what the rules would move…'}</span>`; return; }
+  const mine = new Set(v.group.channels.map((c) => `${c.source}:${c.channelId}`));
+  // What changes team: a rule change also re-files what the rules say otherwise already.
+  const moved = v.moves.filter((m) => m.from.some((f) => f.team !== m.to.team));
+  const others = moved.filter((m) => !mine.has(`${m.channel.source}:${m.channel.channelId}`));
+  el.innerHTML = `<div class="status ${others.length ? 'warn' : 'ok'}">The rules re-file ${channelCount(moved.length)} under the team.</div>
+    ${others.length ? `<p class="hint">Not only these channels: they also take ${others.map((m) => `<b>${esc(plainName(m.channel))}</b> from ${esc(m.from.map((x) => teamLabel(x.team)).join(', '))}`).join(', ')}.</p>` : ''}`;
+}
+
+function renderGroupApply() {
+  const v = state.view;
+  const n = v.checked.size;
+  const b = $('gCreate');
+  if (!b) return;
+  b.textContent = v.mode === 'new'
+    ? `Create the team${n ? ` with ${peopleCount(n)}` : ''}`
+    : `Give ${teamLabel($('gTeam').value)} these channels${n ? ` and ${peopleCount(n)}` : ''}`;
+  b.disabled = busy.has(`wizard:${v.group.prefix}`)
+    || (v.mode === 'new' ? !$('gName').value.trim() || !$('gSlug').value.trim() : !$('gTeam').value);
+}
+
+/** Takes a group made a team out of the list: it, its narrower groups, and its channels from the wider ones. */
+function dropGroup(g) {
+  const gone = new Set(g.channels.map((c) => `${c.source}:${c.channelId}`));
+  const trim = (list) => list.filter((x) => !x.prefix.startsWith(g.prefix)).map((x) => {
+    if (!g.prefix.startsWith(x.prefix)) return x;
+    const channels = x.channels.filter((c) => !gone.has(`${c.source}:${c.channelId}`));
+    return { ...x, channels, size: x.size - (x.channels.length - channels.length) };
+  });
+  state.groups = trim(state.groups);
+  state.dismissedGroups = trim(state.dismissedGroups);
+}
+
+function showGroup(prefix) {
+  const current = loadingPage();
+  const g = [...state.groups, ...state.dismissedGroups].find((x) => x.prefix === prefix);
+  if (!g) {
+    // A link to a group, opened before the groups are there (loadGroups opens it then).
+    if (!state.groupCoverage) { state.view = { target: 'group-pending' }; return; }
+    $('detail').innerHTML = `<div class="title">${backButton()}</div><div class="empty">No channel of the admin team starts with <code>${esc(prefix)}</code> now: a team has them, or they were renamed.</div>`;
+    return;
+  }
+  const teams = state.teams.filter((t) => t.slug !== 'admin');
+  const preferred = g.team ? g.team.slug : (g.slugTaken ? g.slug : '');
+  const v = {
+    target: 'group', group: g, mode: preferred ? 'existing' : 'new', moves: null, checked: new Set(g.people.filter((p) => p.suggested).map((p) => p.email)),
+  };
+  state.view = v;
+  const checked = v.checked.size;
+  const listed = g.membersListed < g.size ? ` The members of ${g.membersListed} of them are listed; in the others, only who posted or reacted is known.` : '';
+  $('detail').innerHTML = `
+    <div class="title">${backButton()}<h1 class="fill">Channels starting with <code>${esc(g.prefix)}</code></h1>
+      ${g.dismissed ? '<button id="gAgain">Suggest again</button>' : '<button id="gDismiss" title="Not a team: hidden until more channels start with it">Dismiss</button>'}</div>
+    <div class="status" id="status"></div>
+    <p class="hint lead">${channelCount(g.size)} the admin team holds start with <code>${esc(g.prefix)}</code>: no rule files them under an ops team.${listed}
+      ${g.dismissed ? ` Dismissed by ${esc(g.dismissed.by || 'someone')} ${esc(ago(g.dismissed.at))}, at ${channelCount(g.dismissed.channels)}: suggested again once more start with it.` : ''}</p>
+    <div class="card wizteam"><h2>Team</h2>
+      <label class="inline"><input type="radio" name="gMode" value="new"${v.mode === 'new' ? ' checked' : ''}><span>A new team</span></label>
+      <div class="form"><label class="fld grow"><span>Name</span><input id="gName" value="${esc(g.slugTaken ? '' : g.name)}"></label>
+        <label class="fld"><span>Slug</span><input id="gSlug" pattern="[a-z0-9][a-z0-9-]*" value="${esc(g.slugTaken ? '' : g.slug)}"></label></div>
+      <label class="inline"><input type="radio" name="gMode" value="existing"${v.mode === 'existing' ? ' checked' : ''}><span>An ops team that exists</span>
+        <select id="gTeam" aria-label="Ops team">${teams.map((t) => `<option value="${esc(t.slug)}"${t.slug === preferred ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>
+      ${g.team ? `<p class="hint">${g.team.people} of the ${peopleCount(checked)} checked below ${g.team.people === 1 ? 'is' : 'are'} on ${esc(teamLabel(g.team.slug))} already: these channels may be its.</p>` : ''}
+      ${g.slugTaken && !g.team ? `<p class="hint">There is a team <span class="mono">${esc(g.slug)}</span> already.</p>` : ''}</div>
+    <div class="card"><h2>Members</h2><div id="gPeople"></div>
+      <p class="hint">The Adobe people who are members of these channels, post or react in them, those in the most first. Checked: in at least half of them, and in them more than twice as often as in the admin team's channels at large, so that someone who is in all of those does not count. They join the team as members; make one a manager on its page.</p></div>
+    <div class="card"><h2>Rules</h2><table><tr><th>Field</th><th>Rule</th><th>Platform</th></tr>${g.rules.map((r) => `<tr><td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td><td>${r.source ? esc(platform({ source: r.source })) : 'All'}</td></tr>`).join('')}</table>
+      <div class="preview" id="gMoves"></div>
+      <p class="hint">The rules file every channel that starts with <code>${esc(g.prefix)}</code> under the team, now and when one is made, at priority 100 as the other prefix rules.</p></div>
+    <div class="card"><h2>Channels</h2><table><tr><th>Channel</th><th>Platform</th><th>Threads</th><th>Latest</th></tr>${g.channels.map((c) => `<tr>
+      <td>${channelName(c)}${c.membersListed ? '' : '<div class="sub">members not listed</div>'}</td><td>${esc(platform(c))}</td><td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td></tr>`).join('')}</table>
+      ${g.size > g.channels.length ? `<p class="hint">And ${g.size - g.channels.length} more.</p>` : ''}</div>
+    <div class="card"><button class="primary" id="gCreate"></button></div>`;
+  showStatus();
+  renderGroupPeople();
+  renderGroupMoves();
+  for (const r of $('detail').querySelectorAll('[name="gMode"]')) {
+    r.onchange = () => { v.mode = r.value; renderGroupApply(); };
+  }
+  $('gName').oninput = () => {
+    if (!$('gSlug').dataset.touched) $('gSlug').value = slugFrom($('gName').value);
+    $('detail').querySelector('[name="gMode"][value="new"]').checked = true;
+    v.mode = 'new';
+    renderGroupApply();
+  };
+  $('gSlug').oninput = () => { $('gSlug').dataset.touched = '1'; v.mode = 'new'; $('detail').querySelector('[name="gMode"][value="new"]').checked = true; renderGroupApply(); };
+  $('gTeam').onchange = () => { v.mode = 'existing'; $('detail').querySelector('[name="gMode"][value="existing"]').checked = true; renderGroupApply(); };
+  renderGroupApply();
+  // What the rules would move: a dry run, as any rule change's.
+  call('/api/admin/team-wizard', 'POST', {
+    prefix: g.prefix, slug: g.slug, name: g.name, dryRun: true,
+  }, { parallel: true, idempotent: true }).then((r) => {
+    if (!current() || v !== state.view) return;
+    if (r.ok) v.moves = r.body.moves; else v.movesError = r.body.error || `could not try the rules (${r.status})`;
+    renderGroupMoves();
+  });
+  $('gCreate').onclick = () => once(`wizard:${g.prefix}`, async () => {
+    renderGroupApply();
+    const body = v.mode === 'new'
+      ? { prefix: g.prefix, slug: $('gSlug').value.trim(), name: $('gName').value.trim() }
+      : { prefix: g.prefix, team: $('gTeam').value };
+    body.people = g.people.filter((p) => v.checked.has(p.email)).map((p) => ({ email: p.email, name: p.name || undefined }));
+    status('', v.mode === 'new' ? `Creating ${body.name}…` : `Giving ${teamLabel(body.team)} the channels…`);
+    const r = await call('/api/admin/team-wizard', 'POST', body);
+    if (!r.ok) { failed(v.mode === 'new' ? `Create ${body.name}` : `Give ${teamLabel(body.team)} the channels`, r); if (v === state.view) renderGroupApply(); return; }
+    const slug = r.body.team.slug;
+    const { moves = [], members = [], refused = [] } = r.body;
+    dropGroup(g);
+    const teamsNow = await call('/api/admin/teams');
+    if (teamsNow.ok) {
+      state.teams = teamsNow.body.teams;
+      state.names = teamsNow.body.names || state.names;
+      state.unassigned = teamsNow.body.unassigned;
+    }
+    const said = `${r.body.team.existing ? teamLabel(slug) : body.name}: ${peopleCount(members.length)} added, re-filing ${channelCount(moves.filter((m) => m.from.some((x) => x.team !== m.to.team)).length)}${refused.length ? `; not added: ${refused.map((x) => x.email).join(', ')}` : ''}.`;
+    if (state.tab !== 'teams' || state.sel !== `${GROUP}${g.prefix}`) { renderList(); return; }
+    state.sel = slug;
+    toUrl();
+    renderList();
+    await showTeam(slug);
+    status(refused.length ? 'warn' : 'ok', said);
+  });
+  const toggle = (dismiss) => async () => {
+    const b = $(dismiss ? 'gDismiss' : 'gAgain');
+    await hold(b, `dismiss:${g.prefix}`, async () => {
+      const r = await call('/api/admin/team-wizard/dismiss', dismiss ? 'POST' : 'DELETE', { prefix: g.prefix });
+      if (!r.ok) { failed(dismiss ? 'Dismiss' : 'Suggest again', r); return; }
+      state.groups = state.groups.filter((x) => x !== g);
+      state.dismissedGroups = state.dismissedGroups.filter((x) => x !== g);
+      if (dismiss) {
+        g.dismissed = { by: state.me.email || state.me.name, at: new Date().toISOString(), channels: g.size };
+        state.dismissedGroups.push(g);
+      } else {
+        g.dismissed = null;
+        state.groups.push(g);
+      }
+      const order = (a, b2) => (b2.size - a.size) || a.prefix.localeCompare(b2.prefix);
+      state.groups.sort(order);
+      state.dismissedGroups.sort(order);
+      if (dismiss && state.sel === `${GROUP}${g.prefix}`) unselect();
+      else if (state.sel === `${GROUP}${g.prefix}`) {
+        renderList();
+        showGroup(g.prefix);
+      } else renderList();
+    });
+  };
+  if ($('gDismiss')) $('gDismiss').onclick = toggle(true);
+  if ($('gAgain')) $('gAgain').onclick = toggle(false);
 }
 
 // ---- channel assignment requests ----------------------------------------------------------
