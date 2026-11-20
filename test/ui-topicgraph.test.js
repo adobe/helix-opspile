@@ -124,6 +124,16 @@ describe('the Topics graph (ui/topicgraph.js)', () => {
     ]);
   });
 
+  it('puts a person in a team they are on now, and one on none in none', () => {
+    const map = mapOf([[0, 'acme', [1, 2, 3]], [1, 'acme', [1, 2, 3]]]);
+    // The map put 2 on team a, but 2 is on team b only now; 3 is on no team.
+    const g = TopicGraph.build(map, { shown: ['person'], min: 1, members: { 1: ['a', 'b'], 2: ['b'] } });
+    assert.equal(g.all.get('person:1').parent, null);
+    assert.deepEqual(g.all.get('team:a').children, ['person:1']);
+    assert.deepEqual(g.all.get('team:b').children, ['person:2']);
+    assert.deepEqual(g.all.get('team:_none').children, ['person:3']);
+  });
+
   it('draws the features in their products or vendors, a thread once in each', () => {
     const map = mapOf([[0, 'acme', [1]], [1, 'acme', [1]], [2, 'acme', [1]]]);
     map.products = {
@@ -182,7 +192,9 @@ describe('the Topics graph (ui/topicgraph.js)', () => {
       }
     }
     const map = { ...mapOf(threads), people, peopleOf: {} };
-    const g = TopicGraph.build(map, { shown: ALL, min: 1 });
+    // On no team: in "Not on an ops team", opened.
+    const g = TopicGraph.build(map, { shown: ALL, min: 1, open: ['team:_none'] });
+    assert.equal(g.all.get('team:_none').label, 'Not on an ops team');
     const named = g.nodes.filter((n) => n.named && n.family === 'person').map((n) => n.id).sort();
     const top = Array.from({ length: 13 }, (_, i) => `person:${i + 4}`);
     assert.deepEqual(named, ['org:acme', ...top].sort());

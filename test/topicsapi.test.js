@@ -61,6 +61,8 @@ describe('the Topics page', { skip: !hasGit() && 'git is not installed' }, () =>
       assert.deepEqual(r.body.may, { areas: [], rebuild: false });
       // Every team's name, the member's or not.
       assert.deepEqual(Object.keys(r.body.teams).sort(), ['admin', 'edge']);
+      // And the teams each person is on.
+      assert.deepEqual(r.body.members[MEMBER.id], ['edge']);
       assert.deepEqual(r.body.areas, []);
       assert.deepEqual(r.body.follows.by, { org: [], person: [], area: [] });
       assert.equal((await call(e, as(MEMBER), 'POST', '/api/areas', {

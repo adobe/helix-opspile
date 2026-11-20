@@ -1446,7 +1446,14 @@ async function api(req, res, url) {
       return json(res, { error: 'the preview has no CONTENT index to build a map from' }, 503);
     }
     const r = await topicsPage(adminApi.env, topicsViewer(), await followsNow());
-    return json(res, await r.json(), r.status);
+    const body = await r.json();
+    // The made-up map's people are on no team in the preview's D1: on the map's.
+    for (const [p, who] of Object.entries(body.latest?.map?.peopleOf || {})) {
+      if (who.team && !body.members[p]) {
+        body.members[p] = [who.team];
+      }
+    }
+    return json(res, body, r.status);
   }
   if (url.pathname === '/api/areas') {
     return json(res, ...await previewArea(req.method, await readJson(req)));
