@@ -12,13 +12,12 @@
 
 import inboxHtml from '../ui/inbox.html';
 import adminHtml from '../ui/admin.html';
-import kbHtml from '../ui/kb.html';
 import cogsHtml from '../ui/cogs.html';
 import topicsHtml from '../ui/topics.html';
 // The pages' scripts, as text (src/page.js inlines them).
 import inboxJs from '../ui/inbox.js' with { type: 'text' };
 import adminJs from '../ui/admin.js' with { type: 'text' };
-import kbJs from '../ui/kb.js' with { type: 'text' };
+import agentJs from '../ui/agent.js' with { type: 'text' };
 import cogsJs from '../ui/cogs.js' with { type: 'text' };
 import topicsJs from '../ui/topics.js' with { type: 'text' };
 import appJs from '../ui/app.js' with { type: 'text' };
@@ -34,7 +33,7 @@ import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
 import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
 import spectrumInboxCss from '../ui/spectrum-inbox.css' with { type: 'text' };
 import spectrumAdminCss from '../ui/spectrum-admin.css' with { type: 'text' };
-import spectrumKbCss from '../ui/spectrum-kb.css' with { type: 'text' };
+import spectrumAgentCss from '../ui/spectrum-agent.css' with { type: 'text' };
 import spectrumCogsCss from '../ui/spectrum-cogs.css' with { type: 'text' };
 import spectrumTopicsCss from '../ui/spectrum-topics.css' with { type: 'text' };
 import { accessEmail } from './access.js';
@@ -89,7 +88,7 @@ import { prunePostKeys } from './postkeys.js';
 const SCRIPTS = {
   'inbox.js': inboxJs,
   'admin.js': adminJs,
-  'kb.js': kbJs,
+  'agent.js': agentJs,
   'cogs.js': cogsJs,
   'topics.js': topicsJs,
   'app.js': appJs,
@@ -104,13 +103,12 @@ const SCRIPTS = {
   'spectrum.css': spectrumCss,
   'spectrum-inbox.css': spectrumInboxCss,
   'spectrum-admin.css': spectrumAdminCss,
-  'spectrum-kb.css': spectrumKbCss,
+  'spectrum-agent.css': spectrumAgentCss,
   'spectrum-cogs.css': spectrumCogsCss,
   'spectrum-topics.css': spectrumTopicsCss,
 };
 const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
 const ADMIN_PAGE = page(adminHtml, SCRIPTS);
-const KB_PAGE = page(kbHtml, SCRIPTS);
 const COGS_PAGE = page(cogsHtml, SCRIPTS);
 const TOPICS_PAGE = page(topicsHtml, SCRIPTS);
 
@@ -226,16 +224,18 @@ const handlers = {
       return oauthResponse;
     }
     if (pathname === '/inbox/admin') {
-      // Teams and orgs (admin team; the API checks), under /inbox like the editor.
+      // Teams and customers, with their agents (the API checks who sees what). Under /inbox,
+      // so the same Access application covers it.
       return new Response(ADMIN_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
     }
     if (pathname === '/inbox/kb') {
-      // The knowledge-base editor (admin team; the API checks). Under /inbox, so the same
-      // Access application covers it.
-      return new Response(KB_PAGE, {
-        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      // The knowledge-base editor that was: its links (a knowledge base, a file, a view) open
+      // the same on the team's or the customer's page, which reads them (ui/admin.js `wanted`).
+      return new Response(null, {
+        status: 302,
+        headers: { location: `/inbox/admin${url.search}`, 'cache-control': 'no-store' },
       });
     }
     if (pathname === '/inbox/cogs') {

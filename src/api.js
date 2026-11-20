@@ -1478,7 +1478,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     return url.pathname === '/api/file/poster' ? filePoster(env, t, u) : threadFile(env, t, u);
   }
-  // The admin pages and the editor: the admin team, and team managers for their teams (the
+  // The admin pages: the admin team, and team managers for their teams (the
   // routes check which).
   if (url.pathname.startsWith('/api/admin/')) {
     if (!isManager(me)) {

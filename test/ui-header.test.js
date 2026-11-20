@@ -146,7 +146,9 @@ describe('the header', () => {
   it('knows which page an address is, on this origin only', () => {
     const { Header } = tab('/inbox');
     assert.equal(Header.pageOf('/inbox?team=t'), 'inbox');
-    assert.equal(Header.pageOf('/inbox/kb?repo=r'), 'agents');
+    // The editor that was: the Worker sends it to Teams or Customers.
+    assert.equal(Header.pageOf('/inbox/kb?repo=r'), null);
+    assert.equal(Header.pageOf('/inbox/admin?tab=teams&team=t&view=kb&path=a.md'), 'teams');
     assert.equal(Header.pageOf('/inbox/admin'), 'teams');
     assert.equal(Header.pageOf('/inbox/admin?tab=orgs&org=o'), 'orgs');
     assert.equal(Header.pageOf('/inbox/admin?tab=bots&bot=k'), 'bots');
@@ -172,17 +174,19 @@ describe('the header', () => {
     assert.equal(admin.Header.href('orgs'), '/inbox/admin?tab=orgs&org=acme');
     // Never opened: where it starts.
     assert.equal(admin.Header.href('requests'), '/inbox/admin?tab=requests');
-    assert.equal(admin.Header.href('agents'), '/inbox/kb');
+    // A section of a team's page, and the file open there, too.
+    admin.history.pushState(null, '', '/inbox/admin?tab=teams&team=edge&view=kb&path=a.md');
+    assert.equal(admin.Header.href('teams'), '/inbox/admin?tab=teams&team=edge&view=kb&path=a.md');
     // Back in the inbox, as it was.
-    assert.equal(tab('/inbox/kb', storage).Header.href('inbox'), '/inbox?team=t&filters=1&f.type=conversation&t=th1');
+    assert.equal(tab('/inbox/topics', storage).Header.href('inbox'), '/inbox?team=t&filters=1&f.type=conversation&t=th1');
   });
 
   it('asks the page where a page opens that was not opened yet', () => {
     const { Header } = tab('/inbox?team=t');
-    Header.init({ admin: true }, { count: false, fallback: { agents: () => '/inbox/kb?org=acme' } });
-    assert.equal(Header.href('agents'), '/inbox/kb?org=acme');
-    Header.remember('/inbox/kb?repo=r');
-    assert.equal(Header.href('agents'), '/inbox/kb?repo=r');
+    Header.init({ admin: true }, { count: false, fallback: { orgs: () => '/inbox/admin?tab=orgs&org=acme' } });
+    assert.equal(Header.href('orgs'), '/inbox/admin?tab=orgs&org=acme');
+    Header.remember('/inbox/admin?tab=orgs&org=r');
+    assert.equal(Header.href('orgs'), '/inbox/admin?tab=orgs&org=r');
   });
 
   it('opens a page where the page on screen sends it, before where it was left', () => {
@@ -190,12 +194,12 @@ describe('the header', () => {
     let customer = 'acme';
     Header.init({ admin: true }, {
       count: false,
-      prefer: { agents: () => (customer ? `/inbox/kb?org=${customer}` : null) },
+      prefer: { orgs: () => (customer ? `/inbox/admin?tab=orgs&org=${customer}` : null) },
     });
-    Header.remember('/inbox/kb?repo=r');
-    assert.equal(Header.href('agents'), '/inbox/kb?org=acme');
+    Header.remember('/inbox/admin?tab=orgs&org=r');
+    assert.equal(Header.href('orgs'), '/inbox/admin?tab=orgs&org=acme');
     customer = null;
-    assert.equal(Header.href('agents'), '/inbox/kb?repo=r');
+    assert.equal(Header.href('orgs'), '/inbox/admin?tab=orgs&org=r');
   });
 
   it('shows Stats to whom /api/me gives it, a plain member too, after the other pages', () => {
@@ -208,13 +212,13 @@ describe('the header', () => {
     const stats = { url: 'https://klickhaus.example/opspile.html' };
     assert.deepEqual(nav({}), { pages: [], hidden: true, html: '' });
     const member = nav({ teams: [{ slug: 'edge' }], stats });
-    assert.deepEqual([member.pages, member.hidden], [['inbox', 'agents', 'topics', 'stats'], false]);
-    assert.deepEqual(nav({ teams: [{ slug: 'edge' }] }).pages, ['inbox', 'agents', 'topics']);
+    assert.deepEqual([member.pages, member.hidden], [['inbox', 'teams', 'orgs', 'topics', 'stats'], false]);
+    assert.deepEqual(nav({ teams: [{ slug: 'edge' }] }).pages, ['inbox', 'teams', 'orgs', 'topics']);
     // Another site, in a new tab, with what it is in its title.
     assert.match(member.html, /<a data-page="stats" href="https:\/\/klickhaus\.example\/opspile\.html\?t=1mo" title="Statistics of all threads[^"]*klickhaus[^"]*new tab\)" target="_blank" rel="noopener">Stats/);
-    assert.deepEqual(nav({ manages: ['edge'], stats }).pages, ['inbox', 'agents', 'teams', 'topics', 'stats']);
-    assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'agents', 'teams', 'orgs', 'bots', 'requests', 'topics', 'cogs', 'stats']);
-    assert.deepEqual(nav({ admin: true }).pages, ['inbox', 'agents', 'teams', 'orgs', 'bots', 'requests', 'topics', 'cogs']);
+    assert.deepEqual(nav({ manages: ['edge'], stats }).pages, ['inbox', 'teams', 'orgs', 'topics', 'stats']);
+    assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'teams', 'orgs', 'bots', 'requests', 'topics', 'cogs', 'stats']);
+    assert.deepEqual(nav({ admin: true }).pages, ['inbox', 'teams', 'orgs', 'bots', 'requests', 'topics', 'cogs']);
   });
 
   it('opens Stats on the org and the team the page on screen sends', () => {

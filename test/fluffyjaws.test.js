@@ -293,7 +293,7 @@ describe('the global FluffyJaws server, set up', () => {
     const e = env();
     const back = await connect(e);
     assert.equal(back.status, 302);
-    assert.equal(back.location, '/inbox/kb?repo=kb-team-helix&view=mcp&mcp_global_connected=fluffyjaws');
+    assert.equal(back.location, '/inbox/admin?repo=kb-team-helix&view=mcp&mcp_global_connected=fluffyjaws');
     assert.deepEqual(OKTA.grants, ['authorization_code']);
     const [row] = e.DB.rows('SELECT * FROM mcp_global_grants');
     assert.ok(!JSON.stringify(row).includes('made-up-'), 'no token in the clear');

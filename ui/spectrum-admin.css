@@ -1,5 +1,5 @@
 /*
- * Teams, Orgs and Requests (ui/admin.html), in Spectrum 2's look:
+ * Teams, Customers, Bots and Requests (ui/admin.html), in Spectrum 2's look:
  * after the page's own styles and ui/spectrum.css, which this adds to. Only Spectrum 2 tokens
  * (see ui/spectrum.css).
  *
@@ -16,6 +16,7 @@
  * - the pickers (a channel, a member): ComboBox, their list a Popover with Menu items.
  * - the status line: StatusLight, small; an error's text in the negative color, as HelpText.
  * - an org's type: SegmentedControl (ui/spectrum.css); its icon suggestions selectable Cards.
+ * - the sections of a team's or a customer's page: Tabs, quiet and compact, with Badges.
  * - "Pick a team." and the like: IllustratedMessage, without the illustration.
  */
 
@@ -190,6 +191,10 @@ body main.instant :is(#list, #detail) { transition: none; }
 /* The parts the script writes: the title's heading, a row of a field and its button, a hint
    leading a card, a list's empty note, the new team's slug and a rule's priority. */
 .title h1 { margin: 0; }
+/* The sections of a team's or a customer's page (ui/admin.js, "sections"): tabs under its title,
+   in one line that scrolls sideways where it is too long. */
+.sections { display: flex; align-items: stretch; overflow-x: auto; scrollbar-width: none; }
+.sections a { display: inline-flex; flex: none; align-items: center; text-decoration: none; white-space: nowrap; }
 .fill { flex: 1; }
 .inline { display: flex; gap: var(--spectrum-spacing-100); align-items: center; }
 .hint.lead { margin: 0 0 var(--spectrum-spacing-100); }
@@ -301,7 +306,7 @@ body main.instant :is(#list, #detail) { transition: none; }
 
 /* ---- the detail: title, cards ------------------------------------------------------------ */
 
-.spectrum .title { gap: var(--spectrum-spacing-200); margin-bottom: var(--spectrum-spacing-400); }
+.spectrum .title { gap: var(--spectrum-spacing-200); min-height: var(--spectrum-component-height-200); margin-bottom: var(--spectrum-spacing-400); }
 .spectrum .title h1 {
   color: var(--spectrum-heading-color);
   font-size: var(--spectrum-heading-size-m);
@@ -326,6 +331,32 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .title a { font-weight: var(--spectrum-medium-font-weight); text-decoration: none; border-radius: var(--spectrum-corner-radius-75); }
 .spectrum .title a:hover { text-decoration: underline; }
 .spectrum .title .ico { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+
+/* Tabs, quiet, compact, size M: the sections of a team's or a customer's page. A divider under
+   them all; the open one's label in the content color with the selection indicator under it,
+   the others subdued, the content color under the pointer; the agent's counts beside the
+   labels as Badges, size S (positive where something is on, outlined where nothing is). */
+.spectrum .sections {
+  gap: var(--spectrum-tab-item-to-tab-item-horizontal-medium);
+  margin: calc(-1 * var(--spectrum-spacing-200)) 0 var(--spectrum-spacing-400);
+  box-shadow: inset 0 calc(-1 * var(--spectrum-border-width-200)) 0 var(--spectrum-gray-200);
+}
+.spectrum .sections a {
+  gap: var(--spectrum-text-to-visual-100);
+  min-height: var(--spectrum-tab-item-compact-height-medium);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-medium-font-weight);
+  border-bottom: var(--spectrum-border-width-200) solid transparent;
+  transition: color var(--s2-ease), border-color var(--s2-ease);
+}
+.spectrum .sections a:hover { color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .sections a[aria-current] { color: var(--spectrum-neutral-content-color-default); border-bottom-color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sections a:focus-visible { outline: var(--s2-focus); outline-offset: calc(-1 * var(--spectrum-focus-indicator-gap)); border-radius: var(--s2-radius); }
+.spectrum .sections .tag { font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .sections .tag + .tag { margin-inline-start: calc(-1 * var(--spectrum-spacing-50)); }
+.spectrum .sections .tag.agent { background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .sections .tag.missing { background: transparent; box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-neutral-visual-color); }
 
 /* A section of the content area: its title, then what it holds, set apart from the next by
    space alone (the widest gap on the page), with no card around it. */

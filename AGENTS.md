@@ -58,6 +58,12 @@ code and docs, is the decision model that labels threads and channels.
   `npm run portal:dev` previews it (README, "Customer portal"). What people upload there (files,
   pictures, logos) is served so that a browser runs none of it (`src/portal/files.js`,
   `openThreadFile` in `src/fileview.js`): keep it so, and never serve SVG or HTML inline.
+- **A team's and a customer's agent are sections of their pages** in Teams and Customers
+  (`ui/admin.html`): `ui/agent.js` (the global `Agent`; thread agents, tools and MCP servers,
+  extraction rules, the knowledge base and its editor) draws into the `#files` and `#editor`
+  that `ui/admin.js` makes, which keeps the address (`view=`, `path=`). Before anything replaces
+  what it shows, `ui/admin.js` awaits `Agent.leave()` (it saves, or asks). Its styles are
+  `ui/spectrum-agent.css`, all under `.agent`. `/inbox/kb`, the page it was, redirects there.
 - `ui/writing.js` (the global `Writing`) is the markdown formatting of a text box and the keys
   that format, the inbox's and the portal's: change a shortcut there, not in either page. The
   portal's box is rich text (`ui/richtext.js`, the global `RichText`): it sends HTML, and

@@ -48,8 +48,8 @@ export const MANIFEST = {
   ],
   shortcuts: [
     { name: 'Inbox', url: '/inbox', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
-    { name: 'Knowledge bases', url: '/inbox/kb', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
-    { name: 'Admin', url: '/inbox/admin', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
+    { name: 'Teams', url: '/inbox/admin?tab=teams', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
+    { name: 'Customers', url: '/inbox/admin?tab=orgs', icons: [{ src: '/icon-192.png', sizes: '192x192' }] },
   ],
 };
 

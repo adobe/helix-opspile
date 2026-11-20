@@ -226,8 +226,8 @@ bases. A job starts from where each thread is filed in D1, and also moves what i
 when the job was queued (a message filed meanwhile points the row at the new place), so several
 changes to a channel in a row end up where the last one says. A large channel moves a few hundred files per job.
 
-**Team managers.** A member of a team can be its **manager**: they get the admin pages and
-the knowledge-base editor for that team only, where they add and remove members, promote
+**Team managers.** A member of a team can be its **manager**: they get the team's own section
+of its page in Teams, and its agent's, for that team only, where they add and remove members, promote
 them to manager or demote them, and edit the team's knowledge base (its `systemprompt.md`
 too). Teams, rules, assignments, orgs and the customers' knowledge bases stay with the admin
 team. A team can be **self-managed**: every member is a manager, and so is everyone who joins.
@@ -613,7 +613,7 @@ concept of type `System Prompt`). Every thread agent appends the bodies of those
 to it, its team's first, then those of the teams its channel is shared with, then the customer's,
 to the end of its system prompt, read again
 before each model request; HTML comments in them are left out. Only people write them,
-whoever may edit the knowledge base, in the knowledge-base editor: agents' writes to `systemprompt.md` are refused, so a
+whoever may edit the knowledge base, in its **Knowledge base** section: agents' writes to `systemprompt.md` are refused, so a
 prompt injection cannot change what later agents are told.
 
 **Stack drawing.** A customer's knowledge base may have a `stack.md` at its root (a concept of
@@ -674,9 +674,12 @@ their nodes everywhere, at the cost of some being longer than they need. The ren
 FMC block diagram as DOT (`fmc` on the nodes and clusters); `npm run ui:dev` shows the
 guidelines' figures drawn by it at `/__dev/fmc`.
 
-**Editor.** Members of the admin team, and team managers for the knowledge bases of their
-teams and of the customers their teams own, have an editor at `/inbox/kb`: every knowledge base, its files, its history, and an editor for `systemprompt.md`
-and the concepts. The members of every ops team see every team's knowledge base there read-only (its
+**Editor.** A team's page in **Teams** and a customer's in **Customers** (`/inbox/admin`,
+ui/admin.js) have their agent's sections (ui/agent.js) after their own: **Thread agents**,
+**Tools and MCP servers**, a team's **Extraction rules**, and **Knowledge base**, its files and
+history beside an editor for `systemprompt.md` and the concepts. Members of the admin team, and
+team managers for the knowledge bases of their teams and of the customers their teams own,
+change them there. The members of every ops team see every team's agent there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
 says per knowledge base whether they may change it, `may`), as every thread agent reads them,
 and the customers' their teams own the same way. A team owns the customers with a channel filed under it or shared with it
@@ -693,17 +696,19 @@ attached over CDP dismisses), and only when edits could not be saved or before a
 one exception is leaving the page (Back, reload, closing the tab) with edits that could not be
 saved, where only the browser's own prompt can ask.
 
-The list of knowledge bases has the ops teams first, then the customers and vendors, by
-activity (the default: most entries first, then most tools and MCP servers turned on for their
-threads) or by name, as the person last chose in that browser. An entry is a file other than
+Teams lists the teams you manage (all of them for the admin team), and for everyone else every
+team with a knowledge base, under **Other teams**; Customers the customers (for the admin team)
+or the customers of your teams with a knowledge base, by name, each with its agent's channels
+and its entries. A team's or a customer's own section is for whoever manages it, so the others
+see its agent's sections only. An entry is a file other than
 `index.md`, `log.md` and `systemprompt.md`; `knowledge_bases.entries` keeps the count, which
-every write updates (and opening a knowledge base in the editor, when its listing is complete),
+every write updates (and opening a knowledge base, when its listing is complete),
 and the cron counts the knowledge bases not counted yet, a batch per run, over their whole tree.
 
-**Thread agents per channel.** The editor shows, for each knowledge base, the channels it
+**Thread agents per channel.** **Thread agents** shows, for each knowledge base, the channels it
 learns from (a team's: the team's channels; a customer's: theirs, in every team) and whether
-each one's [thread agent](#thread-agents) is on; the list of knowledge bases marks those with
-an agent in any of their channels. The admin team, and the managers of the team that owns a
+each one's [thread agent](#thread-agents) is on; its tab, and the lists, count those with an
+agent. The admin team, and the managers of the team that owns a
 channel (the team of its latest thread), turn its agent on or off there, right away (no
 question: it is one channel, and switches back as easily). The switch is a row in
 `agent_channels` with who set it and when. A team's knowledge base also has the team's
@@ -719,7 +724,7 @@ deletes them. A channel nobody switched has an agent when its team's default or
 agents. Turned off, a channel's agents stop at their next message and skip their wrap-up;
 their drafts and what they filed stay.
 
-**MCP servers.** Next to the thread agents, the editor lists a knowledge base's **MCP
+**MCP servers.** **Tools and MCP servers** lists a knowledge base's **MCP
 servers**: those of its team (`kb-team-*`) or its customer (`kb-org-*`), which the agents of
 that team's or customer's threads may call from code mode (see [Thread agents](#thread-agents)).
 Whoever may edit the knowledge base adds, checks, edits, switches and deletes them. A server is a
@@ -731,24 +736,22 @@ knowledge base) and one per channel the knowledge base learns from. In a team's 
 the per-channel switches fold, the channels switched on their own first and then by name, with a
 filter when there are many; in a customer's they are all there is, so they are shown unfolded.
 
-Every page has the same header (`ui/header.js`, `ui/header.css`): a switch between **Inbox**
-and **Agents** (this editor: the agents' knowledge bases, channels, MCP servers and
-instructions) for every member of a team, **Teams** too for team managers, and for the admin
-team **Orgs** and **Requests** too, the sections of `/inbox/admin`, **Topics** (`/inbox/topics`,
-[below](#topic-maps)) and **COGS** (`/inbox/cogs`, [below](#cogs)). Each opens as it was left in that
-browser tab: the header keeps every page's address (sessionStorage) whenever it changes, so
-**Inbox** comes back with its team, filters, sort, unread, the open thread and "view as",
-**Agents** with its knowledge base and file, and each admin section with what was picked in it.
-From the inbox, what is on screen picks what the others open on: Agents and Orgs the customer
-on screen (the open thread's, or the one customer filtered on; Agents its knowledge base if it
-has one, else the team's), Teams the team picked (in the team views, for whoever may manage it).
-With nothing on screen for them, they open as they were left, and Agents, not opened yet in the
-tab, on the team's. The inbox, not
-opened yet, opens from a team's knowledge base on that team. (`back=`, the inbox's
-address on links made before, is still taken.) The editor's URL names the knowledge base and
-the file (or the history), and each one opened is a history entry, so the browser's Back and
-Forward step through them; going between the admin sections is one too. The editor itself is
-always the admin's own, also when they came from a "view as" inbox. On a phone the switch is
+Every page has the same header (`ui/header.js`, `ui/header.css`): a switch between **Inbox**,
+**Teams** and **Customers** (the sections of `/inbox/admin`, each team and customer with its
+agent) for every member of a team, and for the admin team **Bots** and **Requests** too,
+**Topics** (`/inbox/topics`, [below](#topic-maps)) and **COGS** (`/inbox/cogs`, [below](#cogs)).
+Each opens as it was left in that browser tab: the header keeps every page's address
+(sessionStorage) whenever it changes, so **Inbox** comes back with its team, filters, sort,
+unread, the open thread and "view as", and each admin section with what was picked in it, at
+its section and file. From the inbox, what is on screen picks what the others open on:
+Customers the customer on screen (the open thread's, or the one customer filtered on), Teams
+the team picked (in the team views). With nothing on screen for them, they open as they were
+left. The inbox, not opened yet, opens from a team's page on that team. The address names the
+team or the customer, its section and the file open there (`view=`, `path=`), and each file
+or section opened is a history entry, so the browser's Back and Forward step through them;
+going between the admin sections is one too. `/inbox/kb`, where the knowledge bases had a page
+of their own, sends its links there (`repo=`, or the inbox's `org=` and `team=`). The admin
+pages are always the admin's own, also when they came from a "view as" inbox. On a phone the switch is
 the page you are on, with a menu of the others.
 Your menu, on every page, has **Appearance**: the color scheme, the system's (the default),
 light or dark, kept per browser. The inbox's menu is three columns under who you are (you and
@@ -1103,7 +1106,7 @@ and an unchanged thread is never labeled twice):
   and when it runs: that shape backtracks without end on text that almost matches. A script is an ES module whose
   default export gets the thread and returns `[{ field, value }, { tech }]`; it runs in a
   Dynamic Worker of its own (`LOADER`), without network access, within two seconds. Rules are
-  edited on the Agents page (**Extraction rules** of a team's knowledge base), with the MCP
+  edited on the team's page in Teams (**Extraction rules**), with the MCP
   server's tools (`list_extraction_rules`, `save_extraction_rule`, …), and by thread agents
   where the team turned on their `extraction_rules` tool (see "Agent tools").
 - A language model (`llama-3.3-70b-instruct`) writes a **title** of at most eight words. For an
@@ -1206,7 +1209,7 @@ and an unchanged thread is never labeled twice):
   AEM as a Cloud Service, MSM and Edge Functions are Experience Manager Sites; Dynamic Media is Experience Manager
   Assets; CX Enterprise Coworker, Brand Concierge, Brand Visibility, Journey Optimizer, … are
   their own), or a category for other companies' (CDN, Code hosting, Consent, …). Clef is asked
-  about each entry; the product groups them, on the Agents page and the Topics page, where an
+  about each entry; the product groups them, in a team's **Extraction rules** and on the Topics page, where an
   entry is a feature of its product. Migration 0056 added what the product census (Clairic over
   all 822 channel threads with a person's message) found the threads naming that no entry
   covered, and the Adobe products they named that had none; it also put the names people use
@@ -1291,7 +1294,7 @@ in both). The filters are a team, the kinds shown and the threads a
 line needs. A node picked shows what it is joined to and its threads, each a link into the inbox;
 without a pick, the panel lists the gaps first (**Not in the tech stack**: the products no entry
 names, by their threads; those two customers or more name, then, folded, those of one customer,
-which are as likely a brand or a system of theirs, and a count of the names of one thread; adding one on the Agents page, or its name to an entry's description,
+which are as likely a brand or a system of theirs, and a count of the names of one thread; adding one in a team's **Extraction rules**, or its name to an entry's description,
 makes Clef ask about it), then the topics with the share of their threads Clef tagged at all, the
 fewest first on a click: the topics Clef rarely tags are what its topic questions miss. A gap is
 drawn as a hollow ring.
@@ -1818,7 +1821,7 @@ message of the thread:
 
 One agent per inbox entry (a thread, or a re-threaded group under its first thread's key),
 in the channels where agents are on: the admin team and team managers switch them per channel
-in the knowledge-base editor, and their team's default and `AGENT_CHANNELS` turn on the rest. Each is a Durable Object
+on the team's or the customer's page (**Thread agents**), and their team's default and `AGENT_CHANNELS` turn on the rest. Each is a Durable Object
 (`ThreadAgent`) running [Pi](https://developers.cloudflare.com/agents/harnesses/pi/) through
 the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the object's
 SQLite, so a run survives evictions and deploys, and a model request that fails is retried.
@@ -1892,13 +1895,13 @@ may have changed (work accepted, a round of tools, an answer), so asking does no
 agent's Durable Object, which took over a second for an agent that was not running, and most of
 the agents' CPU outside their turns. Only an agent that has not written one yet, or whose turn
 has said `working` for 15 minutes without a word, is asked itself. Its avatar opens the sidebar
-(below), and its name the agent settings of the thread's team (Agents, its thread agents, at the
+(below), and its name the agent settings of the thread's team (its page in Teams, its thread agents, at the
 thread's channel).
 
 Whether it shows is each person's own choice, in their settings (`person_settings`): `traces`,
 off unless they turn it on, for every channel, and `channelTraces`, by channel id, where they
 chose otherwise, which wins. The inbox's user menu changes both (the open thread's channel);
-Agents does too, a select on each channel with an agent. Hidden, the page does not ask
+A team's **Thread agents** does too, a select on each channel with an agent. Hidden, the page does not ask
 `GET /api/agent` at all.
 
 **The sidebar.** Anyone who may see a thread can talk to its agent in the inbox, about the
@@ -2065,7 +2068,7 @@ in a QuickJS sandbox on the agent's own thread (`createInlineCodemodeSandbox`; o
 thread, so a script that computes holds up only its own agent, for at most its interrupt
 budget), every call it makes is a nested tool call, and a script interrupted by an eviction
 resumes where it was without making its finished calls again. Each ops team and each customer
-can have MCP servers (`mcp_servers`, maintained in the knowledge-base editor next to the
+can have MCP servers (`mcp_servers`, maintained on the team's or the customer's page next to the
 per-channel switch; credentials are request headers sealed with `TOKEN_KEY`, or an OAuth
 grant, below). Each server is on or off for every channel of its team or customer, and a
 channel can have a switch of its own that wins (`mcp_server_switches`), as the global servers'
@@ -2279,7 +2282,7 @@ Six tools are off until they are turned on (a new team starts with `computer`,
 `extraction_rules` and `web_search` on for the team, and migration 0077 turned `web_search` on
 for every team before it). All but `any_thread` by the admin team or a team's managers, as
 the global MCP servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
-over its team's), in the knowledge-base editor (**Tools and MCP servers**, `src/agent/agenttools.js`).
+over its team's), on the team's or the customer's page (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
 tools it has are kept in its storage and installed as their own extension (`opspile-tools`,
 right after opspile's own), which a change replaces in place. Each comes with a section of the

@@ -16,7 +16,7 @@
  * - `checkDiagrams`: a write of a `.dot` to a knowledge base is laid out by Graphviz itself
  *   first, after src/dot.js passed it, so what dot cannot lay out is refused with dot's words;
  * - `POST /api/diagram { dot, title? }`: the FMC drawing of `dot`, drawn on the server, for the
- *   knowledge-base editor, which then needs no Graphviz of its own (ui/kb.js).
+ *   knowledge-base editor, which then needs no Graphviz of its own (ui/agent.js).
  * Without the binding (local `cf dev`, `npm run ui:dev`) both do without: src/dot.js alone
  * checks, and the endpoint answers 503, so the page draws with /inbox/fmc.js.
  */

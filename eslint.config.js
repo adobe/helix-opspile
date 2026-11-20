@@ -84,6 +84,8 @@ export default [
         NotifyHelp: 'readonly',
         // The Topics page's graph, ui/topicgraph.js.
         TopicGraph: 'readonly',
+        // A team's or a customer's agent, ui/agent.js (in Teams and Customers, ui/admin.js).
+        Agent: 'readonly',
         // Content swaps that fade in, ui/app.js.
         Swap: 'readonly',
         // Links to the app opened in it, installed, ui/app.js.

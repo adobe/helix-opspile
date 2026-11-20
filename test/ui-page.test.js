@@ -1216,8 +1216,8 @@ describe('inbox page', () => {
     assert.equal(boxState({ text: 'draft, edited', from: 'draft', base: 'v1' }), 'diverged');
   });
 
-  it('tells where the file in the knowledge-base editor stands', () => {
-    const kb = SCRIPTS['kb.js'];
+  it('tells where the file open in a knowledge base stands', () => {
+    const kb = SCRIPTS['agent.js'];
     const from = kb.indexOf('/**\n * Where the open file stands');
     const to = kb.indexOf('/** Saves a pause after the last keystroke');
     // eslint-disable-next-line no-new-func
