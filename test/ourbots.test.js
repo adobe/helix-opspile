@@ -14,7 +14,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { api, botAuthor } from '../src/api.js';
 import { render } from '../src/channels.js';
-import { toAuthor } from '../src/lookup.js';
+import { loadRules, toAuthor } from '../src/lookup.js';
+import { plan, refile } from '../src/refile.js';
 import { d1 } from './d1.js';
 import { fakeBucket, quiet } from './fakes.js';
 
@@ -246,5 +247,70 @@ describe('Adobe\'s bots', () => {
     assert.deepEqual(e.DB.rows("SELECT ours, ours_by FROM identities WHERE user_id = 'bot-helper'"), [
       { ours: 0, ours_by: 'ada@staff.example' },
     ]);
+  });
+
+  it('wait under Requests until an admin says whose they are, if they posted', async () => {
+    const e = env();
+    const open = async () => (await call(e, ADA, 'GET', '/api/admin/requests?count=1')).body.open;
+    // The two that posted; the one only mentioned changes nothing in the inbox.
+    assert.equal(await open(), 2);
+    assert.equal((await call(e, ADA, 'GET', '/api/admin/teams')).body.requests, 2);
+    await quiet(() => call(e, ADA, 'PUT', '/api/admin/bots', { key: HELPER, ours: true }));
+    assert.equal(await open(), 1);
+    // External is an answer too.
+    await quiet(() => call(e, ADA, 'PUT', '/api/admin/bots', { key: OTHER, ours: false }));
+    assert.equal(await open(), 0);
+    // Only posting alerts is not whose it is.
+    e.DB.sqlite.exec("UPDATE identities SET ours = NULL WHERE user_id = 'bot-other'");
+    await quiet(() => call(e, ADA, 'PUT', '/api/admin/bots', { key: OTHER, alerts: true }));
+    assert.equal(await open(), 1);
+  });
+
+  it('only post alerts, as an admin says: the threads they started are re-filed as alerts', async () => {
+    const e = env();
+    e.DB.sqlite.prepare(`INSERT INTO rules (id, target, priority, field, pattern, value)
+      VALUES (1, 'team', 100, 'name', '^acme', 'helix'), (2, 'org', 100, 'name', '^acme', 'acme')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
+      VALUES ('teams', 'T', '19:c', 'acme support', ?)`).run(AT);
+    // A thread the other bot started, and a person's reply to it; the person's thread stays theirs.
+    const ALERT = 'teams:T:19:c:8';
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        kind, channel_name, path, root_at, any_at, messages, updated_at, vectorized_through)
+      VALUES (?, 'teams', 'T', '19:c', '8', 'acme', 'helix', 'channel', 'acme support', 'q/8/', ?, ?, 2, ?, ?)`)
+      .run(ALERT, AT, AT, AT, AT);
+    const message = (id, authorKey, kind) => e.DB.sqlite.prepare(`INSERT INTO messages (source,
+        tenant, channel_id, id, thread, at, staff, counted, author_key, author_kind)
+      VALUES ('teams', 'T', '19:c', ?, ?, ?, 0, ?, ?, ?)`)
+      .run(id, ALERT, AT, Number(kind === 'person'), authorKey, kind);
+    message('8', OTHER, 'bot');
+    message('9', 'teams:T:u-cy', 'person');
+    const queued = [];
+    e.NORMALIZE = { send: async (body) => queued.push(body) };
+    assert.equal((await call(e, ADA, 'PUT', '/api/admin/bots', { key: OTHER, alerts: 'yes' })).status, 400);
+    const r = await quiet(() => call(e, ADA, 'PUT', '/api/admin/bots', { key: OTHER, alerts: true }));
+    assert.equal(r.status, 200);
+    assert.deepEqual([r.body.bot.alerts, r.body.bot.ours, r.body.refile], [true, null, 1]);
+    // Its channel is re-filed, every thread of it, and nothing moves but the kind.
+    assert.deepEqual(queued.map((q) => [q.refile.channelId, q.refile.threads.length]), [['19:c', 2]]);
+    assert.equal((await plan(e, await loadRules(e))).length, 1);
+    await quiet(() => refile(e, queued[0].refile));
+    assert.deepEqual(e.DB.rows('SELECT thread, team, kind, vectorized_through FROM threads ORDER BY thread'), [
+      {
+        thread: THREAD, team: 'helix', kind: 'channel', vectorized_through: null,
+      },
+      {
+        thread: ALERT, team: 'helix', kind: 'alert', vectorized_through: AT,
+      },
+    ]);
+    // Filed as the rules and the bots say: nothing left to move.
+    assert.deepEqual(await plan(e, await loadRules(e)), []);
+    // Said again: nothing to re-file.
+    const again = await quiet(() => call(e, ADA, 'PUT', '/api/admin/bots', { key: OTHER, alerts: true }));
+    assert.equal(again.body.refile, undefined);
+    assert.equal(queued.length, 1);
+    // Taken back: a conversation again.
+    await quiet(() => call(e, ADA, 'PUT', '/api/admin/bots', { key: OTHER, alerts: false }));
+    await quiet(() => refile(e, queued[1].refile));
+    assert.deepEqual(e.DB.rows(`SELECT kind FROM threads WHERE thread = '${ALERT}'`), [{ kind: 'channel' }]);
   });
 });

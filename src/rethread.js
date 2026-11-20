@@ -383,6 +383,17 @@ async function answered(env, thread, before = null) {
     .bind(thread.thread, thread.root_id, before).first());
 }
 
+/** The kinds of `threads` (keys) that D1 has, by key. */
+async function kindsOf(env, threads) {
+  const keys = [...new Set(threads.filter(Boolean))];
+  if (!keys.length) {
+    return new Map();
+  }
+  const { results } = await env.DB.prepare(`SELECT thread, kind FROM threads
+    WHERE thread IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(keys)).all();
+  return new Map((results || []).map((r) => [r.thread, r.kind]));
+}
+
 /**
  * The conversations a new root in a conversation channel may continue: the channel's latest
  * ones (by their messages before the root) and the groups of the similar earlier roots, each
@@ -393,7 +404,7 @@ async function conversations(env, thread, similar) {
   const { results: recent } = await env.DB.prepare(`SELECT COALESCE(t.logical_thread, t.thread) AS grp,
       MAX(m.at) AS latest FROM messages m JOIN threads t ON t.thread = m.thread
     WHERE m.source = ? AND m.tenant = ? AND m.channel_id = ? AND m.at < ? AND m.at >= ?
-      AND m.author_key IS NOT NULL AND m.deleted = 0 AND t.thread != ?
+      AND m.author_key IS NOT NULL AND m.deleted = 0 AND t.thread != ? AND t.kind = 'channel'
     GROUP BY grp ORDER BY latest DESC LIMIT ?`)
     .bind(
       thread.source,
@@ -408,9 +419,10 @@ async function conversations(env, thread, similar) {
     .slice(0, RECENT_CONVERSATIONS);
   for (const m of similar) {
     // eslint-disable-next-line no-await-in-loop
-    const row = await env.DB.prepare('SELECT thread, logical_thread FROM threads WHERE thread = ?')
+    const row = await env.DB.prepare('SELECT thread, logical_thread, kind FROM threads WHERE thread = ?')
       .bind(m.metadata.thread).first();
-    const g = row && groupOf(row);
+    // An alert bot's alerts in the channel are no conversation (src/alertbots.js).
+    const g = row && row.kind === 'channel' && groupOf(row);
     if (g && g !== thread.thread && !groups.includes(g)) {
       groups.push(g);
     }
@@ -700,9 +712,11 @@ export async function rethread(env, key, { force = false } = {}) {
   // An exact repeat: the earliest thread in the channel and window with the same skeleton.
   // Only alerts: in conversations, the same words ("thanks!") are often a different talk.
   const conversation = thread.kind === 'channel';
+  // A channel may hold conversations and an alert bot's alerts both (src/alertbots.js): an alert
+  // joins alerts only.
   const twin = !conversation && await env.DB.prepare(`SELECT thread, logical_thread FROM threads
     WHERE source = ? AND tenant = ? AND channel_id = ? AND skeleton_hash = ? AND thread != ?
-      AND root_at >= ? AND root_at <= ? ORDER BY root_at LIMIT 1`)
+      AND root_at >= ? AND root_at <= ? AND kind = ? ORDER BY root_at LIMIT 1`)
     .bind(
       thread.source,
       thread.tenant,
@@ -711,6 +725,7 @@ export async function rethread(env, key, { force = false } = {}) {
       key,
       new Date((at - WINDOW_DAYS * 86400) * 1000).toISOString(),
       thread.root_at,
+      thread.kind,
     ).first();
 
   // A burst: the channel's previous root is by the same person, minutes earlier. People
@@ -749,9 +764,15 @@ export async function rethread(env, key, { force = false } = {}) {
     id: await vectorId(key), values, metadata: { channel: channelKey(thread), thread: key, at },
   }]);
 
+  // The kinds of the threads found: a conversation joins conversations only, an alert alerts only,
+  // where a channel has both (src/alertbots.js).
+  const kinds = await kindsOf(env, (found.matches || [])
+    .map((m) => m.metadata && m.metadata.thread));
+  const sameKind = (m) => !kinds.has(m.metadata.thread)
+    || kinds.get(m.metadata.thread) === thread.kind;
   // Earlier roots in the window, most similar first.
   const earlier = (found.matches || [])
-    .filter((m) => m.metadata && m.metadata.thread !== key && m.metadata.at < at
+    .filter((m) => m.metadata && m.metadata.thread !== key && sameKind(m) && m.metadata.at < at
       && m.metadata.at >= at - WINDOW_DAYS * 86400
       && m.score >= (conversation ? MIN_CANDIDATE_CONVERSATION : MIN_CANDIDATE))
     .sort((a, b) => b.score - a.score);
@@ -838,7 +859,7 @@ export async function rethread(env, key, { force = false } = {}) {
   const group = logical || key;
   const joined = [key];
   for (const m of conversation ? [] : found.matches || []) {
-    if (m.metadata && m.metadata.thread !== key && m.metadata.at > at
+    if (m.metadata && m.metadata.thread !== key && sameKind(m) && m.metadata.at > at
       && m.metadata.at <= at + WINDOW_DAYS * 86400 && m.score >= AUTO_MATCH) {
       // eslint-disable-next-line no-await-in-loop
       const later = await env.DB.prepare('SELECT logical_thread FROM threads WHERE thread = ?')
@@ -856,7 +877,7 @@ export async function rethread(env, key, { force = false } = {}) {
   const { results: laterTwins } = conversation ? { results: [] } : await env.DB.prepare(`SELECT t.thread, t.logical_thread,
       a.root_at AS anchor_at FROM threads t LEFT JOIN threads a ON a.thread = t.logical_thread
     WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ? AND t.skeleton_hash = ? AND t.thread != ?
-      AND t.root_at > ? AND t.root_at <= ?`)
+      AND t.root_at > ? AND t.root_at <= ? AND t.kind = ?`)
     .bind(
       thread.source,
       thread.tenant,
@@ -865,6 +886,7 @@ export async function rethread(env, key, { force = false } = {}) {
       key,
       thread.root_at,
       new Date((at + WINDOW_DAYS * 86400) * 1000).toISOString(),
+      thread.kind,
     ).all();
   for (const t of laterTwins || []) {
     if (!t.logical_thread || joined.includes(t.logical_thread) || t.anchor_at > thread.root_at) {

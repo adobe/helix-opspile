@@ -518,10 +518,11 @@ function seedAdminChannels(DB) {
 }
 
 /**
- * The admin page's Bots (src/ourbots.js): the fake inbox's bots with their messages, one an
- * admin said is Adobe's (Provisioning Agent, on Adobe's side in its thread, which an admin also
+ * The bots under the admin page's Requests (src/ourbots.js): the fake inbox's bots with their
+ * messages, Alertmanager and opspile waiting for an admin to say whose they are, one an admin said
+ * is Adobe's (Provisioning Agent, on Adobe's side in its thread, which an admin also
  * named and gave a picture: on Teams it posts as its registration, `provisioning-agent`, with
- * none), and one only mentioned. Made up.
+ * none), and one external that only posts alerts, only mentioned. Made up.
  */
 function seedBots(DB, store) {
   const db = DB.sqlite;
@@ -539,7 +540,7 @@ function seedBots(DB, store) {
     { name: 'Alertmanager', source: 'slack', id: 'B0ALERTMANAGER' },
     { name: 'opspile', source: 'slack', id: 'B0OPSPILE' },
     {
-      name: 'Deploy Notifier', handle: 'deploy', source: 'teams', id: 'BOT-DEPLOY', ours: 0, at: 9,
+      name: 'Deploy Notifier', handle: 'deploy', source: 'teams', id: 'BOT-DEPLOY', ours: 0, at: 9, alerts: 1,
     },
   ];
   for (const b of BOTS) {
@@ -567,8 +568,8 @@ function seedBots(DB, store) {
     const said = b.ours === undefined ? null : new Date(Date.now() - b.at * 86400000).toISOString();
     for (const tenant of tenants.size ? tenants : ['T-FAKE']) {
       db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, handle,
-          fetched_at, ours, ours_by, ours_at, display_name, display_avatar)
-          VALUES (?, ?, ?, 'bot', ?, ?, ?, ?, ?, ?, ?, ?)`)
+          fetched_at, ours, ours_by, ours_at, display_name, display_avatar, alerts)
+          VALUES (?, ?, ?, 'bot', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           b.source,
           tenant,
@@ -581,6 +582,7 @@ function seedBots(DB, store) {
           said,
           b.posts ? b.name : null,
           b.picture || null,
+          b.alerts || null,
         );
     }
   }

@@ -598,7 +598,7 @@ without it they stay links. Images pasted into a message (hosted contents) need 
 `AppCatalog.Read.All` is optional as well: with it, Teams bots show their app's icon in the inbox
 (Graph beta's `colorIcon` of the app definition installed, `GET /api/bots/icon`, which the cron's
 list of installed bots points their picture at); without it they show their initials, unless an
-admin gave them a picture on the admin page's Bots.
+admin gave them a picture on the bot's page under the admin page's Requests.
 For replies and reactions it also needs the **delegated** permissions `ChannelMessage.Send`
 (which covers `setReaction`/`unsetReaction` on channel messages and inline images in replies),
 `offline_access` and `User.Read`, for files other than images in replies `Files.ReadWrite.All`

@@ -38,7 +38,9 @@ import {
   reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
-import { getBot, listBots, setBot } from './ourbots.js';
+import {
+  getBot, listBots, setBot, unreviewedCount,
+} from './ourbots.js';
 import { followable, setTeamFollow, teamFollows } from './follows.js';
 import { portalAuthor, portalBound, portalCall } from './portalsource.js';
 import { openConflictCount, resolveConflict, techConflicts } from './techconflicts.js';
@@ -62,8 +64,9 @@ import {
  *   channels they match with a team (src/followrules.js); and the conflicts between team
  *   rules, which the admin team settles under Requests (src/ruleconflicts.js);
  * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments;
- * - bots: which of the bots the inbox knows are Adobe's, and so count as staff, each with its
- *   latest messages (src/ourbots.js);
+ * - bots: which of the bots the inbox knows are Adobe's, and so count as staff, and which only
+ *   post alerts, each with its latest messages (src/ourbots.js); a bot nobody said either of is
+ *   a request, under Requests;
  * - shared channels (migration 0024): a channel is filed under one team, its first, and can be
  *   shared with more. Adding a team to a channel moves it only when the admin team (or nobody)
  *   holds it; a channel another team holds is shared with the new one instead.
@@ -612,8 +615,10 @@ async function requestList(env, me, { status, count }) {
   const conflicts = isAdmin(me) ? await techConflicts(env) : [];
   // And the conflicts between team rules (src/ruleconflicts.js), the admin team's too.
   const rules = isAdmin(me) ? await ruleConflicts(env) : [];
+  // And the bots nobody said whose they are (src/ourbots.js), the admin team's too.
+  const bots = isAdmin(me) ? await unreviewedCount(env) : 0;
   const open = await openCount(env, teams) + await portalOpenCount(env, teams)
-    + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length;
+    + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length + bots;
   if (count) {
     return json({ open });
   }
@@ -1000,7 +1005,7 @@ async function listTeams(env, me) {
   const scope = everything ? null : managedTeams(me);
   const requests = await openCount(env, scope) + await portalOpenCount(env, scope)
     + (everything ? await openConflictCount(env)
-      + (await ruleConflicts(env, { kept: false })).length : 0);
+      + (await ruleConflicts(env, { kept: false })).length + await unreviewedCount(env) : 0);
   // Every team's name, for a manager's page to say where a channel is now.
   const names = Object.fromEntries(all.map((t) => [t.slug, t.name]));
   return json({
