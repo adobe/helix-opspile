@@ -180,15 +180,15 @@ with a link to its thread), and the admin team
 says which are Adobe's and which are external (`identities.ours`: 1, 0, or NULL while nobody
 said; with who said it and when). A bot that posted and that nobody said either of is a request
 there, under "Bots to review", and counts on Requests in the header until an admin answers it
-(`unreviewedCount`); the others are listed below the requests, with the bots only mentioned.
-`/inbox/admin?tab=bots&bot=<key>`, the bots' page before, opens the bot there. An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
+(`unreviewedCount`); the others are listed below the requests, with the bots only mentioned
+(`/inbox/admin?tab=requests&request=bot:<key>`); there is no page of bots. An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
 messages in D1 follow at once (`messages.staff`), and so do the ones written before in the thread
 view (`botAuthor` in `src/api.js`, since their frontmatter says what was so then). Looking the
 account up again keeps the say. Its messages stay a bot's: they are not counted (a bot does not
 answer the customer, `last_staff`), and the agents fence them as every bot's
 (`untrusted` in `src/agent/deliver.js`, which trusts staff people only).
 
-**Alert bots.** A bot may also only post alerts (`identities.alerts`, migration 0088, set on its
+**Alert bots.** A bot may also only post alerts (`identities.alerts`, migration 0089, set on its
 page under Requests, whatever its side): a thread it starts is an alert (`threads.kind =
 'alert'`), also in a channel the rules make a conversation, so a channel can hold people's
 conversations and a monitoring bot's alerts both (`src/alertbots.js`). Only the root decides: a
@@ -234,6 +234,24 @@ and whether it is a conversation, an alert feed or not worth following. Clef is 
 name, its Teams team, its topic, its customer, how busy it is, the Adobe people who post in it
 and are in it with their ops teams, the technologies seen, and its recent threads' titles; it
 looks again when the channel has new activity, the ops teams change, or the label is a week old.
+
+**The team wizard** (`src/teamwizard.js`) goes the other way: from the admin team's channels to
+teams that do not exist yet. Channels are named by convention (`<product>-<customer>`), so a
+prefix that three or more of the admin team's channels share (up to the first or second `-` or
+`_` of a Slack or Discord channel's name, or of a Teams team's name, which is what is named so
+on Teams) is often a product without a rule. The list of teams has each such group under
+**Suggested teams**, as they come up; its page lists its channels, the rules that would file them
+(channel name starts with the prefix, and the Teams team's name for its Teams channels), what a
+dry run of them moves, and the Adobe people present in them (members, posting or reacting; staff
+with a mail address), those in the most first. Checked are the ones in at least half of the
+group's channels and there more than twice as often as in the admin team's channels at large,
+so that an admin in all of them does not count. When most of those are on one ops team already,
+the page offers to give that team the rules instead. **Create** makes the team (with what new
+teams start with), adds the checked people as members, and saves the rules, which re-file the
+channels as any rule change does (`POST /api/admin/team-wizard`, `dryRun` for the preview). A
+group that is no team is dismissed (`team_prefix_dismissals`, migration 0088), with its channel
+count, and suggested again once more channels start with it.
+
 Every rule change applies at once (the page names the channels it
 moved; the API still answers `dryRun` with what a change would move), and the page sends its
 changes one after the other, so many can be made in a row. Applied, each moved channel is **re-filed** by a `refile` job on the
@@ -1299,14 +1317,20 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
   is in and who worked each topic's threads, so it can tell a thread agent which topics a person's
   similar threads are in, and list who works a topic (`list_topics`).
 
-The page draws the map as one force-directed graph (its own, after d3-force's model): a node per
-person, topic, tag and customer, as big as its threads, a line between two that share threads,
-thicker the more (with the topics shown, a line joins a topic to the others, and a person to a
-customer; the topics are the hubs). One kind shown alone is joined to itself: two people, tags or
-products by the threads they share, and two topics or two customers, which never share a thread, by
-the people they share (as many people as the threads a line needs, each with that many threads
-in both). The filters are a team, the kinds shown and the threads a
-line needs. A node picked shows what it is joined to and its threads, each a link into the inbox;
+The page draws the map as one force-directed graph (its own, after d3-force's model) of three
+kinds, each a **hierarchy of bubbles** (`ui/topicgraph.js`): the topics in their areas (and
+"Not in an area"; on maps before version 2, the tag most of a topic's threads have), the people
+in their teams (Adobe's) or their customers (the others'; a customer whose people did not post
+is a bubble too), and the features of the tech stack in their products (Adobe's) or vendors (the
+others'). A click on a group bursts it into its children where it was; a click on the child
+picked folds them back; a group of one child is that child, but a customer stays a bubble. Each
+node is as big as its threads, a line between two that share threads, thicker the more (with the
+topics shown, a line joins a topic or an area to the others; the topics are the hubs). One kind
+shown alone is joined to itself: two people or products by the threads they share, and two
+topics, which never share a thread, by the Adobe people they share (as many people as the
+threads a line needs, each with that many threads in both). The filters are a team, the kinds
+shown and the threads a line needs; they, the groups opened (`open`) and the pick are the page's
+address. A node picked shows what it is joined to and its threads, each a link into the inbox;
 without a pick, the panel lists the gaps first (**Not in the tech stack**: the products no entry
 names, by their threads; those two customers or more name, then, folded, those of one customer,
 which are as likely a brand or a system of theirs, and a count of the names of one thread; adding one on the Agents page, or its name to an entry's description,
@@ -1723,8 +1747,9 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   The reply box is yours, and a draft never replaces what you typed. **Edit** takes the draft
   into the box to edit; with text there already, **Add to reply** puts it after that text.
   View draft, Edit and **Discard** are icons (their names are their labels and tooltips), on
-  the line's first row with who saved the draft; the sends are labelled, past a hairline, and
-  get a row of their own at the bottom of a narrow line.
+  the line's last row with its sources; the sends are labelled, past a hairline. They are at
+  the bottom, which opening the line does not move, so the pointer does not have to follow
+  them; a narrow line gives the sources a row of their own above them.
 - The line sends the draft as it is: **Send as me**, or **Send as bot** (as the opspile app,
   `POST /api/post/app`) where the thread says the viewer may (`can_post_as_bot`: the channel's
   **Post messages** switch is on and its platform's bot is set up). On Discord, and before the

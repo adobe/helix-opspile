@@ -28,6 +28,7 @@ import tableJs from '../ui/table.js' with { type: 'text' };
 import writingJs from '../ui/writing.js' with { type: 'text' };
 import stackJs from '../ui/stack.js' with { type: 'text' };
 import notifyHelpJs from '../ui/notifyhelp.js' with { type: 'text' };
+import tourJs from '../ui/tour.js' with { type: 'text' };
 import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
 // Spectrum 2's look of every page (README, "Spectrum 2").
 import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
@@ -99,6 +100,7 @@ const SCRIPTS = {
   'writing.js': writingJs,
   'stack.js': stackJs,
   'notifyhelp.js': notifyHelpJs,
+  'tour.js': tourJs,
   'topicgraph.js': topicGraphJs,
   'spectrum-fonts.css': spectrumFontsCss,
   'spectrum.css': spectrumCss,

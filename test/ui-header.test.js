@@ -149,8 +149,8 @@ describe('the header', () => {
     assert.equal(Header.pageOf('/inbox/kb?repo=r'), 'agents');
     assert.equal(Header.pageOf('/inbox/admin'), 'teams');
     assert.equal(Header.pageOf('/inbox/admin?tab=orgs&org=o'), 'orgs');
-    // The bots were a page of their own: they are under Requests.
-    assert.equal(Header.pageOf('/inbox/admin?tab=bots&bot=k'), 'requests');
+    // The bots are under Requests: there is no page of their own.
+    assert.equal(Header.pageOf('/inbox/admin?tab=bots&bot=k'), 'teams');
     assert.equal(Header.pageOf('/inbox/admin?tab=requests'), 'requests');
     assert.equal(Header.pageOf('/inbox/cogs?range=7d'), 'cogs');
     assert.equal(Header.pageOf('/inbox/topics?team=helix'), 'topics');

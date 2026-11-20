@@ -16,20 +16,21 @@
  * a Follow on a person, customer, area or product puts its threads in their personal view, and
  * the admin team and team managers add, rename, describe and delete areas in the panel. What
  * the channel threads are about, found from what was said in them (the topics), drawn as one
- * force-directed graph with the Adobe people who posted in them, Clef's topics on them (the
- * tags, as the inbox's Topic filter has them), the products they are about (Clairic's, outlined
- * when no tech stack entry names them: the gaps) and the customers they are for. A line joins two
- * that share threads, thicker the more; the topics are the hubs, so with them shown a line joins
- * a topic to the others, and a person to a customer, and without them any two kinds. One kind
- * alone is joined to itself: people, tags and products by the threads they share, topics and
- * customers (one to a thread) by the people they share. A node is as big as its threads.
+ * force-directed graph of three kinds of bubbles, each a hierarchy (ui/topicgraph.js): the
+ * topics in their areas, the people in their teams (Adobe's) or their customers (the others'),
+ * and the features of the tech stack in their products (Adobe's) or vendors (the others'). A
+ * click on a group bursts it into its children where it was; a click on the child picked folds
+ * them back into it. A line joins two that share threads, thicker the more; the topics are the
+ * hubs, so with them shown a line joins a topic or an area to the others, and without them any
+ * two kinds. A node is as big as its threads.
  *
  * Pointing at a node shows what it is joined to; a click picks it, and the panel beside the graph
- * says what it is: a topic's theme, its people, customers and tags, its threads (each a link into
- * the inbox), and how many of them Clef gave a tag at all, which is where Clef's topics miss what
- * the threads are about. Without a pick the panel lists the topics. The filters (a team, the
- * kinds shown, the threads a line needs) and the pick are the page's address; the header brings
- * it back as it was left. Rebuild clusters the threads again (POST /api/admin/topics).
+ * says what it is: a topic's theme, a group's children, the people, customers, areas and products
+ * of its threads, its threads (each a link into the inbox), and how many of them Clef gave a tag
+ * at all, which is where Clef's areas miss what the threads are about. Without a pick the panel
+ * lists the areas and the topics. The filters (a team, the kinds shown, the threads a line
+ * needs), the groups opened and the pick are the page's address; the header brings it back as
+ * it was left. Rebuild clusters the threads again (POST /api/admin/topics).
  *
  * The graph's data is ui/topicgraph.js (its global `TopicGraph`). The layout is the page's own:
  * d3-force's model (many-body repulsion, links as springs, a pull to the centre, collision), in a
@@ -42,14 +43,18 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
 }[c]));
 const SVG = 'http://www.w3.org/2000/svg';
 
+// The kinds shown, each a hierarchy (ui/topicgraph.js).
 const TYPES = [
-  { id: 'person', label: 'People', one: 'Person', title: 'Adobe people who posted in the threads' },
-  { id: 'topic', label: 'Topics', one: 'Topic', title: 'What the threads are about, found from what was said in them' },
-  { id: 'tag', label: 'Areas', one: 'Area', title: 'The areas Clef puts the threads in, as the inbox\'s Topic filter has them: the teams author them' },
-  { id: 'product', label: 'Products', one: 'Product', title: 'The technologies of the tech stack Clef says the threads are about (on maps from before, the products Clairic named; outlined ones were not in the tech stack)' },
-  { id: 'org', label: 'Customers', one: 'Customer', title: 'Who the threads are for: customers, partners and vendors' },
+  { id: 'topic', label: 'Topics', title: 'What the threads are about, found from what was said in them, in the areas Clef puts them in (the teams author those)' },
+  { id: 'person', label: 'People', title: 'Who posted in the threads: Adobe\'s people in their teams, the others in the customers they are of' },
+  { id: 'product', label: 'Products', title: 'The technologies of the tech stack Clef says the threads are about: features in their products, or the vendor\'s (on maps from before, outlined ones were not in the tech stack)' },
 ];
 const TYPE = Object.fromEntries(TYPES.map((t) => [t.id, t]));
+// The lists of the panel: what a node's threads are joined to.
+const RELATED = [
+  { id: 'tag', label: 'Areas' }, { id: 'topic', label: 'Topics' }, { id: 'person', label: 'People' },
+  { id: 'org', label: 'Customers' }, { id: 'product', label: 'Products' },
+];
 const MINS = [1, 2, 3, 5, 8];
 const THREADS_SHOWN = 30;
 
@@ -66,8 +71,10 @@ const state = {
   note: null,
   error: '',
   building: false,
+  // Every team's name (GET /api/topics), for the bubbles of the teams.
+  teams: {},
   q: {
-    team: '', hide: [], min: 2, sel: '',
+    team: '', hide: [], min: 2, sel: '', open: [],
   },
   find: '',
   hover: '',
@@ -87,6 +94,8 @@ function fromUrl() {
     hide: (p.get('hide') || '').split(',').filter((t) => TYPE[t]),
     min: MINS.includes(min) ? min : 2,
     sel: p.get('sel') || '',
+    // The groups opened (ui/topicgraph.js), as their ids.
+    open: p.getAll('open'),
   };
 }
 
@@ -97,6 +106,7 @@ function toUrl({ push = true } = {}) {
   if (q.hide.length) p.set('hide', q.hide.join(','));
   if (q.min !== 2) p.set('min', String(q.min));
   if (q.sel) p.set('sel', q.sel);
+  for (const id of q.open) p.append('open', id);
   const url = `${location.pathname}${p.size ? `?${p}` : ''}`;
   if (url !== `${location.pathname}${location.search}`) {
     history[push ? 'pushState' : 'replaceState'](null, '', url);
@@ -123,7 +133,10 @@ function graphOf() {
   const { q } = state;
   const names = Object.fromEntries(areaList().map((a) => [a.id, a.name]));
   const m = { ...map(), tags: { ...(map().tags || {}), ...names } };
-  return TopicGraph.build(m, { team: q.team, shown: shownTypes(), min: q.min });
+  const teamName = (slug) => state.teams[slug] || state.me.teams?.find((t) => t.slug === slug)?.name || slug;
+  return TopicGraph.build(m, {
+    team: q.team, shown: shownTypes(), min: q.min, open: q.open, teamName,
+  });
 }
 
 // ---- the layout: d3-force's model -------------------------------------------------------
@@ -132,8 +145,10 @@ const sim = {
   nodes: [], edges: [], alpha: 0, target: 0, frame: 0, pos: new Map(),
 };
 const radius = (n) => ({
-  topic: 6, tag: 5, product: 4, person: 3, org: 3,
+  topic: 6, tag: 7, product: 4, person: 3, team: 5, org: 4,
 }[n.type] + Math.sqrt(n.threads.length) * 1.7);
+/** Whether `n` is a group that opens: drawn, with children (ui/topicgraph.js). */
+const opens = (n) => Boolean(n.children?.length) && !n.open;
 
 /** Starts the layout of `graph`, each node where it was, a new one beside a neighbour. */
 function layout(graph) {
@@ -145,7 +160,17 @@ function layout(graph) {
   const maxW = Math.max(1, ...graph.edges.map((e) => e.w));
   const fresh = graph.nodes.filter((n) => !sim.pos.has(n.id)).length;
   graph.nodes.forEach((n, i) => {
-    const old = sim.pos.get(n.id);
+    // Where it was; a child where its group was, burst around it; a group where its children
+    // were, folded back.
+    const kids = (n.children || []).map((id) => sim.pos.get(id)).filter(Boolean);
+    const parent = n.parent && sim.pos.get(n.parent);
+    const turn = i * Math.PI * (3 - Math.sqrt(5));
+    const old = sim.pos.get(n.id)
+      || (parent && { x: parent.x + Math.cos(turn) * 8, y: parent.y + Math.sin(turn) * 8 })
+      || (kids.length && {
+        x: kids.reduce((s, k) => s + k.x, 0) / kids.length,
+        y: kids.reduce((s, k) => s + k.y, 0) / kids.length,
+      });
     Object.assign(n, { vx: 0, vy: 0, r: radius(n) });
     if (old) {
       n.x = old.x;
@@ -299,7 +324,7 @@ function drawGraph({ refit: asked = false } = {}) {
   const g = graphOf();
   state.graph = g;
   if (!svg || !host.contains(svg)) {
-    svg = el('svg', { role: 'img', 'aria-label': 'People, topics, tags and customers, joined by the threads they share' });
+    svg = el('svg', { role: 'img', 'aria-label': 'Topics in their areas, people in their teams and customers, and products, joined by the threads they share' });
     svg.append(el('g', { class: 'view' }));
     host.append(svg);
     wireGraph();
@@ -317,13 +342,14 @@ function drawGraph({ refit: asked = false } = {}) {
   const dots = el('g', { class: 'nodes' });
   for (const n of sim.nodes) {
     n.el = el('g', {
-      class: `node${n.named || n.type === 'topic' || n.type === 'tag' ? ' named' : ''}`,
+      class: `node${n.named ? ' named' : ''}`,
       'data-type': n.type,
       'data-id': n.id,
       ...(n.gap ? { 'data-gap': '' } : {}),
+      ...(opens(n) ? { 'data-group': '' } : {}),
       tabindex: '0',
       role: 'button',
-      'aria-label': `${TYPE[n.type].one} ${n.label}${n.gap ? ', not in the tech stack' : ''}, ${n.threads.length} threads`,
+      'aria-label': `${n.one} ${n.label}${n.gap ? ', not in the tech stack' : ''}, ${n.threads.length} threads${opens(n) ? `, ${n.children.length} in it: opens` : ''}`,
     });
     n.el.append(el('circle', { r: n.r.toFixed(1) }));
     const label = el('text', { class: 'lbl', dy: '1em' });
@@ -351,7 +377,11 @@ function focus() {
   const id = state.hover || state.q.sel;
   const find = state.find.trim().toLowerCase();
   let on = null;
-  if (id && g.all.has(id)) {
+  const picked = id && g.all.get(id);
+  if (picked && picked.open) {
+    // A group opened: its children.
+    on = new Set([id, ...picked.children]);
+  } else if (picked) {
     on = new Set([id, ...(g.neighbors.get(id) || [])]);
   } else if (find) {
     on = new Set(sim.nodes.filter((n) => n.label.toLowerCase().includes(find)).map((n) => n.id));
@@ -372,7 +402,10 @@ function tip(n, ev) {
     t.hidden = true;
     return;
   }
-  t.innerHTML = `<b>${esc(n.label)}</b><span class="sub">${esc(TYPE[n.type].one)}${n.gap ? ', not in the tech stack' : ''} · ${n.threads.length} thread${n.threads.length === 1 ? '' : 's'}</span>`;
+  const parent = n.parent && state.graph.all.get(n.parent);
+  const act = (opens(n) && `Click to open its ${n.children.length}`)
+    || (parent && n.id === state.q.sel && `Click to fold into ${parent.label}`) || '';
+  t.innerHTML = `<b>${esc(n.label)}</b><span class="sub">${esc(n.one)}${n.gap ? ', not in the tech stack' : ''} · ${n.threads.length} thread${n.threads.length === 1 ? '' : 's'}</span>${act ? `<span class="sub">${esc(act)}</span>` : ''}`;
   t.hidden = false;
   const box = $('graph').getBoundingClientRect();
   t.style.left = `${Math.min(ev.clientX - box.left + 14, box.width - t.offsetWidth - 8)}px`;
@@ -431,7 +464,7 @@ function wireGraph() {
       delete n.fy;
       sim.target = 0;
     }
-    if (!moved && ev.type === 'pointerup') pick(n ? (n.id === state.q.sel ? '' : n.id) : '');
+    if (!moved && ev.type === 'pointerup') clickNode(n);
   };
   svg.addEventListener('pointerup', end);
   svg.addEventListener('pointercancel', end);
@@ -457,7 +490,7 @@ function wireGraph() {
     const n = nodeOf(ev.target);
     if (n && (ev.key === 'Enter' || ev.key === ' ')) {
       ev.preventDefault();
-      pick(n.id === state.q.sel ? '' : n.id);
+      clickNode(n);
     }
   });
 }
@@ -472,26 +505,28 @@ const tagged = (threads) => threads.filter((t) => t.tags && t.tags.length).lengt
 function related(threads, type) {
   const counts = new Map();
   const add = (key) => counts.set(key, (counts.get(key) || 0) + 1);
+  const g = state.graph;
   for (const t of threads) {
     if (type === 'topic') add(String(t.topic));
-    if (type === 'person') Object.keys(t.staff || {}).forEach(add);
-    if (type === 'tag') (t.tags || []).forEach(add);
+    if (type === 'person') Object.keys({ ...t.staff, ...t.customers }).forEach(add);
+    // The area of its topic (ui/topicgraph.js).
+    if (type === 'tag') add(g.areas[t.topic] || TopicGraph.NONE);
     if (type === 'product') new Set((t.products || []).map(productOf)).forEach(add);
     if (type === 'org' && isCustomer(t.org)) add(t.org);
   }
-  const g = state.graph;
   return [...counts].map(([key, n]) => ({ id: `${type}:${key}`, node: g.all.get(`${type}:${key}`), n }))
     .filter((r) => r.node).sort((a, b) => b.n - a.n || a.node.label.localeCompare(b.node.label));
 }
 
 function relatedList(sel, type) {
-  const rows = related(sel.threads, type).filter((r) => r.id !== sel.id);
+  const rows = related(sel.threads, type).filter((r) => r.id !== sel.id
+    && !(sel.children || []).includes(r.id) && r.id !== sel.parent);
   if (!rows.length) return '';
   const max = rows[0].n;
   // A topic's share of its own threads (the team's), so a tag says how much of a topic it covers.
   const of = (r) => (type === 'topic' ? ` <span class="sub">of ${r.node.threads.length}</span>` : '');
   const shown = rows.slice(0, 12);
-  return `<section><h3>${esc(TYPE[type].label)} <span class="sub">${rows.length}</span></h3>
+  return `<section><h3>${esc(RELATED.find((r) => r.id === type).label)} <span class="sub">${rows.length}</span></h3>
     <ul class="rel">${shown.map((r) => `<li><button class="pickr" data-sel="${esc(r.id)}" data-type="${type}">
       <span class="dot" data-type="${type}"></span><span class="nm">${esc(r.node.label)}</span>
       <span class="meter"><span class="fill" data-w="${Math.round((100 * r.n) / max)}"></span></span>
@@ -527,12 +562,12 @@ function overview() {
     ${areasSection()}
     <h3>Topics</h3>
     <table class="topics"><thead><tr><th>Topic</th><th class="n">${sortBy('threads', 'Threads', 'The most threads first')}</th>
-      <th class="n">${sortBy('tagged', 'Tagged', 'Threads with a tag from Clef: the fewest first')}</th><th>Tags</th></tr></thead>
+      <th class="n">${sortBy('tagged', 'Tagged', 'Threads with a tag from Clef: the fewest first')}</th><th>Area</th></tr></thead>
     <tbody>${topics.map((n) => {
-    const tags = related(n.threads, 'tag').slice(0, 3);
+    const area = g.all.get(`tag:${g.areas[Number(n.key)] || TopicGraph.NONE}`);
     return `<tr class="pick" data-sel="${esc(n.id)}"><td><div class="name"><span class="dot" data-type="topic"></span><span>${esc(n.label)}</span></div></td>
       <td class="n">${n.threads.length}</td><td class="n${share(n) < 0.25 ? ' low' : ''}">${pct(tagged(n.threads), n.threads.length)}</td>
-      <td class="m">${tags.map((t) => esc(t.node.label)).join(', ') || '–'}</td></tr>`;
+      <td class="m">${esc(area?.label || '–')}</td></tr>`;
   }).join('')}</tbody></table>`;
 }
 
@@ -573,22 +608,32 @@ function gaps() {
     ${once ? `<div class="sub more">and ${once} named in one thread each (Find shows them)</div>` : ''}`;
 }
 
-/** A product's entries in the tech stack (its features) the threads named, by their threads. */
-function features(n) {
-  const counts = new Map();
-  for (const t of n.threads) {
-    for (const id of t.products || []) {
-      if (productOf(id) === n.key) counts.set(id, (counts.get(id) || 0) + 1);
-    }
-  }
-  const rows = [...counts].sort((a, b) => b[1] - a[1]);
+/** A group's children (its topics, people or features), by their threads; a click picks one. */
+function childList(n) {
+  const g = state.graph;
+  const rows = (n.children || []).map((id) => g.all.get(id)).filter(Boolean)
+    .sort((a, b) => b.threads.length - a.threads.length || a.label.localeCompare(b.label));
   if (!rows.length) return '';
-  const max = rows[0][1];
-  return `<section><h3>Features <span class="sub">${rows.length}</span></h3>
-    <ul class="rel">${rows.map(([id, c]) => `<li><div class="pickr feature" data-type="product"><span class="dot" data-type="product"></span>
-      <span class="nm">${esc(products()[id]?.name || id)}</span>
-      <span class="meter"><span class="fill" data-w="${Math.round((100 * c) / max)}"></span></span>
-      <span class="n">${c}</span></div></li>`).join('')}</ul></section>`;
+  const max = rows[0].threads.length;
+  const what = { tag: 'Its topics', team: 'Its people', org: 'Its people' }[n.type] || 'Its features';
+  return `<section><h3>${what} <span class="sub">${rows.length}</span></h3>
+    <ul class="rel">${rows.map((c) => `<li><button class="pickr" data-sel="${esc(c.id)}" data-type="${c.type}">
+      <span class="dot" data-type="${c.type}"${c.gap ? ' data-gap' : ''}></span><span class="nm">${esc(c.label)}</span>
+      <span class="meter"><span class="fill" data-w="${Math.round((100 * c.threads.length) / max)}"></span></span>
+      <span class="n">${c.threads.length}</span></button></li>`).join('')}</ul></section>`;
+}
+
+/** Open or fold: a group drawn opens, one opened folds, a child folds into its group. */
+function foldButton(n) {
+  const g = state.graph;
+  const parent = n.parent && g.all.get(n.parent);
+  if (n.children?.length && (n.type === 'org' || n.children.length > 1)) {
+    return `<button class="fold" data-fold="${esc(n.id)}">${n.open ? 'Fold' : `Open its ${n.children.length}`}</button>`;
+  }
+  if (parent && parent.open) {
+    return `<button class="fold" data-fold="${esc(parent.id)}" title="Fold back into ${esc(parent.label)}">Fold into ${esc(parent.label)}</button>`;
+  }
+  return '';
 }
 
 // ---- following and areas ---------------------------------------------------------------
@@ -597,7 +642,7 @@ function features(n) {
 function followOf(n) {
   if (n.type === 'person') return { kind: 'person', target: n.key };
   if (n.type === 'org') return { kind: 'org', target: n.key };
-  if (n.type === 'tag') return { kind: 'area', target: n.key };
+  if (n.type === 'tag' && n.key !== TopicGraph.NONE) return { kind: 'area', target: n.key };
   if (n.type === 'product' && n.key.startsWith('tech:')) return { kind: 'tech', target: n.key.slice(5) };
   return null;
 }
@@ -708,13 +753,19 @@ function details(n) {
     ...(n.type === 'product' && !n.gap && !n.key.startsWith('group:') ? [`tech stack: ${products()[n.key]?.name}`] : []),
     ...(n.type === 'tag' ? [] : [`${pct(tagged(n.threads), n.threads.length)} tagged by Clef`]),
   ];
-  const others = TYPES.map((t) => t.id).filter((t) => t !== n.type || t === 'person');
-  return `<div class="head"><span class="dot" data-type="${n.type}"></span><div><div class="sub">${esc(TYPE[n.type].one)}</div>
+  const others = RELATED.map((t) => t.id).filter((t) => t !== n.type || t === 'person');
+  const area = n.type === 'tag' ? areaList().find((a) => a.id === n.key) : null;
+  const team = area && area.teams.find(mayArea);
+  const parent = n.parent && map() && state.graph.all.get(n.parent);
+  return `<div class="head"><span class="dot" data-type="${n.type}"></span><div><div class="sub">${esc(n.one)}${parent ? ` in ${esc(parent.label)}` : ''}</div>
       <h2>${esc(n.label)}</h2></div>${followButton(followOf(n), n.label)}<button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
+    ${foldButton(n) || team ? `<div class="acts">${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
+    ${area && state.editArea && !state.editArea.new && state.editArea.id === area.id ? areaForm() : ''}
+    ${area?.what ? `<p class="theme">Clef is asked: is this thread about ${esc(area.what)}?</p>` : ''}
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
     <p class="sub facts">${facts.map(esc).join(' · ')}</p>
     ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">Clef gave none of these threads a tag: a topic its questions miss.</p>' : ''}
-    ${n.type === 'product' && n.key.startsWith('group:') ? features(n) : ''}
+    ${childList(n)}
     ${others.map((t) => relatedList(n, t)).join('')}
     ${threadList(n.threads)}`;
 }
@@ -736,9 +787,50 @@ function renderPanel() {
 function pick(id) {
   state.q.sel = id;
   state.more = false;
+  // A child picked in the panel or found shows: its group opens.
+  const n = id && state.graph?.all.get(id);
+  const parent = n?.parent && state.graph.all.get(n.parent);
+  const opened = parent && !parent.open;
+  if (opened) state.q.open = [...state.q.open, parent.id];
   toUrl();
+  if (opened) drawGraph();
   renderPanel();
   focus();
+}
+
+/** Opens group `id`, or folds it back. */
+function fold(id) {
+  const { q } = state;
+  q.open = q.open.includes(id) ? q.open.filter((x) => x !== id) : [...q.open, id];
+  // What was in it folds with it.
+  if (!q.open.includes(id)) {
+    const kids = new Set(state.graph.all.get(id)?.children || []);
+    if (kids.has(q.sel)) q.sel = id;
+  }
+  toUrl();
+  drawGraph();
+  renderPanel();
+}
+
+/**
+ * A click on the graph: a group bursts into its children (and is picked); the child picked folds
+ * back into its group; any other node is picked, or unpicked; the background unpicks.
+ */
+function clickNode(n) {
+  if (!n) {
+    pick('');
+    return;
+  }
+  if (opens(n)) {
+    state.q.sel = n.id;
+    fold(n.id);
+    return;
+  }
+  if (n.parent && n.id === state.q.sel) {
+    fold(n.parent);
+    return;
+  }
+  pick(n.id === state.q.sel ? '' : n.id);
 }
 
 function renderBar() {
@@ -753,11 +845,11 @@ function renderBar() {
   $('min').innerHTML = MINS.map((n) => `<option value="${n}"${n === state.q.min ? ' selected' : ''}>${n}+</option>`).join('');
   $('min').disabled = !m;
   const [only] = shownTypes();
-  $('min').title = shownTypes().length === 1 && (only === 'topic' || only === 'org')
+  $('min').title = shownTypes().length === 1 && only === 'topic'
     ? `Join two ${TYPE[only].label.toLowerCase()} when this many people have this many threads in both`
     : 'Draw a line between two only when this many threads have both';
   $('find').disabled = !m;
-  $('names').innerHTML = m && state.graph ? [...state.graph.all.values()].map((n) => `<option value="${esc(n.label)}">${esc(TYPE[n.type].one)}</option>`).join('') : '';
+  $('names').innerHTML = m && state.graph ? [...state.graph.all.values()].map((n) => `<option value="${esc(n.label)}">${esc(n.one)}</option>`).join('') : '';
   const built = state.latest;
   $('built').textContent = built ? `Built ${ago(built.built_at)} by ${built.built_by === 'cron' ? 'the cron' : built.built_by}` : '';
   $('rebuild').hidden = !state.may.rebuild;
@@ -817,6 +909,7 @@ async function load() {
     state.areas = body.areas || [];
     state.follows = body.follows || state.follows;
     state.may = body.may || state.may;
+    state.teams = body.teams || {};
     state.error = '';
   } catch (e) {
     state.error = e.message;
@@ -890,6 +983,8 @@ function wire() {
       state.more = true;
       renderPanel();
     }
+    const folding = ev.target.closest('button[data-fold]');
+    if (folding) fold(folding.dataset.fold);
     const follow = ev.target.closest('button[data-follow]');
     if (follow) toggleFollow(follow.dataset.follow, follow.dataset.target);
     const edit = ev.target.closest('button[data-edit-area]');

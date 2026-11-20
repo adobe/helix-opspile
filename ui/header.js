@@ -118,8 +118,6 @@ window.Header = (() => {
     if (u.pathname === '/inbox/topics') return 'topics';
     if (u.pathname !== '/inbox/admin') return null;
     const tab = u.searchParams.get('tab');
-    // The bots were a page of their own; they are under Requests now.
-    if (tab === 'bots') return 'requests';
     return ['orgs', 'requests'].includes(tab) ? tab : 'teams';
   }
   /** Keeps an address (the page's own, by default) as where its page was left. */

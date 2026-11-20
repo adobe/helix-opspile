@@ -555,6 +555,13 @@ admin pages and Clef leave archived channels out.
 **Channel label.** unlabeled → labeled → stale (`channel_labels`, `src/suggest.js`). Due when the
 channel has activity, the ops teams change, or the label is a week old.
 
+**Team wizard group.** suggested → dismissed → suggested again → gone (`team_prefix_dismissals`,
+`src/teamwizard.js`). A group is computed on every read from the admin team's channels, so it has no
+state of its own: it is gone once a rule files its channels elsewhere, or they are renamed or
+archived. Dismissed is the only stored state, a row with the group's channel count then; a group
+with more channels than that is suggested again (the row stays, and a later dismissal writes the new
+count). Making the group a team deletes the row, so a prefix that comes back later starts afresh.
+
 **GitHub mirror.** absent → importing → ready → refreshing → ready, or given up after an hour
 (`repo_mirrors`, `src/agent/repos.js`). Reads stay on the old mirror until the new one is readable. A
 repository taken off `agent_repos` keeps its mirror.
@@ -750,6 +757,14 @@ it stays so for the thread in the tab. Those that wait or run always show.
 
 **Notification permission.** unasked → asked → granted or denied (`Notification.permission` and
 `opspile.notify.asked`). The browser's own state is the record, and the first visit asks once.
+While the tour is offered it waits: it asks once the tour is over, or on the next load.
+
+**The tour.** unoffered → offered → toured (`toured` in `person_settings`, src/settings.js; false
+until set). The first load of the inbox with `toured` false offers the tour (ui/tour.js) in a
+toast, after the inbox is on screen; Show me around or No thanks sets it true, on the server, so
+no device offers it again. A load whose toast is taken (an account just connected) does not
+offer it: the next one does. Your menu's Show me around, and `/inbox?tour`, start it whatever
+`toured` says. Not offered while viewing as someone else.
 
 **Notification welcome.** unsent → sent, for a tab and for the installed app on this device
 (`opspile.notify.welcomed` in `ui/inbox.js`, a list of `tab` and `app`). Once the browser allows
