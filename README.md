@@ -603,7 +603,7 @@ until `replay.mjs --relabel`, `--vectorize` or `--index` makes them. Alert chann
 
 ```sh
 node scripts/import.mjs --days 90 --dry-run       # how many channels, over how long
-node scripts/import.mjs --since 2026-07-23        # from that day on, ten channels a minute
+node scripts/import.mjs --since 2026-07-23        # from that day on, five channels a minute
 node scripts/import.mjs --status              # where the imports stand (history_imports)
 node scripts/import.mjs --resume              # send on the ones that stopped
 ```

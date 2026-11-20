@@ -45,8 +45,11 @@ const SLACK_PAGE = 50;
 const TEAMS_PAGE = 20;
 /** Pile-1 objects one job writes, about: a page stops after the thread that passes it. */
 const BUDGET = 300;
-/** Between two pages of a channel. */
-const PAGE_DELAY_SECONDS = 5;
+/**
+ * Between two pages of a channel, and up to as much again at random: the channels' pages spread
+ * out, so a queue batch rarely holds several (each is a few hundred subrequests).
+ */
+const PAGE_DELAY_SECONDS = 30;
 const MAX_REPLY_PAGES = 20;
 
 /** Pile-1 key of an imported Slack message; the import of it again rewrites it. */
@@ -298,7 +301,9 @@ export async function runImport(env, job, { graph: injected, now = new Date() } 
       Number(job.skip || 0),
     ).run();
   if (!done && moved.meta && moved.meta.changes) {
-    await env.NORMALIZE.send({ import: { ...job, ...next } }, { delaySeconds: PAGE_DELAY_SECONDS });
+    await env.NORMALIZE.send({ import: { ...job, ...next } }, {
+      delaySeconds: PAGE_DELAY_SECONDS + Math.floor(Math.random() * PAGE_DELAY_SECONDS),
+    });
   }
   return {
     result: 'imported', threads, messages: stored.length, done,

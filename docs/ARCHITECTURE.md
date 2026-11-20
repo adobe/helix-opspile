@@ -1098,7 +1098,9 @@ since, page by page, one `import` job on the NORMALIZE queue a page, which sends
 `conversations.history` lists the roots posted since (a thread's replies with
 `conversations.replies`); Graph lists a channel's threads by their latest activity, with
 `$expand=replies`, and the first one quiet since before then ends the listing. A page stops
-after about 300 messages, and the next job goes on in the same page. Alert channels are left out
+after about 300 messages, and the next job goes on in the same page. Pages are a few hundred
+subrequests each, so they are spread out: the script starts each channel at its own second, and
+a channel's next page waits 30 to 60 seconds, so that a queue batch rarely holds two. Alert channels are left out
 unless asked for (`--alerts`), and ignored ones always.
 
 - **Only what the inbox does not have.** A thread with a message heard of any other way (live, a
@@ -1325,11 +1327,13 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
 - Topics are found **within each area** (map version 2): each thread is in its likeliest area
   (`labels.topics`), or in none, and each area's threads are clustered with **k-means**
   (spherical, cosine; k-means++ seeds, the best of four runs, seeded so the same threads make
-  the same map) into about one topic per twelve threads, at most eight (`areaTopics`). A topic
+  the same map) into about one topic per twelve threads, at most eight, and at most sixteen of the
+  threads in no area, the candidates for new areas (`areaTopics`). A topic
   that is **one customer's, one team's or one product's concern** is no topic: when one of them
   has 60% of its threads or more, and at least twice its share of the area's, it is dissolved,
   each of its threads going to the nearest topic left, until none is or one is left (a single
-  one an area could not split keeps `concentrated`, as `customer:acme`). The lift keeps what is
+  one an area could not split keeps `concentrated`, as `customer:acme`, when one has 60% of it and
+twice its share of all the map's threads). The lift keeps what is
   everywhere (Edge Delivery, the team with most channels) from concentrating anything. Each
   topic has its `area` (null: the threads in none, the candidates for new areas). A few hundred
   threads take a quarter of a second.
