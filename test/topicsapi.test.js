@@ -59,6 +59,8 @@ describe('the Topics page', { skip: !hasGit() && 'git is not installed' }, () =>
       let r = await call(e, as(MEMBER), 'GET', '/api/topics');
       assert.equal(r.status, 200);
       assert.deepEqual(r.body.may, { areas: [], rebuild: false });
+      // Every team's name, the member's or not.
+      assert.deepEqual(Object.keys(r.body.teams).sort(), ['admin', 'edge']);
       assert.deepEqual(r.body.areas, []);
       assert.deepEqual(r.body.follows.by, { org: [], person: [], area: [] });
       assert.equal((await call(e, as(MEMBER), 'POST', '/api/areas', {

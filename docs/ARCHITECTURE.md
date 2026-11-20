@@ -1282,14 +1282,20 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
   is in and who worked each topic's threads, so it can tell a thread agent which topics a person's
   similar threads are in, and list who works a topic (`list_topics`).
 
-The page draws the map as one force-directed graph (its own, after d3-force's model): a node per
-person, topic, tag and customer, as big as its threads, a line between two that share threads,
-thicker the more (with the topics shown, a line joins a topic to the others, and a person to a
-customer; the topics are the hubs). One kind shown alone is joined to itself: two people, tags or
-products by the threads they share, and two topics or two customers, which never share a thread, by
-the people they share (as many people as the threads a line needs, each with that many threads
-in both). The filters are a team, the kinds shown and the threads a
-line needs. A node picked shows what it is joined to and its threads, each a link into the inbox;
+The page draws the map as one force-directed graph (its own, after d3-force's model) of three
+kinds, each a **hierarchy of bubbles** (`ui/topicgraph.js`): the topics in their areas (and
+"Not in an area"; on maps before version 2, the tag most of a topic's threads have), the people
+in their teams (Adobe's) or their customers (the others'; a customer whose people did not post
+is a bubble too), and the features of the tech stack in their products (Adobe's) or vendors (the
+others'). A click on a group bursts it into its children where it was; a click on the child
+picked folds them back; a group of one child is that child, but a customer stays a bubble. Each
+node is as big as its threads, a line between two that share threads, thicker the more (with the
+topics shown, a line joins a topic or an area to the others; the topics are the hubs). One kind
+shown alone is joined to itself: two people or products by the threads they share, and two
+topics, which never share a thread, by the Adobe people they share (as many people as the
+threads a line needs, each with that many threads in both). The filters are a team, the kinds
+shown and the threads a line needs; they, the groups opened (`open`) and the pick are the page's
+address. A node picked shows what it is joined to and its threads, each a link into the inbox;
 without a pick, the panel lists the gaps first (**Not in the tech stack**: the products no entry
 names, by their threads; those two customers or more name, then, folded, those of one customer,
 which are as likely a brand or a system of theirs, and a count of the names of one thread; adding one on the Agents page, or its name to an entry's description,
