@@ -61,16 +61,23 @@ async function allAreas(env) {
 
 /** GET /api/topics. `follows` is the viewer's, as GET /api/follows answers it. */
 export async function topicsPage(env, me, follows) {
-  const [latest, areas, teams, names] = await Promise.all([
+  const [latest, areas, teams, names, memberships] = await Promise.all([
     latestTopicMap(env), allAreas(env), areaTeams(env, me),
     env.DB.prepare('SELECT slug, name FROM teams ORDER BY slug').all(),
+    env.DB.prepare('SELECT person, team FROM team_members ORDER BY person, team').all(),
   ]);
+  const members = {};
+  for (const m of memberships.results || []) {
+    (members[m.person] ||= []).push(m.team);
+  }
   return json({
     latest,
     available: Boolean(env.CONTENT && env.AI),
     areas,
     // Every team's name: the map's people are grouped by theirs (ui/topicgraph.js).
     teams: Object.fromEntries((names.results || []).map((t) => [t.slug, t.name || t.slug])),
+    // The teams each Adobe person is on now, so a person is in a team bubble only when on it.
+    members,
     follows,
     may: { areas: teams, rebuild: teams.length > 0 },
   });

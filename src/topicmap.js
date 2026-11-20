@@ -712,7 +712,8 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
     people[p.person] = p.name || `#${p.person}`;
   }
   // Who each person is, to group them by: Adobe's by the team they are on whose threads they
-  // posted in most (else their first), the others by the customer of most of their threads.
+  // posted in most (else their first; none when they are on no team: the channels they post in
+  // are not their team), the others by the customer of most of their threads.
   const teamOf = new Map();
   for (const m of memberships) {
     teamOf.set(m.person, [...(teamOf.get(m.person) || []), m.team]);
@@ -736,7 +737,7 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
       .sort((a, b) => b[1] - a[1])[0]?.[0]?.slice(prefix.length) || null;
     const teams = teamOf.get(Number(p)) || [];
     peopleOf[p] = isStaff
-      ? { staff: true, team: best('team:', teams.length ? teams : null) || teams[0] || null }
+      ? { staff: true, team: teams.length ? best('team:', teams) || teams[0] : null }
       : { staff: false, org: best('org:') };
   }
   const used = new Set(rows.map((t) => t.org));

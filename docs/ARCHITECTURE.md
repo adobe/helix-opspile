@@ -1325,7 +1325,7 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
   messages), the customers', partners' and vendors' people who posted (`customers`), who each
   person is to group them by (`peopleOf`: Adobe's by the team they are on whose threads they
-  posted in most, the others by the customer of most of their threads), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
+  posted in most, or none when they are on no team, the others by the customer of most of their threads), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
   and the **products**: the technologies Clef says the thread is about (`thread_tech.about`), or,
   for a label that was not asked that (from before migration 0083, or whose "about" call failed),
   the ones it shows (src/topicmap.js `techProductsOf`). Each is named as its entry and drawn as the
