@@ -25,8 +25,9 @@
  * --days counts back from now, --since names the day (UTC) to start from: 90 days before the
  * inbox began is `--since` that day.
  * --alerts imports alert channels too (tens of thousands of bot posts a month).
- * --every and --per: `--per` channels start every `--every` seconds (the queue delays at most
- * 12 hours, so with very many channels, raise `--per`).
+ * --every and --per: `--per` channels start every `--every` seconds, each at its own second of
+ * it, so that a queue batch rarely holds two pages (a page is a few hundred subrequests). The
+ * queue delays at most 12 hours: with very many channels, raise `--per`.
  * --status says where each import stands, from `history_imports`.
  * --resume sends the imports that did not finish (a page that outlived its retries) on from where
  * they stopped.
@@ -53,7 +54,7 @@ const alerts = args.includes('--alerts');
 const source = opt('source', null);
 const channel = opt('channel', null);
 const every = Number(opt('every', 60));
-const per = Number(opt('per', 10));
+const per = Number(opt('per', 5));
 const MAX_DELAY = 12 * 60 * 60;
 
 const cf = (...a) => JSON.parse(execFileSync('cf', a, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
@@ -137,8 +138,13 @@ const dir = mkdtempSync(join(tmpdir(), 'opspile-import-'));
 try {
   for (let i = 0; i < jobs.length; i += per) {
     const file = join(dir, 'jobs.json');
+    // Each job at its own second of the batch's `every`, on top of the batch's delay.
     writeFileSync(file, JSON.stringify(jobs.slice(i, i + per)
-      .map((job) => ({ body: { import: job }, content_type: 'json' }))));
+      .map((job, j) => ({
+        body: { import: job },
+        content_type: 'json',
+        delay_seconds: (i / per) * every + Math.floor((j * every) / per),
+      }))));
     if (!dryRun) {
       cf(
         'queues',
@@ -148,8 +154,6 @@ try {
         queue.queue_id,
         '--messages',
         `@${file}`,
-        '--delay-seconds',
-        String((i / per) * every),
       );
     }
   }
