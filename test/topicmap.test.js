@@ -15,7 +15,7 @@ import { describe, it } from 'node:test';
 import { api } from '../src/api.js';
 import {
   buildTopicMap, centered, coveredBy, KEEP, kmeans, latestTopicMap, MIN_THREADS, NAMER_ALL,
-  parseNames, productKey, productsOf, sweepTopicMap, techIndex, topicCount,
+  areaTopics, parseNames, productKey, productsOf, sweepTopicMap, techIndex, topicCount,
 } from '../src/topicmap.js';
 import { threadVectorId } from '../src/vectors.js';
 import { d1 } from './d1.js';
@@ -79,7 +79,8 @@ async function setup({ perGroup = 10 } = {}) {
         org: group.org,
         title: `${group.words} ${i}`,
         vector: near(g, i),
-        topics: g === 0 && i % 2 ? '{"cdn":0.93}' : null,
+        // Each group in an area of its own, the checkout threads in none.
+        topics: [JSON.stringify({ cdn: 0.93 }), JSON.stringify({ auth: 0.9 }), null][g],
         label: 'question',
       });
       if (g === 0) {
@@ -297,6 +298,9 @@ describe('topic map: building', () => {
     assert.equal(built.k, 3);
     const { map } = built;
     assert.deepEqual(map.topics.map((t) => t.size), [10, 10, 10]);
+    // Found within their areas, the threads in none last.
+    assert.deepEqual(map.topics.map((t) => t.area), ['cdn', 'auth', null]);
+    assert.equal(map.version, 2);
     // Each topic is one group's threads, the most typical first.
     for (const topic of map.topics) {
       const own = map.threads.filter((t) => t.topic === topic.id);
@@ -311,12 +315,16 @@ describe('topic map: building', () => {
     assert.ok(env.calls.ai.every((u) => u.startsWith('Threads, the most typical first:\n- ')));
     // Not the short, the meeting, the alert, the unvectorized, nor the one CONTENT lacks.
     assert.ok(!map.threads.some((t) => /short|meet|alert|novec|gone/.test(t.key)));
-    // Only Adobe people, with their messages; the customers' and the tags as Clef has them.
-    assert.deepEqual(map.people, { 1: 'Ada', 2: 'Bo' });
+    // Everyone who posted: Adobe's people by the team they are on, the others by their customer.
+    assert.deepEqual(map.people, { 1: 'Ada', 2: 'Bo', 3: 'Cy' });
     const one = map.threads.find((t) => t.key === 'slack:E1:C1:0.1');
     assert.deepEqual(one.staff, { 1: 2 });
+    assert.deepEqual(one.customers, { 3: 1 });
+    assert.deepEqual(map.peopleOf, {
+      1: { staff: true, team: 'helix' }, 2: { staff: true, team: 'helix' }, 3: { staff: false, org: 'acme' },
+    });
     assert.deepEqual(one.tags, ['cdn']);
-    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').tags, []);
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:2.2').tags, []);
     assert.deepEqual(map.orgs, {
       acme: { name: 'ACME', type: 'customer' }, globex: { name: 'Globex', type: 'partner' },
     });
@@ -338,6 +346,30 @@ describe('topic map: building', () => {
     assert.deepEqual(latest.map, map);
   });
 
+  it('finds an area\'s topics, and dissolves one that is one customer\'s, team\'s or product\'s', () => {
+    // Two directions in one area: one shared by three customers, the other one customer's.
+    const X = [];
+    const orgs = [];
+    for (let i = 0; i < 24; i += 1) {
+      X.push(Float32Array.from(near(i < 12 ? 0 : 1, i)));
+      orgs.push(i < 12 ? ['acme', 'globex', 'initech'][i % 3] : 'hooli');
+    }
+    const unit = (v) => {
+      const n = Math.hypot(...v);
+      return v.map((x) => x / n);
+    };
+    const idx = X.map((_, i) => i);
+    const vectors = X.map(unit);
+    const kept = areaTopics(vectors, idx, { customer: orgs.map((o) => [o]) });
+    // The one customer's topic went: its threads are in the one left.
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0].members.length, 24);
+    // Without the customers, both directions stay.
+    assert.equal(areaTopics(vectors, idx, {}).length, 2);
+    // Everywhere is no concentration: a team on every thread splits nothing.
+    assert.equal(areaTopics(vectors, idx, { team: idx.map(() => ['helix']) }).length, 2);
+  });
+
   it('names every topic in one call, from titles, concerns and products, and fixes what it misses', async () => {
     const env = await setup();
     // A good name, a vague one, and none for the third.
@@ -351,7 +383,7 @@ describe('topic map: building', () => {
     assert.equal(env.calls.all.length, 1);
     const [user] = env.calls.all;
     assert.match(user, /^Topic 0 \(10 titles shown\):\n- /);
-    assert.match(user, /Concerns: Caching and delivery \(5\)/);
+    assert.match(user, /Concerns: Caching and delivery \(10\)/);
     assert.match(user, /Products: (?=.*Akamai \(CDN\) \(5\))(?=.*Fastly \(CDN\) \(1\))/);
     const topicOf = (word) => map.threads.find((t) => t.title.startsWith(word)).topic;
     const label = (word) => map.topics[topicOf(word)].label;

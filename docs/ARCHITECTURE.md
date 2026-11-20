@@ -1245,8 +1245,16 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
   a `meeting` or `people` thread (whose vectors say "let's meet" more than what about). Their
   vectors are centred (the mean taken away, then of unit length again): bge's vectors share a
   large common part, and without it k-means makes a few big clusters and many of one thread.
-- **k-means** (spherical, cosine; k-means++ seeds, the best of four runs, seeded so the same
-  threads make the same map) into about one topic per twelve threads, at most 30. A few hundred
+- Topics are found **within each area** (map version 2): each thread is in its likeliest area
+  (`labels.topics`), or in none, and each area's threads are clustered with **k-means**
+  (spherical, cosine; k-means++ seeds, the best of four runs, seeded so the same threads make
+  the same map) into about one topic per twelve threads, at most eight (`areaTopics`). A topic
+  that is **one customer's, one team's or one product's concern** is no topic: when one of them
+  has 60% of its threads or more, and at least twice its share of the area's, it is dissolved,
+  each of its threads going to the nearest topic left, until none is or one is left (a single
+  one an area could not split keeps `concentrated`, as `customer:acme`). The lift keeps what is
+  everywhere (Edge Delivery, the team with most channels) from concentrating anything. Each
+  topic has its `area` (null: the threads in none, the candidates for new areas). A few hundred
   threads take a quarter of a second.
 - One call names every topic (two to five words) and says in a sentence what its customers
   need: it reads all of them at once, each as the titles of its fifteen most typical threads
@@ -1257,7 +1265,9 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
   delivery"), too long, or another topic's, and a topic it did not name, are named on their own
   from the titles. No name names a customer; one given twice gets a number.
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
-  messages), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
+  messages), the customers', partners' and vendors' people who posted (`customers`), who each
+  person is to group them by (`peopleOf`: Adobe's by the team they are on whose threads they
+  posted in most, the others by the customer of most of their threads), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
   and the **products**: the technologies Clef says the thread is about (`thread_tech.about`), or,
   for a label that was not asked that (from before migration 0083, or whose "about" call failed),
   the ones it shows (src/topicmap.js `techProductsOf`). Each is named as its entry and drawn as the
