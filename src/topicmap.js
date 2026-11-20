@@ -229,6 +229,11 @@ export const CONCENTRATED = 0.6;
 export const LIFT = 2;
 /** An area's threads make at most this many topics. */
 export const MAX_AREA_TOPICS = 8;
+/**
+ * The threads in no area make up to this many: they are what no area asks about, and split
+ * finer they are the candidates for new areas, not a few catch-alls.
+ */
+export const MAX_NONE_TOPICS = 16;
 
 /** What of `values` (a list per thread) the threads `members` are concentrated on, or null. */
 function concentration(members, values, base, lift = LIFT) {
@@ -247,23 +252,9 @@ function concentration(members, values, base, lift = LIFT) {
   return null;
 }
 
-/**
- * The topics of an area's threads (`idx`, indexes into `X`): k-means into about one topic per
- * PER_TOPIC threads, then each topic that is one customer's, team's or product's concern
- * (`facets`: `{ name: [values per thread] }`) dissolved into the others, its threads each to the
- * nearest topic left, until none is or one is left. `[{ members, sims, concentrated }]`, the
- * most threads first; `concentrated` names what the one left is concentrated on, if it is.
- */
-export function areaTopics(X, idx, facets, { seed = 1 } = {}) {
-  if (!idx.length) {
-    return [];
-  }
-  const k = Math.max(1, Math.min(MAX_AREA_TOPICS, Math.round(idx.length / PER_TOPIC)));
-  const sub = idx.map((i) => X[i]);
-  const { labels, centroids } = k > 1 ? kmeans(sub, k, { seed })
-    : { labels: idx.map(() => 0), centroids: [centroid(sub)] };
-  // The share of each facet's values over the area, for the lift.
-  const bases = Object.fromEntries(Object.entries(facets).map(([name, values]) => {
+/** Each facet's values' share of the threads `idx`: `{ name: Map(value → share) }`. */
+export function shares(facets, idx) {
+  return Object.fromEntries(Object.entries(facets).map(([name, values]) => {
     const m = new Map();
     for (const i of idx) {
       for (const v of new Set(values[i] || [])) {
@@ -272,6 +263,31 @@ export function areaTopics(X, idx, facets, { seed = 1 } = {}) {
     }
     return [name, m];
   }));
+}
+
+/**
+ * The topics of an area's threads (`idx`, indexes into `X`): k-means into about one topic per
+ * PER_TOPIC threads, then each topic that is one customer's, team's or product's concern
+ * (`facets`: `{ name: [values per thread] }`) dissolved into the others, its threads each to the
+ * nearest topic left, until none is or one is left. `[{ members, sims, concentrated }]`, the
+ * most threads first; `concentrated` names what the one left is concentrated on, if it is: what
+ * has CONCENTRATED of its threads and LIFT times its share of all the map's (`overall`: the
+ * facets' shares over every thread, as `shares` makes them).
+ */
+export function areaTopics(X, idx, facets, {
+  seed = 1, max = MAX_AREA_TOPICS, overall = null,
+} = {}) {
+  if (!idx.length) {
+    return [];
+  }
+  const k = Math.max(1, Math.min(max, Math.round(idx.length / PER_TOPIC)));
+  const sub = idx.map((i) => X[i]);
+  const { labels, centroids } = k > 1 ? kmeans(sub, k, { seed })
+    : { labels: idx.map(() => 0), centroids: [centroid(sub)] };
+  // The share of each facet's values over the area, for the lift.
+  const bases = shares(facets, idx);
+  const all = overall || shares(facets, Object.keys(facets).length
+    ? Object.values(facets)[0].map((_, i) => i) : []);
   let live = centroids.map((c, j) => ({ c, members: idx.filter((_, n) => labels[n] === j) }))
     .filter((t) => t.members.length);
   const why = (t) => Object.entries(facets)
@@ -300,10 +316,11 @@ export function areaTopics(X, idx, facets, { seed = 1 } = {}) {
     }
   }
   // The one topic an area could not split has every thread of it, so no lift over the area can
-  // tell: it is concentrated on what has CONCENTRATED of its threads, whatever the area's share.
+  // tell: its lift is over all the map's threads. The team with most channels, on most threads,
+  // concentrates no area so; a team on a tenth of them whose area it is, does.
   const alone = (t) => Object.entries(facets)
     .map(([name, values]) => {
-      const v = concentration(t.members, values, bases[name], 0);
+      const v = concentration(t.members, values, all[name]);
       return v === null ? null : `${name}:${v}`;
     }).find(Boolean) || null;
   return live.map((t) => ({
@@ -659,10 +676,13 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
   };
   const byArea = new Map();
   areaOf.forEach((a, i) => byArea.set(a, [...(byArea.get(a) || []), i]));
+  const overall = shares(facets, rows.map((_, i) => i));
   // The areas with the most threads first; the threads in none last.
   const order = (x, y) => (x[0] ? 0 : 1) - (y[0] ? 0 : 1) || y[1].length - x[1].length;
   const found = [...byArea].sort(order)
-    .flatMap(([area, idx]) => areaTopics(X, idx, facets, { seed })
+    .flatMap(([area, idx]) => areaTopics(X, idx, facets, {
+      seed, max: area ? MAX_AREA_TOPICS : MAX_NONE_TOPICS, overall,
+    })
       .map((t) => ({ ...t, area: area || null })));
   const clusters = found.map((t) => t.members.map((m) => m.i));
   const sims = new Float64Array(rows.length);

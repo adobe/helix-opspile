@@ -15,7 +15,7 @@ import { describe, it } from 'node:test';
 import { api } from '../src/api.js';
 import {
   buildTopicMap, centered, coveredBy, KEEP, kmeans, latestTopicMap, MIN_THREADS, NAMER_ALL,
-  areaTopics, parseNames, productKey, productsOf, sweepTopicMap, techIndex, topicCount,
+  areaTopics, shares, parseNames, productKey, productsOf, sweepTopicMap, techIndex, topicCount,
 } from '../src/topicmap.js';
 import { threadVectorId } from '../src/vectors.js';
 import { d1 } from './d1.js';
@@ -370,8 +370,18 @@ describe('topic map: building', () => {
     assert.equal(areaTopics(vectors, idx, { team: idx.map(() => ['helix']) }).length, 2);
     // An area that could not split says what it is concentrated on, if anything.
     assert.equal(kept[0].concentrated, null);
-    const one = areaTopics(vectors, idx.slice(0, 12), { customer: idx.slice(0, 12).map(() => ['acme']) });
+    // Against all the map's threads: a customer on a quarter of them, all of an area's, is; the
+    // team on 70% of them, on all of an area's, is not (it is everywhere).
+    const twelve = idx.slice(0, 12);
+    const overall = shares({ customer: idx.map((i) => [i < 6 ? 'acme' : 'other']) }, idx);
+    const one = areaTopics(vectors, twelve, { customer: idx.map(() => ['acme']) }, { overall });
     assert.deepEqual([one.length, one[0].concentrated], [1, 'customer:acme']);
+    const team = idx.map(() => ['helix']);
+    const everywhere = shares({ team: idx.map((i) => [i < 17 ? 'helix' : 'cdn']) }, idx);
+    const [helix] = areaTopics(vectors, twelve, { team }, { overall: everywhere });
+    assert.equal(helix.concentrated, null);
+    // At most `max` topics.
+    assert.equal(areaTopics(vectors, idx, {}, { max: 1 }).length, 1);
     // A thread with no customer is nobody's: no `customer:null`.
     const none = areaTopics(vectors, idx, { customer: idx.map((i) => (i < 12 ? [] : ['hooli'])) });
     assert.ok(none.every((t) => t.concentrated !== 'customer:null'));
