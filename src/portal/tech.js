@@ -89,7 +89,16 @@ export async function refreshTech(env, now = Date.now()) {
   if (!list.length) {
     return { result: 'empty' };
   }
+  // A lobby's picks under an id a technology had before a catalog move are its id now, so what
+  // the lobby picked stays picked (the page shows it, a save keeps it).
+  const moves = (Array.isArray(answer) ? answer : []).flatMap((t) => (Array.isArray(t?.moved_from)
+    ? t.moved_from.map((old) => [clean(old, 160), clean(t.tech, 160)]) : []))
+    .filter(([old, id]) => old && id && old !== id);
   await env.DB.batch([
+    ...moves.map(([old, id]) => env.DB.prepare(`UPDATE lobbies SET tech = (SELECT
+        json_group_array(DISTINCT CASE WHEN value = ?1 THEN ?2 ELSE value END)
+        FROM json_each(lobbies.tech))
+      WHERE EXISTS (SELECT 1 FROM json_each(lobbies.tech) WHERE value = ?1)`).bind(old, id)),
     env.DB.prepare('DELETE FROM tech'),
     ...list.map((t, i) => env.DB.prepare(`INSERT OR REPLACE INTO tech (tech, name, product,
       position) VALUES (?, ?, ?, ?)`).bind(t.tech, t.name, t.product || null, i)),

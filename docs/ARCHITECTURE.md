@@ -2874,8 +2874,9 @@ products and features, src/catalog.js: Edge Delivery, Universal Editor, Assets, 
 code hosts and categories the stack also has), each feature on its own under its product, each
 id once as it is asked where no team's own replaces it (`portalTechnologies`,
 src/portalsource.js), which the portal asks the inbox for and keeps for an hour
-(`src/portal/tech.js`). A lobby's picks that a catalog move renamed are stored under the id they
-moved to when the lobby's event arrives. Then they
+(`src/portal/tech.js`). A lobby's picks that a catalog move renamed are its new ids on both
+sides: the inbox stores them so when the lobby's event arrives, and the portal rewrites its
+lobbies when it refreshes the list, which names the ids each technology had (`moved_from`). Then they
 **ask for a channel**.
 
 **Portal requests.** A lobby that asked reaches the inbox as a `lobby` event, a snapshot of it
