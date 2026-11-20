@@ -546,6 +546,8 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 :is(.side-bar, .sp-head) .face { position: relative; flex: none; }
 .side-what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .composer.sidebar .side-exit { flex: none; font: inherit; cursor: pointer; }
+/* The panel's box where you may not ask the agent (sidePanelBox): why, in its place. */
+.composer.sidebar .side-off { flex: 1; margin: 0; }
 /* The sidebar beside the thread (placeSidePanel): a panel at the right edge of the thread's
    column, which makes room for it. While it shows, the content area is shared 3 : 5 : 3 between
    the list, the thread and the panel: the thread, which has the code and the logs, stays the
@@ -2044,6 +2046,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum :is(.side-bar, .sp-head) { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .side-what b { color: var(--spectrum-purple-1000); font-size: var(--spectrum-font-size-100); }
 .spectrum .side-what small { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .composer.sidebar .side-off { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .composer.sidebar .side-exit {
   padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200);
   border: var(--spectrum-border-width-200) solid var(--spectrum-gray-400);

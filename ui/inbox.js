@@ -3265,6 +3265,26 @@ const SIDE_HINT = `Talk to ${AGENT_NAME} in the sidebar: only your team sees it,
 /** Whether the open thread `key` has an agent to talk to, and you may. */
 const canSide = (key) => Boolean(state.cache.get(key)?.data?.agent) && !state.data?.me?.readonly;
 
+/**
+ * Whether you may work thread `key` (`can_work`, src/api.js): reply, draft, and decide on what its
+ * agent asks for. Not so, you only see it (an admin, or someone who talked in its sidebar before it
+ * moved to another team), and talk to its agent.
+ */
+const canWork = (key) => state.cache.get(key)?.data?.can_work !== false;
+
+/** Why you cannot talk to the agent of thread `key` in its sidebar, or null when you can. */
+function sideOff(key) {
+  if (canSide(key)) return null;
+  if (state.data?.me?.readonly) return `You view the inbox as someone else, so ${AGENT_NAME} cannot be asked for them here.`;
+  return `${AGENT_NAME} is off in this channel now, so it cannot be asked here.`;
+}
+
+/** Who sees thread `key`'s sidebar, said under its name: your team, or its team and you. */
+const sideAudience = (key, where) => `${canWork(key) ? 'Only your team sees this.' : 'Only the thread\'s team and you see this.'} Nothing goes to ${where}.`;
+
+/** What a card the agent asked for says to someone who may not work the thread: whose it is. */
+const onlyTeam = (what) => `Only the thread's team can ${what}: it is filed under a team you are not on.`;
+
 /** Whether thread `key` is in sidebar mode in the thread itself: its reply box is the sidebar's. */
 const sideInline = (key) => !side.wide && side.key === key && canSide(key);
 
@@ -3358,14 +3378,17 @@ function toolState(r) {
 
 /** A tool request's card. Waiting, and you may decide: Grant and Deny, disabled while it is busy. */
 function toolCard(key, r) {
-  const decide = canSide(key);
+  const decide = canSide(key) && canWork(key);
+  // Shown, but not yours to decide: the thread is another team's now.
+  const others = canSide(key) && !canWork(key);
   const off = toolBusy.has(r.id) ? ' disabled' : '';
   const head = `<div class="tq-head">${TOOL_ICON}<span><b>${AGENT_NAME}</b> asks for <b>${esc(r.title)}</b></span></div>`;
   const about = r.about ? `<p class="tq-about">${esc(r.about)}</p>` : '';
   let foot;
   if (r.status === 'pending') {
     const note = `<span class="tq-note" title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can grant it">For this thread, a day, in every turn of the agent · open for ${timeLeft(r.deadline)}</span>`;
-    const acts = decide ? `<span class="acts"><button type="button" class="deny" data-tool-act="deny"${off}>Deny</button><button type="button" class="grant" data-tool-act="grant"${off}>Grant for a day</button></span>` : '';
+    const acts = decide ? `<span class="acts"><button type="button" class="deny" data-tool-act="deny"${off}>Deny</button><button type="button" class="grant" data-tool-act="grant"${off}>Grant for a day</button></span>`
+      : (others && `<span class="tq-note">${esc(onlyTeam('grant it'))}</span>`) || '';
     foot = `${note}${acts}`;
   } else {
     const end = r.status === 'granted' && decide ? `<button type="button" class="end" data-tool-act="revoke" title="The agent goes without it from its next message"${off}>End now</button>` : '';
@@ -3451,7 +3474,13 @@ function sideGroup(key, run, { last, trailing }) {
   // Folded, with an answer to you in it that you have not seen: the list's purple badge here too.
   const fresh = open || paneled ? 0 : run.filter(unseenByMe).length;
   const badge = fresh ? `<b class="sidebadge" title="${esc(sideTitle(fresh))}">New</b>` : '';
-  const more = !live && canSide(key) ? `<div class="sc-foot"><button type="button" class="sc-continue" data-side-enter>${SIDE_ICON}Continue in the sidebar</button></div>` : '';
+  // Not to be continued (you view as someone else, its agent is off): why, where the button was.
+  const off = live ? null : sideOff(key);
+  let more = '';
+  if (!live) {
+    more = off ? `<div class="sc-foot"><span class="sc-wait">${esc(off)}</span></div>`
+      : `<div class="sc-foot"><button type="button" class="sc-continue" data-side-enter>${SIDE_ICON}Continue in the sidebar</button></div>`;
+  }
   const body = open ? `<div class="sc-body">${sideRun(key, run, last).join('')}${more}</div>` : '';
   // What the line opens: its run under it, or the panel, which has every run.
   const shows = side.wide ? `aria-expanded="${paneled}" aria-controls="side"` : `aria-expanded="${open}"`;
@@ -3492,17 +3521,17 @@ function sideComposer(key, thread) {
   const where = PLATFORM[thread.source] || 'the channel';
   return `<div class="composer sidebar" role="group" aria-label="Sidebar with ${AGENT_NAME}">
     <div class="side-bar"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}${SIDE_ICON}</span>
-      <span class="side-what"><b>Sidebar with ${AGENT_NAME}</b><small>Only your team sees this. Nothing goes to ${esc(where)}.</small></span>
+      <span class="side-what"><b>Sidebar with ${AGENT_NAME}</b><small>${esc(sideAudience(key, where))}</small></span>
       <button type="button" class="side-exit" data-side-exit title="Back to replying in the thread (Esc)">✕ Exit sidebar</button></div>
     <textarea id="side-reply" rows="1" aria-label="Message to ${AGENT_NAME}, not posted"></textarea>
     <button class="send ask" id="side-send" type="button">Ask</button>${LINES}</div>`;
 }
 
 /** The panel's top: whom you talk to and who sees it, with ✕ to close it. */
-function sidePanelHead(thread) {
+function sidePanelHead(key, thread) {
   const where = PLATFORM[thread.source] || 'the channel';
   return `<div class="sp-head"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}${SIDE_ICON}</span>
-    <span class="side-what"><b>Sidebar with ${AGENT_NAME}</b><small>Only your team sees this. Nothing goes to ${esc(where)}.</small></span>
+    <span class="side-what"><b>Sidebar with ${AGENT_NAME}</b><small>${esc(sideAudience(key, where))}</small></span>
     <button type="button" class="sp-close" data-side-exit title="Close the sidebar (Esc)" aria-label="Close the sidebar"><span class="s2-cross" aria-hidden="true"></span></button></div>`;
 }
 
@@ -3523,7 +3552,9 @@ function sidePanelItems(key, runs) {
 
 /** The panel's own box, to the agent: the thread keeps its reply box. */
 function sidePanelBox(key) {
-  if (!canSide(key)) return '';
+  // Not yours to ask now: why, where the box was.
+  const off = sideOff(key);
+  if (off) return `<div class="composer sidebar off" role="note"><p class="side-off">${esc(off)}</p></div>`;
   return `<div class="composer sidebar" role="group" aria-label="Message to ${AGENT_NAME}">
     <textarea id="side-reply" rows="1" aria-label="Message to ${AGENT_NAME}, not posted"></textarea>
     <button class="send ask" id="side-send" type="button">Ask</button></div>`;
@@ -3838,7 +3869,7 @@ function placeSidePanel(key, thread, runs) {
     if (html) put(htmlNode(html)); else el.remove();
   };
   const head = panel.querySelector(':scope > .sp-head');
-  part(head, sidePanelHead(thread), (node) => (head ? head.replaceWith(node) : panel.prepend(node)));
+  part(head, sidePanelHead(key, thread), (node) => (head ? head.replaceWith(node) : panel.prepend(node)));
   patchItems(scroller.firstElementChild, sidePanelItems(key, runs));
   const box = panel.querySelector(':scope > .composer');
   part(box, sidePanelBox(key), (node) => (box ? box.replaceWith(node) : panel.append(node)));
@@ -4100,6 +4131,8 @@ function composer(thread, resolve = '', key = thread.thread) {
   const name = accountOf(p);
   // The agent's icon: the sidebar, where you talk to it instead of the channel.
   const agent = sideButton(key);
+  // Seen, not worked (an admin's, or a sidebar you talked in before it moved): the sidebar only.
+  if (!canWork(key)) return `<div class="composer">${agent}<span class="connect">Filed under a team you are not on: only its team replies.${canSide(key) ? ` You can ask ${AGENT_NAME} in the sidebar.` : ''}</span>${LINES}</div>`;
   if (p === 'discord') {
     // Discord lets only bots post through its API, and opspile posts as the person or not at
     // all: the reply is written in Discord. Connecting the account makes its posts count as yours.
@@ -5453,7 +5486,7 @@ function bashState(r) {
  * Every card has the request's id, which is how the agent names it in its notes.
  */
 function bashCard(r, {
-  decide = false, busy = false, kept = [], earlier = 0, all = false,
+  decide = false, busy = false, kept = [], earlier = 0, all = false, why = null,
 } = {}) {
   const head = (line) => `<div class="head"><span class="what">${BASH_ICON}Command</span><code class="id" title="This request's id: the agent names it in its notes">${esc(r.id)}</code><span class="by">${line}</span></div>`;
   if (r.status !== 'pending') {
@@ -5468,8 +5501,10 @@ function bashCard(r, {
   const lit = highlightCode(r.command, 'bash');
   const command = `<pre class="cmd${lit ? ' hl' : ''}"><code>${lit ?? esc(r.command)}</code></pre>`;
   const asked = `the agent asks · ${ago(r.created_at)} · <span title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can run it">open for ${timeLeft(r.deadline)}</span>`;
-  const why = `<p class="why">${esc(r.reason)}</p>`;
-  if (!decide) return `<div class="br pending" data-id="${esc(r.id)}">${head(asked)}${why}${command}</div>`;
+  const reason = `<p class="why">${esc(r.reason)}</p>`;
+  // `why` you may not run it, when it is not that you view as someone else: under the command.
+  const whyNot = why ? `<div class="foot"><span class="note">${esc(why)}</span></div>` : '';
+  if (!decide) return `<div class="br pending" data-id="${esc(r.id)}">${head(asked)}${reason}${command}${whyNot}</div>`;
   const off = busy ? ' disabled' : '';
   const vars = r.env.map((v) => {
     const has = kept.includes(v.name);
@@ -5480,7 +5515,7 @@ function bashCard(r, {
   const remember = vars.length ? `<label class="keep" title="Encrypted in this browser's storage, with a key that cannot be taken out of it. Filled in the next time a command asks for a variable of the same name."><input type="checkbox" name="remember"${off}>Remember on this device, encrypted</label>` : '';
   const note = `Runs on the agent's computer, for up to ${r.timeout} s. ${vars.length ? 'The agent gets what it prints, never what you fill in.' : 'The agent gets what it prints.'}`;
   const hint = vars.length ? 'What you fill in goes to this one run and is kept nowhere. Where the output has a value of 8 characters or more, the agent reads the variable\'s name instead. The command itself can still store a value or send it somewhere: read it before you run it.' : 'The agent is told what the command printed, or that it failed or timed out.';
-  return `<form class="br pending" data-id="${esc(r.id)}" autocomplete="off">${head(asked)}${why}${command}${vars.length ? `<div class="vars">${vars.join('')}${remember}</div>` : ''}
+  return `<form class="br pending" data-id="${esc(r.id)}" autocomplete="off">${head(asked)}${reason}${command}${vars.length ? `<div class="vars">${vars.join('')}${remember}</div>` : ''}
       <div class="foot"><span class="note" title="${esc(hint)}">${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>Run</button></span></div></form>`;
 }
 
@@ -5506,10 +5541,12 @@ function renderBashBar(key) {
   // cards stay as they are until it is here.
   if (!el || !hit || state.open !== key) return;
   const list = hit.data?.bash_requests || [];
-  const decide = !state.data?.me?.readonly;
+  const readonly = Boolean(state.data?.me?.readonly);
+  const decide = !readonly && canWork(key);
+  const why = readonly || decide ? null : onlyTeam('run it');
   const html = bashCards(list, {
     all: bashEarlier.has(key),
-    options: (r) => ({ decide, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)) }),
+    options: (r) => ({ decide, why, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)) }),
   });
   if (el.__html !== html) {
     // A change in the open thread's cards grows, folds or resizes them (on a phone they are in
@@ -9979,6 +10016,8 @@ async function showThread(key) {
 
 function replyBlocked(data) {
   if (state.data?.me?.readonly) return READONLY;
+  // Seen, not worked (`can_work`): an admin's, or a sidebar you talked in before it moved.
+  if (data.can_work === false) return `This thread is filed under a team you are not on. You can read it and ask ${AGENT_NAME} in the sidebar, and only its team can reply.`;
   const p = data.thread.source;
   if (p === 'discord') return 'opspile cannot reply on Discord (only bots can post through its API). The user replies in Discord itself; the thread has a link to it.';
   if (p === 'portal' && !state.me.connected?.portal) return 'The customer portal is not connected to this inbox, so opspile cannot post there.';

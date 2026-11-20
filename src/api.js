@@ -61,7 +61,7 @@ import {
   ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
 import {
-  inPersonalInbox, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
+  inPersonalInbox, maySee, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
 } from './shares.js';
 import {
   followable, followedByTeam, followsOfTeams, personFollows, personFollowsBy, setPersonFollow,
@@ -280,7 +280,7 @@ const inTeam = (me, teams) => memberOf(me)(teams);
 async function canSee(env, me, key) {
   const row = await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
     .bind(key).first();
-  return Boolean(row) && (isAdmin(me) || mayWork(env, me)(await teamsOf(env, row), row));
+  return Boolean(row) && maySee(env, me)(await teamsOf(env, row), row);
 }
 
 /**
@@ -815,7 +815,10 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   // Every team whose inbox has it: the one it is filed under, and those its channel is shared
   // with. Read state is the team's the viewer looks at it from (`wanted`, if it is one).
   const teams = row ? await teamsOf(env, row) : [];
-  if (!row || !(isAdmin(me) || await mayWork(env, me)(teams, row))) {
+  // Who may work it may see it, and so may admins and whoever talked in its sidebar (maySee),
+  // who only read it and talk to its agent.
+  const work = Boolean(row) && await mayWork(env, me)(teams, row);
+  if (!row || !(work || await maySee(env, me)(teams, row))) {
     return null;
   }
   const readers = viewTeam(me, teams, wanted);
@@ -1008,6 +1011,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     agent_turn: (agentOn && agentOn.turn) || null,
     // Whether the thread has an agent, which the sidebar talks to.
     agent: Boolean(agentOn && agentOn.on),
+    // Whether the viewer may work it (`mayWork`): reply, draft, and decide on the commands and
+    // tools its agent asks for. Not so, they only see it, and talk to its agent (`maySee`).
+    can_work: work,
     sidebar,
     tool_requests: toolRequests,
     bash_requests: bashRequests,
@@ -1105,10 +1111,10 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return json({ error: 'not signed in, or not a member of any team' }, 403);
   }
   const team = url.searchParams.get('team');
-  // Who may work a thread (src/shares.js): reply, react, resolve, draft; and who may see it,
-  // admins too.
+  // Who may work a thread (src/shares.js): reply, react, resolve, draft; and who may see it and
+  // talk to its agent in its sidebar: admins too, and whoever talked in its sidebar before.
   const working = mayWork(env, me);
-  const seeing = async (teams, place) => isAdmin(me) || working(teams, place);
+  const seeing = maySee(env, me);
 
   if (url.pathname === '/api/me') {
     // The header's Stats link (src/klickhaus.js), only where it is theirs.
@@ -1280,23 +1286,23 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   // The sidebar: a person talks to the thread's agent, never to the channel (src/sidebar.js).
   if (url.pathname === '/api/agent/sidebar' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return talkToAgent(env, me, body, working);
+    return talkToAgent(env, me, body, seeing);
   }
   if (url.pathname === '/api/agent/sidebar/seen' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return sawSidebar(env, me, body, working);
+    return sawSidebar(env, me, body, seeing);
   }
   // A tool the thread's agent asked for in its sidebar (src/agent/toolrequest.js).
   const tool = /^\/api\/agent\/tools\/(grant|deny|revoke)$/.exec(url.pathname);
   if (tool && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return decideTool(env, me, body, working, tool[1]);
+    return decideTool(env, me, body, working, tool[1], { seeing });
   }
   // A command the thread's agent asked a person to run (src/agent/bashrequest.js).
   const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);
   if (bash && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return decideBash(env, me, body, working, { run: bash[1] === 'run' });
+    return decideBash(env, me, body, working, { run: bash[1] === 'run', seeing });
   }
   // Someone is writing a reply: the customer portal shows its customers (src/post.js).
   if (url.pathname === '/api/typing' && request.method === 'POST') {

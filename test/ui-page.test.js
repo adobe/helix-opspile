@@ -887,11 +887,14 @@ describe('inbox page', () => {
         id: 'sb1:answer', role: 'agent', body: 'Twice.', state: 'done', reply_to: 'sb1', at: '2026-10-21T10:00:30.000Z',
       },
     ];
-    /** The sidebar's markup with `side` as it stands, for who may talk to the agent, or not. */
-    const sidebar = (side, { may = true } = {}) => {
-      const globals = {
+    /**
+     * The sidebar's markup with `side` as it stands, for who may talk to the agent, or not, and
+     * who may work the thread (`work`), or only see it.
+     */
+    const sidebar = (side, { may = true, work = true } = {}) => {
+      const base = {
         side: { open: new Set(), ...side },
-        state: { me: { id: 1 }, agents: new Map(), cache: new Map() },
+        state: { me: { id: 1 }, agents: new Map(), cache: new Map([['t', { data: { can_work: work } }]]) },
         canSide: () => may,
         avatar: (name) => `<i>${name}</i>`,
         AGENT_NAME: 'Thread Agent',
@@ -904,7 +907,12 @@ describe('inbox page', () => {
         timeTag: () => '<time>10:00 AM</time>',
         dayLabel: () => 'Today',
       };
+      const globals = {
+        ...base,
+        ...piece('/**\n * Whether you may work thread `key`', '/** Whether thread `key` is in sidebar mode', 'canWork, sideOff, sideAudience, onlyTeam', base),
+      };
       return {
+        ...globals,
         ...piece('/** Whether thread `key` is in sidebar mode in the thread itself', '/** The reply box in sidebar mode', 'sideInline, sidePaneled, sideRun, sideGroup', globals),
         ...piece('/** The panel\'s top:', '/** The panel goes, with what it showed.', 'sidePanelHead, sidePanelItems, sidePanelBox', {
           ...globals, sideRun: (key, r) => r.map((m) => `<p>${m.body}</p>`),
@@ -966,16 +974,34 @@ describe('inbox page', () => {
       assert.match(items[0], /Today · 10:00 AM/);
       assert.match(sidePanelItems('t', [])[0].html, /class="sc-wait blank".*It is never posted\./);
       // It says who sees it, and where nothing goes, as the box in the thread does.
-      assert.match(sidePanelHead({ source: 'slack' }), /Sidebar with Thread Agent<\/b><small>Only your team sees this\. Nothing goes to Slack\.<\/small>/);
-      assert.match(sidePanelHead({ source: 'slack' }), /<button type="button" class="sp-close" data-side-exit [^>]*aria-label="Close the sidebar">/);
+      assert.match(sidePanelHead('t', { source: 'slack' }), /Sidebar with Thread Agent<\/b><small>Only your team sees this\. Nothing goes to Slack\.<\/small>/);
+      assert.match(sidePanelHead('t', { source: 'slack' }), /<button type="button" class="sp-close" data-side-exit [^>]*aria-label="Close the sidebar">/);
       // The thread keeps its reply box, with the draft's and the commands' lines: the panel's
       // box is the sidebar's only.
       const box = sidePanelBox('t');
       assert.equal(box.match(/id="side-reply"/g).length, 1);
       assert.match(box, /id="side-send"/);
       assert.doesNotMatch(box, /id="(draftbar|bashbar|reply|send)"|data-side-exit/);
-      // Someone who may not talk to the agent reads there.
-      assert.equal(sidebar({ wide: true, key: 't' }, { may: false }).sidePanelBox('t'), '');
+      // Someone who may not talk to the agent reads there, and is told why, where the box was.
+      const off = sidebar({ wide: true, key: 't' }, { may: false }).sidePanelBox('t');
+      assert.doesNotMatch(off, /side-reply|side-send/);
+      assert.match(off, /<div class="composer sidebar off" role="note"><p class="side-off">Thread Agent is off in this channel now, so it cannot be asked here\.<\/p><\/div>/);
+    });
+
+    it('tells who only sees the thread that its team sees the sidebar too, and why a folded one stops', () => {
+      // An admin, or who talked in it before the channel moved to another team: they talk, and
+      // the head says who else sees it.
+      const seen = sidebar({ wide: true, key: 't' }, { work: false });
+      assert.match(seen.sidePanelHead('t', { source: 'slack' }), /<small>Only the thread's team and you see this\. Nothing goes to Slack\.<\/small>/);
+      assert.match(seen.sidePanelBox('t'), /id="side-reply"/);
+      assert.match(seen.onlyTeam('grant it'), /^Only the thread's team can grant it: it is filed under a team you are not on\.$/);
+      // Folded under the thread, where it cannot go on: why, instead of Continue.
+      const shut = sidebar({ wide: false, key: null, open: new Set(['sb1']) }, { may: false });
+      const line = shut.sideGroup('t', run, { last: true, trailing: false });
+      assert.doesNotMatch(line, /sc-continue/);
+      assert.match(line, /<div class="sc-foot"><span class="sc-wait">Thread Agent is off in this channel now, so it cannot be asked here\.<\/span><\/div>/);
+      const open = sidebar({ wide: false, key: null, open: new Set(['sb1']) });
+      assert.match(open.sideGroup('t', run, { last: true, trailing: false }), /data-side-enter>Continue in the sidebar/);
     });
 
     it('shows the panel where the list, the thread and it have room, measured from the list\'s left edge', () => {

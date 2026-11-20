@@ -17,7 +17,7 @@
  * their inboxes, and their members read, reply, react, resolve and draft there.
  */
 
-import { ADMIN_TEAM } from './review.js';
+import { ADMIN_TEAM, isAdmin } from './review.js';
 import { UNASSIGNED } from './rules.js';
 import {
   followedByPerson, followersOf, followersOfAreas, followersOfTech, followingTeams, followsEntry,
@@ -180,6 +180,34 @@ export async function inPersonalChannel(env, person, place) {
 export const mayWork = (env, me) => async (teams, place) => memberOf(me)(teams)
   || (Boolean(me) && (await inPersonalChannel(env, me.id, place)
     || (Boolean(place && place.thread) && followsEntry(env, me.id, place.thread))));
+
+/**
+ * Whether person `person` talked to the agent in the sidebar of thread `thread`'s entry: in its
+ * group, on any member's key (a sidebar is kept under the entry's key when it was talked in).
+ */
+export async function inSidebar(env, person, thread) {
+  if (!person || !thread || !env.DB) {
+    return false;
+  }
+  const row = await env.DB.prepare(`SELECT 1 AS yes FROM sidebar_messages
+    WHERE person = ?1 AND role = 'person' AND thread IN (
+      SELECT thread FROM threads
+      WHERE thread = (SELECT COALESCE(logical_thread, thread) FROM threads WHERE thread = ?2)
+        OR logical_thread = (SELECT COALESCE(logical_thread, thread) FROM threads WHERE thread = ?2)
+      UNION SELECT ?2) LIMIT 1`).bind(person, String(thread)).first();
+  return Boolean(row);
+}
+
+/**
+ * Who may see a thread, and talk to its agent in its sidebar: `(teams, place) => Promise<bool>`,
+ * as `mayWork`. Who may work it may, and so may the admin team, and whoever talked in its sidebar
+ * before: a channel that moves to another team (often because they asked its agent to move it)
+ * does not take away the conversation they had about it. Only to see and talk: replying,
+ * drafting, and deciding on what its agent asks for stay `mayWork`'s.
+ */
+export const maySee = (env, me) => async (teams, place) => isAdmin(me)
+  || await mayWork(env, me)(teams, place)
+  || (Boolean(me) && Boolean(place && place.thread) && inSidebar(env, me.id, place.thread));
 
 /**
  * The rooms (teams, by slug) a person's inbox listens to: their own teams', and the rooms of
