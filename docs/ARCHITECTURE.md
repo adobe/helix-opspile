@@ -1706,8 +1706,9 @@ Admins, who can open any thread, see its draft but change only their own teams' 
   The reply box is yours, and a draft never replaces what you typed. **Edit** takes the draft
   into the box to edit; with text there already, **Add to reply** puts it after that text.
   View draft, Edit and **Discard** are icons (their names are their labels and tooltips), on
-  the line's first row with who saved the draft; the sends are labelled, past a hairline, and
-  get a row of their own at the bottom of a narrow line.
+  the line's last row with its sources; the sends are labelled, past a hairline. They are at
+  the bottom, which opening the line does not move, so the pointer does not have to follow
+  them; a narrow line gives the sources a row of their own above them.
 - The line sends the draft as it is: **Send as me**, or **Send as bot** (as the opspile app,
   `POST /api/post/app`) where the thread says the viewer may (`can_post_as_bot`: the channel's
   **Post messages** switch is on and its platform's bot is set up). On Discord, and before the

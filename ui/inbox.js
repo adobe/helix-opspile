@@ -4942,7 +4942,7 @@ const draftTool = (act, icon, label, title, more = '') => `<button class="ico ${
 
 /**
  * The draft line's markup: who saved draft `d` and when, how it starts, or all of it once
- * viewed (`open`), and what to do with it. Its tools are icons: View draft (opens and closes
+ * viewed (`open`), and, at the bottom, what to do with it. Its tools are icons: View draft (opens and closes
  * it; open only while the pointer rests on it, `peek`, it is Keep draft open instead), `editable` (taking it into the reply box: Edit, or Add to reply after your `own` text)
  * and `discard`. Sending it is labelled, the person's own Send as me last: `asBot` and `asMe`.
  * With a part of the draft selected, Edit and the sends take that part (`DRAFT_PART`).
@@ -4966,8 +4966,8 @@ function draftLine(d, {
   if (asBot) sends.push(`<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot"${draftPartLabels('bot')}>${DRAFT_ICONS.bot}<span>Send as bot</span></button>`);
   if (asMe) sends.push(`<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you"${draftPartLabels('me')}>${DRAFT_ICONS.me}<span>Send as me</span></button>`);
   return `<div class="dl"><div class="head"><span class="pen">${DRAFT_ICONS.draft}Draft</span><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span></div>
-      <span class="tools">${tools.join('')}</span>${sends.length ? `<span class="sends">${sends.join('')}</span>` : ''}
-      <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d)}</div>`;
+      <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d)}
+      <span class="tools">${tools.join('')}</span>${sends.length ? `<span class="sends">${sends.join('')}</span>` : ''}</div>`;
 }
 
 /**
@@ -5091,7 +5091,7 @@ function resizeDraft(el, from) {
  * for HOVER_DELAY_MS opens it too, until it leaves (`draftPeek`), and the button then keeps it
  * open: Keep draft open, which was Hide draft and closed what the pointer had just opened.
  * Opening grows the line upwards, so it stays under the pointer instead of leaving it, closing
- * and opening again, over and over.
+ * and opening again, over and over; its buttons are at its bottom, so they stay where they were.
  * Text selected in it keeps a line the pointer opened open, as View draft does: closing it (or
  * opening it) draws the text again, and the selection would go with it, nothing left to copy. A
  * drag that selects often goes past the line's edge. With a part of its text selected, Edit and

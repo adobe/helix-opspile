@@ -990,20 +990,21 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .sendwrap .resolve[aria-pressed="true"] { background: var(--sel); }
 
 /* The thread's shared draft, on its own line under the reply box: a dashed card. Its first row
-   says who saved it and when, then its tools (icons: view, edit, discard) and, past a hairline,
-   the ways to send it; under them how it starts (all of it, viewed), and its sources. In a
-   narrow card, the sends get a row of their own at the bottom, side by side. */
+   says who saved it and when; under it how it starts (all of it, viewed), then its sources and,
+   on their right, its tools (icons: view, edit, discard) and, past a hairline, the ways to send
+   it. They are at the bottom because the card grows upwards: opening it under the pointer moves
+   none of them. In a narrow card, the sources get a row of their own above them. */
 .composer { flex-wrap: wrap; }
 .draftbar { flex-basis: 100%; min-width: 0; container: draft / inline-size;
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
 .draftbar[hidden] { display: none; }
-.draftbar .dl { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "head tools sends" "text text text" "srcs srcs srcs";
+.draftbar .dl { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "head head head" "text text text" "srcs tools sends";
   align-items: center; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
 .draftbar .head { grid-area: head; display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
 .draftbar .pen { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
 .draftbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.draftbar .tools { grid-area: tools; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
-.draftbar .sends { grid-area: sends; display: flex; align-items: center; gap: var(--spectrum-spacing-100);
+.draftbar .tools { grid-area: tools; align-self: end; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
+.draftbar .sends { grid-area: sends; align-self: end; display: flex; align-items: center; gap: var(--spectrum-spacing-100);
   padding-left: var(--spectrum-spacing-100); border-left: var(--spectrum-border-width-100) solid var(--line); }
 .draftbar button { flex: none; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
 .draftbar button svg { flex: none; }
@@ -1031,8 +1032,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .draftbar .pv .line :is(img.att, .gallery, .files, video, audio, hr, input, .quote-by) { display: none; }
 .draftbar button:disabled { opacity: .5; cursor: default; }
 @container draft (max-width: 560px) {
-  .draftbar .dl { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head tools" "text text" "srcs srcs" "sends sends"; }
-  .draftbar .sends { padding: var(--spectrum-spacing-50) 0 0; border-left: 0; }
+  .draftbar .dl { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "head head" "text text" "srcs srcs" "tools sends"; }
   .draftbar .sends button { flex: 1; }
 }
 /* The draft's sources: on their own row of its line, only ever in the inbox. */
