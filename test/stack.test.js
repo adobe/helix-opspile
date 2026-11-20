@@ -12,7 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { checkChanges } from '../src/agent/kbwrite.js';
+import { checkChanges, writeKnowledge } from '../src/agent/kbwrite.js';
 import { checkConcept } from '../src/agent/okf.js';
 import { api } from '../src/api.js';
 import {
@@ -25,6 +25,7 @@ import {
 } from '../src/stack.js';
 import { stackNote } from '../src/agent/tools.js';
 import { d1 } from './d1.js';
+import { gitServer, hasGit } from './git-server.js';
 import { fakeRepo } from './fakes.js';
 import { SCRIPTS } from './ui.js';
 
@@ -321,5 +322,36 @@ describe('what an agent is told about the stack drawing', () => {
     assert.match(note, /none of the customer's threads of the last 90 days showed it: eds, da, erp\./);
     assert.doesNotMatch(stackNote({ hash: 'h1', text: stackFile(DRAWING) }, []), /showed it/);
     assert.match(stackNote({ hash: 'h2', text: '---\ntype: Stack Drawing\n---\n\nNo tables.\n' }), /cannot be drawn: .*Draw it again\./);
+  });
+});
+
+describe('a write of a customer\'s stack drawing', { skip: !hasGit() && 'git is not installed' }, () => {
+  it('keeps its parts for the list by customer, and leaves no stale row when that fails', async () => {
+    const srv = await gitServer();
+    const { error } = console;
+    try {
+      srv.create('kb-org-acme');
+      const DB = d1();
+      const env = { DB, ARTIFACTS: srv.artifacts };
+      const opts = {
+        message: 'm', by: 'opspile-agent/m', at: '2026-11-20T10:00:00.000Z', logEntry: 'e',
+      };
+      await writeKnowledge(env, 'kb-org-acme', [{ path: 'stack.md', content: stackFile(DRAWING) }], opts);
+      assert.equal((await orgStacksOf(env, ['acme'])).acme.length, 5);
+      // The row's write fails: the row goes, so the cron reads the file again.
+      const prepare = DB.prepare.bind(DB);
+      const down = async () => {
+        throw new Error('D1 down');
+      };
+      DB.prepare = (sql) => (/INSERT INTO org_stacks/.test(sql) ? { bind: () => ({ run: down }) } : prepare(sql));
+      console.error = () => {};
+      const again = stackFile({ ...DRAWING, summary: 'Changed.' });
+      await writeKnowledge(env, 'kb-org-acme', [{ path: 'stack.md', content: again, base: null }], opts).catch(() => null);
+      DB.prepare = prepare;
+      assert.deepEqual(DB.rows("SELECT org FROM org_stacks WHERE org = 'acme'"), []);
+    } finally {
+      console.error = error;
+      await srv.close();
+    }
   });
 });

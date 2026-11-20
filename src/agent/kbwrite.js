@@ -392,7 +392,10 @@ export async function writeKnowledge(env, artifact, changes, {
               route: 'kb', action: 'stack', artifact, error: e.message,
             }));
             // Kept stale no longer: with no row, the cron reads the file again.
-            await env.DB.prepare('DELETE FROM org_stacks WHERE org = ?').bind(org).run().catch(() => {});
+            await env.DB.prepare('DELETE FROM org_stacks WHERE org = ?').bind(org).run()
+              .catch((d) => console.error(JSON.stringify({
+                route: 'kb', action: 'stack', artifact, error: `row kept: ${d.message}`,
+              })));
           });
         }
         if (kindOf(artifact) === 'team' && changes.some((c) => inCatalog(c.path))) {
