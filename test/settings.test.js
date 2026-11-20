@@ -42,6 +42,7 @@ describe('settings', () => {
       channelTraces: {},
       postingDeclined: [],
       expert: false,
+      toured: false,
     });
     const url = new URL('https://opspile.test/api/me');
     const res = await api(new Request(url), { DB }, url, { viewer: me });
@@ -64,6 +65,7 @@ describe('settings', () => {
       channelTraces: {},
       postingDeclined: [],
       expert: false,
+      toured: false,
     });
     r = await call(DB, 'PUT', { mentions: false });
     assert.deepEqual([r.body.mentions, r.body.bells.length], [false, 2]);
@@ -74,6 +76,10 @@ describe('settings', () => {
     r = await call(DB, 'PUT', { expert: true });
     assert.deepEqual([r.body.expert, r.body.threads], [true, false]);
     assert.equal((await call(DB, 'PUT', { expert: 'yes' })).status, 400);
+    // The tour: offered until taken or declined, then not again.
+    r = await call(DB, 'PUT', { toured: true });
+    assert.deepEqual([r.body.toured, r.body.expert], [true, true]);
+    assert.equal((await call(DB, 'PUT', { toured: 1 })).status, 400);
   });
 
   it('turns my threads on for those whose settings were stored before it existed', () => {
