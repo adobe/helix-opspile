@@ -990,20 +990,21 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .sendwrap .resolve[aria-pressed="true"] { background: var(--sel); }
 
 /* The thread's shared draft, on its own line under the reply box: a dashed card. Its first row
-   says who saved it and when, then its tools (icons: view, edit, discard) and, past a hairline,
-   the ways to send it; under them how it starts (all of it, viewed), and its sources. In a
-   narrow card, the sends get a row of their own at the bottom, side by side. */
+   says who saved it and when; under it how it starts (all of it, viewed), then its sources and,
+   on their right, its tools (icons: view, edit, discard) and, past a hairline, the ways to send
+   it. They are at the bottom because the card grows upwards: opening it under the pointer moves
+   none of them. In a narrow card, the sources get a row of their own above them. */
 .composer { flex-wrap: wrap; }
 .draftbar { flex-basis: 100%; min-width: 0; container: draft / inline-size;
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
 .draftbar[hidden] { display: none; }
-.draftbar .dl { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "head tools sends" "text text text" "srcs srcs srcs";
+.draftbar .dl { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "head head head" "text text text" "srcs tools sends";
   align-items: center; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
 .draftbar .head { grid-area: head; display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
 .draftbar .pen { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
 .draftbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.draftbar .tools { grid-area: tools; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
-.draftbar .sends { grid-area: sends; display: flex; align-items: center; gap: var(--spectrum-spacing-100);
+.draftbar .tools { grid-area: tools; align-self: end; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
+.draftbar .sends { grid-area: sends; align-self: end; display: flex; align-items: center; gap: var(--spectrum-spacing-100);
   padding-left: var(--spectrum-spacing-100); border-left: var(--spectrum-border-width-100) solid var(--line); }
 .draftbar button { flex: none; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
 .draftbar button svg { flex: none; }
@@ -1031,8 +1032,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .draftbar .pv .line :is(img.att, .gallery, .files, video, audio, hr, input, .quote-by) { display: none; }
 .draftbar button:disabled { opacity: .5; cursor: default; }
 @container draft (max-width: 560px) {
-  .draftbar .dl { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head tools" "text text" "srcs srcs" "sends sends"; }
-  .draftbar .sends { padding: var(--spectrum-spacing-50) 0 0; border-left: 0; }
+  .draftbar .dl { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "head head" "text text" "srcs srcs" "tools sends"; }
   .draftbar .sends button { flex: 1; }
 }
 /* The draft's sources: on their own row of its line, only ever in the inbox. */
@@ -3125,6 +3125,88 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
   border-top: var(--spectrum-border-width-100) solid var(--line); color: var(--faint); font-size: var(--spectrum-font-size-75); }
 .stkpop .stk-foot a { margin-left: auto; color: var(--link); }
 @media (max-width: 640px) { .stkpop .stk-layer { grid-template-columns: 1fr; gap: var(--spectrum-spacing-75); } }
+/* The tour (ui/tour.js): S2's coach marks, one after the other, each beside what it is about,
+   with S2's coach indicator around that: a ring in its shape, 2px away, that pulses (but for
+   those who ask for less motion). Both are placed by the script, in the top layer. */
+.spectrum .coach {
+  position: fixed; inset: auto; margin: 0;
+  width: var(--spectrum-coach-mark-width); max-width: calc(100vw - var(--spectrum-spacing-300));
+  padding: var(--spectrum-coach-mark-edge-to-content);
+  color: var(--ink);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+  font-size: var(--spectrum-coach-mark-body-size);
+  line-height: var(--spectrum-line-height-200);
+  overflow: visible;
+}
+.spectrum .coach .cm-head { display: flex; align-items: flex-start; gap: var(--spectrum-spacing-100); }
+.spectrum .coach h2 { flex: 1; margin: 0; font-size: var(--spectrum-coach-mark-title-size); font-weight: var(--spectrum-extra-bold-font-weight); line-height: var(--spectrum-line-height-100); }
+.spectrum .coach .cm-more {
+  flex: none; display: grid; place-items: center;
+  width: var(--spectrum-component-height-75); height: var(--spectrum-component-height-75);
+  margin: calc(var(--spectrum-spacing-50) * -1) calc(var(--spectrum-spacing-75) * -1) 0 0; padding: 0;
+  border: 0; border-radius: var(--spectrum-corner-radius-100); background: transparent;
+  color: var(--spectrum-neutral-content-color-default);
+}
+.spectrum .coach .cm-more svg { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); fill: currentColor; }
+.spectrum .coach .cm-text { margin-top: var(--spectrum-spacing-200); }
+.spectrum .coach .cm-text :is(p, ul) { margin: 0; }
+.spectrum .coach .cm-text ul { padding-left: var(--spectrum-spacing-300); }
+.spectrum .coach .cm-text li + li { margin-top: var(--spectrum-spacing-75); }
+.spectrum .coach .cm-text b { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .coach .cm-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-300); }
+.spectrum .coach .cm-step { color: var(--spectrum-coach-mark-pagination-color); font-size: var(--spectrum-coach-mark-pagination-body-size); }
+.spectrum .coach .cm-acts { display: flex; gap: var(--spectrum-spacing-100); }
+/* Previous is a quiet secondary Button, Next (Finish) the primary one. */
+.spectrum .coach .cm-prev {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  border: 0; border-radius: calc(var(--s2-ctl) / 2);
+  background: transparent;
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .coach .cm-prev[hidden] { display: none; }
+.spectrum .coach-menu {
+  position: fixed; inset: auto; margin: 0;
+  min-width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-700));
+  padding: var(--spectrum-spacing-75);
+  color: var(--ink);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-medium-size-medium);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .coach-menu:popover-open { display: flex; flex-direction: column; }
+.spectrum .coach-menu button {
+  min-height: var(--spectrum-component-height-100);
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  border: 0; border-radius: var(--spectrum-corner-radius-100);
+  background: none; text-align: left;
+  color: var(--spectrum-neutral-content-color-default);
+}
+.spectrum .coach-menu button:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .coach-ring {
+  position: fixed; inset: auto; margin: 0; padding: 0;
+  box-sizing: border-box;
+  background: transparent;
+  border: var(--spectrum-border-width-200) solid var(--spectrum-coach-indicator-ring-default-color);
+  pointer-events: none;
+  overflow: visible;
+}
+.spectrum .coach-ring.off { visibility: hidden; }
+.spectrum .coach-ring::after {
+  content: ""; position: absolute; inset: calc(var(--spectrum-border-width-200) * -1);
+  border: inherit; border-radius: inherit; opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .spectrum .coach-ring::after { animation: coach-pulse var(--spectrum-animation-duration-4000) var(--spectrum-animation-ease-out) infinite; }
+}
+@keyframes coach-pulse {
+  0% { inset: calc(var(--spectrum-border-width-200) * -1); opacity: 1; }
+  60%, 100% { inset: calc(var(--spectrum-coach-indicator-gap) * -1); opacity: 0; }
+}
 /* Ringed kinds: written by scripts/wf-rings.mjs, do not edit. */
 .spectrum .wf-cloud-error.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNMTAuODYgMi4xNUwxMS44NSAyLjE0TDEyLjQ4IDIuMjJMMTMuNDIgMi40OEwxNC4wNiAyLjc1TDE0LjczIDMuMTVMMTUuMjMgMy41NEwxNS45OSA0LjMxTDE2LjQ5IDUuMDJMMTYuODcgNS43N0wxNy4xMSA2LjQ4TDE3LjI2IDcuMTlMMTcuMyA3Ljk0TDE4LjE3IDguNzdMMTguNTggOS4zMUwxOS4wNyAxMC4yM0wxOS4yOCAxMC43N0wxOS4zOSAxMS4xOUwxOS41MyAxMi4yN0wxOS40NiAxMy4zNUwxOS4zMyAxMy45OEwxOS4xOCAxNC40NEwxOC43NyAxNS4zTDE4LjQgMTUuODhMMTcuOTYgMTYuNEwxNy4zMSAxNi45OEwxNi43MyAxNy4zOEwxNi4yNyAxNy42MkwxNS40OCAxNy45MkwxNC44NSAxOC4wN0wxNC4yNyAxOC4xNEwxMy40IDE4LjE0TDEyLjg1IDE4LjA3TDEyLjI3IDE3Ljk0TDExLjUyIDE3LjY2TDEwLjY5IDE3LjJMMTAuMSAxNy4zOEw5LjY1IDE3LjQ0TDUuNDQgMTcuNDRMNC44MSAxNy4zOEw0LjI3IDE3LjI2TDMuNzMgMTcuMDdMMy4xMSAxNi43N0wyLjgxIDE2LjU4TDIuMjYgMTYuMTVMMS42NiAxNS40OEwxLjM2IDE1LjA2TDEuMDcgMTQuNDhMMC44MSAxMy43N0wwLjcxIDEzLjI3TDAuNjQgMTIuNkwwLjcgMTEuNzNMMC45IDEwLjlMMS4yNyAxMC4wN0wxLjY5IDkuNDRMMi4yOSA4LjgxTDIuNDYgOC4xNUwyLjYyIDcuNzNMMy4xMiA2Ljc3TDMuNTQgNi4yM0w0LjEgNS42OEw0LjczIDUuMjJMNS40OCA0Ljg0TDYuMSA0LjYxTDYuNjUgNC40OUw3LjQgMy42N0w4LjAyIDMuMThMOC42NSAyLjhMOS4yNyAyLjUyTDkuODUgMi4zMlpNMTAuOTIgMy40TDExLjc3IDMuMzlMMTIuMjcgMy40NUwxMy4wMiAzLjY2TDEzLjQ4IDMuODZMMTMuOSA0LjFMMTQuMzYgNC40NEwxNS4wNiA1LjE1TDE1LjQzIDUuNjlMMTUuNzMgNi4yOUwxNS45NSA3LjAyTDE2LjAzIDcuNDRMMTYuMDMgNy45OEwxNS45OSA4LjMxTDE2LjA0IDguNTJMMTYuMTMgOC42NUwxNi42OSA5LjA2TDE3LjI3IDkuNjRMMTcuNDggOS45MUwxNy45MSAxMC42OUwxOC4xNiAxMS40NEwxOC4yOCAxMi4zMUwxOC4yMiAxMy4xOUwxNy45OSAxNC4wNkwxNy42NCAxNC43N0wxNy4zNSAxNS4xOEwxNi44NSAxNS43M0wxNi41MSAxNi4wMkwxNi4wMiAxNi4zNUwxNS4xIDE2LjcyTDE0LjYgMTYuODVMMTQuMSAxNi45TDEzLjQ4IDE2Ljg5TDEyLjUyIDE2LjcxTDExLjc3IDE2LjM5TDExLjAyIDE1Ljg5TDEwLjc3IDE1LjhMMTAuNjQgMTUuODFMMTAuMDYgMTYuMDlMOS42IDE2LjE5TDUuNTIgMTYuMkw0LjYgMTYuMDZMNC4xOSAxNS45MUwzLjY1IDE1LjY0TDIuOTMgMTUuMDZMMi40MiAxNC40TDIuMTUgMTMuODVMMi4wMSAxMy40NEwxLjk0IDEzLjA2TDEuODkgMTIuNEwxLjk2IDExLjc3TDIuMDcgMTEuMzVMMi4yMSAxMC45OEwyLjQgMTAuNkwyLjY2IDEwLjIzTDMuNDYgOS40TDMuNjYgOC40OEw0LjAzIDcuNjlMNC40OCA3LjA2TDUuMTYgNi40NEw1LjQ0IDYuMjZMNi4xIDUuOTNMNi40OCA1LjgxTDcuMzUgNS42MUw4LjE1IDQuNjhMOC45NCA0LjA3TDkuMzEgMy44Nkw5Ljc3IDMuNjZMMTAuMjcgMy41WiIvPjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDEwIDEwKSBzY2FsZSgwLjcpIHRyYW5zbGF0ZSgtMTAgLTEwKSI+PHBhdGggZD0iTTE1LjUsOS4wMjExMmMtMi40ODUzNSwwLTQuNSwyLjAxNDcxLTQuNSw0LjVzMi4wMTQ2NSw0LjUsNC41LDQuNSw0LjQ3OTk4LTIuMDE0NzcsNC40Nzk5OC00LjUtMS45OTQ3NS00LjUtNC40Nzk5OC00LjVaTTE2LjQ1LDE1LjkxNThjMCwuNDcyNDEtLjQyNTQzLjg1NTY5LS45NS44NTU2OXMtLjk1LS4zODMyOC0uOTUtLjg1NTY5di0uMjg4NjNjMC0uNDcyNDEuNDI1NDMtLjg1NTY5Ljk1LS44NTU2OXMuOTUuMzgzMjguOTUuODU1Njl2LjI4ODYzWk0xNi4zNzUsMTMuNDIwOWMwLC40MTQwNi0uMzkxODUuNzUtLjg3NS43NXMtLjg3NS0uMzM1OTQtLjg3NS0uNzV2LTIuNjQ5NDFjMC0uNDE0MDYuMzkxODUtLjc1Ljg3NS0uNzVzLjg3NS4zMzU5NC44NzUuNzV2Mi42NDk0MVoiLz48cGF0aCBkPSJNOS4yNSwxNi45OTgwNUgzLjcxNzc3Yy0xLjkwMzMyLDAtMy40NTIxNS0xLjU0Nzg1LTMuNDUyMTUtMy40NTExNywwLTEuNDkyMTkuOTY2OC0yLjc4MDI3LDIuMzI0MjItMy4yNS0uMDQyOTctLjIzMTQ1LS4wNjQ0NS0uNDY1ODItLjA2NDQ1LS43MDMxMiwwLTIuMTc5NjksMS44MDk1Ny0zLjk1MjE1LDQuMDMzMi0zLjk1MjE1LjI3OTMsMCwuNTU3NjIuMDI5My44MzEwNS4wODc4OS42Mzc3LTEuOTU4OTgsMi40NzY1Ni0zLjM0NzY2LDQuNTg4ODctMy4zNDc2NiwyLjQ5NjA5LDAsNC41NjczOCwxLjg3MDEyLDQuODE4MzYsNC4zNTA1OS4wNDE5OS40MTIxMS0uMjU4NzkuNzc5My0uNjcwOS44MjEyOS0uNDAwMzkuMDQ5OC0uNzc5My0uMjU3ODEtLjgyMTI5LS42NzA5LS4xNzI4NS0xLjcxMDk0LTEuNjAzNTItMy4wMDA5OC0zLjMyNjE3LTMuMDAwOTgtMS42NjMwOSwwLTMuMDgwMDgsMS4yNTE5NS0zLjI5Njg4LDIuOTEyMTEtLjAzMTI1LjIzNTM1LS4xNzE4OC40NDIzOC0uMzc4OTEuNTU3NjItLjIwODAxLjExNzE5LS40NTg5OC4xMjUtLjY3NDguMDI4MzItLjM0ODYzLS4xNTgyLS43MDg5OC0uMjM4MjgtMS4wNjkzNC0uMjM4MjgtMS4zOTY0OCwwLTIuNTMzMiwxLjA5OTYxLTIuNTMzMiwyLjQ1MjE1LDAsLjMzMjAzLjA2OTM0LjY1NjI1LjIwNjA1Ljk2NDg0LjA5OTYxLjIyMzYzLjA4MzAxLjQ4MjQyLS4wNDM5NS42OTIzOHMtLjM0ODYzLjM0Mzc1LS41OTM3NS4zNTkzOGMtMS4wMjUzOS4wNjY0MS0xLjgyODEyLjkxNjk5LTEuODI4MTIsMS45MzY1MiwwLDEuMDc2MTcuODc1OTgsMS45NTExNywxLjk1MjE1LDEuOTUxMTdoNS41MzIyM2MuNDE0MDYsMCwuNzUuMzM1OTQuNzUuNzVzLS4zMzU5NC43NS0uNzUuNzVaIi8+PC9nPjwvc3ZnPg=="); }
 .spectrum .wf-lock.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNOS41NyAxLjUyTDEwLjUyIDEuNTNMMTEuMDYgMS42TDExLjczIDEuNzZMMTIuMzEgMS45N0wxMy4wMiAyLjMyTDEzLjkxIDIuOTRMMTQuNjIgMy42NUwxNS4xMyA0LjM1TDE1LjU5IDUuMjdMMTUuNzkgNS44MUwxNS45MSA2LjI3TDE2LjQyIDYuNzdMMTYuNjUgNy4wNkwxNyA3LjZMMTcuMjUgOC4yM0wxNy4zNyA4LjczTDE3LjQ1IDkuNEwxNy40NCAxNC4xOUwxNy4yNyAxNS4xOUwxNy4xMyAxNS42TDE2Ljk1IDE1Ljk4TDE2LjY5IDE2LjQxTDE2LjQyIDE2LjczTDE1Ljk0IDE3LjJMMTUuNTYgMTcuNDdMMTQuOTMgMTcuODFMMTQuNTYgMTcuOTZMMTQuMSAxOC4wN0wxMy42OSAxOC4xMUw2LjMxIDE4LjExTDUuNzcgMTguMDRMNS4yNyAxNy45TDQuNjkgMTcuNjJMNCAxNy4xNUwzLjUyIDE2LjY3TDMuMjggMTYuMzVMMi45NCAxNS43N0wyLjc1IDE1LjI3TDIuNjQgMTQuODFMMi41NiAxNC4xOUwyLjU2IDkuMzFMMi43MiA4LjM1TDIuOTggNy42NUwzLjQ0IDYuOTRMNC4wOSA2LjI3TDQuMjEgNS44MUw0LjQxIDUuMjdMNC45IDQuMzJMNS4zOCAzLjY1TDYuMDQgMi45OEw2Ljg1IDIuMzlMNy43MyAxLjk1TDguNjUgMS42NlpNOS42MyAyLjc3TDEwLjM1IDIuNzdMMTAuODEgMi44M0wxMS4zNSAyLjk2TDExLjgxIDMuMTFMMTIuNDQgMy40MkwxMy4xIDMuODlMMTMuNjkgNC40OEwxNC4wNyA1LjAyTDE0LjUzIDUuOThMMTQuNzkgNi45NEwxNS41OSA3LjczTDE1Ljg3IDguMTVMMTYuMDQgOC41NkwxNi4yIDkuNEwxNi4yIDE0LjFMMTYuMTIgMTQuNjVMMTUuOTUgMTUuMTlMMTUuNTcgMTUuODFMMTUuMDIgMTYuMzNMMTQuNzcgMTYuNDlMMTQuMjMgMTYuNzVMMTMuNjUgMTYuODZMNi4xNSAxNi44NUw1LjY1IDE2LjdMNS4yIDE2LjQ4TDQuOSAxNi4yN0w0LjMzIDE1LjY5TDQuMTEgMTUuMzFMMy45NiAxNC45NEwzLjggMTQuMTVMMy44IDkuMzVMMy45MyA4LjY1TDQuMDkgOC4yM0w0LjQ4IDcuNjVMNS4xOSA2Ljk4TDUuMjYgNi44MUw1LjQ3IDUuOThMNS44OCA1LjFMNi4zMSA0LjQ4TDYuODUgMy45M0w3LjUyIDMuNDVMOC4xOSAzLjExTDguOTQgMi44OFoiLz48ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMCAxMCkgc2NhbGUoMC43KSB0cmFuc2xhdGUoLTEwIC0xMCkiPjxwYXRoIGQ9Ik0xMS4yNSwxMS41YzAtLjY4OTQ1LS41NjA1NS0xLjI1LTEuMjUtMS4yNXMtMS4yNS41NjA1NS0xLjI1LDEuMjVjMCwuNDAyNTkuMjAzNjEuNzQ0ODcuNS45NzM2M3YuNzc2MzdjMCwuNDE0MDYuMzM1OTQuNzUuNzUuNzVzLjc1LS4zMzU5NC43NS0uNzV2LS43NzYzN2MuMjk2MzktLjIyODc2LjUtLjU3MTA0LjUtLjk3MzYzWiIvPjxwYXRoIGQ9Ik0xNSw3LjAyNTM5di0uNTI1MzljMC0yLjc1Njg0LTIuMjQzMTYtNS01LTVzLTUsMi4yNDMxNi01LDV2LjUyNTM5Yy0xLjEyMTU4LjEyNjIyLTIsMS4wNzAwNy0yLDIuMjI0NjF2Ni41YzAsMS4yNDAyMywxLjAwOTc3LDIuMjUsMi4yNSwyLjI1aDkuNWMxLjI0MDIzLDAsMi4yNS0xLjAwOTc3LDIuMjUtMi4yNXYtNi41YzAtMS4xNTQ1NC0uODc4NDItMi4wOTgzOS0yLTIuMjI0NjFaTTEwLDNjMS45Mjk2OSwwLDMuNSwxLjU3MDMxLDMuNSwzLjV2LjVoLTd2LS41YzAtMS45Mjk2OSwxLjU3MDMxLTMuNSwzLjUtMy41Wk0xNS41LDE1Ljc1YzAsLjQxMzA5LS4zMzY5MS43NS0uNzUuNzVINS4yNWMtLjQxMzA5LDAtLjc1LS4zMzY5MS0uNzUtLjc1di02LjVjMC0uNDEzMDkuMzM2OTEtLjc1Ljc1LS43NWg5LjVjLjQxMzA5LDAsLjc1LjMzNjkxLjc1Ljc1djYuNVoiLz48L2c+PC9zdmc+"); }

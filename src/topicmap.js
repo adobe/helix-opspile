@@ -231,7 +231,7 @@ export const LIFT = 2;
 export const MAX_AREA_TOPICS = 8;
 
 /** What of `values` (a list per thread) the threads `members` are concentrated on, or null. */
-function concentration(members, values, base) {
+function concentration(members, values, base, lift = LIFT) {
   const count = new Map();
   for (const i of members) {
     for (const v of new Set(values[i] || [])) {
@@ -240,7 +240,7 @@ function concentration(members, values, base) {
   }
   for (const [v, n] of count) {
     const share = n / members.length;
-    if (share >= CONCENTRATED && share >= LIFT * (base.get(v) || 0)) {
+    if (share >= CONCENTRATED && share >= lift * (base.get(v) || 0)) {
       return v;
     }
   }
@@ -299,9 +299,16 @@ export function areaTopics(X, idx, facets, { seed = 1 } = {}) {
       t.c = centroid(t.members.map((i) => X[i]));
     }
   }
+  // The one topic an area could not split has every thread of it, so no lift over the area can
+  // tell: it is concentrated on what has CONCENTRATED of its threads, whatever the area's share.
+  const alone = (t) => Object.entries(facets)
+    .map(([name, values]) => {
+      const v = concentration(t.members, values, bases[name], 0);
+      return v === null ? null : `${name}:${v}`;
+    }).find(Boolean) || null;
   return live.map((t) => ({
     members: t.members.map((i) => ({ i, sim: dot(X[i], t.c) })).sort((a, b) => b.sim - a.sim),
-    concentrated: live.length === 1 ? why(t) : null,
+    concentrated: live.length === 1 ? alone(t) : null,
   })).sort((a, b) => b.members.length - a.members.length);
 }
 
@@ -645,8 +652,9 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
   // each area, and none is one customer's, team's or product's concern (areaTopics).
   const areaOf = rows.map((t) => topicList(t.topics).find((id) => tagNames[id]) || '');
   const facets = {
-    customer: rows.map((t) => [t.org]),
-    team: rows.map((t) => [t.team]),
+    // A thread with no customer is nobody's concern, not one of `null`'s.
+    customer: rows.map((t) => (t.org ? [t.org] : [])),
+    team: rows.map((t) => (t.team ? [t.team] : [])),
     product: rows.map((t) => products.of.get(t.thread) || []),
   };
   const byArea = new Map();
@@ -711,11 +719,12 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
   }
   const counts = new Map();
   rows.forEach((t) => {
-    for (const [p, n] of Object.entries({ ...staff.get(t.thread), ...others.get(t.thread) })) {
+    for (const p of Object.keys({ ...staff.get(t.thread), ...others.get(t.thread) })) {
       const c = counts.get(p) || new Map();
       const isStaff = Boolean(staff.get(t.thread)?.[p]);
       const k = isStaff ? `team:${t.team}` : `org:${t.org}`;
-      c.set(k, (c.get(k) || 0) + n);
+      // By threads, not messages: one long thread does not outweigh many.
+      c.set(k, (c.get(k) || 0) + 1);
       counts.set(p, c);
     }
   });

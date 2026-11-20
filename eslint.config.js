@@ -82,6 +82,7 @@ export default [
         Stack: 'readonly',
         // The notification troubleshooter's steps, ui/notifyhelp.js (the inbox).
         NotifyHelp: 'readonly',
+        Tour: 'readonly',
         // The Topics page's graph, ui/topicgraph.js.
         TopicGraph: 'readonly',
         // A team's or a customer's agent, ui/agent.js (in Teams and Customers, ui/admin.js).

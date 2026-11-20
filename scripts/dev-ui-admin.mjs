@@ -423,6 +423,18 @@ const ADMIN_CHANNELS = [
     clef: { none: 0.84, platform: 0.1, edge: 0.06 },
     kind: ['ignore', 0.9],
   },
+  // The team wizard's case (src/teamwizard.js): channels named for a product no team has a
+  // rule for, with the same two people in most of them, known only as members, and on no team.
+  ...['acme', 'globex', 'hooli', 'wonka'].map((org, n) => ({
+    id: `C0LOOM${org.toUpperCase()}`,
+    source: 'slack',
+    name: `loom-${org}`,
+    org,
+    titles: ['Recording does not start'],
+    accounts: [['U-KIRA', 'Kira Selby', 'kselby@example.com'], ...(n < 3 ? [['U-NOOR', 'Noor Haddad', 'nhaddad@example.com']] : [])],
+    clef: { none: 0.6, platform: 0.3, edge: 0.1 },
+    kind: ['channel', 0.9],
+  })),
   // A customer with many channels: its tools' per-channel lists are long.
   ...Array.from({ length: 40 }, (_, n) => ({
     id: `C0INISITE${n}`,
@@ -509,6 +521,10 @@ function seedAdminChannels(DB) {
       const p = person.get(id);
       db.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id, email, name)
         VALUES (?, 'T-FAKE', ?, ?, ?, ?)`).run(c.source, c.id, `U-${id}`, p.email, p.name);
+    });
+    (c.accounts || []).forEach(([user, name, email]) => {
+      db.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id, email, name)
+        VALUES (?, 'T-FAKE', ?, ?, ?, ?)`).run(c.source, c.id, user, email, name);
     });
     const [team, p] = Object.entries(c.clef).sort((a, b) => b[1] - a[1])[0];
     db.prepare(`INSERT INTO channel_labels (source, tenant, channel_id, team, team_p, teams, kind, kind_p,
@@ -770,6 +786,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     },
     AGENT_MODEL: 'dev',
     AGENT_CHANNELS: 'C0ACMEAEM',
+    // The fake inbox's staff (the team wizard counts only them).
+    STAFF_DOMAINS: 'example.com',
     // Seals the MCP servers' headers; made up for the preview.
     TOKEN_KEY: Buffer.alloc(32, 9).toString('base64url'),
     PUBLIC_ORIGIN: PREVIEW_ORIGIN,

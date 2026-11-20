@@ -18,21 +18,31 @@ import { SCRIPTS } from './ui.js';
 // eslint-disable-next-line no-new-func
 const TopicGraph = new Function('globalThis', `${SCRIPTS['topicgraph.js']}\nreturn globalThis.TopicGraph;`)({});
 
-const ALL = ['person', 'topic', 'tag', 'product', 'org'];
+const ALL = ['person', 'topic', 'product'];
 
-/** A map of `threads`: `[topic, org, people, tags]` each, on team `a`. */
+/**
+ * A map of `threads`: `[topic, org, people, tags, customers]` each, on team `a`. Topics 0 and 1
+ * are in area cdn, topic 2 in none; people 1 and 2 are on team a, 3 on team b; 9 is Acme's.
+ */
 function mapOf(threads) {
   return {
-    topics: [{ label: 'T0' }, { label: 'T1' }, { label: 'T2' }],
-    people: { 1: 'P1', 2: 'P2', 3: 'P3' },
+    version: 2,
+    topics: [{ label: 'T0', area: 'cdn' }, { label: 'T1', area: 'cdn' }, { label: 'T2', area: null }],
+    people: {
+      1: 'P1', 2: 'P2', 3: 'P3', 9: 'C9',
+    },
+    peopleOf: {
+      1: { staff: true, team: 'a' }, 2: { staff: true, team: 'a' }, 3: { staff: true, team: 'b' }, 9: { staff: false, org: 'acme' },
+    },
     tags: { cdn: 'CDN', seo: 'SEO' },
     orgs: { acme: { name: 'Acme', type: 'customer' }, beta: { name: 'Beta', type: 'customer' }, us: { name: 'Us', type: 'internal' } },
-    threads: threads.map(([topic, org, people, tags = []], i) => ({
+    threads: threads.map(([topic, org, people, tags = [], customers = []], i) => ({
       key: `k${i}`,
       team: 'a',
       topic,
       org,
       staff: Object.fromEntries(people.map((p) => [p, 1])),
+      customers: Object.fromEntries(customers.map((p) => [p, 1])),
       tags,
     })),
   };
@@ -42,140 +52,140 @@ const lines = (g) => g.edges.map((e) => `${[e.a.id, e.b.id].sort().join(' ')} ${
 const drawn = (g) => g.nodes.map((n) => n.id).sort();
 
 describe('the Topics graph (ui/topicgraph.js)', () => {
-  it('joins people by the threads they share when they are shown alone', () => {
-    const g = TopicGraph.build(mapOf([
-      [0, 'acme', [1, 2]], [1, 'acme', [1, 2]], [2, 'beta', [2, 3]], [0, 'beta', [3]],
-    ]), { shown: ['person'], min: 2 });
-    assert.deepEqual(lines(g), ['person:1 person:2 2']);
-    // Person 3 shares one thread only: no line, not drawn.
-    assert.deepEqual(drawn(g), ['person:1', 'person:2']);
+  it('draws the topics in their areas, and an area opened as its topics', () => {
+    const map = mapOf([[0, 'acme', [1]], [1, 'acme', [1]], [2, 'beta', [3]]]);
+    const shut = TopicGraph.build(map, { shown: ['topic'], min: 1 });
+    // Area cdn has two topics: drawn as itself; "Not in an area" has one: drawn as it.
+    assert.deepEqual(drawn(shut), ['tag:cdn', 'topic:2']);
+    assert.equal(shut.all.get('tag:cdn').threads.length, 2);
+    assert.deepEqual(shut.all.get('tag:cdn').children.sort(), ['topic:0', 'topic:1']);
+    assert.equal(shut.all.get('topic:0').parent, 'tag:cdn');
+    assert.equal(shut.all.get('topic:2').parent, null);
+    assert.equal(shut.all.get('tag:_none').label, 'Not in an area');
+    const opened = TopicGraph.build(map, { shown: ['topic'], min: 1, open: ['tag:cdn'] });
+    assert.deepEqual(drawn(opened), ['topic:0', 'topic:1', 'topic:2']);
+    assert.equal(opened.all.get('tag:cdn').open, true);
   });
 
-  it('joins tags by the threads they share when they are shown alone', () => {
-    const g = TopicGraph.build(mapOf([
-      [0, 'acme', [1], ['cdn', 'seo']], [1, 'acme', [1], ['cdn', 'seo']], [2, 'acme', [1], ['cdn']],
-    ]), { shown: ['tag'], min: 2 });
-    assert.deepEqual(lines(g), ['tag:cdn tag:seo 2']);
+  it('puts a topic of a map from before areas in the tag most of its threads have', () => {
+    const map = mapOf([[0, 'acme', [1], ['seo']], [0, 'acme', [1], ['seo', 'cdn']], [1, 'acme', [1]]]);
+    map.topics = map.topics.map(({ label }) => ({ label }));
+    delete map.peopleOf;
+    const g = TopicGraph.build(map, { shown: ['topic'], min: 1 });
+    assert.deepEqual(g.areas, ['seo', '_none', '_none']);
+    // And Adobe's people in the team of most of their threads.
+    assert.equal(g.all.get('person:1').parent, null);
+    assert.equal(g.all.get('team:a').children.length, 1);
+  });
+
+  it('draws Adobe\'s people in their teams, the others in their customers', () => {
+    const map = mapOf([
+      [0, 'acme', [1, 2], [], [9]], [0, 'acme', [1, 2]], [1, 'beta', [1, 3]], [1, 'us', [3]],
+    ]);
+    const g = TopicGraph.build(map, { shown: ['person'], min: 1, teamName: (t) => `Team ${t}` });
+    // Team a (two people) is a bubble, team b (one) is its person; a customer is a bubble
+    // whether or not its people posted; internal customers are none.
+    assert.deepEqual(drawn(g), ['org:acme', 'org:beta', 'person:3', 'team:a']);
+    assert.equal(g.all.get('team:a').label, 'Team a');
+    assert.deepEqual(g.all.get('org:acme').children, ['person:9']);
+    assert.equal(g.all.get('org:acme').threads.length, 2);
+    assert.deepEqual(lines(g), [
+      'org:acme team:a 2', 'org:beta person:3 1', 'org:beta team:a 1', 'person:3 team:a 1',
+    ]);
+    const open = TopicGraph.build(map, { shown: ['person'], min: 1, open: ['team:a', 'org:acme'] });
+    assert.deepEqual(drawn(open), ['org:beta', 'person:1', 'person:2', 'person:3', 'person:9']);
+    assert.ok(lines(open).includes('person:1 person:9 1'));
   });
 
   it('joins topics by min people, each with min threads in both', () => {
     const threads = [
-      // People 1 and 2 have two threads in topic 0 and two in topic 1.
-      [0, 'acme', [1, 2]], [0, 'acme', [1, 2]], [1, 'acme', [1, 2]], [1, 'acme', [1, 2]],
+      // People 1 and 2 have two threads in topic 0 and two in topic 2.
+      [0, 'acme', [1, 2]], [0, 'acme', [1, 2]], [2, 'acme', [1, 2]], [2, 'acme', [1, 2]],
       // Person 3 has two in topic 1 and two in topic 2, alone: not enough people.
       [1, 'beta', [3]], [1, 'beta', [3]], [2, 'beta', [3]], [2, 'beta', [3]],
     ];
-    const g = TopicGraph.build(mapOf(threads), { shown: ['topic'], min: 2 });
-    assert.deepEqual(lines(g), ['topic:0 topic:1 2']);
+    const open = ['tag:cdn'];
+    const g = TopicGraph.build(mapOf(threads), { shown: ['topic'], min: 2, open });
+    assert.deepEqual(lines(g), ['topic:0 topic:2 2']);
     // Topics are drawn without a line too.
     assert.deepEqual(drawn(g), ['topic:0', 'topic:1', 'topic:2']);
     // At 1+, one person with one thread in both is enough.
     assert.deepEqual(
-      lines(TopicGraph.build(mapOf(threads), { shown: ['topic'], min: 1 })),
-      ['topic:0 topic:1 2', 'topic:1 topic:2 1'],
+      lines(TopicGraph.build(mapOf(threads), { shown: ['topic'], min: 1, open })),
+      ['topic:0 topic:2 2', 'topic:1 topic:2 1'],
     );
   });
 
-  it('joins one person with one thread in each topic only at 1+', () => {
-    const threads = [[0, 'acme', [1, 2]], [1, 'acme', [1, 2]]];
-    assert.deepEqual(lines(TopicGraph.build(mapOf(threads), { shown: ['topic'], min: 2 })), []);
-    assert.deepEqual(
-      lines(TopicGraph.build(mapOf(threads), { shown: ['topic'], min: 1 })),
-      ['topic:0 topic:1 2'],
-    );
-  });
-
-  it('joins customers by their people too, and leaves out internal ones and those without a line', () => {
-    const g = TopicGraph.build(mapOf([
-      [0, 'acme', [1, 2]], [0, 'acme', [1, 2]], [1, 'beta', [1, 2]], [1, 'beta', [1, 2]],
-      [2, 'us', [1, 2]], [2, 'us', [1, 2]], [2, 'gamma', [3]],
-    ]), { shown: ['org'], min: 2 });
-    assert.deepEqual(lines(g), ['org:acme org:beta 2']);
-    assert.deepEqual(drawn(g), ['org:acme', 'org:beta']);
-  });
-
-  it('keeps the lines between kinds as they were with several shown', () => {
-    const map = mapOf([[0, 'acme', [1, 2], ['cdn']], [0, 'acme', [1, 2], ['cdn']]]);
-    // With the topics, they are the hubs: no person–person, person–tag or tag–customer lines.
-    assert.deepEqual(lines(TopicGraph.build(map, { shown: ALL, min: 2 })), [
-      'org:acme person:1 2', 'org:acme person:2 2', 'org:acme topic:0 2',
-      'person:1 topic:0 2', 'person:2 topic:0 2', 'tag:cdn topic:0 2',
-    ]);
-    // Without them, any two kinds, but never two of one.
-    assert.deepEqual(lines(TopicGraph.build(map, { shown: ['person', 'tag'], min: 2 })), [
-      'person:1 tag:cdn 2', 'person:2 tag:cdn 2',
+  it('keeps the topics the hubs with several kinds shown', () => {
+    const map = mapOf([[2, 'acme', [1, 2]], [2, 'acme', [1, 2]]]);
+    // A line from the topic to the others, none between people and customers.
+    assert.deepEqual(lines(TopicGraph.build(map, { shown: ALL, min: 2, open: ['team:a'] })), [
+      'org:acme topic:2 2', 'person:1 topic:2 2', 'person:2 topic:2 2',
     ]);
   });
 
-  it('joins products by the threads they share, an entry as the product it is part of', () => {
+  it('draws the features in their products or vendors, a thread once in each', () => {
     const map = mapOf([[0, 'acme', [1]], [1, 'acme', [1]], [2, 'acme', [1]]]);
     map.products = {
-      ue: { name: 'Universal Editor', tech: true, product: 'Sites' },
-      sites: { name: 'Sites', tech: true, product: 'Sites' },
-      akamai: { name: 'Akamai', tech: true },
-      fastly: { name: 'Fastly' },
+      'tech:adobe/sites/ue': { name: 'Universal Editor', tech: 'adobe/sites/ue', product: 'Sites' },
+      'tech:adobe/sites/eds': { name: 'Edge Delivery', tech: 'adobe/sites/eds', product: 'Sites' },
+      'tech:akamai/cdn': { name: 'Akamai', tech: 'akamai/cdn', product: 'Akamai' },
+      Fastly: { name: 'Fastly' },
     };
-    map.threads[0].products = ['ue', 'akamai'];
-    map.threads[1].products = ['sites', 'ue', 'akamai'];
-    map.threads[2].products = ['fastly'];
+    map.threads[0].products = ['tech:adobe/sites/ue', 'tech:akamai/cdn'];
+    map.threads[1].products = ['tech:adobe/sites/eds', 'tech:adobe/sites/ue', 'tech:akamai/cdn'];
+    map.threads[2].products = ['Fastly'];
     const g = TopicGraph.build(map, { shown: ['product'], min: 2 });
-    // Universal Editor and Sites are one product; a thread naming both counts once.
-    assert.deepEqual(lines(g), ['product:akamai product:group:Sites 2']);
-    assert.deepEqual(g.all.get('product:group:Sites').threads.length, 2);
-    assert.equal(g.all.get('product:fastly').gap, true);
-    assert.equal(g.all.get('product:akamai').gap, false);
+    // Sites is a product of two features; Akamai, a vendor of one, is its technology.
+    assert.deepEqual(lines(g), ['product:group:Sites product:tech:akamai/cdn 2']);
+    assert.equal(g.all.get('product:group:Sites').threads.length, 2);
+    assert.equal(g.all.get('product:group:Sites').one, 'Product');
+    assert.equal(g.all.get('product:tech:adobe/sites/ue').one, 'Feature');
+    assert.equal(g.all.get('product:Fastly').gap, true);
+    assert.equal(g.all.get('product:tech:akamai/cdn').gap, false);
+    const open = TopicGraph.build(map, { shown: ['product'], min: 2, open: ['product:group:Sites'] });
+    assert.deepEqual(lines(open), [
+      'product:tech:adobe/sites/ue product:tech:akamai/cdn 2',
+    ]);
   });
 
   it('takes the team\'s threads only', () => {
     const map = mapOf([[0, 'acme', [1, 2]], [1, 'acme', [1, 2]]]);
     map.threads[1].team = 'b';
-    const g = TopicGraph.build(map, { team: 'a', shown: ['person'], min: 1 });
+    const g = TopicGraph.build(map, {
+      team: 'a', shown: ['person'], min: 1, open: ['team:a'],
+    });
     assert.equal(g.threads.length, 1);
-    assert.deepEqual(lines(g), ['person:1 person:2 1']);
+    assert.ok(lines(g).includes('person:1 person:2 1'));
   });
 
-  it('leaves out what has no line with several shown, but not a topic', () => {
+  it('leaves out what has no line, but not a topic or an area', () => {
     const map = mapOf([
-      [0, 'acme', [1, 2], ['cdn']], [0, 'acme', [1, 2], ['cdn']],
-      // Topic 1's one thread: under the cutoff, so none of it has a line.
-      [1, 'beta', [3], ['seo']],
+      [0, 'acme', [1, 2]], [0, 'acme', [1, 2]],
+      // Topic 2's one thread: under the cutoff, so none of it has a line.
+      [2, 'beta', [3]],
     ]);
     const g = TopicGraph.build(map, { shown: ALL, min: 2 });
-    assert.deepEqual(drawn(g), [
-      'org:acme', 'person:1', 'person:2', 'tag:cdn', 'topic:0', 'topic:1',
-    ]);
+    // Area cdn has one topic on these threads: it is drawn as that topic.
+    assert.deepEqual(drawn(g), ['org:acme', 'team:a', 'topic:0', 'topic:2']);
     // Every node is there to point at and find, drawn or not.
-    assert.ok(g.all.has('person:3') && g.all.has('org:beta') && g.all.has('tag:seo'));
-    // Without the topics, the rest goes too.
-    assert.deepEqual(drawn(TopicGraph.build(map, { shown: ['person', 'org'], min: 2 })), [
-      'org:acme', 'person:1', 'person:2',
-    ]);
+    assert.ok(g.all.has('person:3') && g.all.has('org:beta') && g.all.has('person:1'));
   });
 
-  it('needs min threads for a line between kinds too', () => {
-    const map = mapOf([[0, 'acme', [1, 2]], [0, 'acme', [1]], [0, 'beta', [2]]]);
-    assert.deepEqual(lines(TopicGraph.build(map, { shown: ALL, min: 2 })), [
-      'org:acme person:1 2', 'org:acme topic:0 2', 'person:1 topic:0 2', 'person:2 topic:0 2',
-    ]);
-    const g = TopicGraph.build(map, { shown: ALL, min: 3 });
-    assert.deepEqual(lines(g), []);
-    assert.deepEqual(drawn(g), ['topic:0']);
-  });
-
-  it('names the people, customers and products of most threads, and only them', () => {
+  it('names the groups, and the people and products of most threads, and only them', () => {
     const people = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [i + 1, `P${i + 1}`]));
-    // Person n is on n threads, all in topic 0, with customer acme.
+    // Person n is on n threads, all in topic 2, with customer acme, and on no team.
     const threads = [];
     for (let n = 1; n <= 16; n += 1) {
       for (let i = 0; i < n; i += 1) {
-        threads.push([0, 'acme', [n]]);
+        threads.push([2, 'acme', [n]]);
       }
     }
-    const map = { ...mapOf(threads), people };
+    const map = { ...mapOf(threads), people, peopleOf: {} };
     const g = TopicGraph.build(map, { shown: ALL, min: 1 });
-    const named = g.nodes.filter((n) => n.named).map((n) => n.id).sort();
-    const top = Array.from({ length: 14 }, (_, i) => `person:${i + 3}`);
+    const named = g.nodes.filter((n) => n.named && n.family === 'person').map((n) => n.id).sort();
+    const top = Array.from({ length: 13 }, (_, i) => `person:${i + 4}`);
     assert.deepEqual(named, ['org:acme', ...top].sort());
-    assert.equal(g.all.get('topic:0').named, undefined);
+    assert.equal(g.all.get('topic:2').named, true);
   });
 });

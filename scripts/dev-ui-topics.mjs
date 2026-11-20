@@ -124,6 +124,18 @@ const PRODUCTS = {
   20: { 'Sites Optimizer': 0.8, 'Brand Visibility': 0.3 },
 };
 
+// The customers' own people who post, a few per customer (ids from 300).
+const CUSTOMER_PEOPLE = {
+  acme: ['Ana Ruiz', 'Bram Visser', 'Chen Wei'],
+  globex: ['Dara Quinn', 'Eli Moss'],
+  umbrella: ['Farah Aziz', 'Gus Holm'],
+  wonka: ['Hana Ito', 'Ivo Petrov', 'Jill Hart'],
+  hooli: ['Kai Lund'],
+  stark: ['Lia Costa', 'Milo Dunn'],
+  initech: ['Nils Berg'],
+  vandelay: ['Oda Fry'],
+};
+
 // The storefront is one customer's.
 const OWN_TOPIC = { 11: 'wonka' };
 const TEAMS = ['edge', 'platform'];
@@ -134,6 +146,12 @@ export function topicMapFixture(now = Date.now(), tech = []) {
   const rnd = random(4242);
   const pick = (list) => list[Math.floor(rnd() * list.length)];
   const people = Object.fromEntries(PEOPLE.map(([name], i) => [100 + i, name]));
+  const theirs = {};
+  Object.entries(CUSTOMER_PEOPLE).flatMap(([org, names]) => names.map((name) => [org, name]))
+    .forEach(([org, name], i) => {
+      people[300 + i] = name;
+      theirs[org] = [...(theirs[org] || []), 300 + i];
+    });
   const byTopic = TOPICS.map((_, t) => PEOPLE.map((p, i) => [p, i])
     .filter(([p]) => p[1].includes(t))
     .map(([p, i]) => ({ id: 100 + i, lead: p[1][0] === t })));
@@ -174,6 +192,12 @@ export function topicMapFixture(now = Date.now(), tech = []) {
           facts.push({ thread: key, value: name });
         }
       }
+      const customers = {};
+      for (const c of theirs[org] || []) {
+        if (rnd() < 0.5) {
+          customers[c] = 1 + Math.floor(rnd() * 4);
+        }
+      }
       threads.push({
         key,
         title: `${pick(titles)}${rnd() < 0.3 ? pick(SUFFIXES) : ''}`,
@@ -187,17 +211,29 @@ export function topicMapFixture(now = Date.now(), tech = []) {
         topic: id,
         sim,
         staff,
+        customers,
       });
     }
+    // Found in the area most of its threads are in (none for those Clef tags nothing).
+    const area = Object.entries(tags).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
     return {
-      id, label, theme, size, cohesion: Math.round((0.42 + rnd() * 0.18) * 1000) / 1000,
+      id, label, theme, area, size, cohesion: Math.round((0.42 + rnd() * 0.18) * 1000) / 1000,
     };
   });
   const order = topics.map((t) => t.id).sort((a, b) => topics[b].size - topics[a].size);
   const renumber = new Map(order.map((old, i) => [old, i]));
   const products = productsOf(facts, tech);
+  // Adobe's people in a team each, the customers' in their customer (src/topicmap.js peopleOf).
+  const peopleOf = Object.fromEntries(PEOPLE.map((_, i) => [100 + i,
+    { staff: true, team: i % 3 ? 'platform' : 'edge' }]));
+  for (const [org, ids] of Object.entries(theirs)) {
+    for (const id of ids) {
+      peopleOf[id] = { staff: false, org };
+    }
+  }
   return {
-    version: 1,
+    version: 2,
+    peopleOf,
     built_at: new Date(now - 2 * 86400000).toISOString(),
     built_by: 'cron',
     model: EMBEDDING_MODEL,
