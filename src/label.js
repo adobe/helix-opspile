@@ -21,6 +21,7 @@ import { LAYERS } from './stack.js';
 import { threadTechStatements } from './follows.js';
 import { resolveTech, techMoves } from './catalog.js';
 import { questionKeys } from './techid.js';
+import { areaNames, areasFor } from './areas.js';
 
 /**
  * Thread labels (Clef, a decision model) and facts (the teams' extraction rules, plus Clairic,
@@ -225,15 +226,31 @@ export async function askClef(env, state, ...groups) {
   };
 }
 
-const TOPIC_QUESTIONS = Object.fromEntries(Object.entries(TOPICS).map(([id, t]) => [`topic.${id}`, {
+/** TOPICS as areas (src/areas.js): what Clef asks until a team has written any. */
+export const BUILT_IN_AREAS = Object.entries(TOPICS)
+  .map(([id, t]) => ({ id, name: t.name, what: t.what }));
+
+/**
+ * The areas Clef asks about (src/areas.js `areasFor`): the teams', in the order the built-in ones
+ * were measured in, those added after them; the built-in ones until a team has written any.
+ */
+export const areasToAsk = (env) => areasFor(env, {
+  order: Object.keys(TOPICS), fallback: BUILT_IN_AREAS,
+});
+
+/** The Clef questions of `areas`, one per area: "Is this thread about <what>?". */
+export const areaQuestions = (areas) => Object.fromEntries(areas.map((t) => [`topic.${t.id}`, {
   type: 'noul',
   instructions: `Is this thread about ${t.what}?`,
 }]));
 
-/** The topics Clef is sure enough of, as `{ id: probability }`; null when there are none. */
-export function topicsOf(answers) {
+/**
+ * The areas (topics) Clef is sure enough of, of `areas` (the built-in ones by default), as
+ * `{ id: probability }`; null when there are none.
+ */
+export function topicsOf(answers, areas = BUILT_IN_AREAS) {
   const out = {};
-  for (const id of Object.keys(TOPICS)) {
+  for (const id of areas.map((a) => a.id)) {
     const p = answers && answers[`topic.${id}`] ? answers[`topic.${id}`].noul : null;
     if (typeof p === 'number' && p >= TOPIC_MIN) {
       out[id] = Math.round(p * 1000) / 1000;
@@ -258,18 +275,23 @@ export function topicList(stored) {
   return [...new Set(ids)];
 }
 
-/** The names the inbox shows for topic ids. */
+/** The names the inbox shows for the built-in areas' ids. */
 export const topicNames = () => Object.fromEntries(Object.entries(TOPICS)
   .map(([id, t]) => [id, t.name]));
+
+/** The names the inbox shows for area ids: every team's (src/areas.js), else the built-in ones. */
+export const areaNamesOf = (env) => areaNames(env, topicNames());
 
 /**
  * The names the inbox shows for tech stack and topic ids, the layer of the stack each
  * technology is in (`layers`), and the layers, top to bottom (`stack`, src/stack.js).
  */
 export const vocab = async (env, team = null) => {
-  const [tech, layers] = await Promise.all([techNames(env, team), techLayerMap(env, team)]);
+  const [tech, layers, topics] = await Promise.all([
+    techNames(env, team), techLayerMap(env, team), areaNamesOf(env),
+  ]);
   return {
-    tech, topics: topicNames(), layers, stack: LAYERS.map(({ id, name }) => ({ id, name })),
+    tech, topics, layers, stack: LAYERS.map(({ id, name }) => ({ id, name })),
   };
 };
 
@@ -675,8 +697,8 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
     return { result: 'skip', reason: 'no messages' };
   }
 
-  const [rules, tech, moves] = await Promise.all([
-    rulesFor(env, thread.team), techFor(env, thread.team), techMoves(env),
+  const [rules, tech, moves, areas] = await Promise.all([
+    rulesFor(env, thread.team), techFor(env, thread.team), techMoves(env), areasToAsk(env),
   ]);
   const found = await extract(env, rules, thread, messages);
   // A script may still detect a technology by an id it had (src/catalog.js).
@@ -686,7 +708,7 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
   const state = stateOf(thread, messages, rx.by);
   const [clef, clairic, title] = await Promise.all([
     // The topics on their own, so the tech stack's entries do not move their answers.
-    askClef(env, state, { ...QUESTIONS, ...TOPIC_QUESTIONS }, techQuestions(tech)),
+    askClef(env, state, { ...QUESTIONS, ...areaQuestions(areas) }, techQuestions(tech)),
     env.AI.run(CLAIRIC, {
       model: 'clairic', state, fields: FIELDS, reference_date: now.toISOString().slice(0, 10),
     }),
@@ -701,7 +723,7 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
   };
   const [nextActor, nextActorP] = choice('next_actor');
   const [kind, kindP] = choice('kind');
-  const topics = topicsOf(a);
+  const topics = topicsOf(a, areas);
   const shown = techOf(tech, a, found.tech);
   // Of what it shows, what it is about: a second call, only for those (src/label.js aboutOf).
   const asked = tech.filter((t) => shown[t.tech] !== undefined);

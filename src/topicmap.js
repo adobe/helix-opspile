@@ -11,7 +11,7 @@
  */
 
 import {
-  garbled, mangled, TITLER, topicList, topicNames,
+  areaNamesOf, garbled, mangled, TITLER, topicList,
 } from './label.js';
 import { EMBEDDING_MODEL } from './rethread.js';
 import { authHeaders, gatewayBaseUrl, modelProblem } from './agent/model.js';
@@ -547,7 +547,7 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
   const products = techProductsOf(facts, tech);
   const top = (list) => [...list.reduce((c, v) => c.set(v, (c.get(v) || 0) + 1), new Map())]
     .sort((a, b) => b[1] - a[1]).slice(0, 5);
-  const tagNames = topicNames();
+  const tagNames = await areaNamesOf(env);
   const productName = (id) => {
     const p = products.products[id];
     return (p && (p.product && p.tech ? `${p.name} (${p.product})` : p.name)) || id;
@@ -610,7 +610,7 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
     people,
     orgs: Object.fromEntries(orgs.filter((o) => used.has(o.slug))
       .map((o) => [o.slug, { name: o.name || o.slug, type: o.type }])),
-    tags: topicNames(),
+    tags: tagNames,
     products: products.products,
   };
   const built = await env.DB.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map)

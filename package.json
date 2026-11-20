@@ -36,7 +36,8 @@
     "precomputer:check": "npm run build --silent",
     "pregraphviz:dev": "npm run build --silent",
     "pretruth": "npm run build --silent",
-    "catalog:bootstrap": "node scripts/catalog-bootstrap.mjs"
+    "catalog:bootstrap": "node scripts/catalog-bootstrap.mjs",
+    "areas:bootstrap": "node scripts/areas-bootstrap.mjs"
   },
   "devDependencies": {
     "@adobe/eslint-config-helix": "^3.0.33",

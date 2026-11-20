@@ -34,6 +34,7 @@
 import { LAYER_IDS } from './stack.js';
 import { scalar, splitFrontmatter, strings } from './agent/okf.js';
 import { isTechId } from './techid.js';
+import { areaStatements } from './areas.js';
 
 export const PRODUCTS = 'products';
 export const CATEGORIES = 'categories';
@@ -309,7 +310,7 @@ function rewrites(db, old, tech) {
  * its catalog rows of tech_stack and its moves replaced, the moves that are new rewritten (one
  * whose old id is still a file of the catalog is no move: it is only mapped), all in one batch.
  */
-export async function storeCatalog(env, kb, { rows, moves }, now = new Date()) {
+export async function storeCatalog(env, kb, { rows, moves, areas = null }, now = new Date()) {
   const { team, repo, commit = null } = kb;
   const db = env.DB;
   const at = now.toISOString();
@@ -354,6 +355,10 @@ export async function storeCatalog(env, kb, { rows, moves }, now = new Date()) {
   let cursor = statements.length;
   const each = fresh.map((m) => rewrites(db, m.old, m.tech));
   statements.push(...each.flat());
+  // The team's areas (src/areas.js), compiled from the same commit: one watermark for both.
+  if (Array.isArray(areas)) {
+    statements.push(...areaStatements(db, team, areas, at));
+  }
   statements.push(db.prepare('UPDATE knowledge_bases SET catalog_commit = ? WHERE repo = ?')
     .bind(commit, repo));
   const results = await db.batch(statements);
