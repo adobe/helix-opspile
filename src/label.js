@@ -141,7 +141,10 @@ export const TOPIC_MIN = 0.55;
  * Topics no longer asked, for the labels from before: the topic that took one over, or null for
  * one that is a product, which the tech stack says now.
  */
-const RETIRED_TOPICS = { golive: 'project', commerce: null, integrations: null };
+// The ids of built-in topics from before, as their labels have them: one now another's. An id an
+// area has again (commerce, integrations: authored areas) is not here, or its answers would be
+// dropped on every read.
+const RETIRED_TOPICS = { golive: 'project' };
 export const LABEL_DELAY_SECONDS = 120;
 export const MIN_CONFIDENCE = 0.8;
 // Free-text spans are scored lower than typed values; this is the measured working point.
