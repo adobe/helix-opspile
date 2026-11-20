@@ -589,7 +589,8 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
    3200px (3440px) and hyperwide from 4800px (5120px). In each the filters flow into one more
    column (2, 3, 4: `#facets`, in reading order, balanced, a group never split), the list takes
    a smaller share of what is left (30%, 26%, 22%), as its rows need no more, and the sidebar may
-   grow wider, so the thread keeps most of the room. The simple personal view keeps one column
+   grow wider, so the thread keeps most of the room. Each column of filters is a little wider
+   than the one column is (--facet-w), as there is room, so fewer labels are cut short. The simple personal view keeps one column
    of filters: it has one group.
    Wherever the filters are a column (from 1100px, not folded to the rail) the edges between the
    filters, the list, the thread and the sidebar are grips (`.grip`, wireColumns in
@@ -602,10 +603,11 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 #facets { display: contents; }
 @media (min-width: 1100px) {
   main:not(.rail):not(.simple) #facets { display: block; columns: auto var(--facet-w); column-gap: var(--facet-gap); }
-  main:not(.rail):not(.simple) #facets > .card { break-inside: avoid; margin-bottom: var(--spectrum-spacing-200); }
+  main:not(.rail):not(.simple) #facets > .card { break-inside: avoid; margin-bottom: var(--fr-h); }
 }
 @media (min-width: 2400px) {
   main:not(.simple) { --filters-w: calc(var(--facet-w) * 2 + var(--facet-gap) + var(--spectrum-spacing-300) + var(--frame-gap)); }
+  :root { --facet-w: calc(var(--filters-w) - var(--spectrum-spacing-300) - var(--frame-gap) + var(--spectrum-spacing-500)); }
   main { --list-share: 30%; --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 80));
     grid-template-columns: var(--nav-w) minmax(var(--list-least), var(--list-share)) 1fr; }
   main.siding { grid-template-columns: var(--nav-w) minmax(var(--list-least), calc(var(--list-share) + ((100% - var(--nav-w)) * 3 / 11 - var(--list-share)) * var(--side-open, 1))) 1fr; }
@@ -617,6 +619,34 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 @media (min-width: 4800px) {
   main:not(.simple) { --filters-w: calc(var(--facet-w) * 4 + var(--facet-gap) * 3 + var(--spectrum-spacing-300) + var(--frame-gap)); }
   main { --list-share: 22%; --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 110)); }
+}
+/* The filters as one table, wherever they are a column (from 1100px, not the rail, not the
+   simple personal view), so a row reads across and the columns of filters line up side by side:
+   - Across: every row has the same tracks, at the same widths in every card: its color, its
+     icon, the label, the unread mentions (`.men`, out of `.lw` into a track of their own, so
+     the badges stand in a column and not wherever a label ends), the count, and the bar. The
+     count's track is as wide as the most threads any value can have (`--fr-digits`, the digits
+     of the list's length, set by filterCards in ui/inbox.js), so the bars start at one edge in
+     every card, whatever its counts; the bar's track grows with a column made wider by hand. A
+     group's title (`.fg`) starts where the labels do.
+   - Down: rows, a group's title and a card's title are all --fr-h high, and a card's gap is
+     one more, so every row of every column sits on the same lines as its neighbors'.
+   In the rail the label and its mentions stay together (`.lw`): there only the badge shows. */
+@media (min-width: 1100px) {
+  main:not(.rail):not(.simple) #facets { --fr-h: calc(var(--spectrum-spacing-400) + var(--spectrum-spacing-75));
+    --fr-gap: var(--spectrum-text-to-visual-100); --fr-bar: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-600)); }
+  .spectrum main:not(.rail):not(.simple) #facets .card h3 { height: var(--fr-h); margin: 0px; align-items: flex-end;
+    padding-bottom: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+  main:not(.rail):not(.simple) #facets .fg { height: var(--fr-h); display: flex; align-items: flex-end; overflow: hidden; white-space: nowrap;
+    margin: 0px var(--spectrum-spacing-75) 0px calc(var(--spectrum-spacing-75) * 2 + var(--spectrum-spacing-50) + var(--spectrum-spacing-300) + var(--fr-gap) * 2);
+    padding-bottom: var(--spectrum-spacing-75); }
+  main:not(.rail):not(.simple) #facets .fr { height: var(--fr-h); padding-top: 0px; padding-bottom: 0px; column-gap: var(--fr-gap);
+    grid-template-columns: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) minmax(0px, 1fr) auto
+      minmax(calc(var(--fr-digits, 2) * 1ch), max-content) max(var(--fr-bar), 22%); }
+  main:not(.rail):not(.simple) #facets .fr .lw { display: contents; }
+  main:not(.rail):not(.simple) #facets .fr .men { grid-column: 4; grid-row: 1; justify-self: end; }
+  main:not(.rail):not(.simple) #facets .fr .n { grid-column: 5; grid-row: 1; }
+  main:not(.rail):not(.simple) #facets .fr .bar { grid-column: 6; grid-row: 1; }
 }
 /* A reading width for the two conversations, the thread and the sidebar: past --read-w their
    content keeps to a column in the middle, with the room left over as padding on either side, so
