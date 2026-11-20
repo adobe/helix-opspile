@@ -11,27 +11,24 @@
  */
 
 /**
- * Conflicts between team rules, for the admin team to settle under Requests: two rules that file
- * a channel opspile knows under two teams. The lowest priority decides (src/rules.js), so a
+ * Conflicts between team rules, for the admin team to settle under Requests: two rules of two
+ * teams that both match a channel opspile knows. The lowest priority decides (src/rules.js), so a
  * conflict is no error, but often an accident: a prefix of one team's (`^aem-`) that also takes
  * the channels a narrower rule of another's was meant for. Computed from the rules and the
  * channels every time, never curated.
  *
- * A conflict has two sides: one rule, or one team's manual assignments (`channel_id` rules) that
- * meet the same rule of another team, grouped. Side `a` is the broader (it matches more channels),
- * `b` the narrower. The ways to settle one:
+ * Manual assignments (`channel_id` rules) are never in a conflict: they are how one is settled for
+ * one channel, so a channel one of them decides is in none. Neither is a rule that matches every
+ * channel it may (the fallback to the admin team).
  *
- * - `follow`: a wins. b's rule becomes a follow rule (target `follow`, src/followrules.js): the
- *   channels are filed under a, and shared with b. A manual assignment of one channel becomes a
- *   share of it instead, as adding a team to a channel another team holds makes.
- * - `exclude`: b wins. a's rule leaves b's out: its pattern gets b's as a negative lookahead (on
- *   the same field), or a's manual assignments of those channels go. A rule cannot leave single
- *   channels out, so b's manual assignments against a's rule have no `exclude`: those are the
- *   other conflicts (`section: 'other'`), which `follow` or `keep` settle.
- * - `keep`: it is meant. A kept conflict stays hidden while its rules and channels stay as they
- *   were (`rule_conflict_keeps.fingerprint`).
- *
- * A rule that matches every channel it may (the fallback to the admin team) conflicts with none.
+ * Side `a` is the broader rule (it matches more channels), `b` the narrower. Either side can win
+ * (`win.a`, `win.b`): the other's pattern leaves the winner's out (`^(?!winner)loser`, on the same
+ * field), so the channels both match are filed under the winner, and the other team can follow
+ * them (`follow`): a follow rule (target `follow`, src/followrules.js) of the channels both match
+ * (`^(?=winner)loser`) shares them with it. Or it is meant: `keep` hides it while its rules and
+ * channels stay as they were (`rule_conflict_keeps.fingerprint`). A conflict neither side can win
+ * by a pattern (the rules read different things of a channel, a platform the other rule is not
+ * for) is one of the other conflicts (`section: 'other'`): kept, or changed by hand.
  */
 
 import { isHolding } from './shares.js';
@@ -44,7 +41,7 @@ const MAX_PATTERN = 500;
 const PATTERN_FIELDS = ['name', 'group_name'];
 
 const ordered = (rules) => [...rules].sort((a, b) => (a.priority - b.priority) || (a.id - b.id));
-const isPin = (r) => r.field === 'channel_id';
+const isManual = (r) => r.field === 'channel_id';
 const template = (r) => /\$\d/.test(r.value);
 
 /**
@@ -99,16 +96,21 @@ export function scanPattern(pattern) {
   return { out, alt, backref };
 }
 
-/**
- * Pattern `a` without what pattern `b` matches (`a` and not `b`, both case-insensitive, on one
- * value): `^(?!b)` before `a`, so `a`'s groups keep their numbers. Null when it cannot be written.
- */
-export function excluding(a, b) {
+/** The lookahead that holds where pattern `b` matches (`(?=…)`) or does not (`(?!…)`). */
+function lookahead(b, sign) {
   const sb = scanPattern(b);
   if (sb.backref) {
     return null;
   }
-  const look = b.startsWith('^') && !sb.alt ? `(?!${sb.out.slice(1)})` : `(?![\\s\\S]*?(?:${sb.out}))`;
+  return b.startsWith('^') && !sb.alt ? `(?${sign}${sb.out.slice(1)})`
+    : `(?${sign}[\\s\\S]*?(?:${sb.out}))`;
+}
+
+/** Pattern `a` with a lookahead before it, at the start, so `a`'s groups keep their numbers. */
+function withLookahead(a, look) {
+  if (!look) {
+    return null;
+  }
   const sa = scanPattern(a);
   const body = a.startsWith('^') && !sa.alt ? a.slice(1) : `[\\s\\S]*?(?:${a})`;
   const pattern = `^${look}${body}`;
@@ -119,6 +121,15 @@ export function excluding(a, b) {
   }
   return pattern;
 }
+
+/**
+ * Pattern `a` without what pattern `b` matches (`a` and not `b`, both case-insensitive, on one
+ * value): `^(?!b)` before `a`. Null when it cannot be written.
+ */
+export const excluding = (a, b) => withLookahead(a, lookahead(b, '!'));
+
+/** Pattern `a` where pattern `b` matches too: `^(?=b)` before `a`; null when it cannot be. */
+export const intersecting = (a, b) => withLookahead(a, lookahead(b, '='));
 
 /** A rule as a conflict shows it. */
 const shown = (r) => ({
@@ -138,33 +149,44 @@ const channelOf = (c) => ({
   source: c.source, channelId: c.channelId, name: c.name, groupName: c.groupName, shared: c.shared,
 });
 
-/**
- * The side of rule `r` in a conflict: the rule itself, or its team's manual assignments.
- */
-const sideKey = (r) => (isPin(r) ? `pins:${r.value}` : `rule:${r.id}`);
+const matches = (r, c) => valueOf(r, c, 'team') !== null;
 
-/** How rule `a` can leave out what rule `b` matches, checked on `channels`; or why it cannot. */
-function excludePattern(a, b, channels) {
-  if (a.field !== b.field || !PATTERN_FIELDS.includes(a.field)) {
+/**
+ * How `winner` wins over `loser` on `channels`: `loser`'s pattern without `winner`'s (`pattern`),
+ * and the follow rule of `loser`'s team for what both match (`follow`: `{ pattern, source }`, or
+ * null when the team follows nothing); or `{ why }` it cannot.
+ */
+function winning(winner, loser, channels) {
+  if (winner.field !== loser.field || !PATTERN_FIELDS.includes(loser.field)) {
     return { why: 'the two rules read different things of a channel, so one cannot leave the other out' };
   }
-  if (b.source && b.source !== a.source) {
-    return { why: `the narrower rule is for ${b.source} only: leaving it out would leave out the other platforms' channels too` };
+  if (winner.source && winner.source !== loser.source) {
+    return { why: `the winning rule is for ${winner.source} only: leaving it out would leave out the other platforms' channels too` };
   }
-  const pattern = excluding(a.pattern, b.pattern);
+  const pattern = excluding(loser.pattern, winner.pattern);
   if (!pattern) {
-    return { why: 'the narrower rule\'s pattern cannot be written into the other one (it refers back to a group)' };
+    return { why: 'one pattern cannot be written into the other (it refers back to a group)' };
   }
-  if (pattern.length > MAX_PATTERN) {
+  const both = intersecting(loser.pattern, winner.pattern);
+  if (pattern.length > MAX_PATTERN || (both && both.length > MAX_PATTERN)) {
     return { why: `the pattern would be longer than ${MAX_PATTERN} characters` };
   }
-  const next = { ...a, pattern };
-  const wrong = channels.find((c) => (valueOf(next, c, 'team') !== null)
-    !== (valueOf(a, c, 'team') !== null && valueOf(b, c, 'team') === null));
+  const left = { ...loser, pattern };
+  const shared = both && { ...loser, pattern: both, source: winner.source || loser.source };
+  const wrong = channels.find((c) => matches(left, c) !== (matches(loser, c) && !matches(winner, c))
+    || (shared && matches(shared, c) !== (matches(loser, c) && matches(winner, c))));
   if (wrong) {
-    return { why: 'the rewritten pattern would not match what the rule matches without the other one' };
+    return { why: 'the rewritten pattern would not match what it should' };
   }
-  return { pattern };
+  const follows = shared && !isHolding(loser.value) && !template(loser);
+  return {
+    ok: true,
+    rule: loser.id,
+    pattern,
+    // Left with no channel opspile knows: it goes, or becomes the follow rule itself.
+    empty: !channels.some((c) => matches(left, c)),
+    follow: follows ? { pattern: both, source: shared.source } : null,
+  };
 }
 
 /**
@@ -174,7 +196,6 @@ function excludePattern(a, b, channels) {
 export async function findRuleConflicts(rules, channels) {
   const live = channels.filter((c) => !c.archived);
   const teamRules = ordered(rules.filter((r) => r.target === 'team'));
-  // What each rule matches, and the rules that match every channel they may (fallbacks).
   const hits = new Map(teamRules.map((r) => [r.id, []]));
   const perChannel = live.map((c) => {
     const m = [];
@@ -187,6 +208,7 @@ export async function findRuleConflicts(rules, channels) {
     }
     return m;
   });
+  // The rules that match every channel they may (fallbacks).
   const fallback = new Set(teamRules.filter((r) => {
     const may = live.filter((c) => !r.source || r.source === c.source).length;
     return may > 1 && hits.get(r.id).length === may;
@@ -194,21 +216,18 @@ export async function findRuleConflicts(rules, channels) {
   const groups = new Map();
   live.forEach((c, n) => {
     const m = perChannel[n].filter((x) => !fallback.has(x.rule.id));
+    // Assigned by hand: settled for this channel, whatever the rules say.
+    if (m.some((x) => isManual(x.rule))) {
+      return;
+    }
     for (let i = 0; i < m.length; i += 1) {
       for (let j = i + 1; j < m.length; j += 1) {
         const [x, y] = [m[i], m[j]];
-        const [kx, ky] = [sideKey(x.rule), sideKey(y.rule)];
-        if (x.value !== y.value && kx !== ky) {
-          const key = [kx, ky].sort().join('|');
-          const g = groups.get(key) || { key, sides: new Map(), channels: new Map() };
-          for (const s of [x, y]) {
-            const k = sideKey(s.rule);
-            const side = g.sides.get(k) || { key: k, rules: new Map(), team: s.value };
-            side.rules.set(s.rule.id, s.rule);
-            g.sides.set(k, side);
-          }
+        if (x.value !== y.value) {
+          const key = `rule:${Math.min(x.rule.id, y.rule.id)}|rule:${Math.max(x.rule.id, y.rule.id)}`;
+          const g = groups.get(key) || { key, rules: [x.rule, y.rule], channels: [] };
           // The first rule that matches it decides, of these two or another.
-          g.channels.set(`${c.source}:${c.channelId}`, { channel: c, winner: m[0].value });
+          g.channels.push({ channel: c, winner: m[0].value });
           groups.set(key, g);
         }
       }
@@ -216,76 +235,37 @@ export async function findRuleConflicts(rules, channels) {
   });
   const out = [];
   for (const g of groups.values()) {
-    const sides = [...g.sides.values()].map((s) => {
-      const list = ordered([...s.rules.values()]);
-      const matched = new Map();
-      for (const r of list) {
-        for (const c of hits.get(r.id)) {
-          matched.set(`${c.source}:${c.channelId}`, c);
-        }
-      }
-      return {
-        key: s.key, team: s.team, pins: s.key.startsWith('pins:'), rules: list, matched,
-      };
-    });
-    // a is the broader side; of two as broad, b is the newer one.
-    sides.sort((p, q) => (q.matched.size - p.matched.size)
-      || (Math.max(...p.rules.map((r) => r.id)) - Math.max(...q.rules.map((r) => r.id))));
-    const [a, b] = sides;
-    const overlap = [...g.channels.values()].sort((p, q) => String(p.channel.name)
+    // a is the broader; of two as broad, b is the newer one.
+    const [ra, rb] = [...g.rules].sort((p, q) => (hits.get(q.id).length - hits.get(p.id).length)
+      || (p.id - q.id));
+    const overlap = g.channels.sort((p, q) => String(p.channel.name)
       .localeCompare(String(q.channel.name)));
-    const won = (side) => overlap.filter((o) => o.winner === side.team).length;
-    const follow = (() => {
-      if (isHolding(b.team)) {
-        return { ok: false, why: 'the admin team holds the channels no team has: it follows none' };
-      }
-      if (b.rules.some(template)) {
-        return { ok: false, why: 'the narrower rule names its team from the channel ($1): it cannot follow' };
-      }
-      return {
-        ok: true,
-        rules: b.rules.filter((r) => !b.pins || hits.get(r.id).length !== 1).map((r) => r.id),
-        shares: b.pins ? b.rules.filter((r) => hits.get(r.id).length === 1).map((r) => r.id) : [],
-      };
-    })();
-    const exclude = (() => {
-      if (a.pins) {
-        const inside = a.rules.filter((r) => hits.get(r.id).every((c) => g.channels.has(`${c.source}:${c.channelId}`)));
-        return inside.length === a.rules.length ? { ok: true, deletes: inside.map((r) => r.id) }
-          : { ok: false, why: 'some of the manual assignments match more channels than these' };
-      }
-      if (b.pins) {
-        return {
-          ok: false,
-          why: `a rule cannot leave single channels out; the manual assignments already win over the rule${b.rules.length === 1 ? '' : 's'} of the other team`,
-        };
-      }
-      const e = excludePattern(a.rules[0], b.rules[0], live);
-      return e.pattern ? { ok: true, rule: a.rules[0].id, pattern: e.pattern }
-        : { ok: false, why: e.why };
-    })();
-    const side = (s) => ({
-      key: s.key,
-      team: s.team,
-      pins: s.pins,
-      rules: s.rules.map(shown),
-      matches: s.matched.size,
-      wins: won(s),
+    const side = (r) => ({
+      key: `rule:${r.id}`,
+      team: r.value,
+      rules: [shown(r)],
+      matches: hits.get(r.id).length,
+      wins: overlap.filter((o) => o.winner === r.value).length,
     });
+    const win = {
+      a: winning(ra, rb, live),
+      b: winning(rb, ra, live),
+    };
+    for (const w of Object.values(win)) {
+      w.ok = Boolean(w.ok);
+    }
     const conflict = {
       key: g.key,
-      section: exclude.ok ? 'rules' : 'other',
-      a: side(a),
-      b: side(b),
+      section: win.a.ok || win.b.ok ? 'rules' : 'other',
+      a: side(ra),
+      b: side(rb),
       channels: overlap.map((o) => ({ ...channelOf(o.channel), winner: o.winner })),
-      follow,
-      exclude,
+      win,
     };
     // eslint-disable-next-line no-await-in-loop
     conflict.fingerprint = await sha256(JSON.stringify([
       g.key,
-      ...[a, b].flatMap((s) => s.rules
-        .map((r) => [r.id, r.priority, r.source, r.field, r.pattern, r.value])),
+      ...[ra, rb].map((r) => [r.id, r.priority, r.source, r.field, r.pattern, r.value]),
       overlap.map((o) => `${o.channel.source}:${o.channel.channelId}`),
     ]));
     out.push(conflict);
@@ -312,41 +292,53 @@ export async function ruleConflicts(env, { rules = null, kept: withKept = true }
 }
 
 /**
- * What settling conflict `c` with `action` (`follow` or `exclude`) changes of `rules`: the rules
- * after it (`next`, to plan the moves with), and the changes to write: `updates`
- * (`{ id, target?, pattern? }`), `deletes` (rule ids) and `shares` (`{ source, channelId, team }`,
- * of a manual assignment that becomes a share). `{ error }` when it cannot be settled so.
+ * What settling conflict `c` with side `side` (`a` or `b`) winning changes of `rules`: the loser's
+ * pattern leaves the winner's out, and with `follow` its team gets a follow rule of what both
+ * match. A loser left with no channel opspile knows goes instead, or with `follow` becomes the
+ * follow rule, as it is. `{ next, updates, deletes, inserts }` (`next`: the rules after it, to
+ * plan the moves with; `updates`: `{ id, pattern?, target? }`), or `{ error }`.
  */
-export function settlement(c, action, rules, channels) {
-  const way = c[action];
+export function settlement(c, side, rules, { follow = false } = {}) {
+  const way = c.win && c.win[side];
   if (!way) {
-    return { error: 'action is follow, exclude or keep' };
+    return { error: 'side is a or b' };
   }
   if (!way.ok) {
     return { error: way.why };
   }
+  if (follow && !way.follow) {
+    return { error: 'the other team cannot follow them: the admin team holds what no team has' };
+  }
+  const loser = rules.find((r) => r.id === way.rule);
+  const winner = side === 'a' ? c.a : c.b;
   const updates = [];
   const deletes = [];
-  const shares = [];
-  if (action === 'follow') {
-    updates.push(...way.rules.map((id) => ({ id, target: 'follow' })));
-    for (const id of way.shares) {
-      const r = rules.find((x) => x.id === id);
-      const ch = channels.find((x) => !x.archived && valueOf(r, x, 'team') !== null);
-      deletes.push(id);
-      if (ch) {
-        shares.push({ source: ch.source, channelId: ch.channelId, team: c.b.team });
-      }
-    }
-  } else if (way.deletes) {
-    deletes.push(...way.deletes);
+  const inserts = [];
+  if (way.empty && follow) {
+    updates.push({ id: loser.id, target: 'follow' });
+  } else if (way.empty) {
+    deletes.push(loser.id);
   } else {
-    updates.push({ id: way.rule, pattern: way.pattern });
+    updates.push({ id: loser.id, pattern: way.pattern });
+    if (follow) {
+      inserts.push({
+        target: 'follow',
+        priority: loser.priority,
+        source: way.follow.source,
+        field: loser.field,
+        pattern: way.follow.pattern,
+        value: loser.value,
+        note: `what ${winner.team}'s rule #${winner.rules[0].id} files (rule conflict)`.slice(0, 200),
+      });
+    }
   }
   const changed = new Map(updates.map((u) => [u.id, u]));
-  const next = rules.filter((r) => !deletes.includes(r.id))
-    .map((r) => (changed.has(r.id) ? { ...r, ...changed.get(r.id) } : r));
+  const next = [
+    ...rules.filter((r) => !deletes.includes(r.id))
+      .map((r) => (changed.has(r.id) ? { ...r, ...changed.get(r.id) } : r)),
+    ...inserts.map((r, i) => ({ ...r, id: Number.MAX_SAFE_INTEGER - i })),
+  ];
   return {
-    next, updates, deletes, shares,
+    next, updates, deletes, inserts,
   };
 }

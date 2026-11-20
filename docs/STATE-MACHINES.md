@@ -133,7 +133,7 @@ so it never takes away a share by hand. A channel filed under the rule's team is
 
 **Rule conflict.** open → settled or kept → open again (`src/ruleconflicts.js`). Computed from the
 team rules and the channels on every read, never stored; a settled one is gone because the rules
-changed. A kept one is a row of `rule_conflict_keeps` (migration 0086) with the conflict's
+changed, or because a manual assignment now decides each of its channels. A kept one is a row of `rule_conflict_keeps` (migration 0086) with the conflict's
 `fingerprint` (its rules and the channels both match): it is hidden while the fingerprint holds, and
 open again once a rule or a channel of it changes. Settling names what it started from: the
 fingerprint the page showed, or 409.
