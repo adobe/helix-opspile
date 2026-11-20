@@ -1110,7 +1110,7 @@ and an unchanged thread is never labeled twice):
   (`labels.tech`, migration 0059; a rule's detection counts as 1), and so does `thread_tech`, by
   index. Nothing is kept per channel or customer from Clef's answers: the customer's stack is its
   stack drawing (`channel_tech`, which kept each technology at the highest probability any
-  thread of the channel showed, is no longer written or read).
+  thread of the channel showed, was dropped in migration 0085).
   Of the technologies a thread shows, Clef is then asked, in one more call after the first
   answers, whether the thread is **about** each: whether the question, the problem or the work
   concerns it, not only mentions it (`aboutQuestions`, keyed as the tech questions;
@@ -1146,7 +1146,7 @@ and an unchanged thread is never labeled twice):
   a rename that changes the title, or the D1 entries' short ids (`eds`) when they are first
   written as files. The compile keeps them (`tech_moves`), and when a move is new it rewrites
   what D1 keeps under the old id, once: the D1 row of that id, follows, `thread_tech`,
-  `channel_tech`, extraction rules that detect it and the portal's lobbies. A move whose old id
+  extraction rules that detect it and the portal's lobbies. A move whose old id
   is still a file of the catalog is only mapped. Each new move is logged with the rows it
   rewrote (`route: 'catalog'`, `action: 'move'`), so one nobody meant can be traced. Files (a
   stack drawing's Tech) and labels from before are read through the map (src/catalog.js

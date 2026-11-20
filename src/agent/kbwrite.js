@@ -385,11 +385,15 @@ export async function writeKnowledge(env, artifact, changes, {
           // eslint-disable-next-line no-await-in-loop
           const text = await fs.promises.readFile(`${DIR}/${STACK_PATH}`, 'utf8').catch(() => null);
           // eslint-disable-next-line no-await-in-loop
-          await storeOrgStack(env, artifact.replace(/^kb-org-/, ''), text).catch((e) => console.error(
-            JSON.stringify({
+          const org = artifact.replace(/^kb-org-/, '');
+          // eslint-disable-next-line no-await-in-loop
+          await storeOrgStack(env, org, text).catch(async (e) => {
+            console.error(JSON.stringify({
               route: 'kb', action: 'stack', artifact, error: e.message,
-            }),
-          ));
+            }));
+            // Kept stale no longer: with no row, the cron reads the file again.
+            await env.DB.prepare('DELETE FROM org_stacks WHERE org = ?').bind(org).run().catch(() => {});
+          });
         }
         if (kindOf(artifact) === 'team' && changes.some((c) => inCatalog(c.path))) {
           // eslint-disable-next-line no-await-in-loop
