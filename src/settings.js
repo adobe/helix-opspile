@@ -28,6 +28,8 @@ import { json } from './http.js';
  *   the agent post its replies itself (src/postoffer.js): it does not ask them there again.
  * - `expert`: the personal view as the expert view, with every filter and each thread's status,
  *   people and reactions, instead of the simple one; off unless they turn it on.
+ * - `toured`: whether the inbox has offered them its tour (ui/tour.js) and they took it or said
+ *   no thanks: it offers it once, and your menu's Show me around has it again.
  *
  * The browser shows the notifications and the agent's thinking (ui/inbox.js): the server keeps
  * the settings only.
@@ -40,6 +42,7 @@ export const DEFAULTS = Object.freeze({
   channelTraces: Object.freeze({}),
   postingDeclined: Object.freeze([]),
   expert: false,
+  toured: false,
 });
 
 export const PERSONAL = '~personal';
@@ -128,6 +131,7 @@ export function withDefaults(me, stored) {
     channelTraces,
     postingDeclined,
     expert: typeof s.expert === 'boolean' ? s.expert : DEFAULTS.expert,
+    toured: typeof s.toured === 'boolean' ? s.toured : DEFAULTS.toured,
   };
 }
 
@@ -146,8 +150,8 @@ export async function readSettings(env, me) {
 
 /**
  * The settings `now` with what `body` changes (`mentions`, `threads`, `bells`, `traces`,
- * `channelTraces`, `postingDeclined`, `expert`; `bells` replaces the list, `channelTraces`
- * changes the channels it names, and `null` lets a channel follow `traces` again;
+ * `channelTraces`, `postingDeclined`, `expert`, `toured`; `bells` replaces the list,
+ * `channelTraces` changes the channels it names, and `null` lets a channel follow `traces` again;
  * `postingDeclined` adds the channels it lists): `{ settings }`, or `{ error }` when the body is
  * not settings.
  */
@@ -156,7 +160,7 @@ export function mergeSettings(me, now, body) {
     return { error: 'expected a JSON object' };
   }
   const next = { ...now };
-  for (const key of ['mentions', 'threads', 'expert']) {
+  for (const key of ['mentions', 'threads', 'expert', 'toured']) {
     if (key in body) {
       if (typeof body[key] !== 'boolean') {
         return { error: `\`${key}\` is true or false` };

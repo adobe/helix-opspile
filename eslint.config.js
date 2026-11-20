@@ -82,6 +82,7 @@ export default [
         Stack: 'readonly',
         // The notification troubleshooter's steps, ui/notifyhelp.js (the inbox).
         NotifyHelp: 'readonly',
+        Tour: 'readonly',
         // The Topics page's graph, ui/topicgraph.js.
         TopicGraph: 'readonly',
         // Content swaps that fade in, ui/app.js.

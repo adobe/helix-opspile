@@ -742,6 +742,14 @@ it stays so for the thread in the tab. Those that wait or run always show.
 
 **Notification permission.** unasked → asked → granted or denied (`Notification.permission` and
 `opspile.notify.asked`). The browser's own state is the record, and the first visit asks once.
+While the tour is offered it waits: it asks once the tour is over, or on the next load.
+
+**The tour.** unoffered → offered → toured (`toured` in `person_settings`, src/settings.js; false
+until set). The first load of the inbox with `toured` false offers the tour (ui/tour.js) in a
+toast, after the inbox is on screen; Show me around or No thanks sets it true, on the server, so
+no device offers it again. A load whose toast is taken (an account just connected) does not
+offer it: the next one does. Your menu's Show me around, and `/inbox?tour`, start it whatever
+`toured` says. Not offered while viewing as someone else.
 
 **Notification welcome.** unsent → sent, for a tab and for the installed app on this device
 (`opspile.notify.welcomed` in `ui/inbox.js`, a list of `tab` and `app`). Once the browser allows

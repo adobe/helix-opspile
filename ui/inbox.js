@@ -8349,13 +8349,66 @@ function wireNotify() {
   if (NOTIFY_ASKED === 'seen') testSeen();
   else if (NOTIFY_ASKED) openNotifyHelp();
   else welcomeNote();
-  // Mentions and your threads notify unless turned off, once the browser allows it: asked for
-  // once, on a click.
+  // The tour asks first (wireTour); this asks once it is over, or on the next load.
+  if (!tourDue()) askNotifyOnce();
+}
+
+/**
+ * Mentions and your threads notify unless turned off, once the browser allows it: asked for
+ * once, on a click.
+ */
+function askNotifyOnce() {
   if (!state.as && (state.settings.mentions || state.settings.threads) && canNotify()
     && Notification.permission === 'default' && !localStorage.getItem('opspile.notify.asked')) {
     localStorage.setItem('opspile.notify.asked', '1');
     toast('Get a notification when someone mentions you or writes in your threads?', { label: 'Allow', run: askToNotify });
   }
+}
+
+// ---------------------------------------------------------------- the tour
+// Someone new is offered a tour of the inbox (ui/tour.js), once: a toast, after the inbox is on
+// screen. Taking it, or No thanks, is kept (the `toured` setting), so it is not offered again on
+// any device; your menu's Show me around, and /inbox?tour, start it again. Not offered while
+// viewing as someone, whose settings are not yours.
+
+/** Whether the address asked for the tour (`?tour`), as the page was loaded. */
+const TOUR_ASKED = new URLSearchParams(location.search).has('tour');
+const tourDue = () => !state.as && state.settings?.toured === false;
+let touring = null;
+
+/** The tour's stops, for the inbox on screen. */
+function tourStops() {
+  return Tour.steps({
+    teams: (state.teams || []).length,
+    simple: simple(),
+    bell: !state.as,
+    pages: [...document.querySelectorAll('#pages a[data-page]')].map((a) => a.dataset.page),
+    key: keyLabel,
+  });
+}
+
+function showAround() {
+  if (touring || document.querySelector('dialog[open]')) return;
+  $('menu')?.hidePopover?.();
+  document.querySelectorAll('.toast:not(.leaving)').forEach(toastOut);
+  if (tourDue()) saveSettings({ toured: true });
+  touring = Tour.run(tourStops(), {
+    onEnd: (how) => {
+      touring = null;
+      if (how === 'skip') toast('The tour is in your menu, under Show me around.');
+      else askNotifyOnce();
+    },
+  });
+}
+
+function wireTour() {
+  $('tourAgain').onclick = showAround;
+  if (TOUR_ASKED) { showAround(); return; }
+  // A toast already on screen (an account just connected) goes first: the tour asks next time.
+  if (!tourDue() || document.querySelector('.toast:not(.leaving), dialog[open]')) return;
+  toast('New here? A minute\'s tour shows you around the inbox.', { label: 'Show me around', run: showAround }, {
+    stay: true, dismiss: { label: 'No thanks', run: () => saveSettings({ toured: true }) },
+  });
 }
 
 /** The teams whose rooms the notifications need: all of yours for mentions, threads, Personal. */
@@ -9901,6 +9954,7 @@ async function start() {
   else if (initial.open) openThread(initial.open);
   connect();
   registerTools();
+  wireTour();
 }
 // ---------------------------------------------------------------- WebMCP
 // Tools for an agent in the browser (https://developer.chrome.com/docs/ai/webmcp). They drive
