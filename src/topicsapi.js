@@ -14,7 +14,8 @@
  * The Topics page's API, for every member of an ops team (docs/ARCHITECTURE.md, "Topic maps"):
  *
  * - `GET /api/topics`: the newest topic map, every team's areas (src/areas.js), what the viewer
- *   follows, and what they may change: the areas of which teams (`may.areas`), and a rebuild.
+ *   follows, every team's name, and what they may change: the areas of which teams
+ *   (`may.areas`), and a rebuild.
  * - `POST /api/topics`: builds a map now, for the admin team and team managers.
  * - `POST /api/areas { team, id, title, what }`, `PUT /api/areas { team, id, title?, what?,
  *   enabled? }`, `DELETE /api/areas { team, id }`: an area of `team`'s knowledge base, as a file
@@ -60,13 +61,16 @@ async function allAreas(env) {
 
 /** GET /api/topics. `follows` is the viewer's, as GET /api/follows answers it. */
 export async function topicsPage(env, me, follows) {
-  const [latest, areas, teams] = await Promise.all([
+  const [latest, areas, teams, names] = await Promise.all([
     latestTopicMap(env), allAreas(env), areaTeams(env, me),
+    env.DB.prepare('SELECT slug, name FROM teams ORDER BY slug').all(),
   ]);
   return json({
     latest,
     available: Boolean(env.CONTENT && env.AI),
     areas,
+    // Every team's name: the map's people are grouped by theirs (ui/topicgraph.js).
+    teams: Object.fromEntries((names.results || []).map((t) => [t.slug, t.name || t.slug])),
     follows,
     may: { areas: teams, rebuild: teams.length > 0 },
   });
