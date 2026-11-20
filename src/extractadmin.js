@@ -18,8 +18,8 @@ import { LAYERS } from './stack.js';
 import { ownerOf } from './mcpadmin.js';
 
 /**
- * The Agents page's API for a team's extraction rules and tech stack (src/extract.js), behind
- * `/api/kb/extraction`, for a team's knowledge base:
+ * The agents' API (ui/agent.js) for a team's extraction rules and tech stack (src/extract.js),
+ * behind `/api/kb/extraction`, for a team's knowledge base:
  *
  * - `GET ?repo=` the team's rules and technologies, and the admin team's, which apply too.
  * - `POST /rule { repo, id?, … }` adds a rule, or changes rule `id`; `DELETE /rule { repo, id }`.

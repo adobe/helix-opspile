@@ -16,8 +16,9 @@
  * test/ui-topicgraph.test.js checks it.
  *
  * Three kinds, each a hierarchy of bubbles: the topics in their **areas** (and "Not in an
- * area"), the people in their **teams** (Adobe's) or their **customers** (everyone else's, and a
- * customer whose people did not post is a bubble of its own), and the features in their
+ * area"), the people in their **teams** (Adobe's, those on none in "Not on an ops team") or
+ * their **customers** (everyone else's, and a customer whose people did not post is a bubble of
+ * its own), and the features in their
  * **products** (Adobe's) or **vendors** (the others'). A group is drawn until it is opened
  * (`open`), and then its children are, in its place; a group of one child is that child. A
  * customer stays a bubble even with one person, as it is whom the threads are for.
@@ -104,13 +105,21 @@ globalThis.TopicGraph = (() => {
    * (a group's id) or its `children` (a group's: ids), and `open` when it is a group opened.
    */
   function build(map, {
-    team = '', shown, min = 1, open = [], teamName = (slug) => slug,
+    team = '', shown, min = 1, open = [], teamName = (slug) => slug, members = null,
   }) {
     const threads = map.threads.filter((t) => !team || t.team === team);
     const products = productsOf(map);
     const areas = topicAreas(map);
     const who = peopleOf(map);
     const opened = new Set(open);
+    // An Adobe person's team: the map's when they are on it (`members`: the teams each is on
+    // now), else the first they are on, else none (NONE).
+    const teamOf = (p) => {
+      const mine = members ? members[p] || [] : null;
+      const t = who[p]?.team;
+      if (!mine) return t || NONE;
+      return (mine.includes(t) ? t : mine[0]) || NONE;
+    };
     const all = new Map();
     const node = (type, key, label, one, parent = null) => {
       const id = `${type}:${key}`;
@@ -144,8 +153,8 @@ globalThis.TopicGraph = (() => {
       on.add(tag);
       on.add(child(tag, node('topic', t.topic, map.topics[t.topic]?.label || `Topic ${t.topic + 1}`, 'Topic')));
       for (const p of Object.keys(t.staff || {})) {
-        const slug = who[p]?.team;
-        const g = slug ? group('team', slug, teamName(slug), 'Team') : null;
+        const slug = teamOf(p);
+        const g = group('team', slug, slug === NONE ? 'Not on an ops team' : teamName(slug), 'Team');
         if (g) on.add(g);
         on.add(child(g, node('person', p, map.people[p] || `#${p}`, 'Person')));
       }

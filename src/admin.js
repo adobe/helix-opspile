@@ -1077,7 +1077,7 @@ async function followTech(env, me, body) {
 /**
  * What a new team starts with, as `by` (a name): thread agents on by default in its channels
  * (`agent_teams`), and the agent tools and global MCP servers marked `newTeams` on for the
- * team. Its managers switch any of them off in the knowledge-base editor.
+ * team. Its managers switch any of them off on the team's page (ui/agent.js).
  */
 async function newTeamDefaults(env, slug, by) {
   await setTeamDefault(env, slug, true, by);

@@ -225,6 +225,19 @@ const CHANNELS = {
  * A made-up screenshot: a chart with a title, as an SVG, for the messages with attachments.
  */
 /**
+ * A markdown table wider than any bubble: it scrolls sideways inside it.
+ */
+const WIDE_TABLE = [
+  '| path | status | requests | p50 | p95 | p99 | first seen | last seen | cache | note |',
+  '|---|---|---|---|---|---|---|---|---|---|',
+  '| /content/acme/en/products/overview | 503 | 1204 | 41ms | 1203ms | 2.4s | 10:02:11 | 10:58:40 | MISS | content host timed out |',
+  '| /content/acme/de/start/willkommen | 200 | 860 | 38ms | 310ms | 998ms | 10:02:12 | 10:59:02 | HIT | retried once, then served |',
+  '| /content/dam/acme/hero-banner-wide.png | 404 | 77 | 12ms | 40ms | 88ms | 10:04:30 | 10:41:19 | PASS | renamed in the last push |',
+].join('\n');
+/** A file name longer than any bubble is wide, as a pasted URL makes one. */
+const LONG_NAME = 'preview-requests-content-acme-en-products-overview-and-de-start-willkommen-and-dam-hero-banner-wide-since-the-config-push-2026-10-21';
+
+/**
  * A made-up CSV of publish requests (paths, statuses, timings), long enough that its preview
  * scrolls, with a quoted field holding a comma and one holding a quote.
  */
@@ -1313,6 +1326,11 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['sam', 90, 'The site config we push, and what preview logs right after:\n\n```\n{\n  "source": {\n    "type": "markup",\n    "url": "https://content.example.com/acme",\n    "retries": 3,\n    "paused": false\n  },\n  "owner": "acme",\n  "repo": "acme-web"\n}\n```\n\n```\n2026-10-21 10:02:11.204 *ERROR* [preview-7] content.Source Failed to fetch /en/index: 503\n2026-10-21 10:02:12.380 *WARN* [preview-7] content.Source Retrying (1 of 3)\n```', { subject: 'Preview fails after the config push' }],
       ['dana', 85, 'Thanks. Can you run this and send what it prints?\n\n```\ncurl -sS -H "Authorization: Bearer $TOKEN" https://admin.example.com/status/acme/acme-web/main/en/index | jq .preview\n```'],
       ['sam', 80, 'Our rewrite does this, in case it matters:\n\n```js\n// Maps legacy paths before the CDN asks the origin.\nexport function rewrite(url) {\n  const path = url.pathname.replace(/^\\/content\\/acme/, \'\');\n  return path.endsWith(\'.html\') ? path.slice(0, -5) : path;\n}\n```'],
+      // A table and a file whose name is longer than the bubble is wide, a customer's and a
+      // staff member's: the bubble stays in its column (the name is cut, the table wraps), on
+      // the right as on the left; a narrow window shows it.
+      ['sam', 79, `What preview answered per path since the push:\n\n${WIDE_TABLE}\n\nAttachments:\n- [${LONG_NAME}.csv](${upload(`${LONG_NAME}.csv`, 'text/csv', new TextEncoder().encode(publishCsv()))})`],
+      ['dana', 78, `And what the content host answered for the same requests:\n\n${WIDE_TABLE}\n\nAttachments:\n- [${LONG_NAME}.log](${upload(`${LONG_NAME}.log`, 'text/plain', new TextEncoder().encode('10:02:11 503 /en/index\n'))})`],
     ],
     reads: { dana: 85 },
     label: {
@@ -1323,6 +1341,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     // conversation, under the thread. A wide screen shows both in the panel beside the thread.
     sidebar: [
       ['lena', 84, 'Have we seen `content.Source` 503s after a config push before?'],
+      ['lena', 83.8, `These are the paths that failed:\n\n${WIDE_TABLE}\n\nAttachments:\n- [${LONG_NAME}.log](${upload(`${LONG_NAME}.log`, 'text/plain', new TextEncoder().encode('10:02:11 503 /en/index\n'))})`],
       ['agent', 83.5, 'Yes, twice for ACME this year (*preview-503-after-config-push* in their knowledge base). Both times the content source was set to `paused` by the push, and preview answered 503 until it was resumed.\n\nHere it says `"paused": false`, so it is not that. The retries in the log point at the content host itself.'],
       ['lena', 82, 'So it could be their rewrite?'],
       ['agent', 81.5, 'Possibly: if it strips `/content/acme` before preview asks the content host, the paths would not resolve. I asked Sam for the rewrite in the draft. Nothing went to the channel.'],

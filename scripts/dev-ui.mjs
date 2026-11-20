@@ -20,7 +20,7 @@
  *   node scripts/dev-ui.mjs --no-sim   # no simulated incoming messages
  *   node scripts/dev-ui.mjs --admin    # signed in as a member of the admin team
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
- *   node scripts/dev-ui.mjs --member   # signed in as a member of her teams: Agents read-only
+ *   node scripts/dev-ui.mjs --member   # signed in as a member of her teams: their agents read-only
  *   node scripts/dev-ui.mjs --no-team  # signed in on no team (no-team mode): Personal only
  *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
  *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
@@ -1446,7 +1446,14 @@ async function api(req, res, url) {
       return json(res, { error: 'the preview has no CONTENT index to build a map from' }, 503);
     }
     const r = await topicsPage(adminApi.env, topicsViewer(), await followsNow());
-    return json(res, await r.json(), r.status);
+    const body = await r.json();
+    // The made-up map's people are on no team in the preview's D1: on the map's.
+    for (const [p, who] of Object.entries(body.latest?.map?.peopleOf || {})) {
+      if (who.team && !body.members[p]) {
+        body.members[p] = [who.team];
+      }
+    }
+    return json(res, body, r.status);
   }
   if (url.pathname === '/api/areas') {
     return json(res, ...await previewArea(req.method, await readJson(req)));
@@ -2553,7 +2560,12 @@ const server = createServer(async (req, res) => {
       res.writeHead(302, { location: '/inbox' }).end();
       return;
     }
-    if (['/inbox/kb', '/inbox/admin', '/inbox/cogs', '/inbox/topics'].includes(url.pathname)) {
+    // The knowledge-base editor that was, as the Worker sends it on: to Teams or Customers.
+    if (url.pathname === '/inbox/kb') {
+      res.writeHead(302, { location: `/inbox/admin${url.search}` }).end();
+      return;
+    }
+    if (['/inbox/admin', '/inbox/cogs', '/inbox/topics'].includes(url.pathname)) {
       const html = await uiPage(`${url.pathname.slice('/inbox/'.length)}.html`);
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       res.end(html);

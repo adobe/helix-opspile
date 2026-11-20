@@ -33,7 +33,7 @@ import { mayEdit, mayRead } from './kbaccess.js';
 import { isAdmin, managesTeam } from './review.js';
 
 /**
- * The knowledge-base editor's API for the MCP servers of the thread agents (migration 0023),
+ * The agents' API (ui/agent.js) for the MCP servers of the thread agents (migration 0023),
  * behind `/api/kb/mcp`. Next to the per-channel switch of the agents: a knowledge base's
  * servers are those of its team (`kb-team-*`) or its customer (`kb-org-*`), and the same
  * people manage them who edit it (the admin team; team managers for their teams).
@@ -586,7 +586,7 @@ async function globalCallback(env, me, url, row) {
   const back = (repo, q) => new Response(null, {
     status: 302,
     headers: {
-      location: `/inbox/kb?${new URLSearchParams({ ...(repo ? { repo } : {}), view: 'mcp', ...q })}`,
+      location: `/inbox/admin?${new URLSearchParams({ ...(repo ? { repo } : {}), view: 'mcp', ...q })}`,
       'cache-control': 'no-store',
     },
   });
@@ -681,7 +681,7 @@ async function githubCreated(env, me, url) {
   }
   if (!await checkState(env, url.searchParams.get('state'), me.id, 'github-app')) {
     return text('This link expired or was not started here. Start again from the'
-      + ' knowledge-base editor.\n', 400);
+      + ' tools and MCP servers of a team.\n', 400);
   }
   try {
     const app = await createApp(env, url.searchParams.get('code'), me.email || String(me.id));
@@ -957,12 +957,12 @@ async function oauthCallback(env, me, url) {
   }
   if (!row || !await mayManage(env, me, row.scope, row.slug)) {
     return text('This sign-in expired or was not started here. Connect the server again from the'
-      + ' knowledge-base editor.\n', 400);
+      + ' tools and MCP servers of its team or customer.\n', 400);
   }
   const back = (q) => new Response(null, {
     status: 302,
     headers: {
-      location: `/inbox/kb?${new URLSearchParams({ repo: repoName(row.scope, row.slug), view: 'mcp', ...q })}`,
+      location: `/inbox/admin?${new URLSearchParams({ repo: repoName(row.scope, row.slug), view: 'mcp', ...q })}`,
       'cache-control': 'no-store',
     },
   });

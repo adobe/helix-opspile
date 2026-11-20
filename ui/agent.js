@@ -11,11 +11,14 @@
  */
 
 /*
- * The knowledge-base editor, the Agents page: every knowledge base (pile 3) you may see, its
+ * The agent of a team or a customer, as the global `Agent`: its thread agents per channel, its
+ * tools and MCP servers, its extraction rules (a team's), and its knowledge base (pile 3): the
  * files, and an editor that saves as you type: a pause in typing commits the file as the
- * signed-in person. The admin team edits every knowledge base, team managers their teams' and
- * those of the customers their teams own; the other members of those teams see them, their
- * agents and their tools read-only,
+ * signed-in person. The Teams and Customers pages (ui/admin.js) show it, one section of the
+ * team's or the customer's page each (`show`), in the `#files` and `#editor` they make for it;
+ * they keep the address (`onUrl`) and redraw what counts it (`onChange`). The admin team edits
+ * every knowledge base, team managers their teams' and those of the customers their teams own;
+ * the other members of those teams see them, their agents and their tools read-only,
  * and change only their own settings here: whether the agent's thinking shows in their inbox,
  * everywhere or in one channel (`traces`, `channelTraces` of /api/settings). No native dialogs (alert, confirm): a debugger attached over CDP dismisses them on
  * its own, so the questions that remain are asked in the page. The one exception is
@@ -27,7 +30,7 @@
 const SYSTEM_PROMPT = 'systemprompt.md';
 const GENERATED = new Set(['index.md', 'log.md']);
 const state = {
-  me: null, bases: [], repo: null, files: [], hasSystemPrompt: false, file: null, filter: '', view: 'file',
+  me: null, bases: [], repo: null, files: null, hasSystemPrompt: false, file: null, view: 'file', turn: 0, loads: {},
   channels: null, configured: true, teamDefault: null, mcp: null, globals: null, tools: null, perFilter: {}, openPer: new Set(),
   extraction: null,
   // Saves started (a listing read meanwhile may predate one), and when the files were listed.
@@ -36,7 +39,9 @@ const state = {
   // The computer's secret being added ('new') or edited (its id), or null.
   secretEditing: null,
 };
-const VIEWS = ['history', 'agents', 'mcp', 'extraction'];
+/** What the page around it does: keeps the address, and redraws what counts the agent. */
+const host = { onUrl: () => {}, onChange: () => {}, onOpen: () => {} };
+const VIEWS = ['file', 'history', 'agents', 'mcp', 'extraction'];
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const base = () => state.bases.find((b) => b.repo === state.repo);
@@ -98,7 +103,7 @@ function blobText(repo, hash) {
 
 /** Fetches the files of the listing not here yet, BLOB_PARALLEL batches at a time. */
 function prefetchFiles(repo) {
-  const queue = [...new Set(state.files.map((f) => f.hash).filter((h) => h && !blobs.has(h)))];
+  const queue = [...new Set((state.files || []).map((f) => f.hash).filter((h) => h && !blobs.has(h)))];
   const next = async () => {
     while (queue.length && state.repo === repo) {
       const batch = queue.splice(0, BLOB_BATCH).filter((h) => !blobs.has(h));
@@ -113,7 +118,7 @@ function prefetchFiles(repo) {
 function keepFile(path, hash, text) {
   if (!hash) return;
   if (typeof text === 'string') blobs.set(hash, text);
-  const f = state.files.find((x) => x.path === path);
+  const f = (state.files || []).find((x) => x.path === path);
   if (f) f.hash = hash;
 }
 
@@ -164,7 +169,7 @@ function edited() {
 function ask(question, detail, yes) {
   return new Promise((resolve) => {
     const dlg = document.createElement('dialog');
-    dlg.className = 'confirm';
+    dlg.className = 'ask';
     dlg.setAttribute('aria-label', question);
     dlg.innerHTML = `<form method="dialog"><p><b>${esc(question)}</b></p>${detail ? `<p class="detail">${esc(detail)}</p>` : ''}
       <div class="apply"><button value="no">Cancel</button><button value="yes" class="primary">${esc(yes)}</button></div></form>`;
@@ -187,42 +192,13 @@ async function leave() {
 }
 
 /**
- * The inbox, not opened yet in this browser tab (ui/header.js keeps it as it was left): the
- * inbox of the team whose knowledge base is open.
- */
-function teamInbox() {
-  const b = base();
-  return b && b.kind === 'team' ? `/inbox?team=${encodeURIComponent(b.slug)}` : null;
-}
-
-/**
- * The URL names the knowledge base and the file (or the history), so
- * reloads and the browser's Back and Forward land where they were. Going to another knowledge
- * base or file is a new history entry (`push`); settling the URL of the same view is not.
+ * The page keeps the address of what is open (`where`), so reloads and the browser's Back and
+ * Forward land where they were. Going to another file is a new history entry (`push`);
+ * settling the address of the same view is not.
  */
 function toUrl(mode = 'push') {
-  const q = new URLSearchParams();
-  if (state.repo) q.set('repo', state.repo);
-  if (state.file && !state.file.isNew) q.set('path', state.file.path);
-  if (VIEWS.includes(state.view)) q.set('view', state.view);
-  const url = `/inbox/kb${q.size ? `?${q}` : ''}`;
-  if (url !== `${location.pathname}${location.search}`) {
-    history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', url);
-  }
+  host.onUrl(mode);
 }
-
-// ---- knowledge bases --------------------------------------------------------------------
-
-/**
- * How customers and vendors are listed: by activity (the default: most entries in their
- * knowledge base first, then most tools turned on) or by name. Kept in this browser.
- */
-const SORTS = { activity: 'Activity', name: 'A–Z' };
-const keptSort = () => { try { return localStorage.getItem('opspile.kb.sort'); } catch { return null; } };
-state.sort = keptSort() === 'name' ? 'name' : 'activity';
-
-const byName = (x, y) => x.name.localeCompare(y.name) || x.repo.localeCompare(y.repo);
-const byActivity = (x, y) => (y.entries || 0) - (x.entries || 0) || (y.tools || 0) - (x.tools || 0) || byName(x, y);
 
 /** "12 entries · 2 tools" for a row's title and its count. */
 function activity(b) {
@@ -231,101 +207,125 @@ function activity(b) {
   return parts.join(' · ');
 }
 
-function renderBases() {
-  const f = state.filter.toLowerCase();
-  const shown = state.bases.filter((b) => !f || `${b.name} ${b.slug} ${b.repo}`.toLowerCase().includes(f));
-  const row = (b) => `<div class="row${b.repo === state.repo ? ' on' : ''}" data-repo="${esc(b.repo)}" title="${esc(activity(b))}">
-      <span>${esc(b.name)}</span>${b.agents ? `<span class="tag agent" title="Thread agents are on in ${b.agents} channel${b.agents === 1 ? '' : 's'}">agent${b.agents > 1 ? ` · ${b.agents}` : ''}</span>` : ''}<span class="sub">${esc(b.repo)}</span>${b.entries ? `<span class="n">${b.entries}</span>` : ''}</div>`;
-  const teams = shown.filter((b) => b.kind === 'team');
-  const orgs = shown.filter((b) => b.kind === 'org').sort(state.sort === 'name' ? byName : byActivity);
-  const sorts = Object.entries(SORTS).map(([k, label]) => `<button data-sort="${k}" aria-pressed="${state.sort === k}"
-    title="${k === 'name' ? 'Alphabetically' : 'Most entries in the knowledge base first, then most tools turned on'}">${label}</button>`).join('');
-  $('bases').innerHTML = `<input id="filter" type="search" value="${esc(state.filter)}" aria-label="Filter knowledge bases">${
-    (teams.length ? `<h2>Ops teams</h2>${teams.map(row).join('')}` : '')
-    + (orgs.length ? `<h2 class="sorted"><span>Customers and vendors</span><span class="seg" role="group" aria-label="Sort customers and vendors">${sorts}</span></h2>${orgs.map(row).join('')}` : '')
-    || '<div class="empty">No knowledge bases.</div>'}`;
-  $('filter').oninput = (e) => {
-    state.filter = e.target.value;
-    const at = e.target.selectionStart;
-    renderBases();
-    $('filter').focus();
-    $('filter').setSelectionRange(at, at);
-  };
-  for (const el of $('bases').querySelectorAll('[data-repo]')) {
-    el.onclick = () => openRepo(el.dataset.repo);
-  }
-  for (const el of $('bases').querySelectorAll('[data-sort]')) {
-    el.onclick = () => {
-      state.sort = el.dataset.sort;
-      try { localStorage.setItem('opspile.kb.sort', state.sort); } catch { /* private mode */ }
-      renderBases();
-      $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
-    };
-  }
-}
+/**
+ * Phones show one column of a knowledge base at a time: its `files` or the `editor`, each with
+ * a way back to the other (see the styles).
+ */
+const showPane = (pane) => { if ($('agent')) $('agent').dataset.pane = pane; };
+const UP = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>';
+/** Back to the files, on a phone: only where they are beside the editor. */
+const up = (pane, label) => ($('files') ? `<button class="up" data-up="${pane}">${UP}${label}</button>` : '');
+
+/** What counts the agent changed (its switches, servers, rules): the page redraws it. */
+const counted = () => host.onChange();
 
 /**
- * Phones show one column at a time: `bases`, `files` or `editor`, each sliding in over the one
- * before and back out (see the styles), but while `main.instant` (the first load, and Back that
- * the browser has animated already).
+ * Starts on another knowledge base: forgets what was read of the last one. What is read of it
+ * is read once (`loads`), until `fresh` asks for it again.
  */
-const showPane = (pane) => { document.querySelector('main').dataset.pane = pane; };
-/** The slide is back: what changed while `main.instant` is applied, without it. */
-function slideAgain() {
-  const main = document.querySelector('main');
-  main.getBoundingClientRect();
-  main.classList.remove('instant');
+function reset(repo) {
+  Object.assign(state, {
+    repo,
+    file: null,
+    files: null,
+    filesError: null,
+    channels: null,
+    mcp: null,
+    globals: null,
+    tools: null,
+    extraction: null,
+    secretEditing: null,
+    editing: null,
+    loads: {},
+  });
 }
-const UP = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>';
-const up = (pane, label) => `<button class="up" data-up="${pane}">${UP}${label}</button>`;
 
-async function openRepo(repo, { path, view, nav = 'push' } = {}) {
-  if (repo !== state.repo && !(await leave())) return false;
-  showPane('files');
-  state.repo = repo;
-  state.file = null;
-  state.view = view || 'file';
-  renderBases();
-  $('files').innerHTML = '<div class="empty">Loading…</div>';
-  $('editor').innerHTML = '<div class="empty pick">Pick a file.</div>';
-  state.channels = null;
-  state.mcp = null;
-  state.globals = null;
-  state.tools = null;
-  state.secretEditing = null;
-  state.extraction = null;
-  const [{ ok, body }] = await Promise.all([
-    call(`/api/kb/files?repo=${encodeURIComponent(repo)}`),
+/** Its channels, tools, MCP servers and extraction rules: what the page counts. */
+function loadMeta(repo) {
+  state.loads.meta = state.loads.meta || Promise.all([
     loadChannels(repo),
     loadMcp(repo),
     loadTools(repo),
     loadExtraction(repo),
-  ]);
-  if (state.repo !== repo) return true;
-  if (!ok) {
-    $('files').innerHTML = `<div class="empty">${esc(body.error || 'Could not list the files.')}</div>`;
-    toUrl(nav);
-    return true;
+  ]).then(() => { if (state.repo === repo) counted(); });
+  return state.loads.meta;
+}
+
+/** Its files, listed once; then the ones not here yet are fetched ahead (see prefetch). */
+function loadFiles(repo) {
+  state.loads.files = state.loads.files || call(`/api/kb/files?repo=${encodeURIComponent(repo)}`).then(({ ok, body }) => {
+    if (state.repo !== repo) return;
+    if (!ok) {
+      state.filesError = body.error || 'Could not list the files.';
+      return;
+    }
+    state.files = body.files;
+    state.hasSystemPrompt = body.hasSystemPrompt;
+    state.truncated = body.truncated;
+    state.listedAt = Date.now();
+  });
+  return state.loads.files;
+}
+
+/**
+ * Reads what the page counts of a knowledge base's agent (`Agent.tags`), without showing it:
+ * its team's or customer's page is open on another section. `fresh` reads it again.
+ */
+function load(repo, { fresh = false } = {}) {
+  if (repo !== state.repo) reset(repo);
+  else if (fresh) state.loads.meta = null;
+  return loadMeta(repo);
+}
+
+/**
+ * Shows a view of the agent of `repo` in the `#files` (the knowledge base's views only) and
+ * `#editor` the page made for it: `file` (`path`, else the agent instructions), `history`,
+ * `agents` (`channel` marked), `mcp` (what a server's sign-in said, `flash`) or `extraction`.
+ * The page asked `leave` first: what was open is saved, or given up.
+ */
+async function show(repo, {
+  view = 'file', path = null, nav = 'replace', fresh = false, channel = null, flash = null,
+} = {}) {
+  if (repo !== state.repo) reset(repo);
+  else if (fresh) state.loads.meta = null;
+  const turn = ++state.turn;
+  const stale = () => turn !== state.turn || state.repo !== repo;
+  state.view = VIEWS.includes(view) ? view : 'file';
+  state.file = null;
+  state.focusChannel = state.view === 'agents' ? channel : null;
+  if (flash) state.flash = flash;
+  // Another file, view or knowledge base fades in (ui/app.js).
+  Swap.watch($('editor'), () => `${state.repo}|${state.view}|${state.view === 'file' ? (state.file ? state.file.path : state.opening?.path) : ''}`);
+  const kb = state.view === 'file' || state.view === 'history';
+  showPane(kb && !path && state.view === 'file' ? 'files' : 'editor');
+  $('editor').innerHTML = '<div class="empty">Loading…</div>';
+  if (kb) renderFiles();
+  await (kb ? Promise.all([loadMeta(repo), loadFiles(repo)]) : loadMeta(repo));
+  if (stale()) return;
+  if (kb) {
+    renderFiles();
+    if (!state.files) {
+      $('editor').innerHTML = `<div class="empty">${esc(state.filesError)}</div>`;
+      return;
+    }
   }
-  state.files = body.files;
-  state.hasSystemPrompt = body.hasSystemPrompt;
-  state.truncated = body.truncated;
-  state.listedAt = Date.now();
-  renderFiles();
   if (state.view === 'history') showHistory({ force: true, nav });
   else if (state.view === 'agents') showAgents({ force: true, nav });
   else if (state.view === 'mcp') showMcp({ force: true, nav });
-  else if (state.view === 'extraction' && state.extraction) showExtraction({ force: true, nav });
+  else if (state.view === 'extraction') showExtraction({ force: true, nav });
   else openFile(path || SYSTEM_PROMPT, { force: true, nav });
   // After the open file's own read, so that one goes first.
-  prefetchFiles(repo);
-  return true;
+  if (kb) prefetchFiles(repo);
 }
 
 // ---- files ------------------------------------------------------------------------------
 
 function renderFiles() {
-  const b = base();
+  if (!$('files')) return;
+  if (!state.files) {
+    $('files').innerHTML = `<div class="empty">${esc(state.filesError || 'Loading…')}</div>`;
+    return;
+  }
   const others = state.files.filter((f) => f.path !== SYSTEM_PROMPT);
   const rows = [];
   let lastDir = null;
@@ -334,18 +334,11 @@ function renderFiles() {
     if (dir !== lastDir && dir) rows.push(`<div class="row dir">${esc(dir)}/</div>`);
     lastDir = dir;
     const name = f.path.slice(dir ? dir.length + 1 : 0);
-    rows.push(`<div class="row${state.file?.path === f.path ? ' on' : ''}" data-path="${esc(f.path)}" style="padding-left:${dir ? 20 : 8}px">
+    rows.push(`<div class="row${dir ? ' nested' : ''}${state.file?.path === f.path ? ' on' : ''}" data-path="${esc(f.path)}">
       <span>${esc(name)}</span>${GENERATED.has(name) ? '<span class="tag">generated</span>' : ''}</div>`);
   }
-  $('files').innerHTML = `${up('bases', 'Knowledge bases')}<h2>${esc(b.name)}</h2>
-    <div class="row${state.file?.path === SYSTEM_PROMPT ? ' on' : ''}" data-path="${SYSTEM_PROMPT}">
+  $('files').innerHTML = `<div class="row${state.file?.path === SYSTEM_PROMPT ? ' on' : ''}" data-path="${SYSTEM_PROMPT}">
       <span>${SYSTEM_PROMPT}</span><span class="tag${state.hasSystemPrompt ? '' : ' missing'}">${state.hasSystemPrompt ? 'agent instructions' : 'not written yet'}</span></div>
-    <div class="row${state.view === 'agents' ? ' on' : ''}" id="agents" title="Which of its channels have thread agents">
-      <span>Thread agents</span>${agentsTag()}</div>
-    <div class="row${state.view === 'mcp' ? ' on' : ''}" id="mcp" title="Tools its agents get where they are turned on, and MCP servers they call from code mode">
-      <span>Tools and MCP servers</span>${toolsTag()}${mcpTag()}</div>
-    ${b.kind === 'team' ? `<div class="row${state.view === 'extraction' ? ' on' : ''}" id="extraction" title="What labeling finds in the threads of ${esc(b.slug === 'admin' ? 'every channel' : `${b.name}'s channels`)}: facts and the tech stack">
-      <span>Extraction rules</span>${extractionTag()}</div>` : ''}
     <h2>Files</h2>
     ${rows.join('') || '<div class="empty pad">Empty so far.</div>'}
     ${state.truncated ? '<div class="empty pad">Only the first 400 entries are shown.</div>' : ''}
@@ -361,9 +354,6 @@ function renderFiles() {
   }
   if ($('new')) $('new').onclick = newFile;
   $('history').onclick = () => showHistory();
-  $('agents').onclick = () => showAgents();
-  $('mcp').onclick = () => showMcp();
-  if ($('extraction')) $('extraction').onclick = () => showExtraction();
 }
 
 // ---- thread agents ----------------------------------------------------------------------
@@ -388,7 +378,7 @@ async function refreshBases() {
     const mine = state.bases.find((y) => y.repo === x.repo);
     if (mine) Object.assign(mine, { agents: x.agents, tools: x.tools, entries: x.entries });
   }
-  renderBases();
+  counted();
 }
 
 const agentCount = () => (state.channels || []).filter((c) => c.agent.enabled).length;
@@ -414,15 +404,12 @@ function ago(at) {
   return new Date(at).toLocaleDateString();
 }
 
-async function showAgents({ force = false, nav = 'push' } = {}) {
-  if (!force && state.file && !(await leave())) return false;
-  if (!force) showPane('editor');
+/** The thread agents, a switch per channel (see `show`). */
+function showAgents({ nav = 'replace' } = {}) {
   state.view = 'agents';
   state.file = null;
-  renderFiles();
   toUrl(nav);
   renderAgents();
-  return true;
 }
 
 /** For a team's knowledge base: the switch that gives its channels agents unless switched off. */
@@ -549,7 +536,7 @@ function renderAgents(note) {
         data-channel="${esc(c.channelId)}"${c.may ? '' : ' disabled'}></button>
     </div>`;
   }).join('');
-  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Thread agents in ${esc(whose)}</span></div>
+  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="heading">Thread agents in ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
   : state.configured ? explain : 'Agents are not configured in this deployment: a channel\'s switch takes effect once they are.'}</div>
     <div class="channels">${list ? tracesRow() + teamDefaultRow() + (rows || '<div class="empty">No channels yet.</div>') : '<div class="empty">Could not list the channels.</div>'}</div>`;
@@ -585,8 +572,7 @@ async function switchAgent(c, el) {
   if (b) b.agents = agentCount();
   // The other knowledge bases of the channel (its team's, its customer's) count it too.
   refreshBases();
-  renderBases();
-  renderFiles();
+  counted();
   renderAgents({
     kind: 'ok',
     text: on ? `The thread agent in ${name} is on: every thread that gets a new message has one, which keeps a draft reply (it never posts) and files what it learns.`
@@ -616,7 +602,7 @@ async function switchTeamDefault(el) {
   if (state.repo !== repo || state.view !== 'agents') return;
   b.agents = agentCount();
   refreshBases();
-  renderFiles();
+  counted();
   renderAgents({ kind: 'ok', text: on ? `Thread agents are on by default in ${b.name}.` : `Thread agents are off by default in ${b.name}.` });
 }
 
@@ -655,17 +641,15 @@ function mcpTag() {
   return on ? `<span class="tag agent">${on} server${on === 1 ? '' : 's'}</span>` : '<span class="tag missing">none</span>';
 }
 
-async function showMcp({ force = false, nav = 'push' } = {}) {
-  if (!force && state.file && !(await leave())) return false;
+/** The tools and MCP servers (see `show`). */
+function showMcp({ nav = 'replace' } = {}) {
   state.view = 'mcp';
   state.file = null;
   state.editing = null;
-  renderFiles();
   toUrl(nav);
   // Arriving: the list from its top (renderMcp keeps it where it is otherwise).
   $('editor').replaceChildren();
   renderMcp();
-  return true;
 }
 
 /** How an OAuth server is signed in, for its row. */
@@ -996,7 +980,7 @@ function toolsSection() {
   const b = base();
   if (!state.tools) return '<div class="empty">Could not list the agent tools.</div>';
   const note = b.kind === 'team' ? `Built-in tools: on or off for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). New teams start with Computer, Extraction rules and Web search on.`
-    : `Built-in tools: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
+    : `Built-in tools: turned on for a whole team on its page in Teams, or here for one of ${b.name}'s channels.`;
   return `<h3 class="group">Tools</h3><div class="sub intro">${esc(note)}</div>${state.tools.map(toolRow).join('')}`;
 }
 
@@ -1023,7 +1007,7 @@ function bindTools() {
       if (stale()) return;
       if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
       t.team = body.switch;
-      renderFiles();
+      counted();
       refreshBases();
       renderMcp({ kind: 'ok', text: `${t.title} is ${on ? 'on' : 'off'} for ${b.name}.` });
     };
@@ -1046,7 +1030,7 @@ function bindTools() {
       }
       if (body.switch) t.channels[c.channelId] = body.switch;
       else delete t.channels[c.channelId];
-      renderFiles();
+      counted();
       refreshBases();
       channelSwitched(el, t.channels, { kind: 'ok', text: enabled === null ? `${t.title} in ${channelName(c)} follows its team again.` : `${t.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
     };
@@ -1078,17 +1062,14 @@ function extractionTag() {
   return `<span class="tag agent">${[rules && `${rules} rule${rules === 1 ? '' : 's'}`, tech && `${tech} tech`].filter(Boolean).join(' · ')}</span>`;
 }
 
-async function showExtraction({ force = false, nav = 'push' } = {}) {
-  if (!force && state.file && !(await leave())) return false;
-  if (!force) showPane('editor');
+/** A team's extraction rules and tech stack (see `show`). */
+function showExtraction({ nav = 'replace' } = {}) {
   state.view = 'extraction';
   state.file = null;
   state.editRule = null;
   state.editTech = null;
-  renderFiles();
   toUrl(nav);
   renderExtraction();
-  return true;
 }
 
 const mayRules = () => Boolean(state.extraction?.may);
@@ -1208,7 +1189,7 @@ function renderExtraction(note) {
   const b = base();
   const x = state.extraction;
   if (!x) {
-    $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Extraction rules</span></div><div class="empty">Could not load the rules.</div>`;
+    $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="heading">Extraction rules</span></div><div class="empty">Could not load the rules.</div>`;
     return;
   }
   const where = x.global ? 'every channel' : `the channels of ${b.name}`;
@@ -1216,7 +1197,7 @@ function renderExtraction(note) {
   const editing = state.editRule ? x.rules.find((r) => r.id === state.editRule) : null;
   const inherited = x.inherited;
   const techEditing = state.editTech ? (x.tech.find((t) => t.tech === state.editTech) || inherited?.tech.find((t) => t.tech === state.editTech)) : null;
-  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Extraction rules and tech stack for ${esc(where)}</span></div>
+  $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="heading">Extraction rules and tech stack for ${esc(where)}</span></div>
     <div class="note${note ? ` ${note.kind}` : ''}" id="note">${esc(note ? note.text : explain)}</div>
     <div class="channels">
       <h3 class="group">Rules</h3>
@@ -1233,8 +1214,9 @@ function renderExtraction(note) {
 
 function bindExtraction() {
   const x = state.extraction;
+  // A technology of the team's catalog: its file, in the knowledge base.
   for (const el of $('editor').querySelectorAll('[data-topen]')) {
-    el.onclick = () => openFile(el.dataset.topen);
+    el.onclick = () => host.onOpen('file', el.dataset.topen);
   }
   if (!mayRules()) return;
   const repo = state.repo;
@@ -1242,7 +1224,7 @@ function bindExtraction() {
   const reload = async (text) => {
     await loadExtraction(repo);
     if (stale()) return;
-    renderFiles();
+    counted();
     renderExtraction(text && { kind: 'ok', text });
   };
   const send = async (method, path, body) => {
@@ -1493,10 +1475,13 @@ function flashNote() {
 function holdList(change) {
   const list = () => $('editor').querySelector('.channels');
   const before = list();
-  const origin = before && before.getBoundingClientRect().top - before.scrollTop;
+  // What scrolls it: the page's section it is in.
+  let scroller = before && before.parentElement;
+  while (scroller && scroller !== document.body && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement;
+  const top = before && before.getBoundingClientRect().top;
   change();
   const after = list();
-  if (before && after) after.scrollTop = after.getBoundingClientRect().top - origin;
+  if (before && after && scroller) scroller.scrollTop += after.getBoundingClientRect().top - top;
 }
 
 const showNote = (note) => holdList(() => {
@@ -1527,14 +1512,14 @@ function renderMcp(shownNote) {
   const editing = state.editing && list ? list.find((x) => x.id === state.editing) : null;
   const globals = state.globals || [];
   const globalNote = b.kind === 'team' ? `Built-in, set up once for every team: on or off for ${b.name}, or for one of its channels. New teams start with the browser and GitHub on.`
-    : `Built-in, set up once for every team: turned on for a whole team in its knowledge base, or here for one of ${b.name}'s channels.`;
+    : `Built-in, set up once for every team: turned on for a whole team on its page in Teams, or here for one of ${b.name}'s channels.`;
   holdList(() => {
-    $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="title">Tools and MCP servers for ${esc(whose)}</span></div>
+    $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="heading">Tools and MCP servers for ${esc(whose)}</span></div>
     <div class="note${note ? ` ${note.kind}` : state.configured ? '' : ' warn'}" id="note">${note ? esc(note.text)
   : state.configured ? esc(explain) : 'Agents are not configured in this deployment: servers take effect once they are.'}</div>
     <div class="channels">${toolsSection()}${globals.length ? `<h3 class="group">Global MCP servers</h3><div class="sub intro">${esc(globalNote)}</div>${globals.map(globalRow).join('')}
       <h3 class="group">${b.kind === 'team' ? 'The team\'s servers' : 'The customer\'s servers'}</h3>` : ''}
-    ${list && list.length ? `<div class="sub" style="color:var(--mute);font-size:12px;margin:0 2px 4px">${esc(`Each is on or off for every channel of ${b.name}, or for one of them (a channel's own switch wins).`)}</div>` : ''}
+    ${list && list.length ? `<div class="sub intro">${esc(`Each is on or off for every channel of ${b.name}, or for one of them (a channel's own switch wins).`)}</div>` : ''}
     ${list ? list.map(mcpRow).join('') || '<div class="empty">No MCP server yet: agents here use the knowledge bases and GitHub only.</div>'
     : '<div class="empty">Could not list the MCP servers.</div>'}
     ${list && mayEdit() ? mcpForm(editing || {}) : ''}</div>`;
@@ -1547,7 +1532,7 @@ function renderMcp(shownNote) {
   const put = (server) => {
     state.mcp = state.mcp.some((x) => x.id === server.id) ? state.mcp.map((x) => (x.id === server.id ? server : x))
       : [...state.mcp, server].sort((x, y) => x.name.localeCompare(y.name));
-    renderFiles();
+    counted();
     refreshBases();
   };
   const reached = (s) => (s.checkError ? { kind: 'warn', text: `${s.name} could not be reached: ${s.checkError}` }
@@ -1566,10 +1551,10 @@ function renderMcp(shownNote) {
   }
   // Off to the server's sign-in; it comes back to this page (flashNote).
   const connect = async (s) => {
-    const host = (() => { try { return new URL(s.url).host; } catch { return s.url; } })();
+    const site = (() => { try { return new URL(s.url).host; } catch { return s.url; } })();
     const yes = await ask(
       `Connect ${s.name} as you?`,
-      `You sign in at ${host}. From then on the agents of these threads call it as you, with everything you may do there, until someone disconnects it. "Only these tools" limits which of its tools they get.`,
+      `You sign in at ${site}. From then on the agents of these threads call it as you, with everything you may do there, until someone disconnects it. "Only these tools" limits which of its tools they get.`,
       'Sign in',
     );
     if (!yes) return;
@@ -1599,7 +1584,7 @@ function renderMcp(shownNote) {
       if (!ok) { renderMcp({ kind: 'err', text: body.error }); return; }
       state.mcp = state.mcp.filter((x) => x.id !== s.id);
       if (state.editing === s.id) state.editing = null;
-      renderFiles();
+      counted();
       refreshBases();
       renderMcp({ kind: 'ok', text: `Deleted ${s.name}.` });
     };
@@ -1636,7 +1621,7 @@ function renderMcp(shownNote) {
       }
       // Kept in place, so that the row is not sorted away from under you (channelSwitched).
       Object.assign(s, body.server);
-      renderFiles();
+      counted();
       refreshBases();
       channelSwitched(el, s.channels, { kind: 'ok', text: enabled === null ? `${s.name} in ${channelName(c)} follows the server's switch again.` : `${s.name} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
     };
@@ -1737,7 +1722,7 @@ function bindGlobals() {
       if (stale()) return;
       if (!ok) { renderMcp({ kind: 'err', text: body.error || 'Switching failed.' }); return; }
       g.team = body.switch;
-      renderFiles();
+      counted();
       refreshBases();
       renderMcp({ kind: 'ok', text: `${g.title} is ${on ? 'on' : 'off'} for ${b.name}.` });
     };
@@ -1756,7 +1741,7 @@ function bindGlobals() {
       }
       if (body.switch) g.channels[c.channelId] = body.switch;
       else delete g.channels[c.channelId];
-      renderFiles();
+      counted();
       refreshBases();
       channelSwitched(el, g.channels, { kind: 'ok', text: enabled === null ? `${g.title} in ${channelName(c)} follows its team again.` : `${g.title} is ${enabled ? 'on' : 'off'} in ${channelName(c)}.` });
     };
@@ -1791,7 +1776,7 @@ function bindGlobals() {
       if (!ok) { renderMcp({ kind: 'err', text: body.error || 'That did not work.' }); return; }
       await loadMcp(repo);
       if (stale()) return;
-      renderFiles();
+      counted();
       renderMcp({ kind: 'ok', text: allow ? `Agents can read what the app is installed on in ${inst.account}. Check lists the tools.` : `Agents no longer read ${inst.account}.` });
     };
   }
@@ -1938,7 +1923,7 @@ function renderEditor(note) {
     </div>
     <div class="note${note ? ` ${note.kind}` : ''}" id="note">${note ? esc(note.text) : explain}</div>
     ${dot ? '<div class="dotpane"><div class="text" id="text"></div><div class="dotview" id="dotview" role="img" aria-label="The diagram, drawn"></div></div>' : '<div class="text" id="text"></div>'}
-    ${f.readonly || f.isNew ? '' : '<div class="foot"><span style="flex:1"></span><button id="delete" class="danger">Delete</button></div>'}`;
+    ${f.readonly || f.isNew ? '' : '<div class="foot"><span class="fill"></span><button id="delete" class="danger">Delete</button></div>'}`;
   state.editor = Editor.create($('text'), {
     text: f.baseline,
     readonly: f.readonly,
@@ -2135,7 +2120,7 @@ async function commit(f) {
       $('path').replaceWith(span);
     }
     if (!$('delete')) {
-      $('editor').insertAdjacentHTML('beforeend', '<div class="foot"><span style="flex:1"></span><button id="delete" class="danger">Delete</button></div>');
+      $('editor').insertAdjacentHTML('beforeend', '<div class="foot"><span class="fill"></span><button id="delete" class="danger">Delete</button></div>');
       $('delete').onclick = remove;
     }
     await reloadFiles();
@@ -2164,7 +2149,7 @@ function resolveConflict(f, keep) {
   f.problem = null;
   f.hash = theirs ? theirs.hash : null;
   f.isNew = !theirs;
-  if (theirs && !state.files.some((x) => x.path === f.path)) reloadFiles();
+  if (theirs && !(state.files || []).some((x) => x.path === f.path)) reloadFiles();
   if (theirs) keepFile(f.path, theirs.hash, theirs.text);
   if (keep === 'theirs') {
     f.baseline = theirs ? theirs.text : '';
@@ -2242,7 +2227,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+  if ((e.metaKey || e.ctrlKey) && e.key === 's' && state.file) {
     e.preventDefault();
     flush();
   }
@@ -2261,8 +2246,8 @@ window.addEventListener('pagehide', () => {
 });
 // The one native question: leaving the page (the browser's Back, a reload, closing the tab)
 // would lose edits that the keepalive save above cannot save (a conflict, a concept that was
-// refused, a new file without a path) or that a save in flight may not include. The switch to
-// the inbox asks in the page instead.
+// refused, a new file without a path) or that a save in flight may not include. Going to
+// another page or section asks in the page instead (`leave`).
 window.addEventListener('beforeunload', (e) => {
   if (['clean', 'editing'].includes(fileState())) return;
   e.preventDefault();
@@ -2275,119 +2260,43 @@ document.querySelector('main').addEventListener('click', (e) => {
   if (to) showPane(to.dataset.up);
 });
 
-// Back and Forward within the editor: show what the URL names, after the same check as a click.
-window.addEventListener('popstate', async (e) => {
-  // Safari's edge swipe has already slid the column before into view: no second slide.
-  if (e.hasUAVisualTransition) document.querySelector('main').classList.add('instant');
-  try {
-    await popped();
-  } finally {
-    slideAgain();
-  }
-});
-async function popped() {
-  const q = new URLSearchParams(location.search);
-  const repo = q.get('repo');
-  const view = VIEWS.includes(q.get('view')) ? q.get('view') : 'file';
-  const path = q.get('path') || SYSTEM_PROMPT;
-  let moved;
-  if (!repo || !state.bases.some((b) => b.repo === repo)) {
-    moved = await leave();
-    if (moved) {
-      Object.assign(state, { repo: null, file: null, view: 'file' });
-      showPane('bases');
-      renderBases();
-      // The files slide out as they were (phones); then they go.
-      Promise.allSettled($('files').getAnimations().map((a) => a.finished)).then(() => {
-        if (state.repo) return;
-        $('files').innerHTML = '';
-        $('editor').innerHTML = '<div class="empty pick">Pick a knowledge base.</div>';
-      });
-      toUrl('replace');
-    }
-  } else if (repo !== state.repo) {
-    moved = await openRepo(repo, { path, view, nav: 'replace' });
-  } else if (view === 'history') {
-    moved = state.view === 'history' || await showHistory({ nav: 'replace' });
-  } else if (view === 'agents') {
-    moved = state.view === 'agents' || await showAgents({ nav: 'replace' });
-  } else if (view === 'mcp') {
-    moved = state.view === 'mcp' || await showMcp({ nav: 'replace' });
-  } else if (view === 'extraction') {
-    moved = state.view === 'extraction' || await showExtraction({ nav: 'replace' });
-  } else {
-    moved = (state.view === 'file' && state.file?.path === path) || await openFile(path, { nav: 'replace' });
-  }
-  // Stayed (edits that could not be saved, kept): the URL goes back to what is shown.
-  if (moved === false) toUrl('push');
-}
-
-// A link to a knowledge base or a file lands on it: no slide until the page has opened it.
-(async () => {
-  // Another file, view or knowledge base fades in (ui/app.js).
-  Swap.watch($('editor'), () => `${state.repo}|${state.view}|${state.view === 'file' ? (state.file ? state.file.path : state.opening?.path) : ''}`);
-  const q = new URLSearchParams(location.search);
-  // `back=`, the inbox as it was left, from links made before ui/header.js kept it.
-  const back = q.get('back');
-  if (back && Header.pageOf(back) === 'inbox') Header.remember(back);
-  if (q.has('back')) {
-    q.delete('back');
-    history.replaceState(null, '', `${location.pathname}${q.size ? `?${q}` : ''}`);
-  }
-  const me = await call('/api/me');
-  if (!me.ok) { $('bases').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
-  state.me = me.body;
-  // Yours (src/settings.js): whether your inbox shows the agent's thinking (renderAgents).
-  state.settings = state.me.readonly ? null : state.me.settings || null;
-  Header.user(state.me, Header.role(state.me) || (state.me.teams?.length ? 'Read-only' : ''));
-  // The members of an ops team see every team's knowledge base, and those of the customers
-  // their teams own; managers change their teams' (the API says which, `may`).
-  if (!state.me.admin && !state.me.teams?.length) {
-    $('bases').innerHTML = '<div class="empty">The agents are for the members of an ops team.</div>';
-    $('editor').innerHTML = `<div class="empty"><a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;
-    return;
-  }
-  // The pages (ui/header.js). Leaving saves what is pending and asks, in the page, about edits
-  // that cannot be saved; a new tab (⌘-click, middle click) leaves nothing.
-  Header.init(state.me, {
-    fallback: { inbox: teamInbox },
-    go: async (id, url) => {
-      if (!(await leave())) return;
-      state.file = null; // saved, or discarded on purpose: nothing for pagehide or beforeunload
-      location.assign(url);
-    },
-  });
-  const { ok, body } = await call('/api/kb');
-  if (!ok) { $('bases').innerHTML = `<div class="empty">${esc(body.error || 'Could not list the knowledge bases.')}</div>`; return; }
-  state.bases = body.bases;
-  renderBases();
-  // `repo` (with `path` or `view`) names one; from the inbox, `org` and `team` say what was on
-  // screen there, and the customer's knowledge base wins over the team's.
-  const exact = state.bases.find((b) => b.repo === q.get('repo'));
-  // Back from an MCP server's sign-in (src/mcpadmin.js): said once on the servers' page.
-  if (exact && (q.get('mcp_connected') || q.get('mcp_error') || q.get('mcp_global_connected'))) {
-    if (q.get('mcp_error')) state.flash = { error: q.get('mcp_error') };
-    else if (q.get('mcp_global_connected')) state.flash = { global: q.get('mcp_global_connected') };
-    else state.flash = { connected: q.get('mcp_connected') };
-  }
-  const pick = exact
-    || state.bases.find((b) => b.kind === 'org' && b.slug === q.get('org'))
-    || state.bases.find((b) => b.kind === 'team' && b.slug === q.get('team'));
-  // `team` with `view` (the inbox's agent: its team's thread agents, at `channel`) names a
-  // view of the team's knowledge base too.
-  const named = exact || (pick && pick.kind === 'team' && !q.get('org'));
-  const view = named && VIEWS.includes(q.get('view')) ? q.get('view') : undefined;
-  state.focusChannel = view === 'agents' ? q.get('channel') : null;
-  if (pick) {
-    await openRepo(pick.repo, {
-      path: exact ? q.get('path') || undefined : undefined,
-      view,
-      nav: 'replace',
-    });
-    // A link to a file, the history or the agents opens it; a link to a knowledge base, its files.
-    if ((exact && q.get('path')) || ['history', 'agents', 'extraction'].includes(view) || (exact && (q.get('mcp_connected') || q.get('mcp_error') || q.get('mcp_global_connected')))) showPane('editor');
-    $('bases').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
-  } else {
-    toUrl('replace');
-  }
-})().finally(slideAgain);
+window.Agent = {
+  /** Who you are (/api/me), and the knowledge bases you may see (/api/kb), kept in place. */
+  init(me, bases, { onUrl, onChange, onOpen } = {}) {
+    state.me = me;
+    state.bases = bases;
+    // Yours (src/settings.js): whether your inbox shows the agent's thinking (renderAgents).
+    state.settings = me.readonly ? null : me.settings || null;
+    Object.assign(host, { onUrl, onChange, onOpen });
+  },
+  load,
+  show,
+  /**
+   * Before anything else is shown where the agent is: saves what is pending, and asks only
+   * about edits that could not be saved. False when you stay.
+   */
+  leave() {
+    // Asked once, however many ways out were taken meanwhile (a tab clicked twice).
+    state.leaving = state.leaving || (async () => {
+      if (!(await leave())) return false;
+      // Saved, or given up on purpose: nothing for pagehide or beforeunload, and what was on
+      // its way to the screen does not come.
+      state.file = null;
+      state.turn += 1;
+      return true;
+    })().finally(() => { state.leaving = null; });
+    return state.leaving;
+  },
+  /** What is open, for the address: the view, and the file's path. */
+  where: () => ({
+    repo: state.repo,
+    view: state.view,
+    path: state.view === 'file' && state.file && !state.file.isNew ? state.file.path : null,
+  }),
+  /** The badges of the views of `repo`'s agent, once they are read (`load`); else none. */
+  tags(repo) {
+    if (repo !== state.repo || !state.channels) return {};
+    return { agents: agentsTag(), mcp: `${toolsTag()}${mcpTag()}`, extraction: state.extraction ? extractionTag() : '' };
+  },
+  activity,
+};

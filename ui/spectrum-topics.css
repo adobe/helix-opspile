@@ -177,15 +177,17 @@ tr.pick { cursor: pointer; }
 }
 .spectrum .node[data-type="topic"] .lbl { font-weight: var(--spectrum-bold-font-weight); font-size: calc(var(--spectrum-font-size-75) / var(--zoom, 1)); }
 .spectrum .node:not(.named) .lbl { display: none; }
-/* A group that bursts into its children: lighter, in a ring of its color. */
-.spectrum .node[data-group] circle {
-  fill-opacity: .55;
+/* A group that bursts into its children: light, in a ring of its color, its children inside. */
+.spectrum .node[data-group] > circle {
+  fill-opacity: .25;
   stroke: var(--s2-type);
   stroke-width: var(--spectrum-border-width-400);
 }
+.spectrum .node .kid { fill: var(--s2-type); stroke: none; pointer-events: none; }
+/* Each child in its own kind's color (a team's people, an area's topics). */
 .spectrum .node[data-group] { cursor: zoom-in; }
 .spectrum .node:focus-visible { outline: none; }
-.spectrum .node:focus-visible circle, .spectrum .node.sel circle {
+.spectrum .node:focus-visible > circle, .spectrum .node.sel > circle {
   stroke: var(--spectrum-neutral-content-color-default);
   stroke-width: var(--spectrum-border-width-400);
 }

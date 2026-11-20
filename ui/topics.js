@@ -73,6 +73,8 @@ const state = {
   building: false,
   // Every team's name (GET /api/topics), for the bubbles of the teams.
   teams: {},
+  // The teams each Adobe person is on (GET /api/topics), for their team bubbles.
+  members: null,
   q: {
     team: '', hide: [], min: 2, sel: '', open: [],
   },
@@ -135,7 +137,7 @@ function graphOf() {
   const m = { ...map(), tags: { ...(map().tags || {}), ...names } };
   const teamName = (slug) => state.teams[slug] || state.me.teams?.find((t) => t.slug === slug)?.name || slug;
   return TopicGraph.build(m, {
-    team: q.team, shown: shownTypes(), min: q.min, open: q.open, teamName,
+    team: q.team, shown: shownTypes(), min: q.min, open: q.open, teamName, members: state.members,
   });
 }
 
@@ -288,11 +290,19 @@ function el(name, attrs = {}) {
 }
 
 function place() {
+  // A line from outline to outline, not from centre to centre: none across a bubble; none at
+  // all where two touch.
   for (const e of sim.edges) {
-    e.el.setAttribute('x1', e.a.x.toFixed(1));
-    e.el.setAttribute('y1', e.a.y.toFixed(1));
-    e.el.setAttribute('x2', e.b.x.toFixed(1));
-    e.el.setAttribute('y2', e.b.y.toFixed(1));
+    const dx = e.b.x - e.a.x;
+    const dy = e.b.y - e.a.y;
+    const d = Math.hypot(dx, dy);
+    const gap = d > e.a.r + e.b.r;
+    const ua = gap ? e.a.r / d : 0;
+    const ub = gap ? 1 - e.b.r / d : 0;
+    e.el.setAttribute('x1', (e.a.x + dx * ua).toFixed(1));
+    e.el.setAttribute('y1', (e.a.y + dy * ua).toFixed(1));
+    e.el.setAttribute('x2', (e.a.x + dx * ub).toFixed(1));
+    e.el.setAttribute('y2', (e.a.y + dy * ub).toFixed(1));
   }
   for (const n of sim.nodes) n.el.setAttribute('transform', `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`);
 }
@@ -301,6 +311,37 @@ function transform() {
   svg.querySelector('.view').setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
   // The names stay as big on screen at any zoom (ui/spectrum-topics.css).
   svg.style.setProperty('--zoom', view.k.toFixed(3));
+}
+
+/** The most children drawn inside a closed group. */
+const KIDS = 30;
+
+/**
+ * The children of closed group `n`, drawn inside it as small circles: the most threads in the
+ * middle, on a sunflower spiral (the same as the layout's first places), each as big as its
+ * share of the biggest, so a team shows its people and an area its topics before it opens.
+ */
+function inside(n) {
+  const g = el('g', { class: 'kids', 'aria-hidden': 'true' });
+  const all = state.graph.all;
+  const list = n.children.map((id) => all.get(id)).filter(Boolean)
+    .sort((a, b) => b.threads.length - a.threads.length).slice(0, KIDS);
+  const max = Math.max(1, ...list.map((c) => c.threads.length));
+  // Spacing so the spiral of `list.length` fills four fifths of the group.
+  const step = (n.r * 0.8) / Math.sqrt(list.length);
+  list.forEach((c, i) => {
+    const angle = i * Math.PI * (3 - Math.sqrt(5));
+    const dist = step * Math.sqrt(i + 0.5);
+    const r = step * 0.45 * Math.max(0.4, Math.sqrt(c.threads.length / max));
+    g.append(el('circle', {
+      class: 'kid',
+      'data-type': c.type,
+      cx: (Math.cos(angle) * dist).toFixed(1),
+      cy: (Math.sin(angle) * dist).toFixed(1),
+      r: r.toFixed(1),
+    }));
+  });
+  return g;
 }
 
 /** Zooms and pans so that every node is in sight. */
@@ -352,6 +393,7 @@ function drawGraph({ refit: asked = false } = {}) {
       'aria-label': `${n.one} ${n.label}${n.gap ? ', not in the tech stack' : ''}, ${n.threads.length} threads${opens(n) ? `, ${n.children.length} in it: opens` : ''}`,
     });
     n.el.append(el('circle', { r: n.r.toFixed(1) }));
+    if (opens(n)) n.el.append(inside(n));
     const label = el('text', { class: 'lbl', dy: '1em' });
     label.setAttribute('y', n.r.toFixed(1));
     label.textContent = n.label.length > 34 ? `${n.label.slice(0, 33)}…` : n.label;
@@ -910,6 +952,7 @@ async function load() {
     state.follows = body.follows || state.follows;
     state.may = body.may || state.may;
     state.teams = body.teams || {};
+    state.members = body.members || null;
     state.error = '';
   } catch (e) {
     state.error = e.message;

@@ -272,7 +272,9 @@ function kbPerson(thread, key, p) {
   }
   return kbPeople.get(k);
 }
-const contactHref = (e) => `/inbox/kb?${new URLSearchParams({ repo: e.repo, path: e.path })}`;
+/** A file of a knowledge base, in its team's or customer's page (ui/admin.js reads `repo`). */
+const kbFileHref = (repo, path) => `/inbox/admin?${new URLSearchParams({ repo, view: 'kb', path })}`;
+const contactHref = (e) => kbFileHref(e.repo, e.path);
 /** The card's knowledge-base part: their Contacts' descriptions, or that there is none yet. */
 function cardKb(found) {
   if (!found || found.failed) return '';
@@ -1752,10 +1754,10 @@ function placeStack(el, anchor) {
 /** The drawing's frame: who drew it and when, and where to change it. */
 function stackFoot(res) {
   if (!res) return '<span>Only the ops teams that work with this customer see its knowledge base.</span>';
-  const edit = `/inbox/kb?${new URLSearchParams({ repo: res.repo, path: res.path })}`;
+  const edit = kbFileHref(res.repo, res.path);
   if (!res.drawing) {
     const why = res.error ? `The drawing in the knowledge base cannot be drawn: ${esc(res.error)}.` : 'No drawing yet. The thread agents draw one as they learn the stack from the threads.';
-    return `<span>${why}</span>${res.hash ? `<a href="${esc(edit)}">Fix it in Agents</a>` : ''}`;
+    return `<span>${why}</span>${res.hash ? `<a href="${esc(edit)}">Fix it in its knowledge base</a>` : ''}`;
   }
   const who = /^human:/.test(res.by || '') ? res.by.slice(6) : 'a thread agent';
   const since = res.at ? ago(res.at) : '';
@@ -1763,7 +1765,7 @@ function stackFoot(res) {
   if (since === 'now') when = ' just now';
   else if (/^\d+[mhd]$/.test(since)) when = ` ${since} ago`;
   else if (since) when = ` on ${since}`;
-  return `<span>Drawn by ${esc(who)}${esc(when)}.</span><a href="${esc(edit)}">${res.may ? 'Edit it in Agents' : 'Open it in Agents'}</a>`;
+  return `<span>Drawn by ${esc(who)}${esc(when)}.</span><a href="${esc(edit)}">${res.may ? 'Edit it in its knowledge base' : 'Open it in its knowledge base'}</a>`;
 }
 /** Shows the customer's stack under `anchor`; a second click on the same one closes it. */
 async function showStack(org, anchor) {
@@ -2742,14 +2744,14 @@ function tracesShown(channel) {
   return typeof own === 'boolean' ? own : state.settings?.traces === true;
 }
 
-/** The agent settings of the thread's team, at its channel (ui/kb.js). */
+/** The thread agents of the thread's team, at its channel (its page in Teams, ui/agent.js). */
 function agentHref(key) {
   const t = threadRow(key);
   const team = t?.team || (!personal() && state.team) || null;
   if (!team) return null;
-  const q = new URLSearchParams({ team, view: 'agents' });
+  const q = new URLSearchParams({ tab: 'teams', team, view: 'agents' });
   if (t?.channel_id) q.set('channel', t.channel_id);
-  return `/inbox/kb?${q}`;
+  return `/inbox/admin?${q}`;
 }
 
 // The agent at work: a highlight going round its bubble's border and down its trail (the halo,
@@ -8162,8 +8164,8 @@ async function saveSettings(patch) {
 
 // ---------------------------------------------------------------- the agent's thinking
 // Whether the thread agent's thinking shows under the threads (agentItem), in the user menu:
-// everywhere, and in the open thread's channel, which wins. The Agents page has them too, by
-// channel. Not while viewing as someone else.
+// everywhere, and in the open thread's channel, which wins. A team's thread agents (its page in
+// Teams) have them too, by channel. Not while viewing as someone else.
 
 /** The open thread's channel, as the menu names it. */
 function channelLabel(t) {
@@ -8187,7 +8189,7 @@ function renderTraces() {
   }
   const set = Object.keys(state.settings.channelTraces || {}).length;
   $('tracesHint').textContent = `What it is doing while it works, and its note once done; only for you.${set
-    ? ` Set in ${set} channel${set === 1 ? '' : 's'} on ${set === 1 ? 'its' : 'their'} own, which win${set === 1 ? 's' : ''}: Agents lists them.` : ''}`;
+    ? ` Set in ${set} channel${set === 1 ? '' : 's'} on ${set === 1 ? 'its' : 'their'} own, which win${set === 1 ? 's' : ''}: the team's thread agents list them.` : ''}`;
 }
 
 /** The open thread's agent, after the settings changed from `before`: shown (asked again) or gone. */
@@ -8227,7 +8229,7 @@ function wireExpert() {
 // After the third of the agent's drafts you sent in a channel, the inbox asks whether it may post
 // its replies there itself (`postingOffer` of POST /api/post, src/postoffer.js): only the team's
 // managers and the admin team, where the channel's Post messages switch is off. Yes switches the
-// channel on (PUT /api/kb/tools, as Agents does); Keep drafts is kept (`postingDeclined`), and
+// channel on (PUT /api/kb/tools, as a team's tools do); Keep drafts is kept (`postingDeclined`), and
 // the inbox does not ask there again. A note that went otherwise (the next one) asks next time.
 
 function offerPosting(key, offer) {
@@ -8912,17 +8914,6 @@ function customerOnScreen() {
     || state.cache.get(state.open)?.data?.thread);
   const customers = state.sel.customer;
   return open ? open.org : (customers?.size === 1 ? [...customers][0] : null);
-}
-/**
- * The knowledge-base editor for what is on screen: the customer's knowledge base (see
- * customerOnScreen), else the team's; the editor picks whichever of them exists.
- */
-function kbHref() {
-  const q = new URLSearchParams();
-  const org = customerOnScreen();
-  if (org) q.set('org', org);
-  if (state.team && !personal()) q.set('team', state.team);
-  return `/inbox/kb${q.size ? `?${q}` : ''}`;
 }
 /**
  * Whether an address asks for the personal view: it is the default, so any address without a
@@ -9890,23 +9881,20 @@ async function start() {
     main.getBoundingClientRect();
     main.classList.remove('instant');
   });
-  // The pages (ui/header.js): the editor for every member of a team (read-only, but for their
-  // own settings, unless they manage it), the admin pages for the admin team and team
-  // managers. What is on screen picks what they open on: Agents and Orgs the customer on
-  // screen, Teams the team picked (one you may manage); with nothing on screen they open as
-  // they were left, and Agents, not opened yet in this tab, on the team. Stats (klickhaus) opens
-  // on the customer on screen and the team whose inbox it is, either or both, else on all. The
-  // open requests are the admin team's own, not shown while viewing as someone.
-  const teamOnScreen = () => (!personal() && state.team
-    && (state.me.admin || state.me.manages?.includes(state.team)) ? state.team : null);
+  // The pages (ui/header.js): Teams and Customers for every member of a team (their agents
+  // read-only, but for their own settings, unless they manage them), the rest of the admin
+  // pages for the admin team. What is on screen picks what they open on: Customers the
+  // customer on screen, Teams the team picked; with nothing on screen they open as they were
+  // left. Stats (klickhaus) opens on the customer on screen and the team whose inbox it is,
+  // either or both, else on all. The open requests are the admin team's own, not shown while
+  // viewing as someone.
+  const teamOnScreen = () => (!personal() && state.team ? state.team : null);
   Header.init(state.me, {
     prefer: {
-      agents: () => (customerOnScreen() ? kbHref() : null),
       teams: () => (teamOnScreen() ? `/inbox/admin?tab=teams&team=${encodeURIComponent(teamOnScreen())}` : null),
       orgs: () => (customerOnScreen() ? `/inbox/admin?tab=orgs&org=${encodeURIComponent(customerOnScreen())}` : null),
       stats: () => Header.stats({ org: customerOnScreen(), team: personal() ? null : state.team }),
     },
-    fallback: { agents: kbHref },
     count: !state.as,
   });
   if (state.me.admin) {

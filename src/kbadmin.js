@@ -31,14 +31,14 @@ import { parseStack, STACK_PATH, stackView } from './stack.js';
 import { resolveTech, techMoves } from './catalog.js';
 
 /**
- * The knowledge-base editor's API (`/inbox/kb`). The admin team and team managers list
- * the knowledge bases, list and read their files, and change them as the signed-in person
- * (team managers: those of their teams and of the customers their teams own); the members of
- * a team read its knowledge base and those of the customers it owns, and see their agents,
- * without changing them (src/kbaccess.js). Writes go through the same path as the agents'
- * (OKF checks, indexes and log by code, retry on a concurrent push), are committed with the
- * person as author and stamped `human:<email>`, and may also change `systemprompt.md`, which
- * agents cannot.
+ * The agents' API (their sections of the Teams and Customers pages, ui/agent.js). The admin
+ * team and team managers list the knowledge bases, list and read their files, and change them
+ * as the signed-in person (team managers: those of their teams and of the customers their
+ * teams own); the members of a team read its knowledge base and those of the customers it
+ * owns, and see their agents, without changing them (src/kbaccess.js). Writes go through the
+ * same path as the agents' (OKF checks, indexes and log by code, retry on a concurrent push),
+ * are committed with the person as author and stamped `human:<email>`, and may also change
+ * `systemprompt.md`, which agents cannot.
  */
 
 const MAX_MESSAGE = 200;
@@ -154,8 +154,8 @@ async function toolCounts(env) {
 
 /**
  * GET /api/kb: every knowledge base `me` may read, teams first, with the team's or customer's
- * name, its entries (null until counted), how many channels with agents and tools it has, and
- * whether `me` may change it (`may`).
+ * name (a customer's display name, else its slug), its entries (null until counted), how many
+ * channels with agents and tools it has, and whether `me` may change it (`may`).
  */
 async function listBases(env, me) {
   const [agents, tools, may, { results }] = await Promise.all([
@@ -163,8 +163,9 @@ async function listBases(env, me) {
     toolCounts(env),
     access(env, me),
     env.DB.prepare(`SELECT k.repo, k.kind, k.slug, k.created_at, k.entries,
-        t.name AS team_name
+        t.name AS team_name, o.name AS org_name
       FROM knowledge_bases k LEFT JOIN teams t ON k.kind = 'team' AND t.slug = k.slug
+      LEFT JOIN orgs o ON k.kind = 'org' AND o.slug = k.slug
       ORDER BY CASE k.kind WHEN 'team' THEN 0 ELSE 1 END, k.slug`).all(),
   ]);
   return json({
@@ -173,7 +174,7 @@ async function listBases(env, me) {
       repo: r.repo,
       kind: r.kind,
       slug: r.slug,
-      name: r.team_name || r.slug,
+      name: r.team_name || r.org_name || r.slug,
       created_at: r.created_at,
       entries: r.entries ?? null,
       agents: agents.size(`${r.kind}:${r.slug}`),

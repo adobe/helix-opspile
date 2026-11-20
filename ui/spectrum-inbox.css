@@ -515,6 +515,8 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .sc-body .sm .face { position: relative; flex: none; }
 .sc-body .sm .col { max-width: min(80%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
 .sc-body .sm.person .col { align-items: flex-end; }
+/* No wider than its column, as a bubble in the thread (below). */
+.sc-body .sm .col > .bubble { max-width: 100%; }
 .sc-body .sm .who { margin: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-50); }
 .sc-body .sm.pending .bubble { opacity: .7; }
 .sc-body .sc-foot { display: flex; justify-content: center; }
@@ -680,6 +682,10 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 .msg.adobe { flex-direction: row-reverse; }
 .msg .col { max-width: min(74%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
 .msg.adobe .col { align-items: flex-end; }
+/* A bubble is no wider than its column, whatever it holds: a file's name it cuts, a table or a
+   code block that cannot wrap it scrolls. Wider, it would grow past the column towards the
+   start of the line, off the feed's left edge on Adobe's side (aligned to the end). */
+.msg .col > .bubble { max-width: 100%; }
 /* The header line: who and when, then the quick reactions (below, with their rules). It is as
    wide as the feed has room beside the avatar (`--msg-line`), not as the bubble, and takes none
    of the column's width (the margin takes it back): the bubble alone says how wide a message
@@ -714,7 +720,10 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 
 .bubble > :last-child { margin-bottom: 0; }
 .bubble hr { border: 0; border-top: var(--spectrum-border-width-100) solid currentColor; opacity: .3; margin: var(--spectrum-spacing-100) 0; }
-.bubble table { border-collapse: collapse; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; display: block; overflow-x: auto; }
+/* A table scrolls sideways in its bubble rather than squeeze its columns: its cells break a
+   word only where it does not fit (`break-word`), not anywhere, as the bubble does, which
+   would shrink them to a letter's width. */
+.bubble table { border-collapse: collapse; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; display: block; overflow-x: auto; overflow-wrap: break-word; }
 .bubble th, .bubble td { border: var(--spectrum-border-width-100) solid color-mix(in srgb, currentColor 25%, transparent); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-100); }
 .bubble li > input[type=checkbox] { margin: 0 var(--spectrum-spacing-75) 0 calc(-1 * var(--spectrum-spacing-50)); vertical-align: calc(-1 * var(--spectrum-border-width-100)); }
 

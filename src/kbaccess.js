@@ -12,7 +12,7 @@
 
 /**
  * Who may look at and who may change a knowledge base (`{ kind, slug }`), its agents' MCP
- * servers and tools, in the editor (`/inbox/kb`):
+ * servers and tools, on its team's or customer's page (ui/agent.js):
  *
  * - a team's (`kind: 'team'`): the members of every ops team look (as every thread agent
  *   reads it, src/agent/repos.js), its managers change it;

@@ -31,9 +31,18 @@
  * asking (the status line names the channels a rule change moved), and go to the API one
  * after the other, so many can be made in a row (see `serial`). Text fields save when they
  * change. A change updates the open page in place (see "view state"); nothing reloads.
+ *
+ * A team's or a customer's page has its agent too, a section each (see "sections"): its thread
+ * agents, its tools and MCP servers, a team's extraction rules, and the knowledge base with its
+ * agent instructions, which ui/agent.js shows. Every member of an ops team sees those, of every
+ * team and of the customers their teams own (src/kbaccess.js says who changes them); a team's
+ * own section is its managers' and the admin team's, a customer's the admin team's.
  */
 const state = {
   me: null, tab: 'teams', listError: '', teams: [], unassigned: null, orgs: [], types: [], sel: null, filter: '', view: null,
+  // The knowledge bases you see (GET /api/kb), and which section of the team or the org picked
+  // is open (`own`, or one of its agent's, SECTIONS), with the file open in its knowledge base.
+  bases: [], section: null, path: null,
   requests: [], openRequests: 0, names: {}, noIcon: false,
   // The bots the inbox knows (GET /api/admin/bots), under Requests.
   bots: [],
@@ -235,29 +244,98 @@ const PARAM = {
   teams: 'team', orgs: 'org', requests: 'request',
 };
 const PICK = {
-  teams: 'a team', orgs: 'an org', requests: 'a request',
+  teams: 'a team', orgs: 'a customer', requests: 'a request',
 };
-function toUrl() {
-  const q = new URLSearchParams({ tab: state.tab });
-  if (state.sel) q.set(PARAM[state.tab], state.sel);
-  history.replaceState(null, '', `/inbox/admin?${q}`);
+/** The tabs whose rows have an agent: a team's, a customer's. */
+const AGENTED = ['teams', 'orgs'];
+/** A suggested team of the team wizard, picked in Teams (see "the team wizard"). */
+const isGroup = (sel) => String(sel ?? '').startsWith(GROUP);
+/** Whether `sel` on `tab` is a team or a customer, whose page has an agent's sections. */
+const agented = (tab, sel) => AGENTED.includes(tab) && !isGroup(sel);
+
+/**
+ * The address of what is picked (`sel` on `tab`), at a section of its page (`view`, none for its
+ * own) and the file open there (`path`).
+ */
+function address({
+  tab = state.tab, sel = state.sel, section = state.section, path = state.path,
+} = {}) {
+  const q = new URLSearchParams({ tab });
+  if (sel) q.set(PARAM[tab], sel);
+  if (sel && agented(tab, sel) && section && section !== 'own') {
+    q.set('view', section);
+    if (section === 'kb' && path) q.set('path', path);
+  }
+  return `/inbox/admin?${q}`;
+}
+function toUrl(mode = 'replace') {
+  const url = address();
+  if (url !== `${location.pathname}${location.search}`) history[mode === 'push' ? 'pushState' : 'replaceState'](null, '', url);
   // Phones show the list or what is picked in it (see the styles).
   document.body.classList.toggle('picked', Boolean(state.sel));
 }
 
 /**
- * Teams, Orgs and Requests are pages of the header (ui/header.js), each opening as it was
- * left: one of them, from its address, without loading the page again. Going to another is a
- * new history entry (`push`), so Back returns to the one before.
+ * What an address asks for: a tab, what is picked on it, a section of its page and a file.
+ * Links made before the agents were in these pages (/inbox/kb, which the Worker sends here)
+ * name a knowledge base instead (`repo`), or the customer and the team on screen in the inbox
+ * (`org`, `team`): the customer's, where it has a knowledge base, else the team's.
  */
-function openUrl(url, { push = true, instant = false } = {}) {
+function wanted(url) {
   const q = new URL(url, location.origin).searchParams;
-  const tab = ['orgs', 'requests'].includes(q.get('tab')) && state.me.admin ? q.get('tab') : 'teams';
+  let tab = q.get('tab');
+  let sel = null;
+  if (!tab) {
+    const named = state.bases.find((b) => b.repo === q.get('repo'))
+      || (q.get('org') && state.bases.find((b) => b.kind === 'org' && b.slug === q.get('org')));
+    if (named) {
+      tab = named.kind === 'org' ? 'orgs' : 'teams';
+      sel = named.slug;
+    } else if (q.get('org') && !q.get('team') && state.me.admin) tab = 'orgs';
+  }
+  if (!['orgs', 'requests'].includes(tab) || (tab !== 'orgs' && !state.me.admin)) tab = 'teams';
+  sel = sel || q.get(PARAM[tab]);
+  const view = q.get('view');
+  const legacy = Boolean(q.get('repo') || q.get('path'));
+  let section = SECTIONS.includes(view) ? view : null;
+  if (view === 'file' || (!section && legacy)) section = 'kb';
+  // Back from an MCP server's sign-in (src/mcpadmin.js): said once, on the servers' section.
+  let flash = null;
+  if (q.get('mcp_error')) flash = { error: q.get('mcp_error') };
+  else if (q.get('mcp_global_connected')) flash = { global: q.get('mcp_global_connected') };
+  else if (q.get('mcp_connected')) flash = { connected: q.get('mcp_connected') };
+  return {
+    tab, sel, section, path: q.get('path'), channel: q.get('channel'), flash,
+  };
+}
+
+/**
+ * Teams, Customers and Requests are pages of the header (ui/header.js), each opening as it
+ * was left: one of them, from its address, without loading the page again. Going to another is a
+ * new history entry (`push`), so Back returns to the one before. What the agent has open is
+ * saved first; where it cannot be and you stay, so does the address.
+ */
+async function openUrl(url, { push = true, instant = false } = {}) {
+  if (!(await Agent.leave())) {
+    if (!push) toUrl('push');
+    return;
+  }
+  const {
+    tab, sel, section, path, channel, flash,
+  } = wanted(url);
   if (push) history.pushState(null, '', url);
-  const sel = q.get(PARAM[tab]);
+  // Another section of the page open, or another file in its knowledge base.
+  if (sel && tab === state.tab && String(sel) === String(state.sel) && agented(tab, sel)) {
+    openSection(section, { path, channel, flash });
+    return;
+  }
   const open = () => {
     switchTab(tab);
-    if (sel) select(sel);
+    if (sel) {
+      select(sel, {
+        section, path, channel, flash,
+      });
+    }
   };
   // Phones slide between the list and what is picked in it within a page, not to another page
   // or from one picked to another.
@@ -283,13 +361,19 @@ function instantly(fn) {
 }
 
 async function load() {
-  // Team managers see their teams only, and no orgs.
-  const [teams, orgs, requests, bots] = await Promise.all([call('/api/admin/teams'),
-    state.me.admin ? call('/api/admin/orgs') : Promise.resolve({ body: {} }),
-    state.me.admin ? call('/api/admin/requests') : Promise.resolve({ body: {} }),
-    state.me.admin ? call('/api/admin/bots') : Promise.resolve({ body: {} })]);
+  // Team managers see their teams only, and no orgs; the other members of a team only the
+  // knowledge bases (their agents), as everyone does.
+  const none = Promise.resolve({ ok: true, body: {} });
+  const [teams, orgs, requests, bots, bases] = await Promise.all([
+    state.me.admin || state.me.manages?.length ? call('/api/admin/teams') : none,
+    state.me.admin ? call('/api/admin/orgs') : none,
+    state.me.admin ? call('/api/admin/requests') : none,
+    state.me.admin ? call('/api/admin/bots') : none,
+    call('/api/kb')]);
   if (!teams.ok) { $('list').innerHTML = `<div class="empty">${esc(teams.body.error || 'Could not load.')}</div>`; return false; }
-  state.teams = teams.body.teams;
+  // In place: the agent (ui/agent.js) counts on the same list.
+  state.bases.splice(0, state.bases.length, ...(bases.ok ? bases.body.bases : []));
+  state.teams = teams.body.teams || [];
   state.names = teams.body.names || {};
   state.requests = requests.body.requests || [];
   state.portal = requests.body.portal || [];
@@ -328,7 +412,12 @@ function wireFilter() {
     state.filter = e.target.value;
     renderList();
   };
-  for (const el of $('list').querySelectorAll('[data-sel]')) el.onclick = () => select(el.dataset.sel);
+  for (const el of $('list').querySelectorAll('[data-sel]')) el.onclick = () => pickRow(el.dataset.sel);
+}
+
+/** A row of the list picked: what the agent has open is saved first, or you stay. */
+async function pickRow(sel) {
+  if (await Agent.leave()) select(sel);
 }
 
 /**
@@ -361,18 +450,33 @@ function listError(text) {
   if ($('listStatus')) $('listStatus').textContent = text;
 }
 
+/** A knowledge base's row (a team's or a customer's you do not manage): its agent, its entries. */
+function baseRow(b) {
+  const agents = b.agents ? `agent in ${channelCount(b.agents)}` : '';
+  return `<div class="row two${state.sel === b.slug ? ' on' : ''}" data-sel="${esc(b.slug)}" title="${esc(b.name)} (${esc(b.slug)})">
+        <span class="name">${esc(b.name)}</span>
+        <span class="sub">${esc([agents, Agent.activity(b), b.name !== b.slug && b.slug].filter(Boolean).join(' · '))}</span></div>`;
+}
+
 function drawList() {
   const f = state.filter.toLowerCase();
+  const matches = (b) => !f || `${b.name} ${b.slug}`.toLowerCase().includes(f);
   if (state.tab === 'teams') {
+    // The teams you do not manage: their agents, read-only.
+    const managed = new Set(state.teams.map((t) => t.slug));
+    const others = state.me.admin ? [] : state.bases.filter((b) => b.kind === 'team' && !managed.has(b.slug) && matches(b));
     const rows = state.teams.filter((t) => !f || `${t.name} ${t.slug}`.toLowerCase().includes(f)).map((t) => `
       <div class="row two${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}" title="${esc(t.name)} (${esc(t.slug)})">
         <span class="name">${esc(t.name)}</span>
         <span class="sub">${t.self_managed ? '<span title="Every member is a team manager">Self-managed</span> · ' : ''}${t.members} ${t.members === 1 ? 'person' : 'people'} · ${channelCount(t.channels)}${t.shared ? ` + ${t.shared} shared` : ''} · ${esc(t.slug)}</span></div>`).join('');
     const un = state.unassigned && state.unassigned.channels ? `<div class="row two${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
         <span class="name"><i>Unassigned</i></span><span class="sub">${channelCount(state.unassigned.channels)}</span></div>` : '';
+    const yours = state.me.admin || state.me.manages?.length
+      ? `<h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}` : '';
+    const theirs = others.length || !yours ? `<h2>${yours ? 'Other teams' : 'Ops teams'}</h2>${others.map(baseRow).join('') || '<div class="empty">No teams.</div>'}` : '';
     const groups = state.me.admin ? groupList(f) : '';
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter teams" value="${esc(state.filter)}"></label>
-      <h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}${groups}
+      ${yours}${groups}${theirs}
       ${state.me.admin ? `<h2>New team</h2><form class="form" id="newTeam"><label class="fld grow"><span>Name</span><input id="ntName" required></label>
         <label class="fld"><span>Slug</span><input id="ntSlug" pattern="[a-z0-9][a-z0-9-]*" required></label><button class="primary">Create</button></form>` : ''}
       <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
@@ -440,6 +544,13 @@ function drawList() {
       ${decided.length || answered.length || kept.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${kept.join('')}` : ''}
       ${bots.length > review.length ? `<h2>Bots</h2>${bots.filter((b) => !unreviewed(b)).map(botRow).join('')}` : ''}
       <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team. A bot that posted waits here until you say whether it is Adobe's or external.</p>`;
+  } else if (!state.me.admin) {
+    // The customers your teams own: their agents, which their managers change.
+    const rows = state.bases.filter((b) => b.kind === 'org' && matches(b))
+      .sort((x, y) => x.name.localeCompare(y.name)).map(baseRow).join('');
+    $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter customers" value="${esc(state.filter)}"></label>
+      <h2>Customers of your teams</h2>${rows || `<div class="empty">${f ? 'Nothing matches.' : 'No customer of your teams has a knowledge base yet.'}</div>`}
+      <p class="hint">The customers with a channel filed under or shared with one of your teams, once their thread agents started a knowledge base.</p>`;
   } else {
     const rows = state.orgs.filter((o) => (!f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f))
       && (!state.noIcon || iconless(o))).map((o) => `
@@ -477,23 +588,35 @@ function drawList() {
   wireFilter();
 }
 
-function select(sel) {
+/**
+ * Picks `sel` on the open tab; a team or a customer at a `section` of its page (its own, else
+ * the first it has), the knowledge base at `path`, the thread agents at a `channel`, the
+ * servers with what a sign-in said (`flash`).
+ */
+function select(sel, {
+  section = null, path = null, channel = null, flash = null,
+} = {}) {
   state.sel = sel;
+  if (agented(state.tab, sel)) {
+    const shown = sectionsOf(state.tab, sel);
+    state.section = shown.includes(section) ? section : shown[0] || 'own';
+    state.path = state.section === 'kb' ? path : null;
+  }
   toUrl();
   renderList();
-  if (state.tab === 'teams' && String(sel).startsWith(GROUP)) showGroup(String(sel).slice(GROUP.length));
-  else if (state.tab === 'teams') showTeam(sel);
+  if (state.tab === 'teams' && isGroup(sel)) showGroup(String(sel).slice(GROUP.length));
+  else if (agented(state.tab, sel)) showPicked({ channel, flash, fresh: true });
   else if (state.tab === 'requests' && String(sel).startsWith(PORTAL)) showPortalRequest(String(sel).slice(PORTAL.length));
   else if (state.tab === 'requests' && String(sel).startsWith(CONFLICT)) showConflict(String(sel).slice(CONFLICT.length));
   else if (state.tab === 'requests' && String(sel).startsWith(RULE_CONFLICT)) showRuleConflict(String(sel).slice(RULE_CONFLICT.length));
   else if (state.tab === 'requests' && String(sel).startsWith(BOT)) showBot(String(sel).slice(BOT.length));
   else if (state.tab === 'requests') showRequest(sel);
-  else showOrg(sel);
 }
 
 /** Back to the list (phones), its filter as it was. */
 function unselect() {
   state.sel = null;
+  state.section = null;
   toUrl();
   renderList();
   // What was picked slides out as it was (phones); then it goes.
@@ -507,10 +630,141 @@ const backButton = () => `<button class="back" data-back title="Back to the list
 function switchTab(tab) {
   state.tab = tab;
   state.sel = null;
+  state.section = null;
   state.filter = '';
   toUrl();
   renderList();
   $('detail').innerHTML = `<div class="empty pick">Pick ${PICK[tab]}.</div>`;
+}
+
+// ---- sections ---------------------------------------------------------------------------
+//
+// A team's page and a customer's have a section of their own (the admin API's: a team's
+// members, rules, channels and technologies; a customer's name, icon, type and channels) and
+// their agent's, which ui/agent.js shows in the `#files` and `#editor` made for it here. The
+// sections are tabs under the title, each a link to its address, with what the agent counts.
+
+/** The agent's sections, as the address names them (history is the knowledge base's). */
+const SECTIONS = ['agents', 'mcp', 'extraction', 'kb', 'history'];
+const SECTION_LABEL = {
+  agents: 'Thread agents', mcp: 'Tools and MCP servers', extraction: 'Extraction rules', kb: 'Knowledge base',
+};
+const SECTION_TITLE = {
+  agents: 'Which of its channels have thread agents, and whether your inbox shows their thinking',
+  mcp: 'Tools its agents get where they are turned on, and MCP servers they call from code mode',
+  extraction: 'What labeling finds in the threads of its channels: facts and the tech stack',
+  kb: 'Its knowledge base: the agent instructions, the files the agents keep, and their history',
+};
+const inKb = (section) => section === 'kb' || section === 'history';
+
+/** The knowledge base of a team (`teams`) or a customer (`orgs`), where you see one. */
+const baseOf = (tab, slug) => state.bases.find((b) => b.kind === (tab === 'orgs' ? 'org' : 'team') && b.slug === slug) || null;
+
+/**
+ * The sections of a team's or a customer's page that you see, the one it opens at first: its
+ * own where it is yours (a team you manage, Unassigned, any for the admin team), then its
+ * agent's where it has a knowledge base.
+ */
+function sectionsOf(tab, slug) {
+  const own = tab === 'teams' ? state.teams.some((t) => t.slug === slug) || (slug === UNASSIGNED && state.me.admin)
+    : Boolean(state.me.admin);
+  const b = baseOf(tab, slug);
+  return [
+    ...(own ? ['own'] : []),
+    ...(b ? ['agents', 'mcp', ...(b.kind === 'team' ? ['extraction'] : []), 'kb', 'history'] : []),
+  ];
+}
+
+/** The tabs of the sections, the open one current, the agent's badges once they are read. */
+function sectionTabs() {
+  const b = baseOf(state.tab, state.sel);
+  const tags = b ? Agent.tags(b.repo) : {};
+  const type = state.orgs.find((o) => o.slug === state.sel)?.type || 'customer';
+  const own = state.tab === 'teams' ? 'Team' : `${type[0].toUpperCase()}${type.slice(1)}`;
+  const label = { own, ...SECTION_LABEL };
+  const title = { own: state.tab === 'teams' ? 'Its members, rules, channels and technologies' : 'Its name, icon, type and channels', ...SECTION_TITLE };
+  const open = state.section === 'history' ? 'kb' : state.section;
+  return sectionsOf(state.tab, state.sel).filter((x) => x !== 'history').map((x) => `<a href="${esc(address({ section: x, path: null }))}"
+    data-section="${x}"${open === x ? ' aria-current="page"' : ''} title="${esc(title[x])}"><span>${esc(label[x])}</span>${tags[x] || ''}</a>`).join('');
+}
+/** The tabs under the title, where there is more than one. */
+const sectionsNav = () => (sectionsOf(state.tab, state.sel).length > 1
+  ? `<nav class="sections" id="sections" aria-label="Sections">${sectionTabs()}</nav>` : '');
+/** The open tab in view, where the tabs scroll sideways (on a phone). */
+function tabInView() {
+  const nav = $('sections');
+  const open = nav && nav.querySelector('[aria-current]');
+  if (!open) return;
+  const at = open.getBoundingClientRect().left - nav.getBoundingClientRect().left;
+  nav.scrollLeft += at - (nav.clientWidth - open.offsetWidth) / 2;
+}
+/** The tabs again: another one is open, or the agent's counts changed. */
+function drawSections() {
+  if (!$('sections')) return;
+  $('sections').innerHTML = sectionTabs();
+  tabInView();
+}
+
+/** The title of an agent's section: the team's or the customer's name, which its own section edits. */
+function agentTitle(b) {
+  const team = state.tab === 'teams' && state.teams.find((t) => t.slug === state.sel);
+  const org = state.tab === 'orgs' && state.orgs.find((o) => o.slug === state.sel);
+  const name = (team && team.name) || (org && org.name) || b.name;
+  return `<div class="title">${backButton()}${org ? ico(org.icon, org.domain) : ''}<h1 class="fill">${esc(name)}</h1>
+    <span class="sub mono">${esc(state.sel)}</span></div>`;
+}
+
+/**
+ * What is picked, at its section (`state.section`): its own, or its agent's, which then shows
+ * the thread agents at a `channel`, or the servers with what a sign-in said (`flash`). `fresh`
+ * reads the agent again (another team or customer was picked, or another section).
+ */
+function showPicked({ channel = null, flash = null, fresh = false } = {}) {
+  const { tab, sel, section } = state;
+  const b = baseOf(tab, sel);
+  if (!sectionsOf(tab, sel).length) {
+    // Neither yours to manage nor with a knowledge base you see.
+    loadingPage();
+    state.view = null;
+    $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(tab === 'teams' ? teamLabel(sel) : orgLabel(sel))}</h1></div>
+      <div class="empty">${tab === 'teams' ? 'This team has no knowledge base yet.' : 'None of your teams works with this customer, or its agents have not started a knowledge base yet.'}</div>`;
+    return;
+  }
+  if (section === 'own') {
+    if (tab === 'teams') showTeam(sel);
+    else showOrg(sel);
+    // The agent's badges, on its tabs.
+    if (b) Agent.load(b.repo, { fresh });
+    return;
+  }
+  loadingPage();
+  state.view = { target: 'agent', value: sel };
+  const kb = inKb(section);
+  $('detail').innerHTML = `${agentTitle(b)}${sectionsNav()}
+    <div class="agent${kb ? ' kb' : ''}" id="agent">${kb ? '<section id="files" aria-label="Files"></section>' : ''}<section id="editor"></section></div>`;
+  tabInView();
+  Agent.show(b.repo, {
+    view: section === 'kb' ? 'file' : section, path: state.path, channel, flash, fresh, nav: 'replace',
+  });
+}
+
+/**
+ * Another section of the page open (its address, Back or Forward): the knowledge base's files
+ * stay while another of them, or its history, opens.
+ */
+function openSection(section, { path = null, channel = null, flash = null } = {}) {
+  const shown = sectionsOf(state.tab, state.sel);
+  const next = shown.includes(section) ? section : shown[0] || 'own';
+  const was = state.section;
+  state.section = next;
+  state.path = next === 'kb' ? path : null;
+  toUrl();
+  if (inKb(next) && inKb(was) && $('files')) {
+    drawSections();
+    Agent.show(baseOf(state.tab, state.sel).repo, { view: next === 'kb' ? 'file' : 'history', path, nav: 'replace' });
+    return;
+  }
+  showPicked({ channel, flash, fresh: true });
 }
 
 // ---- view state ---------------------------------------------------------------------------
@@ -1416,8 +1670,8 @@ async function showTeam(slug) {
   $('detail').innerHTML = `
     <div class="title">${backButton()}${title}
       <span class="sub mono">${esc(team.slug)}</span>
-      ${real ? `<a href="/inbox/kb?team=${encodeURIComponent(team.slug)}">Knowledge base</a>` : ''}
       ${admin && real && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
+    ${sectionsNav()}
     <div class="status" id="status"></div>
     ${real ? `<div class="card"><label class="inline">
       <input type="checkbox" id="tSelf"${team.self_managed ? ' checked' : ''}${admin ? '' : ' disabled'}>
@@ -1444,6 +1698,7 @@ async function showTeam(slug) {
       <p class="hint lead">Channels the admin team holds (no rule files them under a team) where members of ${esc(team.name)} post, react or are members, and the ones Clef thinks are this team's. Add assigns one here by hand.</p>
       <div id="suggestTable"></div></div>` : ''}`;
   showStatus();
+  tabInView();
   renderChannels();
   if (suggestions) renderSuggestions();
   wireChannelPicker();
@@ -1673,6 +1928,7 @@ function showGroup(prefix) {
     const said = `${r.body.team.existing ? teamLabel(slug) : body.name}: ${peopleCount(members.length)} added, re-filing ${channelCount(moves.filter((m) => m.from.some((x) => x.team !== m.to.team)).length)}${refused.length ? `; not added: ${refused.map((x) => x.email).join(', ')}` : ''}.`;
     if (state.tab !== 'teams' || state.sel !== `${GROUP}${g.prefix}`) { renderList(); return; }
     state.sel = slug;
+    state.section = 'own';
     toUrl();
     renderList();
     await showTeam(slug);
@@ -2125,7 +2381,9 @@ function askedWhere(c, d) {
 
 /** One team's definition of a technology: where it is kept, and what it says. */
 function definitionCard(c, d) {
-  const where = d.path ? `<a href="/inbox/kb?repo=${encodeURIComponent(`kb-team-${d.team}`)}&path=${encodeURIComponent(d.path)}">${esc(d.path)}</a>`
+  const where = d.path ? `<a href="${esc(address({
+    tab: 'teams', sel: d.team, section: 'kb', path: d.path,
+  }))}">${esc(d.path)}</a>`
     : '<span class="sub">saved in D1</span>';
   const differs = (f) => (c.kind === 'diverging' && c.fields.includes(f) ? ' class="differs"' : '');
   const k = c.kind === 'name' ? c.key.slice('name:'.length) : null;
@@ -2411,6 +2669,7 @@ async function showOrg(slug) {
   $('detail').innerHTML = `
     <div class="title">${backButton()}<span id="oIco">${ico(org.icon, domain)}</span><h1 class="fill" id="oTitle">${esc(org.name || org.slug)}</h1>
       <span class="sub mono">${esc(org.slug)}</span><button class="danger" id="oDelete" title="Forget the name, icon and type"${org.updated_at ? '' : ' hidden'}>Reset</button></div>
+    ${sectionsNav()}
     <div class="status" id="status"></div>
     <div class="card"><div class="field">
       <label for="oName">Display name</label><span class="inline"><input id="oName" class="fill" value="${esc(org.name || '')}"></span>
@@ -2422,6 +2681,7 @@ async function showOrg(slug) {
     ${rules.length ? `<div class="card"><h2>Rules naming this org</h2><table><tr><th>Field</th><th>Pattern</th><th>Value</th><th>Priority</th><th>Note</th></tr>
       ${rules.filter((x) => x.field !== 'channel_id' || x.note !== 'manual assignment').map((x) => `<tr><td>${esc(FIELD_LABEL[x.field] || x.field)}</td><td>${describe(x)}</td><td><code>${esc(x.value)}</code></td><td class="n">${x.priority}</td><td class="sub">${esc(x.note || '')}</td></tr>`).join('')}</table></div>` : ''}`;
   showStatus();
+  tabInView();
   renderChannels();
   wireChannelPicker();
   const pressed = () => $('oType').querySelector('[aria-pressed="true"]')?.dataset.type || 'customer';
@@ -2650,22 +2910,49 @@ function showBot(key) {
 // ---- start ------------------------------------------------------------------------------
 
 (async () => {
-  // Another team, org or request fades in (ui/app.js).
-  Swap.watch($('detail'), () => `${state.tab}|${state.sel ?? ''}`);
+  // Another team, org, request or section fades in (ui/app.js).
+  Swap.watch($('detail'), () => `${state.tab}|${state.sel ?? ''}|${state.section === 'history' ? 'kb' : state.section ?? ''}`);
   const me = await call('/api/me');
   if (!me.ok) { $('list').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
   state.me = me.body;
-  Header.user(state.me, Header.role(state.me));
-  if (!state.me.admin && !state.me.manages?.length) {
-    $('list').innerHTML = '<div class="empty">These pages are for the admin team and team managers.</div>';
+  Header.user(state.me, Header.role(state.me) || (state.me.teams?.length ? 'Read-only' : ''));
+  if (!state.me.admin && !state.me.manages?.length && !state.me.teams?.length) {
+    $('list').innerHTML = '<div class="empty">These pages are for the members of an ops team.</div>';
     $('detail').innerHTML = '<div class="empty"><a href="/inbox">Back to the inbox</a></div>';
     return;
   }
   Header.init(state.me, {
     count: false, // renderCount, from the requests loaded here
-    go: (id, url) => (['teams', 'orgs', 'requests'].includes(id) ? openUrl(url) : location.assign(url)),
+    // The inbox, not opened yet in this browser tab (ui/header.js keeps it as it was left): the
+    // team picked's.
+    fallback: { inbox: () => (state.tab === 'teams' && state.sel && state.sel !== UNASSIGNED ? `/inbox?team=${encodeURIComponent(state.sel)}` : null) },
+    // Leaving saves what the agent has open, and asks, in the page, about edits that cannot be
+    // saved; a new tab (⌘-click, middle click) leaves nothing.
+    go: async (id, url) => {
+      if (['teams', 'orgs', 'requests'].includes(id)) openUrl(url);
+      else if (await Agent.leave()) location.assign(url);
+    },
   });
   if (!(await load())) return;
+  Agent.init(state.me, state.bases, {
+    // The agent's address: the view and the file it has open, in the page's.
+    onUrl: (mode) => {
+      const w = Agent.where();
+      const b = baseOf(state.tab, state.sel);
+      if (!b || w.repo !== b.repo || !SECTIONS.includes(state.section)) return;
+      state.section = w.view === 'file' ? 'kb' : w.view;
+      state.path = w.path;
+      toUrl(mode);
+      drawSections();
+    },
+    // Its switches change what the tabs and the list count.
+    onChange: () => {
+      drawSections();
+      renderList();
+    },
+    // A file it names (a technology of the team's catalog), in the knowledge base.
+    onOpen: (view, path) => openUrl(address({ section: view === 'file' ? 'kb' : view, path })),
+  });
   // An icon that does not load: Google has no favicon for the domain (or the image is gone).
   // The org is then shown without one, and counts as one without an icon.
   let redraw = 0;
@@ -2678,7 +2965,10 @@ function showBot(key) {
     redraw = setTimeout(() => { if (state.tab === 'orgs') renderList(); }, 300);
   }, true);
   $('detail').addEventListener('click', (e) => {
-    if (e.target.closest('[data-back]')) { unselect(); return; }
+    if (e.target.closest('[data-back]')) {
+      Agent.leave().then((left) => { if (left) unselect(); });
+      return;
+    }
     // A link to another team or org here (a request's team) opens it as the header does.
     const a = e.target.closest('a[href^="/inbox/admin?"]');
     if (a && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
