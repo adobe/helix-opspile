@@ -335,10 +335,13 @@ describe('history import, Teams', () => {
     assert.ok(row(e).done_at);
   });
 
-  it('ends where Graph refuses the channel', async () => {
-    const e = env();
-    const graph = async () => new Response('{}', { status: 403 });
-    assert.equal((await runImport(e, job, { graph, now: NOW })).result, 'import-ended');
-    assert.match(row(e).error, /graph 403/);
+  it('ends where Graph refuses the channel, or says it is gone', async () => {
+    for (const status of [403, 410]) {
+      const e = env();
+      const graph = async () => new Response('{}', { status });
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await runImport(e, job, { graph, now: NOW })).result, 'import-ended');
+      assert.match(row(e).error, new RegExp(`graph ${status}`));
+    }
   });
 });

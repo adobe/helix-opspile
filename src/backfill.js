@@ -28,7 +28,7 @@ import {
 const MAX_PAGES = 20;
 
 // Errors that stay: asking again changes nothing. Anything else may pass, so it is tried again.
-export const FINAL = /\b(channel_not_found|thread_not_found|not_in_channel|missing_scope|is_archived|no_permission|access_denied|not_authed|invalid_auth|account_inactive|token_revoked|team_access_not_granted)\b|^graph 40[134]\b|^discord 40[134]\b/;
+export const FINAL = /\b(channel_not_found|thread_not_found|not_in_channel|missing_scope|is_archived|no_permission|access_denied|not_authed|invalid_auth|account_inactive|token_revoked|team_access_not_granted)\b|^graph 4(0[134]|10)\b|^discord 40[134]\b/;
 
 // A request nobody finished, a job that died or was never sent, goes out again this long after.
 const SWEEP_AFTER_MS = 60 * 60 * 1000;
