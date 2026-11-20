@@ -142,8 +142,8 @@ const CHANNELS = {
     team: 'platform',
     members: ['kira'],
     appPosting: true,
-    // The channel's tech stack (channel_tech), for the Tech stack filter, and the key parts of
-    // ACME's stack beside its heading in the list by customer.
+    // What the fake channel's threads show, for the Tech stack filter (the key parts beside
+    // ACME's heading come from its stack.md, scripts/dev-ui-kb.mjs).
     tech: ['eds', 'akamai', 'sharepoint', 'github', 'commerce', 'appbuilder', 'analytics', 'consent', 'opspile'],
   },
   aemGlobex: {

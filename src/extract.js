@@ -22,8 +22,8 @@ import { isTechId, MAX_TECH_ID } from './techid.js';
  *   technology the customer uses (an Akamai error reference means Akamai). They run on every
  *   relabel (src/label.js), exact and cheap; loose facts are left to Clairic.
  * - `tech_stack`: the technologies worth knowing at a glance for a customer, each one Clef
- *   yes/no question ("Does this thread show that the customer uses …?"). The channel keeps the
- *   highest probability any thread showed (channel_tech). Most rows are compiled from the
+ *   yes/no question ("Does this thread show that the customer uses …?"), kept per thread
+ *   (labels.tech, thread_tech). Most rows are compiled from the
  *   teams' catalogs (src/catalog.js, `path` set); a row without a path was saved here.
  *
  * The admin team's rules apply to every channel; any other team's to the channels it owns

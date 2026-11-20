@@ -296,7 +296,6 @@ function rewrites(db, old, tech) {
     ...swap('team_follows'),
     ...swap('person_follows'),
     ...swap('thread_tech'),
-    ...swap('channel_tech'),
     db.prepare('UPDATE extraction_rules SET field = ?2 WHERE target = \'tech\' AND field = ?1')
       .bind(old, tech),
     db.prepare(`UPDATE portal_requests SET tech = (SELECT json_group_array(CASE WHEN value = ?1

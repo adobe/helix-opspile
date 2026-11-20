@@ -550,7 +550,7 @@ function elsewhereCounts() {
   })).filter((t) => t.unread > 0);
 }
 
-/** The channel's tech stack (channel_tech), likeliest first. */
+/** What the fake channel's threads show, likeliest first (thread_tech, in production). */
 const channelTech = (entry) => (entry.ch.tech || [])
   .map((tech, i) => ({ tech, p: 0.95 - i * 0.05 }));
 
