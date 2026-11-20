@@ -34,7 +34,7 @@ export const CLAIRIC = '@cf/cloudflare/clairic';
 export const TITLER = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const MAX_TITLE = 90;
 
-/** At or above this, a technology is the channel's (channel_tech); a rule's detection is 1. */
+/** At or above this, a thread shows a technology (thread_tech); a rule's detection is 1. */
 export const TECH_MIN = 0.8;
 /** Questions per Clef call: more are asked in calls of their own, at the same time. */
 export const MAX_QUESTIONS = 24;
@@ -573,29 +573,6 @@ export function techOf(tech, answers, detected = []) {
   return out;
 }
 
-/** The channel's technologies, from those `found` in a thread: each keeps the highest. */
-async function recordTech(env, thread, found) {
-  for (const [id, p] of Object.entries(found)) {
-    // eslint-disable-next-line no-await-in-loop
-    await env.DB.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (source, tenant, channel_id, tech) DO UPDATE SET
-        p = MAX(channel_tech.p, excluded.p),
-        thread = CASE WHEN excluded.p > channel_tech.p THEN excluded.thread ELSE channel_tech.thread END,
-        updated_at = excluded.updated_at`)
-      .bind(
-        thread.source,
-        thread.tenant,
-        thread.channel_id,
-        id,
-        p,
-        thread.thread,
-        new Date().toISOString(),
-      )
-      .run();
-  }
-}
-
 async function replaceFacts(db, thread, source, facts) {
   await db.prepare('DELETE FROM facts WHERE thread = ? AND source = ?').bind(thread, source).run();
   for (const f of facts) {
@@ -770,7 +747,6 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
     );
   // The label and what the thread shows by index (`thread_tech`) at once.
   await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown, about || {})]);
-  await recordTech(env, thread, shown);
   const was = (before || []).map((r) => r.tech).sort();
   const is = Object.keys(shown).sort();
   const loose = clairicFacts(clairic.answers);

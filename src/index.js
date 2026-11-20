@@ -59,6 +59,7 @@ import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { countEntries } from './kbadmin.js';
 import { syncCatalogs } from './catalogsync.js';
+import { syncOrgStacks } from './orgstacks.js';
 import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
@@ -319,6 +320,10 @@ const handlers = {
     ctx.waitUntil(countEntries(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'entries', ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'entries', error: e.message }))));
+    // The customers' stack drawings the inbox's list by customer has not read yet.
+    ctx.waitUntil(syncOrgStacks(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'stacks', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'stacks', error: e.message }))));
     // The teams' catalogs of products whose knowledge base moved on without a compile.
     ctx.waitUntil(syncCatalogs(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'catalog', ...r })))

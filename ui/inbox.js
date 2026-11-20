@@ -1674,19 +1674,15 @@ function groupHtml(x) {
 }
 
 /*
- * A customer's tech stack: what Clef saw in its channels (`stacks`, src/api.js orgStacks), each
- * technology in its layer (`vocab.layers`, `vocab.stack`, src/stack.js). Under the customer's
- * heading, the likeliest technology of each layer, top to bottom, is its stack at a glance;
- * a click on it shows the stack's drawing from the customer's knowledge base (GET
- * /api/kb/stack, ui/stack.js, as an FMC block diagram), or, without one, what Clef saw, by
- * layer.
+ * A customer's tech stack: the parts of its stack drawing (`stacks`, src/orgstacks.js), each in
+ * its layer (`vocab.stack`, src/stack.js). Under the customer's heading, the first part of each
+ * layer, top to bottom, is its stack at a glance; a click on it shows the drawing from the
+ * customer's knowledge base (GET /api/kb/stack, ui/stack.js, as an FMC block diagram). A customer
+ * without a drawing has none: Clef's answers are the threads', not the customer's.
  */
-/** The customer's technologies, likeliest first: `[{ tech, name, p, layer }]`. */
+/** The customer's parts, in the drawing's order: `[{ tech, name, layer }]`. */
 function orgStack(org) {
-  const v = state.data?.vocab || {};
-  return (state.data?.stacks?.[org] || []).map((t) => ({
-    tech: t.tech, p: t.p, name: v.tech?.[t.tech] || t.tech, layer: v.layers?.[t.tech] || null,
-  }));
+  return (state.data?.stacks?.[org] || []).map((t) => ({ tech: t.tech, name: t.name, layer: t.layer }));
 }
 /** The names of the key parts of a customer's stack: each layer's likeliest, but Other's. */
 function stackLine(org) {
@@ -1694,15 +1690,9 @@ function stackLine(org) {
   for (const t of orgStack(org)) if (t.layer && t.layer !== 'other' && !by.has(t.layer)) by.set(t.layer, t.name);
   return (state.data?.vocab?.stack || []).map((l) => by.get(l.id)).filter(Boolean);
 }
-/** Pages of the inbox, merged: each customer's technologies at the highest probability of any. */
+/** Pages of the inbox, merged: a customer's drawing is the same on each, the later's kept. */
 function mergeStacks(a = {}, b = {}) {
-  const out = { ...a };
-  for (const [org, list] of Object.entries(b || {})) {
-    const best = new Map((out[org] || []).map((t) => [t.tech, t.p]));
-    for (const t of list) if (!(best.get(t.tech) >= t.p)) best.set(t.tech, t.p);
-    out[org] = [...best].map(([tech, p]) => ({ tech, p })).sort((x, y) => y.p - x.p);
-  }
-  return out;
+  return { ...(a || {}), ...(b || {}) };
 }
 const STACK_FRESH_MS = 60 * 1000;
 const stackPop = {
@@ -1762,7 +1752,7 @@ function stackFoot(res) {
   if (!res) return '<span>Only the ops teams that work with this customer see its knowledge base.</span>';
   const edit = `/inbox/kb?${new URLSearchParams({ repo: res.repo, path: res.path })}`;
   if (!res.drawing) {
-    const why = res.error ? `The drawing in the knowledge base cannot be drawn: ${esc(res.error)}.` : 'No drawing yet: this is what Clef saw in their threads. The thread agents draw one as they learn the stack.';
+    const why = res.error ? `The drawing in the knowledge base cannot be drawn: ${esc(res.error)}.` : 'No drawing yet. The thread agents draw one as they learn the stack from the threads.';
     return `<span>${why}</span>${res.hash ? `<a href="${esc(edit)}">Fix it in Agents</a>` : ''}`;
   }
   const who = /^human:/.test(res.by || '') ? res.by.slice(6) : 'a thread agent';
@@ -1784,31 +1774,28 @@ async function showStack(org, anchor) {
   const name = customerName(org);
   el.setAttribute('aria-label', `${name}'s tech stack`);
   const head = `<div class="stk-head"><h3>${esc(name)}'s tech stack</h3><button type="button" class="stk-x" data-stack-close title="Close (Esc)" aria-label="Close"><span class="s2-cross" aria-hidden="true"></span></button></div>`;
-  // The list's, else the open thread's channel's (a customer the list does not show).
-  let detected = orgStack(org);
-  const open = state.cache.get(state.open)?.data;
-  if (!detected.length && open?.thread?.org === org) {
-    const v = open.vocab || state.data?.vocab || {};
-    detected = (open.tech || []).map((t) => ({
-      tech: t.tech, p: t.p, name: v.tech?.[t.tech] || t.tech, layer: v.layers?.[t.tech] || null,
-    }));
-  }
-  const vocab = { ...(state.data?.vocab || {}), ...(open?.vocab || {}) };
-  const draw = (res) => {
-    const view = res?.drawing || Stack.fromDetected(detected, vocab.layers || {}, vocab.stack || []);
-    el.innerHTML = `${head}${Stack.html(view, { detected: res?.drawing ? detected : [], md: (s) => md(s) })}<div class="stk-foot">${stackFoot(res)}</div>`;
-    el.classList.toggle('guess', !res?.drawing);
-    placeStack(el, anchor);
+  const draw = (res, waiting = false) => {
     if (stackPop.stop) stackPop.stop();
+    stackPop.stop = null;
+    if (!res?.drawing) {
+      // No drawing (or not here yet): no guess at the customer's stack.
+      el.innerHTML = `${head}<div class="stk-foot">${waiting ? '<span>Loading the drawing…</span>' : stackFoot(res)}</div>`;
+      el.classList.add('guess');
+      placeStack(el, anchor);
+      return;
+    }
+    const view = res.drawing;
+    el.innerHTML = `${head}${Stack.html(view, { md: (s) => md(s) })}<div class="stk-foot">${stackFoot(res)}</div>`;
+    el.classList.remove('guess');
+    placeStack(el, anchor);
     // The diagram replaces the list of parts once the renderer has drawn it (ui/stack.js).
     stackPop.stop = Stack.wire(el, view, {
-      md: (s) => md(s), detected, title: name, drawn: () => { if (!el.hidden) placeStack(el, anchor); },
+      md: (s) => md(s), title: name, drawn: () => { if (!el.hidden) placeStack(el, anchor); },
     });
   };
   const asked = stackOf(org);
   const pending = stackPop.asked.get(org);
-  // What Clef saw shows at once when the drawing is not here yet; the drawing replaces it.
-  if (!pending?.done) draw(null);
+  if (!pending?.done) draw(null, true);
   const res = await asked;
   if (pending) pending.done = true;
   if (stackPop.org !== org || stackPop.anchor !== anchor) return;
@@ -2993,8 +2980,8 @@ function headLinks(facts = []) {
 function headTech(data) {
   const name = (kind, id) => data.vocab?.[kind]?.[id] || id;
   const here = (data.thread_tech || []).map((t) => ({ id: t.tech, name: name('tech', t.tech), p: t.p }));
-  const shown = new Set(here.map((t) => t.id));
-  const also = (data.tech || []).filter((t) => !shown.has(t.tech)).map((t) => ({ id: t.tech, name: name('tech', t.tech), p: t.p }));
+  // The channel's technologies, from before a customer's stack was its drawing's: none now.
+  const also = [];
   const topics = (data.topics || []).map((id) => ({ id, name: name('topics', id) }));
   const first = here[0] || topics[0] || also[0];
   return {

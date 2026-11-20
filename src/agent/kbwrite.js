@@ -20,6 +20,8 @@ import {
   splitFrontmatter, stampGenerated, SYSTEM_PROMPT,
 } from './okf.js';
 import { checkStackTech } from '../stacktech.js';
+import { storeOrgStack } from '../orgstacks.js';
+import { STACK_PATH } from '../stack.js';
 import {
   checkCatalog, compileCatalog, inCatalog, movesOf, storeCatalog, withMovedFrom,
 } from '../catalog.js';
@@ -378,6 +380,17 @@ export async function writeKnowledge(env, artifact, changes, {
         }
         // eslint-disable-next-line no-await-in-loop
         await countEntries(env, artifact, fs);
+        if (kindOf(artifact) === 'org' && changes.some((c) => c.path === STACK_PATH)) {
+          // The customer's stack as the inbox's list shows it (src/orgstacks.js).
+          // eslint-disable-next-line no-await-in-loop
+          const text = await fs.promises.readFile(`${DIR}/${STACK_PATH}`, 'utf8').catch(() => null);
+          // eslint-disable-next-line no-await-in-loop
+          await storeOrgStack(env, artifact.replace(/^kb-org-/, ''), text).catch((e) => console.error(
+            JSON.stringify({
+              route: 'kb', action: 'stack', artifact, error: e.message,
+            }),
+          ));
+        }
         if (kindOf(artifact) === 'team' && changes.some((c) => inCatalog(c.path))) {
           // eslint-disable-next-line no-await-in-loop
           await compileTree(env, artifact, fs, result.commit);

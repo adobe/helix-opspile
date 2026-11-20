@@ -122,7 +122,7 @@ person (`person_follows`; from a thread's tech stack dropdown, or the Following 
 whichever team its channel is filed under, and they work it there as a shared channel's: read,
 reply, react, resolve, draft, search, live updates, notifications, the MCP server. What a thread
 shows is its own label's (`labels.tech`: what Clef is sure of, and what the rules detected), not its
-channel's (`channel_tech`), so a team that follows Experience Workspace gets the threads about it,
+channel's or its customer's, so a team that follows Experience Workspace gets the threads about it,
 not every thread of a customer that uses it; and an inbox entry shows what any of its members does.
 Conversations only: an alert channel's threads are followed by none. A person's follows count
 only while they are on an ops team: someone who signed in from `SIGNIN_DOMAINS` on no team cannot
@@ -625,13 +625,16 @@ a flow between parts that are not there, more than 40 parts or 60 flows) is refu
 writes it (`checkConcept`), so the inbox can always draw it. `GET /api/kb/stack?org=` answers
 it parsed, by layer, with who wrote it and when (its `generated` stamp), for whoever may read
 the knowledge base; the inbox draws it (ui/stack.js) as an FMC block diagram, a part under the
-pointer or the focus lighting its flows and naming them, and the technologies Clef saw in the
-customer's channels that it does not draw listed under it. Without one, the inbox draws what
-Clef saw, by layer.
+pointer or the focus lighting its flows and naming them. Without one, the inbox draws nothing:
+the drawing is the only customer-level record of what a customer runs, which its thread agents
+keep, and Clef's answers are each thread's. Every write of `stack.md` also keeps its parts (but
+people) in D1 (`org_stacks`, migration 0084, src/orgstacks.js) for the inbox's list by customer;
+the cron reads the drawings of knowledge bases that have no row yet.
 The agents are told to keep it current: every turn's system prompt has a `stack-drawing`
 section with the drawing's parts by layer and its hash (the `base` for `draw_stack`), or that
-there is none, and the technologies Clef saw in the channel (`channel_tech`, at 0.8 or above)
-that no part is; the prompt asks them to draw it once they know what serves the customer's
+there is none, the technologies Clef saw in the customer's channel threads of the last 90 days
+(`thread_tech`, at 0.8 or above, with how many threads showed each) that no part is, and the
+parts none of them showed (retired, or only not talked about); the prompt asks them to draw it once they know what serves the customer's
 pages, and again in the same turn a thread shows a part, flow or change it lacks, only from what
 someone said or showed. The day-later wrap-up asks again.
 
@@ -823,13 +826,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   customers**, with or without threads, until a click brings it back. **All customers** drops
   the pick and what is excluded.
   Beside each customer's heading in the list by customer are the key parts of its **stack**:
-  the likeliest technology of each layer of the stack (`tech_stack.layer`, see "Labels and
-  facts"), top to bottom, Other's left out, over the customer's channels on the pages loaded
-  (`stacks` of `/api/inbox`, `orgStacks` in src/api.js: each technology at the highest
-  probability of any of its channels there, at 0.8 or above; pages merge the same way). A click
-  on them shows the customer's [stack drawing](#3-knowledge-bases) (`GET /api/kb/stack`,
-  ui/stack.js) under the heading, or, without one, what Clef saw, by layer; the thread's tech
-  stack dropdown has a link to the same.
+  the first part of each layer of its [stack drawing](#3-knowledge-bases), top to bottom, Other's
+  left out (`stacks` of `/api/inbox`, from `org_stacks`, src/orgstacks.js); a customer without a
+  drawing has none. A click on them shows the drawing (`GET /api/kb/stack`, ui/stack.js) under
+  the heading; the thread's tech stack dropdown has a link to the same.
   Besides its cards it has one switch, **Mentions** (the @ at the top right of the
   customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
   the thread's mentions, has you); with unread only, the ones with mentions of you you have not read. The
@@ -1106,10 +1106,11 @@ and an unchanged thread is never labeled twice):
   every team has it off). Clef gets at most 24 questions per call; the
   rest are asked in calls of their own, at the same time, in the order of their ids. A question's
   key in a call is a hash of the id (src/techid.js `questionKeys`: a catalog path is no key),
-  mapped back when Clef answers, and stored nowhere. The channel keeps the highest probability any thread
-  showed (a rule's detection counts as 1), so every thread of a customer shows their stack;
-  the label keeps what the thread itself showed (`labels.tech`, migration 0059), so its header
-  can name that first.
+  mapped back when Clef answers, and stored nowhere. The label keeps what the thread showed
+  (`labels.tech`, migration 0059; a rule's detection counts as 1), and so does `thread_tech`, by
+  index. Nothing is kept per channel or customer from Clef's answers: the customer's stack is its
+  stack drawing (`channel_tech`, which kept each technology at the highest probability any
+  thread of the channel showed, is no longer written or read).
   Of the technologies a thread shows, Clef is then asked, in one more call after the first
   answers, whether the thread is **about** each: whether the question, the problem or the work
   concerns it, not only mentions it (`aboutQuestions`, keyed as the tech questions;
@@ -1468,12 +1469,9 @@ large one), each with its root's link. Hovering it names the customer and its ty
 two dropdowns, each named by what matters most for the thread:
 
 - **Tech stack:** what the thread shows (`labels.tech` of its members, the likeliest first),
-  then the rest of the channel's (`channel_tech`), then Clef's topics of the thread. A thread
-  labeled before labels kept their technologies counts those it set the channel's highest
-  probability for (`channel_tech.thread`), until it is labeled again. The dropdown is named by
-  what the thread shows, else by its first topic, and only then by the channel's likeliest: that
-  is the customer's, and a da.live link in one thread would otherwise name every other thread of
-  the channel Document Authoring.
+  then Clef's topics of the thread. The dropdown is named by what the thread shows, else by its
+  first topic. The channel's technologies are not the thread's: a da.live link in one thread
+  would otherwise name every other thread of the channel Document Authoring.
 - **Links:** the pages mentioned in the thread (Clairic's `affected_url` first, then the
   rules' `url` facts), then each Edge Delivery site's production URL
   (`main--<site>--<org>.aem.live`), then links to documentation and code (`aem.live`,

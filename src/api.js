@@ -77,6 +77,7 @@ import { Timing, withTiming } from './timing.js';
 import { batchedDatabase } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
+import { orgStacksOf } from './orgstacks.js';
 import { drawDiagram } from './diagrams.js';
 
 /**
@@ -425,30 +426,6 @@ async function unreadElsewhere(env, me) {
 }
 
 /**
- * The tech stack of each customer, over its channels in this page of the inbox: `{ [org]:
- * [{ tech, p }] }`, likeliest first, each technology at the highest probability any of its
- * channels has (channel_tech). The list by customer names the key parts under each customer
- * (ui/inbox.js `stackLine`); pages are merged the same way in the page.
- */
-export function orgStacks(rows) {
-  const best = new Map();
-  for (const r of rows || []) {
-    if (r.org && r.p != null) {
-      if (!best.has(r.org)) {
-        best.set(r.org, new Map());
-      }
-      const m = best.get(r.org);
-      if (!(m.get(r.tech) >= r.p)) {
-        m.set(r.tech, r.p);
-      }
-    }
-  }
-  return Object.fromEntries([...best].map(([org, m]) => [org, [...m]
-    .map(([tech, p]) => ({ tech, p: Math.round(p * 1000) / 1000 }))
-    .sort((a, b) => b.p - a.p || a.tech.localeCompare(b.tech))]));
-}
-
-/**
  * A page of a team's inbox, or with `personal` (and no team) of the viewer's personal view.
  * `before` is the `next` cursor of the previous page (`<latest>|<group>`): the groups whose
  * latest activity comes after it in the newest-first order. With `groups` (inbox entry keys,
@@ -558,7 +535,7 @@ export async function inbox(env, me, team, {
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
-    { results: techRows }, techVocab, elsewhere, yours, unseen,
+    { results: techRows }, stacks, techVocab, elsewhere, yours, unseen,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
     // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
@@ -610,12 +587,13 @@ export async function inbox(env, me, team, {
     membersP,
     orgsOf(env, threads.map((t) => t.org)),
     env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
-    // The tech stack of each thread's channel (src/label.js recordTech), for the tech facet,
-    // and of each customer, over its channels here (`stacks`), for the list by customer.
-    env.DB.prepare(`SELECT t.thread, t.org, c.tech, c.p FROM threads t JOIN channel_tech c
-        ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
-      WHERE t.thread IN (SELECT value FROM json_each(?)) AND c.p >= ? ORDER BY c.p DESC`)
+    // What each thread shows (thread_tech, its own label), for the tech facet.
+    env.DB.prepare(`SELECT thread, tech, p FROM thread_tech
+      WHERE thread IN (SELECT value FROM json_each(?)) AND p >= ? ORDER BY p DESC`)
       .bind(keys, TECH_MIN).all(),
+    // Each customer's stack, as its stack drawing has it (src/orgstacks.js), for the list by
+    // customer: the customer-level record; Clef's answers are the threads'.
+    orgStacksOf(env, threads.map((t) => t.org)),
     // The team's names for its technologies (the personal view, across teams: the admin team's).
     vocab(env, personal ? null : team),
     // Only once the personal view has been loaded to the end: the list says so then.
@@ -637,7 +615,6 @@ export async function inbox(env, me, team, {
   };
   const rxBy = by(rx, (r) => ({ emoji: r.emoji, count: r.n }));
   const techBy = by(techRows, (r) => r.tech);
-  const stacks = orgStacks(techRows);
   const postersBy = by(posted, (r) => r.person);
   const namedBy = by(named, (r) => ({ person: r.person, staff: Boolean(r.staff) }));
   const labelBy = new Map((labels || []).map(({ topics, ...l }) => [
@@ -788,19 +765,16 @@ export function readMembers(group, keep = [], most = MAX_READ_MEMBERS) {
 
 /**
  * The technologies an inbox entry shows, likeliest first, as `[{ tech, p }]`: each member's
- * (`labels.tech`, the highest of any member). Where no member has been labeled since labels
- * had them, those whose highest probability in the channel one of its threads set
- * (`channel_tech.thread`).
+ * (`labels.tech`, the highest of any member).
  */
-export function threadTech(labels, channelTech, keys) {
+export function threadTech(labels) {
   const best = new Map();
   const add = (id, p) => {
     if (!(best.get(id) >= p)) {
       best.set(id, p);
     }
   };
-  const stored = (labels || []).filter((l) => l.tech != null);
-  for (const l of stored) {
+  for (const l of (labels || []).filter((x) => x.tech != null)) {
     let parsed = null;
     try {
       parsed = JSON.parse(l.tech);
@@ -810,14 +784,6 @@ export function threadTech(labels, channelTech, keys) {
     for (const [id, p] of Object.entries(parsed && typeof parsed === 'object' ? parsed : {})) {
       if (typeof p === 'number') {
         add(id, p);
-      }
-    }
-  }
-  if (!stored.length) {
-    const own = new Set(keys);
-    for (const t of channelTech || []) {
-      if (own.has(t.thread)) {
-        add(t.tech, t.p);
       }
     }
   }
@@ -863,7 +829,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   // (opening a thread waited for some fifteen round trips in a row).
   const [
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
-    reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
+    reviewed, facts, anchorLabel, { results: found }, drafts, rowOrgs,
     { results: appPosts }, agentOn, { results: memberTech }, { results: rootLinks }, place,
     bashRequests, sidebar, toolRequests,
   ] = await Promise.all([
@@ -898,9 +864,6 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     reviewsFor(env.DB, [labelKey]),
     resolutionFacts(env, group.map((m) => m.thread)),
     env.DB.prepare('SELECT title FROM labels WHERE thread = ?').bind(key).first(),
-    env.DB.prepare(`SELECT tech, p, thread FROM channel_tech
-      WHERE source = ? AND tenant = ? AND channel_id = ? ORDER BY p DESC`)
-      .bind(row.source, row.tenant, row.channel_id).all(),
     env.DB.prepare(`SELECT DISTINCT source, field, value, confidence
       FROM facts WHERE thread IN (SELECT value FROM json_each(?)) ORDER BY field, value`)
       .bind(keys).all(),
@@ -1007,8 +970,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       channel_group: (place && place.group_name) || null,
       label_thread: labelKey,
     },
-    tech: (tech || []).map((t) => ({ tech: t.tech, p: t.p })),
-    thread_tech: threadTech(memberTech, tech, entryKeys),
+    // The channel's, from before the customer's stack came from its drawing: none now.
+    tech: [],
+    thread_tech: threadTech(memberTech),
     topics: topicList(model && model.topics),
     vocab: await vocab(env, row.team),
     members: group.map((m) => ({

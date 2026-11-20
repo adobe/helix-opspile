@@ -200,10 +200,12 @@ export async function channelFacts(env, ch, ctx = {}) {
     FROM channel_members cm LEFT JOIN people p ON p.email = cm.email
     WHERE cm.source = ? AND cm.tenant = ? AND cm.channel_id = ?`, ...k);
   // What each technology is, as the teams describe it to Clef (src/extract.js).
-  const tech = (await rows(env, `SELECT c.tech, COALESCE((SELECT s.description FROM tech_stack s
-        WHERE s.tech = c.tech ORDER BY s.team = 'admin' DESC LIMIT 1), c.tech) AS what
-    FROM channel_tech c WHERE c.source = ? AND c.tenant = ? AND c.channel_id = ?
-    ORDER BY c.p DESC`, ...k)).map((r) => r.what);
+  // What its threads show (thread_tech), the most threads first.
+  const tech = (await rows(env, `SELECT g.tech, COALESCE((SELECT s.description FROM tech_stack s
+        WHERE s.tech = g.tech ORDER BY s.team = 'admin' DESC LIMIT 1), g.tech) AS what
+    FROM thread_tech g JOIN threads t ON t.thread = g.thread
+    WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ?
+    GROUP BY g.tech ORDER BY COUNT(*) DESC, MAX(g.p) DESC`, ...k)).map((r) => r.what);
   const staff = (p) => Boolean(p.staff) || isStaffDomain(env, p.email);
   const teamsFor = (p) => (p.email ? teamsOf.get(p.email) || [] : [])
     .filter((t) => t !== ADMIN_TEAM).map((t) => teamName.get(t) || t);

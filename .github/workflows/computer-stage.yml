@@ -77,6 +77,7 @@ on:
       - 'src/messagelinks.js'
       - 'src/normalize.js'
       - 'src/notify.js'
+      - 'src/orgstacks.js'
       - 'src/platforms.js'
       - 'src/portal/ids.js'
       - 'src/portalsource.js'

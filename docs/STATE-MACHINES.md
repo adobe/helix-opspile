@@ -73,8 +73,8 @@ reads its entry from the members that are still there (`latestMember`, `fold` in
 what was labeled already is a no-op. `sweepLabels` picks up recent threads with a person's message
 after their label. `labeled_through` means that Clef read the thread, so nothing else writes it: a
 thread whose files are missing is recorded in `dead_jobs`, and the sweep leaves it for a day.
-A label written before migration 0059 has no `tech` (null, not `{}`): the thread view then goes by
-`channel_tech.thread` until the thread is labeled again.
+A label written before migration 0059 has no `tech` (null, not `{}`): the thread view then shows no
+technologies until the thread is labeled again (`POST /api/admin/relabel`).
 
 **What a thread shows, by index.** `thread_tech` (migration 0072, `src/follows.js`) is derived from
 `labels.tech`: one row per technology, written in the same `db.batch` as the label (all of the
@@ -270,7 +270,8 @@ was stuck in goes with it.
 and when. The first drawing is a create (refused when one appeared meanwhile); every later one
 names the `base` it was drawn from, so an agent never draws over a colleague's or a person's newer
 one unseen. A write that cannot be drawn is refused, so `drawn` always parses. Deleting the file
-in the editor goes back to none; the inbox then draws what Clef saw instead. The inbox keeps an
+in the editor goes back to none; the inbox then draws nothing. `org_stacks` follows every write
+of the file (its parts, or `[]`); one missing is filled in by the cron. The inbox keeps an
 answer of `GET /api/kb/stack` for a minute (`stackOf`, `ui/inbox.js`).
 
 **Agent polling.** idle → polling → due while hidden (`loadAgent`, `ui/inbox.js`). A failed request
