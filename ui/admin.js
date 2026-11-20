@@ -3237,6 +3237,8 @@ function wirePair(v) {
       status(kb.error || (kb.failed && kb.failed.length) ? 'warn' : 'ok', `Merged ${nameIn(v, from)} into ${nameIn(v, into)}.`);
       renderList();
       if (v === state.view) drawPair(v);
+      // The org kept has the merged one's channels now: the pairs it makes with others come up.
+      loadDups({ fresh: true });
     });
   }
   if ($('pUndo')) {
