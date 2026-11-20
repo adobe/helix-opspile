@@ -17,7 +17,7 @@
  * A rule of target `follow` (migration 0086) files nothing: every one that matches a channel
  * shares it with its team (`followers`), which src/followrules.js keeps in `channel_teams`.
  *
- * A merged org (migration 0090, src/orgmerge.js) is a rule of target `merge` that `loadRules`
+ * A merged org (migration 0091, src/orgmerge.js) is a rule of target `merge` that `loadRules`
  * adds (`mergeRule`): the org the other rules give is looked up among them last (`mergedOrg`), so
  * what they file under the merged slug, by a template or by hand, is filed under the one it was
  * merged into.

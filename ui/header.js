@@ -15,9 +15,9 @@
  * page's <header>, before the page's own script.
  *
  * The switch between the pages: Inbox, Teams, Customers (each with its agents, read-only but
- * where you manage them) and Topics (the topic map) for every member of a team, and Bots,
- * Requests and COGS (what the inbox costs) too for the admin team (with the number of open
- * requests on Requests); and Stats, klickhaus' statistics of all threads in a new tab,
+ * where you manage them) and Topics (the topic map) for every member of a team, and
+ * Requests (the bots too) and COGS (what the inbox costs) too for the admin team (with the
+ * number of open requests on Requests); and Stats, klickhaus' statistics of all threads in a new tab,
  * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
@@ -37,8 +37,7 @@ window.Header = (() => {
     { id: 'inbox', label: 'Inbox', href: '/inbox', title: 'Threads with customers, partners and vendors', member: true },
     { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their members, channels and rules, and their agents: thread agents, tools, instructions and knowledge base', member: true },
     { id: 'orgs', label: 'Customers', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors, and their agents: thread agents, tools, instructions and knowledge base', member: true },
-    { id: 'bots', label: 'Bots', href: '/inbox/admin?tab=bots', title: 'The bots in the threads: say which are Adobe\'s, so the inbox shows them on Adobe\'s side', admin: true },
-    { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for, and customers waiting in the portal: confirm, open or decline', admin: true },
+    { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for, customers waiting in the portal and the bots in the threads: confirm, open or decline, and say whose each bot is', admin: true },
     { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their areas and topics, with the people, customers and products on each', member: true },
     { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs at list prices: per service, message, thread, customer and month', admin: true },
     // On klickhaus, in a new tab: its address comes from /api/me (`stats.url`).
@@ -118,7 +117,7 @@ window.Header = (() => {
     if (u.pathname === '/inbox/topics') return 'topics';
     if (u.pathname !== '/inbox/admin') return null;
     const tab = u.searchParams.get('tab');
-    return ['orgs', 'bots', 'requests'].includes(tab) ? tab : 'teams';
+    return ['orgs', 'requests'].includes(tab) ? tab : 'teams';
   }
   /** Keeps an address (the page's own, by default) as where its page was left. */
   function remember(url = location.href) {

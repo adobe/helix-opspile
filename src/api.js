@@ -99,10 +99,10 @@ const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop
 /**
  * A bot's message author as its account says now (`account`: the message's row, with its
  * identity's `account_kind`, `ours`, `account_staff`, `account_email` and `display_name`): an
- * admin who says a bot is Adobe's, or takes it back (the admin page's Bots), moves the messages
- * it wrote before to that side too, whose frontmatter says what was so when they were written,
- * and the name an admin gives it goes on them too. A bot nobody decided on (`ours` NULL) keeps
- * its frontmatter's side.
+ * admin who says a bot is Adobe's, or takes it back (under Requests on the admin page), moves
+ * the messages it wrote before to that side too, whose frontmatter says what was so when they
+ * were written, and the name an admin gives it goes on them too. A bot nobody decided on
+ * (`ours` NULL) keeps its frontmatter's side.
  */
 export function botAuthor(env, author, account) {
   if (!author || author.kind !== 'bot' || !account || account.account_kind !== 'bot') {

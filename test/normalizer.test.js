@@ -210,6 +210,39 @@ describe('processKey', () => {
     ]);
   });
 
+  it('files the threads a bot that only posts alerts starts as alerts, in a conversation channel', async () => {
+    const at = (n) => `1792584000.00040${n}`;
+    const key = (n) => `slack/E1/C1/2026/10/21/${at(n)}-Ev${n}.json`;
+    const bot = (n, thread) => event({
+      type: 'message', subtype: 'bot_message', channel: 'C1', bot_id: 'B1', bot_profile: { name: 'Monitor' }, ts: at(n), text: 'CPU high.', ...(thread ? { thread_ts: at(thread) } : {}),
+    });
+    const person = (n, thread) => event({
+      type: 'message', channel: 'C1', user: 'U2', ts: at(n), text: 'Looking.', ...(thread ? { thread_ts: at(thread) } : {}),
+    });
+    // An alert, a person's reply to it, a person's question and the bot's reply to that.
+    const e = env({
+      [key(1)]: bot(1), [key(2)]: person(2, 1), [key(3)]: person(3), [key(4)]: bot(4, 3),
+    }, { AI: {} });
+    await processKey(e, key(1));
+    const [{ author_key: bot1 }] = e.DB.rows(`SELECT author_key FROM messages WHERE id = '${at(1)}'`);
+    // Not yet: its first alert is a conversation's, as the channel's are.
+    assert.deepEqual(e.DB.rows('SELECT kind FROM threads'), [{ kind: 'channel' }]);
+    e.DB.sqlite.prepare("UPDATE identities SET alerts = 1 WHERE source || ':' || tenant || ':' || user_id = ?").run(bot1);
+    e.queued.length = 0;
+    for (const n of [1, 2, 3, 4]) {
+      // eslint-disable-next-line no-await-in-loop
+      await processKey(e, key(n));
+    }
+    assert.deepEqual(e.DB.rows('SELECT root_id, kind FROM threads ORDER BY root_id'), [
+      { root_id: at(1), kind: 'alert' },
+      { root_id: at(3), kind: 'channel' },
+    ]);
+    // Clef labels only the person's conversation; the alert gets its title when it is re-threaded.
+    const labels = e.queued.filter((q) => q.body.label).map((q) => q.body.label);
+    assert.ok(labels.length > 0);
+    assert.ok(labels.every((t) => t.endsWith(at(3))), labels.join(' '));
+  });
+
   it('keeps a Slack bot\'s picture, and writes the name an admin gave it', async () => {
     const at = (n) => `1792584000.00050${n}`;
     const key = (n) => `slack/E1/C1/2026/10/21/${at(n)}-Ev${n}.json`;

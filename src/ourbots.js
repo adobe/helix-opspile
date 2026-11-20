@@ -20,10 +20,16 @@
  * as any bot's (src/agent/deliver.js), and they do not count as a reply (`counted`). The admin
  * team also gives a bot the name and picture the inbox shows (`display_name`, `display_avatar`,
  * migration 0081), where the platform's say nothing to people (a Teams app has no picture).
+ *
+ * The admin page has no list of bots of its own: they are under Requests. A bot nobody said
+ * anything of yet (`ours` NULL) that has posted is a request there, until an admin says it is
+ * Adobe's or external; the others are listed below the requests. A bot may also only post
+ * alerts (`alerts`, migration 0090): the threads it starts are alerts (src/alertbots.js).
  */
 
 import { json } from './http.js';
 import { toAuthor } from './lookup.js';
+import { enqueueMoves } from './refile.js';
 
 const KEY = "i.source || ':' || i.tenant || ':' || i.user_id";
 
@@ -49,6 +55,8 @@ function botOf(env, r) {
     ours: r.ours === null || r.ours === undefined ? null : Boolean(r.ours),
     oursBy: r.ours_by || null,
     oursAt: r.ours_at || null,
+    // Whether it only posts alerts: the threads it starts are alerts (src/alertbots.js).
+    alerts: Boolean(r.alerts),
     // Whether its messages show as Adobe's: Adobe's, or staff by a Discord role.
     staff: toAuthor(env, { ...r, kind: 'bot' }).staff,
     messages: r.messages || 0,
@@ -61,7 +69,7 @@ function botOf(env, r) {
 }
 
 const SELECT = `SELECT i.source, i.tenant, i.user_id, i.name, i.handle, i.avatar, i.email, i.staff,
-    i.ours, i.ours_by, i.ours_at, i.display_name, i.display_avatar,
+    i.ours, i.ours_by, i.ours_at, i.display_name, i.display_avatar, i.alerts,
     (SELECT COUNT(*) FROM messages m WHERE m.author_key = ${KEY} AND m.deleted = 0) AS messages,
     (SELECT COUNT(DISTINCT m.thread) FROM messages m WHERE m.author_key = ${KEY}
       AND m.deleted = 0) AS threads,
@@ -103,6 +111,17 @@ export async function listBots(env) {
   bots.sort((a, b) => String(b.latest || '').localeCompare(String(a.latest || ''))
     || named(a).localeCompare(named(b)));
   return json({ bots });
+}
+
+/**
+ * How many bots are waiting for an admin to say whose they are: nobody did (`ours` NULL), and they
+ * posted (a bot only mentioned changes nothing in the inbox). They are requests, under Requests.
+ */
+export async function unreviewedCount(env) {
+  const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM identities i
+    WHERE i.kind = 'bot' AND i.ours IS NULL
+      AND EXISTS (SELECT 1 FROM messages m WHERE m.author_key = ${KEY} AND m.deleted = 0)`).first();
+  return r ? r.n : 0;
 }
 
 /** How many of a bot's latest messages its page shows. */
@@ -189,12 +208,30 @@ function looks(body) {
 }
 
 /**
- * PUT /api/admin/bots `{ key, ours?, name?, avatar? }`: what the admin team says of the bot
- * `key` (its identity key, the messages' `author_key`).
+ * The channels the bot `key` started threads in, re-filed (src/refile.js): a thread it started is
+ * an alert there now, or a conversation again (src/alertbots.js). Returns the number of jobs.
+ */
+async function refileStarted(env, key) {
+  const { results } = await env.DB.prepare(`SELECT DISTINCT t.source, t.tenant, t.channel_id
+    FROM messages m JOIN threads t ON t.thread = m.thread AND t.root_id = m.id
+    WHERE m.author_key = ?`).bind(key).all();
+  return enqueueMoves(env, (results || []).map((c) => ({
+    channel: { source: c.source, tenant: c.tenant, channelId: c.channel_id },
+  })));
+}
+
+/**
+ * PUT /api/admin/bots `{ key, ours?, alerts?, name?, avatar? }`: what the admin team says of the
+ * bot `key` (its identity key, the messages' `author_key`).
  *
- * `ours`: whether it is Adobe's. Its messages in D1 follow at once (`messages.staff`, the thread
+ * `ours`: whether it is Adobe's (true) or external (false); a bot nobody said either of is a
+ * request under Requests. Its messages in D1 follow at once (`messages.staff`, the thread
  * list's participants); the thread view reads the account for those written before
  * (src/api.js, botAuthor), and the ones it writes from now on say so themselves.
+ *
+ * `alerts`: whether it only posts alerts. The threads it started are re-filed as alerts (or as
+ * conversations again, where their channel is one), and so are the ones it starts from now on
+ * (src/alertbots.js).
  *
  * `name` and `avatar`: the name and picture (an https:// image URL) the inbox shows for it,
  * instead of the platform's (null: the platform's again). Teams gives an app's messages no
@@ -211,15 +248,18 @@ export async function setBot(env, me, body) {
   if (body.ours !== undefined && typeof body.ours !== 'boolean') {
     return json({ error: 'say whether the bot is Adobe\'s: ours is true or false' }, 400);
   }
-  if (body.ours === undefined && !naming) {
-    return json({ error: 'say whether the bot is Adobe\'s (ours), or give it a name or a picture' }, 400);
+  if (body.alerts !== undefined && typeof body.alerts !== 'boolean') {
+    return json({ error: 'say whether the bot only posts alerts: alerts is true or false' }, 400);
+  }
+  if (body.ours === undefined && body.alerts === undefined && !naming) {
+    return json({ error: 'say whether the bot is Adobe\'s (ours), whether it only posts alerts (alerts), or give it a name or a picture' }, 400);
   }
   const [source, tenant, userId] = splitKey(body.key);
   if (!source || !tenant || !userId) {
     return json({ error: 'give the bot\'s key' }, 400);
   }
   const where = 'WHERE source = ? AND tenant = ? AND user_id = ? AND kind = \'bot\'';
-  const before = await env.DB.prepare(`SELECT name, display_name FROM identities ${where}`)
+  const before = await env.DB.prepare(`SELECT name, display_name, alerts FROM identities ${where}`)
     .bind(source, tenant, userId).first();
   if (!before) {
     return json({ error: 'no such bot' }, 404);
@@ -229,6 +269,10 @@ export async function setBot(env, me, body) {
   if (body.ours !== undefined) {
     sets.push('ours = ?', 'ours_by = ?', 'ours_at = ?');
     args.push(Number(body.ours), me.email || String(me.id), new Date().toISOString());
+  }
+  if (body.alerts !== undefined) {
+    sets.push('alerts = ?');
+    args.push(Number(body.alerts));
   }
   if (look.name !== undefined) {
     sets.push('display_name = ?');
@@ -261,18 +305,24 @@ export async function setBot(env, me, body) {
       AND thread IN (SELECT thread FROM messages WHERE author_key = ?3)`)
       .bind(shown, was, bot.key).run();
   }
+  // Its threads follow, re-filed: only when the say changed, since that moves nothing otherwise.
+  const refiled = body.alerts !== undefined && body.alerts !== Boolean(before.alerts)
+    ? await refileStarted(env, bot.key) : 0;
   let said = 'look';
   if (body.ours !== undefined) {
     said = bot.ours ? 'ours' : 'not ours';
+  } else if (body.alerts !== undefined) {
+    said = bot.alerts ? 'alerts' : 'not alerts';
   }
   console.log(JSON.stringify({
     route: 'admin',
     bot: said,
     by: me.id,
     messages: moved,
+    ...(body.alerts !== undefined ? { alerts: bot.alerts, refile: refiled } : {}),
     ...(naming ? {
       named: look.name !== undefined, pictured: look.avatar !== undefined, renamed,
     } : {}),
   }));
-  return json({ ok: true, bot });
+  return json({ ok: true, bot, ...(refiled ? { refile: refiled } : {}) });
 }

@@ -817,6 +817,31 @@ describe('requesting channel members', () => {
     }]);
   });
 
+  it('tells the agent of the guest invitations the relay offers for addresses with no account', async () => {
+    const { run } = setup({
+      SLACK_AUTOMATION: {
+        submit: async () => ({
+          ok: true,
+          posted: [
+            { invite: ['a@client.example', 'b@client.example'], channelId: 'C1', adminOnly: false },
+            { invite: ['c@other.example'], channelId: 'C1', adminOnly: true },
+          ],
+          notes: [],
+          skipped: null,
+          requester: null,
+        }),
+      },
+    });
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['a@client.example', 'b@client.example', 'c@other.example'], message: '1792584000.000100',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.doesNotMatch(r.text, /confirmation\(s\)/);
+    assert.match(r.text, /offered to send guest invitations to a@client\.example, b@client\.example, which an admin or any full member \(not a guest\) of this channel can click/);
+    assert.match(r.text, /guest invitations to c@other\.example, which no invite rule approves on its own, so an admin has to click it/);
+    assert.match(r.text, /do not see #general: tell them in your reply/);
+  });
+
   it('asks nothing for a message that is not in the thread, a bad address, or a tool switched off', async () => {
     const { e, calls, run } = setup();
     const teams = target(TEAMS, 'teams', '19:abc@thread.tacv2');

@@ -191,7 +191,7 @@ it was shown, and asked again once that changes, two dozen a load; the page load
 Clef gets further. The orgs' facts are kept in the isolate for five minutes.
 
 The admin team merges a pair from its page (`POST /api/admin/org-merge`, tried first with `dryRun`).
-The merge is a row of `org_merges` (migration 0090) that `loadRules` hands every caller of the rules
+The merge is a row of `org_merges` (migration 0091) that `loadRules` hands every caller of the rules
 as a rule of target `merge`, applied after the others (`mergedOrg` in `src/rules.js`): what the rules
 file under the merged slug, now or later, by a template or by hand, is filed under the one kept, and
 its channels move as for a rule change (only the merged org's: a channel filed otherwise for another
@@ -210,17 +210,35 @@ list until somebody asks for its merge.
 
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
 (an agent that provisions access, say) would show on the customer's side of a thread. The admin
-pages' **Bots** (`src/ourbots.js`) list every bot opspile knows (`identities` of kind `bot`:
+pages' **Requests** (`src/ourbots.js`) list every bot opspile knows (`identities` of kind `bot`:
 written when one posts or is mentioned, a Slack bot or Teams app the first time it posts,
 `botIdentity` in `src/lookup.js`), with its messages and where it posted last (a bot's page previews its latest three, each
 with a link to its thread), and the admin team
-says which are Adobe's (`identities.ours`: 1, 0, or NULL while nobody said; with who said it and
-when). An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
+says which are Adobe's and which are external (`identities.ours`: 1, 0, or NULL while nobody
+said; with who said it and when). A bot that posted and that nobody said either of is a request
+there, under "Bots to review", and counts on Requests in the header until an admin answers it
+(`unreviewedCount`); the others are listed below the requests, with the bots only mentioned
+(`/inbox/admin?tab=requests&request=bot:<key>`); there is no page of bots. An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
 messages in D1 follow at once (`messages.staff`), and so do the ones written before in the thread
 view (`botAuthor` in `src/api.js`, since their frontmatter says what was so then). Looking the
 account up again keeps the say. Its messages stay a bot's: they are not counted (a bot does not
 answer the customer, `last_staff`), and the agents fence them as every bot's
 (`untrusted` in `src/agent/deliver.js`, which trusts staff people only).
+
+**Alert bots.** A bot may also only post alerts (`identities.alerts`, migration 0090, set on its
+page under Requests, whatever its side): a thread it starts is an alert (`threads.kind =
+'alert'`), also in a channel the rules make a conversation, so a channel can hold people's
+conversations and a monitoring bot's alerts both (`src/alertbots.js`). Only the root decides: a
+person's reply to an alert leaves it an alert, and the bot's reply in a person's thread leaves that
+a conversation. The message index writes the kind (`threadKind` in the normalizer: the root's
+author, the message itself or the root D1 has; a reply that arrives before its root is filed as a
+conversation until the root comes), and everything after it goes by the thread's kind, not the
+channel's: no agent, no Clef label (an alert's title instead), no vectors or full-text items. A
+re-filing (`src/refile.js`) writes it again from the rules and the alert bots, and `plan` counts a
+thread filed so as filed where the rules say; so a change of the flag re-files the channels the bot
+started threads in, which makes their threads alerts, or conversations again, and takes away or
+makes again what goes by the kind. Re-threading keeps the two apart in such a channel: an alert
+joins alerts only, a conversation conversations only.
 
 A bot's page also gives it the name and picture the inbox shows (`identities.display_name` and
 `display_avatar`, an https image URL; NULL shows the platform's), for bots the platform says
@@ -793,7 +811,7 @@ filter when there are many; in a customer's they are all there is, so they are s
 
 Every page has the same header (`ui/header.js`, `ui/header.css`): a switch between **Inbox**,
 **Teams** and **Customers** (the sections of `/inbox/admin`, each team and customer with its
-agent) for every member of a team, and for the admin team **Bots** and **Requests** too,
+agent) for every member of a team, and for the admin team **Requests** too (with the bots),
 **Topics** (`/inbox/topics`, [below](#topic-maps)) and **COGS** (`/inbox/cogs`, [below](#cogs)).
 Each opens as it was left in that browser tab: the header keeps every page's address
 (sessionStorage) whenever it changes, so **Inbox** comes back with its team, filters, sort,
@@ -1113,7 +1131,9 @@ since, page by page, one `import` job on the NORMALIZE queue a page, which sends
 `conversations.history` lists the roots posted since (a thread's replies with
 `conversations.replies`); Graph lists a channel's threads by their latest activity, with
 `$expand=replies`, and the first one quiet since before then ends the listing. A page stops
-after about 300 messages, and the next job goes on in the same page. Alert channels are left out
+after about 300 messages, and the next job goes on in the same page. Pages are a few hundred
+subrequests each, so they are spread out: the script starts each channel at its own second, and
+a channel's next page waits 30 to 60 seconds, so that a queue batch rarely holds two. Alert channels are left out
 unless asked for (`--alerts`), and ignored ones always.
 
 - **Only what the inbox does not have.** A thread with a message heard of any other way (live, a
@@ -1340,11 +1360,13 @@ themes, who works on which and for whom, and where Clef's topics miss: what to a
 - Topics are found **within each area** (map version 2): each thread is in its likeliest area
   (`labels.topics`), or in none, and each area's threads are clustered with **k-means**
   (spherical, cosine; k-means++ seeds, the best of four runs, seeded so the same threads make
-  the same map) into about one topic per twelve threads, at most eight (`areaTopics`). A topic
+  the same map) into about one topic per twelve threads, at most eight, and at most sixteen of the
+  threads in no area, the candidates for new areas (`areaTopics`). A topic
   that is **one customer's, one team's or one product's concern** is no topic: when one of them
   has 60% of its threads or more, and at least twice its share of the area's, it is dissolved,
   each of its threads going to the nearest topic left, until none is or one is left (a single
-  one an area could not split keeps `concentrated`, as `customer:acme`). The lift keeps what is
+  one an area could not split keeps `concentrated`, as `customer:acme`, when one has 60% of it and
+twice its share of all the map's threads). The lift keeps what is
   everywhere (Edge Delivery, the team with most channels) from concentrating anything. Each
   topic has its `area` (null: the threads in none, the candidates for new areas). A few hundred
   threads take a quarter of a second.
@@ -2094,6 +2116,11 @@ gives it back to the band. The widths are kept in the browser per band (`opspile
 the filters flow into as many columns as their width has room for; whatever is sized, the list
 keeps 380px and the thread 440px (and the sidebar's width beside it), also as the window
 shrinks. Under 1100px (the drawer, the phone) nothing sized on a wider screen applies.
+Where the filters are a column they are one table: every row has the same tracks in every
+card (color, icon, label, unread mentions, count, bar), the count's as wide as the list's
+length has digits, so the bars start at one edge and the mention badges stand in a column; and
+rows, titles and the gaps between cards are each one row high, so the rows of neighboring
+columns line up. In the wide bands each column of filters is 32px wider than the one column.
 Both conversations keep to a reading width (`--read-w`, 1040px): past it the thread's header,
 messages, reply box, draft and command cards, and the sidebar's messages and box, stay in a
 column in the middle, padded on either side, so neither side of a conversation is a head turn

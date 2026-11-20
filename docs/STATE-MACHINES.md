@@ -145,7 +145,7 @@ a failed assignment opens it again, unless the rule was saved by then. `move` (m
 request is made: a move request confirms as a move whoever holds the channel, the others move it
 only out of the admin team and share it otherwise.
 
-**Merged org.** an org of its own ⇄ merged into another (`org_merges`, migration 0090;
+**Merged org.** an org of its own ⇄ merged into another (`org_merges`, migration 0091;
 `src/orgmerge.js`). Whether the row exists is the state, and the rules carry it: `loadRules` adds
 each row as a rule of target `merge`, and `classify` files what the other rules give a merged slug
 under the one it went into (`mergedOrg`), so every caller of the rules agrees, the normalizer too.
@@ -165,15 +165,23 @@ load. A verdict Clef did not give (an error, a timeout) is no row: the next load
 (`dismissed_at`) takes a pair off everyone's list but the admin team's until somebody asks for its
 merge.
 
-**Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0090).
+**Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status
 = 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.
 
-**Adobe's bot.** undecided → Adobe's ⇄ not Adobe's (`identities.ours`: NULL, 1, 0; `src/ourbots.js`).
-Only the admin page writes it, never back to NULL, and the identity's refresh (`getIdentity`) leaves
+**Adobe's bot.** undecided → Adobe's ⇄ external (`identities.ours`: NULL, 1, 0; `src/ourbots.js`).
+While undecided, a bot that posted is a request under Requests (`unreviewedCount`); the answer
+closes it. Only the admin page writes it, never back to NULL, and the identity's refresh (`getIdentity`) leaves
 it out of its upsert. The bot's messages are not rewritten: a message's frontmatter keeps the side it
 was written with, and the thread view follows the flag over it once it is decided (`botAuthor` in
 `src/api.js`); `messages.staff` is set to match on every change.
+
+**Alert bot.** conversations ⇄ alerts only (`identities.alerts`: NULL or 0, 1; `src/alertbots.js`),
+independent of the side. Only the admin page writes it, and the identity's refresh leaves it out of
+its upsert. A thread's kind follows from it and its root's author (`threadKind`, `kindOf`): written
+with every message, and again by a re-filing, which a change of the flag queues for every channel
+the bot started threads in. Until those jobs ran, the threads keep the kind they had; `plan`
+lists those channels as moving.
 
 **A bot's name and picture.** the platform's ⇄ an admin's (`identities.display_name`,
 `display_avatar`: NULL or set; `src/ourbots.js`). Only the admin page writes them, and the

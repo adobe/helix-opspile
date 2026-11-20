@@ -24,7 +24,7 @@ import { mergeRule, UNASSIGNED } from './rules.js';
 import { ownedCustomers } from './shares.js';
 
 /**
- * Duplicate customers, and merging them (migration 0090). An org is a slug the rules give a
+ * Duplicate customers, and merging them (migration 0091). An org is a slug the rules give a
  * channel (`aem-<slug>`, a manual assignment), so one company can end up under two: a channel
  * named `workfront-acmeco` and one named `aem-acme`. The admin pages list the pairs of orgs that
  * may be one, likeliest first:
