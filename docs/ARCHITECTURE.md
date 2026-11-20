@@ -1866,8 +1866,15 @@ chose otherwise, which wins. The inbox's user menu changes both (the open thread
 Agents does too, a select on each channel with an agent. Hidden, the page does not ask
 `GET /api/agent` at all.
 
-**The sidebar.** Anyone who may work a thread can talk to its agent in the inbox, about the
-thread, without the channel seeing any of it (`POST /api/agent/sidebar`, `src/sidebar.js`). Each
+**The sidebar.** Anyone who may see a thread can talk to its agent in the inbox, about the
+thread, without the channel seeing any of it (`POST /api/agent/sidebar`, `src/sidebar.js`): who
+may work it, the admin team, and whoever talked in its sidebar before (`maySee`,
+`src/shares.js`). The last is for a channel that moves: someone who asks the agent to move it to
+another team (`request_channel_reassignment`) keeps the thread to read and the conversation to go
+on with once the admin team confirms the move, though they no longer work it. Working it stays
+`mayWork`'s: the reply box, the draft, and deciding on the tools and commands its agent asks for,
+which answer `403` with the team it is filed under to who only sees it; the thread says which
+(`can_work`), and the page says so instead of the reply box and the cards' buttons. Each
 message goes into the agent's own conversation as an input of its own (`ThreadAgent.sidebar`,
 `src/agent/sidebar.js`), after the run it is in, never steered into one; so the agent remembers
 it in later turns. New messages of the thread do not steer into it either: while a sidebar

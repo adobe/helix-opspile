@@ -257,6 +257,17 @@ const text = (res, body, status = 200) => {
 };
 
 const inTeam = (team) => store.teams.some((t) => t.slug === team && t.members.includes(ME));
+/**
+ * As src/shares.js `maySee`: who may work the entry, admins, and whoever talked in its sidebar
+ * before see it and talk to its agent; only the first work it.
+ */
+const maySee = (entry) => inTeam(entry.row.team) || ADMIN
+  || (store.sidebars.get(entry.row.logical_thread || entry.row.thread) || [])
+    .some((m) => m.role === 'person' && m.by?.id === ME);
+/** As src/agent/stub.js `notTheirs`: a 403 that names the team the thread is filed under. */
+const notTheirs = (res, entry, what) => json(res, {
+  error: `the thread is filed under ${store.teams.find((t) => t.slug === entry.row.team)?.name || entry.row.team}, and only its team may ${what}`,
+}, 403);
 
 // ---- reactions, as D1's `reactions` would hold them ---------------------------------------
 
@@ -888,7 +899,7 @@ const agentAsked = new WeakMap();
  * comes with the thread.
  */
 function agentTurn(entry, { asked = false } = {}) {
-  if (entry.row.channel_id !== 'C0ACMEAEM') {
+  if (entry.row.channel_id !== 'C0ACMEAEM' && !entry.ch.agent) {
     return undefined;
   }
   // A sidebar message waits for its answer: the agent works on it, then answers.
@@ -896,7 +907,8 @@ function agentTurn(entry, { asked = false } = {}) {
   if (side) {
     return side;
   }
-  const latest = [...store.threads.values()].filter((e) => e.row.channel_id === 'C0ACMEAEM')
+  const latest = [...store.threads.values()]
+    .filter((e) => e.row.channel_id === entry.row.channel_id)
     .sort((a, b) => String(b.row.last_at).localeCompare(String(a.row.last_at)))[0];
   if (entry !== latest) {
     const end = Date.parse(entry.row.last_at) + 75000;
@@ -930,7 +942,7 @@ const DEV_READ_MEMBERS = 8;
 function thread(asked) {
   const own = store.threads.get(asked);
   const entry = own && store.threads.get(own.row.logical_thread || asked);
-  if (!entry || !inTeam(entry.row.team)) {
+  if (!entry || !maySee(entry)) {
     return null;
   }
   const key = entry.row.thread;
@@ -1040,6 +1052,8 @@ function thread(asked) {
     })(),
     // As src/api.js: whether the thread has an agent, and what the sidebar said to it.
     agent: agentTurn(entry) !== undefined,
+    // As src/api.js: whether Dana may work it, or only see it and talk to its agent.
+    can_work: inTeam(entry.row.team),
     sidebar: store.sidebars.get(key) || [],
   };
 }
@@ -1649,6 +1663,9 @@ async function api(req, res, url) {
     // seconds later, and the room says so each time. The values are not kept, or printed.
     const { thread: key, id, env: values = {} } = await readJson(req);
     const entry = store.threads.get(key);
+    if (entry && !inTeam(entry.row.team) && maySee(entry)) {
+      return notTheirs(res, entry, 'run the commands its agent asks for');
+    }
     const request = entry && inTeam(entry.row.team)
       && (store.bashRequests.get(key) || []).find((r) => r.id === id);
     if (!request) {
@@ -1683,6 +1700,9 @@ async function api(req, res, url) {
     // agent as your sidebar message, which the made-up agent answers.
     const { thread: key, id } = await readJson(req);
     const entry = store.threads.get(key);
+    if (entry && !inTeam(entry.row.team) && maySee(entry)) {
+      return notTheirs(res, entry, 'decide on the tools its agent asks for');
+    }
     const request = entry && inTeam(entry.row.team)
       && (store.toolRequests.get(key) || []).find((r) => r.id === id);
     if (!request) {
@@ -1732,7 +1752,7 @@ async function api(req, res, url) {
     const { thread: key, text: raw } = await readJson(req);
     const entry = store.threads.get(key);
     const said = String(raw || '').trim();
-    if (!entry || !inTeam(entry.row.team)) {
+    if (!entry || !maySee(entry)) {
       return json(res, { error: 'not found' }, 404);
     }
     if (!said || said.length > 8000) {
@@ -1761,7 +1781,7 @@ async function api(req, res, url) {
     if (!Array.isArray(ids) || !ids.length) {
       return json(res, { error: 'name the answers seen' }, 400);
     }
-    if (!entry || !inTeam(entry.row.team)) {
+    if (!entry || !maySee(entry)) {
       return json(res, { error: 'not found' }, 404);
     }
     const seen = (store.sidebars.get(key) || [])

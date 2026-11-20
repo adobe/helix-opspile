@@ -35,8 +35,10 @@ import { seed, seedNote, seedPin } from '../src/agent/seed.js';
 import { dream, dreamOf } from '../src/agent/dream.js';
 import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
 import {
-  agentStatus, pokeAgent, sawSidebar, seedAgent, talkToAgent, tellDiscarded,
+  agentStatus, decideBash, decideTool, pokeAgent, sawSidebar, seedAgent, talkToAgent,
+  tellDiscarded,
 } from '../src/agent/stub.js';
+import { maySee, mayWork } from '../src/shares.js';
 import { keepSidebarAnswer } from '../src/sidebar.js';
 import { channelThreads, resolveAnyThread, resolveThread } from '../src/agent/history.js';
 import { mentionedOutside } from '../src/agent/members.js';
@@ -407,6 +409,53 @@ describe('thread agents', () => {
     assert.deepEqual(notified, [['helix', { type: 'sidebar-seen', thread: THREAD, person: me.id }]]);
     assert.equal(await listed(), undefined);
     assert.equal((await inboxThread(e, me, THREAD)).sidebar[1].unseen, false);
+  });
+
+  it('let who talked in a sidebar go on talking there once the channel is another team\'s', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    e.AGENTS = {
+      idFromName: (name) => ({ name }),
+      get: () => ({
+        async __unsafe_ensureInitialized() {
+          return true;
+        },
+        async sidebar() {
+          return { ok: true, accepted: true };
+        },
+      }),
+    };
+    const person = (id, teams) => ({
+      id, name: `Staff ${id}`, email: `s${id}@staff.example`, teams: teams.map((slug) => ({ slug, name: slug })),
+    });
+    const ada = person(7, ['helix']);
+    const bob = person(8, ['helix']);
+    const root = person(9, ['admin']);
+    const talk = (who, text) => talkToAgent(e, who, { thread: THREAD, text }, maySee(e, who));
+    assert.equal((await talk(ada, 'Should this channel be with Forms?')).status, 202);
+    // Moved, as the admin team confirmed her request: filed under Forms, which neither is on.
+    e.DB.sqlite.exec(`INSERT INTO teams (slug, name) VALUES ('forms', 'Forms ops');
+      UPDATE threads SET team = 'forms';`);
+    const seen = await inboxThread(e, ada, THREAD);
+    assert.equal(seen.can_work, false);
+    assert.equal(seen.sidebar.length, 1);
+    assert.equal((await talk(ada, 'Thanks. Anything left for us?')).status, 202);
+    // Bob never talked in it: the thread is not his to see, so it is not found.
+    assert.equal(await inboxThread(e, bob, THREAD), null);
+    assert.equal((await talk(bob, 'Hello?')).status, 404);
+    // An admin sees it and talks to its agent, and works it no more than Ada.
+    assert.equal((await inboxThread(e, root, THREAD)).can_work, false);
+    assert.equal((await talk(root, 'Why is it with Forms now?')).status, 202);
+    assert.equal((await inboxThread(e, person(10, ['forms']), THREAD)).can_work, true);
+    // What its agent asks for is its team's to decide: Ada is told whose, Bob that it is not found.
+    const decide = (who) => decideTool(e, who, { thread: THREAD, id: 'x' }, mayWork(e, who), 'grant', { seeing: maySee(e, who) });
+    const told = await decide(ada);
+    assert.equal(told.status, 403);
+    assert.match((await told.json()).error, /filed under Forms ops, and only its team may decide/);
+    assert.equal((await decide(bob)).status, 404);
+    const run = (who) => decideBash(e, who, { thread: THREAD, id: 'x' }, mayWork(e, who), { run: true, seeing: maySee(e, who) });
+    assert.equal((await run(root)).status, 403);
+    assert.equal((await run(bob)).status, 404);
   });
 
   it('keep their latest finished turn, which comes with the thread', async () => {

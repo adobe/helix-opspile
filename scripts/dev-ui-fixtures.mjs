@@ -95,6 +95,8 @@ const PARTNERS = new Map([['agency.example', 'Agency Co']]);
 const TEAMS = [
   { slug: 'platform', name: 'Platform ops', members: [1, 2, 3, 4] },
   { slug: 'edge', name: 'Edge ops', members: [1, 3] },
+  // Not Dana's: a channel she asked the agent to move here is no longer hers to work.
+  { slug: 'forms', name: 'Forms ops', members: [2] },
 ];
 
 /**
@@ -192,6 +194,11 @@ const CHANNELS = {
   },
   edgeQ: {
     source: 'slack', channelId: 'C0EDGEQ01', name: 'edge-questions', org: 'opspile', team: 'edge',
+  },
+  // Moved to Forms ops, which Dana is not on, at her asking: she sees it and talks to its agent
+  // (`agent`: it has one), and may not work it (src/shares.js, `maySee`).
+  formsAcme: {
+    source: 'slack', channelId: 'C0FORMSAC1', name: 'aem-forms-acme', org: 'acme', team: 'forms', agent: true,
   },
   // Archived on Slack's side: a reply sent here fails (`rejects` is Slack's error), and shows
   // as not sent, with Retry.
@@ -1153,6 +1160,25 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
 
+  // Moved to Forms ops at Dana's asking, in the sidebar: not in her inbox any more, and she still
+  // sees it (from a link, ?t=…) and talks to its agent, though she may not work it. The sidebar
+  // says who sees it; the reply box is not hers.
+  seed({
+    ch: CHANNELS.formsAcme,
+    messages: [
+      ['sam', 140, 'The contact form stopped sending submissions to our CRM since this morning.'],
+    ],
+    sidebar: [
+      ['dana', 130, 'Does this channel belong to us or to Forms?'],
+      ['agent', 129.5, 'It is filed under Platform ops: the `aem-` prefix rule puts it there. It is about AEM Forms, so Forms ops may be the better owner. Should I ask the admin team to move it?'],
+      ['dana', 129, 'move.'],
+      ['agent', 128.5, 'I filed a request to move the channel to Forms ops. The admin team confirms or declines it under Requests in the admin pages.'],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1.2, resolved_p: 0.1,
+    },
+  });
+
   // Waiting on the customer for more than a day: "Customer silent".
   seed({
     ch: CHANNELS.aemGlobex,
@@ -1578,7 +1604,9 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   return {
     now,
     me: {
-      ...people.get(1), teams: teams.map(({ slug, name }) => ({ slug, name })), admin: false,
+      ...people.get(1),
+      teams: teams.filter((t) => t.members.includes(1)).map(({ slug, name }) => ({ slug, name })),
+      admin: false,
     },
     teams,
     klickhaus: KLICKHAUS,

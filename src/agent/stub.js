@@ -95,6 +95,21 @@ async function threadTarget(env, key) {
 }
 
 /**
+ * The answer to someone who sees thread entry `entry` but may not work it, and asked to `what`
+ * (a 403, which names the team the thread is filed under): a thread that moved to another team
+ * is not "not found" to them, as they still see it.
+ */
+async function notTheirs(env, entry, what) {
+  const row = entry.team
+    ? await env.DB.prepare('SELECT name FROM teams WHERE slug = ?').bind(entry.team).first() : null;
+  const owner = (row && row.name) || entry.team;
+  return json({
+    error: owner ? `the thread is filed under ${owner}, and only its team may ${what}`
+      : `only the thread's team may ${what}`,
+  }, 403);
+}
+
+/**
  * POST /api/agent/seed `{ thread, text }` or `{ team, org, text }`: shares knowledge with the
  * thread's agent, or with the knowledge-base agent of a team and customer, which files it in
  * the knowledge bases. Only members of the team.
@@ -167,10 +182,11 @@ export async function seedAgent(env, me, body, inTeam) {
  * POST /api/agent/sidebar `{ thread, text }`: a person on the team talks to the thread's agent in
  * the inbox's sidebar (src/sidebar.js). The message goes into the thread's sidebar and into the
  * agent's conversation, and nowhere else: never to the platform. The agent answers it when it is
- * done with what it is doing; the inboxes of the thread's teams hear of both. Only who may work
- * the thread. Answers 202 with the message.
+ * done with what it is doing; the inboxes of the thread's teams hear of both. Only who may see
+ * the thread (`maySee`, src/shares.js: who may work it, admins, and who talked in its sidebar
+ * before), `canSee`. Answers 202 with the message.
  */
-export async function talkToAgent(env, me, body, inTeam) {
+export async function talkToAgent(env, me, body, canSee) {
   const text = String((body && body.text) || '').trim();
   if (!text || text.length > MAX_SIDEBAR) {
     return json({ error: `write what to ask the agent (up to ${MAX_SIDEBAR} characters)` }, 400);
@@ -182,7 +198,7 @@ export async function talkToAgent(env, me, body, inTeam) {
     return json({ error: 'agents are not configured' }, 503);
   }
   const t = await threadTarget(env, body.thread);
-  if (!t || !await inTeam(t.entry.teams, t.entry)) {
+  if (!t || !await canSee(t.entry.teams, t.entry)) {
     return json({ error: 'not found' }, 404);
   }
   if (!t.enabled) {
@@ -208,15 +224,15 @@ export async function talkToAgent(env, me, body, inTeam) {
  * POST /api/agent/sidebar/seen `{ thread, ids }`: the person was shown the agent's answers `ids`
  * to them in the sidebar of thread `thread` (src/sidebar.js, seeSidebar), so the inbox marks it
  * no more. Their other inboxes hear of it (`sidebar-seen`, with the person), and only they act on
- * it. Answers 204.
+ * it. Only who may talk in it (`canSee`, as talkToAgent). Answers 204.
  */
-export async function sawSidebar(env, me, body, inTeam) {
+export async function sawSidebar(env, me, body, canSee) {
   const ids = body && body.ids;
   if (!Array.isArray(ids) || !ids.length) {
     return json({ error: 'name the answers seen' }, 400);
   }
   const t = await threadTarget(env, body.thread);
-  if (!t || !await inTeam(t.entry.teams, t.entry)) {
+  if (!t || !await canSee(t.entry.teams, t.entry)) {
     return json({ error: 'not found' }, 404);
   }
   if (await seeSidebar(env, me.id, ids)) {
@@ -258,15 +274,18 @@ export async function tellDiscarded(env, me, key, result) {
  * thread. The agent that asked decides the rest, in its own object: whether the request can
  * still be run, and the run itself, on its computer; `run` answers 202 once the command has
  * started, and the inbox hears how it ended through the team's room. The values go to the
- * agent's object and from there to the shell, and are neither kept nor logged.
+ * agent's object and from there to the shell, and are neither kept nor logged. Who only sees
+ * the thread (`seeing`, `maySee`) is told whose it is, with a 403.
  */
-export async function decideBash(env, me, body, inTeam, { run }) {
+export async function decideBash(env, me, body, inTeam, { run, seeing = null }) {
   if (!env.AGENTS) {
     return json({ error: 'agents are not configured' }, 503);
   }
   const entry = await entryOf(env, body && body.thread);
   if (!entry || !await inTeam(entry.teams, entry)) {
-    return json({ error: 'not found' }, 404);
+    return entry && seeing && await seeing(entry.teams, entry)
+      ? notTheirs(env, entry, 'run the commands its agent asks for')
+      : json({ error: 'not found' }, 404);
   }
   const request = await requestOf(env, body.id);
   // Of this entry: one of its member threads asked (a thread folded into a group since).
@@ -302,9 +321,10 @@ function toolDecided(r) {
  * person's sidebar message (`grantText`, `denyText`), and the agent answers it there; it has a
  * granted tool from that message on, as its tools are read before each one. Ended early, the
  * agent goes without it from its next message. Answers with the request, and the sidebar
- * message when there is one.
+ * message when there is one. Who only sees the thread (`seeing`, `maySee`) is told whose it is,
+ * with a 403.
  */
-export async function decideTool(env, me, body, inTeam, action) {
+export async function decideTool(env, me, body, inTeam, action, { seeing = null } = {}) {
   if (me.readonly) {
     return json({ error: 'read-only while viewing as someone else' }, 403);
   }
@@ -313,7 +333,9 @@ export async function decideTool(env, me, body, inTeam, action) {
   }
   const t = await threadTarget(env, body && body.thread);
   if (!t || !await inTeam(t.entry.teams, t.entry)) {
-    return json({ error: 'not found' }, 404);
+    return t && seeing && await seeing(t.entry.teams, t.entry)
+      ? notTheirs(env, t.entry, 'decide on the tools its agent asks for')
+      : json({ error: 'not found' }, 404);
   }
   const request = await toolRequestOf(env, body.id);
   // The agent that asked is the one that gets it: the entry's.
