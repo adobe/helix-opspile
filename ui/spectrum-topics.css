@@ -177,6 +177,8 @@ tr.pick { cursor: pointer; }
 }
 .spectrum .node[data-type="topic"] .lbl { font-weight: var(--spectrum-bold-font-weight); font-size: calc(var(--spectrum-font-size-75) / var(--zoom, 1)); }
 .spectrum .node:not(.named) .lbl { display: none; }
+/* How many a closed group holds, after its name. */
+.spectrum .node .lbl .count { fill: var(--spectrum-neutral-subdued-content-color-default); font-weight: var(--spectrum-regular-font-weight); }
 /* A group that bursts into its children: light, in a ring of its color, its children inside. */
 .spectrum .node[data-group] > circle {
   fill-opacity: .25;

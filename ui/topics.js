@@ -397,6 +397,12 @@ function drawGraph({ refit: asked = false } = {}) {
     const label = el('text', { class: 'lbl', dy: '1em' });
     label.setAttribute('y', n.r.toFixed(1));
     label.textContent = n.label.length > 34 ? `${n.label.slice(0, 33)}…` : n.label;
+    // A closed group says how many it holds: an area its topics, a team its people.
+    if (opens(n)) {
+      const count = el('tspan', { class: 'count' });
+      count.textContent = ` ${n.children.length}`;
+      label.append(count);
+    }
     n.el.append(label);
     dots.append(n.el);
   }
@@ -768,16 +774,18 @@ async function saveArea(method, body) {
 function areasSection() {
   const g = state.graph;
   const count = (id) => g.all.get(`tag:${id}`)?.threads.length || 0;
+  const topics = (id) => g.all.get(`tag:${id}`)?.children?.length || 0;
   const list = areaList();
   const may = (state.may.areas || []).length;
   const note = state.note ? `<p class="hint${state.note.err ? ' err' : ''}">${esc(state.note.text)}</p>` : '';
   return `<h3>Areas <span class="sub">${list.length}</span></h3>
     <p class="hint">What Clef puts the threads in: each area is a question it answers for every thread. The teams author them${may ? '; you change those of the teams you manage' : ''}. Follow one and its threads are in your personal view.</p>
     ${note}${areaForm()}
-    <table class="topics areas"><thead><tr><th>Area</th><th class="n">Threads</th><th></th></tr></thead><tbody>${list.map((a) => {
+    <table class="topics areas"><thead><tr><th>Area</th><th class="n">Topics</th><th class="n">Threads</th><th></th></tr></thead><tbody>${list.map((a) => {
     const team = a.teams.find(mayArea);
     return `<tr${a.enabled ? '' : ' class="off"'}><td><button class="link pickr-a" data-sel="tag:${esc(a.id)}" title="${esc(a.what)}">${esc(a.name)}</button>${a.enabled ? '' : ' <span class="sub">off</span>'}</td>
-      <td class="n">${count(a.id)}</td>
+      <td class="n">${topics(a.id) || '–'}</td>
+      <td class="n"${count(a.id) ? '' : ' title="None on this map: it was built before the area, or Clef put no thread in it"'}>${count(a.id) || '–'}</td>
       <td class="acts">${followButton({ kind: 'area', target: a.id }, a.name)}${team ? `<button data-edit-area="${esc(team)}|${esc(a.id)}">Change</button>` : ''}</td></tr>`;
   }).join('')}</tbody></table>
     ${may && !state.editArea ? '<button id="newArea">New area</button>' : ''}`;
