@@ -164,7 +164,12 @@ async function onSlack(env, t, {
     ok: true,
     platform: 'slack',
     ts: posted.ts,
-    confirmations: (out.posted || []).length,
+    // The relay threads two kinds of buttons: one per guest to add (`userId`), and, for addresses
+    // with no account here, one offer of guest invitations per group (`invite`: the addresses;
+    // `adminOnly` when no invite rule approves them, so only an admin may send them).
+    confirmations: (out.posted || []).filter((p) => !p.invite).length,
+    invites: (out.posted || []).filter((p) => p.invite)
+      .map((p) => ({ emails: [].concat(p.invite), adminOnly: Boolean(p.adminOnly) })),
     notes: out.notes || [],
     skipped: out.skipped || null,
     requesterConfirms: Boolean(out.requester),
@@ -224,8 +229,15 @@ export function requestedNote(r) {
     return `${parts.join('; ') || 'nothing to request'}.${r.answered ? ' admin-bot answered in the thread.' : ' admin-bot could not answer in the thread (it may not be installed in this team): say so in your note.'}`;
   }
   const notes = r.notes.length ? ` Its notes: ${r.notes.join(' ')}` : '';
-  if (r.skipped && !r.confirmations) {
-    return `Posted in #general (message ${r.ts}); AEM Ops Automation did nothing with it (${r.skipped}).${notes}`;
+  const invites = (r.invites || []).map((i) => (i.adminOnly
+    ? ` AEM Ops Automation offered to send guest invitations to ${i.emails.join(', ')}, which no invite rule approves on its own, so an admin has to click it.`
+    : ` AEM Ops Automation offered to send guest invitations to ${i.emails.join(', ')}, which ${r.requesterConfirms ? 'the person who asked, ' : ''}an admin or any full member (not a guest) of this channel can click.`)).join('');
+  const tell = ' The people in your thread do not see #general: tell them in your reply what was asked, what it waits for, and what its notes say they have to do.';
+  if (r.skipped && !r.confirmations && !invites) {
+    return `Posted in #general (message ${r.ts}); AEM Ops Automation did nothing with it (${r.skipped}).${notes}${tell}`;
   }
-  return `Posted in #general (message ${r.ts}); AEM Ops Automation asked for ${r.confirmations} confirmation(s) there, which ${r.requesterConfirms ? 'the person who asked or an admin' : 'an admin'} has to click.${notes}`;
+  const asked = r.confirmations || !invites
+    ? ` AEM Ops Automation asked for ${r.confirmations} confirmation(s) there, which ${r.requesterConfirms ? 'the person who asked or an admin' : 'an admin'} has to click.`
+    : '';
+  return `Posted in #general (message ${r.ts});${asked}${invites}${notes}${tell}`;
 }

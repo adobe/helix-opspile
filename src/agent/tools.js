@@ -1223,7 +1223,7 @@ Every query leaves Adobe, for an outside search provider. Write it as a general 
 
 const MEMBERSHIP = {
   teams: 'On Teams it goes to admin-bot (the teams-admin-agent bot), as an "@admin-bot add <email>" would: admin-bot answers in the thread that the request waits for approval, and again once the admins have reviewed it in their Slack channel.',
-  slack: 'On Slack it is posted in #general for AEM Ops Automation, which threads a confirmation per person under it: the person who asked confirms it if they are a member of the workspace, an admin otherwise. It handles guests of the workspace; for an address with no Slack account yet, it says who has to invite them instead.',
+  slack: 'On Slack it is posted in #general for AEM Ops Automation, which threads a confirmation per person under it: the person who asked confirms it if they are a member of the workspace, an admin otherwise. It handles guests of the workspace. For addresses with no Slack account yet, it offers to send them guest invitations to this channel, for an admin or a full member of the channel to click, when its invite rules allow it, and says why not otherwise. The people in your thread do not see #general: what the bot answered reaches them only through you.',
 };
 
 const MEMBERSHIP_GUIDE = `The team turned on request_membership for this channel: you may ask the admins to add people to this channel (on Teams: its team), or remove them, when someone in your thread asks for it. Nobody is added until it is approved.
@@ -1231,6 +1231,7 @@ const MEMBERSHIP_GUIDE = `The team turned on request_membership for this channel
 - Give the message that asked (\`message\`, its id as your thread shows it): the request names its author.
 - First check that it has not been asked already: admin-bot's "Invitation request submitted" (Teams), an AEM Ops Automation thread in #general (Slack), or a colleague handling it. Do not ask twice.
 - The request waits for approval: never tell anyone that the person was added before the bot says so.
+- In your reply in the thread, tell the person who asked what you requested and what it waits for now (an admin's approval, a colleague's click, an invitation email to accept), in plain words.
 - Say in your note for the team what you requested, for whom, and what the bot answered.`;
 
 /**
