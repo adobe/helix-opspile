@@ -88,6 +88,8 @@ import {
  */
 
 export const MANUAL_PRIORITY = 10;
+// Above every rule id D1 gives: the ids of rules planned but not saved yet.
+const MAX_RULE_ID = Number.MAX_SAFE_INTEGER - 1000;
 const MANUAL_NOTE = 'manual assignment';
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const FIELDS = ['name', 'group_name', 'connected', 'channel_id'];
@@ -626,13 +628,13 @@ async function requestList(env, me, { status, count }) {
 }
 
 /**
- * POST /api/admin/rule-conflicts `{ key, action, fingerprint?, note?, dryRun? }`: the admin team
- * settles a conflict between team rules (src/ruleconflicts.js). `follow`: side a files the
- * channels, and b's rule becomes a follow rule (a manual assignment of one channel, a share of
- * it); `exclude`: b's, and a's rule leaves b's out (or a's manual assignments of them go);
- * `keep`: as it is. `fingerprint` is the conflict's as it was shown: a conflict that changed
- * since is not settled (409). `dryRun` answers with the channels it would move (`moves`) and the
- * ones b would follow (`follows`); applied, with the conflicts as they are after it.
+ * POST /api/admin/rule-conflicts `{ key, action, side?, follow?, fingerprint?, note?, dryRun? }`:
+ * the admin team settles a conflict between team rules (src/ruleconflicts.js). `win`: side
+ * `side` (`a` or `b`) files the channels both rules match, the other rule leaves them out, and
+ * with `follow` the other team follows them (a follow rule); `keep`: as it is. `fingerprint` is
+ * the conflict's as it was shown: a conflict that changed since is not settled (409). `dryRun`
+ * answers with the channels it would move (`moves`) and the ones the other team would follow
+ * (`follows`); applied, with the conflicts as they are after it.
  */
 async function settleRuleConflict(env, me, body) {
   const key = clean(body.key, 500);
@@ -656,19 +658,21 @@ async function settleRuleConflict(env, me, body) {
     console.log(JSON.stringify({ route: 'admin', ruleConflict: 'kept', by: me.id }));
     return json({ ok: true, done: 'kept', ruleConflicts: await ruleConflicts(env) });
   }
-  const channels = await knownChannels(env);
-  const s = settlement(c, action, rules, channels);
+  if (action !== 'win') {
+    return bad('action is win or keep');
+  }
+  const side = clean(body.side);
+  const s = settlement(c, side, rules, { follow: Boolean(body.follow) });
   if (s.error) {
     return bad(s.error);
   }
-  // The channels b follows after it: its follow rules', and its manual assignments' shares.
-  const live = channels.filter((x) => !x.archived);
-  const byKey = new Map(live.map((x) => [`${x.source}:${x.channelId}`, x]));
-  const followed = action !== 'follow' ? [] : [
-    ...[...wantedFollows(s.next, live).values()]
-      .filter((w) => w.team === c.b.team && c.follow.rules.includes(w.rule)),
-    ...s.shares,
-  ].map((w) => byKey.get(`${w.source}:${w.channelId}`)).filter(Boolean)
+  const loser = side === 'a' ? c.b : c.a;
+  // The channels the other team follows after it.
+  const live = (await knownChannels(env)).filter((x) => !x.archived);
+  const followed = [...wantedFollows(s.next, live).values()]
+    .filter((w) => w.team === loser.team && (w.rule > MAX_RULE_ID || w.rule === loser.rules[0].id))
+    .map((w) => live.find((x) => x.source === w.source && x.channelId === w.channelId))
+    .filter(Boolean)
     .map((x) => ({
       source: x.source, channelId: x.channelId, name: x.name, groupName: x.groupName,
     }));
@@ -685,14 +689,14 @@ async function settleRuleConflict(env, me, body) {
           : env.DB.prepare('UPDATE rules SET pattern = ?, updated_by = ?, updated_at = ? WHERE id = ?')
             .bind(u.pattern, by, at, u.id))),
         ...s.deletes.map((id) => env.DB.prepare('DELETE FROM rules WHERE id = ?').bind(id)),
-        ...s.shares.map((x) => env.DB.prepare(`INSERT INTO channel_teams (source, channel_id, team,
-            added_by, added_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
-          .bind(x.source, String(x.channelId), x.team, by, at)),
+        ...s.inserts.map((r) => env.DB.prepare(`INSERT INTO rules (target, priority, source, field,
+            pattern, value, note, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .bind(...ruleValues(r), by, at)),
       ]);
       console.log(JSON.stringify({
-        route: 'admin', ruleConflict: action, by: me.id, updates: s.updates.length, deletes: s.deletes.length,
+        route: 'admin', ruleConflict: 'win', side, follow: Boolean(body.follow), by: me.id,
       }));
-      return { done: action };
+      return { done: 'win' };
     },
   });
   if (body.dryRun || !res.ok) {

@@ -103,11 +103,10 @@ no rule matches are filed under `_unassigned`. A **manual assignment** of one ch
 rule too: its `channel_id`, priority 10. A **follow rule** (target `follow`) files nothing: it
 shares every channel it matches with its team (see "Shared channels"). Two teams' rules that
 match the same channel are a **rule conflict** (`src/ruleconflicts.js`), which the admin team
-settles under Requests: the broader rule's team files the channels and the narrower one's rule
-becomes a follow rule, or the narrower one files them and the broader rule's pattern leaves it
-out (`^(?!narrower)broader`), or the conflict is kept as meant. A team's manual assignments
-against another team's rule are one side; no rule leaves single channels out, so those are
-followed or kept.
+settles under Requests: either team files the channels both match, the other rule's pattern
+leaves the winner's out (`^(?!winner)loser`), and the other team may follow them (a follow rule
+of `^(?=winner)loser`); or the conflict is kept as meant. Manual assignments are never in a
+conflict: they settle one for a channel, so a channel one of them decides is in none.
 
 **Shared channels.** A channel can be in several teams' inboxes, but it is filed under one team,
 its first: the rules pick it, and its folders, thread rows (`threads.team`), knowledge base and

@@ -399,8 +399,8 @@ function drawList() {
     // The conflicts between the teams' technologies (src/techconflicts.js).
     const clash = (state.conflicts || []).filter((c) => !f || conflictTitle(c).toLowerCase().includes(f));
     const unsettled = clash.filter((c) => !c.kept);
-    // The conflicts between team rules (src/ruleconflicts.js): the ones a rule change settles,
-    // and the others (manual assignments against a rule), which only follow or keep settle.
+    // The conflicts between team rules (src/ruleconflicts.js): the ones a change of a pattern
+    // settles, and the others (rules that read different things of a channel), kept or by hand.
     const ruleClash = (state.ruleConflicts || []).filter((c) => !f || ruleConflictTitle(c).toLowerCase().includes(f));
     const ruleOpen = ruleClash.filter((c) => !c.kept && c.section === 'rules');
     const ruleOther = ruleClash.filter((c) => !c.kept && c.section !== 'rules');
@@ -1977,39 +1977,36 @@ function showConflict(key) {
 
 // ---- conflicts between team rules ------------------------------------------------------------
 //
-// Computed from the rules and the channels every time (src/ruleconflicts.js): two rules that file
-// a channel under two teams. Side a is the broader, b the narrower. Settled by a rule change (a
-// wins and b follows, or b wins and a leaves b out) or kept as it is; each is tried first (a dry
-// run), so the page says what would move before anything does.
+// Computed from the rules and the channels every time (src/ruleconflicts.js): two teams' rules that
+// both match a channel no manual assignment decides. Side a is the broader, b the narrower. Either
+// side can win: the other rule leaves the winner's out, and the other team may follow the channels
+// both match (a follow rule). Or it is kept as it is. Each way is tried first (a dry run), so the
+// page says what would move before anything does.
 
 const RULE_CONFLICT = 'ruleconflict:';
 /** A team's, in words: "Edge's", "Platform ops'". */
 const poss = (slug) => { const n = teamLabel(slug); return /s$/i.test(n) ? `${n}'` : `${n}'s`; };
+const sideRule = (x) => x.rules[0];
 
-/** One side of a rule conflict, in a few words: "Platform ops' aem-…", "Edge's 3 manual assignments". */
+/** One side of a rule conflict, in a few words: "Platform ops' aem-…". */
 function sideText(x) {
-  if (x.pins) return `${poss(x.team)} ${x.rules.length} manual assignment${x.rules.length === 1 ? '' : 's'}`;
-  const r = x.rules[0];
-  const prefix = prefixOf(r.pattern);
-  return `${poss(x.team)} ${prefix !== null ? `${prefix}…` : r.pattern}`;
+  const prefix = prefixOf(sideRule(x).pattern);
+  return `${poss(x.team)} ${prefix !== null ? `${prefix}…` : sideRule(x).pattern}`;
 }
 /** The same as HTML, the pattern as code. */
 function sideHtml(x) {
-  if (x.pins) return `${esc(poss(x.team))} ${x.rules.length === 1 ? 'manual assignment' : `${x.rules.length} manual assignments`}`;
-  return `${esc(poss(x.team))} rule (${FIELD_LABEL[x.rules[0].field] ? esc(FIELD_LABEL[x.rules[0].field].toLowerCase()) : esc(x.rules[0].field)} ${describe(x.rules[0])})`;
+  const r = sideRule(x);
+  return `${esc(poss(x.team))} rule (${esc((FIELD_LABEL[r.field] || r.field).toLowerCase())} ${describe(r)})`;
 }
 
 function ruleConflictTitle(c) {
   return `${sideText(c.a)} · ${sideText(c.b)}`;
 }
 
-/** A side in the list: its pattern, or how many manual assignments. */
-const pinsOr = (x) => (x.pins ? `${x.rules.length} manual assignment${x.rules.length === 1 ? '' : 's'}` : x.rules[0].pattern);
-
 function ruleConflictRow(c) {
   const sel = `${RULE_CONFLICT}${c.key}`;
   return `<div class="row${String(state.sel) === sel ? ' on' : ''}" data-sel="${esc(sel)}">
-    <span class="name">${esc(teamLabel(c.a.team))} <span class="sub">and</span> ${esc(teamLabel(c.b.team))} <span class="sub">${esc(pinsOr(c.b))} inside ${esc(pinsOr(c.a))}</span></span>
+    <span class="name">${esc(teamLabel(c.a.team))} <span class="sub">and</span> ${esc(teamLabel(c.b.team))} <span class="sub">${esc(sideRule(c.b).pattern)} inside ${esc(sideRule(c.a).pattern)}</span></span>
     ${c.kept ? '<span class="tag confirmed">kept</span>' : ''}<span class="sub">${esc(channelCount(c.channels.length))}</span></div>`;
 }
 
@@ -2028,65 +2025,64 @@ const ruleCells = (r) => `<td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${
   <td>${r.source ? `<span class="tag">${esc(r.source)} only</span>` : ''}</td><td class="n">${r.priority}</td>
   <td class="sub">${esc(r.note || '')}${r.updatedBy ? `<div>${esc(r.updatedBy)} ${esc(ago(r.updatedAt))}</div>` : ''}</td>`;
 
-/** One side: its rules, how much they match, and whether it is the broader or the narrower. */
-function sideCard(c, x, which) {
-  const list = x.rules.slice(0, MAX_RC_ROWS).map((r) => `<tr>${ruleCells(r)}</tr>`).join('');
-  const more = x.rules.length > MAX_RC_ROWS ? `<tr><td colspan="5" class="sub">and ${x.rules.length - MAX_RC_ROWS} more</td></tr>` : '';
-  return `<div class="card"><h2>${esc(teamLabel(x.team))} <span class="sub">${which === 'a' ? 'the broader' : 'the narrower'} · matches ${esc(channelCount(x.matches))}, files ${x.wins} of these</span></h2>
-    <table><tr><th>Field</th><th>Pattern</th><th></th><th>Priority</th><th>Note</th></tr>${list}${more}</table></div>`;
+/** Both rules: what they read, how much they match, how many of these they file now. */
+function rulesCard(c) {
+  const row = (x, which) => `<tr><td>${esc(teamLabel(x.team))}<div class="sub">${which} · matches ${esc(channelCount(x.matches))}, files ${x.wins} of these</div></td>${ruleCells(sideRule(x))}</tr>`;
+  return `<div class="card"><h2>The rules</h2>
+    <table><tr><th>Team</th><th>Field</th><th>Pattern</th><th></th><th>Priority</th><th>Note</th></tr>${row(c.a, 'the broader')}${row(c.b, 'the narrower')}</table></div>`;
 }
 
-/** The channels both sides match, and who files each now. */
+/** The channels both rules match, and who files each now. */
 function overlapCard(c) {
   const rows = c.channels.slice(0, MAX_RC_ROWS).map((ch) => `<tr><td>${channelName(ch)}<div class="sub">${esc(platform(ch))} · <span class="mono">${esc(ch.channelId)}</span></div></td>
     <td>${esc(teamLabel(ch.winner))}</td></tr>`).join('');
   const more = c.channels.length > MAX_RC_ROWS ? `<tr><td colspan="2" class="sub">and ${c.channels.length - MAX_RC_ROWS} more</td></tr>` : '';
   return `<div class="card"><h2>The channels both match <span class="sub">${esc(channelCount(c.channels.length))}</span></h2>
-    <table><tr><th>Channel</th><th>Filed under now</th></tr>${rows}${more}</table></div>`;
+    <table><tr><th>Channel</th><th>Filed under now</th></tr>${rows}${more}</table>
+    <p class="hint">Channels assigned by hand are not in a conflict: the assignment decides them.</p></div>`;
 }
 
-/** What a dry run of a way to settle it says: the moves, and what the narrower side follows. */
-function settlePreview(c, p) {
+/** What a dry run of a side winning says: the moves, and, when it follows, what the other team follows. */
+function settlePreview(loser, p, follows) {
   if (!p) return '<p class="hint">Trying it…</p>';
   if (!p.ok) return `<p class="hint">Could not try it: ${esc(p.body.error || `failed (${p.status})`)}</p>`;
-  const { moves = [], follows = [] } = p.body;
+  const { moves = [], follows: list = [] } = p.body;
   const moved = moves.length ? `Moves ${esc(channelCount(moves.length))}: ${esc(movesText(moves))}.` : 'No channel moves.';
-  const followed = follows.length ? ` ${esc(teamLabel(c.b.team))} follows ${esc(channelCount(follows.length))}: ${esc(follows.slice(0, 5).map(plainName).join(', '))}${follows.length > 5 ? ` and ${follows.length - 5} more` : ''}.` : '';
+  const followed = follows && list.length ? ` ${esc(teamLabel(loser.team))} follows ${esc(channelCount(list.length))}: ${esc(list.slice(0, 5).map(plainName).join(', '))}${list.length > 5 ? ` and ${list.length - 5} more` : ''}.` : '';
   return `<p class="hint">${moved}${followed}</p>`;
 }
 
-/** The ways to settle it, each with what it would do (`previews`, by action). */
-function waysCard(c, previews) {
-  const a = esc(teamLabel(c.a.team));
-  const b = esc(teamLabel(c.b.team));
-  const aOf = esc(poss(c.a.team));
-  const bOf = esc(poss(c.b.team));
-  const follow = c.follow.ok
-    ? `<p class="lead">${a} files the channels. ${c.b.pins
-      ? `${bOf} manual assignment${c.b.rules.length === 1 ? '' : 's'} go${c.b.rules.length === 1 ? 'es' : ''}, and ${c.b.rules.length === 1 ? 'its channel is' : 'their channels are'} shared with ${b} instead: in ${bOf} inbox too.`
-      : `${bOf} rule becomes a follow rule: every channel it matches, also the ones it finds later, is filed where the other rules say and shared with ${b}.`}</p>
-      ${settlePreview(c, previews.follow)}<div class="acts"><button class="primary" data-way="follow"${previews.follow && previews.follow.ok ? '' : ' disabled'}>${a} wins, ${b} follows</button></div>`
-    : `<p class="hint">Not possible: ${esc(c.follow.why)}.</p>`;
-  const what = c.exclude.ok && (c.exclude.pattern
-    ? `${aOf} rule leaves ${bOf} out: its pattern becomes <code>${esc(c.exclude.pattern)}</code>.`
-    : `${aOf} manual assignment${c.exclude.deletes.length === 1 ? '' : 's'} of ${c.exclude.deletes.length === 1 ? 'the channel goes' : 'these channels go'}.`);
-  const exclude = c.exclude.ok
-    ? `<p class="lead">${b} files the channels. ${what}</p>
-      ${settlePreview(c, previews.exclude)}<div class="acts"><button class="primary" data-way="exclude"${previews.exclude && previews.exclude.ok ? '' : ' disabled'}>${b} wins, ${a} leaves them out</button></div>`
-    : `<p class="hint">Not possible: ${esc(c.exclude.why)}. If ${b} is meant to file them, keep it as it is.</p>`;
-  return `<div class="card conflict"><h2>${a} wins</h2>${follow}</div>
-    <div class="card conflict"><h2>${b} wins</h2>${exclude}</div>`;
+/** One side winning: what happens to the other rule, whether the other team follows, and the button. */
+function winCard(c, side, previews, follows) {
+  const winner = c[side];
+  const loser = c[side === 'a' ? 'b' : 'a'];
+  const w = c.win[side];
+  const name = esc(teamLabel(winner.team));
+  const other = esc(teamLabel(loser.team));
+  if (!w.ok) return `<div class="card conflict"><h2>${name} wins</h2><p class="hint">Not possible: ${esc(w.why)}.</p></div>`;
+  const rule = w.empty
+    ? `${esc(poss(loser.team))} rule matches no other channel: it goes${w.follow ? ', or becomes the follow rule' : ''}.`
+    : `${esc(poss(loser.team))} rule leaves ${esc(poss(winner.team))} out: its pattern becomes <code>${esc(w.pattern)}</code>.`;
+  const follow = w.follow
+    ? `<label class="only"><input type="checkbox" data-follow="${side}"${follows[side] ? ' checked' : ''}> ${other} follows them: they are in ${esc(poss(loser.team))} inbox too${w.empty ? '' : ` (a follow rule, <code>${esc(w.follow.pattern)}</code>)`}</label>`
+    : '';
+  return `<div class="card conflict"><h2>${name} wins</h2>
+    <p class="lead">${name} files the channels both match. ${rule}</p>${follow}
+    ${settlePreview(loser, previews[side], w.follow && follows[side])}
+    <div class="acts"><button class="primary" data-win="${side}"${previews[side] && previews[side].ok ? '' : ' disabled'}>${name} wins${w.follow && follows[side] ? `, ${other} follows` : ''}</button></div></div>`;
 }
 
-function drawRuleConflict(c, previews = {}) {
+function drawRuleConflict(c, previews = {}, follows = { a: true, b: true }) {
+  const neither = !c.win.a.ok && !c.win.b.ok;
   $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(teamLabel(c.a.team))} and ${esc(teamLabel(c.b.team))}</h1>${c.kept ? '<span class="tag confirmed">kept</span>' : ''}</div>
     <div class="status" id="status"></div>
     <div class="card"><p class="lead">${sideHtml(c.a)} and ${sideHtml(c.b)} both match ${esc(channelCount(c.channels.length))}. The lowest priority decides: now ${esc(winnersText(c))}.</p>
+      ${neither ? `<p class="hint">Neither can win by a change of its pattern: ${esc(c.win.a.why)}. Change the rules on the teams' pages, or keep it as it is.</p>` : ''}
       ${c.kept ? `<p class="hint">Kept by ${esc(c.kept.by)} ${esc(ago(c.kept.at))}${c.kept.note ? `: <span class="note">${esc(c.kept.note)}</span>` : ''}. It shows again once its rules or channels change.</p>`
     : '<form class="form" id="rcKeep"><label class="fld grow"><span>Why it is meant (optional)</span><input id="rcNote" maxlength="300"></label><button id="rcKeepBtn">Keep as it is</button></form>'}
       <p class="hint">Settling it changes the rules as you, and re-files the channels it moves, as a change on a team's page does.</p></div>
-    ${waysCard(c, previews)}
-    ${sideCard(c, c.a, 'a')}${sideCard(c, c.b, 'b')}${overlapCard(c)}`;
+    ${neither ? '' : `${winCard(c, 'a', previews, follows)}${winCard(c, 'b', previews, follows)}`}
+    ${rulesCard(c)}${overlapCard(c)}`;
   showStatus();
   const settle = (btn, body, done) => hold(btn, `ruleconflict:${c.key}`, () => call('/api/admin/rule-conflicts', 'POST', {
     key: c.key, fingerprint: c.fingerprint, ...body,
@@ -2112,27 +2108,31 @@ function drawRuleConflict(c, previews = {}) {
       settle($('rcKeepBtn'), { action: 'keep', note: $('rcNote').value.trim() || undefined }, 'Kept as it is.');
     };
   }
-  for (const btn of $('detail').querySelectorAll('[data-way]')) {
+  for (const box of $('detail').querySelectorAll('[data-follow]')) {
+    box.onchange = () => {
+      follows[box.dataset.follow] = box.checked;
+      drawRuleConflict(c, previews, follows);
+    };
+  }
+  for (const btn of $('detail').querySelectorAll('[data-win]')) {
     btn.onclick = async () => {
-      const way = btn.dataset.way;
-      const p = previews[way] && previews[way].body;
+      const side = btn.dataset.win;
+      const w = c.win[side];
+      const winner = teamLabel(c[side].team);
+      const loser = c[side === 'a' ? 'b' : 'a'];
+      const follow = Boolean(w.follow && follows[side]);
+      const p = previews[side] && previews[side].body;
       const n = (p && p.moves && p.moves.length) || 0;
-      const a = teamLabel(c.a.team);
-      const b = teamLabel(c.b.team);
-      const aOf = poss(c.a.team);
-      const bOf = poss(c.b.team);
-      const ask = way === 'follow'
-        ? [`${a} wins, ${b} follows?`, `${c.b.pins ? `${bOf} manual assignments become shares` : `${bOf} rule becomes a follow rule`}; ${n ? `${channelCount(n)} move` : 'no channel moves'}.`, 'Settle it']
-        : [`${b} wins, ${a} leaves them out?`, `${c.exclude.pattern ? `${aOf} rule gets a new pattern` : `${aOf} manual assignments go`}; ${n ? `${channelCount(n)} move` : 'no channel moves'}.`, 'Settle it'];
-      if (!(await confirmFirst(...ask))) return;
-      settle(btn, { action: way }, way === 'follow' ? `${a} files them, ${b} follows them.` : `${b} files them, ${aOf} rule leaves them out.`);
+      const rule = w.empty ? `${poss(loser.team)} rule ${follow ? 'becomes a follow rule' : 'goes'}` : `${poss(loser.team)} rule gets a new pattern${follow ? `, and ${teamLabel(loser.team)} a follow rule` : ''}`;
+      if (!(await confirmFirst(`${winner} wins${follow ? `, ${teamLabel(loser.team)} follows` : ''}?`, `${rule}; ${n ? `${channelCount(n)} move` : 'no channel moves'}.`, 'Settle it'))) return;
+      settle(btn, { action: 'win', side, follow }, `${winner} files them${follow ? `, ${teamLabel(loser.team)} follows them` : ''}.`);
     };
   }
 }
 
 /**
- * A rule conflict, and a dry run of each way to settle it (`/api/admin/rule-conflicts` with
- * `dryRun`), shown as they come. `c` is the conflict as an answer gave it, when it is newer.
+ * A rule conflict, and a dry run of each side winning (`/api/admin/rule-conflicts` with `dryRun`),
+ * shown as they come. `c` is the conflict as an answer gave it, when it is newer.
  */
 function showRuleConflict(key, c = null) {
   loadingPage();
@@ -2140,17 +2140,18 @@ function showRuleConflict(key, c = null) {
   const found = c || (state.ruleConflicts || []).find((x) => x.key === key);
   if (!found) { $('detail').innerHTML = '<div class="empty">No such conflict: it may be settled already.</div>'; return; }
   const previews = {};
-  drawRuleConflict(found, previews);
+  const follows = { a: true, b: true };
+  drawRuleConflict(found, previews, follows);
   const shownNow = () => state.sel === `${RULE_CONFLICT}${key}`;
-  for (const way of ['follow', 'exclude'].filter((w) => found[w].ok)) {
+  for (const side of ['a', 'b'].filter((x) => found.win[x].ok)) {
     call('/api/admin/rule-conflicts', 'POST', {
-      key, fingerprint: found.fingerprint, action: way, dryRun: true,
+      key, fingerprint: found.fingerprint, action: 'win', side, follow: Boolean(found.win[side].follow), dryRun: true,
     }, { parallel: true, idempotent: true }).then((p) => {
-      previews[way] = p;
+      previews[side] = p;
       if (shownNow()) {
         const el = document.activeElement && document.activeElement.id;
         const typed = $('rcNote') ? $('rcNote').value : '';
-        drawRuleConflict(found, previews);
+        drawRuleConflict(found, previews, follows);
         if ($('rcNote')) $('rcNote').value = typed;
         if (el && $(el)) $(el).focus();
       }

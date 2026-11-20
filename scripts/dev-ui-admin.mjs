@@ -437,9 +437,10 @@ const ADMIN_CHANNELS = [
 
 /**
  * Conflicts between team rules, under Requests (src/ruleconflicts.js): Edge ops' narrower
- * `^aem-edge-` inside Platform ops' `^aem-` (either may win), and Edge ops' manual assignment of
- * an `aem-` channel (only a follow or a keep settles it); and a follow rule of Edge ops', which its
- * page lists. The channels have no threads, so settling one moves nothing.
+ * `^aem-edge-` inside Platform ops' `^aem-` (either may win), and Edge ops' rule for a Teams team
+ * name against Platform ops' `^aem-` (one of the other conflicts: only a keep settles it). Edge
+ * ops' manual assignment of an `aem-` channel is none: it decides that channel. And a follow rule
+ * of Edge ops', which its page lists. The channels have no threads, so settling moves nothing.
  */
 function seedRuleConflicts(DB) {
   const db = DB.sqlite;
@@ -448,6 +449,10 @@ function seedRuleConflicts(DB) {
     db.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
       VALUES ('slack', 'T-FAKE', ?, ?, ?)`).run(id, name, at);
   }
+  db.prepare(`INSERT INTO channels (source, tenant, channel_id, name, group_id, group_name, fetched_at)
+    VALUES ('teams', 'T-FAKE', 'CH-STARKAEM', 'aem-stark', 'TEAM-xyz-stark', 'xyz-stark', ?)`).run(at);
+  db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
+    VALUES ('team', 60, 'teams', 'group_name', '^xyz-stark$', 'edge', 'Stark runs it with us', 'priya@example.com', ?)`).run(at);
   db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
     VALUES ('team', 50, NULL, 'name', '^aem-edge-', 'edge', 'Edge Delivery customers', 'priya@example.com', ?)`).run(at);
   db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
