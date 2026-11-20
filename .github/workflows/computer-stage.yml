@@ -34,6 +34,7 @@ on:
       - 'src/agent/**'
       - '!src/agent/stub.js'
       - 'src/accounts.js'
+      - 'src/agentlabels.js'
       - 'src/alertbots.js'
       - 'src/areas.js'
       - 'src/attach.js'

@@ -29,7 +29,7 @@ import {
 import {
   findExperts, listTopics, MAX_SUGGESTED, suggestExpert, topicExperts,
 } from '../experts.js';
-import { TECH_MIN, threadMessages } from '../label.js';
+import { QUESTIONS, TECH_MIN, threadMessages } from '../label.js';
 import { entryMessages, formatMessage, screen } from './deliver.js';
 import { readThreadFile } from './files.js';
 import { MAX_RAW, readRawMessage } from './rawmessage.js';
@@ -71,6 +71,12 @@ import {
   stackFile,
 } from '../stack.js';
 import { resolveTech, techMoves } from '../catalog.js';
+import {
+  AGENT_ANSWERS, agentLabelsFor, clearAgentLabel, holds, labelThreadOf, setAgentLabels, URGENCY,
+} from '../agentlabels.js';
+import { notifyRoom } from '../notify.js';
+import { teamsOf } from '../shares.js';
+import { queueExport } from '../clickhouse.js';
 
 /**
  * The thread agent's extension: what it is told (sections) and what it can do (tools). It
@@ -79,8 +85,9 @@ import { resolveTech, techMoves } from '../catalog.js';
  * thread's shared draft (or discards one it saved) and suggests colleagues to pull in
  * (src/experts.js). It cannot post, react or resolve: a person reads the draft and sends it.
  * Unless the team turned them on (agentToolsExtension, src/agent/agenttools.js): then it may
- * post and react itself, or has a shell, or searches the web (src/agent/websearch.js); in an
- * internal channel, it may read any thread.
+ * post and react itself, or has a shell, or searches the web (src/agent/websearch.js), or
+ * resolves and labels its thread in the inbox (src/agentlabels.js); in an internal channel, it
+ * may read any thread.
  */
 
 const MAX_INDEX = 8000;
@@ -1234,6 +1241,69 @@ const MEMBERSHIP_GUIDE = `The team turned on request_membership for this channel
 - In your reply in the thread, tell the person who asked what you requested and what it waits for now (an admin's approval, a colleague's click, an invitation email to accept), in plain words.
 - Say in your note for the team what you requested, for whom, and what the bot answered.`;
 
+const RESOLVING = `The team turned on resolve_thread for this channel: you may mark your thread resolved in the inbox, which the team sorts and filters by. Resolve it when its issue or request is settled: the customer confirmed that the fix works or the answer helped, or said nothing more is needed; or when someone asks you to in the sidebar.
+- Not while a question is open, someone at Adobe is still working on it, or the customer has yet to confirm a fix: when in doubt, leave it to the team and Clef.
+- It counts as a person's ✅ on the first message, in the inbox only: nothing is posted or reacted in the channel, so never mention it in a reply or draft.
+- The wrap-up, a day after the latest message, is the time to look: resolve a thread that is settled and that nobody resolved yet.
+- A customer's next message opens the thread again by itself; resolve it again once that is settled too. When it turns out not to be done, take yours back (undo).
+- Say in your note that you resolved it, and why.`;
+
+const URGENCY_NAMES = Object.keys(URGENCY);
+const criteria = (q) => Object.entries(QUESTIONS[q].criteria).map(([k, v]) => `\n  - ${k}: ${v}`).join('');
+
+const LABELING = () => `The team turned on label_thread for this channel: you may correct what Clef, the model that labels every thread, says of yours, which the inbox sorts and filters by. label_thread without labels shows Clef's and yours. Set only what Clef has wrong and you are sure of, with your reason:
+- \`kind\`, which holds until you change it:${criteria('kind')}
+- \`urgency\`, which holds until a person posts again:${QUESTIONS.urgency.criteria.map((c, i) => `\n  - ${URGENCY_NAMES[i]}: ${c.replace(/^[^:]*:\s*/, '')}`).join('')}
+- \`waiting_on\`, who has to act next, which holds until a person posts again:${criteria('next_actor')}
+- Once a person posts, Clef reads the thread anew; label it again then only if Clef still has it wrong. Look at the labels when the thread changes what it is about or how urgent it is, not every turn.
+- Mention a label in your note only when it says something the team should know.`;
+
+/** A thread's labels as the agent reads them: Clef's, and its own that hold. */
+async function labelsText(env, keys) {
+  const thread = await labelThreadOf(env.DB, keys);
+  if (!thread) {
+    return 'This thread is not in the inbox yet.';
+  }
+  const [model, own, resolved] = await Promise.all([
+    env.DB.prepare(`SELECT kind, kind_p, urgency, next_actor, next_actor_p, resolved_p
+      FROM labels WHERE thread = ?`).bind(thread).first(),
+    agentLabelsFor(env.DB, [thread]),
+    env.DB.prepare(`SELECT at FROM agent_labels WHERE question = 'resolved'
+      AND thread IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(keys)).first(),
+  ]);
+  const p = (v) => (v == null ? '' : ` (${Math.round(v * 100)}%)`);
+  const urgencyOf = (u) => (u == null ? 'unknown' : URGENCY_NAMES[Math.round(u)] || String(u));
+  const clef = model ? [
+    `kind ${model.kind || 'unknown'}${p(model.kind_p)}`,
+    `urgency ${urgencyOf(model.urgency)}`,
+    `waiting on ${model.next_actor || 'unknown'}${p(model.next_actor_p)}`,
+    `resolved ${model.resolved_p == null ? 'unknown' : `${model.resolved_p >= 0.5 ? 'yes' : 'no'}${p(model.resolved_p)}`}`,
+  ].join(', ') : 'not labeled yet (it labels a thread about two minutes after it changes)';
+  const name = { kind: 'kind', urgency: 'urgency', next_actor: 'waiting on' };
+  const shown = (r) => `${name[r.question]} ${r.question === 'urgency' ? urgencyOf(Number(r.value)) : r.value}`;
+  const mine = own.filter(holds).map((r) => `${shown(r)} (since ${r.at})`);
+  const gone = own.filter((r) => !holds(r)).map(shown);
+  return [
+    `Clef: ${clef}.`,
+    `Yours: ${mine.length ? mine.join(', ') : 'none'}${resolved ? `; resolved since ${resolved.at}` : ''}.`,
+    ...(gone.length ? [`No longer held, since a person posted: ${gone.join(', ')}.`] : []),
+  ].join('\n');
+}
+
+/** The open inboxes hear that the agent changed what the inbox shows of `key`; the export too. */
+async function announceLabel(env, key) {
+  try {
+    const row = await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
+      .bind(key).first();
+    if (row) {
+      await notifyRoom(env, await teamsOf(env, row), { type: 'thread', thread: key });
+    }
+    await queueExport(env, key);
+  } catch (e) {
+    console.warn(JSON.stringify({ route: 'agent', action: 'announce-label', error: e.message }));
+  }
+}
+
 /**
  * The tools the team turned on for this thread (src/agent/agenttools.js), as their own
  * extension, so that a change replaces it in place: `post_message` and `add_reaction` with
@@ -1509,6 +1579,96 @@ export function agentToolsExtension(ctx, tools) {
           return text(`${head}\n${args.query ? 'no thread of that channel matches' : '(no other threads in that channel)'}`);
         }
         return text(`${head}\n${threadLines(res, args)}`);
+      },
+    }));
+  }
+  // In the inbox only, so also while the agent answers a sidebar message.
+  const keysOf = (t) => (t.threads && t.threads.length ? t.threads : [t.key]);
+  if (on.has('resolve') && ctx.hasThread) {
+    sections.push(section('resolving', () => RESOLVING));
+    list.push(defineTool({
+      name: 'resolve_thread',
+      description: 'Mark your thread resolved in the inbox, as a person\'s ✅ on its first message counts, once its issue or request is settled; `undo` takes yours back. Nothing is posted or reacted in the channel. A customer\'s next message opens it again.',
+      parameters: Type.Object({
+        reason: Type.String({ description: 'Why it is resolved (or not after all), in a sentence for the team' }),
+        undo: Type.Optional(Type.Boolean({ description: 'Take your resolution back: the thread is open again' })),
+      }),
+      executionMode: 'sequential',
+      async execute(args) {
+        const t = await ctx.target();
+        // Asked again each time: the tools an agent has are only as new as its latest message.
+        if (!(await toolsFor(env, t)).includes('resolve')) {
+          return fail('resolve_thread is not available in this channel (any more).');
+        }
+        const keys = keysOf(t);
+        if (args.undo) {
+          const n = await clearAgentLabel(env.DB, keys, 'resolved');
+          if (!n) {
+            return fail('You have not resolved this thread: there is nothing of yours to take back. A person\'s ✅ is theirs to take off.');
+          }
+          await announceLabel(env, t.key);
+          console.log(JSON.stringify({ route: 'agent', action: 'unresolve', team: t.team }));
+          return text('Your resolution is taken back: the thread is open again, unless a person resolved it too or Clef says it is resolved.');
+        }
+        const thread = await labelThreadOf(env.DB, keys);
+        if (!thread) {
+          return fail('This thread is not in the inbox yet: nothing was resolved.');
+        }
+        await setAgentLabels(env.DB, thread, keys, { resolved: 'yes' }, args.reason);
+        await announceLabel(env, thread);
+        console.log(JSON.stringify({ route: 'agent', action: 'resolve', team: t.team }));
+        return text('Resolved in the inbox. Nothing was posted or reacted in the channel. A customer\'s next message opens it again, and anyone on the team can with the ✅ button.');
+      },
+    }));
+  }
+  if (on.has('label') && ctx.hasThread) {
+    sections.push(section('labeling', LABELING));
+    const choice = (values, description) => Type.Optional(Type.Union(
+      values.map((v) => Type.Literal(v)),
+      { description },
+    ));
+    list.push(defineTool({
+      name: 'label_thread',
+      description: 'Correct what Clef says of your thread, in the inbox: its kind, its urgency, whom it waits on. Without any of them, shows Clef\'s labels and yours. Only what Clef has wrong.',
+      parameters: Type.Object({
+        kind: choice(AGENT_ANSWERS.kind, 'What kind of thread it is'),
+        urgency: choice(URGENCY_NAMES, 'How urgent it is for Adobe'),
+        waiting_on: choice(AGENT_ANSWERS.next_actor, 'Who has to act next'),
+        reason: Type.Optional(Type.String({ description: 'Why Clef has it wrong, in a sentence for the team' })),
+      }),
+      executionMode: 'sequential',
+      async execute(args) {
+        const t = await ctx.target();
+        if (!(await toolsFor(env, t)).includes('label')) {
+          return fail('label_thread is not available in this channel (any more).');
+        }
+        const keys = keysOf(t);
+        const answers = {
+          ...(args.kind ? { kind: args.kind } : {}),
+          ...(args.urgency ? { urgency: URGENCY[args.urgency] } : {}),
+          ...(args.waiting_on ? { next_actor: args.waiting_on } : {}),
+        };
+        const bad = Object.entries(answers)
+          .find(([q, v]) => !AGENT_ANSWERS[q].includes(String(v)));
+        if (bad) {
+          return fail('Not a label: see the values each takes. Nothing was changed.');
+        }
+        if (!Object.keys(answers).length) {
+          return text(await labelsText(env, keys));
+        }
+        if (!String(args.reason || '').trim()) {
+          return fail('Give your reason. Nothing was changed.');
+        }
+        const thread = await labelThreadOf(env.DB, keys);
+        if (!thread) {
+          return fail('This thread is not in the inbox yet: nothing was labeled.');
+        }
+        await setAgentLabels(env.DB, thread, keys, answers, args.reason);
+        await announceLabel(env, thread);
+        console.log(JSON.stringify({
+          route: 'agent', action: 'label', team: t.team, labels: Object.keys(answers),
+        }));
+        return text(`Labeled in the inbox.\n${await labelsText(env, keys)}`);
       },
     }));
   }

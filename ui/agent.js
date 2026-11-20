@@ -973,13 +973,21 @@ const TOOL_CONFIRM = {
     on: (where) => `From their next message, the agents of ${where} can search the public web. Their queries go to an outside search provider (Microsoft Web IQ, or one through AI Gateway); they are told to keep the customer's name, people and hosts out of them.`,
     off: (where) => `Agents of ${where} stop searching the web with their next message.`,
   },
+  resolve: {
+    on: (where) => `From their next message, the agents of ${where} can mark their threads resolved in the inbox, as a ✅ on the first message counts, without anything posted in the channel. A customer's next message opens a thread again, and so does the ✅ button.`,
+    off: (where) => `Agents of ${where} stop resolving threads with their next message. Threads they resolved stay resolved until a customer writes again.`,
+  },
+  label: {
+    on: (where) => `From their next message, the agents of ${where} can correct Clef's kind, urgency and next actor of their threads, which the inbox sorts and filters by.`,
+    off: (where) => `Agents of ${where} stop labeling threads with their next message. What they set stays: a kind as it is, the urgency and next actor until a person posts.`,
+  },
 };
 
 /** The built-in tools, as the first group of the tools and MCP servers page. */
 function toolsSection() {
   const b = base();
   if (!state.tools) return '<div class="empty">Could not list the agent tools.</div>';
-  const note = b.kind === 'team' ? `Built-in tools: on or off for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). New teams start with Computer, Extraction rules and Web search on.`
+  const note = b.kind === 'team' ? `Built-in tools: on or off for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). New teams start with Computer, Extraction rules, Web search, Resolve threads and Label threads on.`
     : `Built-in tools: turned on for a whole team on its page in Teams, or here for one of ${b.name}'s channels.`;
   return `<h3 class="group">Tools</h3><div class="sub intro">${esc(note)}</div>${state.tools.map(toolRow).join('')}`;
 }

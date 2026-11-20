@@ -49,6 +49,11 @@ import { searchProblem } from './websearch.js';
  *   Web Search API and AI Gateway (src/agent/websearch.js), for pages it has no address for;
  *   it reads them with the global browser MCP server or its computer. On for every team
  *   (migration 0077) and every new one; its managers turn it off.
+ * - `resolve`: the agent marks its thread resolved, or takes that back (src/agentlabels.js), in
+ *   the inbox only: it counts as a staff ✅ on the root (src/resolve.js). On for every team
+ *   (migration 0091) and every new one.
+ * - `label`: the agent corrects Clef's kind, urgency and next actor of its thread, in the inbox
+ *   only (src/agentlabels.js). On for every team (migration 0091) and every new one.
  *
  * Those marked `newTeams` are turned on for a team when it is created (src/admin.js).
  *
@@ -146,6 +151,31 @@ export const AGENT_TOOLS = [
       + ' AI Gateway to Ceramic.ai, Linkup or Exa (WEB_SEARCH_PROVIDER), billed to the account\'s'
       + ' AI Gateway credits or a provider key stored on the gateway. The agents are told to write'
       + ' general queries, never with the customer\'s name, people, hosts or the thread\'s text.',
+    platforms: null,
+    newTeams: true,
+  },
+  {
+    tool: 'resolve',
+    title: 'Resolve threads',
+    names: ['resolve_thread'],
+    description: 'The agent marks its thread resolved in the inbox once its issue or request is'
+      + ' settled (the customer confirmed a fix, or said nothing more is needed), or when someone'
+      + ' asks it to in the sidebar, and takes that back',
+    note: 'In the inbox only, as a person\'s ✅ on the first message counts: nothing is'
+      + ' posted or reacted in the channel. A customer\'s next message opens the thread again,'
+      + ' and anyone on the team does with the ✅ button.',
+    platforms: null,
+    newTeams: true,
+  },
+  {
+    tool: 'label',
+    title: 'Label threads',
+    names: ['label_thread'],
+    description: 'The agent corrects what Clef says of its thread: its kind, its urgency, and'
+      + ' whom it waits on',
+    note: 'In the inbox only. The kind holds until the agent changes it; the urgency and whom it'
+      + ' waits on until a person posts again, when Clef reads the thread anew. A label review'
+      + ' by the admin team wins over the agent\'s.',
     platforms: null,
     newTeams: true,
   },

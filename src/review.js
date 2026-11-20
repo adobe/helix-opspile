@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { applyAgentLabels } from './agentlabels.js';
 import { QUESTIONS } from './label.js';
 
 /**
@@ -67,14 +68,16 @@ export function modelAnswer(label, question) {
 }
 
 /**
- * The label as the inbox should show it: the latest review of each question for this
- * label version replaces the model's answer. Returns the label with `reviewed` listing the
+ * The label as the inbox should show it: the thread agent's answers that hold
+ * (src/agentlabels.js, `agent` lists them) replace the model's, and the latest review of each
+ * question for this label version replaces both. Returns the label with `reviewed` listing the
  * corrected questions.
  */
-export function effectiveLabel(label, reviews) {
-  if (!label) {
+export function effectiveLabel(model, reviews, agent = []) {
+  if (!model) {
     return null;
   }
+  const label = applyAgentLabels(model, agent);
   const latest = new Map();
   for (const r of reviews) {
     if (r.labeled_through === label.labeled_through
@@ -96,6 +99,9 @@ export function effectiveLabel(label, reviews) {
     } else if (q === 'resolved') {
       out.resolved_p = r.value === 'yes' ? 1 : 0;
     }
+  }
+  if (out.agent) {
+    out.agent = out.agent.filter((q) => !latest.has(q));
   }
   return out;
 }
