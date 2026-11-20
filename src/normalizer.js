@@ -46,6 +46,7 @@ import { portalMarkdown } from './portalsource.js';
 import { recordLobby } from './portalrequests.js';
 import { teamsFollowing } from './follows.js';
 import { classify } from './rules.js';
+import { threadKind } from './alertbots.js';
 import {
   advanceWatermark, applyReaction, findMessage, indexMessage, mentionedByName, recordMentions,
   previewOf, replaceReactions, titleOf,
@@ -505,6 +506,11 @@ export async function processKey(env, key, cache = {}) {
     raw: [key],
     permalink: message.permalink,
   };
+  const authorKey = (message.authorRef.userId || message.authorRef.botId)
+    ? `${message.source}:${message.tenant}:${message.authorRef.userId || message.authorRef.botId}` : null;
+  // The thread's kind: the channel's, but an alert where a bot that only posts alerts started it
+  // (src/alertbots.js). Everything below goes by it, not by the channel's.
+  const kind = await threadKind(env, cls.kind, message, authorKey, cache);
   const body = deleted ? '' : await toMarkdown(env, message);
   const path = channelPath({ ...message, org: cls.org, team: cls.team });
   const written = await writeMessage(env.CHANNELS, path, {
@@ -513,8 +519,7 @@ export async function processKey(env, key, cache = {}) {
 
   await indexMessage(env.DB, {
     ...message,
-    authorKey: (message.authorRef.userId || message.authorRef.botId)
-      ? `${message.source}:${message.tenant}:${message.authorRef.userId || message.authorRef.botId}` : null,
+    authorKey,
     author: author.name,
     person,
     staff: author.staff,
@@ -524,7 +529,7 @@ export async function processKey(env, key, cache = {}) {
     preview: deleted ? null : previewOf(body),
     org: cls.org,
     team: cls.team,
-    kind: cls.kind,
+    kind,
     channelName: channel.name,
     path: path.slice(0, path.lastIndexOf('/') + 1),
     // For the klickhaus export (src/clickhouse.js), which reads D1 only.
@@ -576,7 +581,7 @@ export async function processKey(env, key, cache = {}) {
   // A person's reply in the platform thread of a root that was folded into another conversation:
   // it is a conversation of its own now (src/rethread.js dethread), before its agent is poked and
   // the inboxes hear of the message. The group it left is exported again; this one is below.
-  if (message.id !== message.rootId && !deleted && !imported && cls.kind === 'channel'
+  if (message.id !== message.rootId && !deleted && !imported && kind === 'channel'
     && author.kind === 'person') {
     const split = await dethread(env, message.thread);
     if (split.group) {
@@ -584,7 +589,7 @@ export async function processKey(env, key, cache = {}) {
     }
   }
   // A thread agent reads every new message of its thread (only in channels where it is on).
-  const poke = written && !deleted && !imported && cls.kind === 'channel'
+  const poke = written && !deleted && !imported && kind === 'channel'
     && await agentEnabled(env, message.channelId, cls.team);
   // A new root may continue an earlier thread (a repeat alert, a follow-up). Its agent is
   // poked once that is decided, so it is the group's agent, not one of the root's own.
@@ -595,13 +600,13 @@ export async function processKey(env, key, cache = {}) {
   } else if (poke) {
     await env.NORMALIZE.send({ agent: message.thread }, { delaySeconds: AGENT_DELAY_SECONDS });
   }
-  if (cls.kind === 'channel' && author.kind === 'person' && !imported && env.AI) {
+  if (kind === 'channel' && author.kind === 'person' && !imported && env.AI) {
     await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
   }
   // Its vector, and the thread's; a deletion (whoever's) takes the message's vector away. The
   // full-text index (SEARCH) has the bots' messages too.
   const vectors = (author.kind === 'person' || deleted) && env.CONTENT && env.AI;
-  if (cls.kind === 'channel' && !imported && (vectors || env.SEARCH)) {
+  if (kind === 'channel' && !imported && (vectors || env.SEARCH)) {
     await env.NORMALIZE.send({ vectorize: message.thread }, {
       delaySeconds: VECTORIZE_DELAY_SECONDS,
     });
@@ -626,7 +631,7 @@ export async function processKey(env, key, cache = {}) {
     } : {}),
   });
   return {
-    key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind: cls.kind,
+    key, result: written ? op.op : 'unchanged', org: cls.org, team: cls.team, kind,
   };
 }
 

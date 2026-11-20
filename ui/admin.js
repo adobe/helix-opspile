@@ -24,8 +24,10 @@
  * them; the rules that file channels under the team (a channel-name prefix like `aem-`, a
  * Teams team name, a Slack Connect team id); and manual assignments of single channels, one of
  * which moves a channel to the team picked under its name (`moveMenu`). Orgs: display name, icon and
- * type (customer, partner, vendor), and manual assignments. Bots: which of the bots in the
- * threads are Adobe's, and so on Adobe's side in the inbox (src/ourbots.js). Changes apply at once, without
+ * type (customer, partner, vendor), and manual assignments. The bots, under Requests: which of
+ * the bots in the threads are Adobe's, and so on Adobe's side in the inbox, which are external,
+ * and which only post alerts (src/ourbots.js); one nobody said whose it is waits there as a
+ * request. Changes apply at once, without
  * asking (the status line names the channels a rule change moved), and go to the API one
  * after the other, so many can be made in a row (see `serial`). Text fields save when they
  * change. A change updates the open page in place (see "view state"); nothing reloads.
@@ -42,8 +44,8 @@ const state = {
   // is open (`own`, or one of its agent's, SECTIONS), with the file open in its knowledge base.
   bases: [], section: null, path: null,
   requests: [], openRequests: 0, names: {}, noIcon: false,
-  // The bots the inbox knows (GET /api/admin/bots), and whether the list shows only Adobe's.
-  bots: [], onlyOurs: false,
+  // The bots the inbox knows (GET /api/admin/bots), under Requests.
+  bots: [],
   // The customers waiting in the customer portal, and whether it is connected to this inbox.
   portal: [], portalBound: false,
   // The team wizard's groups of the admin team's channels (GET /api/admin/team-groups): the
@@ -239,10 +241,10 @@ async function ruleChange(method, path, body, what = 'Rule change') {
 
 // What is picked on each tab, in the URL.
 const PARAM = {
-  teams: 'team', orgs: 'org', bots: 'bot', requests: 'request',
+  teams: 'team', orgs: 'org', requests: 'request',
 };
 const PICK = {
-  teams: 'a team', orgs: 'a customer', bots: 'a bot', requests: 'a request',
+  teams: 'a team', orgs: 'a customer', requests: 'a request',
 };
 /** The tabs whose rows have an agent: a team's, a customer's. */
 const AGENTED = ['teams', 'orgs'];
@@ -291,7 +293,7 @@ function wanted(url) {
       sel = named.slug;
     } else if (q.get('org') && !q.get('team') && state.me.admin) tab = 'orgs';
   }
-  if (!['orgs', 'bots', 'requests'].includes(tab) || (tab !== 'orgs' && !state.me.admin)) tab = 'teams';
+  if (!['orgs', 'requests'].includes(tab) || (tab !== 'orgs' && !state.me.admin)) tab = 'teams';
   sel = sel || q.get(PARAM[tab]);
   const view = q.get('view');
   const legacy = Boolean(q.get('repo') || q.get('path'));
@@ -308,7 +310,7 @@ function wanted(url) {
 }
 
 /**
- * Teams, Customers, Bots and Requests are pages of the header (ui/header.js), each opening as it
+ * Teams, Customers and Requests are pages of the header (ui/header.js), each opening as it
  * was left: one of them, from its address, without loading the page again. Going to another is a
  * new history entry (`push`), so Back returns to the one before. What the agent has open is
  * saved first; where it cannot be and you stay, so does the address.
@@ -508,8 +510,6 @@ function drawList() {
       state.teams.sort((x, y) => x.name.localeCompare(y.name));
       select(r.body.team.slug);
     };
-  } else if (state.tab === 'bots') {
-    drawBots(f);
   } else if (state.tab === 'requests') {
     const match = (r) => !f || `${plainName(r.channel)} ${r.channel.channelId} ${teamLabel(r.team)} ${r.requestedBy.name || ''} ${r.requestedBy.email}`
       .toLowerCase().includes(f);
@@ -531,14 +531,19 @@ function drawList() {
     const ruleOpen = ruleClash.filter((c) => !c.kept && c.section === 'rules');
     const ruleOther = ruleClash.filter((c) => !c.kept && c.section !== 'rules');
     const kept = [...clash.filter((c) => c.kept).map(conflictRow), ...ruleClash.filter((c) => c.kept).map(ruleConflictRow)];
+    // The bots (src/ourbots.js): those nobody said whose they are wait for it, the others follow.
+    const bots = state.bots.filter((b) => botMatch(b, f));
+    const review = bots.filter(unreviewed);
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter requests" value="${esc(state.filter)}"></label>
       ${waiting.length ? `<h2>Customers waiting in the portal</h2>${waiting.map(portalRow).join('')}` : ''}
       <h2>Waiting for a decision</h2>${open.map(row).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No request is waiting.'}</div>`}
+      ${review.length ? `<h2>Bots to review</h2>${review.map(botRow).join('')}` : ''}
       ${unsettled.length ? `<h2>Conflicts between technologies</h2>${unsettled.map(conflictRow).join('')}` : ''}
       ${ruleOpen.length ? `<h2>Conflicts between team rules</h2>${ruleOpen.map(ruleConflictRow).join('')}` : ''}
       ${ruleOther.length ? `<h2>Other rule conflicts</h2>${ruleOther.map(ruleConflictRow).join('')}` : ''}
       ${decided.length || answered.length || kept.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${kept.join('')}` : ''}
-      <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team.</p>`;
+      ${bots.length > review.length ? `<h2>Bots</h2>${bots.filter((b) => !unreviewed(b)).map(botRow).join('')}` : ''}
+      <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team. A bot that posted waits here until you say whether it is Adobe's or external.</p>`;
   } else if (!state.me.admin) {
     // The customers your teams own: their agents, which their managers change.
     const rows = state.bases.filter((b) => b.kind === 'org' && matches(b))
@@ -604,8 +609,8 @@ function select(sel, {
   else if (state.tab === 'requests' && String(sel).startsWith(PORTAL)) showPortalRequest(String(sel).slice(PORTAL.length));
   else if (state.tab === 'requests' && String(sel).startsWith(CONFLICT)) showConflict(String(sel).slice(CONFLICT.length));
   else if (state.tab === 'requests' && String(sel).startsWith(RULE_CONFLICT)) showRuleConflict(String(sel).slice(RULE_CONFLICT.length));
+  else if (state.tab === 'requests' && String(sel).startsWith(BOT)) showBot(String(sel).slice(BOT.length));
   else if (state.tab === 'requests') showRequest(sel);
-  else showBot(sel);
 }
 
 /** Back to the list (phones), its filter as it was. */
@@ -2773,10 +2778,14 @@ async function showOrg(slug) {
 
 // ---- bots -------------------------------------------------------------------------------
 //
-// The bots in the threads (src/ourbots.js): Adobe's own count as staff, so the inbox shows them
-// on Adobe's side, as a colleague; the others on the customer's. Bots have no mail address,
-// which is how the inbox tells people apart, so an admin says which are Adobe's.
+// The bots in the threads (src/ourbots.js), under Requests: Adobe's own count as staff, so the
+// inbox shows them on Adobe's side, as a colleague; the external ones on the customer's. Bots
+// have no mail address, which is how the inbox tells people apart, so an admin says whose each
+// is: one that posted and nobody said yet waits as a request. A bot may also only post alerts:
+// the threads it starts are alerts (src/alertbots.js).
 
+/** What marks a bot among the requests picked (`?request=bot:slack:T…:B…`). */
+const BOT = 'bot:';
 /** A bot's name as the inbox shows it: an admin's, else the platform's. */
 const botName = (b) => b.displayName || b.name || b.handle || b.id;
 /** A bot's picture: an admin's, else the platform's (Slack, Discord), else an empty square. */
@@ -2784,26 +2793,20 @@ const botIco = (b) => {
   const url = b.displayAvatar || b.avatar || '';
   return /^(https:\/\/|\/)/.test(url) ? `<img class="ico" src="${esc(url)}" alt="">` : '<span class="ico none"></span>';
 };
-const oursTag = (b) => (b.ours ? '<span class="tag ours" title="Adobe\'s: on Adobe\'s side in the inbox">Adobe</span>' : '');
+/** Whether a bot waits for an admin to say whose it is: nobody did, and it posted. */
+const unreviewed = (b) => b.ours === null && b.messages > 0;
+const botTags = (b) => [
+  b.ours === true ? '<span class="tag ours" title="Adobe\'s: on Adobe\'s side in the inbox">Adobe</span>' : '',
+  b.ours === false ? '<span class="tag" title="External: on the customer\'s side in the inbox">External</span>' : '',
+  b.alerts ? '<span class="tag alerts" title="Only posts alerts: the threads it starts are alerts">Alerts</span>' : '',
+].join('');
 const botPosts = (b) => (b.messages ? `${b.messages} ${b.messages === 1 ? 'message' : 'messages'}` : 'mentioned only');
-
-function drawBots(f) {
-  const match = (b) => !f || `${b.displayName || ''} ${b.name || ''} ${b.handle || ''} ${b.id} ${platform(b)} ${b.channel || ''}`.toLowerCase().includes(f);
-  const shown = state.bots.filter((b) => match(b) && (!state.onlyOurs || b.ours));
-  const ours = state.bots.filter((b) => b.ours).length;
-  const rows = shown.map((b) => `
-      <div class="row${state.sel === b.key ? ' on' : ''}" data-sel="${esc(b.key)}" title="${esc(botName(b))} (${esc(platform(b))})">
-        ${botIco(b)}<span class="name">${esc(botName(b))} <span class="sub">${esc(platform(b))}</span></span>
-        ${oursTag(b)}<span class="sub">${esc(botPosts(b))}</span></div>`).join('');
-  $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter bots" value="${esc(state.filter)}"></label>
-    <label class="only"><input type="checkbox" id="onlyOurs"${state.onlyOurs ? ' checked' : ''}> ${ours === 1 ? 'Only the one that is Adobe\'s' : `Only the ${ours} that are Adobe's`}</label>
-    ${rows || `<div class="empty">${state.bots.length ? 'Nothing matches.' : 'No bot has posted or been mentioned yet.'}</div>`}
-    <p class="hint">The bots that posted in a thread, or were mentioned, latest first. Adobe's show on Adobe's side in the inbox, as your colleagues do.</p>`;
-  $('onlyOurs').onchange = (e) => {
-    state.onlyOurs = e.target.checked;
-    renderList();
-  };
-}
+const botMatch = (b, f) => !f || `${b.displayName || ''} ${b.name || ''} ${b.handle || ''} ${b.id} ${platform(b)} ${b.channel || ''} ${b.ours === true ? 'adobe' : ''} ${b.ours === false ? 'external' : ''} ${b.alerts ? 'alerts' : ''}`.toLowerCase().includes(f);
+// A bot that waits for a review says where and how much it posted; the others say what was said.
+const botRow = (b) => `
+      <div class="row${state.sel === `${BOT}${b.key}` ? ' on' : ''}" data-sel="${esc(`${BOT}${b.key}`)}" title="${esc(botName(b))} (${esc(platform(b))}, ${esc(botPosts(b))})">
+        ${botIco(b)}<span class="name">${esc(botName(b))}${unreviewed(b) ? ` <span class="sub">${esc(platform(b))}</span>` : ''}</span>
+        ${botTags(b)}${unreviewed(b) || !botTags(b) ? `<span class="sub">${esc(botPosts(b))}</span>` : ''}</div>`;
 
 function showBot(key) {
   const b = state.bots.find((x) => x.key === key);
@@ -2834,12 +2837,14 @@ function showBot(key) {
       <div class="card"><div class="field">
         <label>Whose</label><span class="seg" id="bOurs">
           <button type="button" data-ours="1" aria-pressed="${b.ours === true}"${off(`bot:${key}`)}>Adobe's</button>
-          <button type="button" data-ours="0" aria-pressed="${b.ours !== true}"${off(`bot:${key}`)}>Not Adobe's</button></span>
+          <button type="button" data-ours="0" aria-pressed="${b.ours === false}"${off(`bot:${key}`)}>External</button></span>
+        <label>Alerts</label><label class="inline"><input type="checkbox" id="bAlerts"${b.alerts ? ' checked' : ''}${off(`bot:${key}`)}>
+          <span>It only posts alerts: the threads it starts are alerts</span></label>
         <label>Posted</label><span>${b.messages ? `${esc(botPosts(b))} in ${b.threads} ${b.threads === 1 ? 'thread' : 'threads'}${where ? `, ${esc(where)}` : ''}` : 'Nothing yet: it was mentioned'}</span>
         ${b.handle && b.handle !== b.name ? `<label>Mentioned as</label><span>@${esc(b.handle)}</span>` : ''}
         <label>Id</label><span class="mono">${esc(b.id)}</span>
         ${b.oursBy ? `<label>Said by</label><span class="sub">${esc(b.oursBy)}, ${esc(ago(b.oursAt))}</span>` : ''}
-      </div><p class="hint">Bots have no mail address, which is how the inbox tells Adobe people from customers, so an admin says which bots are Adobe's. An Adobe bot's messages show on Adobe's side, as your colleagues' do, the ones it wrote before too${b.staff && !b.ours ? '; this one is there already, by its Discord role' : ''}. They stay a bot's: they are not an answer to the customer, and the thread agents read them as they read every bot's.</p></div>
+      </div><p class="hint">${b.ours === null ? 'Nobody said whose this bot is yet, so it waits under Requests. ' : ''}Bots have no mail address, which is how the inbox tells Adobe people from customers, so an admin says which bots are Adobe's and which are external. An Adobe bot's messages show on Adobe's side, as your colleagues' do, the ones it wrote before too${b.staff && !b.ours ? '; this one is there already, by its Discord role' : ''}. They stay a bot's: they are not an answer to the customer, and the thread agents read them as they read every bot's. A bot that only posts alerts starts alerts, also in a channel of conversations: they are counted, not unread, and no agent works them. Its replies in a person's thread leave that a conversation.</p></div>
       <div class="card"><h2>How the inbox shows it</h2><div class="field">
         <label>On ${esc(platform(b))}</label><span class="inline">${botIco({ avatar: b.avatar })}<span>${esc(b.name || b.handle || b.id)}</span>${b.avatar ? '' : '<span class="sub">no picture</span>'}</span>
         <label for="bName">Name</label><span class="inline"><input id="bName" class="fill" maxlength="80" value="${esc(b.displayName || '')}"></span>
@@ -2865,18 +2870,34 @@ function showBot(key) {
     };
     $('bName').onchange = look;
     $('bAvatar').onchange = look;
+    // Saying whose it is answers its request: Requests in the header counts one less.
+    const said = (res) => {
+      const waited = unreviewed(b);
+      Object.assign(b, res.body.bot);
+      if (waited && !unreviewed(b)) state.openRequests = Math.max(0, state.openRequests - 1);
+      renderCount();
+      renderList();
+    };
+    // Drawn again once the save is done, so its controls are not drawn as busy.
+    const redraw = () => { if (v === state.view) draw(); };
     for (const btn of $('bOurs').querySelectorAll('[data-ours]')) {
       btn.onclick = () => hold(btn, `bot:${key}`, async () => {
         const ours = btn.dataset.ours === '1';
-        if (ours === (b.ours === true)) return;
+        if (ours === b.ours) return;
         const res = await call('/api/admin/bots', 'PUT', { key, ours });
         if (!res.ok) { failed('Save', res); return; }
-        Object.assign(b, res.body.bot);
-        status('ok', ours ? `${botName(b)} is Adobe's now.` : `${botName(b)} is not Adobe's now.`);
-        renderList();
-        if (v === state.view) draw();
-      });
+        said(res);
+        status('ok', ours ? `${botName(b)} is Adobe's now.` : `${botName(b)} is external now.`);
+      }).then(redraw);
     }
+    $('bAlerts').onchange = (e) => hold(e.target, `bot:${key}`, async () => {
+      const alerts = e.target.checked;
+      const res = await call('/api/admin/bots', 'PUT', { key, alerts });
+      if (!res.ok) { failed('Save', res); return; }
+      said(res);
+      const jobs = res.body.refile ? ': re-filing the threads it started' : '';
+      status('ok', alerts ? `${botName(b)} only posts alerts now${jobs}.` : `${botName(b)} posts more than alerts now${jobs}.`);
+    }).then(redraw);
   };
   draw();
   if (!b.messages) return;
@@ -2908,7 +2929,7 @@ function showBot(key) {
     // Leaving saves what the agent has open, and asks, in the page, about edits that cannot be
     // saved; a new tab (⌘-click, middle click) leaves nothing.
     go: async (id, url) => {
-      if (['teams', 'orgs', 'bots', 'requests'].includes(id)) openUrl(url);
+      if (['teams', 'orgs', 'requests'].includes(id)) openUrl(url);
       else if (await Agent.leave()) location.assign(url);
     },
   });

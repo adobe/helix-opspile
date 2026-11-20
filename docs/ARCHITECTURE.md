@@ -176,17 +176,35 @@ verdict.
 
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
 (an agent that provisions access, say) would show on the customer's side of a thread. The admin
-pages' **Bots** (`src/ourbots.js`) list every bot opspile knows (`identities` of kind `bot`:
+pages' **Requests** (`src/ourbots.js`) list every bot opspile knows (`identities` of kind `bot`:
 written when one posts or is mentioned, a Slack bot or Teams app the first time it posts,
 `botIdentity` in `src/lookup.js`), with its messages and where it posted last (a bot's page previews its latest three, each
 with a link to its thread), and the admin team
-says which are Adobe's (`identities.ours`: 1, 0, or NULL while nobody said; with who said it and
-when). An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
+says which are Adobe's and which are external (`identities.ours`: 1, 0, or NULL while nobody
+said; with who said it and when). A bot that posted and that nobody said either of is a request
+there, under "Bots to review", and counts on Requests in the header until an admin answers it
+(`unreviewedCount`); the others are listed below the requests, with the bots only mentioned
+(`/inbox/admin?tab=requests&request=bot:<key>`); there is no page of bots. An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
 messages in D1 follow at once (`messages.staff`), and so do the ones written before in the thread
 view (`botAuthor` in `src/api.js`, since their frontmatter says what was so then). Looking the
 account up again keeps the say. Its messages stay a bot's: they are not counted (a bot does not
 answer the customer, `last_staff`), and the agents fence them as every bot's
 (`untrusted` in `src/agent/deliver.js`, which trusts staff people only).
+
+**Alert bots.** A bot may also only post alerts (`identities.alerts`, migration 0090, set on its
+page under Requests, whatever its side): a thread it starts is an alert (`threads.kind =
+'alert'`), also in a channel the rules make a conversation, so a channel can hold people's
+conversations and a monitoring bot's alerts both (`src/alertbots.js`). Only the root decides: a
+person's reply to an alert leaves it an alert, and the bot's reply in a person's thread leaves that
+a conversation. The message index writes the kind (`threadKind` in the normalizer: the root's
+author, the message itself or the root D1 has; a reply that arrives before its root is filed as a
+conversation until the root comes), and everything after it goes by the thread's kind, not the
+channel's: no agent, no Clef label (an alert's title instead), no vectors or full-text items. A
+re-filing (`src/refile.js`) writes it again from the rules and the alert bots, and `plan` counts a
+thread filed so as filed where the rules say; so a change of the flag re-files the channels the bot
+started threads in, which makes their threads alerts, or conversations again, and takes away or
+makes again what goes by the kind. Re-threading keeps the two apart in such a channel: an alert
+joins alerts only, a conversation conversations only.
 
 A bot's page also gives it the name and picture the inbox shows (`identities.display_name` and
 `display_avatar`, an https image URL; NULL shows the platform's), for bots the platform says
@@ -759,7 +777,7 @@ filter when there are many; in a customer's they are all there is, so they are s
 
 Every page has the same header (`ui/header.js`, `ui/header.css`): a switch between **Inbox**,
 **Teams** and **Customers** (the sections of `/inbox/admin`, each team and customer with its
-agent) for every member of a team, and for the admin team **Bots** and **Requests** too,
+agent) for every member of a team, and for the admin team **Requests** too (with the bots),
 **Topics** (`/inbox/topics`, [below](#topic-maps)) and **COGS** (`/inbox/cogs`, [below](#cogs)).
 Each opens as it was left in that browser tab: the header keeps every page's address
 (sessionStorage) whenever it changes, so **Inbox** comes back with its team, filters, sort,
