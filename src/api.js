@@ -11,7 +11,7 @@
  */
 
 import { accessEmail } from './access.js';
-import { admin } from './admin.js';
+import { admin, STAFF_ROUTES } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
 import { personInKb } from './kbpeople.js';
 import {
@@ -1480,9 +1480,10 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return url.pathname === '/api/file/poster' ? filePoster(env, t, u) : threadFile(env, t, u);
   }
   // The admin pages: the admin team, and team managers for their teams (the
-  // routes check which).
+  // routes check which); a few routes for every member of an ops team (STAFF_ROUTES).
   if (url.pathname.startsWith('/api/admin/')) {
-    if (!isManager(me)) {
+    const adminRoute = `${request.method} ${url.pathname.slice('/api/admin/'.length)}`;
+    if (!isManager(me) && !(STAFF_ROUTES.includes(adminRoute) && (me.teams || []).length)) {
       return json({ error: 'for the admin team and team managers' }, 403);
     }
     return (await admin(request, env, url, me)) || json({ error: 'not found' }, 404);

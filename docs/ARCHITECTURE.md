@@ -174,6 +174,53 @@ user agent (many answer a bot's with an error page); an `.ico` of bitmaps, which
 read, is decoded into a PNG for it (`src/ico.js`), and an SVG icon is offered without Clef's
 verdict.
 
+**Unassigned channels.** A channel no rule files under an org (its name is not
+`<product>-<org>`, nobody assigned it) is in the org `_unassigned`, which Customers lists as
+Unassigned, with how many channels it has (`unassigned` of `GET /api/admin/orgs`; the ignored ones
+are not counted). Its page (`GET /api/admin/org?slug=_unassigned`) lists them, each with the orgs
+it may belong to (`src/orgassign.js`): a Slack Connect team or Teams team it shares with the
+channels of an org and few others (the inbox's own Enterprise Grid is in every Connect channel), the
+usual mail domain of an org that the people outside Adobe in it or posting there write from, and an
+org's slug or name as a word of its name, or a few words together (`home-depot`), the products the
+org rules name in their `^(?:aem|…)-` and words such as `adobe` or `alerts` aside. Where none fits,
+it suggests a new org: its people's mail domain, else the first word of its name. Picking one, any
+other org, or a new one named in the same list (made with its type first, `POST /api/admin/orgs`)
+assigns the channel there by hand (`POST /api/admin/assign`, target `org`).
+
+**Duplicate customers.** An org is a slug the rules give a channel (`aem-<slug>`,
+`<product>-<slug>`, a manual assignment), so one company can end up under two: a channel named
+`workfront-acmeco` and one named `aem-acme`. The admin pages' Customers list the pairs of orgs
+that may be one (`GET /api/admin/org-duplicates`, `src/orgmerge.js`), likeliest first. A pair is
+a candidate when its signals add up: names (the same in letters and digits, one the start of the
+other, spelled alike, a word in common), the same icon (or one's icon the other's mail domain), the
+same usual mail domain of their people, channels with the same Slack Connect team, Teams team or
+portal domain, and people outside Adobe in channels of both (`channel_members`, counting only those in
+the channels of a few orgs: staff, bots and agencies are everywhere). A domain or a Slack Connect team
+more orgs share is a partner's, and weighs less. Clef is then asked about each candidate, shown both
+orgs (names, type, icon, channels and their topics, mail domains) and the signals, and told that an
+agency's people or Slack Connect team in both is no sign: "should A and B be one organization: do
+both names refer to the same company?" Its answers are kept in `org_pairs` with a fingerprint of what
+it was shown, and asked again once that changes, two dozen a load; the page loads the list again while
+Clef gets further. The orgs' facts are kept in the isolate for five minutes.
+
+The admin team merges a pair from its page (`POST /api/admin/org-merge`, tried first with `dryRun`).
+The merge is a row of `org_merges` (migration 0091) that `loadRules` hands every caller of the rules
+as a rule of target `merge`, applied after the others (`mergedOrg` in `src/rules.js`): what the rules
+file under the merged slug, now or later, by a template or by hand, is filed under the one kept, and
+its channels move as for a rule change (only the merged org's: a channel filed otherwise for another
+reason stays where it is). The org kept keeps its name, icon and type, and the merged one's fill in
+where it has none; the merged org's `orgs` row goes (the merge keeps it), its agents' MCP servers,
+secrets and repositories, the people who follow it, its stack drawing and its portal lobbies go to
+the org kept (one of the same name there stays the kept org's), and the entries of its knowledge base
+that the kept org's has not are copied over as the person merging (a path both have stays in the
+merged org's, for a dream or a person to reconcile). The merged org leaves the lists (orgs, knowledge
+bases); its knowledge base stays in Artifacts. Undoing a merge (on the kept org's page) moves its
+channels back and gives it its row again; what moved with it stays. Anyone on a team who sees one of
+the two (the customers its teams own) sees the pair too and asks the admin team for the merge (`POST
+/api/admin/org-merge-requests`), which waits under Requests until the admin team merges or declines
+it; the admin team can also say two orgs are not the same, which takes the pair off everyone else's
+list until somebody asks for its merge.
+
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
 (an agent that provisions access, say) would show on the customer's side of a thread. The admin
 pages' **Requests** (`src/ourbots.js`) list every bot opspile knows (`identities` of kind `bot`:

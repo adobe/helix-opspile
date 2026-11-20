@@ -1,7 +1,7 @@
 # State machines
 
-opspile has four status columns, `channel_requests.status`, `bash_requests.status`,
-`tool_requests.status` and `portal_requests.status` (and the customer portal, in its own database, `lobbies.status`). Everything
+opspile has five status columns, `channel_requests.status`, `bash_requests.status`,
+`tool_requests.status`, `portal_requests.status` and `org_merge_requests.status` (and the customer portal, in its own database, `lobbies.status`). Everything
 else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
@@ -144,6 +144,30 @@ and team. Every close is `WHERE status = 'open'`. Confirming claims the request 
 a failed assignment opens it again, unless the rule was saved by then. `move` (migration 0071) is fixed when the
 request is made: a move request confirms as a move whoever holds the channel, the others move it
 only out of the admin team and share it otherwise.
+
+**Merged org.** an org of its own ⇄ merged into another (`org_merges`, migration 0091;
+`src/orgmerge.js`). Whether the row exists is the state, and the rules carry it: `loadRules` adds
+each row as a rule of target `merge`, and `classify` files what the other rules give a merged slug
+under the one it went into (`mergedOrg`), so every caller of the rules agrees, the normalizer too.
+The merge is a rule change (`applyRules`, `only` the merged org's channels): planned with the
+merge among the rules, its row written, then the moves queued, so a failure before the row moves
+nothing and one after it leaves the moves to the queue, as any rule change. A merge into an org that
+was itself merged is refused (409); what was merged into the merged org is pointed at the new one in
+the same batch, so there is never a chain to follow. Undoing it deletes the row (and gives the org
+its `orgs` row back, kept on the merge's); its channels move back the same way. What moved with it
+(servers, secrets, follows, knowledge-base entries) stays.
+
+**Duplicate pair.** unasked → Clef's verdict → stale → asked again; and dismissed ⇄ not
+(`org_pairs`, src/orgmerge.js). A verdict is kept with the `fingerprint` of what Clef was shown
+(both orgs' names, channels, domains and the signals): while it holds, Clef is not asked again; once
+it changes, the old verdict is shown (`stale`) until the next list asks, at most `ASK_PER_LIST` a
+load. A verdict Clef did not give (an error, a timeout) is no row: the next load asks. Dismissed
+(`dismissed_at`) takes a pair off everyone's list but the admin team's until somebody asks for its
+merge.
+
+**Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
+One open request per pair, either way round (checked before the insert). Every close is `WHERE status
+= 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.
 
 **Adobe's bot.** undecided → Adobe's ⇄ external (`identities.ours`: NULL, 1, 0; `src/ourbots.js`).
 While undecided, a bot that posted is a request under Requests (`unreviewedCount`); the answer

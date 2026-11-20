@@ -51,6 +51,11 @@ const state = {
   // The team wizard's groups of the admin team's channels (GET /api/admin/team-groups): the
   // ones offered, the dismissed ones, and how much of the admin team's channels it saw.
   groups: [], dismissedGroups: [], groupCoverage: null,
+  // The pairs of orgs that may be one (GET /api/admin/org-duplicates), whether the list shows the
+  // less likely ones too, and the merges asked for (the admin team's, under Requests).
+  dups: null, dupsMore: false, orgMerges: [],
+  // The channels no rule files under an org (GET /api/admin/orgs `unassigned`): how many.
+  orgsUnassigned: null,
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -250,8 +255,10 @@ const PICK = {
 const AGENTED = ['teams', 'orgs'];
 /** A suggested team of the team wizard, picked in Teams (see "the team wizard"). */
 const isGroup = (sel) => String(sel ?? '').startsWith(GROUP);
+/** Two orgs that may be one, picked in Customers (see "duplicate customers"). */
+const isPair = (sel) => String(sel ?? '').startsWith(PAIR);
 /** Whether `sel` on `tab` is a team or a customer, whose page has an agent's sections. */
-const agented = (tab, sel) => AGENTED.includes(tab) && !isGroup(sel);
+const agented = (tab, sel) => AGENTED.includes(tab) && !isGroup(sel) && !isPair(sel);
 
 /**
  * The address of what is picked (`sel` on `tab`), at a section of its page (`view`, none for its
@@ -379,14 +386,17 @@ async function load() {
   state.portal = requests.body.portal || [];
   state.conflicts = requests.body.conflicts || [];
   state.ruleConflicts = requests.body.ruleConflicts || [];
+  state.orgMerges = requests.body.orgMerges || [];
   state.portalBound = Boolean(requests.body.portalBound);
   state.openRequests = requests.body.open ?? teams.body.requests ?? 0;
   renderCount();
   state.unassigned = teams.body.unassigned;
   state.orgs = orgs.body.orgs || [];
+  state.orgsUnassigned = orgs.body.unassigned || null;
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
   state.bots = bots.body.bots || [];
   if (state.me.admin) loadGroups();
+  loadDups();
   return true;
 }
 
@@ -531,6 +541,10 @@ function drawList() {
     const ruleOpen = ruleClash.filter((c) => !c.kept && c.section === 'rules');
     const ruleOther = ruleClash.filter((c) => !c.kept && c.section !== 'rules');
     const kept = [...clash.filter((c) => c.kept).map(conflictRow), ...ruleClash.filter((c) => c.kept).map(ruleConflictRow)];
+    // The merges of customers asked for (src/orgmerge.js).
+    const merges = (state.orgMerges || []).filter((r) => !f || `${r.from} ${r.into} ${r.requestedBy.name || ''} ${r.requestedBy.email}`.toLowerCase().includes(f));
+    const mergesOpen = merges.filter((r) => r.status === 'open');
+    const mergesDone = merges.filter((r) => r.status !== 'open');
     // The bots (src/ourbots.js): those nobody said whose they are wait for it, the others follow.
     const bots = state.bots.filter((b) => botMatch(b, f));
     const review = bots.filter(unreviewed);
@@ -541,7 +555,8 @@ function drawList() {
       ${unsettled.length ? `<h2>Conflicts between technologies</h2>${unsettled.map(conflictRow).join('')}` : ''}
       ${ruleOpen.length ? `<h2>Conflicts between team rules</h2>${ruleOpen.map(ruleConflictRow).join('')}` : ''}
       ${ruleOther.length ? `<h2>Other rule conflicts</h2>${ruleOther.map(ruleConflictRow).join('')}` : ''}
-      ${decided.length || answered.length || kept.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${kept.join('')}` : ''}
+      ${mergesOpen.length ? `<h2>Customers to merge</h2>${mergesOpen.map(mergeRow).join('')}` : ''}
+      ${decided.length || answered.length || kept.length || mergesDone.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${mergesDone.map(mergeRow).join('')}${kept.join('')}` : ''}
       ${bots.length > review.length ? `<h2>Bots</h2>${bots.filter((b) => !unreviewed(b)).map(botRow).join('')}` : ''}
       <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team. A bot that posted waits here until you say whether it is Adobe's or external.</p>`;
   } else if (!state.me.admin) {
@@ -549,8 +564,9 @@ function drawList() {
     const rows = state.bases.filter((b) => b.kind === 'org' && matches(b))
       .sort((x, y) => x.name.localeCompare(y.name)).map(baseRow).join('');
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter customers" value="${esc(state.filter)}"></label>
-      <h2>Customers of your teams</h2>${rows || `<div class="empty">${f ? 'Nothing matches.' : 'No customer of your teams has a knowledge base yet.'}</div>`}
+      ${dupSection(f)}<h2>Customers of your teams</h2>${rows || `<div class="empty">${f ? 'Nothing matches.' : 'No customer of your teams has a knowledge base yet.'}</div>`}
       <p class="hint">The customers with a channel filed under or shared with one of your teams, once their thread agents started a knowledge base.</p>`;
+    wireDups();
   } else {
     const rows = state.orgs.filter((o) => (!f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f))
       && (!state.noIcon || iconless(o))).map((o) => `
@@ -558,13 +574,19 @@ function drawList() {
         ${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
         ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
         <span class="sub">${channelCount(o.channels)}</span></div>`).join('');
+    // The channels without an org, to be given one (see "unassigned channels").
+    const un = state.orgsUnassigned && state.orgsUnassigned.channels && (!f || 'unassigned'.includes(f))
+      ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}"><span class="ico none"></span>
+        <span class="name"><i>Unassigned</i></span><span class="sub">${channelCount(state.orgsUnassigned.channels)}</span></div>` : '';
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter orgs" value="${esc(state.filter)}"></label>
+      ${dupSection(f)}${state.dups && state.dups.pairs.length ? '<h2>Every org</h2>' : ''}
       <label class="only"><input type="checkbox" id="noIcon"${state.noIcon ? ' checked' : ''}> Only the ${state.orgs.filter(iconless).length} without an icon</label>
-      ${rows || '<div class="empty">Nothing matches.</div>'}
+      ${un}${rows || (un ? '' : '<div class="empty">Nothing matches.</div>')}
       <h2>New org</h2><form class="form" id="newOrg"><label class="fld grow"><span>Display name</span><input id="noName" required></label>
         <select id="noType">${state.types.map((t) => `<option>${t}</option>`).join('')}</select><button class="primary">Create</button></form>
       <p class="hint">Channels are filed under an org by the rules (<code>aem-&lt;slug&gt;</code>) or a manual assignment.</p>
       <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
+    wireDups();
     $('noIcon').onchange = (e) => {
       state.noIcon = e.target.checked;
       renderList();
@@ -605,6 +627,8 @@ function select(sel, {
   toUrl();
   renderList();
   if (state.tab === 'teams' && isGroup(sel)) showGroup(String(sel).slice(GROUP.length));
+  else if (state.tab === 'orgs' && isPair(sel)) showPair(...String(sel).slice(PAIR.length).split(':'));
+  else if (state.tab === 'requests' && String(sel).startsWith(MERGE_REQUEST)) showMergeRequest(String(sel).slice(MERGE_REQUEST.length));
   else if (agented(state.tab, sel)) showPicked({ channel, flash, fresh: true });
   else if (state.tab === 'requests' && String(sel).startsWith(PORTAL)) showPortalRequest(String(sel).slice(PORTAL.length));
   else if (state.tab === 'requests' && String(sel).startsWith(CONFLICT)) showConflict(String(sel).slice(CONFLICT.length));
@@ -775,10 +799,11 @@ function openSection(section, { path = null, channel = null, flash = null } = {}
 
 /** Adds `n` channels and `threads` threads to a team's or an org's counts in the list. */
 function count(kind, slug, n, threads) {
-  if (kind === 'team' && slug === UNASSIGNED) {
-    if (state.unassigned) {
-      state.unassigned.channels += n;
-      state.unassigned.threads += threads;
+  if (slug === UNASSIGNED) {
+    const un = kind === 'team' ? state.unassigned : state.orgsUnassigned;
+    if (un) {
+      un.channels = Math.max(0, un.channels + n);
+      un.threads = Math.max(0, un.threads + threads);
     }
     return;
   }
@@ -1109,31 +1134,8 @@ function renderChannels() {
 const movePop = { el: null, button: null, shut: 0 };
 function moveMenu(button, c) {
   if (!c) return;
-  // The click that closed it, on its own name: closed it stays.
-  if (movePop.button === button && Date.now() - movePop.shut < 300) return;
-  let el = movePop.el;
-  if (!el) {
-    el = document.createElement('div');
-    el.className = 'movepop';
-    el.popover = 'auto';
-    el.setAttribute('role', 'dialog');
-    // Closed from within (Escape), the focus goes back to the name it was opened from; a click
-    // elsewhere has moved it already.
-    let inside = false;
-    el.addEventListener('beforetoggle', (e) => {
-      if (e.newState !== 'closed') return;
-      movePop.shut = Date.now();
-      inside = el.contains(document.activeElement);
-    });
-    el.addEventListener('toggle', (e) => {
-      const b = movePop.button;
-      if (e.newState === 'closed' && inside && b && b.isConnected) b.focus();
-    });
-    document.body.append(el);
-    movePop.el = el;
-  }
-  if (el.matches(':popover-open')) el.hidePopover();
-  movePop.button = button;
+  const el = openPop(button);
+  if (!el) return;
   const v = state.view;
   const clef = c.clef && c.clef.team !== 'none' && c.clef.team !== c.team ? c.clef : null;
   const teams = state.teams.filter((t) => t.slug !== c.team)
@@ -1187,7 +1189,45 @@ function moveMenu(button, c) {
     }
   };
   render();
-  // Under the name, or above it when there is no room below; inside the window either way.
+  placePop(el, button);
+  input.focus();
+}
+
+/**
+ * The page's one popover of choices under a button (a channel's teams, a channel's orgs), made
+ * the first time: null when the click is the one that closed it, on the same button.
+ */
+function openPop(button) {
+  // The click that closed it, on its own name: closed it stays.
+  if (movePop.button === button && Date.now() - movePop.shut < 300) return null;
+  let el = movePop.el;
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'movepop';
+    el.popover = 'auto';
+    el.setAttribute('role', 'dialog');
+    // Closed from within (Escape), the focus goes back to the name it was opened from; a click
+    // elsewhere has moved it already.
+    let inside = false;
+    el.addEventListener('beforetoggle', (e) => {
+      if (e.newState !== 'closed') return;
+      movePop.shut = Date.now();
+      inside = el.contains(document.activeElement);
+    });
+    el.addEventListener('toggle', (e) => {
+      const b = movePop.button;
+      if (e.newState === 'closed' && inside && b && b.isConnected) b.focus();
+    });
+    document.body.append(el);
+    movePop.el = el;
+  }
+  if (el.matches(':popover-open')) el.hidePopover();
+  movePop.button = button;
+  return el;
+}
+
+/** Shows the popover under `button`, or above it when there is no room below; in the window. */
+function placePop(el, button) {
   const r = button.getBoundingClientRect();
   el.classList.remove('up');
   el.showPopover();
@@ -1197,7 +1237,6 @@ function moveMenu(button, c) {
   el.classList.toggle('up', up);
   el.style.left = `${Math.max(gap, Math.min(r.left, innerWidth - width - gap))}px`;
   el.style.top = `${up ? r.top - gap - height : Math.min(r.bottom + gap, Math.max(gap, innerHeight - height - gap))}px`;
-  input.focus();
 }
 
 /**
@@ -1970,7 +2009,7 @@ function showGroup(prefix) {
 
 const who = (p) => esc((p && (p.name || p.email)) || 'someone');
 const STATUS = {
-  open: 'pending', confirmed: 'confirmed', declined: 'declined', withdrawn: 'withdrawn', opened: 'opened',
+  open: 'pending', confirmed: 'confirmed', declined: 'declined', withdrawn: 'withdrawn', opened: 'opened', merged: 'merged',
 };
 const statusTag = (r) => `<span class="tag ${esc(r.status)}">${esc(STATUS[r.status] || r.status)}</span>`;
 
@@ -2657,9 +2696,16 @@ async function showOrg(slug) {
   const current = loadingPage();
   const r = await call(`/api/admin/org?slug=${encodeURIComponent(slug)}`);
   if (!current()) return;
+  if (!r.ok && r.body.mergedInto) {
+    // Merged (src/orgmerge.js): it is the org it went into now.
+    $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(slug)}</h1></div>
+      <div class="empty">Merged into <a href="${esc(address({ tab: 'orgs', sel: r.body.mergedInto, section: 'own' }))}">${esc(orgLabel(r.body.mergedInto))}</a>.</div>`;
+    return;
+  }
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
+  if (r.body.unassigned) { showUnassigned(r.body); return; }
   const {
-    org, rules, channels, types, domains = [],
+    org, rules, channels, types, domains = [], merged = [],
   } = r.body;
   const v = {
     target: 'org', value: slug, org, rules, channels,
@@ -2678,12 +2724,14 @@ async function showOrg(slug) {
       <label>Suggestions</label><div class="icons" id="oIcons"><span class="sub">Looking for icons…</span></div>
     </div><p class="hint">The inbox shows the display name and icon instead of the slug and the favicon of the customer's mail domain${domain ? ` (here ${esc(domain)})` : ''}. A domain shows its favicon; an https URL is used as the image. The suggestions are the favicons of the websites its name and its people's mail domains suggest, and the icons those sites name, most likely first as Clef sees them; pick one to use it.</p></div>
     ${channelsCard('org')}
+    ${orgMergeCard(slug, merged)}
     ${rules.length ? `<div class="card"><h2>Rules naming this org</h2><table><tr><th>Field</th><th>Pattern</th><th>Value</th><th>Priority</th><th>Note</th></tr>
       ${rules.filter((x) => x.field !== 'channel_id' || x.note !== 'manual assignment').map((x) => `<tr><td>${esc(FIELD_LABEL[x.field] || x.field)}</td><td>${describe(x)}</td><td><code>${esc(x.value)}</code></td><td class="n">${x.priority}</td><td class="sub">${esc(x.note || '')}</td></tr>`).join('')}</table></div>` : ''}`;
   showStatus();
   tabInView();
   renderChannels();
   wireChannelPicker();
+  wireOrgMerge(slug);
   const pressed = () => $('oType').querySelector('[aria-pressed="true"]')?.dataset.type || 'customer';
   /** Shows an org's fields as saved, without touching the field being typed in. */
   const show = (o) => {
@@ -2774,6 +2822,563 @@ async function showOrg(slug) {
     $('oIcon').value = '';
     show(v.org);
   });
+}
+
+// ---- unassigned channels ---------------------------------------------------------------------
+//
+// A channel no rule files under an org (its name is not `<product>-<org>`, nor is it assigned by
+// hand) is in the org `_unassigned`. Customers lists them under Unassigned, each with the orgs it
+// may belong to (src/orgassign.js: a Slack Connect or Teams team, its people's mail domain, a
+// word of its name) or the new org it may be. Picking one assigns the channel there by hand, as
+// the channel picker of an org's page does; a new org is made first, with the name and type given.
+
+function showUnassigned(body) {
+  const v = {
+    target: 'org', value: UNASSIGNED, org: body.org, channels: body.channels, suggestions: body.suggestions || {},
+  };
+  state.view = v;
+  $('detail').innerHTML = `<div class="title">${backButton()}<span class="ico none"></span><h1 class="fill">Unassigned</h1></div>
+    <div class="status" id="status"></div>
+    <div class="card"><h2>Channels without an org</h2><div id="unassignedTable"></div>
+    <p class="hint">No rule files these channels under an org: their names are not <code>&lt;product&gt;-&lt;org&gt;</code>, and nobody assigned them. Give each one an org: one the inbox suggests (its Slack Connect or Teams team, its people's mail domain, a word of its name), any other, or a new one. It is assigned there by hand (a channel-id rule with priority 10), and its threads are re-filed. Ignored channels are not listed.</p></div>`;
+  showStatus();
+  renderUnassigned(v);
+}
+
+function renderUnassigned(v) {
+  if (v !== state.view || !$('unassignedTable')) return;
+  const rows = v.channels.map((c) => {
+    const where = `<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div>`;
+    if (c.left) {
+      return `<tr class="left"><td>${channelName(c)}${where}</td><td colspan="4" class="sub">Filed under ${esc(orgLabel(c.left.org))} now; its threads are re-filed in the background.</td></tr>`;
+    }
+    const sug = v.suggestions[c.channelId] || { orgs: [], fresh: null };
+    const key = (slug) => `assign:org:${c.channelId}:${slug}`;
+    const picks = [
+      ...sug.orgs.map((o) => `<button class="link" data-org="${esc(o.org)}" data-ch="${esc(c.channelId)}" title="${esc(o.why)}"${off(key(o.org))}>→ ${esc(orgLabel(o.org))}</button>`),
+      ...(sug.fresh ? [`<button class="link" data-new="${esc(sug.fresh.name)}" data-ch="${esc(c.channelId)}" title="${esc(`A new org: ${sug.fresh.why}`)}"${off(key(sug.fresh.slug))}>+ ${esc(sug.fresh.name)}</button>`] : []),
+      `<button class="link" data-pick="${esc(c.channelId)}" aria-haspopup="dialog">${sug.orgs.length || sug.fresh ? 'Another…' : 'Pick an org…'}</button>`,
+    ];
+    return `<tr><td>${channelName(c)}${where}</td><td>${esc(teamLabel(c.team))}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}</td>
+      <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td><td class="picks-cell">${picks.join(' ')}</td></tr>`;
+  }).join('');
+  $('unassignedTable').innerHTML = rows
+    ? `<table><tr><th>Channel</th><th>Team</th><th>Threads</th><th>Latest</th><th>Org</th></tr>${rows}</table>`
+    : '<div class="empty">Every channel has an org.</div>';
+  const find = (id) => v.channels.find((c) => c.channelId === id && !c.left);
+  for (const b of $('unassignedTable').querySelectorAll('[data-org]')) {
+    b.onclick = () => press(b, () => assignOrg(v, find(b.dataset.ch), b.dataset.org));
+  }
+  for (const b of $('unassignedTable').querySelectorAll('[data-new]')) {
+    b.onclick = () => press(b, () => newOrgFor(v, find(b.dataset.ch), b.dataset.new, 'customer'));
+  }
+  for (const b of $('unassignedTable').querySelectorAll('[data-pick]')) {
+    b.onclick = () => orgMenu(b, v, find(b.dataset.pick));
+  }
+}
+
+/** Assigns channel `c` of the unassigned ones to org `slug` by hand. */
+function assignOrg(v, c, slug) {
+  if (!c) return null;
+  return once(`assign:org:${c.channelId}:${slug}`, async () => {
+    const res = await ruleChange('POST', '/api/admin/assign', {
+      target: 'org', value: slug, channelId: c.channelId, source: c.source,
+    }, `${plainName(c)} → ${orgLabel(slug)}`);
+    if (!res) return null;
+    applyMoves(res.moves, v);
+    // Nothing to re-file (no thread yet): it is that org's all the same.
+    for (const row of v.channels.filter((x) => x.channelId === c.channelId && !x.left)) {
+      row.left = { team: row.team, org: slug, kind: row.kind };
+    }
+    renderUnassigned(v);
+    renderList();
+    return res;
+  });
+}
+
+/** Makes a new org called `name` (of `type`) and assigns channel `c` to it. */
+async function newOrgFor(v, c, name, type) {
+  if (!c || !name.trim()) return;
+  const slug = slugFrom(name);
+  if (!state.orgs.some((o) => o.slug === slug)) {
+    const r = await call('/api/admin/orgs', 'POST', { name: name.trim(), type });
+    // There is one of that slug already (known to the Worker, not to the page): it is the one.
+    if (!r.ok && r.status !== 409) { failed(`New org ${name}`, r); return; }
+    if (r.ok) {
+      state.orgs.push({ ...r.body.org, channels: 0, threads: 0 });
+      state.orgs.sort((x, y) => (x.name || x.slug).localeCompare(y.name || y.slug));
+    }
+  }
+  await assignOrg(v, c, slug);
+}
+
+/**
+ * The orgs for an unassigned channel, in the page's popover: the suggested ones first, then
+ * every org, filtered as you type, and a new org of the name typed, with its type.
+ */
+function orgMenu(button, v, c) {
+  if (!c) return;
+  const el = openPop(button);
+  if (!el) return;
+  const sug = (v.suggestions[c.channelId] || {}).orgs || [];
+  const why = new Map(sug.map((o) => [o.org, o.why]));
+  const all = [...state.orgs].sort((a, b) => (why.has(b.slug) - why.has(a.slug))
+    || (a.name || a.slug).localeCompare(b.name || b.slug));
+  let list = all;
+  let at = 0;
+  el.setAttribute('aria-label', `An org for ${plainName(c)}`);
+  el.innerHTML = `<p class="what">File ${channelName(c)} under</p>
+    <label class="s2-search"><input class="search" type="search" aria-label="Find an org, or name a new one" autocomplete="off"></label>
+    <div class="opts" role="listbox" aria-label="Orgs"></div>
+    <div class="newtype" hidden><span class="sub">A new org, a</span><select aria-label="Its type">${state.types.map((t) => `<option>${t}</option>`).join('')}</select></div>
+    <p class="hint">Assigned there by hand, whatever the rules say; its threads are re-filed.</p>`;
+  const input = el.querySelector('input');
+  const opts = el.querySelector('.opts');
+  const typeOf = el.querySelector('select');
+  const go = (o) => {
+    if (!o) return;
+    el.hidePopover();
+    if (v !== state.view) return;
+    if (o.create) newOrgFor(v, c, o.name, typeOf.value);
+    else assignOrg(v, c, o.slug);
+  };
+  const render = () => {
+    const typed = input.value.trim();
+    const fresh = typed && slugFrom(typed) && !state.orgs.some((o) => o.slug === slugFrom(typed))
+      ? [{ create: true, name: typed, slug: slugFrom(typed) }] : [];
+    list = [...list.filter((o) => !o.create), ...fresh];
+    el.querySelector('.newtype').hidden = !fresh.length;
+    opts.innerHTML = list.map((o, i) => `<div class="row${i === at ? ' on' : ''}" role="option" aria-selected="${i === at}" data-i="${i}">
+      ${o.create ? `<span class="name">New org “${esc(o.name)}” <span class="sub mono">${esc(o.slug)}</span></span>`
+    : `${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)} <span class="sub mono">${esc(o.slug)}</span></span>${why.has(o.slug) ? `<span class="tag clef yes" title="${esc(why.get(o.slug))}">suggested</span>` : ''}`}</div>`).join('')
+      || '<div class="empty pad">Type a name to make a new org.</div>';
+    for (const row of opts.querySelectorAll('[data-i]')) {
+      // eslint-disable-next-line no-loop-func
+      row.onclick = () => go(list[Number(row.dataset.i)]);
+    }
+    const on = opts.querySelector('.on');
+    if (on) on.scrollIntoView({ block: 'nearest' });
+  };
+  input.oninput = () => {
+    const words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
+    list = all.filter((o) => words.every((w) => `${o.name || ''} ${o.slug}`.toLowerCase().includes(w)));
+    at = 0;
+    render();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!list.length) return;
+      at = (at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length;
+      render();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      go(list[at]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      el.hidePopover();
+    }
+  };
+  render();
+  placePop(el, button);
+  input.focus();
+}
+
+// ---- duplicate customers ---------------------------------------------------------------------
+//
+// One company can end up under two slugs (a channel named workfront-acmeco and one named
+// aem-acme). The Worker lists the pairs of orgs that may be one, from their names, icons, mail
+// domains, Slack Connect teams and people, each with Clef's verdict (src/orgmerge.js); the list
+// on the left shows the likely ones first. A pair's page puts the two side by side: the admin
+// team merges one into the other (tried first: what would be re-filed) or says they are not the
+// same; anyone else who sees one of them asks the admin team for the merge, which waits under
+// Requests. A merge can be undone on the page of the org kept.
+
+const PAIR = 'pair:';
+const MERGE_REQUEST = 'orgmerge:';
+const pairSel = (a, b) => `${PAIR}${a < b ? `${a}:${b}` : `${b}:${a}`}`;
+/** An org's name in a pair: its display name, else its slug. */
+const dupName = (slug, orgs = state.dups?.orgs) => (orgs && orgs[slug] && orgs[slug].name) || orgLabel(slug);
+/** An org's name on a pair's page: with its slug, where both are called the same. */
+const nameIn = (v, slug) => {
+  const other = slug === v.pair.a ? v.pair.b : v.pair.a;
+  const name = dupName(slug, v.orgs);
+  return name === dupName(other, v.orgs) ? `${name} (${slug})` : name;
+};
+const openAsks = (p) => (p.requests || []).filter((r) => r.status === 'open');
+/** Whether a pair is listed among the likely ones: Clef says so, or somebody asked. */
+const likelyPair = (p) => openAsks(p).length > 0 || (!p.dismissed && p.p !== null && p.p >= (state.dups?.likely ?? 0.5));
+
+/**
+ * The pairs, from the Worker. Clef is asked about some of them at a time, so while it has not
+ * answered for all, the list asks again, as long as it gets further.
+ */
+async function loadDups({ fresh = false, round = 0 } = {}) {
+  const r = await call(`/api/admin/org-duplicates${fresh ? '?fresh=1' : ''}`);
+  if (!r.ok) {
+    state.dups = {
+      error: r.body.error || `failed (${r.status})`, pairs: [], orgs: {}, unchecked: 0,
+    };
+    return;
+  }
+  const was = state.dups && !state.dups.error ? state.dups.unchecked : null;
+  state.dups = r.body;
+  if (state.tab === 'orgs') renderList();
+  if (r.body.unchecked && round < 10 && (was === null || round === 0 || r.body.unchecked < was)) {
+    loadDups({ round: round + 1 });
+  }
+}
+
+function dupRow(p) {
+  const { orgs } = state.dups;
+  const asked = openAsks(p).length;
+  const said = p.p === null ? 'Clef has not said yet' : `${pct(p.p)} one, says Clef`;
+  const why = [`${p.a}, ${p.b}`, said, asked ? 'merge asked for' : '', p.dismissed ? 'not the same' : ''].filter(Boolean).join(' · ');
+  return `<div class="row two dup${state.sel === pairSel(p.a, p.b) ? ' on' : ''}" data-sel="${esc(pairSel(p.a, p.b))}"
+      title="${esc(`${dupName(p.a)} (${p.a}) and ${dupName(p.b)} (${p.b})`)}">
+    <span class="name">${ico(orgs[p.a].icon, orgs[p.a].domain)}${ico(orgs[p.b].icon, orgs[p.b].domain)}<span>${esc(dupName(p.a))} <span class="sep">and</span> ${esc(dupName(p.b))}</span></span>
+    <span class="sub">${esc(why)}</span></div>`;
+}
+
+/** The pairs at the top of the list (filtered as the list is), the less likely ones folded. */
+function dupSection(f) {
+  const d = state.dups;
+  if (!d || d.error) return '';
+  const match = (p) => !f || `${dupName(p.a)} ${p.a} ${dupName(p.b)} ${p.b}`.toLowerCase().includes(f);
+  const top = d.pairs.filter((p) => likelyPair(p) && match(p));
+  const rest = d.pairs.filter((p) => !likelyPair(p) && match(p));
+  if (!top.length && !rest.length && !d.unchecked) return '';
+  const checking = d.unchecked ? `<div class="sub pad">Clef is looking at ${d.unchecked} more…</div>` : '';
+  const open = state.dupsMore || rest.some((p) => state.sel === pairSel(p.a, p.b));
+  return `<h2>Likely duplicates</h2>${top.map(dupRow).join('') || `<div class="empty pad">${f ? 'Nothing matches.' : 'None for now.'}</div>`}
+    ${checking}${rest.length ? `<details class="dismissed" id="dupMore"${open ? ' open' : ''}><summary class="sub">${rest.length} less likely</summary>${rest.map(dupRow).join('')}</details>` : ''}`;
+}
+
+function wireDups() {
+  if ($('dupMore')) $('dupMore').ontoggle = (e) => { state.dupsMore = e.target.open; };
+}
+
+/** The org a pair keeps when nobody said: the one asked for, else the busier, else the named. */
+function keptOf(pair, orgs) {
+  const asked = openAsks(pair)[0];
+  if (asked) return asked.into;
+  const [a, b] = [orgs[pair.a], orgs[pair.b]];
+  if (a.threads !== b.threads) return a.threads > b.threads ? a.slug : b.slug;
+  if (Boolean(a.name) !== Boolean(b.name)) return a.name ? a.slug : b.slug;
+  return a.slug.length <= b.slug.length ? a.slug : b.slug;
+}
+
+/** The pair as it is now, in the list on the left too. */
+function updatePair(pair, orgs) {
+  if (!state.dups || state.dups.error) return;
+  const i = state.dups.pairs.findIndex((x) => x.a === pair.a && x.b === pair.b);
+  if (i >= 0) state.dups.pairs[i] = pair;
+  else if (likelyPair(pair)) state.dups.pairs.unshift(pair);
+  Object.assign(state.dups.orgs, orgs);
+}
+
+/** A merge request as the page says it. */
+const askText = (r, v = null) => `${who(r.requestedBy)} asked to merge <b>${esc(v ? nameIn(v, r.from) : dupName(r.from))}</b> into <b>${esc(v ? nameIn(v, r.into) : dupName(r.into))}</b> ${esc(ago(r.requestedAt))}${r.note ? `: <span class="note">${esc(r.note)}</span>` : ''}`;
+
+/** One side of a pair: what the inbox knows of the org. */
+function pairSide(o, kept) {
+  const page = address({ tab: 'orgs', sel: o.slug, section: 'own' });
+  const chans = o.channelNames.map((c) => `<li>${esc(c.label)} <span class="sub">${esc(platform(c))} · ${c.threads} ${c.threads === 1 ? 'thread' : 'threads'}</span>${c.topic ? `<div class="sub">${esc(c.topic)}</div>` : ''}</li>`).join('');
+  return `<div class="side${kept ? ' kept' : ''}">
+    <div class="inline">${ico(o.icon, o.domain)}<a href="${esc(page)}"><b>${esc(o.name || o.slug)}</b></a>${kept ? '<span class="tag confirmed">kept</span>' : ''}</div>
+    <div class="sub mono">${esc(o.slug)}</div>
+    <div class="field">
+      <label>Type</label><span>${esc(o.type)}</span>
+      <label>Channels</label><span>${channelCount(o.channels)}, ${o.threads} ${o.threads === 1 ? 'thread' : 'threads'}${o.latest ? `, latest ${esc(ago(o.latest))}` : ''}</span>
+      ${o.domains.length ? `<label>Mail</label><span>${esc(o.domains.join(', '))}</span>` : ''}
+    </div>
+    ${chans ? `<ul class="chans">${chans}</ul>` : ''}${o.channels > o.channelNames.length ? `<div class="sub">and ${o.channels - o.channelNames.length} more</div>` : ''}
+  </div>`;
+}
+
+/** What merging would do, from its dry run. */
+function mergePreviewText(v) {
+  const pr = v.preview;
+  if (!pr) return '<span class="sub">Trying it…</span>';
+  if (!pr.ok) return `<span class="err">${esc(pr.body.error || `failed (${pr.status})`)}</span>`;
+  const { moves, moved = {}, kb = {} } = pr.body;
+  const from = nameIn(v, v.from);
+  const into = nameIn(v, v.keep);
+  const what = {
+    mcp_servers: ['MCP server', 'MCP servers'],
+    agent_secrets: ['secret', 'secrets'],
+    agent_repos: ['repository', 'repositories'],
+    person_follows_by: ['person who follows it', 'people who follow it'],
+    org_stacks: ['stack drawing', 'stack drawings'],
+    portal_requests: ['portal lobby', 'portal lobbies'],
+  };
+  const along = Object.entries(moved).map(([k, n]) => `${n} ${(what[k] || [k, k])[n === 1 ? 0 : 1]}`);
+  return `<ul>
+    <li>${moves.length ? `Re-files ${moves.length} ${moves.length === 1 ? 'channel' : 'channels'} under ${esc(into)}: ${moves.slice(0, 6).map((m) => esc(plainName(m.channel))).join(', ')}${moves.length > 6 ? ` and ${moves.length - 6} more` : ''}.` : 'Re-files no channel: it has none with threads.'} What the rules file under ${esc(v.from)} later goes there too.</li>
+    ${along.length ? `<li>Gives ${esc(into)} its ${esc(along.join(', '))}.</li>` : ''}
+    ${kb.entries ? `<li>Copies the ${kb.entries} entries of its knowledge base that ${esc(into)}'s has not; a file both have stays as ${esc(into)}'s.</li>` : ''}
+    <li>${esc(into)} keeps its name, icon and type; ${esc(from)}'s fill in where it has none.</li>
+  </ul>`;
+}
+
+async function showPair(x, y) {
+  const current = loadingPage();
+  state.view = null;
+  const r = await call(`/api/admin/org-duplicates?pair=${encodeURIComponent(`${x}:${y}`)}`);
+  if (!current()) return;
+  if (!r.ok) {
+    $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">Duplicates</h1></div><div class="empty">${esc(r.body.error || `Could not load (${r.status}).`)}</div>`;
+    return;
+  }
+  const [pair] = r.body.pairs;
+  const { orgs } = r.body;
+  updatePair(pair, orgs);
+  renderList();
+  const keep = keptOf(pair, orgs);
+  state.view = {
+    target: 'pair', value: `${pair.a}:${pair.b}`, pair, orgs, keep, from: keep === pair.a ? pair.b : pair.a, preview: null, done: null,
+  };
+  drawPair(state.view);
+  if (state.me.admin) previewMerge(state.view);
+}
+
+/** The merge's dry run, for the way round picked. */
+async function previewMerge(v) {
+  v.preview = null;
+  const asked = { from: v.from, into: v.keep };
+  const pr = await call('/api/admin/org-merge', 'POST', { ...asked, dryRun: true }, { parallel: true, idempotent: true });
+  if (v !== state.view || v.from !== asked.from) return;
+  v.preview = pr;
+  if ($('pPreview')) $('pPreview').innerHTML = mergePreviewText(v);
+  if ($('pMerge')) $('pMerge').disabled = !pr.ok;
+}
+
+function drawPair(v) {
+  const { pair, orgs } = v;
+  const admin = Boolean(state.me.admin);
+  const asks = pair.requests || [];
+  const open = openAsks(pair);
+  const mine = open.find((q) => q.requestedBy.email === state.me.email);
+  const clef = pair.p === null ? 'Clef has not been asked yet; it is, the next time the list loads.'
+    : `Clef says ${pct(pair.p)} that they are one company${pair.stale ? ' (from before their channels changed: it is asked again)' : ''}${pair.checked ? `, asked ${esc(ago(pair.checked))}` : ''}.`;
+  const seg = `<span class="seg" id="pKeep">${[pair.a, pair.b].map((s) => `<button type="button" data-keep="${esc(s)}" aria-pressed="${v.keep === s}">${esc(nameIn(v, s))}</button>`).join('')}</span>`;
+  let act = '';
+  if (v.done) {
+    act = `<div class="card"><h2>Merged</h2><p>${esc(nameIn(v, v.done.from))} is part of <a href="${esc(address({ tab: 'orgs', sel: v.done.into, section: 'own' }))}">${esc(nameIn(v, v.done.into))}</a> now${v.done.moves ? `; ${v.done.moves} ${v.done.moves === 1 ? 'channel is' : 'channels are'} re-filed` : ''}${v.done.kb ? `; ${v.done.kb}` : ''}.</p>
+      <div class="form"><button id="pUndo"${off(`unmerge:${v.done.from}`)}>Undo the merge</button></div></div>`;
+  } else if (admin) {
+    act = `<div class="card"><h2>Merge them</h2><div class="field"><label>Keep</label>${seg}</div>
+      <div class="preview" id="pPreview">${mergePreviewText(v)}</div>
+      <div class="form"><button class="primary" id="pMerge"${v.preview && v.preview.ok ? '' : ' disabled'}${off(`merge:${v.value}`)}>Merge ${esc(nameIn(v, v.from))} into ${esc(nameIn(v, v.keep))}</button>
+        ${pair.dismissed ? `<button id="pDismiss" data-undo="1"${off(`dismiss:${v.value}`)}>They may be one after all</button>` : `<button id="pDismiss"${off(`dismiss:${v.value}`)}>Not the same</button>`}</div>
+      <p class="hint">${pair.dismissed ? `Said not to be the same by ${who({ email: pair.dismissed.by })} ${esc(ago(pair.dismissed.at))}: the list shows them last, and nobody else sees them unless they ask for a merge.` : 'Not the same takes them off the list, until somebody asks for their merge.'} A merge is undone on the page of the org kept: its channels go back; what moved with it stays.</p></div>`;
+  } else if (mine) {
+    act = `<div class="card"><h2>Your request</h2><p>${askText(mine, v)}</p><div class="form"><button id="pWithdraw"${off(`ask:${mine.id}`)}>Take it back</button></div></div>`;
+  } else if (!open.length) {
+    act = `<div class="card"><h2>Ask for a merge</h2><form class="form" id="pAskForm"><div class="fld"><span class="sub">Keep</span>${seg}</div>
+      <label class="fld grow"><span>Why they are one (optional)</span><input id="pNote" maxlength="500"></label>
+      <button class="primary" id="pAsk"${off(`ask:${v.value}`)}>Ask the admin team</button></form>
+      <p class="hint">The admin team merges customers: the one is filed under the other from then on, its channels, knowledge and agents' set-up too. They answer under Requests.</p></div>`;
+  }
+  // Your own open request is the card that takes it back.
+  const listed = asks.filter((q) => q !== mine);
+  const asked = listed.length ? `<div class="card"><h2>Asked for</h2><ul class="asks">${listed.map((q) => `<li>${askText(q, v)}${q.status === 'open' ? '' : ` · ${decisionText(q)}`}
+      ${admin && q.status === 'open' ? `<form class="form" data-decline="${q.id}"><label class="fld grow"><span>Reason, for ${who(q.requestedBy)} (optional)</span><input maxlength="500"></label><button class="danger"${off(`ask:${q.id}`)}>Decline</button></form>` : ''}</li>`).join('')}</ul></div>` : '';
+  $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(dupName(pair.a, orgs))} <span class="sub">and</span> ${esc(dupName(pair.b, orgs))}</h1></div>
+    <div class="status" id="status"></div>
+    <div class="card"><div class="pair">${pairSide(orgs[pair.a], !v.done && v.keep === pair.a)}${pairSide(orgs[pair.b], !v.done && v.keep === pair.b)}</div></div>
+    <div class="card"><h2>Why they may be one</h2><p>${clef}</p>${pair.signals.length ? `<ul>${pair.signals.map((x) => `<li>${esc(x.text[0].toUpperCase() + x.text.slice(1))}.</li>`).join('')}</ul>` : '<p class="sub">Nothing they share says so.</p>'}</div>
+    ${asked}${act}`;
+  showStatus();
+  wirePair(v);
+}
+
+/** Closes a pair's open requests in the page's lists, as the Worker did. */
+function settleAsks(v, outcome) {
+  const now = new Date().toISOString();
+  for (const q of openAsks(v.pair)) {
+    Object.assign(q, { status: outcome, decidedAt: now, decidedBy: { email: state.me.email, name: state.me.name } });
+    const listed = state.orgMerges.find((x) => x.id === q.id);
+    if (listed) Object.assign(listed, q);
+    if (state.me.admin) state.openRequests = Math.max(0, state.openRequests - 1);
+  }
+  renderCount();
+}
+
+function wirePair(v) {
+  const { pair } = v;
+  for (const b of $('detail').querySelectorAll('[data-keep]')) {
+    b.onclick = () => {
+      if (v.keep === b.dataset.keep) return;
+      v.keep = b.dataset.keep;
+      v.from = v.keep === pair.a ? pair.b : pair.a;
+      v.preview = null;
+      drawPair(v);
+      if (state.me.admin) previewMerge(v);
+    };
+  }
+  if ($('pMerge')) {
+    $('pMerge').onclick = () => hold($('pMerge'), `merge:${v.value}`, async () => {
+      const [from, into] = [v.from, v.keep];
+      const ok = await confirmFirst(`Merge ${nameIn(v, from)} into ${nameIn(v, into)}?`, `${from} is filed under ${into} from now on: its channels, the ones the rules name it later, its agents' set-up and its knowledge. Undo moves its channels back.`, 'Merge');
+      if (!ok) return;
+      const res = await call('/api/admin/org-merge', 'POST', { from, into });
+      if (!res.ok) { failed('Merge', res); return; }
+      const { moves, kb = {} } = res.body;
+      applyMoves(moves, null);
+      settleAsks(v, 'merged');
+      state.orgs = state.orgs.filter((o) => o.slug !== from);
+      if (state.dups && !state.dups.error) state.dups.pairs = state.dups.pairs.filter((p) => p.a !== from && p.b !== from);
+      const copied = kb.copied ? `${kb.copied} knowledge-base ${kb.copied === 1 ? 'entry' : 'entries'} copied` : '';
+      const left = kb.kept && kb.kept.length ? `${kb.kept.length} kept in ${from}'s, as ${into}'s has them too` : '';
+      v.done = {
+        from, into, moves: moves.length, kb: [copied, left, kb.error ? `its knowledge base was not copied: ${kb.error}` : ''].filter(Boolean).join(', '),
+      };
+      status(kb.error || (kb.failed && kb.failed.length) ? 'warn' : 'ok', `Merged ${nameIn(v, from)} into ${nameIn(v, into)}.`);
+      renderList();
+      if (v === state.view) drawPair(v);
+    });
+  }
+  if ($('pUndo')) {
+    $('pUndo').onclick = () => hold($('pUndo'), `unmerge:${v.done.from}`, async () => {
+      const res = await unmerge(v.done.from);
+      if (!res) return;
+      v.done = null;
+      v.preview = null;
+      if (v === state.view) {
+        drawPair(v);
+        previewMerge(v);
+      }
+    });
+  }
+  if ($('pDismiss')) {
+    $('pDismiss').onclick = () => hold($('pDismiss'), `dismiss:${v.value}`, async () => {
+      const undo = Boolean($('pDismiss').dataset.undo);
+      const res = await call('/api/admin/org-duplicates/dismiss', 'POST', { a: pair.a, b: pair.b, undo });
+      if (!res.ok) { failed('Save', res); return; }
+      pair.dismissed = res.body.dismissed;
+      status('ok', undo ? 'Back on the list.' : 'Not the same: off the list.');
+      updatePair(pair, v.orgs);
+      renderList();
+      if (v === state.view) drawPair(v);
+    });
+  }
+  if ($('pAskForm')) {
+    $('pAskForm').onsubmit = (e) => {
+      e.preventDefault();
+      hold($('pAsk'), `ask:${v.value}`, async () => {
+        const res = await call('/api/admin/org-merge-requests', 'POST', { from: v.from, into: v.keep, note: $('pNote').value.trim() || undefined });
+        if (!res.ok) {
+          failed('Ask', res);
+          if (res.body.request) pair.requests = [res.body.request, ...(pair.requests || [])];
+        } else {
+          pair.requests = [res.body.request, ...(pair.requests || [])];
+          status('ok', 'Asked: the admin team answers under Requests.');
+        }
+        updatePair(pair, v.orgs);
+        renderList();
+        if (v === state.view) drawPair(v);
+      });
+    };
+  }
+  if ($('pWithdraw')) {
+    const mine = openAsks(pair).find((q) => q.requestedBy.email === state.me.email);
+    $('pWithdraw').onclick = () => hold($('pWithdraw'), `ask:${mine.id}`, async () => {
+      const res = await call('/api/admin/org-merge-requests', 'DELETE', { id: mine.id });
+      if (!res.ok) failed('Take back', res);
+      else status('ok', 'Taken back.');
+      if (res.body.request) Object.assign(mine, res.body.request);
+      updatePair(pair, v.orgs);
+      renderList();
+      if (v === state.view) drawPair(v);
+    });
+  }
+  for (const form of $('detail').querySelectorAll('[data-decline]')) {
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const id = Number(form.dataset.decline);
+      hold(form.querySelector('button'), `ask:${id}`, async () => {
+        const res = await call('/api/admin/org-merge-requests/decline', 'POST', { id, reason: form.querySelector('input').value.trim() || undefined });
+        if (!res.ok) { failed('Decline', res); return; }
+        const q = (pair.requests || []).find((x) => x.id === id);
+        if (q && q.status === 'open' && state.me.admin) state.openRequests = Math.max(0, state.openRequests - 1);
+        if (q) Object.assign(q, res.body.request);
+        const listed = state.orgMerges.find((x) => x.id === id);
+        if (listed) Object.assign(listed, res.body.request);
+        renderCount();
+        status('ok', 'Declined.');
+        updatePair(pair, v.orgs);
+        renderList();
+        if (v === state.view) drawPair(v);
+      });
+    };
+  }
+}
+
+/** Undoes the merge of `slug`: its channels go back. The answer, or null when refused. */
+async function unmerge(slug) {
+  const res = await call('/api/admin/org-merge', 'DELETE', { slug });
+  if (!res.ok) { failed('Undo', res); return null; }
+  applyMoves(res.body.moves, null);
+  status('ok', `${slug} is an org of its own again${res.body.moves.length ? `; ${res.body.moves.length} ${res.body.moves.length === 1 ? 'channel goes' : 'channels go'} back` : ''}.`);
+  const orgs = await call('/api/admin/orgs');
+  if (orgs.ok) state.orgs = orgs.body.orgs;
+  loadDups({ fresh: true });
+  return res.body;
+}
+
+/** A merge request in Requests' list. */
+const mergeRow = (r) => `<div class="row${String(state.sel) === `${MERGE_REQUEST}${r.id}` ? ' on' : ''}" data-sel="${MERGE_REQUEST}${r.id}">
+  <span class="name">${esc(dupName(r.from))} <span class="sub">into ${esc(dupName(r.into))}</span></span>
+  ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
+
+/** A merge request picked under Requests: the pair's page while it is open, else what came of it. */
+function showMergeRequest(id) {
+  const r = state.orgMerges.find((x) => String(x.id) === String(id));
+  if (!r) { $('detail').innerHTML = `<div class="empty">${backButton()} No such request.</div>`; return; }
+  if (r.status === 'open') { showPair(r.from, r.into); return; }
+  loadingPage();
+  state.view = null;
+  $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(dupName(r.from))} <span class="sub">into</span> ${esc(dupName(r.into))}</h1></div>
+    <div class="card"><p>${askText(r)}</p><p>${decisionText(r)}</p>
+    <p><a href="${esc(address({ tab: 'orgs', sel: pairSel(r.from, r.into) }))}">The two side by side</a></p></div>`;
+}
+
+/**
+ * An org's page: the orgs merged into it, each undone here, its likely duplicates, and any
+ * other org to compare it with.
+ */
+function orgMergeCard(slug, merged) {
+  const pairs = (state.dups && !state.dups.error ? state.dups.pairs : []).filter((p) => p.a === slug || p.b === slug);
+  const others = state.orgs.filter((o) => o.slug !== slug);
+  return `<div class="card"><h2>Duplicates</h2>
+    ${merged.length ? `<table id="mergedTable"><tr><th>Merged into it</th><th>By</th><th></th></tr>${merged.map((m) => `<tr><td>${esc(m.name || m.slug)} <span class="sub mono">${esc(m.slug)}</span></td>
+      <td class="sub">${who({ email: m.merged_by })}, ${esc(ago(m.merged_at))}</td><td class="n"><button class="quiet" data-unmerge="${esc(m.slug)}"${off(`unmerge:${m.slug}`)}>Undo</button></td></tr>`).join('')}</table>` : ''}
+    ${pairs.length ? `<ul class="dups">${pairs.map((p) => {
+    const other = p.a === slug ? p.b : p.a;
+    return `<li><a href="${esc(address({ tab: 'orgs', sel: pairSel(p.a, p.b) }))}">${esc(dupName(other))}</a> <span class="sub">${p.p === null ? 'Clef has not said yet' : `${pct(p.p)} one, says Clef`}${p.dismissed ? ' · not the same' : ''}</span></li>`;
+  }).join('')}</ul>` : ''}
+    <form class="form" id="oCompare"><label class="fld grow"><span>Compare with another org</span><input id="oOther" list="oOthers" autocomplete="off"></label>
+      <datalist id="oOthers">${others.map((o) => `<option value="${esc(o.slug)}">${esc(o.name || '')}</option>`).join('')}</datalist><button>Compare</button></form>
+    <p class="hint">Two orgs that are one company: merged, the one is filed under the other from then on, its channels, knowledge and agents' set-up too. Undo moves its channels back.</p></div>`;
+}
+
+function wireOrgMerge(slug) {
+  for (const b of $('detail').querySelectorAll('[data-unmerge]')) {
+    b.onclick = () => hold(b, `unmerge:${b.dataset.unmerge}`, async () => {
+      if (!(await unmerge(b.dataset.unmerge)) || !b.isConnected) return;
+      const table = b.closest('table');
+      b.closest('tr').remove();
+      if (table.rows.length < 2) table.remove();
+    });
+  }
+  $('oCompare').onsubmit = (e) => {
+    e.preventDefault();
+    const typed = $('oOther').value.trim().toLowerCase();
+    const o = state.orgs.find((x) => x.slug === typed || (x.name || '').toLowerCase() === typed);
+    if (!o || o.slug === slug) { status('err', `No other org ${typed || 'by that name'}.`); return; }
+    openUrl(address({ tab: 'orgs', sel: pairSel(slug, o.slug) }));
+  };
 }
 
 // ---- bots -------------------------------------------------------------------------------

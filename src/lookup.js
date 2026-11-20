@@ -13,6 +13,7 @@
 import { discordApi, discordAvatar, staffRolesOf } from './discord.js';
 import { cachedGraph } from './graph.js';
 import { gravatar } from './raw.js';
+import { mergeRule } from './rules.js';
 
 /** The Slack Connect teams of a channel (a conversation object): every team but its own. */
 export const connectedTeams = (c) => [...new Set([
@@ -653,7 +654,14 @@ export function toAuthor(env, identity) {
   };
 }
 
+/**
+ * The rules (`rules`), and the merged orgs as rules of target `merge` (`org_merges`, see
+ * src/rules.js `mergeRule`), which file what the others give a merged org under its new one.
+ */
 export async function loadRules(env) {
-  const { results } = await env.DB.prepare('SELECT * FROM rules').all();
-  return results || [];
+  const [{ results }, merges] = await Promise.all([
+    env.DB.prepare('SELECT * FROM rules').all(),
+    env.DB.prepare('SELECT slug, into_slug FROM org_merges').all(),
+  ]);
+  return [...(results || []), ...((merges && merges.results) || []).map(mergeRule)];
 }

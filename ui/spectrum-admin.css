@@ -143,6 +143,20 @@ tr.left td { opacity: .55; }
 .portalopen textarea { width: 100%; resize: vertical; }
 .portalopen fieldset { display: flex; flex-wrap: wrap; min-width: 0; margin: 0; padding: 0; border: 0; }
 .portalopen input[type="checkbox"] { min-width: 0; }
+/* Two orgs that may be one (Customers): side by side, one under the other on a phone; in the
+   list, both icons, then both names. The less likely pairs fold away. */
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spectrum-spacing-300); }
+.pair .side { min-width: 0; }
+.pair .chans, .asks, .dups { margin: var(--spectrum-spacing-100) 0 0; padding-left: var(--spectrum-spacing-300); }
+.row.dup .name { display: flex; align-items: center; gap: var(--spectrum-spacing-75); }
+.row.dup .name > span { overflow: hidden; text-overflow: ellipsis; }
+.sub.pad { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+details.dismissed > summary { cursor: pointer; padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+@media (max-width: 699px) { .pair { grid-template-columns: 1fr; } }
+/* An unassigned channel's orgs: the suggested ones, then the popover; a new org's type in it. */
+td.picks-cell { white-space: normal; }
+.movepop .newtype { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
+.movepop .newtype[hidden] { display: none; }
 /* A conflict between technologies: each team's definition, what differs marked, its actions. */
 .conflict .acts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-300); }
 .spectrum .conflict .field > .differs { background: var(--spectrum-notice-subtle-background-color-default); font-weight: var(--spectrum-bold-font-weight); }
@@ -466,7 +480,7 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .tag.alerts { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-orange-subtle-background-color-default); }
 /* A request's status, and Clef's verdict when it is this team's. */
 .spectrum .tag.open { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); }
-.spectrum .tag.confirmed, .spectrum .tag.clef.yes { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .tag.confirmed, .spectrum .tag.merged, .spectrum .tag.clef.yes { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }
 .spectrum .tag.declined { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); }
 .spectrum .tag.clef { color: var(--spectrum-neutral-content-color-default); }
 
@@ -635,3 +649,13 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-500); }
 .spectrum dialog.confirm .apply button:not(.danger) { min-height: var(--s2-ctl); padding: 0 calc(var(--spectrum-component-pill-edge-to-text-100) - var(--spectrum-border-width-200)); border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300); border-radius: var(--s2-pill); background: transparent; font-weight: var(--spectrum-bold-font-weight); }
 .spectrum dialog.confirm .apply button:not(.danger):hover { background: var(--spectrum-gray-100); border-color: var(--spectrum-gray-400); }
+
+/* Two orgs that may be one: each a quiet panel, the one a merge keeps in the accent's tint. */
+.spectrum .pair .side { padding: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .pair .side.kept { background: var(--spectrum-accent-subtle-background-color-default); }
+.spectrum .pair .field { margin-top: var(--spectrum-spacing-200); }
+.spectrum .pair .side a { color: inherit; }
+.spectrum .row.dup .ico + .ico { margin-inline-start: calc(-1 * var(--spectrum-spacing-100)); }
+.spectrum .asks li + li, .spectrum .dups li + li { margin-top: var(--spectrum-spacing-100); }
+.spectrum .movepop .newtype { padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum td.picks-cell .link + .link { margin-inline-start: var(--spectrum-spacing-100); }
