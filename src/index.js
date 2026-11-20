@@ -70,6 +70,7 @@ import {
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
 import { sweepChannels } from './channelsweep.js';
+import { syncFollowRules } from './followrules.js';
 import { ensureSubscription } from './subscription.js';
 import { moved } from './moved.js';
 import { classifyChannels } from './suggest.js';
@@ -294,17 +295,16 @@ const handlers = {
 
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, count the
- * entries of the knowledge bases not counted yet, keep the
- * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, check the global
- * MCP servers' tools once a day, keep the agents' MCP OAuth grants alive, classify a batch of
- * the admin team's channels for the channel suggestions, join the public Slack channels the app
- * is not in (SLACK_JOIN_TEAMS), look up again the channels not looked up for a week (to learn
- * which are archived), enqueue the threads whose message and thread vectors are
- * behind, fill in the latest message's text of threads indexed before it was kept, delete
- * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals
- * kept for an Undo of a discarded draft past its time (src/draftevents.js), and enqueue the
- * threads whose klickhaus rows are behind; build the Topics page's map once a week; and roll up
- * what the days used, for COGS.
+ * entries of the knowledge bases not counted yet, keep the agents' GitHub mirrors fresh, learn the
+ * bots installed in each Teams team, check the global MCP servers' tools once a day, keep the
+ * agents' MCP OAuth grants alive, classify a batch of the admin team's channels for the channel
+ * suggestions, write the follow rules' shares (src/followrules.js), join the public Slack channels
+ * the app is not in (SLACK_JOIN_TEAMS), look up again the channels not looked up for a week (to
+ * learn which are archived), enqueue the threads whose message and thread vectors are behind, fill
+ * in the latest message's text of threads indexed before it was kept, delete the thread list's
+ * picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals kept for an Undo of a
+ * discarded draft past its time (src/draftevents.js), and enqueue the threads whose klickhaus rows
+ * are behind; build the Topics page's map once a week; and roll up what the days used, for COGS.
  */
   async scheduled(controller, env, ctx) {
     // What the days cost so far, for the COGS dashboard (src/cogs/rollup.js).
@@ -363,6 +363,10 @@ const handlers = {
     ctx.waitUntil(joinPublicChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', slackJoin: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', slackJoin: 'error', error: e.message }))));
+    // The follow rules' shares (src/followrules.js), for the channels seen or renamed since.
+    ctx.waitUntil(syncFollowRules(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', followRules: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', followRules: 'error', error: e.message }))));
     // Channels looked up a week ago, again: archived ones get no messages to say so.
     ctx.waitUntil(sweepChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', channels: r })))

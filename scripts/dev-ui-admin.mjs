@@ -435,6 +435,31 @@ const ADMIN_CHANNELS = [
   })),
 ];
 
+/**
+ * Conflicts between team rules, under Requests (src/ruleconflicts.js): Edge ops' narrower
+ * `^aem-edge-` inside Platform ops' `^aem-` (either may win), and Edge ops' manual assignment of
+ * an `aem-` channel (only a follow or a keep settles it); and a follow rule of Edge ops', which its
+ * page lists. The channels have no threads, so settling one moves nothing.
+ */
+function seedRuleConflicts(DB) {
+  const db = DB.sqlite;
+  const at = new Date(Date.now() - 86400000).toISOString();
+  for (const [id, name] of [['C0EDGEACME', 'aem-edge-acme'], ['C0EDGEHOOL', 'aem-edge-hooli'], ['C0WONKAAEM', 'aem-wonka']]) {
+    db.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
+      VALUES ('slack', 'T-FAKE', ?, ?, ?)`).run(id, name, at);
+  }
+  db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
+    VALUES ('team', 50, NULL, 'name', '^aem-edge-', 'edge', 'Edge Delivery customers', 'priya@example.com', ?)`).run(at);
+  db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
+    VALUES ('team', 10, 'slack', 'channel_id', '^C0WONKAAEM$', 'edge', 'manual assignment', 'priya@example.com', ?)`).run(at);
+  const follow = db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
+    VALUES ('follow', 100, NULL, 'name', '^initech-', 'edge', 'their CDN questions', 'priya@example.com', ?)`).run(at);
+  // Its shares, as src/followrules.js writes them.
+  db.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_by, added_at)
+    SELECT source, channel_id, 'edge', ?, ? FROM channels WHERE name LIKE 'initech-%'`)
+    .run(`rule:${follow.lastInsertRowid}`, at);
+}
+
 function seedAdminChannels(DB) {
   const at = (days) => new Date(Date.now() - days * 86400000).toISOString();
   const db = DB.sqlite;
@@ -623,6 +648,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     }
   }
   seedAdminChannels(DB);
+  seedRuleConflicts(DB);
   seedBots(DB, store);
   // What the preview costs: the COGS dashboard's made-up usage (dev-ui-cogs.mjs).
   seedCogs(DB);

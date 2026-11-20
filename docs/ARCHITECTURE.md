@@ -100,7 +100,14 @@ expression, and sets the team, the org or the kind (`channel`, `alert`, `ignore`
 priority wins. Naming conventions (`aem-<customer>` exists on both platforms) are rules, and
 so are the overrides for vendor channels, alert channels and irregular names. Channels that
 no rule matches are filed under `_unassigned`. A **manual assignment** of one channel is a
-rule too: its `channel_id`, priority 10.
+rule too: its `channel_id`, priority 10. A **follow rule** (target `follow`) files nothing: it
+shares every channel it matches with its team (see "Shared channels"). Two teams' rules that
+match the same channel are a **rule conflict** (`src/ruleconflicts.js`), which the admin team
+settles under Requests: the broader rule's team files the channels and the narrower one's rule
+becomes a follow rule, or the narrower one files them and the broader rule's pattern leaves it
+out (`^(?!narrower)broader`), or the conflict is kept as meant. A team's manual assignments
+against another team's rule are one side; no rule leaves single channels out, so those are
+followed or kept.
 
 **Shared channels.** A channel can be in several teams' inboxes, but it is filed under one team,
 its first: the rules pick it, and its folders, thread rows (`threads.team`), knowledge base and
@@ -113,7 +120,9 @@ channel back to the admin team is always a move. Which team a shared channel is 
 be swapped (`POST /api/admin/swap`, **Make primary** on the sharing team's page, for the admin team
 and whoever manages both teams): the channel moves to the team it was shared with, by hand, and its
 former team shares it. The shares are configuration, like the rules, so a replay of pile 1 keeps
-them.
+them. A follow rule's shares are rows here too (`added_by` `rule:<id>`, `src/followrules.js`):
+written after every rule change and on the cron, taken away once the rule no longer matches, and
+not removed by hand.
 
 **Following technologies.** A team follows technologies of the tech stack (`team_follows`, migration
 0072; its managers and the admin team pick them on its page, `PUT /api/admin/follows`), and so does a

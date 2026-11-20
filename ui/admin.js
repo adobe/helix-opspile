@@ -289,6 +289,7 @@ async function load() {
   state.requests = requests.body.requests || [];
   state.portal = requests.body.portal || [];
   state.conflicts = requests.body.conflicts || [];
+  state.ruleConflicts = requests.body.ruleConflicts || [];
   state.portalBound = Boolean(requests.body.portalBound);
   state.openRequests = requests.body.open ?? teams.body.requests ?? 0;
   renderCount();
@@ -398,12 +399,19 @@ function drawList() {
     // The conflicts between the teams' technologies (src/techconflicts.js).
     const clash = (state.conflicts || []).filter((c) => !f || conflictTitle(c).toLowerCase().includes(f));
     const unsettled = clash.filter((c) => !c.kept);
-    const kept = clash.filter((c) => c.kept);
+    // The conflicts between team rules (src/ruleconflicts.js): the ones a rule change settles,
+    // and the others (manual assignments against a rule), which only follow or keep settle.
+    const ruleClash = (state.ruleConflicts || []).filter((c) => !f || ruleConflictTitle(c).toLowerCase().includes(f));
+    const ruleOpen = ruleClash.filter((c) => !c.kept && c.section === 'rules');
+    const ruleOther = ruleClash.filter((c) => !c.kept && c.section !== 'rules');
+    const kept = [...clash.filter((c) => c.kept).map(conflictRow), ...ruleClash.filter((c) => c.kept).map(ruleConflictRow)];
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter requests" value="${esc(state.filter)}"></label>
       ${waiting.length ? `<h2>Customers waiting in the portal</h2>${waiting.map(portalRow).join('')}` : ''}
       <h2>Waiting for a decision</h2>${open.map(row).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No request is waiting.'}</div>`}
       ${unsettled.length ? `<h2>Conflicts between technologies</h2>${unsettled.map(conflictRow).join('')}` : ''}
-      ${decided.length || answered.length || kept.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${kept.map(conflictRow).join('')}` : ''}
+      ${ruleOpen.length ? `<h2>Conflicts between team rules</h2>${ruleOpen.map(ruleConflictRow).join('')}` : ''}
+      ${ruleOther.length ? `<h2>Other rule conflicts</h2>${ruleOther.map(ruleConflictRow).join('')}` : ''}
+      ${decided.length || answered.length || kept.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${kept.join('')}` : ''}
       <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team.</p>`;
   } else {
     const rows = state.orgs.filter((o) => (!f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f))
@@ -449,6 +457,7 @@ function select(sel) {
   if (state.tab === 'teams') showTeam(sel);
   else if (state.tab === 'requests' && String(sel).startsWith(PORTAL)) showPortalRequest(String(sel).slice(PORTAL.length));
   else if (state.tab === 'requests' && String(sel).startsWith(CONFLICT)) showConflict(String(sel).slice(CONFLICT.length));
+  else if (state.tab === 'requests' && String(sel).startsWith(RULE_CONFLICT)) showRuleConflict(String(sel).slice(RULE_CONFLICT.length));
   else if (state.tab === 'requests') showRequest(sel);
   else if (state.tab === 'bots') showBot(sel);
   else showOrg(sel);
@@ -735,7 +744,8 @@ function renderChannels() {
       ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}"${off(assignKey(target, c.channelId, pick))} title="Assign it to ${esc(teamLabel(pick))} by hand">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
       <td class="nw">${sharedHere ? `<span class="tag manual" title="Filed under ${esc(teamLabel(c.team))}, and in this team's inbox too">shared by ${esc(teamLabel(c.team))}</span>
         ${swappable(c) ? `<button class="link" data-swap="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`swap:${c.channelId}`)} title="File it under ${esc(teamLabel(state.view.value))} (its folders, knowledge base and agents move here); ${esc(teamLabel(c.team))} keeps it in its inbox, shared">Make primary</button>` : ''}
-        ${state.me.admin ? `<button class="link" data-unshare="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unshare:${state.view.value}:${c.channelId}`)} title="Take it out of this team's inbox; it stays filed under ${esc(teamLabel(c.team))}">Remove</button>` : ''}`
+        ${(c.followedByRule || []).includes(state.view.value) ? '<span class="sub" title="A follow rule of this team shares it: change the rule to take it out">by a follow rule</span>'
+    : `${state.me.admin ? `<button class="link" data-unshare="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unshare:${state.view.value}:${c.channelId}`)} title="Take it out of this team's inbox; it stays filed under ${esc(teamLabel(c.team))}">Remove</button>` : ''}`}`
     : `${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
         ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unassign:${target}:${c.channelId}`)}>Undo</button>` : ''}` : '<span class="sub">by rule</span>'}
         ${back && c.team !== 'admin' ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="admin"${off(assignKey(target, c.channelId, 'admin'))} title="Move it back to ${esc(teamLabel('admin'))}: assigned there by hand, whatever the rules say">→ ${esc(teamLabel('admin'))}</button>` : ''}`}</td></tr>`;
@@ -1238,7 +1248,8 @@ function describe(r) {
 }
 
 function ruleRow(r) {
-  return `<tr data-rule="${r.id}"><td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td>
+  const does = r.target === 'follow' ? '<span class="tag" title="Shares the channels it matches with the team; files none">follows</span>' : '<span class="tag manual" title="Files the channels it matches under the team">files</span>';
+  return `<tr data-rule="${r.id}"><td>${does}</td><td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td>
     <td>${r.source ? `<span class="tag">${esc(r.source)} only</span>` : ''}</td>
     <td class="n">${r.priority}</td><td class="sub">${esc(r.note || '')}</td>
     <td><button class="link" data-edit="${r.id}">Edit</button><button class="link" data-del="${r.id}"${off(`rule:${r.id}`)}>Delete</button></td></tr>`;
@@ -1248,6 +1259,7 @@ function ruleForm(r = {}) {
   const prefix = r.pattern ? prefixOf(r.pattern) : '';
   const mode = prefix !== null ? 'prefix' : 'regex';
   return `<form class="form" id="ruleForm" data-id="${r.id || ''}">
+    <label class="fld"><span>Does</span><select id="rTarget" title="A follow rule shares the channels it matches with the team, filed wherever the other rules say"><option value="team">files channels</option><option value="follow"${r.target === 'follow' ? ' selected' : ''}>follows channels</option></select></label>
     <label class="fld"><span>Field</span><select id="rField">${Object.entries(FIELD_LABEL).map(([k, v]) => `<option value="${k}"${(r.field || 'name') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
     <label class="fld"><span>Match</span><select id="rMode"><option value="prefix"${mode === 'prefix' ? ' selected' : ''}>starts with</option><option value="regex"${mode === 'regex' ? ' selected' : ''}>regular expression</option></select></label>
     <label class="fld grow"><span>Pattern</span><input id="rPattern" class="mono" value="${esc(mode === 'prefix' ? prefix : r.pattern)}" required></label>
@@ -1258,14 +1270,14 @@ function ruleForm(r = {}) {
   </form>`;
 }
 
-/** The team's own rules (not manual assignments, which the channels card shows). */
+/** The team's own rules, follow rules too (not manual assignments, which the channels card shows). */
 const ownRules = () => state.view.rules.filter((x) => x.value === state.view.team.slug && x.field !== 'channel_id');
 
 function renderRules() {
   const own = ownRules();
   $('rulesTable').innerHTML = own.length
-    ? `<table><tr><th>Field</th><th>Pattern</th><th></th><th>Priority</th><th>Note</th><th></th></tr>${own.map(ruleRow).join('')}</table>`
-    : '<div class="empty">No rule files channels under this team yet.</div>';
+    ? `<table><tr><th></th><th>Field</th><th>Pattern</th><th></th><th>Priority</th><th>Note</th><th></th></tr>${own.map(ruleRow).join('')}</table>`
+    : '<div class="empty">No rule files or follows channels for this team yet.</div>';
   for (const b of $('rulesTable').querySelectorAll('[data-edit]')) {
     b.onclick = () => {
       $('ruleSlot').innerHTML = ruleForm(state.view.rules.find((x) => String(x.id) === b.dataset.edit));
@@ -1306,7 +1318,7 @@ function wireRuleForm() {
     const raw = $('rPattern').value.trim();
     const body = {
       ...(id ? { id } : {}),
-      target: 'team',
+      target: $('rTarget').value,
       field: $('rField').value,
       pattern: $('rMode').value === 'prefix' ? `^${escapeRe(raw)}` : raw,
       value: slug,
@@ -1389,7 +1401,7 @@ async function showTeam(slug) {
 
     ${admin ? `<div class="card"><h2>Rules</h2><div id="rulesTable"></div>
       <div id="ruleSlot">${ruleForm()}</div>
-      <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>.</p>
+      <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>. A follow rule files nothing: the channels it matches are shared with the team, wherever they are filed. Conflicts between the teams' rules are under Requests.</p>
       ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}` : ''}
     ${channelsCard('team')}
     ${real ? `<div class="card"><h2>Technologies</h2><div id="followsTable"></div>
@@ -1512,6 +1524,7 @@ async function refreshRequests() {
   state.requests = r.body.requests;
   state.portal = r.body.portal || [];
   state.conflicts = r.body.conflicts || [];
+  state.ruleConflicts = r.body.ruleConflicts || [];
   state.openRequests = r.body.open;
   renderCount();
   const v = state.view;
@@ -1960,6 +1973,189 @@ function showConflict(key) {
   const c = (state.conflicts || []).find((x) => x.key === key);
   if (!c) { $('detail').innerHTML = '<div class="empty">No such conflict: it may be settled already.</div>'; return; }
   drawConflict(c);
+}
+
+// ---- conflicts between team rules ------------------------------------------------------------
+//
+// Computed from the rules and the channels every time (src/ruleconflicts.js): two rules that file
+// a channel under two teams. Side a is the broader, b the narrower. Settled by a rule change (a
+// wins and b follows, or b wins and a leaves b out) or kept as it is; each is tried first (a dry
+// run), so the page says what would move before anything does.
+
+const RULE_CONFLICT = 'ruleconflict:';
+/** A team's, in words: "Edge's", "Platform ops'". */
+const poss = (slug) => { const n = teamLabel(slug); return /s$/i.test(n) ? `${n}'` : `${n}'s`; };
+
+/** One side of a rule conflict, in a few words: "Platform ops' aem-…", "Edge's 3 manual assignments". */
+function sideText(x) {
+  if (x.pins) return `${poss(x.team)} ${x.rules.length} manual assignment${x.rules.length === 1 ? '' : 's'}`;
+  const r = x.rules[0];
+  const prefix = prefixOf(r.pattern);
+  return `${poss(x.team)} ${prefix !== null ? `${prefix}…` : r.pattern}`;
+}
+/** The same as HTML, the pattern as code. */
+function sideHtml(x) {
+  if (x.pins) return `${esc(poss(x.team))} ${x.rules.length === 1 ? 'manual assignment' : `${x.rules.length} manual assignments`}`;
+  return `${esc(poss(x.team))} rule (${FIELD_LABEL[x.rules[0].field] ? esc(FIELD_LABEL[x.rules[0].field].toLowerCase()) : esc(x.rules[0].field)} ${describe(x.rules[0])})`;
+}
+
+function ruleConflictTitle(c) {
+  return `${sideText(c.a)} · ${sideText(c.b)}`;
+}
+
+/** A side in the list: its pattern, or how many manual assignments. */
+const pinsOr = (x) => (x.pins ? `${x.rules.length} manual assignment${x.rules.length === 1 ? '' : 's'}` : x.rules[0].pattern);
+
+function ruleConflictRow(c) {
+  const sel = `${RULE_CONFLICT}${c.key}`;
+  return `<div class="row${String(state.sel) === sel ? ' on' : ''}" data-sel="${esc(sel)}">
+    <span class="name">${esc(teamLabel(c.a.team))} <span class="sub">and</span> ${esc(teamLabel(c.b.team))} <span class="sub">${esc(pinsOr(c.b))} inside ${esc(pinsOr(c.a))}</span></span>
+    ${c.kept ? '<span class="tag confirmed">kept</span>' : ''}<span class="sub">${esc(channelCount(c.channels.length))}</span></div>`;
+}
+
+/** Who files the channels both sides match now: "Edge files all 15", "Edge 12, Platform ops 3". */
+function winnersText(c) {
+  const n = c.channels.length;
+  const rest = n - c.a.wins - c.b.wins;
+  const parts = [[c.b, c.b.wins], [c.a, c.a.wins]].filter(([, k]) => k)
+    .map(([x, k]) => `${teamLabel(x.team)} ${k === n ? ({ 1: 'files it', 2: 'files both' }[n] || `files all ${n}`) : k}`);
+  if (rest) parts.push(`another rule ${rest}`);
+  return parts.join(', ');
+}
+
+const MAX_RC_ROWS = 25;
+const ruleCells = (r) => `<td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td>
+  <td>${r.source ? `<span class="tag">${esc(r.source)} only</span>` : ''}</td><td class="n">${r.priority}</td>
+  <td class="sub">${esc(r.note || '')}${r.updatedBy ? `<div>${esc(r.updatedBy)} ${esc(ago(r.updatedAt))}</div>` : ''}</td>`;
+
+/** One side: its rules, how much they match, and whether it is the broader or the narrower. */
+function sideCard(c, x, which) {
+  const list = x.rules.slice(0, MAX_RC_ROWS).map((r) => `<tr>${ruleCells(r)}</tr>`).join('');
+  const more = x.rules.length > MAX_RC_ROWS ? `<tr><td colspan="5" class="sub">and ${x.rules.length - MAX_RC_ROWS} more</td></tr>` : '';
+  return `<div class="card"><h2>${esc(teamLabel(x.team))} <span class="sub">${which === 'a' ? 'the broader' : 'the narrower'} · matches ${esc(channelCount(x.matches))}, files ${x.wins} of these</span></h2>
+    <table><tr><th>Field</th><th>Pattern</th><th></th><th>Priority</th><th>Note</th></tr>${list}${more}</table></div>`;
+}
+
+/** The channels both sides match, and who files each now. */
+function overlapCard(c) {
+  const rows = c.channels.slice(0, MAX_RC_ROWS).map((ch) => `<tr><td>${channelName(ch)}<div class="sub">${esc(platform(ch))} · <span class="mono">${esc(ch.channelId)}</span></div></td>
+    <td>${esc(teamLabel(ch.winner))}</td></tr>`).join('');
+  const more = c.channels.length > MAX_RC_ROWS ? `<tr><td colspan="2" class="sub">and ${c.channels.length - MAX_RC_ROWS} more</td></tr>` : '';
+  return `<div class="card"><h2>The channels both match <span class="sub">${esc(channelCount(c.channels.length))}</span></h2>
+    <table><tr><th>Channel</th><th>Filed under now</th></tr>${rows}${more}</table></div>`;
+}
+
+/** What a dry run of a way to settle it says: the moves, and what the narrower side follows. */
+function settlePreview(c, p) {
+  if (!p) return '<p class="hint">Trying it…</p>';
+  if (!p.ok) return `<p class="hint">Could not try it: ${esc(p.body.error || `failed (${p.status})`)}</p>`;
+  const { moves = [], follows = [] } = p.body;
+  const moved = moves.length ? `Moves ${esc(channelCount(moves.length))}: ${esc(movesText(moves))}.` : 'No channel moves.';
+  const followed = follows.length ? ` ${esc(teamLabel(c.b.team))} follows ${esc(channelCount(follows.length))}: ${esc(follows.slice(0, 5).map(plainName).join(', '))}${follows.length > 5 ? ` and ${follows.length - 5} more` : ''}.` : '';
+  return `<p class="hint">${moved}${followed}</p>`;
+}
+
+/** The ways to settle it, each with what it would do (`previews`, by action). */
+function waysCard(c, previews) {
+  const a = esc(teamLabel(c.a.team));
+  const b = esc(teamLabel(c.b.team));
+  const aOf = esc(poss(c.a.team));
+  const bOf = esc(poss(c.b.team));
+  const follow = c.follow.ok
+    ? `<p class="lead">${a} files the channels. ${c.b.pins
+      ? `${bOf} manual assignment${c.b.rules.length === 1 ? '' : 's'} go${c.b.rules.length === 1 ? 'es' : ''}, and ${c.b.rules.length === 1 ? 'its channel is' : 'their channels are'} shared with ${b} instead: in ${bOf} inbox too.`
+      : `${bOf} rule becomes a follow rule: every channel it matches, also the ones it finds later, is filed where the other rules say and shared with ${b}.`}</p>
+      ${settlePreview(c, previews.follow)}<div class="acts"><button class="primary" data-way="follow"${previews.follow && previews.follow.ok ? '' : ' disabled'}>${a} wins, ${b} follows</button></div>`
+    : `<p class="hint">Not possible: ${esc(c.follow.why)}.</p>`;
+  const what = c.exclude.ok && (c.exclude.pattern
+    ? `${aOf} rule leaves ${bOf} out: its pattern becomes <code>${esc(c.exclude.pattern)}</code>.`
+    : `${aOf} manual assignment${c.exclude.deletes.length === 1 ? '' : 's'} of ${c.exclude.deletes.length === 1 ? 'the channel goes' : 'these channels go'}.`);
+  const exclude = c.exclude.ok
+    ? `<p class="lead">${b} files the channels. ${what}</p>
+      ${settlePreview(c, previews.exclude)}<div class="acts"><button class="primary" data-way="exclude"${previews.exclude && previews.exclude.ok ? '' : ' disabled'}>${b} wins, ${a} leaves them out</button></div>`
+    : `<p class="hint">Not possible: ${esc(c.exclude.why)}. If ${b} is meant to file them, keep it as it is.</p>`;
+  return `<div class="card conflict"><h2>${a} wins</h2>${follow}</div>
+    <div class="card conflict"><h2>${b} wins</h2>${exclude}</div>`;
+}
+
+function drawRuleConflict(c, previews = {}) {
+  $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(teamLabel(c.a.team))} and ${esc(teamLabel(c.b.team))}</h1>${c.kept ? '<span class="tag confirmed">kept</span>' : ''}</div>
+    <div class="status" id="status"></div>
+    <div class="card"><p class="lead">${sideHtml(c.a)} and ${sideHtml(c.b)} both match ${esc(channelCount(c.channels.length))}. The lowest priority decides: now ${esc(winnersText(c))}.</p>
+      ${c.kept ? `<p class="hint">Kept by ${esc(c.kept.by)} ${esc(ago(c.kept.at))}${c.kept.note ? `: <span class="note">${esc(c.kept.note)}</span>` : ''}. It shows again once its rules or channels change.</p>`
+    : '<form class="form" id="rcKeep"><label class="fld grow"><span>Why it is meant (optional)</span><input id="rcNote" maxlength="300"></label><button id="rcKeepBtn">Keep as it is</button></form>'}
+      <p class="hint">Settling it changes the rules as you, and re-files the channels it moves, as a change on a team's page does.</p></div>
+    ${waysCard(c, previews)}
+    ${sideCard(c, c.a, 'a')}${sideCard(c, c.b, 'b')}${overlapCard(c)}`;
+  showStatus();
+  const settle = (btn, body, done) => hold(btn, `ruleconflict:${c.key}`, () => call('/api/admin/rule-conflicts', 'POST', {
+    key: c.key, fingerprint: c.fingerprint, ...body,
+  })).then((res) => {
+    if (!res) return;
+    if (!res.ok) {
+      failed(`Settle ${ruleConflictTitle(c)}`, res);
+      if (res.status === 409 && res.body.conflict) showRuleConflict(c.key, res.body.conflict);
+      return;
+    }
+    state.ruleConflicts = res.body.ruleConflicts || [];
+    refreshRequests();
+    const now = state.ruleConflicts.find((x) => x.key === c.key);
+    if (now) showRuleConflict(now.key);
+    else $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(teamLabel(c.a.team))} and ${esc(teamLabel(c.b.team))}</h1></div><div class="status" id="status"></div><div class="empty">Settled: ${esc(done)}</div>`;
+    const moves = res.body.moves || [];
+    status('ok', `${done}${moves.length ? ` Re-filing ${channelCount(moves.length)} (${movesText(moves)}).` : ''}`);
+    renderList();
+  });
+  if ($('rcKeep')) {
+    $('rcKeep').onsubmit = (e) => {
+      e.preventDefault();
+      settle($('rcKeepBtn'), { action: 'keep', note: $('rcNote').value.trim() || undefined }, 'Kept as it is.');
+    };
+  }
+  for (const btn of $('detail').querySelectorAll('[data-way]')) {
+    btn.onclick = async () => {
+      const way = btn.dataset.way;
+      const p = previews[way] && previews[way].body;
+      const n = (p && p.moves && p.moves.length) || 0;
+      const a = teamLabel(c.a.team);
+      const b = teamLabel(c.b.team);
+      const aOf = poss(c.a.team);
+      const bOf = poss(c.b.team);
+      const ask = way === 'follow'
+        ? [`${a} wins, ${b} follows?`, `${c.b.pins ? `${bOf} manual assignments become shares` : `${bOf} rule becomes a follow rule`}; ${n ? `${channelCount(n)} move` : 'no channel moves'}.`, 'Settle it']
+        : [`${b} wins, ${a} leaves them out?`, `${c.exclude.pattern ? `${aOf} rule gets a new pattern` : `${aOf} manual assignments go`}; ${n ? `${channelCount(n)} move` : 'no channel moves'}.`, 'Settle it'];
+      if (!(await confirmFirst(...ask))) return;
+      settle(btn, { action: way }, way === 'follow' ? `${a} files them, ${b} follows them.` : `${b} files them, ${aOf} rule leaves them out.`);
+    };
+  }
+}
+
+/**
+ * A rule conflict, and a dry run of each way to settle it (`/api/admin/rule-conflicts` with
+ * `dryRun`), shown as they come. `c` is the conflict as an answer gave it, when it is newer.
+ */
+function showRuleConflict(key, c = null) {
+  loadingPage();
+  state.view = null;
+  const found = c || (state.ruleConflicts || []).find((x) => x.key === key);
+  if (!found) { $('detail').innerHTML = '<div class="empty">No such conflict: it may be settled already.</div>'; return; }
+  const previews = {};
+  drawRuleConflict(found, previews);
+  const shownNow = () => state.sel === `${RULE_CONFLICT}${key}`;
+  for (const way of ['follow', 'exclude'].filter((w) => found[w].ok)) {
+    call('/api/admin/rule-conflicts', 'POST', {
+      key, fingerprint: found.fingerprint, action: way, dryRun: true,
+    }, { parallel: true, idempotent: true }).then((p) => {
+      previews[way] = p;
+      if (shownNow()) {
+        const el = document.activeElement && document.activeElement.id;
+        const typed = $('rcNote') ? $('rcNote').value : '';
+        drawRuleConflict(found, previews);
+        if ($('rcNote')) $('rcNote').value = typed;
+        if (el && $(el)) $(el).focus();
+      }
+    });
+  }
 }
 
 // ---- orgs ---------------------------------------------------------------------------------
