@@ -1163,7 +1163,7 @@ unless asked for (`--alerts`), and ignored ones always.
   thread is. Such a thread was over before the inbox began: it is read by everyone (`readState`,
   the red badge, the other teams' counts), waits on nobody (`waitingOn`, in the inbox and in
   klickhaus), is quiet in the status piles, and says `imported` to MCP clients. The cron's
-  vector and label sweeps leave it out; `replay.mjs --relabel`, `--vectorize` and `--index`
+  vector and label sweeps leave it out, and so does a re-file (which exports it again); `replay.mjs --relabel`, `--vectorize` and `--index`
   make them when wanted. A message of it heard of otherwise (a reply, an edit, a Teams reaction)
   makes it a live thread like any.
 - **Progress** is `history_imports`, one row per channel: where the next page starts (the

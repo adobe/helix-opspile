@@ -294,7 +294,7 @@ export async function refile(env, job) {
   await ensureChannelKnowledgeBases(env, cls);
   // Each thread's kind: the channel's, or an alert where an alert bot started it.
   const bots = [...await alertBots(env)];
-  const { results: current } = await env.DB.prepare(`SELECT thread, path, org, team, kind,
+  const { results: current } = await env.DB.prepare(`SELECT thread, path, org, team, kind, imported,
       ${bots.length ? alertRoot('t', '?4') : '0'} AS alert FROM threads t
     WHERE source = ?1 AND tenant = ?2 AND channel_id = ?3`)
     .bind(job.source, job.tenant, job.channelId, ...(bots.length ? [JSON.stringify(bots)] : []))
@@ -367,7 +367,8 @@ export async function refile(env, job) {
       left.push([thread, stuck]);
     }
   }
-  await revectorize(env, refiled);
+  // Not the history import's threads (src/history.js): they get vectors once someone asks.
+  await revectorize(env, refiled.filter((t) => !Number(rowOf.get(t)?.imported)));
   await reexport(env, refiled);
   // Open inboxes of the teams it left and the teams it is in now show it where it is now: an
   // inbox loaded before the move keeps the old org (or team) otherwise, until something else
