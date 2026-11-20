@@ -90,13 +90,25 @@ export async function receive(env, events) {
 }
 
 /**
- * The technologies a lobby picks from, for the portal: the admin team's entries of the tech
- * stack that are marked for it (`tech_stack.portal`) and on, by product and name.
+ * The technologies a lobby picks from, for the portal: Adobe's of every team's catalog (plan Q14,
+ * `tech_stack.portal`, src/catalog.js), each feature on its own, by product and name. Each id
+ * once, as it is asked where no team's own replaces it (src/extract.js techFor): the admin
+ * team's definition when it is on, else the first team's by name that is on; one every team has
+ * off is not offered. A team's override of an id never changes what customers see.
  */
 export async function portalTechnologies(env) {
-  const { results } = await env.DB.prepare(`SELECT tech, name, product FROM tech_stack
-    WHERE team = 'admin' AND enabled = 1 AND portal = 1 ORDER BY product, name`).all();
-  return (results || []).map((r) => ({ tech: r.tech, name: r.name, product: r.product || null }));
+  const { results } = await env.DB.prepare(`SELECT tech, name, product, enabled, portal
+    FROM tech_stack ORDER BY tech, team = 'admin' DESC, team`).all();
+  const by = new Map();
+  for (const r of results || []) {
+    if (r.enabled && !by.has(r.tech)) {
+      by.set(r.tech, r);
+    }
+  }
+  return [...by.values()].filter((r) => r.portal)
+    .map((r) => ({ tech: r.tech, name: r.name, product: r.product || null }))
+    .sort((a, b) => String(a.product || '').localeCompare(String(b.product || ''))
+      || a.name.localeCompare(b.name));
 }
 
 /**

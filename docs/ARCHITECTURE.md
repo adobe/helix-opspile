@@ -2869,9 +2869,13 @@ invite colleagues **of the same domain** by mail address; an invited colleague i
 from then on and joins when they first sign in, and anyone else of the domain is told whom to
 ask. (Nothing is mailed: the member tells them where the portal is.) In the lobby they say
 what the company is called, pick the **technologies** they use, and say what they need. The
-technologies are Adobe's own of the inbox's tech stack (`tech_stack.portal`, migration 0074:
-Edge Delivery, Universal Editor, Assets, …, not the CDNs and code hosts the stack also has),
-which the portal asks the inbox for and keeps for an hour (`src/portal/tech.js`). Then they
+technologies are Adobe's of every team's catalog (`tech_stack.portal`, set for each of Adobe's
+products and features, src/catalog.js: Edge Delivery, Universal Editor, Assets, …, not the CDNs,
+code hosts and categories the stack also has), each feature on its own under its product, each
+id once as it is asked where no team's own replaces it (`portalTechnologies`,
+src/portalsource.js), which the portal asks the inbox for and keeps for an hour
+(`src/portal/tech.js`). A lobby's picks that a catalog move renamed are stored under the id they
+moved to when the lobby's event arrives. Then they
 **ask for a channel**.
 
 **Portal requests.** A lobby that asked reaches the inbox as a `lobby` event, a snapshot of it
