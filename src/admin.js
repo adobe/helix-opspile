@@ -33,8 +33,8 @@ import {
 import { syncAccessQuietly } from './accesssync.js';
 import { faviconProxy, findIcons } from './favicons.js';
 import {
-  closeMergeRequest, dismissPair, listMergeRequests, mailDomains, mergeOrgs, openMergeCount,
-  orgDuplicates, requestMerge, unmergeOrg,
+  closeMergeRequest, dismissPair, forgetFacts, listMergeRequests, mailDomains, mergeOrgs,
+  openMergeCount, orgDuplicates, requestMerge, unmergeOrg,
 } from './orgmerge.js';
 import {
   claimRequest, closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf,
@@ -1493,11 +1493,14 @@ async function saveOrg(env, body, create) {
       ON CONFLICT (slug) DO UPDATE SET name = excluded.name, type = excluded.type,
         icon = excluded.icon, updated_at = excluded.updated_at`).bind(slug, f.name, f.type, f.icon, now).run();
   }
+  // Its name, type and icon are what the duplicate search compares.
+  forgetFacts();
   return json({ ok: true, org: { slug, ...f, updated_at: now } });
 }
 
 async function deleteOrg(env, body) {
   const { meta } = await env.DB.prepare('DELETE FROM orgs WHERE slug = ?').bind(clean(body.slug)).run();
+  forgetFacts();
   return meta.changes ? json({ ok: true }) : json({ error: 'this org has no name, icon or type to delete' }, 404);
 }
 

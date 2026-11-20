@@ -169,6 +169,22 @@ describe('duplicate candidates', () => {
     ]);
     assert.deepEqual(candidates({ orgs, members: null }).map((c) => [c.a, c.b]), [['acme', 'acmeco']]);
   });
+
+  it('lists a customer with its partner only when their names are alike', () => {
+    // The partner's people write from its domain in the customer's channels, on its Slack team.
+    const worker = (slug, type) => org(slug, {
+      type, domains: ['agency.example'], channels: [{ places: ['connect:T7'] }],
+    });
+    const orgs = new Map([['globex', worker('globex', 'customer')], ['agency', worker('agency', 'partner')]]);
+    assert.deepEqual(candidates({ orgs, members: null }), []);
+    // A customer with a name of the partner's is one, perhaps typed wrong.
+    orgs.set('agency-emea', worker('agency-emea', 'customer'));
+    assert.deepEqual(candidates({ orgs, members: null }).map((c) => [c.a, c.b]), [['agency', 'agency-emea']]);
+    // Two customers that share all that are a candidate, as before.
+    orgs.delete('agency-emea');
+    orgs.set('agency', worker('agency', 'customer'));
+    assert.deepEqual(candidates({ orgs, members: null }).map((c) => [c.a, c.b]), [['agency', 'globex']]);
+  });
 });
 
 describe('admin: duplicate customers', () => {
