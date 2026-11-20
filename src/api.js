@@ -367,6 +367,7 @@ export function fold(threads) {
       last_staff: latest.last_staff,
       last_text: latest.last_text,
       messages: ms.reduce((n, m) => n + (m.messages || 0), 0),
+      imported: ms.every((m) => Number(m.imported)) ? 1 : 0,
       participants: people,
       staffPosted: ms.some((m) => m.staffPosted),
       label: latest.label || anchor.label || null,
@@ -411,7 +412,7 @@ async function unreadElsewhere(env, me) {
       SELECT COALESCE(t.logical_thread, t.thread) AS g, t.team AS filed, t.source, t.channel_id,
         t.thread, t.logical_thread
       FROM threads t LEFT JOIN watermarks w ON w.thread = t.thread AND w.person = ?1
-      WHERE t.kind != 'ignore'
+      WHERE t.kind != 'ignore' AND t.imported = 0
         AND CASE WHEN t.kind = 'alert' THEN t.any_at ELSE t.last_at END IS NOT NULL
         AND (w.read_at IS NULL OR w.read_at < CASE WHEN t.kind = 'alert' THEN t.any_at
           ELSE t.last_at END)
@@ -508,7 +509,7 @@ export async function inbox(env, me, team, {
           ORDER BY COALESCE(y.last_at, y.any_at) DESC LIMIT 5))
     SELECT thread, source, org, team, kind,
       channel_name, title, root_at, last_at, last_author, last_staff, last_text, any_at,
-      messages,
+      messages, imported,
       root_at IS NOT NULL AS root_known, logical_thread,
       (SELECT m.permalink FROM messages m WHERE m.thread = r.thread AND m.deleted = 0
         AND m.permalink IS NOT NULL ORDER BY (m.id = r.root_id) DESC, m.at LIMIT 1)

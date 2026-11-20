@@ -805,6 +805,7 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
 /**
  * Cron: the threads a person posted in since their label, and quiet for longer than a label job
  * and its retries take: the job died. Recent ones only: nobody looks at the older ones' labels.
+ * Never an imported thread (src/history.js), which is labeled only when someone asks.
  * A thread whose job died within the day waits, so that one that always fails goes out once a day.
  */
 export async function sweepLabels(env, now = new Date()) {
@@ -816,7 +817,7 @@ export async function sweepLabels(env, now = new Date()) {
   }
   const { results } = await env.DB.prepare(`SELECT t.thread FROM threads t
     LEFT JOIN labels l ON l.thread = t.thread
-    WHERE t.kind = 'channel' AND t.last_at >= ? AND t.last_at < ?
+    WHERE t.kind = 'channel' AND t.last_at >= ? AND t.last_at < ? AND t.imported = 0
       AND (l.thread IS NULL OR l.labeled_through < t.last_at)
       AND EXISTS (SELECT 1 FROM messages m WHERE m.thread = t.thread AND m.deleted = 0)
       AND NOT EXISTS (SELECT 1 FROM dead_jobs d WHERE d.job = 'label:' || t.thread AND d.at > ?)

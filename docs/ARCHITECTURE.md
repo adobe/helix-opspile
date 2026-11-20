@@ -86,6 +86,9 @@ are removed before an event is stored.
   domain, is the tenant.
 - Backfill pages from the history APIs land here too, marked `via: backfill` (Discord's:
   `via: history`; the portal's, which tells of a thread again when asked: `via: resend`).
+  The history import's land here as `via: import` (Slack's under `<ts>-import.json`), which the
+  normalizer reads from the object's metadata, so a replay files them the same way (see
+  "History import").
 
 ### 2. Channel folders
 
@@ -1064,6 +1067,41 @@ Slack, the message and its `/replies` on Graph. Every message lands in pile 1 ma
 `backfills` table makes the request idempotent. An error that stays (the bot is not in the
 channel) ends a request. Any other leaves it open: the queue retries it, and the cron sends out
 what is still open after an hour, an hour apart, until the thread has been quiet for a week.
+
+## History import
+
+What a channel had before the inbox did is read on request (`scripts/import.mjs --since <day>`
+or `--days N`, `src/history.js`): for every known Slack and Teams channel, the threads started
+since, page by page, one `import` job on the NORMALIZE queue a page, which sends the next. Slack's
+`conversations.history` lists the roots posted since (a thread's replies with
+`conversations.replies`); Graph lists a channel's threads by their latest activity, with
+`$expand=replies`, and the first one quiet since before then ends the listing. A page stops
+after about 300 messages, and the next job goes on in the same page. Alert channels are left out
+unless asked for (`--alerts`), and ignored ones always.
+
+- **Only what the inbox does not have.** A thread with a message heard of any other way (live, a
+  backfill, a catch-up) is left as it is; one imported before is imported again, the same keys,
+  so nothing changes but what changed since.
+- **Filed like any message, waking nobody.** Pile 1 marks them `via: import`, and the normalizer
+  files and indexes them as usual, mentions and reactions too, but sends no agent poke,
+  re-threading, label, vector or full-text job, no file copy, no backfill (the import has the
+  whole thread, its root perhaps a moment behind), no export job (the cron's export sweep takes
+  them, newest first) and no announcement to the inboxes.
+- **Imported threads.** `messages.imported` is set while every pile-1 object of a message is the
+  import's (`MIN` on upsert, so in any order), and `threads.imported` while every message of the
+  thread is. Such a thread was over before the inbox began: it is read by everyone (`readState`,
+  the red badge, the other teams' counts), waits on nobody (`waitingOn`, in the inbox and in
+  klickhaus), is quiet in the status piles, and says `imported` to MCP clients. The cron's
+  vector and label sweeps leave it out; `replay.mjs --relabel`, `--vectorize` and `--index`
+  make them when wanted. A message of it heard of otherwise (a reply, an edit, a Teams reaction)
+  makes it a live thread like any.
+- **Progress** is `history_imports`, one row per channel: where the next page starts (the
+  platform's cursor, and how many roots of that page are done), and how many pages, threads and
+  messages so far. A page moves the row on only from where it started, so one delivered twice
+  moves it once and sends no second next page; a newer import of the channel replaces the row,
+  and the older one's pages stop. An error that stays (the bot is not in the channel, Graph
+  refuses it) ends it; any other is the queue's to retry (a rate limit backs off), and one that
+  outlives the retries leaves the row open with its error, for `--resume`.
 
 ## Labels and facts
 

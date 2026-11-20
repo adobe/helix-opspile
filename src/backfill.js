@@ -28,7 +28,7 @@ import {
 const MAX_PAGES = 20;
 
 // Errors that stay: asking again changes nothing. Anything else may pass, so it is tried again.
-const FINAL = /\b(channel_not_found|thread_not_found|not_in_channel|missing_scope|is_archived|no_permission|access_denied|not_authed|invalid_auth|account_inactive|token_revoked)\b|^graph 40[134]\b|^discord 40[134]\b/;
+export const FINAL = /\b(channel_not_found|thread_not_found|not_in_channel|missing_scope|is_archived|no_permission|access_denied|not_authed|invalid_auth|account_inactive|token_revoked)\b|^graph 40[134]\b|^discord 40[134]\b/;
 
 // A request nobody finished, a job that died or was never sent, goes out again this long after.
 const SWEEP_AFTER_MS = 60 * 60 * 1000;
@@ -54,7 +54,8 @@ export async function requestBackfill(env, request) {
   return created;
 }
 
-async function slackReplies(env, channel, ts) {
+/** A Slack thread's messages, its root first (`conversations.replies`). */
+export async function slackReplies(env, channel, ts) {
   const messages = [];
   let cursor = '';
   for (let page = 0; page < MAX_PAGES; page += 1) {
