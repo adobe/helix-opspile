@@ -97,6 +97,8 @@ import { createAdmin, devFavicon } from './dev-ui-admin.mjs';
 import { faviconProxy } from '../src/favicons.js';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
+import { areaFile, compileAreas, isArea } from '../src/areas.js';
+import { topicsPage } from '../src/topicsapi.js';
 import { findPerson } from '../src/kbpeople.js';
 import { AGENT, createStore } from './dev-ui-fixtures.mjs';
 import { OFFER_AFTER } from '../src/postoffer.js';
@@ -148,7 +150,11 @@ const compileKb = async (repo) => {
   const b = kb.list().find((x) => x.repo === repo);
   if (b && b.kind === 'team') {
     const where = { team: b.slug, repo };
-    await storeCatalog(adminApi.env, where, compileCatalog(await kb.catalog(repo)));
+    const files = await kb.catalog(repo);
+    await storeCatalog(adminApi.env, where, {
+      ...compileCatalog(files.filter((f) => inCatalog(f.path))),
+      areas: compileAreas(files.filter((f) => isArea(f.path))),
+    });
   }
 };
 for (const b of kb.list()) {
@@ -204,11 +210,68 @@ let settings = withDefaults(store.me, {
 });
 // The technologies Dana follows (src/follows.js), and her teams', which the admin pages keep.
 let follows = ['da'];
+// What Dana follows besides technologies (src/follows.js `person_follows_by`).
+let followsBy = { org: [], person: [], area: [] };
 const followsNow = async () => ({
   me: follows,
   teams: await followsOfTeams(adminApi.env, store.me.teams.map((t) => t.slug)),
+  by: followsBy,
 });
 const reloadClients = new Set();
+
+/** An area's file as its fields (src/areas.js), for the preview's changes. */
+const parseArea = (text) => {
+  const [row] = compileAreas([{ path: 'areas/x.md', text }]);
+  return row ? { title: row.name, what: row.what, enabled: row.enabled } : {};
+};
+
+/** Dana as src/topicsapi.js sees her: the admin team's, a manager or a member (`--member`). */
+function topicsViewer() {
+  // As /api/me on the admin pages: the admin team's, unless --manager or --member.
+  const teams = store.me.teams.map((t) => ({ slug: t.slug, role: MANAGER ? 'manager' : 'member' }));
+  if (!MANAGER && !MEMBER) {
+    teams.push({ slug: 'admin', role: 'member' });
+  }
+  return { ...store.me, teams };
+}
+
+/** POST, PUT or DELETE /api/areas in the preview: `[body, status]`, as src/topicsapi.js. */
+async function previewArea(method, b) {
+  if (MEMBER) {
+    return [{ error: 'the admin team changes every team\'s areas, a team\'s managers their team\'s' }, 403];
+  }
+  const repo = `kb-team-${b.team}`;
+  const path = `areas/${String(b.id || '')}.md`;
+  if (!kb.has(repo)) {
+    return [{ error: `no team ${b.team}` }, 400];
+  }
+  const now = await kb.read(repo, path);
+  let change;
+  if (method === 'DELETE') {
+    change = { path, delete: true, base: now.hash };
+  } else if (method === 'POST') {
+    change = { path, content: areaFile({ title: b.title, what: b.what }), create: true };
+  } else {
+    const old = parseArea(now.text || '');
+    const area = {
+      title: b.title ?? old.title, what: b.what ?? old.what, enabled: b.enabled ?? old.enabled,
+    };
+    change = { path, base: now.hash, content: areaFile(area) };
+  }
+  const w = await kb.write(repo, [change], {
+    message: `Area ${path}`,
+    by: `human:${store.me.email}`,
+    at: new Date().toISOString(),
+    logEntry: `**Update**: ${path}`,
+    author: { name: store.me.name, email: store.me.email },
+  });
+  if (w.error || w.conflict) {
+    return [{ error: w.error || w.conflict }, 400];
+  }
+  await compileKb(repo);
+  const r = await topicsPage(adminApi.env, topicsViewer(), await followsNow());
+  return [{ ok: true, areas: (await r.json()).areas }, 200];
+}
 
 // Which backend answers: the presence of a session file selects production, read-only.
 let backendState = { mode: 'fake' };
@@ -1376,11 +1439,33 @@ async function api(req, res, url) {
       follows: await followsNow(),
     });
   }
+  // The Topics page (src/topicsapi.js), over the admin pages' D1: its map, the areas the fake
+  // knowledge bases have, and Dana's follows; areas are written to the fake knowledge bases.
+  if (url.pathname === '/api/topics') {
+    if (req.method === 'POST') {
+      return json(res, { error: 'the preview has no CONTENT index to build a map from' }, 503);
+    }
+    const r = await topicsPage(adminApi.env, topicsViewer(), await followsNow());
+    return json(res, await r.json(), r.status);
+  }
+  if (url.pathname === '/api/areas') {
+    return json(res, ...await previewArea(req.method, await readJson(req)));
+  }
   if (url.pathname === '/api/follows') {
     // As src/api.js: what Dana follows, changed one technology at a time.
     if (req.method === 'PUT') {
       const b = await readJson(req);
-      const id = String(b.tech || '');
+      if (b.kind && b.kind !== 'tech') {
+        const list = followsBy[b.kind];
+        if (!list) {
+          return json(res, { error: 'kind is org, person, area or tech' }, 400);
+        }
+        const t = b.kind === 'person' ? Number(b.target) : String(b.target);
+        const next = b.follow === false ? list.filter((x) => x !== t) : [...new Set([...list, t])];
+        followsBy = { ...followsBy, [b.kind]: next };
+        return json(res, await followsNow());
+      }
+      const id = String(b.tech || b.target || '');
       if (!vocabNames.tech[id]) {
         return json(res, { error: 'no tech stack has that technology' }, 400);
       }

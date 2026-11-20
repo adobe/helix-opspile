@@ -131,9 +131,15 @@ export async function areaNames(env, fallback = {}) {
   if (!(results || []).length) {
     return fallback;
   }
-  const out = {};
+  // The built-in names under the teams': an id a team has not written keeps its name on the
+  // labels from before.
+  const out = { ...fallback };
+  const named = new Set();
   for (const r of results) {
-    out[r.id] = out[r.id] || r.name;
+    if (!named.has(r.id)) {
+      out[r.id] = r.name;
+      named.add(r.id);
+    }
   }
   return out;
 }

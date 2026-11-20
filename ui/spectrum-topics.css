@@ -212,6 +212,19 @@ tr.pick { cursor: pointer; }
 .spectrum .panel details.gaps { margin-top: var(--spectrum-spacing-200); }
 .spectrum .panel details.gaps > summary { cursor: pointer; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 .spectrum .panel .more { margin-top: var(--spectrum-spacing-75); }
+/* Following a node, and the areas: the teams author them here (src/topicsapi.js). */
+.spectrum .panel .head .follow { flex: none; }
+.spectrum .panel button.follow[aria-pressed="true"] { color: var(--spectrum-accent-content-color-default); border-color: var(--spectrum-accent-background-color-default); }
+.spectrum .panel table.areas td.acts { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-75); white-space: nowrap; }
+.spectrum .panel table.areas tr.off td:first-child { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .panel table.areas .pickr-a { text-align: left; }
+.spectrum .panel .areaform { display: flex; flex-direction: column; gap: var(--spectrum-spacing-200); margin: var(--spectrum-spacing-200) 0; padding: var(--spectrum-spacing-300); border-radius: var(--spectrum-corner-radius-200); background: var(--spectrum-gray-75); }
+.spectrum .panel .areaform h3 { margin: 0; }
+.spectrum .panel .areaform textarea { width: 100%; resize: vertical; }
+.spectrum .panel .areaform .acts { display: flex; gap: var(--spectrum-spacing-100); }
+.spectrum .panel .areaform .only { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
+.spectrum .panel .hint.err { color: var(--spectrum-negative-content-color-default); }
+.spectrum .panel #newArea { margin-top: var(--spectrum-spacing-100); }
 /* What it is joined to: ListView rows, quiet, each with a Meter of its share. */
 .spectrum .panel .pickr {
   gap: var(--spectrum-spacing-100);

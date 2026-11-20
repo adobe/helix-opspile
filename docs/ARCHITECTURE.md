@@ -1228,7 +1228,8 @@ and is labeled again, the model answers again and the old review only counts as 
 
 Clef's topics are asked: each is a question someone wrote, and a thread about something nobody
 asked about gets none. A **topic map** (`src/topicmap.js`, the **Topics** page) finds what the
-threads are about from what was said in them instead, for the admin team, to see the common
+threads are about from what was said in them instead, for every member of an ops team (the
+admin team and team managers rebuild it and change the areas on it), to see the common
 themes, who works on which and for whom, and where Clef's topics miss: what to ask Clef next.
 
 - The threads: channel threads with a `CONTENT` thread vector, at least three messages, and not

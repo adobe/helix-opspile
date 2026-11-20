@@ -79,6 +79,7 @@ import { batchedDatabase } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
 import { orgStacksOf } from './orgstacks.js';
+import { changeArea, rebuildTopics, topicsPage } from './topicsapi.js';
 import { drawDiagram } from './diagrams.js';
 
 /**
@@ -1158,6 +1159,23 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return saveSettings(env, me, await request.json().catch(() => null));
     }
     return json({ error: 'GET or PUT' }, 405);
+  }
+  // The Topics page, for every member of an ops team (src/topicsapi.js).
+  if (url.pathname === '/api/topics') {
+    if (request.method === 'GET') {
+      return topicsPage(env, me, await followsOf(env, me));
+    }
+    if (request.method === 'POST') {
+      return me.readonly ? json({ error: 'read-only while viewing as someone else' }, 403)
+        : rebuildTopics(env, me);
+    }
+    return json({ error: 'GET or POST' }, 405);
+  }
+  if (url.pathname === '/api/areas') {
+    if (me.readonly) {
+      return json({ error: 'read-only while viewing as someone else' }, 403);
+    }
+    return changeArea(env, me, request.method, await request.json().catch(() => ({})));
   }
   if (url.pathname === '/api/follows') {
     // The technologies the person follows, for their personal view (src/follows.js).

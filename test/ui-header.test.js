@@ -208,11 +208,11 @@ describe('the header', () => {
     const stats = { url: 'https://klickhaus.example/opspile.html' };
     assert.deepEqual(nav({}), { pages: [], hidden: true, html: '' });
     const member = nav({ teams: [{ slug: 'edge' }], stats });
-    assert.deepEqual([member.pages, member.hidden], [['inbox', 'agents', 'stats'], false]);
-    assert.deepEqual(nav({ teams: [{ slug: 'edge' }] }).pages, ['inbox', 'agents']);
+    assert.deepEqual([member.pages, member.hidden], [['inbox', 'agents', 'topics', 'stats'], false]);
+    assert.deepEqual(nav({ teams: [{ slug: 'edge' }] }).pages, ['inbox', 'agents', 'topics']);
     // Another site, in a new tab, with what it is in its title.
     assert.match(member.html, /<a data-page="stats" href="https:\/\/klickhaus\.example\/opspile\.html\?t=1mo" title="Statistics of all threads[^"]*klickhaus[^"]*new tab\)" target="_blank" rel="noopener">Stats/);
-    assert.deepEqual(nav({ manages: ['edge'], stats }).pages, ['inbox', 'agents', 'teams', 'stats']);
+    assert.deepEqual(nav({ manages: ['edge'], stats }).pages, ['inbox', 'agents', 'teams', 'topics', 'stats']);
     assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'agents', 'teams', 'orgs', 'bots', 'requests', 'topics', 'cogs', 'stats']);
     assert.deepEqual(nav({ admin: true }).pages, ['inbox', 'agents', 'teams', 'orgs', 'bots', 'requests', 'topics', 'cogs']);
   });
