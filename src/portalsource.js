@@ -13,6 +13,7 @@
 import { portalFileRef, portalUserId } from './portal/ids.js';
 import { personAvatar } from './lookup.js';
 import { readMarkdown, writeMarkdown } from './mdast.js';
+import { techMoves } from './catalog.js';
 import {
   dayPath, putRaw, segment,
 } from './raw.js';
@@ -98,15 +99,18 @@ export async function receive(env, events) {
  * the ids it had before a catalog move (`moved_from`), for the portal's lobbies' picks.
  */
 export async function portalTechnologies(env) {
-  const [{ results }, { results: moves }] = await Promise.all([
+  const [{ results }, moves] = await Promise.all([
     env.DB.prepare(`SELECT tech, name, product, enabled, portal
       FROM tech_stack ORDER BY tech, team = 'admin' DESC, team`).all(),
-    env.DB.prepare('SELECT old, tech FROM tech_moves').all(),
+    techMoves(env),
   ]);
-  // The ids each had before a catalog move: the portal keeps a lobby's picks, and maps them.
+  // The ids each had before a catalog move, as the inbox resolves them (a chain followed to its
+  // end, the admin team's first): the portal keeps a lobby's picks, and maps them.
   const was = new Map();
-  for (const m of moves || []) {
-    was.set(m.tech, [...new Set([...(was.get(m.tech) || []), m.old])]);
+  for (const [old, id] of Object.entries(moves)) {
+    if (old !== id) {
+      was.set(id, [...(was.get(id) || []), old]);
+    }
   }
   const by = new Map();
   for (const r of results || []) {

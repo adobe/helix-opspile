@@ -316,6 +316,11 @@ describe('the portal as a source', () => {
     const union = await portalTechnologies(inbox);
     assert.ok(union.some((t) => t.tech === 'adobe/commerce/b2b' && t.name === 'B2B'));
     assert.deepEqual(union.filter((t) => t.tech === 'eds').map((t) => t.name), ['Edge Delivery']);
+    // An id moved twice reports both earlier ids, as the inbox resolves them.
+    inbox.DB.sqlite.exec(`INSERT INTO tech_moves (team, old, tech) VALUES
+      ('commerce', 'b2b', 'adobe/b2b'), ('commerce', 'adobe/b2b', 'adobe/commerce/b2b')`);
+    const b2b = (await portalTechnologies(inbox)).find((t) => t.tech === 'adobe/commerce/b2b');
+    assert.deepEqual(b2b.moved_from.sort(), ['adobe/b2b', 'b2b']);
     inbox.DB.sqlite.prepare("UPDATE tech_stack SET enabled = 0 WHERE tech = 'eds'").run();
     assert.ok(!(await portalTechnologies(inbox)).some((t) => t.tech === 'eds'));
   });
