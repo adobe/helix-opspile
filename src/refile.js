@@ -294,7 +294,9 @@ export async function refile(env, job) {
   await ensureChannelKnowledgeBases(env, cls);
   // Each thread's kind: the channel's, or an alert where an alert bot started it.
   const bots = [...await alertBots(env)];
-  const { results: current } = await env.DB.prepare(`SELECT thread, path, org, team, kind,
+  const { results: current } = await env.DB.prepare(`SELECT thread, path, org, team, kind, imported,
+      (embedded IS NOT NULL OR vectorized_through IS NOT NULL OR indexed_through IS NOT NULL)
+        AS derived,
       ${bots.length ? alertRoot('t', '?4') : '0'} AS alert FROM threads t
     WHERE source = ?1 AND tenant = ?2 AND channel_id = ?3`)
     .bind(job.source, job.tenant, job.channelId, ...(bots.length ? [JSON.stringify(bots)] : []))
@@ -367,7 +369,13 @@ export async function refile(env, job) {
       left.push([thread, stuck]);
     }
   }
-  await revectorize(env, refiled);
+  // Not the history import's threads (src/history.js), which get vectors once someone asks, unless
+  // they had some (asked for, by replay.mjs): those are moved, or taken away, as any thread's. The
+  // row was read before `clearDerived`, and the cron's sweep leaves imported threads out.
+  await revectorize(env, refiled.filter((t) => {
+    const was = rowOf.get(t);
+    return !was || !Number(was.imported) || Number(was.derived);
+  }));
   await reexport(env, refiled);
   // Open inboxes of the teams it left and the teams it is in now show it where it is now: an
   // inbox loaded before the move keeps the old org (or team) otherwise, until something else

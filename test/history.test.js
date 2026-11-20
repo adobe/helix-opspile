@@ -198,6 +198,10 @@ describe('history import, Slack', () => {
     };
     await quiet(() => consume({ messages: [msg] }, e));
     assert.ok(msg.options.delaySeconds >= 60);
+    globalThis.fetch = async () => Response.json({ ok: false, error: 'team_access_not_granted' });
+    assert.equal((await runImport(e, slackJob(), { now: NOW })).result, 'import-ended');
+    assert.match(row(e).error, /team_access_not_granted/);
+    e.DB.sqlite.exec('UPDATE history_imports SET done_at = NULL, error = NULL');
     globalThis.fetch = async () => Response.json({ ok: false, error: 'not_in_channel' });
     assert.equal((await runImport(e, slackJob(), { now: NOW })).result, 'import-ended');
     assert.ok(row(e).done_at);
