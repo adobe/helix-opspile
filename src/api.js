@@ -1162,6 +1162,11 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   // The Topics page, for every member of an ops team (src/topicsapi.js).
   if (url.pathname === '/api/topics') {
+    // Every team's threads, customers and people: for the members of an ops team, not someone
+    // signed in from SIGNIN_DOMAINS on none, whose inbox is their personal view only.
+    if (!(me.teams || []).length) {
+      return json({ error: 'the topic map is for the members of the ops teams' }, 403);
+    }
     if (request.method === 'GET') {
       return topicsPage(env, me, await followsOf(env, me));
     }

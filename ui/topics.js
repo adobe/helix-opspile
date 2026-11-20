@@ -115,10 +115,15 @@ const isCustomer = (slug) => TopicGraph.isCustomer(map(), slug);
 const orgName = (slug) => map().orgs[slug]?.name || slug;
 const shownTypes = () => TYPES.map((t) => t.id).filter((id) => !state.q.hide.includes(id));
 
-/** The graph for the filters (ui/topicgraph.js). */
+/**
+ * The graph for the filters (ui/topicgraph.js). An area's name is what its file says now
+ * (`state.areas`), not what it was when the map was built: a rename shows at once.
+ */
 function graphOf() {
   const { q } = state;
-  return TopicGraph.build(map(), { team: q.team, shown: shownTypes(), min: q.min });
+  const names = Object.fromEntries(areaList().map((a) => [a.id, a.name]));
+  const m = { ...map(), tags: { ...(map().tags || {}), ...names } };
+  return TopicGraph.build(m, { team: q.team, shown: shownTypes(), min: q.min });
 }
 
 // ---- the layout: d3-force's model -------------------------------------------------------
@@ -664,9 +669,11 @@ async function saveArea(method, body) {
     state.areas = out.areas || state.areas;
     state.editArea = null;
     state.note = { text: method === 'DELETE' ? 'Deleted. Clef stops asking it from the next labels.' : 'Saved. Clef asks it from the next labels.' };
-  } else {
-    state.note = { err: true, text: out.error || 'That did not work.' };
+    // The bubbles take the areas' names as they are now: drawn again.
+    render();
+    return;
   }
+  state.note = { err: true, text: out.error || 'That did not work.' };
   renderPanel();
 }
 
