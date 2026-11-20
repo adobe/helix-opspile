@@ -42,6 +42,10 @@ import { getBot, listBots, setBot } from './ourbots.js';
 import { followable, setTeamFollow, teamFollows } from './follows.js';
 import { portalAuthor, portalBound, portalCall } from './portalsource.js';
 import { openConflictCount, resolveConflict, techConflicts } from './techconflicts.js';
+import { ruleConflicts, settlement } from './ruleconflicts.js';
+import {
+  isRuleShare, knownChannels, syncFollowRules, wantedFollows,
+} from './followrules.js';
 import {
   getPortalRequest, listPortalRequests, portalOpenCount, recordDeclined, recordOpened,
   reopenDeclined,
@@ -54,7 +58,9 @@ import {
  *   email), remove, promote to team manager or demote;
  * - rules: the regular-expression rules that file channels under a team, an org or a kind
  *   (`^aem-` style prefixes, Teams team names, Slack Connect teams), and manual assignments
- *   of one channel (a `channel_id` rule with priority 10);
+ *   of one channel (a `channel_id` rule with priority 10); follow rules, which share the
+ *   channels they match with a team (src/followrules.js); and the conflicts between team
+ *   rules, which the admin team settles under Requests (src/ruleconflicts.js);
  * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments;
  * - bots: which of the bots the inbox knows are Adobe's, and so count as staff, each with its
  *   latest messages (src/ourbots.js);
@@ -85,7 +91,7 @@ export const MANUAL_PRIORITY = 10;
 const MANUAL_NOTE = 'manual assignment';
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const FIELDS = ['name', 'group_name', 'connected', 'channel_id'];
-const TARGETS = ['team', 'org', 'kind'];
+const TARGETS = ['team', 'org', 'kind', 'follow'];
 const KINDS = ['channel', 'alert', 'ignore'];
 const TYPES = ['customer', 'partner', 'vendor', 'internal'];
 const ICON = /^(https:\/\/\S{1,500}|[a-z0-9.-]+\.[a-z]{2,})$/i;
@@ -199,6 +205,13 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
   const labels = new Map((await rows(env, 'SELECT * FROM channel_labels'))
     .map((l) => [`${l.source}:${l.tenant}:${l.channel_id}`, l]));
   const shares = await sharesByChannel(env);
+  // The shares a follow rule made (src/followrules.js): the rule's, not taken away by hand.
+  const byRule = new Map();
+  for (const r of await rows(env, `SELECT source, channel_id, team FROM channel_teams
+    WHERE added_by LIKE 'rule:%'`)) {
+    const k = `${r.source}:${r.channel_id}`;
+    byRule.set(k, [...(byRule.get(k) || []), r.team]);
+  }
   const needle = q.toLowerCase().trim();
   const words = searchWords(needle);
   const teamNames = words.length
@@ -224,6 +237,7 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
         shared: Boolean(c.shared),
         team: c.team,
         sharedWith,
+        followedByRule: (byRule.get(`${c.source}:${c.channel_id}`) || []).filter((t) => t !== c.team),
         org: c.org,
         orgName: c.org_name || null,
         kind: c.kind,
@@ -281,7 +295,10 @@ async function ruleFrom(env, body) {
   if (target === 'kind' && !KINDS.includes(value)) {
     return { error: `a kind is one of ${KINDS.join(', ')}` };
   }
-  if (target === 'team' && !template) {
+  if (target === 'follow' && template) {
+    return { error: 'a follow rule names its team' };
+  }
+  if ((target === 'team' || target === 'follow') && !template) {
     value = toSlug(value);
     if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(value).first()) {
       return { error: `there is no team ${value}; create it first` };
@@ -297,14 +314,24 @@ async function ruleFrom(env, body) {
   };
 }
 
-/** Saves a rule change, or with `dryRun` only says what it would move. */
-async function applyRules(env, me, { next, dryRun, write }) {
+/**
+ * Saves a rule change, or with `dryRun` only says what it would move. `extra` goes with the
+ * answer, either way. The follow rules' shares follow the change (src/followrules.js): a failure
+ * there is left to the cron, since the rules are saved.
+ */
+async function applyRules(env, me, {
+  next, dryRun, write, extra = {},
+}) {
   const moves = await plan(env, next);
   if (dryRun) {
-    return json({ dryRun: true, moves });
+    return json({ dryRun: true, moves, ...extra });
   }
   const saved = await write();
   const jobs = await enqueueMoves(env, moves);
+  const follows = await syncFollowRules(env).catch((e) => {
+    console.error(JSON.stringify({ route: 'admin', rules: 'follows not synced', error: e.message }));
+    return { error: e.message };
+  });
   // In the team's inbox now: nothing left to ask for. The rule is saved and its moves are queued,
   // so a failure here must not answer as if it were not; the request stays open, and says so.
   await settleMoved(env, me, moves).catch((e) => {
@@ -322,7 +349,7 @@ async function applyRules(env, me, { next, dryRun, write }) {
     route: 'admin', rules: 'changed', by: me.id, moves: moves.length, jobs,
   }));
   return json({
-    ok: true, ...saved, moves, jobs,
+    ok: true, ...saved, moves, jobs, follows, ...extra,
   });
 }
 
@@ -439,6 +466,13 @@ async function unshareChannel(env, me, body) {
   const source = clean(body.source);
   if (!channelId || !slug || !source) {
     return bad('give a source, a channelId and a team');
+  }
+  const row = await env.DB.prepare(`SELECT added_by FROM channel_teams WHERE source = ?
+    AND channel_id = ? AND team = ?`).bind(source, channelId, slug).first();
+  if (row && isRuleShare(row.added_by)) {
+    return json({
+      error: `a follow rule shares this channel with this team (${row.added_by}): change the rule on the team's page`,
+    }, 409);
   }
   const removed = await unshare(env, { source, channelId, team: slug });
   if (!removed) {
@@ -574,8 +608,10 @@ async function requestList(env, me, { status, count }) {
   // The customers waiting in the portal count too: they are the admin team's to answer; and so do
   // the conflicts between the teams' technologies (src/techconflicts.js), the admin team's only.
   const conflicts = isAdmin(me) ? await techConflicts(env) : [];
+  // And the conflicts between team rules (src/ruleconflicts.js), the admin team's too.
+  const rules = isAdmin(me) ? await ruleConflicts(env) : [];
   const open = await openCount(env, teams) + await portalOpenCount(env, teams)
-    + conflicts.filter((c) => !c.kept).length;
+    + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length;
   if (count) {
     return json({ open });
   }
@@ -584,8 +620,85 @@ async function requestList(env, me, { status, count }) {
     portal: await listPortalRequests(env, { teams }),
     portalBound: portalBound(env),
     conflicts,
+    ruleConflicts: rules,
     open,
   });
+}
+
+/**
+ * POST /api/admin/rule-conflicts `{ key, action, fingerprint?, note?, dryRun? }`: the admin team
+ * settles a conflict between team rules (src/ruleconflicts.js). `follow`: side a files the
+ * channels, and b's rule becomes a follow rule (a manual assignment of one channel, a share of
+ * it); `exclude`: b's, and a's rule leaves b's out (or a's manual assignments of them go);
+ * `keep`: as it is. `fingerprint` is the conflict's as it was shown: a conflict that changed
+ * since is not settled (409). `dryRun` answers with the channels it would move (`moves`) and the
+ * ones b would follow (`follows`); applied, with the conflicts as they are after it.
+ */
+async function settleRuleConflict(env, me, body) {
+  const key = clean(body.key, 500);
+  const action = clean(body.action);
+  const rules = await loadRules(env);
+  const c = (await ruleConflicts(env, { rules })).find((x) => x.key === key);
+  if (!c) {
+    return json({ error: 'no such conflict: it may be settled already', ruleConflicts: await ruleConflicts(env) }, 404);
+  }
+  if (body.fingerprint && body.fingerprint !== c.fingerprint) {
+    return json({ error: 'the conflict changed since it was shown: look at it again', conflict: c }, 409);
+  }
+  if (action === 'keep') {
+    if (body.dryRun) {
+      return json({ dryRun: true, moves: [], follows: [] });
+    }
+    await env.DB.prepare(`INSERT INTO rule_conflict_keeps (key, fingerprint, kept_by, kept_at, note)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET fingerprint = excluded.fingerprint,
+        kept_by = excluded.kept_by, kept_at = excluded.kept_at, note = excluded.note`)
+      .bind(key, c.fingerprint, ...stamp(me), clean(body.note, 300) || null).run();
+    console.log(JSON.stringify({ route: 'admin', ruleConflict: 'kept', by: me.id }));
+    return json({ ok: true, done: 'kept', ruleConflicts: await ruleConflicts(env) });
+  }
+  const channels = await knownChannels(env);
+  const s = settlement(c, action, rules, channels);
+  if (s.error) {
+    return bad(s.error);
+  }
+  // The channels b follows after it: its follow rules', and its manual assignments' shares.
+  const live = channels.filter((x) => !x.archived);
+  const byKey = new Map(live.map((x) => [`${x.source}:${x.channelId}`, x]));
+  const followed = action !== 'follow' ? [] : [
+    ...[...wantedFollows(s.next, live).values()]
+      .filter((w) => w.team === c.b.team && c.follow.rules.includes(w.rule)),
+    ...s.shares,
+  ].map((w) => byKey.get(`${w.source}:${w.channelId}`)).filter(Boolean)
+    .map((x) => ({
+      source: x.source, channelId: x.channelId, name: x.name, groupName: x.groupName,
+    }));
+  const res = await applyRules(env, me, {
+    next: s.next,
+    dryRun: body.dryRun,
+    extra: { follows: followed },
+    write: async () => {
+      const [by, at] = stamp(me);
+      await env.DB.batch([
+        ...s.updates.map((u) => (u.target
+          ? env.DB.prepare('UPDATE rules SET target = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+            .bind(u.target, by, at, u.id)
+          : env.DB.prepare('UPDATE rules SET pattern = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+            .bind(u.pattern, by, at, u.id))),
+        ...s.deletes.map((id) => env.DB.prepare('DELETE FROM rules WHERE id = ?').bind(id)),
+        ...s.shares.map((x) => env.DB.prepare(`INSERT INTO channel_teams (source, channel_id, team,
+            added_by, added_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
+          .bind(x.source, String(x.channelId), x.team, by, at)),
+      ]);
+      console.log(JSON.stringify({
+        route: 'admin', ruleConflict: action, by: me.id, updates: s.updates.length, deletes: s.deletes.length,
+      }));
+      return { done: action };
+    },
+  });
+  if (body.dryRun || !res.ok) {
+    return res;
+  }
+  return json({ ...(await res.json()), ruleConflicts: await ruleConflicts(env) });
 }
 
 /**
@@ -866,7 +979,7 @@ async function listTeams(env, me) {
   const all = await rows(env, `SELECT t.slug, t.name, t.self_managed,
       (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug) AS members,
       (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug AND m.role = 'manager') AS managers,
-      (SELECT COUNT(*) FROM rules r WHERE r.target = 'team' AND r.value = t.slug) AS rules,
+      (SELECT COUNT(*) FROM rules r WHERE r.target IN ('team', 'follow') AND r.value = t.slug) AS rules,
       (SELECT COUNT(DISTINCT th.channel_id) FROM threads th WHERE th.team = t.slug
         AND ${LIVE('th')}) AS channels,
       (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug) AS threads,
@@ -882,7 +995,8 @@ async function listTeams(env, me) {
   // the customers waiting in the portal, theirs to open a channel for.
   const scope = everything ? null : managedTeams(me);
   const requests = await openCount(env, scope) + await portalOpenCount(env, scope)
-    + (everything ? await openConflictCount(env) : 0);
+    + (everything ? await openConflictCount(env)
+      + (await ruleConflicts(env, { kept: false })).length : 0);
   // Every team's name, for a manager's page to say where a channel is now.
   const names = Object.fromEntries(all.map((t) => [t.slug, t.name]));
   return json({
@@ -900,7 +1014,8 @@ async function team(env, slug, me) {
     team: t ? { ...t, self_managed: Boolean(t.self_managed) } : { slug, name: 'Unassigned', self_managed: false },
     members: await rows(env, `SELECT p.id, p.name, p.email, p.staff, m.role FROM team_members m
       JOIN people p ON p.id = m.person WHERE m.team = ? ORDER BY p.name`, slug),
-    rules: rules.filter((r) => r.target === 'team' && (r.value === slug || /\$\d/.test(r.value)))
+    rules: rules.filter((r) => (r.target === 'team' && (r.value === slug || /\$\d/.test(r.value)))
+      || (r.target === 'follow' && r.value === slug))
       .sort((a, b) => a.priority - b.priority || a.id - b.id),
     channels: await channelList(env, rules, { team: slug }),
     // What the team's managers asked the admin team for, and what came of it.
@@ -1019,7 +1134,7 @@ async function deleteTeam(env, body) {
     return bad('the admin team cannot be deleted');
   }
   const used = await env.DB.prepare(`SELECT
-      (SELECT COUNT(*) FROM rules WHERE target = 'team' AND value = ?) AS rules,
+      (SELECT COUNT(*) FROM rules WHERE target IN ('team', 'follow') AND value = ?) AS rules,
       (SELECT COUNT(*) FROM threads WHERE team = ?) AS threads`).bind(slug, slug).first();
   if (used.rules || used.threads) {
     return json({
@@ -1363,6 +1478,7 @@ export async function admin(request, env, url, me) {
     case 'POST portal/open': return openPortal(env, me, body);
     case 'POST portal/decline': return declinePortal(env, me, body);
     case 'POST conflicts': return settleConflict(env, me, body);
+    case 'POST rule-conflicts': return settleRuleConflict(env, me, body);
     // Channel threads labeled again though they did not change (src/label.js queueRelabel).
     case 'POST relabel': return env.NORMALIZE ? json(await queueRelabel(env, body))
       : json({ error: 'no queue' }, 503);

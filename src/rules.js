@@ -13,6 +13,9 @@
 /**
  * The rules engine that maps a channel to an ops team, an org (customer or vendor) and a
  * kind. Rules are rows in D1 (`rules`); see migrations/0001_index.sql.
+ *
+ * A rule of target `follow` (migration 0086) files nothing: every one that matches a channel
+ * shares it with its team (`followers`), which src/followrules.js keeps in `channel_teams`.
  */
 
 export const UNASSIGNED = '_unassigned';
@@ -46,18 +49,29 @@ function candidates(channel, field) {
   return value ? [value] : [];
 }
 
+// The rules are a few hundred patterns, each tried on every channel: compiled once. Without a
+// `g` flag, `exec` keeps no state, so one RegExp serves every call.
+const compiled = new Map();
 function compile(pattern) {
-  try {
-    return new RegExp(pattern, 'i');
-  } catch {
-    return null; // a broken rule never matches
+  if (!compiled.has(pattern)) {
+    if (compiled.size > 5000) {
+      compiled.clear();
+    }
+    let re = null;
+    try {
+      re = new RegExp(pattern, 'i');
+    } catch {
+      // a broken rule never matches
+    }
+    compiled.set(pattern, re);
   }
+  return compiled.get(pattern);
 }
 
 const ordered = (rules) => [...rules].sort((a, b) => (a.priority - b.priority) || (a.id - b.id));
 
 /** What `rule` gives `channel` for `target`, or null when it does not apply or match. */
-function valueOf(rule, channel, target) {
+export function valueOf(rule, channel, target = rule.target) {
   if (rule.target !== target || (rule.source && rule.source !== channel.source)) {
     return null;
   }
@@ -102,4 +116,12 @@ export function matching(rules, channel, target) {
     const value = valueOf(rule, channel, target);
     return value === null ? [] : [{ rule, value }];
   });
+}
+
+/**
+ * The teams the follow rules share `channel` with (target `follow`): every one that matches,
+ * not only the first. `[{ rule, team }]`, in the order the rules are tried.
+ */
+export function followers(rules, channel) {
+  return matching(rules, channel, 'follow').map(({ rule, value }) => ({ rule, team: value }));
 }

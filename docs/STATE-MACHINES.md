@@ -122,6 +122,22 @@ order, or a replay of pile 1) changes nothing, and the write says so again, so o
 once the later wins. A job from `followChange` carries the classification it moved from (`was`):
 a thread a newer message already re-filed in its row still gets its derived data redone.
 
+**A follow rule's share.** wanted → shared → gone (`channel_teams` rows with `added_by`
+`rule:<id>`; `src/followrules.js`). Not stored as a state: `syncFollowRules` works out what the
+follow rules want from the rules and `channels` and writes the difference, after every rule change
+(`applyRules` in `src/admin.js`, once the rules are saved) and on the cron, which also catches a
+channel seen or renamed since and a sync that failed. It only adds where no row is (a share by hand
+of the same channel and team stays a share by hand) and only deletes `WHERE added_by = 'rule:<id>'`,
+so it never takes away a share by hand. A channel filed under the rule's team is not shared with it.
+`DELETE /api/admin/share` refuses a rule's share: the cron would add it again.
+
+**Rule conflict.** open → settled or kept → open again (`src/ruleconflicts.js`). Computed from the
+team rules and the channels on every read, never stored; a settled one is gone because the rules
+changed. A kept one is a row of `rule_conflict_keeps` (migration 0086) with the conflict's
+`fingerprint` (its rules and the channels both match): it is hidden while the fingerprint holds, and
+open again once a rule or a channel of it changes. Settling names what it started from: the
+fingerprint the page showed, or 409.
+
 **Channel request.** open → confirmed, declined or withdrawn (`src/requests.js`). The one real status
 column, and `CHECK` keeps it to those four; a partial unique index allows one open request per channel
 and team. Every close is `WHERE status = 'open'`. Confirming claims the request first, then assigns;
