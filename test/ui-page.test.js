@@ -836,6 +836,8 @@ describe('inbox page', () => {
       tracesShown: () => true,
       threadRow: () => ({}),
       placeAgent: (k) => placed.push(state.agents.get(k).turn),
+      agentDid: () => {},
+      showSide: () => {},
       hidden: () => false,
       AGENT_POLL_MS: 1,
       AGENT_WAIT_MS: 1,
@@ -858,6 +860,43 @@ describe('inbox page', () => {
     assert.equal(timers.length, 3);
     assert.equal(state.agents.get('t').turn, null);
     assert.equal(placed.pop(), null);
+  });
+
+  it('wiggles the sidebar\'s tab as the agent sets to work or is done, not as a thread opens', () => {
+    const state = { open: 't' };
+    let wiggles = 0;
+    const { agentDid } = piece('// The open thread\'s agent, as the tab last knew it', '/** The tab wiggles, once', 'agentDid', {
+      state, wiggleSideTab: () => { wiggles += 1; },
+    });
+    const working = { startedAt: 'a', state: 'working', text: 'Reading the thread' };
+    agentDid('t', working);
+    assert.equal(wiggles, 0, 'the thread just opened: where its agent was');
+    agentDid('t', { ...working, text: 'Checking a web page' });
+    assert.equal(wiggles, 0, 'not for what it says while it works');
+    agentDid('t', { startedAt: 'a', state: 'done' });
+    assert.equal(wiggles, 1, 'done');
+    agentDid('t', { startedAt: 'b', state: 'working' });
+    assert.equal(wiggles, 2, 'at work again');
+    agentDid('u', { startedAt: 'c', state: 'working' });
+    assert.equal(wiggles, 2, 'not another thread\'s');
+    state.open = 'u';
+    agentDid('u', { startedAt: 'c', state: 'working' });
+    assert.equal(wiggles, 2, 'another thread opened');
+    const { agentDid: fresh } = piece('// The open thread\'s agent, as the tab last knew it', '/** The tab wiggles, once', 'agentDid', {
+      state, wiggleSideTab: () => { wiggles += 1; },
+    });
+    fresh('u', null);
+    fresh('u', null);
+    assert.equal(wiggles, 2, 'no agent, no wiggle');
+  });
+
+  it('puts the sidebar\'s tab on the thread\'s edge, and on the panel\'s while it is open', () => {
+    const css = SCRIPTS['spectrum-inbox.css'];
+    assert.match(css, /main\.siding #side-tab \{ margin-right: calc\(var\(--side-w\) \* var\(--side-open, 1\)\); \}/);
+    assert.match(css, /#side-tab\[hidden\] \{ display: none; \}/);
+    assert.match(css, /\.spectrum #side-tab\.wiggle \{ animation: side-tab-wiggle /);
+    // Pulled, the panel's motion is where the pointer is: placeSidePanel leaves it there.
+    assert.match(html, /if \(coming && side\.pulling\) drawSide\(\);/);
   });
 
   it('talks to the agent in the sidebar through its own route only, and says who did', () => {
@@ -1039,7 +1078,7 @@ describe('inbox page', () => {
 
     it('puts the panel beside the thread, in the content area, and hides it everywhere else', () => {
       const css = SCRIPTS['spectrum-inbox.css'];
-      assert.match(PAGES['inbox.html'], /<section id="pane" [^>]*>.*<\/section>\n {2}<section id="side" aria-label="Sidebar with Thread Agent" hidden><\/section>\n {2}<div id="side-join" aria-hidden="true" hidden><svg>.*<\/svg><\/div>\n<\/main>/);
+      assert.match(PAGES['inbox.html'], /<section id="pane" [^>]*>.*<\/section>\n {2}<section id="side" aria-label="Sidebar with Thread Agent" hidden><\/section>\n {2}<div id="side-join" aria-hidden="true" hidden><svg>.*<\/svg><\/div>\n {2}<button id="side-tab" [^>]*hidden><\/button>\n<\/main>/);
       assert.match(css, /#side \{ grid-row: 1; grid-column: 3; justify-self: end; width: var\(--side-w\);/);
       assert.match(css, /#side\[hidden\] \{ display: none; \}/);
       // It comes out of the line that opened it, and goes back into it.

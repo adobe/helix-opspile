@@ -2033,8 +2033,10 @@ thread's channel).
 Whether it shows is each person's own choice, in their settings (`person_settings`): `traces`,
 off unless they turn it on, for every channel, and `channelTraces`, by channel id, where they
 chose otherwise, which wins. The inbox's user menu changes both (the open thread's channel);
-A team's **Thread agents** does too, a select on each channel with an agent. Hidden, the page does not ask
-`GET /api/agent` at all.
+A team's **Thread agents** does too, a select on each channel with an agent. Hidden, the page asks
+`GET /api/agent` all the same (a read of the kept copy, `agent_live`), without showing the note:
+the sidebar shows the agent working on its answer, and the sidebar's tab wiggles as the agent sets
+to work or is done (below).
 
 **The sidebar.** Anyone who may see a thread can talk to its agent in the inbox, about the
 thread, without the channel seeing any of it (`POST /api/agent/sidebar`, `src/sidebar.js`): who
@@ -2087,7 +2089,12 @@ turn. **End now** on a granted card (`…/revoke`) ends it early; the agent goes
 next input. See docs/STATE-MACHINES.md, "Tool request".
 
 In the inbox, the agent's icon enters **sidebar mode**: its avatar on its note, the button with
-it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. Each run
+it beside the reply box, *Continue in the sidebar* on an earlier conversation, or `a`. Where the
+panel has room beside the thread, a purple **tab** on the thread's right edge does too (`#side-tab`,
+for the many who hide the agent's note): a click opens or closes the panel, and pulled, the panel
+comes out of the edge with it, or goes back in, open or gone by where it is let go or which way it
+was flicked. Open, the tab is on the panel's edge. It wiggles once when the thread's agent sets to
+work or is done, and has a dot while an answer to you waits in the sidebar. Each run
 of sidebar messages is one line between the thread's messages where it happened ("Lena Berg had
 a sidebar conversation with Thread Agent · 4 messages · not posted"), for everyone who sees the
 thread in the inbox. Where the conversation itself shows depends on the room (`ui/inbox.js`,

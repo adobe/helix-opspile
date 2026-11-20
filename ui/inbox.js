@@ -2730,7 +2730,9 @@ function message(m, prev, fresh, followed = false, dated = false) {
 // its note for the team once done: its thinking. A finished one comes with the thread
 // (`agent_turn`, keptAgentTurn), so it shows with the messages. Asked when a thread opens or changes, and
 // every few seconds while it works, or while a new message waits for it to start. Not where
-// you hide it (your settings: `traces`, and `channelTraces` by channel, which wins). Its
+// you hide it (your settings: `traces`, and `channelTraces` by channel, which wins): there it is
+// asked all the same, for the sidebar's tab, which wiggles as the agent does something
+// (agentDid), and for the sidebar, which shows it working on an answer. Its
 // avatar opens the sidebar, a conversation with it (below); its name opens the agent settings
 // of the thread's team, at the thread's channel.
 const AGENT_NAME = 'Thread Agent';
@@ -2829,12 +2831,6 @@ function keptAgentTurn(key, turn) {
 async function loadAgent(key, { latest = null } = {}) {
   const known = state.agents.get(key);
   clearTimeout(known?.timer);
-  // Hidden here: not asked (shown again, renderTraces asks).
-  if (!tracesShown(threadRow(key)?.channel_id)) {
-    if (known) known.timer = null;
-    placeAgent(key);
-    return;
-  }
   // Not while the tab is in the background: asked again once it is shown (visibilitychange).
   const askAgain = (entry) => {
     entry.timer = setTimeout(() => {
@@ -2870,6 +2866,7 @@ async function loadAgent(key, { latest = null } = {}) {
   };
   state.agents.set(key, entry);
   placeAgent(key);
+  agentDid(key, res.enabled ? said : null);
   if (JSON.stringify(sidebar) !== JSON.stringify(known?.side || null)) showSide(key);
   // Working, or a message newer than its turn that it has not picked up yet (it waits a few
   // seconds for more), or a sidebar message it has not answered yet: ask again, while the
@@ -3265,6 +3262,8 @@ const side = {
   // The open thread's conversations as it was last drawn, `{ key, runs }`: what the tab shows,
   // seen once it is in front again (seeSide).
   runs: null,
+  // Whether the panel is being pulled by its tab now: it is where the tab is (pullSide).
+  pulling: false,
 };
 const SIDE_ICON = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
 const SIDE_HINT = `Talk to ${AGENT_NAME} in the sidebar: only your team sees it, nothing is posted (A)`;
@@ -3860,7 +3859,7 @@ function placeSidePanel(key, thread, runs) {
   }
   // Coming, or back while it was going: it moves as you enter the sidebar, else it is there.
   const coming = panel.hidden || sideMotion.to === 0;
-  if (panel.hidden) {
+  if (panel.hidden && !side.pulling) {
     sideMotion.p = 0;
     sideMotion.to = 0;
     document.querySelector('main').style.setProperty('--side-open', '0');
@@ -3889,7 +3888,9 @@ function placeSidePanel(key, thread, runs) {
   // What was just asked here: the panel is joined to its conversation's line, a new one too.
   const asked = side.asked && runs.find(({ run }) => run.some((m) => m.id === side.asked));
   side.asked = null;
-  if (coming) moveSide(1, { animate: side.motion });
+  // Pulled out by its tab, it is where the tab is (pullSide).
+  if (coming && side.pulling) drawSide();
+  else if (coming) moveSide(1, { animate: side.motion });
   else if (asked && asked.run[0].id !== side.joined) joinLine(asked.run[0].id);
   else drawJoin();
 }
@@ -4474,6 +4475,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   });
   placeSidePanel(key, thread, runs);
   side.runs = { key, runs };
+  syncSideTab();
   seeSide(key, runs);
   syncHeadMenus();
   restorePreviews(pane);
@@ -8980,6 +8982,7 @@ const syncReading = () => {
   if (reading() && $('pane').inert) { paneLeave += 1; $('pane').inert = false; }
   // The sidebar's panel is beside the thread it is about, and only there.
   if (!sidePaneled(state.open)) hideSidePanel();
+  syncSideTab();
 };
 /** Back to the list: the browser's Back when the list is the entry before, so Forward reopens the thread. */
 function closeThread() {
@@ -9081,6 +9084,7 @@ function syncSideRoom() {
   const typing = document.activeElement === $('side-reply');
   side.wide = wide;
   if (!showSide(state.open)) hideSidePanel();
+  syncSideTab();
   if (typing) $('side-reply')?.focus();
 }
 function wireSideRoom() {
@@ -9103,6 +9107,145 @@ function wireSideRoom() {
   };
   // Esc closes it from anywhere in it, as from its box (wireSide).
   panel.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); exitSide(); } };
+}
+
+// ---------------------------------------------------------------- the sidebar's tab
+// A purple tab on the thread's right edge, where the panel comes from (`#side-tab`), for when the
+// agent's note, whose avatar opens the sidebar, is hidden. A click opens the panel or closes it;
+// pulled, the panel comes with it, out of the edge or back into it, and stays open or goes
+// by where it is let go (or which way it was flicked). Open, the tab rides on the panel's edge.
+// It wiggles when the thread's agent sets to work or is done (agentDid), and has a dot while an
+// answer to you waits in the sidebar. Only where the panel has room beside the thread
+// (`side.wide`); elsewhere the button beside the reply box is the way in.
+// How far a press moves before it pulls instead of clicking, and how fast a flick is (px/ms).
+const PULL_SLOP = 4;
+const PULL_FLICK = 0.4;
+// The open thread's agent, as the tab last knew it: `{ key, said }`, the turn's start and state.
+const tabSaw = { key: null, said: undefined };
+
+/** The tab, as the open thread and its sidebar stand now. */
+function syncSideTab() {
+  const tab = $('side-tab');
+  const key = state.open;
+  const shows = Boolean(key && side.wide && state.cache.get(key)) && (canSide(key) || sideList(key).length > 0);
+  tab.hidden = !shows;
+  if (!shows) return;
+  const open = sidePaneled(key);
+  const label = open ? 'Close the sidebar (Esc)' : SIDE_HINT;
+  tab.title = label;
+  tab.setAttribute('aria-label', label);
+  tab.setAttribute('aria-expanded', String(open));
+  const runs = side.runs?.key === key ? side.runs.runs : [];
+  tab.classList.toggle('fresh', !open && runs.some(({ run }) => run.some(unseenByMe)));
+}
+
+/**
+ * The open thread's agent said how its latest turn stands (`said`, loadAgent): if it set to work
+ * since the tab last knew, or is done, the tab wiggles. Not for what it says while it works, and
+ * not for the thread just opened, whose agent is where it was.
+ */
+function agentDid(key, said) {
+  if (key !== state.open) return;
+  const now = said ? `${said.startedAt}|${said.state === 'working' ? 'working' : 'done'}` : null;
+  const was = tabSaw.key === key ? tabSaw.said : undefined;
+  Object.assign(tabSaw, { key, said: now });
+  if (was === undefined || was === now || !now) return;
+  wiggleSideTab();
+}
+
+/** The tab wiggles, once (not where motion is reduced). */
+function wiggleSideTab() {
+  const tab = $('side-tab');
+  if (tab.hidden || REDUCED_MOTION.matches || side.pulling) return;
+  tab.classList.remove('wiggle');
+  // Again from the start, also while it still wiggles.
+  tab.getBoundingClientRect();
+  tab.classList.add('wiggle');
+}
+
+/**
+ * The panel pulled out to `room` (0 gone, 1 open), with the tab on its edge: where its motion is
+ * at that room (drawSide eases it), so the tab stays under the pointer.
+ */
+function pullSide(room) {
+  const y = clamp01(room);
+  sideMotion.p = y < 0.5 ? Math.sqrt(y / 2) : 1 - Math.sqrt(2 * (1 - y)) / 2;
+  drawSide();
+}
+
+/** A pull sets out: the panel stops where it was going, and comes, at the tab, if it was gone. */
+function startPull(key) {
+  cancelAnimationFrame(sideMotion.raf);
+  bridgeStill();
+  Object.assign(sideMotion, { raf: 0, to: 1, mode: 'slide' });
+  side.pulling = true;
+  if (side.key === key) return;
+  Object.assign(side, { key, at: null, joined: null });
+  if ($('side').hidden) sideMotion.p = 0;
+  showSide(key);
+}
+
+/** Let go: the panel opens or goes, from where it is. */
+function endPull(key, v) {
+  side.pulling = false;
+  if (state.open !== key || side.key !== key) return;
+  const open = Math.abs(v) > PULL_FLICK ? v < 0 : sideMotion.p > 0.5;
+  if (!open) { exitSide({ focus: false }); return; }
+  moveSide(1, { animate: true });
+  syncSideTab();
+  $('side-reply')?.focus({ preventScroll: true });
+}
+
+function wireSideTab() {
+  const tab = $('side-tab');
+  tab.innerHTML = `${SIDE_ICON}<span class="dot" aria-hidden="true"></span>`;
+  let pull = null;
+  // A press that pulled is no click.
+  let pulled = false;
+  tab.onpointerdown = (e) => {
+    if (e.button !== 0 || !state.open) return;
+    pull = {
+      id: e.pointerId, key: state.open, x: e.clientX, from: $('side').hidden ? 0 : easeInOut(sideMotion.p), moved: false, lx: e.clientX, lt: e.timeStamp, v: 0,
+    };
+    pulled = false;
+    tab.setPointerCapture(e.pointerId);
+  };
+  tab.onpointermove = (e) => {
+    if (!pull || e.pointerId !== pull.id) return;
+    const dx = e.clientX - pull.x;
+    if (!pull.moved) {
+      if (Math.abs(dx) < PULL_SLOP) return;
+      pull.moved = true;
+      pulled = true;
+      tab.classList.add('pulling');
+      startPull(pull.key);
+    }
+    const dt = e.timeStamp - pull.lt;
+    if (dt > 0) pull.v = (e.clientX - pull.lx) / dt;
+    Object.assign(pull, { lx: e.clientX, lt: e.timeStamp });
+    // The panel's width, the way the tab goes with it from one end to the other.
+    const w = $('side').offsetWidth || GRIPS.side.least;
+    pullSide(pull.from - dx / w);
+  };
+  const done = (e) => {
+    if (!pull || e.pointerId !== pull.id) return;
+    const {
+      moved, key, v, lt,
+    } = pull;
+    pull = null;
+    tab.classList.remove('pulling');
+    // The click that follows a pull is not one; nor is the next, if none follows.
+    setTimeout(() => { pulled = false; });
+    // Resting a moment before letting go is no flick.
+    if (moved) endPull(key, e.timeStamp - lt > 100 ? 0 : v);
+  };
+  tab.onpointerup = done;
+  tab.onpointercancel = done;
+  tab.onclick = () => {
+    if (pulled) return;
+    if (side.key === state.open) exitSide(); else enterSide();
+  };
+  tab.onanimationend = () => tab.classList.remove('wiggle');
 }
 
 // ---------------------------------------------------------------- the columns' widths
@@ -9721,6 +9864,7 @@ async function start() {
   wireDrawerSwipes();
   wireHeadAway();
   wireRail();
+  wireSideTab();
   wireSideRoom();
   wireColumns();
   wireFavicons();

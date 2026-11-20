@@ -585,6 +585,17 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 #side-join[hidden] { display: none; }
 .sidechat.emerging { position: relative; z-index: 3; clip-path: inset(0px 0px 0px 100%); }
 #side-join svg { display: block; width: 100%; height: 100%; }
+/* The sidebar's tab (wireSideTab in ui/inbox.js): on the thread's right edge, halfway down, where
+   the panel comes from; open, on the panel's edge, which it goes back into. Pulled, the panel
+   comes or goes with it (--side-open). Only where the panel has room beside the thread. */
+#side-tab { display: none; }
+@media (min-width: 1100px) {
+  #side-tab { display: grid; place-items: center; grid-row: 1; grid-column: 3; justify-self: end; align-self: center; position: relative; z-index: 4;
+    width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-800); padding: 0px; cursor: pointer; touch-action: none; }
+  #side-tab[hidden] { display: none; }
+  main.siding #side-tab { margin-right: calc(var(--side-w) * var(--side-open, 1)); }
+  #side-tab.pulling { cursor: grabbing; }
+}
 
 /* ==== Wide screens: the bands, and the columns you size =======================================
    Three bands past a desktop's screen: ultrawide from 2400px (a 2560px screen), megawide from
@@ -2139,6 +2150,34 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum #side .sp-when.found { color: var(--spectrum-purple-1000); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum #side .sp-head { border-bottom: var(--spectrum-border-width-100) solid var(--side-line); }
 .spectrum #side .composer.sidebar { border-top: var(--spectrum-border-width-100) solid var(--side-line); background: none; }
+/* The tab is the sidebar's purple, a filled tab with the speech bubble, its open side on the edge
+   it comes out of. Under the pointer it comes out a little further. A dot: an answer to you
+   waits in the sidebar. As the agent sets to work or is done, it wiggles, out of the edge and
+   back, once. */
+.spectrum #side-tab {
+  border: 0;
+  border-radius: var(--s2-radius) 0px 0px var(--s2-radius);
+  background: var(--spectrum-purple-background-color-default);
+  color: var(--spectrum-white);
+  box-shadow: var(--content-shadow);
+  transform-origin: right center;
+  transition: width var(--s2-ease), background-color var(--s2-ease);
+}
+.spectrum #side-tab:hover, .spectrum #side-tab.pulling { width: calc(var(--spectrum-spacing-400) + var(--spectrum-spacing-75)); background: var(--spectrum-purple-1000); }
+.spectrum #side-tab:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum #side-tab .bubble-ico { position: static; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); padding: 0px; color: inherit; background: none; }
+.spectrum #side-tab .dot { display: none; position: absolute; top: var(--spectrum-spacing-100); left: var(--spectrum-spacing-75);
+  width: var(--spectrum-spacing-100); height: var(--spectrum-spacing-100); border-radius: 50%; background: var(--spectrum-white); }
+.spectrum #side-tab.fresh .dot { display: block; }
+.spectrum #side-tab.wiggle { animation: side-tab-wiggle var(--spectrum-animation-duration-1000) var(--spectrum-animation-ease-in-out); }
+@keyframes side-tab-wiggle {
+  0%, 100% { rotate: 0deg; translate: 0px 0px; }
+  15% { rotate: -9deg; translate: calc(-1 * var(--spectrum-spacing-100)) 0px; }
+  30% { rotate: 7deg; translate: calc(-1 * var(--spectrum-spacing-75)) 0px; }
+  45% { rotate: -5deg; translate: calc(-1 * var(--spectrum-spacing-50)) 0px; }
+  60% { rotate: 3deg; translate: 0px 0px; }
+  75% { rotate: -1deg; }
+}
 .spectrum .file-view .fv-wait .spin {
   width: var(--spectrum-progress-circle-size-small);
   height: var(--spectrum-progress-circle-size-small);
