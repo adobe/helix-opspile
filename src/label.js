@@ -18,7 +18,7 @@ import {
 } from './extract.js';
 import { isStaffDomain } from './lookup.js';
 import { LAYERS } from './stack.js';
-import { threadTechStatements } from './follows.js';
+import { threadAreaStatements, threadTechStatements } from './follows.js';
 import { resolveTech, techMoves } from './catalog.js';
 import { questionKeys } from './techid.js';
 import { areaNames, areasFor } from './areas.js';
@@ -768,7 +768,8 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
       about ? JSON.stringify(about) : null,
     );
   // The label and what the thread shows by index (`thread_tech`) at once.
-  await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown, about || {})]);
+  await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown, about || {}),
+    ...threadAreaStatements(env.DB, key, topics)]);
   const was = (before || []).map((r) => r.tech).sort();
   const is = Object.keys(shown).sort();
   const loose = clairicFacts(clairic.answers);

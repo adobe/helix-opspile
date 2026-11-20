@@ -133,6 +133,11 @@ channel stays under its team, with its shares, and a following team cannot start
 OR <shared channel> OR <followed>` stays a search by index (`teamsOf`, `mayWork`, `roomsOf`, the
 inbox's `inInbox`). A thread's agent writes the knowledge bases of the teams that follow it, as those
 of its channel's shares (`accessibleRepos`, `via: 'follow'`).
+A person also follows a **customer**, a **person** or an **area** (`person_follows_by`, migration
+0087; `PUT /api/follows { kind, target }`): the customer's conversations, the threads the person
+posted in, and those Clef puts in the area (`thread_areas`, by index, written with the label, as
+`thread_tech` is) are in their personal view the same way, and in `followersOf` for live updates
+and notifications. Teams follow technologies only.
 
 An org is a slug. What it is called, its icon (a domain, whose favicon is shown, or an image
 URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an org without

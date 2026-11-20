@@ -35,6 +35,28 @@ const COUNTED_PERSON_FOLLOWS = `SELECT person, tech FROM person_follows f
   WHERE EXISTS (SELECT 1 FROM team_members m WHERE m.person = f.person)`;
 
 /**
+ * SQL: the rows of `person_follows_by` that count (customers, people and areas), as
+ * COUNTED_PERSON_FOLLOWS does for technologies.
+ */
+const COUNTED_FOLLOWS_BY = `SELECT person, kind, target FROM person_follows_by f
+  WHERE EXISTS (SELECT 1 FROM team_members m WHERE m.person = f.person)`;
+
+/** What a person follows besides technologies. */
+export const FOLLOW_KINDS = ['org', 'person', 'area'];
+
+/** SQL: the targets of kind `kind` person `param` follows. */
+const followedBy = (param, kind) => `SELECT target FROM (${COUNTED_FOLLOWS_BY})
+  WHERE person = ${param} AND kind = '${kind}'`;
+
+/** SQL: the inbox entries with a member among the threads `threads` selects; conversations. */
+const entriesOf = (threads) => `SELECT COALESCE(x.logical_thread, x.thread) FROM threads x
+    WHERE x.thread IN (${threads}) AND x.kind = 'channel'`;
+
+/** SQL: thread row `alias` is in an entry with a member among the threads `threads` selects. */
+const inEntries = (alias, threads) => `(${alias}.thread IN (${entriesOf(threads)})
+    OR ${alias}.logical_thread IN (${entriesOf(threads)}))`;
+
+/**
  * SQL: the inbox entries (`COALESCE(logical_thread, thread)`) with a member that shows one of the
  * technologies `techs` selects (SQL that selects `tech` ids). Conversations only: an alert or an
  * ignored channel's thread is in no one's inbox by what it shows.
@@ -63,11 +85,20 @@ export const followedByTeams = (alias, param) => inFollowed(
   `SELECT tech FROM team_follows WHERE team IN (SELECT value FROM json_each(${param}))`,
 );
 
-/** SQL: thread row `alias` shows a technology person `param` (an SQL parameter, an id) follows. */
-export const followedByPerson = (alias, param) => inFollowed(
+/**
+ * SQL: thread row `alias` is in an entry person `param` (an SQL parameter, an id) follows: one
+ * that shows a technology they follow, a conversation of a customer they follow, one a person
+ * they follow posted in, or one Clef puts in an area they follow (thread_areas).
+ */
+export const followedByPerson = (alias, param) => `(${inFollowed(
   alias,
   `SELECT tech FROM (${COUNTED_PERSON_FOLLOWS}) WHERE person = ${param}`,
-);
+)}
+  OR (${alias}.kind = 'channel' AND ${alias}.org IN (${followedBy(param, 'org')}))
+  OR ${inEntries(alias, `SELECT m.thread FROM messages m WHERE m.deleted = 0
+      AND m.person IN (SELECT CAST(target AS INTEGER) FROM (${followedBy(param, 'person')}))`)}
+  OR ${inEntries(alias, `SELECT a.thread FROM thread_areas a
+      WHERE a.area IN (${followedBy(param, 'area')})`)})`;
 
 /**
  * SQL, `?1` a thread: the members of its entry (`x`), each with what it shows (`g`). For who
@@ -115,17 +146,33 @@ export async function entryFollowers(env, thread) {
   return (results || []).map((r) => r.who);
 }
 
-/** Which of `people` (ids) follow a technology inbox entry `thread` shows. A Set of ids. */
+/**
+ * Which of `people` (ids) follow inbox entry `thread`: a technology it shows, its customer, a
+ * person who posted in it, or an area it is in. A Set of ids.
+ */
 export async function followersOf(env, people, thread) {
   const ids = [...new Set([].concat(people || []).filter(Boolean))];
   if (!env.DB || !ids.length || !thread) {
     return new Set();
   }
-  const { results } = await env.DB.prepare(`${ENTRY_TECH}
-      JOIN (SELECT person AS who, tech FROM (${COUNTED_PERSON_FOLLOWS})
-        WHERE person IN (SELECT value FROM json_each(?2))) f ON f.tech = g.tech
-    WHERE x.kind = 'channel'`).bind(String(thread), JSON.stringify(ids)).all();
-  return new Set((results || []).map((r) => r.who));
+  const [{ results: tech }, { results: more }] = await Promise.all([
+    env.DB.prepare(`${ENTRY_TECH}
+        JOIN (SELECT person AS who, tech FROM (${COUNTED_PERSON_FOLLOWS})
+          WHERE person IN (SELECT value FROM json_each(?2))) f ON f.tech = g.tech
+      WHERE x.kind = 'channel'`).bind(String(thread), JSON.stringify(ids)).all(),
+    env.DB.prepare(`WITH k AS (SELECT COALESCE(logical_thread, thread) AS g FROM threads WHERE thread = ?1),
+        x AS (SELECT t.thread, t.org FROM k JOIN threads t ON (t.thread = k.g OR t.logical_thread = k.g)
+          WHERE t.kind = 'channel'),
+        f AS (SELECT person, kind, target FROM (${COUNTED_FOLLOWS_BY})
+          WHERE person IN (SELECT value FROM json_each(?2)))
+      SELECT DISTINCT f.person AS who FROM f WHERE
+        (f.kind = 'org' AND f.target IN (SELECT org FROM x))
+        OR (f.kind = 'area' AND f.target IN (SELECT a.area FROM thread_areas a WHERE a.thread IN (SELECT thread FROM x)))
+        OR (f.kind = 'person' AND CAST(f.target AS INTEGER) IN (SELECT m.person FROM messages m
+          WHERE m.thread IN (SELECT thread FROM x) AND m.deleted = 0))`)
+      .bind(String(thread), JSON.stringify(ids)).all(),
+  ]);
+  return new Set([...(tech || []), ...(more || [])].map((r) => r.who));
 }
 
 /**
@@ -178,6 +225,79 @@ export async function teamFollows(env, team) {
   const { results } = await env.DB.prepare(`SELECT tech, added_by, added_at FROM team_follows
     WHERE team = ? ORDER BY tech`).bind(team).all();
   return results || [];
+}
+
+/**
+ * What person `person` follows besides technologies: `{ org: [slug], person: [id], area: [id] }`.
+ */
+export async function personFollowsBy(env, person) {
+  const { results } = await env.DB.prepare(`SELECT kind, target FROM person_follows_by
+    WHERE person = ? ORDER BY kind, target`).bind(person).all();
+  const out = Object.fromEntries(FOLLOW_KINDS.map((k) => [k, []]));
+  for (const r of results || []) {
+    out[r.kind].push(r.kind === 'person' ? Number(r.target) : r.target);
+  }
+  return out;
+}
+
+/** Whether `target` is one of kind `kind` that may be followed: a customer, a person, an area. */
+async function knownTarget(env, kind, target) {
+  const id = String(target ?? '').trim();
+  if (!id || id.length > 120) {
+    return null;
+  }
+  // A customer is one with threads, whether or not the admin pages named it (`orgs`).
+  const sql = {
+    org: 'SELECT 1 FROM threads WHERE org = ?1 UNION ALL SELECT 1 FROM orgs WHERE slug = ?1',
+    person: 'SELECT 1 FROM people WHERE id = ?1',
+    area: 'SELECT 1 FROM areas WHERE id = ?1 AND enabled = 1',
+  }[kind];
+  const row = await env.DB.prepare(`${sql} LIMIT 1`).bind(kind === 'person' ? Number(id) : id).first();
+  return row ? id : null;
+}
+
+/**
+ * Person `person` follows `target` of `kind` (a customer's slug, a person's id, an area's id), or
+ * (`follow` false) no more. As setPersonFollow: only someone on an ops team follows; anyone stops.
+ */
+export async function setPersonFollowBy(env, {
+  person, kind, target, follow,
+}) {
+  if (!FOLLOW_KINDS.includes(kind)) {
+    return { error: `kind is ${FOLLOW_KINDS.join(', ')} or tech`, status: 400 };
+  }
+  if (!follow) {
+    const { meta } = await env.DB.prepare(`DELETE FROM person_follows_by
+      WHERE person = ? AND kind = ? AND target = ?`).bind(person, kind, String(target ?? '')).run();
+    return { ok: true, changed: Boolean(meta.changes) };
+  }
+  const member = await env.DB.prepare('SELECT 1 FROM team_members WHERE person = ? LIMIT 1')
+    .bind(person).first();
+  if (!member) {
+    return { error: 'only members of an ops team follow', status: 403 };
+  }
+  const id = await knownTarget(env, kind, target);
+  if (!id) {
+    return { error: `no such ${{ org: 'customer', person: 'person', area: 'area' }[kind]}` };
+  }
+  const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM person_follows_by WHERE person = ? AND kind = ?')
+    .bind(person, kind).first('n');
+  if (n >= MAX_FOLLOWS) {
+    return { error: `you follow at most ${MAX_FOLLOWS} of each` };
+  }
+  const { meta } = await env.DB.prepare(`INSERT INTO person_follows_by (person, kind, target, added_at)
+    VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`).bind(person, kind, id, new Date().toISOString()).run();
+  return { ok: true, changed: Boolean(meta.changes) };
+}
+
+/** The statements that make thread `thread`'s rows of `thread_areas` what `topics` says. */
+export function threadAreaStatements(db, thread, topics) {
+  return [
+    db.prepare('DELETE FROM thread_areas WHERE thread = ?').bind(thread),
+    ...Object.entries(topics || {}).filter(([, p]) => typeof p === 'number')
+      .map(([area, p]) => db.prepare('INSERT INTO thread_areas (thread, area, p) VALUES (?, ?, ?)')
+        .bind(thread, area, p)),
+  ];
 }
 
 /** The technologies person `person` follows, by id. */
