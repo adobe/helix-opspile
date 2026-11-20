@@ -1079,7 +1079,9 @@ since, page by page, one `import` job on the NORMALIZE queue a page, which sends
 `conversations.history` lists the roots posted since (a thread's replies with
 `conversations.replies`); Graph lists a channel's threads by their latest activity, with
 `$expand=replies`, and the first one quiet since before then ends the listing. A page stops
-after about 300 messages, and the next job goes on in the same page. Alert channels are left out
+after about 300 messages, and the next job goes on in the same page. Pages are a few hundred
+subrequests each, so they are spread out: the script starts each channel at its own second, and
+a channel's next page waits 30 to 60 seconds, so that a queue batch rarely holds two. Alert channels are left out
 unless asked for (`--alerts`), and ignored ones always.
 
 - **Only what the inbox does not have.** A thread with a message heard of any other way (live, a
