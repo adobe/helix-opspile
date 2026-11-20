@@ -141,18 +141,31 @@ function channelLine(c) {
     why.length ? `matched ${why.join('; ')}` : '', c.url || ''].filter(Boolean).join(' | ')}`;
 }
 
-/** The technologies Clef saw in the agent's channel (channel_tech), likeliest first. */
-async function channelTech(env, t) {
-  const { results } = await env.DB.prepare(`SELECT tech, p FROM channel_tech
-    WHERE source = ? AND tenant = ? AND channel_id = ? AND p >= ? ORDER BY p DESC, tech`)
-    .bind(t.source, t.tenant, t.channelId, TECH_MIN).all();
+/** How far back the agent's evidence of the customer's stack reaches. */
+const EVIDENCE_DAYS = 90;
+
+/**
+ * What Clef said the customer's threads of the last EVIDENCE_DAYS show (thread_tech, each
+ * thread's own), `[{ tech, n }]`, the most threads first: the agent's evidence for the stack
+ * drawing, the customer-level record. A technology the customer left stops showing up here.
+ */
+async function customerTech(env, t, now = new Date()) {
+  if (!t.org) {
+    return [];
+  }
+  const since = new Date(now.getTime() - EVIDENCE_DAYS * 86400000).toISOString();
+  const { results } = await env.DB.prepare(`SELECT g.tech, COUNT(DISTINCT g.thread) AS n
+    FROM thread_tech g JOIN threads x ON x.thread = g.thread
+    WHERE x.org = ? AND x.kind = 'channel' AND x.last_at >= ? AND g.p >= ?
+    GROUP BY g.tech ORDER BY n DESC, g.tech`).bind(t.org, since, TECH_MIN).all();
   return results || [];
 }
 
 /**
  * What the agent is told about the customer's stack drawing: its parts by layer and its flows,
- * with the hash draw_stack takes as `base`, or that there is none; and the technologies Clef saw
- * in the channel that no part is (`seen`, `[{ tech, name, p }]`).
+ * with the hash draw_stack takes as `base`, or that there is none; the technologies Clef saw in
+ * the customer's recent threads that no part is (`seen`, `[{ tech, name, n }]`, customerTech),
+ * and the parts none of them showed.
  */
 export function stackNote(file, seen = [], moves = {}) {
   const lines = [];
@@ -177,7 +190,13 @@ export function stackNote(file, seen = [], moves = {}) {
   }
   const missing = seen.filter((x) => !drawn.has(x.tech));
   if (missing.length) {
-    lines.push(`Clef saw in this channel, and the drawing has no part for: ${missing.map((x) => `${x.name} (${x.tech}, ${Math.round(x.p * 100)}%)`).join(', ')}. Clef can be wrong: draw a part only for what the thread or the knowledge base shows.`);
+    lines.push(`Clef saw in the customer's threads of the last ${EVIDENCE_DAYS} days, and the drawing has no part for: ${missing.map((x) => `${x.name} (${x.tech}, ${x.n} thread${x.n === 1 ? '' : 's'})`).join(', ')}. Clef can be wrong: draw a part only for what the thread or the knowledge base shows.`);
+  }
+  // In the drawing, but no thread showed it lately: retired, or only not talked about.
+  const recent = new Set(seen.map((x) => x.tech));
+  const quiet = [...drawn].filter((id) => id !== 'own' && !recent.has(id));
+  if (seen.length && quiet.length) {
+    lines.push(`In the drawing, but none of the customer's threads of the last ${EVIDENCE_DAYS} days showed it: ${quiet.join(', ')}. Leave it unless a thread says it was retired or replaced.`);
   }
   return lines.join('\n');
 }
@@ -374,7 +393,7 @@ export function opspileExtension(ctx) {
       }
       const [file, seen, names, moves] = await Promise.all([
         readText(env, org.artifact, STACK_PATH, { full: true }).catch(() => ({ error: 'unreadable' })),
-        t.channelId ? channelTech(env, t) : [],
+        customerTech(env, t),
         techNames(env, t.team),
         techMoves(env),
       ]);

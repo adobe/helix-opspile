@@ -89,8 +89,9 @@ import { mergeSettings, withDefaults } from '../src/settings.js';
 import { slackMessageRefs } from '../src/slackurl.js';
 import { previewOf, readState, waitingOn } from '../src/threads.js';
 import {
-  fold, orgStacks, readMembers, threadTech,
+  fold, readMembers, threadTech,
 } from '../src/api.js';
+import { stackParts } from '../src/orgstacks.js';
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin, devFavicon } from './dev-ui-admin.mjs';
 import { faviconProxy } from '../src/favicons.js';
@@ -153,6 +154,24 @@ const compileKb = async (repo) => {
 for (const b of kb.list()) {
   // eslint-disable-next-line no-await-in-loop
   await compileKb(b.repo);
+}
+/** Each customer's stack, from its stack.md, as src/orgstacks.js keeps it in D1. */
+const orgStacks = {};
+const readOrgStack = async (repo) => {
+  const b = kb.list().find((x) => x.repo === repo);
+  if (b && b.kind === 'org') {
+    const f = await kb.read(repo, STACK_PATH);
+    const parts = stackParts(f.error ? null : f.text);
+    if (parts.length) {
+      orgStacks[b.slug] = parts;
+    } else {
+      delete orgStacks[b.slug];
+    }
+  }
+};
+for (const b of kb.list()) {
+  // eslint-disable-next-line no-await-in-loop
+  await readOrgStack(b.repo);
 }
 // The names of tech stack and topic ids (src/label.js vocab), from the teams' configuration on
 // the admin pages: read again on every request, so a change there shows on the next one.
@@ -658,9 +677,9 @@ function inbox(team, before = null, personal = false, only = null) {
       .map((t) => [t.slug, { name: t.name, members: t.members }])),
     members: members(...scope),
     vocab: vocabNames,
-    // Each customer's stack over its channels here, as src/api.js `orgStacks` makes it.
-    stacks: orgStacks(threads.flatMap((t) => channelTech(store.threads.get(t.thread))
-      .map((x) => ({ org: t.org, ...x })))),
+    // Each customer's stack, from its drawing (src/orgstacks.js).
+    stacks: Object.fromEntries([...new Set(threads.map((t) => t.org))]
+      .filter((org) => orgStacks[org]).map((org) => [org, orgStacks[org]])),
     threads,
     page,
     ...(personal && !only && !page.next ? { elsewhere: elsewhereCounts() } : {}),
@@ -995,11 +1014,15 @@ function thread(asked) {
     watermarks,
     label: store.labels.get(key) || null,
     model: store.labels.get(key) || null,
-    tech: channelTech(entry),
-    // As src/api.js: what the members' labels say the thread shows (labels.tech).
-    thread_tech: threadTech(group.map(({ row: m }) => ({
-      thread: m.thread, tech: store.labels.get(m.thread)?.tech ?? null,
-    })), channelTech(entry), group.map(({ row: m }) => m.thread)),
+    tech: [],
+    // As src/api.js: what the members' labels say the thread shows (labels.tech), else, in the
+    // preview, what the fake channel lists.
+    thread_tech: (() => {
+      const shows = threadTech(group.map(({ row: m }) => ({
+        thread: m.thread, tech: store.labels.get(m.thread)?.tech ?? null,
+      })));
+      return shows.length ? shows : channelTech(entry);
+    })(),
     topics: store.labels.get(key)?.topics || [],
     vocab: vocabNames,
     reviews: [],
@@ -1187,6 +1210,9 @@ async function kbApi(req, res, url) {
     }
     if (inCatalog(body.path)) {
       await compileKb(repo);
+    }
+    if (body.path === STACK_PATH) {
+      await readOrgStack(repo);
     }
     const now = remove ? null : await kb.read(repo, body.path);
     return json(res, {

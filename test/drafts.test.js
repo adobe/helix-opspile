@@ -389,17 +389,14 @@ describe('shared drafts', () => {
     const e = env();
     e.DB.sqlite.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').run(ROOT, FOLLOW);
     e.DB.sqlite.prepare('UPDATE messages SET permalink = \'https://s.example/p\' || id').run();
-    e.DB.sqlite.prepare(`INSERT INTO channel_tech (source, tenant, channel_id, tech, p, thread,
-      updated_at) VALUES ('slack', 'E1', 'C1', 'eds', 1, ?, '2026-10-21T10:00:00Z'),
-      ('slack', 'E1', 'C1', 'akamai', 0.9, 'slack:E1:C1:9.1', '2026-10-21T10:00:00Z')`).run(ROOT);
     const open = async () => (await call(e, BO, 'GET', `/api/thread?thread=${ROOT}`)).json();
     let data = await open();
     assert.deepEqual(data.members.map((m) => [m.thread, m.permalink]), [
       [ROOT, 'https://s.example/p1.1'], [FOLLOW, 'https://s.example/p2.1'],
     ]);
-    assert.deepEqual(data.tech.map((t) => t.tech), ['eds', 'akamai']);
-    // Labeled before labels had their technologies: those a member set for the channel.
-    assert.deepEqual(data.thread_tech, [{ tech: 'eds', p: 1 }]);
+    // Nothing at the channel's level: what the members' labels say, and none yet.
+    assert.deepEqual(data.tech, []);
+    assert.deepEqual(data.thread_tech, []);
     // Once a member is labeled again, what the labels say.
     e.DB.sqlite.prepare(`INSERT INTO labels (thread, labeled_through, model, labeled_at, tech)
       VALUES (?, '', 'clef', '', '{"akamai":0.85}'), (?, '', 'clef', '', '{}')`).run(FOLLOW, ROOT);

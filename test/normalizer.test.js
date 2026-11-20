@@ -1129,8 +1129,9 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual(about.map((c) => Object.keys(c.input.questions)), [[`about.${questionKeys(['eds']).eds}`]]);
     assert.match(Object.values(about[0].input.questions)[0].instructions, /^Is this thread about /);
     assert.ok(asked.includes('topic.cdn'));
-    // The rules detected Edge Delivery, as sure as can be; Clef said nothing about it.
-    assert.deepEqual(e.DB.rows('SELECT tech, p FROM channel_tech'), [{ tech: 'eds', p: 1 }]);
+    // The rules detected Edge Delivery, as sure as can be; Clef said nothing about it. Nothing is
+    // kept per channel any more: the customer's stack is its drawing's.
+    assert.deepEqual(e.DB.rows('SELECT tech, p FROM channel_tech'), []);
     // And the thread's own (labels.tech), for its header.
     assert.deepEqual(e.DB.rows('SELECT tech FROM labels'), [{ tech: '{"eds":1}' }]);
     // By index too, for the teams and people who follow it (src/follows.js), and what changed.

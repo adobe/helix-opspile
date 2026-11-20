@@ -311,33 +311,31 @@ describe('the simple personal view', () => {
       assert.match(page.groupHtml(list().find((x) => x.head === 'initech')), /<span class="logo"><span class="ico av">I<\/span><\/span>/);
     });
 
-    it('names the key parts of the customer\'s stack beside it: the likeliest of each layer', () => {
+    it('names the key parts of the customer\'s stack beside it: its drawing\'s first of each layer', () => {
       state.data.vocab = {
-        tech: {
-          akamai: 'Akamai', fastly: 'Fastly', eds: 'Edge Delivery', da: 'Document Authoring', opspile: 'Enterprise Support inbox', github: 'GitHub',
-        },
-        layers: {
-          akamai: 'edge', fastly: 'edge', eds: 'site', da: 'content', opspile: 'other', github: 'code',
-        },
         stack: [{ id: 'edge', name: 'Edge' }, { id: 'site', name: 'Site' }, { id: 'content', name: 'Content' }, { id: 'code', name: 'Code' }, { id: 'other', name: 'Other' }],
       };
+      // The parts of its stack drawing (src/orgstacks.js), as the drawing has them.
       state.data.stacks = {
-        acme: [{ tech: 'eds', p: 1 }, { tech: 'opspile', p: 0.99 }, { tech: 'da', p: 0.97 }, { tech: 'fastly', p: 0.9 }, { tech: 'akamai', p: 0.85 }, { tech: 'nope', p: 0.9 }],
+        acme: [
+          { name: 'Fastly', tech: 'fastly/cdn', layer: 'edge' }, { name: 'Akamai', tech: 'akamai/cdn', layer: 'edge' },
+          { name: 'Edge Delivery', tech: 'adobe/aem-sites/edge-delivery', layer: 'site' },
+          { name: 'Enterprise Support inbox', tech: null, layer: 'other' },
+          { name: 'Document Authoring', tech: 'adobe/aem-sites/document-authoring', layer: 'content' },
+        ],
       };
-      // Top to bottom, one per layer, the likeliest; what is in no layer, or in Other, is not.
+      // Top to bottom, one per layer, the first; Other's is not.
       assert.deepEqual(page.stackLine('acme'), ['Fastly', 'Edge Delivery', 'Document Authoring']);
       const head = page.groupHtml(list()[0]);
       assert.match(head, /<\/button><button type="button" class="stk-line" data-stack="acme" aria-haspopup="dialog" title="ACME&#39;s tech stack: Fastly, Edge Delivery, Document Authoring. Show the drawing"><span>Fastly<\/span><span>Edge Delivery<\/span><span>Document Authoring<\/span><\/button><\/div>$/);
       assert.match(head, /class="grp new sticky stacked"/);
-      // A customer Clef saw nothing of has none.
+      // A customer without a drawing has none.
       assert.doesNotMatch(page.groupHtml(list().find((x) => x.head === 'initech')), /stk-line/);
-      // Pages merge: each technology at the highest probability of any.
-      const merged = page.mergeStacks(state.data.stacks, { acme: [{ tech: 'akamai', p: 0.95 }, { tech: 'github', p: 0.9 }], initech: [{ tech: 'da', p: 1 }] });
-      assert.deepEqual(merged.acme.slice(0, 3), [{ tech: 'eds', p: 1 }, { tech: 'opspile', p: 0.99 }, { tech: 'da', p: 0.97 }]);
-      assert.deepEqual(merged.acme.find((t) => t.tech === 'akamai'), { tech: 'akamai', p: 0.95 });
-      assert.deepEqual(merged.initech, [{ tech: 'da', p: 1 }]);
+      // Pages merge: a customer's drawing is the same on each.
+      const merged = page.mergeStacks(state.data.stacks, { initech: [{ name: 'GitHub', tech: 'github/github', layer: 'code' }] });
+      assert.deepEqual(Object.keys(merged).sort(), ['acme', 'initech']);
       state.data.stacks = merged;
-      assert.deepEqual(page.stackLine('acme'), ['Akamai', 'Edge Delivery', 'Document Authoring', 'GitHub']);
+      assert.deepEqual(page.stackLine('initech'), ['GitHub']);
     });
 
     it('sets apart the customers with unread threads, and carries no badge on the heading', () => {
