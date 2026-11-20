@@ -1045,7 +1045,18 @@ and an unchanged thread is never labeled twice):
   resolved. The state it reads is the thread as text, with every author marked as Adobe staff
   or customer. `access` is about permissions and getting into tools; people joining, leaving,
   being introduced or away are `people`; scheduling and sharing a call's notes are `meeting`.
-- In the same call, Clef answers a yes/no question per **topic** (src/label.js `TOPICS`):
+- In the same call, Clef answers a yes/no question per **area** (a topic, in the code and the
+  inbox's Topic filter). Areas are authored: each is a file at `areas/<id>.md` of a team's
+  knowledge base (type `Area`: its `title` the name, its `description` what Clef is asked, "Is
+  this thread about <description>?", `enabled: false` to stop asking it), compiled into `areas`
+  (migration 0086, src/areas.js) with the team's catalog, on every write and by the cron. The id is
+  the file's name, so a rename (its title) keeps its labels. Clef asks every team's, each id
+  once (the admin team's, else the first team's by name, that is on), the built-in ones in the
+  order they were measured in and the others after. Only people write them (the admin team and
+  team managers; an agent's write under `areas/` is refused): each is one more question in every
+  label. Until a team has written any, the built-in list below is asked, and
+  `npm run areas:bootstrap` writes it as kb-team-admin's files, which ask the same.
+  The built-in areas (src/label.js `TOPICS`) are:
   authoring and content, sign-in and permissions, project plan and go-live, caching and
   delivery, domains and certificates, performance, preview and publishing, SEO, URLs and
   redirects, code and deployment, blocks and front-end code, errors and traffic, limits and

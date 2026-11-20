@@ -20,6 +20,9 @@ import {
   splitFrontmatter, stampGenerated, SYSTEM_PROMPT,
 } from './okf.js';
 import { checkStackTech } from '../stacktech.js';
+import {
+  AREAS, checkArea, compileAreas, isArea,
+} from '../areas.js';
 import { storeOrgStack } from '../orgstacks.js';
 import { STACK_PATH } from '../stack.js';
 import {
@@ -75,6 +78,10 @@ export function checkChanges(changes, { staff = false, kind = null } = {}) {
       // eslint-disable-next-line no-continue
       continue;
     }
+    // An area is a Clef question in every label: people author them (src/areas.js), not agents.
+    if (!staff && String(c.path).startsWith(`${AREAS}/`)) {
+      return `${c.path}: areas are kept by the admin team and team managers, on the Topics page`;
+    }
     if (c.delete) {
       if (RESERVED.has(String(c.path).split('/').pop())) {
         return `${c.path} is maintained automatically`;
@@ -83,6 +90,7 @@ export function checkChanges(changes, { staff = false, kind = null } = {}) {
       const why = checkConcept(c.path, String(c.content ?? ''))
         // What is under products/ of a team's is what Clef asks: people are held to it too.
         || (kind === 'team' ? checkCatalog(c.path, String(c.content ?? '')) : null)
+        || (kind === 'team' ? checkArea(c.path, String(c.content ?? '')) : null)
         || (!staff && kind ? checkLayout(c.path, String(c.content ?? ''), kind) : null);
       if (why) {
         return `${c.path}: ${why}`;
@@ -309,12 +317,15 @@ export async function compileTree(env, artifact, fs, commit) {
     return null;
   }
   try {
-    const paths = fs.files(DIR).filter((f) => !f.startsWith('.git/') && inCatalog(f));
+    const paths = fs.files(DIR).filter((f) => !f.startsWith('.git/') && (inCatalog(f) || isArea(f)));
     const files = await Promise.all(paths.map(async (path) => ({
       path, text: await fs.promises.readFile(`${DIR}/${path}`, 'utf8'),
     })));
     const team = artifact.replace(/^kb-team-/, '');
-    return await storeCatalog(env, { team, repo: artifact, commit }, compileCatalog(files));
+    return await storeCatalog(env, { team, repo: artifact, commit }, {
+      ...compileCatalog(files.filter((f) => inCatalog(f.path))),
+      areas: compileAreas(files.filter((f) => isArea(f.path))),
+    });
   } catch (e) {
     console.error(JSON.stringify({
       route: 'kb', action: 'catalog', artifact, error: e.message,
@@ -398,7 +409,7 @@ export async function writeKnowledge(env, artifact, changes, {
               })));
           });
         }
-        if (kindOf(artifact) === 'team' && changes.some((c) => inCatalog(c.path))) {
+        if (kindOf(artifact) === 'team' && changes.some((c) => inCatalog(c.path) || isArea(c.path))) {
           // eslint-disable-next-line no-await-in-loop
           await compileTree(env, artifact, fs, result.commit);
         }
