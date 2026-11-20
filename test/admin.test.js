@@ -120,7 +120,7 @@ describe('admin: teams and members', () => {
       { team: 'search', enabled: 1, changed_by: 'Ada' },
     ]);
     assert.deepEqual(rowsOf(`SELECT tool, scope, target, enabled, changed_by
-      FROM agent_tool_switches ORDER BY tool`), ['computer', 'extraction_rules', 'web_search'].map((tool) => ({
+      FROM agent_tool_switches ORDER BY tool`), ['computer', 'extraction_rules', 'label', 'resolve', 'web_search'].map((tool) => ({
       tool, scope: 'team', target: 'search', enabled: 1, changed_by: 'Ada',
     })));
     assert.deepEqual(rowsOf(`SELECT server, scope, target, enabled, changed_by

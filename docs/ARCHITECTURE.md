@@ -801,8 +801,8 @@ question: it is one channel, and switches back as easily). The switch is a row i
 default, **On by default** (`agent_teams`, after a question in the page, since it switches many
 channels at once): on, every channel of the team that nobody switched has an agent, the
 channels it gets later too. A new team starts with it on (the admin team's name for it in
-`changed_by`), and with the [agent tools](#agent-tools) `computer`, `extraction_rules` and
-`web_search` and
+`changed_by`), and with the [agent tools](#agent-tools) `computer`, `extraction_rules`,
+`web_search`, `resolve` and `label` and
 the [global servers](#global-mcp-servers) `browser` and `github` on for the team (those marked
 `newTeams`; `fluffyjaws`, which acts as a person, is not); the teams from before that have them as they had them, and deleting a team
 deletes them. A channel nobody switched has an agent when its team's default or
@@ -1043,8 +1043,9 @@ kind (channels the rules ignore never get there).
   urgency and its level, `resolved_p`) and the facts (tickets, sites, CVEs, URLs, the problem). Its `url` opens the
   thread in the inbox's personal view.
 - **As the inbox shows it.** The label, title, resolution and facts are the inbox entry's: a
-  re-threaded group's latest member's label (with reviews), its first thread's title, the facts
-  of every member, and resolved by a staff ✅ on a member's root (until a customer writes again)
+  re-threaded group's latest member's label (with its agent's answers and reviews), its first
+  thread's title, the facts of every member, and resolved by a staff ✅ on a member's root or
+  its agent (until a customer writes again)
   or else by Clef (`resolved_p` ≥ 0.5). Who it waits on is the inbox's `waiting_on`: Clef's
   next actor, except that a thread where Adobe posted last never waits on us, an unlabeled one
   waits on us when the customer posted last, and a 🙏 after the last message leaves nothing
@@ -1788,6 +1789,15 @@ The models see reactions too: each message is followed by who reacted with what 
 Adobe staff), and a reaction relabels the thread, so a customer's ✅ or 👍 on the answer can
 make Clef call it resolved.
 
+**The thread's agent resolves too**, with `resolve_thread` (the agent tool `resolve`, on by
+default, see [Agent tools](#agent-tools)): a row in `agent_labels` (`question = 'resolved'`,
+`src/agentlabels.js`), which `resolutionFacts` counts as a staff ✅ on the root from its `at`,
+named "opspile agent", reopened by a customer's message the same way. It is in the inbox only:
+nothing is put on the platform, so the channel never sees it. While only the agent resolved a
+thread, the ✅ button says so and opens it again (`POST /api/resolve` with `undo` deletes the
+agent's row, for anyone on the team, with no account on the platform needed); the agent takes
+it back with `undo` too.
+
 ### New threads
 
 The ✎ button next to the list's bell opens a composer in the pane, where a thread would show.
@@ -2422,9 +2432,9 @@ pile 3 (git history); replaying pile 1 pokes them, but they find nothing past th
 
 ### Agent tools
 
-Six tools are off until they are turned on (a new team starts with `computer`,
-`extraction_rules` and `web_search` on for the team, and migration 0077 turned `web_search` on
-for every team before it). All but `any_thread` by the admin team or a team's managers, as
+Eight tools are off until they are turned on (a new team starts with `computer`,
+`extraction_rules`, `web_search`, `resolve` and `label` on for the team; migration 0077 turned
+`web_search` on for every team before it, and migration 0091 `resolve` and `label`). All but `any_thread` by the admin team or a team's managers, as
 the global MCP servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
 over its team's), on the team's or the customer's page (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
@@ -2811,6 +2821,20 @@ Worker logs a search's team, provider, result count or error, never its query. A
 or go on without searching. Each search that answered is counted for COGS as the thread's
 (`web_search`, per provider, at the provider's list price). It is on for every team: new teams
 get it (`newTeams`) and migration 0077 switched it on for the teams before.
+
+**`resolve` and `label`.** The agent reads every message of its thread anyway, so it says what
+Clef would otherwise guess: `resolve_thread` marks the thread resolved (see [Resolved](#resolved)),
+`label_thread` corrects Clef's kind, urgency and next actor (`waiting_on` to the agent, as the
+inbox calls it), with a reason, and without arguments shows Clef's and its own. Both write
+`agent_labels` (`src/agentlabels.js`, one row per platform thread and question, on the entry's
+latest member, whose label the inbox shows), and nothing goes to the platform, so they work in
+the sidebar too. `effectiveLabel` (`src/review.js`) puts the agent's answers in place of Clef's
+while they hold: a kind until the agent changes it (what a thread is about rarely changes, and
+Clef's answer can flip from one message to the next), the urgency and the next actor until a
+person posts after them (`threads.last_at`), when Clef reads the thread anew. A label review of
+the current label wins over the agent's. The label lists the questions the agent's answers
+replaced (`agent`). The open inboxes hear of a change at once (the room's `thread` event), and
+the export sends it to ClickHouse. Both are on for every team (migration 0091, `newTeams`).
 
 ## COGS
 

@@ -97,9 +97,20 @@ a person whose thread no longer shows what they follow still hears of it, and th
 `labeled_through` matches the label's (`src/review.js`).
 
 **Resolution.** Clef decides → resolved → reopened → Clef decides. Not stored: `resolution` in
-`src/resolve.js` works it out from the staff ✅ on the root, the latest customer message and
+`src/resolve.js` works it out from the staff ✅ on the root, the thread agent's resolution (an
+`agent_labels` row, which counts as a ✅ from its `at`), the latest customer message and
 `labeled_through`. A reopened thread stays open until Clef has read that message. `isResolved` is the
-rule for everyone but the page, which has its own copy.
+rule for everyone but the page, which has its own copy. The ✅ button's undo deletes the agent's
+row as well as the person's ✅, so a thread only the agent resolved can be opened again by anyone
+on the team.
+
+**The agent's labels.** none → set → no longer held (`agent_labels`, `src/agentlabels.js`): one
+row per platform thread and question, replaced by the agent's next answer, never stored as
+expired. Whether a row holds is worked out on each read (`holds`): a kind always, the urgency and
+the next actor while no person has posted after its `at` (`threads.last_at`, which bots do not
+move, so the agent's own posts keep them). A row is written on the entry's latest member, and the
+same question is deleted on the others in the same batch, so one row speaks for the group. A
+person's label review of the current label wins over it (`effectiveLabel`).
 
 **Status pile.** critical, hot, you, waiting, silent, team, quiet. Not stored: `statusOf` in
 `ui/inbox.js`, from the thread, the viewer and the clock (for normal and low urgency, a clock

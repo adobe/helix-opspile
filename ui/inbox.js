@@ -2648,12 +2648,19 @@ const canReact = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt 
 const canEdit = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt
   && (m.editable === 'app' || (m.editable === 'user' && Boolean(state.me?.edit?.[m.source])));
 
-/** The ✅ button: resolve, or take your ✅ off again. */
+/** Whether the open thread's ✅ button takes a resolution back: yours, or only its agent's. */
+const undoable = (r) => r?.state === 'resolved' && (r.mine || r.agent);
+
+/** The ✅ button: resolve, or take your ✅ (or the agent's resolution, in the inbox only) off again. */
 function resolveButton(thread, r) {
-  // Without the first message there is nothing to put the ✅ on.
-  if (state.data?.me?.readonly || !thread.root_at || (thread.kind === 'alert' && !r) || thread.source === 'discord') return '';
-  const mine = r?.state === 'resolved' && r.mine;
-  return `<button class="resolve" id="resolve" aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" data-mine="${mine ? '1' : ''}" title="${mine ? 'Take your ✅ off the first message again' : 'Add ✅ to the first message, as you: resolved'} (e)">${mine ? '✅ Resolved · undo' : '✅ Resolve'}</button>`;
+  if (state.data?.me?.readonly) return '';
+  const agent = r?.state === 'resolved' && r.agent && !r.mine;
+  // Without the first message there is nothing to put the ✅ on; the agent's needs none.
+  if (!agent && (!thread.root_at || (thread.kind === 'alert' && !r) || thread.source === 'discord')) return '';
+  const mine = undoable(r);
+  const undo = agent ? '✅ Resolved by the agent · reopen' : '✅ Resolved · undo';
+  const title = agent ? 'The agent resolved it, in the inbox only: open it again' : 'Take your ✅ off the first message again';
+  return `<button class="resolve" id="resolve" aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" data-mine="${mine ? '1' : ''}" data-undo="${esc(undo)}" title="${mine ? title : 'Add ✅ to the first message, as you: resolved'} (e)">${mine ? undo : '✅ Resolve'}</button>`;
 }
 
 /** Whether `m` goes on from `prev`: same author, same post and day, within five minutes. */
@@ -4570,7 +4577,7 @@ function wireHoldMenu(key, thread) {
     save.hidden = !text;
     save.textContent = d ? '✎ Update draft' : '✎ Save draft';
     if (!btn) return;
-    if (btn.dataset.mine) btn.textContent = '✅ Resolved · undo';
+    if (btn.dataset.mine) btn.textContent = btn.dataset.undo;
     else btn.textContent = text ? 'Send and ✅ resolve' : '✅ Resolve';
   };
   const show = () => { label(); menu.hidden = save.hidden && !btn; };
@@ -7436,7 +7443,9 @@ async function resolveThread(key, undo) {
   if (btn) { btn.disabled = true; btn.textContent = undo ? 'Taking ✅ off…' : 'Resolving…'; }
   const res = await write('/api/resolve', { thread: key, undo });
   if (res.failed) { if (btn) openThread(key, { live: true }); return res; }
-  toast(undo ? 'Your ✅ is off again.' : 'Resolved: ✅ on the first message, as you.', { label: 'Undo', run: () => resolveThread(key, !undo) });
+  const again = { label: 'Undo', run: () => resolveThread(key, !undo) };
+  if (undo && res.agent) toast('Open again: the agent\'s resolution is off.', { ...again, label: 'Resolve as you' });
+  else toast(undo ? 'Your ✅ is off again.' : 'Resolved: ✅ on the first message, as you.', again);
   reloadSoon(key);
   return res;
 }
@@ -7444,8 +7453,7 @@ async function resolveThread(key, undo) {
 function toggleResolve() {
   const key = state.open;
   if (!key || state.data?.me?.readonly || !$('resolve') || $('resolve').disabled) return;
-  const r = state.cache.get(key)?.data?.resolution;
-  resolveThread(key, Boolean(r && r.state === 'resolved' && r.mine));
+  resolveThread(key, Boolean(undoable(state.cache.get(key)?.data?.resolution)));
 }
 
 /** The emoji picker open, not one fading out. */

@@ -341,6 +341,8 @@ const PICKER_TEAMS = {
   thumbsup: '👍', heart: '❤️', joy: '😂', open_mouth: '😮', eyes: '👀', pray: '🙏', tada: '🎉', white_check_mark: '✅',
 };
 const CHECKS = new Set(['white_check_mark', '✅']);
+// Threads their agent resolved, and when (src/agentlabels.js: in the inbox only, no ✅).
+const agentResolved = new Map();
 /**
  * Clef for the preview: the first candidate for an emoji name nobody has
  * (src/shortcodes.js), when its keywords have the name.
@@ -386,10 +388,14 @@ const personNamed = (name) => [...store.people.values()].find((p) => p.name === 
       reactions.set(k, [...list, { emoji: r.emoji, person: who.id, at: entry.row.any_at }]);
     }
   }
-  const done = [...store.threads.values()]
-    .find((e) => (store.labels.get(e.key)?.resolved_p ?? 0) >= 0.5 && e.row.root_at);
+  const [done, byAgent] = [...store.threads.values()]
+    .filter((e) => (store.labels.get(e.key)?.resolved_p ?? 0) >= 0.5 && e.row.root_at);
   if (done && tom) {
     reactions.set(`${done.key}|${done.row.root_id}`, [{ emoji: 'white_check_mark', person: tom.id, at: done.row.any_at }]);
+  }
+  // The next one its agent resolved: the ✅ button opens it again.
+  if (byAgent) {
+    agentResolved.set(byAgent.key, byAgent.row.any_at);
   }
 }
 
@@ -423,6 +429,11 @@ function resolutionOf(entry) {
   const checks = (reactions.get(`${entry.key}|${entry.row.root_id}`) || [])
     .filter((r) => CHECKS.has(r.emoji) && store.people.get(r.person)?.staff)
     .map((r) => ({ at: r.at, person: r.person, name: store.people.get(r.person).name }));
+  if (agentResolved.has(entry.key)) {
+    checks.push({
+      at: agentResolved.get(entry.key), person: null, name: 'opspile agent', agent: true,
+    });
+  }
   const customerAt = entry.messages
     .filter((m) => m.author.kind === 'person' && !m.author.staff && !m.deletedAt)
     .map((m) => m.at).sort().pop() || null;
@@ -2111,6 +2122,12 @@ async function api(req, res, url) {
     const entry = store.threads.get(key);
     if (!entry || !inTeam(entry.row.team)) {
       return json(res, { error: 'not found' }, 404);
+    }
+    // The agent's resolution comes off with an undo, as src/react.js takes it off.
+    if (undo && agentResolved.delete(key)) {
+      console.log('resolve undo (the agent\'s)');
+      broadcast(entry.row.team, { type: 'thread', thread: key });
+      return json(res, { ok: true, resolved: false, agent: true });
     }
     if (!entry.row.root_at) {
       return json(res, { error: 'the first message of this thread is not known yet' }, 409);

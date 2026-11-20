@@ -44,6 +44,7 @@ import {
 } from './lookup.js';
 import { appRule, readPost } from './attach.js';
 import { openPortalFile, portalFetch, portalFileOf } from './portalsource.js';
+import { agentLabelsFor } from './agentlabels.js';
 import { react, resolve } from './react.js';
 import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
@@ -540,7 +541,7 @@ export async function inbox(env, me, team, {
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
-    { results: techRows }, stacks, techVocab, elsewhere, yours, unseen,
+    { results: techRows }, stacks, techVocab, elsewhere, yours, unseen, agentLabels,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
     // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
@@ -607,6 +608,8 @@ export async function inbox(env, me, team, {
     unreadInYours(env.DB, threadKeys, me.id),
     // The agent's answers to the viewer in a sidebar they have not seen: the purple badge.
     unseenAnswers(env, [...threadKeys, ...threads.map((t) => t.logical_thread)], me.id),
+    // What the threads' agents said of them (src/agentlabels.js), in place of Clef's answers.
+    agentLabelsFor(env.DB, threadKeys),
   ]);
   const by = (rows, f) => {
     const m = new Map();
@@ -624,7 +627,11 @@ export async function inbox(env, me, team, {
   const namedBy = by(named, (r) => ({ person: r.person, staff: Boolean(r.staff) }));
   const labelBy = new Map((labels || []).map(({ topics, ...l }) => [
     l.thread, {
-      ...effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
+      ...effectiveLabel(
+        l,
+        reviews.filter((r) => r.thread === l.thread),
+        agentLabels.filter((r) => r.thread === l.thread),
+      ),
       topics: topicList(topics),
     },
   ]));
@@ -839,7 +846,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
     reviewed, facts, anchorLabel, { results: found }, drafts, rowOrgs,
     { results: appPosts }, agentOn, { results: memberTech }, { results: rootLinks }, place,
-    bashRequests, sidebar, toolRequests,
+    bashRequests, sidebar, toolRequests, agentLabels,
   ] = await Promise.all([
     // The first thread's root, else its first message, else (all of it deleted) the group's.
     env.DB.prepare(`SELECT permalink FROM messages
@@ -906,6 +913,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     sidebarFor(env, entryKeys),
     // The tools the agent asked for in the sidebar, and how each stands (src/toolrequests.js).
     toolRequestsFor(env, entryKeys),
+    // What the agent said of the thread (src/agentlabels.js), in place of Clef's answers.
+    agentLabelsFor(env.DB, [labelKey]),
   ]);
   const rootLink = new Map((rootLinks || []).map((r) => [r.thread, r.permalink]));
   const asApp = new Set((appPosts || []).map((p) => `${p.thread}|${p.id}`));
@@ -945,7 +954,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       };
     })
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
-  const label = effectiveLabel(model, model ? reviewed : []);
+  const label = effectiveLabel(model, model ? reviewed : [], agentLabels);
   const bodies = messages.filter((m) => !m.deletedAt).map((m) => m.body);
   // Slack permalinks the messages name, in this thread's workspace. Profiles wait for the
   // authors those links add; the mention and channel lookups run alongside the link lookup.
