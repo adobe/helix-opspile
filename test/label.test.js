@@ -160,9 +160,9 @@ describe('kinds and topics', () => {
   });
 
   it('reads the topics of a label from before as they are now', () => {
-    // go-live is part of the project; commerce and integrations are products, the tech stack's.
-    assert.deepEqual(topicList('{"golive":0.9,"cdn":0.85,"commerce":0.95}'), ['project', 'cdn']);
-    assert.deepEqual(topicList('{"project":0.95,"golive":0.9,"integrations":0.8}'), ['project']);
+    // go-live is part of the project; commerce and integrations are areas again (authored).
+    assert.deepEqual(topicList('{"golive":0.9,"cdn":0.85,"commerce":0.95}'), ['commerce', 'project', 'cdn']);
+    assert.deepEqual(topicList('{"project":0.95,"golive":0.9,"integrations":0.8}'), ['project', 'integrations']);
   });
 
   it('asks only about concerns, in the order they were measured in, at one cut', () => {
