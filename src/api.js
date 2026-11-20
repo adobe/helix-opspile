@@ -64,7 +64,8 @@ import {
   inPersonalInbox, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
 } from './shares.js';
 import {
-  followable, followedByTeam, followsOfTeams, personFollows, setPersonFollow,
+  followable, followedByTeam, followsOfTeams, personFollows, personFollowsBy, setPersonFollow,
+  setPersonFollowBy,
 } from './follows.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { claimPost, settlePost } from './postkeys.js';
@@ -260,11 +261,13 @@ export async function viewer(request, env, options) {
  * their teams'.
  */
 async function followsOf(env, me) {
-  const [mine, teams] = await Promise.all([
+  const [mine, teams, by] = await Promise.all([
     personFollows(env, me.id),
     followsOfTeams(env, (me.teams || []).map((t) => t.slug)),
+    personFollowsBy(env, me.id),
   ]);
-  return { me: mine, teams };
+  // `me` the technologies, as before; `by` the customers, people and areas.
+  return { me: mine, teams, by };
 }
 
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
@@ -1157,9 +1160,14 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     if (request.method === 'PUT') {
       const body = await request.json().catch(() => ({}));
-      const res = await setPersonFollow(env, {
-        person: me.id, tech: body.tech, follow: body.follow !== false,
-      });
+      // `{ tech }`, or `{ kind: org | person | area, target }` (src/follows.js).
+      const res = body.kind && body.kind !== 'tech'
+        ? await setPersonFollowBy(env, {
+          person: me.id, kind: body.kind, target: body.target, follow: body.follow !== false,
+        })
+        : await setPersonFollow(env, {
+          person: me.id, tech: body.tech ?? body.target, follow: body.follow !== false,
+        });
       if (res.error) {
         return json({ error: res.error }, res.status || 400);
       }

@@ -18,7 +18,7 @@ import {
 } from './extract.js';
 import { isStaffDomain } from './lookup.js';
 import { LAYERS } from './stack.js';
-import { threadTechStatements } from './follows.js';
+import { threadAreaStatements, threadTechStatements } from './follows.js';
 import { resolveTech, techMoves } from './catalog.js';
 import { questionKeys } from './techid.js';
 import { areaNames, areasFor } from './areas.js';
@@ -740,8 +740,10 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
     }
   }
   // What it showed before, for the inboxes that follow what it shows or showed (src/follows.js).
-  const { results: before } = await env.DB.prepare('SELECT tech FROM thread_tech WHERE thread = ?')
-    .bind(key).all();
+  const [{ results: before }, { results: areasBefore }] = await Promise.all([
+    env.DB.prepare('SELECT tech FROM thread_tech WHERE thread = ?').bind(key).all(),
+    env.DB.prepare('SELECT area FROM thread_areas WHERE thread = ?').bind(key).all(),
+  ]);
   const label = env.DB.prepare(`INSERT INTO labels (thread, next_actor, next_actor_p, kind, kind_p,
       urgency, resolved_p, labeled_through, model, labeled_at, title, topics, tech, about)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -768,9 +770,12 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
       about ? JSON.stringify(about) : null,
     );
   // The label and what the thread shows by index (`thread_tech`) at once.
-  await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown, about || {})]);
+  await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown, about || {}),
+    ...threadAreaStatements(env.DB, key, topics)]);
   const was = (before || []).map((r) => r.tech).sort();
   const is = Object.keys(shown).sort();
+  const hadAreas = (areasBefore || []).map((r) => r.area).sort();
+  const hasAreas = Object.keys(topics || {}).sort();
   const loose = clairicFacts(clairic.answers);
   await replaceFacts(env.DB, key, 'clairic', loose);
   return {
@@ -785,6 +790,13 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
     ...(was.join() !== is.join() ? {
       tech: {
         gained: is.filter((t) => !was.includes(t)), lost: was.filter((t) => !is.includes(t)),
+      },
+    } : {}),
+    // And the areas it is in: those who follow one that it joined or left hear of it too.
+    ...(hadAreas.join() !== hasAreas.join() ? {
+      areas: {
+        gained: hasAreas.filter((t) => !hadAreas.includes(t)),
+        lost: hadAreas.filter((t) => !hasAreas.includes(t)),
       },
     } : {}),
   };

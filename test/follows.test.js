@@ -18,7 +18,7 @@ import {
 } from '../src/api.js';
 import { entryOf } from '../src/drafts.js';
 import {
-  followable, followersOf, followingTeams, threadTechStatements,
+  followable, followersOf, followingTeams, threadAreaStatements, threadTechStatements,
 } from '../src/follows.js';
 import {
   mayWork, recipients, roomsOf, teamsOf,
@@ -251,6 +251,30 @@ describe('following technologies', () => {
     assert.deepEqual(heard.map((s) => s.person), [EW.id]);
   });
 
+  it('tells an area\'s follower that a thread left it, and keeps a target as it was stored', async () => {
+    const e = env();
+    const ew = asMe(EW);
+    e.DB.sqlite.exec(`INSERT INTO areas (team, id, name, what, path) VALUES
+      ('admin', 'seo', 'SEO', 'SEO', 'areas/seo.md')`);
+    await e.DB.batch(threadAreaStatements(e.DB, key('C1', '2.1'), { seo: 0.9 }));
+    await call(e, ew, 'PUT', '/api/follows', { kind: 'area', target: ' seo ' });
+    const sockets = [{ person: EW.id, scoped: true }];
+    assert.equal((await recipients(e, { thread: key('C1', '2.1') }, sockets)).length, 1);
+    // Relabeled: it is in the area no more; the event naming it still reaches them.
+    await e.DB.batch(threadAreaStatements(e.DB, key('C1', '2.1'), {}));
+    assert.equal((await recipients(e, { thread: key('C1', '2.1') }, sockets)).length, 0);
+    assert.equal((await recipients(e, { thread: key('C1', '2.1'), areas: ['seo'] }, sockets)).length, 1);
+    // Unfollowed with what followed it, spaces and all.
+    let r = await call(e, ew, 'PUT', '/api/follows', { kind: 'area', target: ' seo ', follow: false });
+    assert.deepEqual(r.body.by.area, []);
+    // A person's id is stored as the integer it is: "007" is 7, "1e1" no one.
+    r = await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: `00${ADA.id}` });
+    assert.deepEqual(r.body.by.person, [ADA.id]);
+    assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: '1e0' })).status, 400);
+    r = await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: ADA.id, follow: false });
+    assert.deepEqual(r.body.by.person, []);
+  });
+
   it('finds the threads a team follows when it searches', async () => {
     const e = env();
     const ew = asMe(EW);
@@ -272,9 +296,43 @@ describe('following technologies', () => {
     r = await call(e, ew, 'GET', '/api/follows');
     assert.deepEqual(r.body.me, ['xw']);
     assert.ok(r.body.tech.some((t) => t.tech === 'xw' && t.name));
-    assert.deepEqual((await call(e, ew, 'GET', '/api/me')).body.follows, { me: ['xw'], teams: { ew: ['da'] } });
+    assert.deepEqual((await call(e, ew, 'GET', '/api/me')).body.follows, {
+      me: ['xw'], teams: { ew: ['da'] }, by: { org: [], person: [], area: [] },
+    });
     r = await call(e, ew, 'PUT', '/api/follows', { tech: 'xw', follow: false });
     assert.deepEqual(r.body.me, []);
+  });
+
+  it('puts the threads of a customer, a person or an area a person follows in their personal view', async () => {
+    const e = env();
+    const ew = asMe(EW);
+    const personal = async () => entries(await inbox(e, ew, null, { personal: true })).sort();
+    assert.deepEqual(await personal(), []);
+    // A customer: its conversations, not its alerts.
+    let r = await call(e, ew, 'PUT', '/api/follows', { kind: 'org', target: 'globex' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.by.org, ['globex']);
+    assert.deepEqual(await personal(), [key('C2', '3.1')]);
+    assert.deepEqual([...await followersOf(e, [EW.id, ADA.id], key('C2', '4.1'))], [EW.id]);
+    await call(e, ew, 'PUT', '/api/follows', { kind: 'org', target: 'globex', follow: false });
+    // A person: the threads they posted in.
+    e.DB.sqlite.prepare('UPDATE messages SET person = ? WHERE thread = ?').run(ADA.id, key('C1', '2.1'));
+    r = await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: ADA.id });
+    assert.deepEqual(r.body.by.person, [ADA.id]);
+    assert.deepEqual(await personal(), [key('C1', '2.1')]);
+    await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: ADA.id, follow: false });
+    // An area: the threads Clef puts in it (thread_areas, written with the label).
+    e.DB.sqlite.exec(`INSERT INTO areas (team, id, name, what, path) VALUES
+      ('admin', 'seo', 'SEO', 'SEO', 'areas/seo.md')`);
+    await e.DB.batch(threadAreaStatements(e.DB, key('C2', '4.1'), { seo: 0.9 }));
+    r = await call(e, ew, 'PUT', '/api/follows', { kind: 'area', target: 'seo' });
+    assert.deepEqual(r.body.by.area, ['seo']);
+    assert.deepEqual(await personal(), [key('C2', '3.1')]);
+    assert.deepEqual([...await followersOf(e, [EW.id], key('C2', '3.1'))], [EW.id]);
+    // What no one may follow, and who may not.
+    assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'area', target: 'nope' })).status, 400);
+    assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'team', target: 'ew' })).status, 400);
+    assert.equal((await call(e, asMe(SOLO), 'PUT', '/api/follows', { kind: 'org', target: 'acme' })).status, 403);
   });
 
   it('lets a team\'s managers and the admin team pick what the team follows', async () => {

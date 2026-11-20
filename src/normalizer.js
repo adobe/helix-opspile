@@ -58,11 +58,12 @@ export { notifyRoom };
  * it again, so a thread that now shows a technology they follow comes in, and one that no longer
  * does goes. Best effort, as every room's.
  */
-async function announceFollowed(env, key, tech) {
+async function announceFollowed(env, key, tech, areas) {
   if (!env.ROOMS) {
     return;
   }
-  const changed = [...tech.gained, ...tech.lost];
+  const changed = tech ? [...tech.gained, ...tech.lost] : [];
+  const moved = areas ? [...areas.gained, ...areas.lost] : [];
   const row = await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
     .bind(key).first();
   const [teams, following] = await Promise.all([
@@ -71,7 +72,9 @@ async function announceFollowed(env, key, tech) {
   ]);
   const rooms = [...new Set([...teams, ...following])];
   if (rooms.length) {
-    await notifyRoom(env, rooms, { type: 'thread', thread: key, tech: changed });
+    await notifyRoom(env, rooms, {
+      type: 'thread', thread: key, tech: changed, ...(moved.length ? { areas: moved } : {}),
+    });
   }
 }
 
@@ -693,9 +696,9 @@ export async function consume(batch, baseEnv, meter = null) {
           // eslint-disable-next-line no-await-in-loop
           await queueExport(env, body.label, { delaySeconds: 0 });
         }
-        if (r.tech) {
+        if (r.tech || r.areas) {
           // eslint-disable-next-line no-await-in-loop
-          await announceFollowed(env, body.label, r.tech);
+          await announceFollowed(env, body.label, r.tech, r.areas);
         }
       } else if (body.export) {
         // eslint-disable-next-line no-await-in-loop
