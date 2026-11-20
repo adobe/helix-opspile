@@ -722,10 +722,13 @@ src/favicons.js), so it is not final, and the next drawing after that asks again
 the latest question.
 
 **Knowledge-base editor.** clean → editing → saving → saved, or conflict, unnamed or problem
-(`fileState` in `ui/kb.js`). One save at a time, and a save names the blob it was written from.
+(`fileState` in `ui/agent.js`). One save at a time, and a save names the blob it was written from.
+Leaving the file (another section of the page, another team or customer, another page) waits for
+the save, and asks only when it could not be made, once however many ways out were taken meanwhile
+(`Agent.leave`); staying keeps the address on the file.
 
 **Knowledge-base prefetch.** not here → in flight → text, or not here again (`blobs` in
-`ui/kb.js`). Kept by blob hash, so a text is never stale for its hash; the listing (`state.files`)
+`ui/agent.js`). Kept by blob hash, so a text is never stale for its hash; the listing (`state.files`)
 says which hash a path has, and is the watermark: a save relists (unless another save started while
 it was read), and so does showing the tab again after `RELIST_MS`. A failed batch leaves its hashes
 not here, and opening one reads it by its path.

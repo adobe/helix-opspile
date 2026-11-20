@@ -17,7 +17,10 @@ import {
 } from '../src/page.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
-const NAMES = ['inbox', 'admin', 'kb', 'cogs', 'topics', 'portal'];
+const NAMES = ['inbox', 'admin', 'cogs', 'topics', 'portal'];
+/** The stylesheets a page links (ui/<name>.html), in order, but the built tokens. */
+const linked = (name) => [...PAGES[`${name}.html`].matchAll(/<link rel="stylesheet" href="([\w.-]+)">/g)]
+  .map((m) => m[1]).filter((f) => f !== 'spectrum-tokens.css');
 const served = (name) => (name === 'inbox' ? inboxPage : page)(PAGES[`${name}.html`], SCRIPTS);
 const STYLESHEETS = Object.keys(SCRIPTS).filter((f) => /^spectrum(-[a-z]+)?\.css$/.test(f) && f !== 'spectrum-fonts.css');
 
@@ -33,7 +36,7 @@ describe('Spectrum 2', () => {
       assert.ok(fonts > 0 && shared > fonts && its > shared, name);
       assert.ok(its < html.indexOf('</head>'), name);
       // The tokens the stylesheets use, light and dark, between the fonts and the stylesheets.
-      const tokens = spectrumTokens(`${SCRIPTS['spectrum-fonts.css']}\n${SCRIPTS['spectrum.css']}\n${SCRIPTS[`spectrum-${name}.css`]}`);
+      const tokens = spectrumTokens(linked(name).map((f) => SCRIPTS[f]).join('\n'));
       const at = html.indexOf(tokens);
       assert.ok(at > fonts && at < shared, name);
       assert.match(tokens, /--spectrum-background-base-color:/, name);
@@ -56,10 +59,11 @@ describe('Spectrum 2', () => {
     assert.match(shared, /:where\(\.spectrum\) body \{ background: var\(--frame\);/);
     // The header is part of the frame: no fill of its own, and no line under it.
     assert.match(shared, /\.spectrum header \{[^}]*background: transparent;\s*border-bottom: 0;/);
-    // The inbox's list and thread, and a knowledge base's files and editor, are one container.
-    for (const file of ['spectrum-inbox.css', 'spectrum-kb.css']) {
-      assert.match(SCRIPTS[file], /\.spectrum main::before \{ content: ""; grid-row: 1; grid-column: [^;]+; background: var\(--content\);\s*border-radius: var\(--content-radius\); box-shadow: var\(--content-shadow\); \}/, file);
-    }
+    // The inbox's list and thread are one container; a knowledge base's files and editor are
+    // in the admin pages' content area, with a divider between them.
+    assert.match(SCRIPTS['spectrum-inbox.css'], /\.spectrum main::before \{ content: ""; grid-row: 1; grid-column: [^;]+; background: var\(--content\);\s*border-radius: var\(--content-radius\); box-shadow: var\(--content-shadow\); \}/);
+    assert.match(SCRIPTS['spectrum-agent.css'], /\.spectrum \.agent #files, \.spectrum \.agent #editor \{ background: transparent; \}/);
+    assert.match(SCRIPTS['spectrum-agent.css'], /\.spectrum \.agent\.kb #editor \{ border-left: var\(--spectrum-border-width-100\) solid var\(--line\); \}/);
     assert.match(SCRIPTS['spectrum-admin.css'], /\.spectrum #detail \{[^}]*background: var\(--content\);\s*border-radius: var\(--content-radius\);\s*box-shadow: var\(--content-shadow\);/);
     // Nothing on a page hangs over another part of it at rest: the open thread's row is
     // selected where it is, and a filter group has no card or shadow until it slides out.
@@ -207,7 +211,7 @@ describe('Spectrum 2', () => {
     // page pins the underlay's opacity (but the lightbox's, which animates itself), which would
     // keep it dark until the dialog is gone.
     assert.match(SCRIPTS['app.js'], /window\.Dialog = /);
-    for (const name of ['admin.js', 'kb.js', 'inbox.js', 'table.js']) {
+    for (const name of ['admin.js', 'agent.js', 'inbox.js', 'table.js']) {
       assert.match(SCRIPTS[name], /Dialog\.remove\(dlg\)/, name);
     }
     const pageCss = Object.entries(SCRIPTS).filter(([n]) => /^spectrum-.*\.css$/.test(n));
