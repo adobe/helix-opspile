@@ -11,7 +11,10 @@
  */
 
 /*
- * Topics: the topic map (src/topicmap.js) for the admin team, over GET /api/admin/topics. What
+ * Topics: the topic map (src/topicmap.js) for every member of an ops team, over GET /api/topics
+ * (src/topicsapi.js), with the areas (src/areas.js) the teams author and what the viewer follows:
+ * a Follow on a person, customer, area or product puts its threads in their personal view, and
+ * the admin team and team managers add, rename, describe and delete areas in the panel. What
  * the channel threads are about, found from what was said in them (the topics), drawn as one
  * force-directed graph with the Adobe people who posted in them, Clef's topics on them (the
  * tags, as the inbox's Topic filter has them), the products they are about (Clairic's, outlined
@@ -42,7 +45,7 @@ const SVG = 'http://www.w3.org/2000/svg';
 const TYPES = [
   { id: 'person', label: 'People', one: 'Person', title: 'Adobe people who posted in the threads' },
   { id: 'topic', label: 'Topics', one: 'Topic', title: 'What the threads are about, found from what was said in them' },
-  { id: 'tag', label: 'Tags', one: 'Tag', title: 'Clef\'s topics on the threads, as the inbox\'s Topic filter has them' },
+  { id: 'tag', label: 'Areas', one: 'Area', title: 'The areas Clef puts the threads in, as the inbox\'s Topic filter has them: the teams author them' },
   { id: 'product', label: 'Products', one: 'Product', title: 'The technologies of the tech stack Clef says the threads are about (on maps from before, the products Clairic named; outlined ones were not in the tech stack)' },
   { id: 'org', label: 'Customers', one: 'Customer', title: 'Who the threads are for: customers, partners and vendors' },
 ];
@@ -54,6 +57,13 @@ const state = {
   me: null,
   latest: null,
   available: false,
+  // Every team's areas (src/areas.js), what the viewer follows, and what they may change.
+  areas: [],
+  follows: { me: [], teams: {}, by: { org: [], person: [], area: [] } },
+  may: { areas: [], rebuild: false },
+  // The area being added (`{ new: true }`) or changed (`{ team, id }`), and the answer to it.
+  editArea: null,
+  note: null,
   error: '',
   building: false,
   q: {
@@ -105,10 +115,15 @@ const isCustomer = (slug) => TopicGraph.isCustomer(map(), slug);
 const orgName = (slug) => map().orgs[slug]?.name || slug;
 const shownTypes = () => TYPES.map((t) => t.id).filter((id) => !state.q.hide.includes(id));
 
-/** The graph for the filters (ui/topicgraph.js). */
+/**
+ * The graph for the filters (ui/topicgraph.js). An area's name is what its file says now
+ * (`state.areas`), not what it was when the map was built: a rename shows at once.
+ */
 function graphOf() {
   const { q } = state;
-  return TopicGraph.build(map(), { team: q.team, shown: shownTypes(), min: q.min });
+  const names = Object.fromEntries(areaList().map((a) => [a.id, a.name]));
+  const m = { ...map(), tags: { ...(map().tags || {}), ...names } };
+  return TopicGraph.build(m, { team: q.team, shown: shownTypes(), min: q.min });
 }
 
 // ---- the layout: d3-force's model -------------------------------------------------------
@@ -509,6 +524,7 @@ function overview() {
       people's comings and goings), named all at once from their most typical threads, Clef topics and products. <b>${none} of them (${pct(none, threads.length)})
       have no tag from Clef</b>: the topics Clef rarely tags are what its topic questions miss.</p>
     ${gaps()}
+    ${areasSection()}
     <h3>Topics</h3>
     <table class="topics"><thead><tr><th>Topic</th><th class="n">${sortBy('threads', 'Threads', 'The most threads first')}</th>
       <th class="n">${sortBy('tagged', 'Tagged', 'Threads with a tag from Clef: the fewest first')}</th><th>Tags</th></tr></thead>
@@ -575,6 +591,111 @@ function features(n) {
       <span class="n">${c}</span></div></li>`).join('')}</ul></section>`;
 }
 
+// ---- following and areas ---------------------------------------------------------------
+
+/** What following node `n` is (PUT /api/follows): `{ kind, target }`, or null for a topic. */
+function followOf(n) {
+  if (n.type === 'person') return { kind: 'person', target: n.key };
+  if (n.type === 'org') return { kind: 'org', target: n.key };
+  if (n.type === 'tag') return { kind: 'area', target: n.key };
+  if (n.type === 'product' && n.key.startsWith('tech:')) return { kind: 'tech', target: n.key.slice(5) };
+  return null;
+}
+
+/** Whether the viewer follows `f` (followOf). */
+function follows(f) {
+  if (!f) return false;
+  if (f.kind === 'tech') return (state.follows.me || []).includes(f.target);
+  return (state.follows.by?.[f.kind] || []).map(String).includes(String(f.target));
+}
+
+const followButton = (f, label) => (f && state.me.teams?.length
+  ? `<button class="follow" data-follow="${esc(f.kind)}" data-target="${esc(f.target)}" aria-pressed="${follows(f)}"
+      title="${follows(f) ? `Stop following ${esc(label)}` : `Follow ${esc(label)}: its threads are in your personal view`}">${follows(f) ? 'Following' : 'Follow'}</button>`
+  : '');
+
+async function toggleFollow(kind, target) {
+  const f = { kind, target };
+  const body = kind === 'tech' ? { tech: target, follow: !follows(f) } : { kind, target, follow: !follows(f) };
+  const res = await fetch('/api/follows', {
+    method: 'PUT', credentials: 'same-origin', redirect: 'manual', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }).catch(() => null);
+  const out = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) state.follows = { ...state.follows, ...out };
+  else state.note = { err: true, text: out.error || 'Could not change what you follow.' };
+  renderPanel();
+}
+
+/** Every area once, as Clef asks it: the admin team's, else the first team's, that is on. */
+function areaList() {
+  const by = new Map();
+  for (const a of state.areas) {
+    const had = by.get(a.id);
+    if (!had || (!had.enabled && a.enabled)) by.set(a.id, { ...a, teams: [...(had?.teams || []), a.team] });
+    else had.teams.push(a.team);
+  }
+  return [...by.values()].sort((x, y) => x.name.localeCompare(y.name));
+}
+
+/** May the viewer change team `team`'s areas. */
+const mayArea = (team) => (state.may.areas || []).includes(team);
+
+function areaForm() {
+  const e = state.editArea;
+  if (!e) return '';
+  const def = e.new ? {} : state.areas.find((a) => a.team === e.team && a.id === e.id) || {};
+  const teams = state.may.areas || [];
+  const teamName = (slug) => state.me.teams?.find((t) => t.slug === slug)?.name || slug;
+  return `<form class="areaform" id="areaForm" autocomplete="off">
+    <h3>${e.new ? 'New area' : `Change ${esc(def.name || e.id)}`}</h3>
+    ${e.new ? `<label class="fld"><span>In the knowledge base of</span><select id="afTeam">${teams.map((t) => `<option value="${esc(t)}">${esc(teamName(t))}</option>`).join('')}</select></label>
+      <label class="fld"><span>Id (lower case, digits and -; it stays when the area is renamed)</span><input id="afId" required pattern="[a-z][a-z0-9-]*" maxlength="40"></label>` : ''}
+    <label class="fld"><span>Name</span><input id="afTitle" required maxlength="80" value="${esc(def.name || '')}"></label>
+    <label class="fld"><span>Clef is asked: “Is this thread about …?”</span><textarea id="afWhat" rows="3" required maxlength="500">${esc(def.what || '')}</textarea></label>
+    ${e.new ? '' : `<label class="only"><input type="checkbox" id="afOn"${def.enabled === false ? '' : ' checked'}> Asked in every label</label>`}
+    <p class="hint">Every area is one more question Clef answers for every thread. A change shows on the threads as they are labeled again.</p>
+    <div class="acts"><button class="primary" type="submit">${e.new ? 'Add' : 'Save'}</button>
+      <button type="button" id="afCancel">Cancel</button>
+      ${e.new ? '' : `<button type="button" class="danger" id="afDelete"${e.confirm ? ' data-confirm' : ''}>${e.confirm ? 'Delete it, for good' : 'Delete'}</button>`}</div>
+  </form>`;
+}
+
+async function saveArea(method, body) {
+  const res = await fetch('/api/areas', {
+    method, credentials: 'same-origin', redirect: 'manual', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }).catch(() => null);
+  const out = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) {
+    state.areas = out.areas || state.areas;
+    state.editArea = null;
+    state.note = { text: method === 'DELETE' ? 'Deleted. Clef stops asking it from the next labels.' : 'Saved. Clef asks it from the next labels.' };
+    // The bubbles take the areas' names as they are now: drawn again.
+    render();
+    return;
+  }
+  state.note = { err: true, text: out.error || 'That did not work.' };
+  renderPanel();
+}
+
+/** The areas: their threads on this map, whether the viewer follows them, and changing them. */
+function areasSection() {
+  const g = state.graph;
+  const count = (id) => g.all.get(`tag:${id}`)?.threads.length || 0;
+  const list = areaList();
+  const may = (state.may.areas || []).length;
+  const note = state.note ? `<p class="hint${state.note.err ? ' err' : ''}">${esc(state.note.text)}</p>` : '';
+  return `<h3>Areas <span class="sub">${list.length}</span></h3>
+    <p class="hint">What Clef puts the threads in: each area is a question it answers for every thread. The teams author them${may ? '; you change those of the teams you manage' : ''}. Follow one and its threads are in your personal view.</p>
+    ${note}${areaForm()}
+    <table class="topics areas"><thead><tr><th>Area</th><th class="n">Threads</th><th></th></tr></thead><tbody>${list.map((a) => {
+    const team = a.teams.find(mayArea);
+    return `<tr${a.enabled ? '' : ' class="off"'}><td><button class="link pickr-a" data-sel="tag:${esc(a.id)}" title="${esc(a.what)}">${esc(a.name)}</button>${a.enabled ? '' : ' <span class="sub">off</span>'}</td>
+      <td class="n">${count(a.id)}</td>
+      <td class="acts">${followButton({ kind: 'area', target: a.id }, a.name)}${team ? `<button data-edit-area="${esc(team)}|${esc(a.id)}">Change</button>` : ''}</td></tr>`;
+  }).join('')}</tbody></table>
+    ${may && !state.editArea ? '<button id="newArea">New area</button>' : ''}`;
+}
+
 function details(n) {
   const m = map();
   const topic = n.type === 'topic' ? m.topics[Number(n.key)] : null;
@@ -589,7 +710,7 @@ function details(n) {
   ];
   const others = TYPES.map((t) => t.id).filter((t) => t !== n.type || t === 'person');
   return `<div class="head"><span class="dot" data-type="${n.type}"></span><div><div class="sub">${esc(TYPE[n.type].one)}</div>
-      <h2>${esc(n.label)}</h2></div><button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
+      <h2>${esc(n.label)}</h2></div>${followButton(followOf(n), n.label)}<button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
     <p class="sub facts">${facts.map(esc).join(' · ')}</p>
     ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">Clef gave none of these threads a tag: a topic its questions miss.</p>' : ''}
@@ -639,6 +760,7 @@ function renderBar() {
   $('names').innerHTML = m && state.graph ? [...state.graph.all.values()].map((n) => `<option value="${esc(n.label)}">${esc(TYPE[n.type].one)}</option>`).join('') : '';
   const built = state.latest;
   $('built').textContent = built ? `Built ${ago(built.built_at)} by ${built.built_by === 'cron' ? 'the cron' : built.built_by}` : '';
+  $('rebuild').hidden = !state.may.rebuild;
   $('rebuild').disabled = state.building || !state.available;
   $('rebuild').title = state.available
     ? 'Cluster the threads again, from their vectors as they are now (takes about half a minute)'
@@ -687,11 +809,14 @@ function render({ refit = false } = {}) {
 
 async function load() {
   try {
-    const res = await fetch('/api/admin/topics', { credentials: 'same-origin' });
+    const res = await fetch('/api/topics', { credentials: 'same-origin', redirect: 'manual' });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `failed (${res.status})`);
     state.latest = body.latest;
     state.available = body.available;
+    state.areas = body.areas || [];
+    state.follows = body.follows || state.follows;
+    state.may = body.may || state.may;
     state.error = '';
   } catch (e) {
     state.error = e.message;
@@ -704,7 +829,7 @@ async function rebuild() {
   renderBar();
   $('body').classList.add('busy');
   try {
-    const res = await fetch('/api/admin/topics', { method: 'POST', credentials: 'same-origin' });
+    const res = await fetch('/api/topics', { method: 'POST', credentials: 'same-origin', redirect: 'manual' });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `failed (${res.status})`);
     state.latest = body.latest;
@@ -765,6 +890,47 @@ function wire() {
       state.more = true;
       renderPanel();
     }
+    const follow = ev.target.closest('button[data-follow]');
+    if (follow) toggleFollow(follow.dataset.follow, follow.dataset.target);
+    const edit = ev.target.closest('button[data-edit-area]');
+    if (edit) {
+      const [team, id] = edit.dataset.editArea.split('|');
+      state.editArea = { team, id };
+      state.note = null;
+      renderPanel();
+    }
+    if (ev.target.closest('#newArea')) {
+      state.editArea = { new: true };
+      state.note = null;
+      renderPanel();
+    }
+    if (ev.target.closest('#afCancel')) {
+      state.editArea = null;
+      renderPanel();
+    }
+    if (ev.target.closest('#afDelete')) {
+      const e = state.editArea;
+      // Asked in the page, not a native dialog: a second click deletes.
+      if (!e.confirm) {
+        e.confirm = true;
+        renderPanel();
+      } else {
+        saveArea('DELETE', { team: e.team, id: e.id });
+      }
+    }
+  });
+  $('body').addEventListener('submit', (ev) => {
+    if (ev.target.id !== 'areaForm') return;
+    ev.preventDefault();
+    const e = state.editArea;
+    const title = $('afTitle').value.trim();
+    const what = $('afWhat').value.trim();
+    if (e.new) saveArea('POST', { team: $('afTeam').value, id: $('afId').value.trim(), title, what });
+    else {
+      saveArea('PUT', {
+        team: e.team, id: e.id, title, what, enabled: $('afOn').checked,
+      });
+    }
   });
   window.addEventListener('popstate', () => {
     fromUrl();
@@ -788,8 +954,8 @@ function wire() {
   state.me = me;
   Header.user(me, Header.role(me));
   Header.init(me);
-  if (!me.admin) {
-    $('body').innerHTML = `<div class="empty">The topic map is for the admin team. <a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;
+  if (!me.teams?.length) {
+    $('body').innerHTML = `<div class="empty">The topic map is for the members of the ops teams. <a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;
     return;
   }
   fromUrl();

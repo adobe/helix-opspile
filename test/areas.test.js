@@ -77,6 +77,8 @@ describe('areas', () => {
     assert.match(areaQuestions(asked)['topic.search'].instructions, /^Is this thread about site search/);
     assert.deepEqual(topicsOf({ 'topic.search': { noul: 0.9 }, 'topic.seo': { noul: 0.9 } }, asked), { search: 0.9 });
     assert.deepEqual(await areaNames(env), { cdn: 'Caching and delivery', search: 'Site search' });
+    // The built-in names stay under the teams', for the labels from before.
+    assert.equal((await vocab(env)).topics.seo, 'SEO');
     // Turned off by every team that has it, it is not asked.
     DB.sqlite.exec("UPDATE areas SET enabled = 0 WHERE id = 'search'");
     assert.deepEqual((await areasFor(env, { fallback: BUILT_IN_AREAS })).map((a) => a.id), ['cdn']);

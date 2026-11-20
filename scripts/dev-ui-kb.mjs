@@ -15,6 +15,8 @@ import { checkChanges, commitChanges } from '../src/agent/kbwrite.js';
 import { memfs } from '../src/agent/memfs.js';
 import { isEntry, SYSTEM_PROMPT } from '../src/agent/okf.js';
 import { inCatalog } from '../src/catalog.js';
+import { areaFile, isArea } from '../src/areas.js';
+import { BUILT_IN_AREAS } from '../src/label.js';
 import { stackFile } from '../src/stack.js';
 
 /**
@@ -195,7 +197,12 @@ const SEED = {
     },
   },
   // The admin team's: its extraction rules and tech stack apply to every channel.
-  'kb-team-admin': { name: 'Admin', kind: 'team', files: {} },
+  // The areas Clef asks about (src/areas.js), as the bootstrap wrote production's.
+  'kb-team-admin': {
+    name: 'Admin',
+    kind: 'team',
+    files: Object.fromEntries(BUILT_IN_AREAS.map((a) => [`areas/${a.id}.md`, areaFile({ title: a.name, what: a.what })])),
+  },
   'kb-org-acme': {
     name: 'acme',
     kind: 'org',
@@ -303,7 +310,7 @@ export async function createKnowledgeBases() {
     /** The catalog files of a team's knowledge base, `[{ path, text }]` (src/catalog.js). */
     async catalog(repo) {
       const r = repos.get(repo);
-      const paths = (await tracked(r)).filter(inCatalog);
+      const paths = (await tracked(r)).filter((p) => inCatalog(p) || isArea(p));
       return Promise.all(paths.map(async (path) => ({
         path, text: await r.fs.promises.readFile(`${DIR}/${path}`, 'utf8'),
       })));

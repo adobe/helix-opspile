@@ -14,9 +14,9 @@
  * The header of every page (its styles in ui/spectrum.css), as the global `Header`. It runs right after the
  * page's <header>, before the page's own script.
  *
- * The switch between the pages: Inbox and Agents for every member of a team (Agents read-only),
- * Teams too for team managers, and Orgs, Bots, Requests and COGS (what the inbox costs) too for the
- * admin team (with the number of open requests on Requests), and Topics (the topic map); and Stats, klickhaus' statistics of all threads in a new tab,
+ * The switch between the pages: Inbox, Agents (read-only) and Topics (the topic map) for every
+ * member of a team, Teams too for team managers, and Orgs, Bots, Requests and COGS (what the inbox
+ * costs) too for the admin team (with the number of open requests on Requests); and Stats, klickhaus' statistics of all threads in a new tab,
  * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
@@ -39,7 +39,7 @@ window.Header = (() => {
     { id: 'orgs', label: 'Orgs', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors', admin: true },
     { id: 'bots', label: 'Bots', href: '/inbox/admin?tab=bots', title: 'The bots in the threads: say which are Adobe\'s, so the inbox shows them on Adobe\'s side', admin: true },
     { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for, and customers waiting in the portal: confirm, open or decline', admin: true },
-    { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their topics, found from what was said, with the Adobe people, customers and Clef topics on each', admin: true },
+    { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their areas and topics, with the people, customers and products on each', member: true },
     { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs at list prices: per service, message, thread, customer and month', admin: true },
     // On klickhaus, in a new tab: its address comes from /api/me (`stats.url`).
     { id: 'stats', label: 'Stats', href: null, title: 'Statistics of all threads, every team\'s, in klickhaus (opens in a new tab)', external: true },
