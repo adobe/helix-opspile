@@ -251,6 +251,30 @@ describe('following technologies', () => {
     assert.deepEqual(heard.map((s) => s.person), [EW.id]);
   });
 
+  it('tells an area\'s follower that a thread left it, and keeps a target as it was stored', async () => {
+    const e = env();
+    const ew = asMe(EW);
+    e.DB.sqlite.exec(`INSERT INTO areas (team, id, name, what, path) VALUES
+      ('admin', 'seo', 'SEO', 'SEO', 'areas/seo.md')`);
+    await e.DB.batch(threadAreaStatements(e.DB, key('C1', '2.1'), { seo: 0.9 }));
+    await call(e, ew, 'PUT', '/api/follows', { kind: 'area', target: ' seo ' });
+    const sockets = [{ person: EW.id, scoped: true }];
+    assert.equal((await recipients(e, { thread: key('C1', '2.1') }, sockets)).length, 1);
+    // Relabeled: it is in the area no more; the event naming it still reaches them.
+    await e.DB.batch(threadAreaStatements(e.DB, key('C1', '2.1'), {}));
+    assert.equal((await recipients(e, { thread: key('C1', '2.1') }, sockets)).length, 0);
+    assert.equal((await recipients(e, { thread: key('C1', '2.1'), areas: ['seo'] }, sockets)).length, 1);
+    // Unfollowed with what followed it, spaces and all.
+    let r = await call(e, ew, 'PUT', '/api/follows', { kind: 'area', target: ' seo ', follow: false });
+    assert.deepEqual(r.body.by.area, []);
+    // A person's id is stored as the integer it is: "007" is 7, "1e1" no one.
+    r = await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: `00${ADA.id}` });
+    assert.deepEqual(r.body.by.person, [ADA.id]);
+    assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: '1e0' })).status, 400);
+    r = await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: ADA.id, follow: false });
+    assert.deepEqual(r.body.by.person, []);
+  });
+
   it('finds the threads a team follows when it searches', async () => {
     const e = env();
     const ew = asMe(EW);

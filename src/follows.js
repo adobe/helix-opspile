@@ -191,6 +191,23 @@ export async function followersOfTech(env, people, techs) {
   return new Set((results || []).map((r) => r.person));
 }
 
+/**
+ * Which of `people` (ids) follow any of `areas` (ids), as it counts: those who had a thread that
+ * is no longer in an area they follow hear that it changed, as followersOfTech.
+ */
+export async function followersOfAreas(env, people, areas) {
+  const ids = [...new Set([].concat(people || []).filter(Boolean))];
+  const list = [...new Set([].concat(areas || []).filter(Boolean))];
+  if (!env.DB || !ids.length || !list.length) {
+    return new Set();
+  }
+  const { results } = await env.DB.prepare(`SELECT DISTINCT person FROM (${COUNTED_FOLLOWS_BY})
+    WHERE kind = 'area' AND person IN (SELECT value FROM json_each(?1))
+      AND target IN (SELECT value FROM json_each(?2))`)
+    .bind(JSON.stringify(ids), JSON.stringify(list)).all();
+  return new Set((results || []).map((r) => r.person));
+}
+
 /** Whether person `person` follows a technology inbox entry `thread` shows. */
 export async function followsEntry(env, person, thread) {
   return (await followersOf(env, [person], thread)).has(person);
@@ -240,9 +257,18 @@ export async function personFollowsBy(env, person) {
   return out;
 }
 
+/** `target` as it is stored: trimmed; a person's id as the integer it is (null if it is none). */
+function targetOf(kind, target) {
+  const id = String(target ?? '').trim();
+  if (kind !== 'person') {
+    return id;
+  }
+  return /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) ? String(Number(id)) : null;
+}
+
 /** Whether `target` is one of kind `kind` that may be followed: a customer, a person, an area. */
 async function knownTarget(env, kind, target) {
-  const id = String(target ?? '').trim();
+  const id = targetOf(kind, target);
   if (!id || id.length > 120) {
     return null;
   }
@@ -268,7 +294,7 @@ export async function setPersonFollowBy(env, {
   }
   if (!follow) {
     const { meta } = await env.DB.prepare(`DELETE FROM person_follows_by
-      WHERE person = ? AND kind = ? AND target = ?`).bind(person, kind, String(target ?? '')).run();
+      WHERE person = ? AND kind = ? AND target = ?`).bind(person, kind, targetOf(kind, target) ?? '').run();
     return { ok: true, changed: Boolean(meta.changes) };
   }
   const member = await env.DB.prepare('SELECT 1 FROM team_members WHERE person = ? LIMIT 1')

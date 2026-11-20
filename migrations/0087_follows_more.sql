@@ -21,6 +21,9 @@ CREATE TABLE thread_areas (
   PRIMARY KEY (thread, area)
 );
 CREATE INDEX thread_areas_area ON thread_areas (area);
+-- As the inbox reads them (src/label.js topicList): a retired id as the area that took it over
+-- (golive is project's), one that became a product (commerce, integrations) none.
 INSERT OR IGNORE INTO thread_areas (thread, area, p)
-  SELECT l.thread, j.key, j.value FROM labels l, json_each(l.topics) j
-  WHERE l.topics IS NOT NULL AND json_valid(l.topics);
+  SELECT l.thread, CASE j.key WHEN 'golive' THEN 'project' ELSE j.key END, j.value
+  FROM labels l, json_each(l.topics) j
+  WHERE l.topics IS NOT NULL AND json_valid(l.topics) AND j.key NOT IN ('commerce', 'integrations');

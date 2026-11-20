@@ -1138,6 +1138,9 @@ describe('backfill, mentions and labels', () => {
     ]);
     assert.deepEqual(r.tech, { gained: ['eds'], lost: [] });
     assert.deepEqual(r.topics, ['cdn']);
+    // The areas it is in, by index, and that it joined one, for those who follow it.
+    assert.deepEqual(e.DB.rows('SELECT area, p FROM thread_areas'), [{ area: 'cdn', p: 0.9 }]);
+    assert.deepEqual(r.areas, { gained: ['cdn'], lost: [] });
     assert.deepEqual(e.DB.rows('SELECT topics FROM labels'), [{ topics: '{"cdn":0.9}' }]);
     assert.match(calls[0].input.state, /Cy \(customer, customer\.example\):\nsite down/);
     assert.equal(calls.find((c) => c.model.endsWith('/clairic')).input.reference_date, '2026-10-21');
