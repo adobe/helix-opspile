@@ -2757,9 +2757,13 @@ async function showOrg(slug) {
     const res = await call('/api/admin/orgs', 'PUT', { slug, ...now });
     if (!res.ok) { failed('Save', res); return; }
     if (mine !== saves) return;
+    const was = state.orgs.find((x) => x.slug === slug);
+    const retyped = (was?.type || 'customer') !== res.body.org.type;
     v.org = res.body.org;
     status('ok', 'Saved.');
     if (v === state.view) show(res.body.org);
+    // A partner and a customer are candidates only by their names.
+    if (retyped) loadDups({ fresh: true });
   };
   // The icon suggestions (src/favicons.js), each a button that makes it the org's icon.
   let found = [];
@@ -2817,6 +2821,7 @@ async function showOrg(slug) {
       slug, name: null, icon: null, type: 'customer', updated_at: null,
     };
     status('ok', 'Reset.');
+    loadDups({ fresh: true });
     if (v !== state.view) return;
     $('oName').value = '';
     $('oIcon').value = '';

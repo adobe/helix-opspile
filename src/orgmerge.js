@@ -385,7 +385,9 @@ function spreads(orgs) {
 
 /**
  * The pairs of orgs whose signals add up to `CANDIDATE`, strongest first, at most
- * `MAX_CANDIDATES`: `[{ a, b, signals, score }]`, `a` before `b`.
+ * `MAX_CANDIDATES`: `[{ a, b, signals, score }]`, `a` before `b`. Orgs of two types (a customer
+ * and its partner, vendor, or Adobe) share people, mail domains and Slack Connect teams because
+ * one works for the other: only alike names make them a candidate.
  */
 export function candidates({ orgs, members }) {
   const spread = spreads(orgs);
@@ -395,7 +397,9 @@ export function candidates({ orgs, members }) {
     for (let j = i + 1; j < list.length; j += 1) {
       const signals = signalsOf(list[i], list[j], { ...spread, members });
       const score = scoreOf(signals);
-      if (score >= CANDIDATE) {
+      const named = (list[i].type || 'customer') === (list[j].type || 'customer')
+        || signals.some((s) => s.kind === 'name');
+      if (score >= CANDIDATE && named) {
         out.push({
           a: list[i].slug, b: list[j].slug, signals, score,
         });
