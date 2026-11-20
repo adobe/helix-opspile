@@ -760,7 +760,7 @@ function details(n) {
   return `<div class="head"><span class="dot" data-type="${n.type}"></span><div><div class="sub">${esc(n.one)}${parent ? ` in ${esc(parent.label)}` : ''}</div>
       <h2>${esc(n.label)}</h2></div>${followButton(followOf(n), n.label)}<button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
     ${foldButton(n) || team ? `<div class="acts">${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
-    ${state.editArea && area ? areaForm() : ''}
+    ${area && state.editArea && !state.editArea.new && state.editArea.id === area.id ? areaForm() : ''}
     ${area?.what ? `<p class="theme">Clef is asked: is this thread about ${esc(area.what)}?</p>` : ''}
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
     <p class="sub facts">${facts.map(esc).join(' · ')}</p>
@@ -821,7 +821,7 @@ function clickNode(n) {
     pick('');
     return;
   }
-  if (opens(n) && (n.type !== 'org' || n.children.length)) {
+  if (opens(n)) {
     state.q.sel = n.id;
     fold(n.id);
     return;
