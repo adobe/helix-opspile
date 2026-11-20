@@ -202,6 +202,7 @@ async function entries(env, groups) {
       any_at: latestOf('any_at'),
       label,
       signals: members.flatMap((m) => signals.get(m.thread) || []),
+      imported: members.every((m) => Number(m.imported)),
     });
     out.set(g, {
       title: (anchorLabel && anchorLabel.title) || (label && label.title) || anchor.title || '',

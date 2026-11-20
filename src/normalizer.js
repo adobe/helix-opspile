@@ -38,6 +38,7 @@ import { copyThreadFiles } from './threadfiles.js';
 import { isTeamsFileKey, withTeamsFiles } from './teamsfiles.js';
 import { followChange, refile } from './refile.js';
 import { runCatchUp } from './catchup.js';
+import { IMPORT_VIA, runImport } from './history.js';
 import { notifyRoom } from './notify.js';
 import { signalFacts } from './resolve.js';
 import { teamsOf } from './shares.js';
@@ -404,6 +405,10 @@ export async function processKey(env, key, cache = {}) {
   if (!obj) {
     return { key, result: 'missing' };
   }
+  // The history import's (src/history.js): a thread that was over before the inbox began. It is
+  // filed and indexed like any, but wakes nobody: no agent, label, vectors, full-text items,
+  // file copies, export job (the cron's sweep exports it) or announcement.
+  const imported = Boolean(obj.customMetadata && obj.customMetadata.via === IMPORT_VIA);
   // Slack Connect files arrive as stubs: what files.info says about them, kept in pile 1.
   // Teams files are copied into pile 1, and the images among them shown inline.
   const payload = await withSlackFiles(env, key, JSON.parse(await obj.text()));
@@ -526,6 +531,7 @@ export async function processKey(env, key, cache = {}) {
     authorKind: author.kind,
     edited: Boolean(message.editedAt),
     attachments: deleted ? 0 : attachmentsOf(body),
+    imported,
   });
   if (message.reactions) {
     await replaceReactions(
@@ -549,11 +555,12 @@ export async function processKey(env, key, cache = {}) {
   }, deleted ? [] : await mentionsOf(env, message, body, person, cache));
 
   // The message's files, copied for the agents (src/threadfiles.js), in a job of their own.
-  if (written && !deleted && env.FILES && attachmentsOf(body)) {
+  if (written && !deleted && !imported && env.FILES && attachmentsOf(body)) {
     await env.NORMALIZE.send({ files: message.thread });
   }
-  // A reply whose root we have never seen: fetch the thread's history once.
-  if (message.id !== message.rootId && !deleted) {
+  // A reply whose root we have never seen: fetch the thread's history once. The import has the
+  // whole thread already, its root perhaps a moment behind.
+  if (message.id !== message.rootId && !deleted && !imported) {
     const root = await findMessage(env.DB, { ...message, id: message.rootId });
     if (!root) {
       await requestBackfill(env, {
@@ -569,39 +576,42 @@ export async function processKey(env, key, cache = {}) {
   // A person's reply in the platform thread of a root that was folded into another conversation:
   // it is a conversation of its own now (src/rethread.js dethread), before its agent is poked and
   // the inboxes hear of the message. The group it left is exported again; this one is below.
-  if (message.id !== message.rootId && !deleted && cls.kind === 'channel' && author.kind === 'person') {
+  if (message.id !== message.rootId && !deleted && !imported && cls.kind === 'channel'
+    && author.kind === 'person') {
     const split = await dethread(env, message.thread);
     if (split.group) {
       await queueExport(env, [split.group, ...split.split]);
     }
   }
   // A thread agent reads every new message of its thread (only in channels where it is on).
-  const poke = written && !deleted && cls.kind === 'channel' && await agentEnabled(env, message.channelId, cls.team);
+  const poke = written && !deleted && !imported && cls.kind === 'channel'
+    && await agentEnabled(env, message.channelId, cls.team);
   // A new root may continue an earlier thread (a repeat alert, a follow-up). Its agent is
   // poked once that is decided, so it is the group's agent, not one of the root's own.
-  if (message.id === message.rootId && !deleted && env.VECTORS && env.AI) {
+  if (message.id === message.rootId && !deleted && !imported && env.VECTORS && env.AI) {
     await env.NORMALIZE.send({ rethread: message.thread, ...(poke ? { poke: true } : {}) }, {
       delaySeconds: RETHREAD_DELAY_SECONDS,
     });
   } else if (poke) {
     await env.NORMALIZE.send({ agent: message.thread }, { delaySeconds: AGENT_DELAY_SECONDS });
   }
-  if (cls.kind === 'channel' && author.kind === 'person' && env.AI) {
+  if (cls.kind === 'channel' && author.kind === 'person' && !imported && env.AI) {
     await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
   }
   // Its vector, and the thread's; a deletion (whoever's) takes the message's vector away. The
   // full-text index (SEARCH) has the bots' messages too.
   const vectors = (author.kind === 'person' || deleted) && env.CONTENT && env.AI;
-  if (cls.kind === 'channel' && (vectors || env.SEARCH)) {
+  if (cls.kind === 'channel' && !imported && (vectors || env.SEARCH)) {
     await env.NORMALIZE.send({ vectorize: message.thread }, {
       delaySeconds: VECTORIZE_DELAY_SECONDS,
     });
   }
   // Its row in klickhaus (src/clickhouse.js), after the label job; a burst exports once.
-  if (written) {
+  if (written && !imported) {
     await queueExport(env, message.thread);
   }
-  const rooms = env.ROOMS ? await teamsOf(env, {
+  // An import is tens of thousands of messages: announced, every open inbox would reload with each.
+  const rooms = env.ROOMS && !imported ? await teamsOf(env, {
     team: cls.team, source: message.source, channel_id: message.channelId, thread: message.thread,
   }) : [];
   // Who to notify (ui/inbox.js): the people a message just posted (not a backfill, a replay or a
@@ -659,7 +669,8 @@ export async function consume(batch, baseEnv, meter = null) {
       || (body.agent && `agent:${body.agent}`)
       || (body.files && `files:${body.files}`)
       || (body.refile && `refile:${body.refile.source}:${body.refile.channelId}`)
-      || (body.catchup && `catchup:${body.catchup.channelId}`);
+      || (body.catchup && `catchup:${body.catchup.channelId}`)
+      || (body.import && `import:${body.import.source}:${body.import.channelId}`);
     try {
       let r;
       if (body.backfill) {
@@ -679,6 +690,9 @@ export async function consume(batch, baseEnv, meter = null) {
       } else if (body.catchup) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await runCatchUp(env, body.catchup) };
+      } else if (body.import) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await runImport(env, body.import) };
       } else if (body.refile) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await refile(env, body.refile) };

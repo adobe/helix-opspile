@@ -587,6 +587,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       messages: live.filter((m) => m.author.kind !== 'system').length,
       // Re-threaded into another thread's group (src/rethread.js): that group's first thread.
       logical_thread: entry.logical || null,
+      // From the history import (src/history.js): read by everyone, waiting on nobody.
+      imported: entry.imported ? 1 : 0,
       updated_at: new Date(now).toISOString(),
     };
   }
@@ -652,10 +654,11 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
    * `tools`: what the agent asked for there (src/toolrequests.js), `[{ asked, ago, kind, name,
    * title, about, reason, status?, by? }]`: `asked` the index in `sidebar` of the message it
    * answered, `ago` minutes ago; `status` (and `by`, a person key) for one that was decided.
+   * `imported`: the thread came in through the history import (src/history.js).
    */
   function seed({
     ch, messages, reads = {}, label, facts: threadFacts = [], mentioned = [], draft, bash = [],
-    sidebar = [], tools = [],
+    sidebar = [], tools = [], imported = false,
   }) {
     const ids = messages.map(([, ago]) => newId(ch.source, now - ago * MIN));
     const rootId = ids[0];
@@ -669,6 +672,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       }).replace(/\/[^/]+\.md$/, '/'),
       messages: [],
       row: null,
+      imported,
     };
     threads.set(key, entry);
     messages.forEach(([who, ago, body, extra = {}], i) => {
@@ -1039,6 +1043,19 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['jonas', 185, 'Thanks, the staging host resolves again.'],
     ],
     mentioned: ['dana'],
+  });
+
+  // From the history import: over before the inbox began, so read and quiet, though the customer
+  // spoke last and mentioned Dana.
+  seed({
+    ch: CHANNELS.initech,
+    messages: [
+      ['jonas', 60 * 24 * 40, 'Do we need to rotate the CDN keys before the migration?'],
+      ['tom', 60 * 24 * 40 - 30, 'Not before, the new keys come with it.'],
+      ['jonas', 60 * 24 * 40 - 45, 'Great, Dana, can you confirm the date?'],
+    ],
+    mentioned: ['dana'],
+    imported: true,
   });
 
   seed({
