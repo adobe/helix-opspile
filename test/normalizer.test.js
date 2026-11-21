@@ -1204,6 +1204,34 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual(none, { queued: 0, next: null });
     const named = await queueRelabel(e, { threads: ['slack:E1:C1:1.1'], minMessages: 1 });
     assert.deepEqual(named, { queued: 1, next: null });
+
+    // Labeled live, what it now shows is news for those who follow it; imported (the history
+    // import's, src/history.js), it tells nobody.
+    const told = [];
+    e.ROOMS = {
+      idFromName: (n) => n,
+      get: (team) => ({
+        fetch: async (u, init) => {
+          told.push({ team, ...JSON.parse(init.body) });
+          return new Response(null, { status: 204 });
+        },
+      }),
+    };
+    const relabel = async () => {
+      e.DB.sqlite.exec('DELETE FROM thread_tech; DELETE FROM thread_areas');
+      await quiet(() => consume({
+        messages: [{
+          body: { label: 'slack:E1:C1:1.1', force: true }, attempts: 1, ack() {}, retry() {},
+        }],
+      }, e));
+    };
+    await relabel();
+    assert.ok(told.some((t) => t.type === 'thread' && t.tech && t.tech.includes('eds')));
+    told.length = 0;
+    e.DB.sqlite.exec('UPDATE threads SET imported = 1');
+    await relabel();
+    assert.deepEqual(told, []);
+    assert.deepEqual(e.DB.rows('SELECT tech FROM thread_tech'), [{ tech: 'eds' }]);
   });
 
   it('keeps "about" unasked, not empty, when its call fails', async () => {
