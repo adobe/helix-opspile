@@ -149,6 +149,27 @@ describe('cogs: meter', () => {
     assert.deepEqual(await m.flush(), { points: 0 });
   });
 
+  it('reaches AI Search over RPC, where every property is a method of the other side', async () => {
+    // A Workers RPC stub: any property is a callable stub, `bind` and `apply` too, which the other
+    // side does not have.
+    const remote = { search: async () => ({ chunks: [] }), upload: async (n) => ({ id: `item-${n}` }), delete: async () => {} };
+    const stub = (path = []) => new Proxy(() => {}, {
+      get: (_, prop) => (typeof prop === 'symbol' ? undefined : stub([...path, prop])),
+      apply: (_, __, args) => {
+        const fn = remote[path[path.length - 1]];
+        if (!fn || path.some((p) => ['bind', 'apply', 'call'].includes(p))) {
+          throw new Error(`The RPC receiver does not implement the method "${path[path.length - 1]}".`);
+        }
+        return fn(...args);
+      },
+    });
+    const m = new Meter({ USAGE: usage(), SEARCH: stub() }, { via: 'queue' });
+    const env = m.env({ org: 'acme', team: 'helix' });
+    assert.deepEqual(await env.SEARCH.items.upload('n', 'text', {}), { id: 'item-n' });
+    await env.SEARCH.items.delete('i1');
+    assert.deepEqual(await env.SEARCH.search({ query: 'q' }), { chunks: [] });
+  });
+
   it('counts D1 rows, R2 operations, queue operations, Workers AI, Vectorize and AI Search', async () => {
     const USAGE = usage();
     const sent = [];
