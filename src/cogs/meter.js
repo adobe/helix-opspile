@@ -57,8 +57,10 @@ const sizeOf = (value) => {
 };
 
 /** Calls the binding method `v` on `target`, with `after` counting what it answered. */
+// `Reflect.apply`, not `v.apply`: a binding reached over RPC (AI Search) answers any property,
+// `apply` and `bind` too, as a method of the other side, which it does not have.
 const counted = (target, v, after) => async (...args) => {
-  const res = await v.apply(target, args);
+  const res = await Reflect.apply(v, target, args);
   try {
     after(res, args);
   } catch {
@@ -252,13 +254,14 @@ function search(instance, scope) {
           scope.add('ai_search', 'uploads', '', 1);
         });
       }
-      return v.bind(t);
+      return (...args) => Reflect.apply(v, t, args);
     },
   });
   return new Proxy(instance, {
     get(target, prop) {
       const v = Reflect.get(target, prop);
-      if (prop === 'items' && v && typeof v === 'object') {
+      // Over RPC, `items` is a stub, which is a function.
+      if (prop === 'items' && v && (typeof v === 'object' || typeof v === 'function')) {
         return items(v);
       }
       if (typeof v !== 'function') {
@@ -270,7 +273,7 @@ function search(instance, scope) {
           scope.add('ai_search', kind === 'keyword' ? 'fulltext_queries' : 'semantic_queries', '', 1);
         });
       }
-      return v.bind(target);
+      return (...args) => Reflect.apply(v, target, args);
     },
   });
 }
