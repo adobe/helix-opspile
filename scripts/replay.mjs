@@ -30,7 +30,8 @@
  *
  * --imported, with --relabel, --vectorize or --index: only the history import's threads
  * (src/history.js), and only theirs are reset; --limit <n> the n most recent of them, to try a
- * few first. Their labels tell no inbox, as a live thread's do.
+ * few first. Their labels tell no inbox, as a live thread's do. --every <seconds> between two
+ * batches of 50 (default 20): Vectorize and Workers AI are rate limited.
  *
  * --rethread re-runs re-threading for every thread with a root (no replay), spread over a few
  * minutes. Run it after a replay, once the vector index has caught up with the new roots.
@@ -66,6 +67,7 @@ const indexAll = args.includes('--index');
 const channel = opt('channel', null);
 const imported = args.includes('--imported');
 const limit = Number(opt('limit', 0));
+const every = Number(opt('every', 20));
 /** Seconds between two roots of one channel re-threaded in order. */
 const SPACING = 6;
 const bucket = `helix-opspile-raw${suffix}`;
@@ -109,6 +111,9 @@ if (!queue) {
 if ((imported || limit) && !(relabelAll || vectorizeAll || indexAll)) {
   throw new Error('--imported and --limit go with --relabel, --vectorize or --index');
 }
+if (!(every > 0)) {
+  throw new Error('--every takes a number of seconds');
+}
 if (args.includes('--limit') && !(limit > 0)) {
   throw new Error('--limit takes a number');
 }
@@ -137,6 +142,12 @@ if (rethreadAll || relabelAll || vectorizeAll || indexAll) {
   // With --limit, only those are reset.
   const these = limit ? ` IN (SELECT thread FROM (${sql}))` : '';
   const reset = (column) => (imported || limit ? ` AND ${column}${these || ' IN (SELECT thread FROM threads WHERE imported = 1)'}` : '');
+  const res = cf('d1', 'query', db.uuid, '--sql', sql);
+  const keys = (res.result || res)[0].results.map((r) => r.thread);
+  // The queue delays a message 12 hours at most.
+  if (Math.ceil(keys.length / 50) * every > 12 * 3600) {
+    throw new Error(`${keys.length} threads at 50 every ${every}s take longer than the queue delays`);
+  }
   if (relabelAll && !dryRun) {
     // Labels are skipped when nothing changed; forget what they were computed for.
     cf('d1', 'query', db.uuid, '--sql', `UPDATE labels SET labeled_through = '', title = NULL WHERE 1${reset('thread')}`);
@@ -146,11 +157,9 @@ if (rethreadAll || relabelAll || vectorizeAll || indexAll) {
     cf('d1', 'query', db.uuid, '--sql', `UPDATE messages SET embedded = NULL WHERE embedded IS NOT NULL${reset('thread')}; `
       + `UPDATE threads SET embedded = NULL, vectorized_through = NULL WHERE vectorized_through IS NOT NULL${reset('thread')}`);
   }
-  const res = cf('d1', 'query', db.uuid, '--sql', sql);
-  const keys = (res.result || res)[0].results.map((r) => r.thread);
   // One channel's roots one by one, oldest first; everything else in batches of 50.
   const size = channel && rethreadAll ? 1 : 50;
-  const spacing = size === 1 ? SPACING : 20;
+  const spacing = size === 1 ? SPACING : every;
   for (let i = 0; i < keys.length; i += size) {
     const file = join(dir, 'rethread.json');
     writeFileSync(file, JSON.stringify(keys.slice(i, i + size)

@@ -612,9 +612,9 @@ Their labels, vectors and full-text items, when wanted, only theirs, a few first
 
 ```sh
 node scripts/replay.mjs --vectorize --imported --limit 50   # vectors and full-text items of 50
-node scripts/replay.mjs --vectorize --imported              # of every imported thread
+node scripts/replay.mjs --vectorize --imported --every 60   # of every imported thread, 50 a minute
 node scripts/replay.mjs --relabel --imported --limit 50     # Clef's labels of 50, telling no inbox
-node scripts/replay.mjs --relabel --imported
+node scripts/replay.mjs --relabel --imported --every 60
 ```
 
 The Entra app needs these Microsoft Graph **application** permissions, with admin consent:
