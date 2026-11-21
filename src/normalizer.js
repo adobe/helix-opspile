@@ -715,7 +715,10 @@ export async function consume(batch, baseEnv, meter = null) {
           // eslint-disable-next-line no-await-in-loop
           await queueExport(env, body.label, { delaySeconds: 0 });
         }
-        if (r.tech || r.areas) {
+        // An imported thread's first label is no news: thousands of them, labeled when asked
+        // for (scripts/replay.mjs --imported), would reload every inbox that follows what they
+        // show with each.
+        if ((r.tech || r.areas) && !r.imported) {
           // eslint-disable-next-line no-await-in-loop
           await announceFollowed(env, body.label, r.tech, r.areas);
         }

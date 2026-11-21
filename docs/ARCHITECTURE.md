@@ -1165,7 +1165,8 @@ unless asked for (`--alerts`), and ignored ones always.
   klickhaus), is quiet in the status piles, and says `imported` to MCP clients. The cron's
   vector and label sweeps leave it out, and so does a re-file (which exports it again, and
   moves its vectors only where it has some); `replay.mjs --relabel`, `--vectorize` and `--index`
-  make them when wanted. A message of it heard of otherwise (a reply, an edit, a Teams reaction)
+  make them when wanted (with `--imported`, only theirs). Their labels announce nothing: the
+  inboxes that follow what one shows hear of it with its next live message. A message of it heard of otherwise (a reply, an edit, a Teams reaction)
   makes it a live thread like any.
 - **Progress** is `history_imports`, one row per channel: where the next page starts (the
   platform's cursor, and how many roots of that page are done), and how many pages, threads and

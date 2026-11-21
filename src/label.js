@@ -788,6 +788,8 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
     topics: topics ? Object.keys(topics) : [],
     facts: loose.length,
     title: Boolean(title),
+    // From the history import (src/history.js): nobody is told (src/normalizer.js).
+    ...(Number(thread.imported) ? { imported: true } : {}),
     // What it shows, when that changed: the inboxes that follow a technology it gained or lost
     // list it again (src/normalizer.js).
     ...(was.join() !== is.join() ? {
