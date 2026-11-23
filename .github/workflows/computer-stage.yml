@@ -91,6 +91,7 @@ on:
       - 'src/refile.js'
       - 'src/requests.js'
       - 'src/resolve.js'
+      - 'src/response-model.js'
       - 'src/rethread.js'
       - 'src/review.js'
       - 'src/rules.js'
