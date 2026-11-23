@@ -642,7 +642,7 @@ function trees() {
     const few = n.type === 'topic' && n.threads.length && tagged(n.threads) / n.threads.length < 0.25;
     return `<li class="tr d${depth}">${shows(n) ? `<button class="chev" data-fold="${esc(n.id)}" aria-expanded="${Boolean(n.open)}" aria-label="${n.open ? 'Fold' : 'Open'} ${esc(n.label)}"></button>` : '<span class="chev"></span>'}
       <button class="pickr" data-sel="${esc(n.id)}"><span class="dot" data-type="${n.type}"${n.gap ? ' data-gap' : ''}></span><span class="nm">${esc(n.label)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ''}${few ? ' <span class="untagged" title="Clef tags few of its threads">·</span>' : ''}</span>
-      ${TrendView.badge(it)}${TrendView.spark(it)}<span class="n" title="Channels a week, the last ${Trends.RECENT} weeks">${it ? it.stats.perWeek.toFixed(1) : '–'}</span></button></li>`;
+      ${TrendView.badge(it)}${TrendView.spark(it)}<span class="n" title="Its share of the active channels, the last ${Trends.RECENT} weeks${it ? ` (${it.stats.perWeek.toFixed(1)} channels a week)` : ''}">${it ? TrendView.pct(100 * it.stats.share) : '–'}</span></button></li>`;
   };
   const tree = (roots) => roots.sort((a, b) => recent(b) - recent(a) || a.label.localeCompare(b.label))
     .map((n) => row(n, 0) + (shows(n) && n.open ? n.children.map((id) => g.all.get(id)).filter(Boolean)
@@ -670,7 +670,7 @@ function trees() {
       <h3>Products and features</h3><ul class="tree">${tree(made) || '<li class="sub">No products yet.</li>'}</ul>`;
   }
   return `<div class="seg" role="group" aria-label="Show">${LISTS.map((l) => `<button data-tl="${l.id}" aria-pressed="${state.q.tl === l.id}" title="${esc(l.title)}">${l.label}</button>`).join('')}</div>
-    <p class="hint">Each line is the share of the channels with messages that talk about it, week by week; trending, declining and peaked are said of the last ${Trends.RECENT} full weeks, to ${esc(TrendView.data.weeks[moving.last])}, against the ${Trends.BASE} before. A click picks it on the map and adds its line to the chart, which keeps it until × takes it off.</p>
+    <p class="hint">Each line is the share of the active channels (those with a message that week) that talk about it, week by week; trending, declining and peaked are said of the last ${Trends.RECENT} full weeks, to ${esc(TrendView.data.weeks[moving.last])}, against the ${Trends.BASE} before. A click picks it on the map and adds its line to the chart, which keeps it until × takes it off.</p>
     ${body}`;
 }
 

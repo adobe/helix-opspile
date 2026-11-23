@@ -81,6 +81,9 @@ describe('trends (ui/trends.js)', () => {
     assert.ok(up.stats.lift > 2 && up.stats.z > 2 && up.stats.accel > 0, JSON.stringify(up.stats));
     assert.equal(d.weeks[m.peaked[0].stats.peak.week], weeks[12]);
     assert.equal(up.orgs > 10, true);
+    // Its share of the active channels (40 a week, all of them): the last six weeks against before.
+    assert.ok(Math.abs(up.stats.share - up.stats.recent / (40 * 6)) < 1e-9);
+    assert.ok(Math.abs(up.stats.baseShare - 3 / 40) < 1e-9);
   });
 
   it('counts what is mostly one customer\'s half', () => {

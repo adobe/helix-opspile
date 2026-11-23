@@ -18,8 +18,8 @@
  *
  * Everything is the map's: its nodes' ids (`topic:3`, `tag:cdn`, `product:tech:…`,
  * `product:group:…`, ui/topicgraph.js), its areas and products, its team filter. A week counts the
- * channels with a message in a matching thread, of the channels with any (ui/trends.js), as a
- * share, on a three-week mean. The chart under the map compares terms, separated by commas: what
+ * channels with a message in a matching thread, of the active channels (those with a message
+ * that week, ui/trends.js), as a share, on a three-week mean. The chart under the map compares terms, separated by commas: what
  * the map has, by its name, words (in a title or a message) or `~a phrase` (the threads about
  * it), the last two asked of GET /api/topics/trends/match. What is picked on the map or in the
  * panel joins them (`add`), so a line stays until it is taken off; with none, the chart shows the
@@ -222,7 +222,7 @@
     const pace = item.list === 'trending' && s.accel > 0.05 ? ', speeding up' : '';
     const title = item.list === 'peaked'
       ? `Peaked in the week of ${st.data.weeks[s.peak.week]}; now ${Math.round((100 * s.now) / (s.peak.share || 1))}% of that`
-      : `${s.perWeek.toFixed(1)} channels a week, ${lift >= 0 ? '+' : ''}${lift}% on the 12 weeks before${pace}`;
+      : `${pctOf(100 * s.share)} of the active channels (${s.perWeek.toFixed(1)} a week), ${lift >= 0 ? '+' : ''}${lift}% on its share in the ${Trends.BASE} weeks before${pace}`;
     return `<span class="badge ${item.list}${item.top > Trends.MOSTLY_ONE ? ' one' : ''}" title="${esc(title)}${item.top > Trends.MOSTLY_ONE ? ' · mostly one customer' : ''}">${esc(text)}</span>`;
   }
 
@@ -230,13 +230,12 @@
   function summary(item) {
     if (!item) return '';
     const s = item.stats;
-    const lift = Math.round((s.lift - 1) * 100);
     const what = {
       trending: 'Trending',
       declining: 'Declining',
       peaked: `Peaked in the week of ${st.data.weeks[s.peak.week]}, now at ${Math.round((100 * s.now) / (s.peak.share || 1))}% of that`,
     }[item.list] || 'Steady';
-    return `<p class="trend">${spark(item)}<span>${esc(what)}: ${s.perWeek.toFixed(1)} channels a week in the last ${Trends.RECENT} weeks, ${lift >= 0 ? '+' : ''}${lift}% on the ${Trends.BASE} before${item.list === 'trending' && s.accel > 0.05 ? ', speeding up' : ''} · ${item.orgs} customer${item.orgs === 1 ? '' : 's'}${item.top > Trends.MOSTLY_ONE ? ', mostly one' : ''}</span></p>`;
+    return `<p class="trend">${spark(item)}<span>${esc(what)}: ${pctOf(100 * s.share)} of the active channels in the last ${Trends.RECENT} weeks (${s.perWeek.toFixed(1)} a week), against ${pctOf(100 * s.baseShare)} in the ${Trends.BASE} before${item.list === 'trending' && s.accel > 0.05 ? ', speeding up' : ''} · ${item.orgs} customer${item.orgs === 1 ? '' : 's'}${item.top > Trends.MOSTLY_ONE ? ', mostly one' : ''}</span></p>`;
   }
 
   function drawChart(ctx) {
@@ -310,8 +309,8 @@
       cursor.setAttribute('x2', x(i));
       cursor.setAttribute('visibility', 'visible');
       tip.innerHTML = `<b>Week of ${esc(weeks[i])}${i === n - 1 ? ' (so far)' : ''}</b>
-        ${shown.map((s) => `<span class="row"><span class="swatch s${s.color}"></span>${esc(s.label)}: ${s.counts[first + i]} channels, ${totals[first + i] ? pctOf((100 * s.counts[first + i]) / totals[first + i]) : '0%'}</span>`).join('')}
-        <span class="sub">${totals[first + i]} channels with messages that week · click for its threads</span>`;
+        ${shown.map((s) => `<span class="row"><span class="swatch s${s.color}"></span>${esc(s.label)}: ${totals[first + i] ? pctOf((100 * s.counts[first + i]) / totals[first + i]) : '0%'} (${s.counts[first + i]} of ${totals[first + i]} active channels)</span>`).join('')}
+        <span class="sub">Active: a channel with a message that week · click for its threads</span>`;
       tip.hidden = false;
       const box2 = $('tchart').getBoundingClientRect();
       tip.style.left = `${Math.min(ev.clientX - box2.left + 14, box2.width - tip.offsetWidth - 8)}px`;
@@ -351,7 +350,7 @@
   /** The chart's card, under the map. */
   function card() {
     return `<section class="card tchart" id="tchart">
-      <div class="thead"><h2>Channels talking about it <span class="sub">% of the channels with messages, week by week</span></h2>
+      <div class="thead"><h2>Active channels talking about it <span class="sub">% of the channels with a message that week</span></h2>
         <div class="tqrow"><label class="s2-search"><input class="search" id="tq" type="search" list="tnames" autocomplete="off" aria-label="Compare, separated by commas: a topic, an area or a product, words, or ~a phrase"></label><datalist id="tnames"></datalist>
           <button id="tgo">Compare</button></div></div>
       <svg id="tsvg" role="img" aria-label="Week by week"></svg><ul class="legend tlegend" id="tlegend"></ul>
@@ -458,6 +457,7 @@
     spark,
     badge,
     summary,
+    pct: (v) => pctOf(v),
     card,
     wire,
     chart,
