@@ -120,7 +120,11 @@
     st.terms = p.get('tq');
   }
 
-  const params = () => (st.terms ? [['tq', st.terms]] : []);
+  /**
+   * The terms in the address: none (`tq` absent) shows the defaults; an empty `tq` is a chart that
+   * was cleared, with no line until one is added.
+   */
+  const params = () => (st.terms === null || st.terms === undefined ? [] : [['tq', st.terms]]);
 
   /**
    * A term: `{ term, label, id }` for one of the map's nodes (a group of one as its one, as the
@@ -138,6 +142,10 @@
 
   const termsOf = (ctx) => (st.terms || '').split(',').map((s) => s.trim()).filter(Boolean)
     .slice(0, MAX_TERMS).map((t) => termOf(t, ctx));
+  /** Whether the chart was cleared, or had its last line taken off: then it has no defaults. */
+  const cleared = () => typeof st.terms === 'string';
+  /** What is on the chart before the pick and what is pointed at: the terms, or the defaults. */
+  const base = (ctx) => (cleared() ? termsOf(ctx) : defaults(ctx));
 
   async function ask(term) {
     if (st.matches.has(term)) return;
@@ -164,7 +172,7 @@
     const m = moving(ctx);
     const picked = ctx.sel && TopicGraph.standsFor(ctx.graph, ctx.sel);
     const list = [];
-    for (const t of (termsOf(ctx).length ? termsOf(ctx) : defaults(ctx))) {
+    for (const t of base(ctx)) {
       if (!list.some((x) => x.term === t.term)) list.push({ ...t, picked: Boolean(picked && t.term === picked.id) });
     }
     // A pick the terms do not have yet (they are added on a pick, `add`): shown too.
@@ -351,7 +359,8 @@
       return `<li${st.hidden.has(s.term) ? ' class="off"' : ''}><button class="term" data-term="${esc(s.term)}" title="Shift-click hides it">
         <span class="swatch ${s.paint}"></span>${esc(s.label)}${note ? ` <span class="sub">${esc(note)}</span>` : ''}</button>
         <button class="x" data-drop="${esc(s.term)}" aria-label="Take ${esc(s.label)} off the chart">×</button></li>`;
-    }).join('')}${st.terms ? '<li><button class="clear" data-clear>Clear</button></li>' : ''}`;
+    }).join('')}${series.some((s) => !s.hovered) ? '<li><button class="clear" data-clear>Clear</button></li>'
+      : '<li class="sub">Nothing on the chart: pick a bubble, or search, to add its line.</li>'}`;
   }
 
   /** Draws the chart, asking for the words and phrases it does not have yet. */
@@ -377,7 +386,7 @@
 
   /** Adds `text` to what the chart compares: terms separated by commas, at most MAX_TERMS. */
   function compare(text, c) {
-    const old = (termsOf(c).length ? termsOf(c) : defaults(c)).map((t) => t.term);
+    const old = base(c).map((t) => t.term);
     const added = String(text).split(',').map((s) => s.trim()).filter(Boolean)
       .map((raw) => termOf(raw, c).term);
     st.terms = [...new Set([...old, ...added])].slice(-MAX_TERMS).join(', ');
@@ -396,7 +405,7 @@
       const drop = ev.target.closest('[data-drop]');
       if (drop) {
         const shown = seriesOf(c).map((t) => t.term).filter((t) => t !== drop.dataset.drop);
-        st.terms = shown.join(', ') || null;
+        st.terms = shown.join(', ');
         // The pick's line goes with it: it is unpicked.
         if (c.sel && TopicGraph.standsFor(c.graph, c.sel)?.id === drop.dataset.drop) {
           c.pick('');
@@ -425,16 +434,18 @@
     const n = id && TopicGraph.standsFor(ctx.graph, id);
     const m = moving(ctx);
     if (!n || !m || !m.items.has(n.id)) return;
-    const now = (termsOf(ctx).length ? termsOf(ctx) : defaults(ctx)).map((t) => t.term);
+    const now = base(ctx).map((t) => t.term);
     if (!now.includes(n.id)) st.terms = [...now, n.id].slice(-MAX_TERMS).join(', ');
     else st.terms = now.join(', ');
   }
 
   /**
-   * Takes every line off, the pick's too (it is unpicked): the chart shows the defaults again.
+   * Takes every line off, the pick's too (it is unpicked): the chart is empty until a line is added
+   * (a pick, a search), and stays so in the address (an empty `tq`).
    */
   function clear(ctx) {
-    st.terms = null;
+    // Empty, not the defaults again: what is added next is all there is.
+    st.terms = '';
     if (ctx.sel) {
       ctx.pick('');
       return;

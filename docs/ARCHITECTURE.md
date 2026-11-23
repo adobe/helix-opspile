@@ -1542,7 +1542,9 @@ there.
   its share of the active channels in the last six weeks. Filtered to trending, declining or peaked, the trees become one list, the
   strongest first. A click on a row, or on a bubble, picks the node on the graph and adds its
   line to the chart's (with none yet, to the most trending topics the chart starts with), where
-  it stays until × takes it off; Clear goes back to those.
+  it stays until × takes it off. **Clear** takes every line off, and so does × on the last one:
+  the chart stays empty (an empty `tq`, kept in the address) until a pick or a search adds a
+  line, instead of going back to those.
 - **Terms**, separated by commas (`tq`), are anything the map has, by its name, or words and
   phrases (`GET /api/topics/trends/match`):
   - **Words** are whole words, in a title or a message preview (`LIKE`, then a word-boundary test).

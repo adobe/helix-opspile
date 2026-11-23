@@ -142,20 +142,27 @@ describe('the trends chart (ui/trendview.js)', () => {
     );
   };
 
-  it('takes every line off on Clear, the pick\'s too', () => {
+  it('takes every line off on Clear, the pick\'s too, and keeps the chart empty', () => {
     const view = load('?tq=topic%3A1%2C+topic%3A2');
     view.fromUrl();
     assert.deepEqual(view.params(), [['tq', 'topic:1, topic:2']]);
     const calls = [];
     view.clear({ sel: 'topic:2', pick: (id) => calls.push(['pick', id]), toUrl: () => calls.push(['toUrl']) });
-    // Unpicked, which draws the chart again: with no terms, its defaults.
+    // Unpicked, which draws the chart again: empty, not its defaults, also in the address.
     assert.deepEqual(calls, [['pick', '']]);
-    assert.deepEqual(view.params(), []);
+    assert.deepEqual(view.params(), [['tq', '']]);
     const quiet = load('?tq=topic%3A1');
     quiet.fromUrl();
     const more = [];
     quiet.clear({ sel: '', pick: (id) => more.push(['pick', id]), toUrl: () => more.push(['toUrl']) });
     assert.deepEqual(more, [['toUrl']]);
-    assert.deepEqual(quiet.params(), []);
+    assert.deepEqual(quiet.params(), [['tq', '']]);
+    // An empty `tq` comes back empty; none, the defaults.
+    const empty = load('?tq=');
+    empty.fromUrl();
+    assert.deepEqual(empty.params(), [['tq', '']]);
+    const fresh = load('');
+    fresh.fromUrl();
+    assert.deepEqual(fresh.params(), []);
   });
 });
