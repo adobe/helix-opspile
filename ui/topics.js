@@ -968,6 +968,8 @@ function clickNode(n) {
     state.q.sel = n.id;
     if (TrendView.data) TrendView.add(n.id, trendCtx());
     fold(n.id);
+    // Its line, added: on the chart now, not on its next redraw.
+    TrendView.chart(trendCtx());
     return;
   }
   if (n.parent && n.id === state.q.sel) {

@@ -374,9 +374,7 @@
     $('tlegend').onclick = (ev) => {
       const c = ctx();
       if (ev.target.closest('[data-clear]')) {
-        clear();
-        c.toUrl();
-        chart(c);
+        clear(c);
         return;
       }
       const drop = ev.target.closest('[data-drop]');
@@ -416,9 +414,17 @@
     else st.terms = now.join(', ');
   }
 
-  /** Takes every line off: the chart shows the defaults again. */
-  function clear() {
+  /**
+   * Takes every line off, the pick's too (it is unpicked): the chart shows the defaults again.
+   */
+  function clear(ctx) {
     st.terms = null;
+    if (ctx.sel) {
+      ctx.pick('');
+      return;
+    }
+    ctx.toUrl();
+    chart(ctx);
   }
 
   /** The threads of week `week` for `terms` (as the chart has them), for the panel. */
