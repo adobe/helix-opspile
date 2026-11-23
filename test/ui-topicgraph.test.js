@@ -200,4 +200,15 @@ describe('the Topics graph (ui/topicgraph.js)', () => {
     assert.deepEqual(named, ['org:acme', ...top].sort());
     assert.equal(g.all.get('topic:2').named, true);
   });
+
+  it('lists a group of one as its one, once', () => {
+    // Area cdn has topics 0 and 1; "Not in an area" only topic 2.
+    const map = mapOf([[0, 'acme', [1]], [1, 'acme', [1]], [2, 'beta', [3]]]);
+    const g = TopicGraph.build(map, { shown: ['topic'], min: 1 });
+    assert.equal(TopicGraph.standsFor(g, `tag:${TopicGraph.NONE}`).id, 'topic:2');
+    assert.equal(TopicGraph.standsFor(g, 'tag:cdn').id, 'tag:cdn');
+    assert.equal(TopicGraph.standsFor(g, 'topic:9'), null);
+    const ids = ['topic:2', `tag:${TopicGraph.NONE}`, 'tag:cdn', 'topic:0', 'topic:9'];
+    assert.deepEqual(TopicGraph.distinct(g, ids).map((n) => n.id), ['topic:2', 'tag:cdn', 'topic:0']);
+  });
 });

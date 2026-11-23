@@ -18,18 +18,19 @@
  *
  * Everything is the map's: its nodes' ids (`topic:3`, `tag:cdn`, `product:tech:…`,
  * `product:group:…`, ui/topicgraph.js), its areas and products, its team filter. A week counts the
- * channels with a message in a matching thread, of the channels with any (ui/trends.js), as a
- * share, on a three-week mean. The chart under the map shows what is picked and the terms
- * compared, separated by commas: what the map has, by its name, words (in a title or a message)
- * or `~a phrase` (the threads about it), the last two asked of GET /api/topics/trends/match. The
- * terms are the page's address (`tq`).
+ * channels with a message in a matching thread, of the active channels (those with a message
+ * that week, ui/trends.js), as a share, on a three-week mean. The chart under the map compares terms, separated by commas: what
+ * the map has, by its name, words (in a title or a message) or `~a phrase` (the threads about
+ * it), the last two asked of GET /api/topics/trends/match. What is picked on the map or in the
+ * panel joins them (`add`), so a line stays until it is taken off; with none, the chart shows the
+ * most trending topics, and the first pick joins those. The terms are the page's address (`tq`).
  *
  * Its global `TrendView`.
  */
 (() => {
   const SVG = 'http://www.w3.org/2000/svg';
   const COLORS = 8;
-  const MAX_TERMS = 6;
+  const MAX_TERMS = 8;
   const LISTED = 30;
   const SMOOTH = 1;
   const { I } = Trends;
@@ -119,12 +120,16 @@
 
   const params = () => (st.terms ? [['tq', st.terms]] : []);
 
-  /** A term: `{ term, label, id }` for one of the map's nodes, `{ term, label, server }` else. */
+  /**
+   * A term: `{ term, label, id }` for one of the map's nodes (a group of one as its one, as the
+   * graph draws it), `{ term, label, server }` else.
+   */
   function termOf(raw, ctx) {
     const t = raw.trim();
-    const node = ctx.graph.all.get(t)
+    const named = ctx.graph.all.get(t)
       || [...ctx.graph.all.values()].find((n) => ['topic', 'tag', 'product'].includes(n.type)
         && n.label.toLowerCase() === t.toLowerCase());
+    const node = named && TopicGraph.standsFor(ctx.graph, named.id);
     if (node) return { term: node.id, label: node.label, id: node.id };
     return { term: t, label: t, server: true };
   }
@@ -145,18 +150,26 @@
     }
   }
 
-  /** What the chart shows: the pick, then the terms; with neither, the most trending topics. */
+  /** With no terms: the most trending topics, as terms. */
+  function defaults(ctx) {
+    const m = moving(ctx);
+    return TopicGraph.distinct(ctx.graph, m.trending.filter((x) => x.key.startsWith('topic:'))
+      .map((x) => x.key)).slice(0, 3).map((n) => ({ term: n.id, label: n.label, id: n.id }));
+  }
+
+  /** What the chart shows: the terms (or the defaults), the pick among them marked. */
   function seriesOf(ctx) {
     const m = moving(ctx);
+    const picked = ctx.sel && TopicGraph.standsFor(ctx.graph, ctx.sel);
     const list = [];
-    const add = (t) => {
-      if (t && !list.some((x) => x.term === t.term)) list.push(t);
-    };
-    if (ctx.sel && m.items.has(ctx.sel)) add({ term: ctx.sel, label: ctx.graph.all.get(ctx.sel)?.label || ctx.sel, id: ctx.sel, picked: true });
-    termsOf(ctx).forEach(add);
-    if (!list.length) {
-      m.trending.filter((x) => x.key.startsWith('topic:')).slice(0, 3)
-        .forEach((x) => add({ term: x.key, label: ctx.graph.all.get(x.key)?.label || x.key, id: x.key }));
+    for (const t of (termsOf(ctx).length ? termsOf(ctx) : defaults(ctx))) {
+      if (!list.some((x) => x.term === t.term)) list.push({ ...t, picked: Boolean(picked && t.term === picked.id) });
+    }
+    // A pick the terms do not have yet (they are added on a pick, `add`): shown too.
+    if (picked && m.items.has(picked.id) && !list.some((x) => x.term === picked.id)) {
+      list.push({
+        term: picked.id, label: picked.label, id: picked.id, picked: true,
+      });
     }
     const k = keep(ctx);
     return list.map((t, i) => {
@@ -209,7 +222,7 @@
     const pace = item.list === 'trending' && s.accel > 0.05 ? ', speeding up' : '';
     const title = item.list === 'peaked'
       ? `Peaked in the week of ${st.data.weeks[s.peak.week]}; now ${Math.round((100 * s.now) / (s.peak.share || 1))}% of that`
-      : `${s.perWeek.toFixed(1)} channels a week, ${lift >= 0 ? '+' : ''}${lift}% on the 12 weeks before${pace}`;
+      : `${pctOf(100 * s.share)} of the active channels (${s.perWeek.toFixed(1)} a week), ${lift >= 0 ? '+' : ''}${lift}% on its share in the ${Trends.BASE} weeks before${pace}`;
     return `<span class="badge ${item.list}${item.top > Trends.MOSTLY_ONE ? ' one' : ''}" title="${esc(title)}${item.top > Trends.MOSTLY_ONE ? ' · mostly one customer' : ''}">${esc(text)}</span>`;
   }
 
@@ -217,13 +230,12 @@
   function summary(item) {
     if (!item) return '';
     const s = item.stats;
-    const lift = Math.round((s.lift - 1) * 100);
     const what = {
       trending: 'Trending',
       declining: 'Declining',
       peaked: `Peaked in the week of ${st.data.weeks[s.peak.week]}, now at ${Math.round((100 * s.now) / (s.peak.share || 1))}% of that`,
     }[item.list] || 'Steady';
-    return `<p class="trend">${spark(item)}<span>${esc(what)}: ${s.perWeek.toFixed(1)} channels a week in the last ${Trends.RECENT} weeks, ${lift >= 0 ? '+' : ''}${lift}% on the ${Trends.BASE} before${item.list === 'trending' && s.accel > 0.05 ? ', speeding up' : ''} · ${item.orgs} customer${item.orgs === 1 ? '' : 's'}${item.top > Trends.MOSTLY_ONE ? ', mostly one' : ''}</span></p>`;
+    return `<p class="trend">${spark(item)}<span>${esc(what)}: ${pctOf(100 * s.share)} of the active channels in the last ${Trends.RECENT} weeks (${s.perWeek.toFixed(1)} a week), against ${pctOf(100 * s.baseShare)} in the ${Trends.BASE} before${item.list === 'trending' && s.accel > 0.05 ? ', speeding up' : ''} · ${item.orgs} customer${item.orgs === 1 ? '' : 's'}${item.top > Trends.MOSTLY_ONE ? ', mostly one' : ''}</span></p>`;
   }
 
   function drawChart(ctx) {
@@ -297,8 +309,8 @@
       cursor.setAttribute('x2', x(i));
       cursor.setAttribute('visibility', 'visible');
       tip.innerHTML = `<b>Week of ${esc(weeks[i])}${i === n - 1 ? ' (so far)' : ''}</b>
-        ${shown.map((s) => `<span class="row"><span class="swatch s${s.color}"></span>${esc(s.label)}: ${s.counts[first + i]} channels, ${totals[first + i] ? pctOf((100 * s.counts[first + i]) / totals[first + i]) : '0%'}</span>`).join('')}
-        <span class="sub">${totals[first + i]} channels with messages that week · click for its threads</span>`;
+        ${shown.map((s) => `<span class="row"><span class="swatch s${s.color}"></span>${esc(s.label)}: ${totals[first + i] ? pctOf((100 * s.counts[first + i]) / totals[first + i]) : '0%'} (${s.counts[first + i]} of ${totals[first + i]} active channels)</span>`).join('')}
+        <span class="sub">Active: a channel with a message that week · click for its threads</span>`;
       tip.hidden = false;
       const box2 = $('tchart').getBoundingClientRect();
       tip.style.left = `${Math.min(ev.clientX - box2.left + 14, box2.width - tip.offsetWidth - 8)}px`;
@@ -309,14 +321,14 @@
       cursor.setAttribute('visibility', 'hidden');
     };
     hit.onclick = (ev) => ctx.onWeek(first + at(ev), shown.map((s) => s.term));
-    $('tlegend').innerHTML = series.map((s) => {
+    $('tlegend').innerHTML = `${series.map((s) => {
       const mt = s.match;
       const note = (mt && mt.pending && 'looking…') || (mt && mt.error) || (mt && mt.capped && 'some months have more than shown')
         || (mt && mt.semantic && 'by meaning') || (s.picked && 'picked') || '';
       return `<li${st.hidden.has(s.term) ? ' class="off"' : ''}><button class="term" data-term="${esc(s.term)}" title="Shift-click hides it">
         <span class="swatch s${s.color}"></span>${esc(s.label)}${note ? ` <span class="sub">${esc(note)}</span>` : ''}</button>
-        ${s.picked ? '' : `<button class="x" data-drop="${esc(s.term)}" aria-label="Remove ${esc(s.label)}">×</button>`}</li>`;
-    }).join('');
+        <button class="x" data-drop="${esc(s.term)}" aria-label="Take ${esc(s.label)} off the chart">×</button></li>`;
+    }).join('')}${st.terms ? '<li><button class="clear" data-clear>Clear</button></li>' : ''}`;
     const names = [...ctx.graph.all.values()].filter((nd) => ['topic', 'tag', 'product'].includes(nd.type)).map((nd) => nd.label);
     $('tnames').innerHTML = [...new Set(names)].map((nm) => `<option value="${esc(nm)}"></option>`).join('');
     if (document.activeElement !== $('tq')) {
@@ -338,7 +350,7 @@
   /** The chart's card, under the map. */
   function card() {
     return `<section class="card tchart" id="tchart">
-      <div class="thead"><h2>Channels talking about it <span class="sub">% of the channels with messages, week by week</span></h2>
+      <div class="thead"><h2>Active channels talking about it <span class="sub">% of the channels with a message that week</span></h2>
         <div class="tqrow"><label class="s2-search"><input class="search" id="tq" type="search" list="tnames" autocomplete="off" aria-label="Compare, separated by commas: a topic, an area or a product, words, or ~a phrase"></label><datalist id="tnames"></datalist>
           <button id="tgo">Compare</button></div></div>
       <svg id="tsvg" role="img" aria-label="Week by week"></svg><ul class="legend tlegend" id="tlegend"></ul>
@@ -361,9 +373,19 @@
     };
     $('tlegend').onclick = (ev) => {
       const c = ctx();
+      if (ev.target.closest('[data-clear]')) {
+        clear(c);
+        return;
+      }
       const drop = ev.target.closest('[data-drop]');
       if (drop) {
-        st.terms = termsOf(c).filter((t) => t.term !== drop.dataset.drop).map((t) => t.term).join(', ');
+        const shown = seriesOf(c).map((t) => t.term).filter((t) => t !== drop.dataset.drop);
+        st.terms = shown.join(', ') || null;
+        // The pick's line goes with it: it is unpicked.
+        if (c.sel && TopicGraph.standsFor(c.graph, c.sel)?.id === drop.dataset.drop) {
+          c.pick('');
+          return;
+        }
         c.toUrl();
         chart(c);
         return;
@@ -379,10 +401,28 @@
     };
   }
 
-  /** Adds `id` to the terms compared. */
-  function compareWith(id, ctx) {
-    const now = termsOf(ctx).map((t) => t.term);
-    if (!now.includes(id)) st.terms = [...now, id].slice(-MAX_TERMS).join(', ');
+  /**
+   * Adds node `id` to the terms compared (to the defaults, when there are no terms yet), unless
+   * it has no line (a person, a customer); the oldest goes when there are MAX_TERMS.
+   */
+  function add(id, ctx) {
+    const n = id && TopicGraph.standsFor(ctx.graph, id);
+    const m = moving(ctx);
+    if (!n || !m || !m.items.has(n.id)) return;
+    const now = (termsOf(ctx).length ? termsOf(ctx) : defaults(ctx)).map((t) => t.term);
+    if (!now.includes(n.id)) st.terms = [...now, n.id].slice(-MAX_TERMS).join(', ');
+    else st.terms = now.join(', ');
+  }
+
+  /**
+   * Takes every line off, the pick's too (it is unpicked): the chart shows the defaults again.
+   */
+  function clear(ctx) {
+    st.terms = null;
+    if (ctx.sel) {
+      ctx.pick('');
+      return;
+    }
     ctx.toUrl();
     chart(ctx);
   }
@@ -423,11 +463,13 @@
     spark,
     badge,
     summary,
+    pct: (v) => pctOf(v),
     card,
     wire,
     chart,
     drawChart,
-    compareWith,
+    add,
+    clear,
     weekThreads,
     fromUrl,
     params,

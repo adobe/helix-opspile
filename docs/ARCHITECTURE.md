@@ -1453,8 +1453,8 @@ page: the chart under the graph, and the panel beside both.
   them in compact form (kept for five minutes per isolate). Each one has its channel, customer,
   team, platform, kind, topic, technologies, and messages by the week they were written. The page
   does the counting (`ui/trends.js`).
-- **A week counts channels:** of the channels with messages that week, the share that had a
-  matching thread with one, on a three-week mean. A chatty channel counts once, as a person
+- **A week counts channels:** of the active channels that week (those with a message in a
+  counted thread), the share that had a matching thread with one, on a three-week mean. A chatty channel counts once, as a person
   searching ten times counts once in Google Trends. The history import (more, shorter threads,
   never re-threaded) then counts the same as the live inbox. The map's team filter applies.
 - **The map's hierarchy.** The series are the graph's nodes, under the graph's ids: a topic
@@ -1463,9 +1463,10 @@ page: the chart under the graph, and the panel beside both.
   pick, the areas with their topics and the products with their features are **trees**. A group
   opens and folds there the way its bubble bursts and folds on the graph, and both use the same
   `open`. Each row has its sparkline, its badge (↑ trending, ↓ declining, peaked and when) and
-  its channels a week. Filtered to trending, declining or peaked, the trees become one list, the
-  strongest first. A click on a row picks the node, on the graph and on the chart, which shows the
-  pick and the terms compared.
+  its share of the active channels in the last six weeks. Filtered to trending, declining or peaked, the trees become one list, the
+  strongest first. A click on a row, or on a bubble, picks the node on the graph and adds its
+  line to the chart's (with none yet, to the most trending topics the chart starts with), where
+  it stays until × takes it off; Clear goes back to those.
 - **Terms**, separated by commas (`tq`), are anything the map has, by its name, or words and
   phrases (`GET /api/topics/trends/match`):
   - **Words** are whole words, in a title or a message preview (`LIKE`, then a word-boundary test).
