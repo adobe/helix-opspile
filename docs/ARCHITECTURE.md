@@ -1059,7 +1059,11 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   the browser's), ⌃1…9 (Ctrl+Shift+1…9 off a Mac) picks a view, ↑ or ⌘↑ in an empty reply box
   edits your last message (without one, puts the last message in focus) and ⌘⇧\ reacts to the
   last one. On a message in focus ↑/↓ move, `e` edits it, `r` reacts, `m` (or the menu key, ⇧F10)
-  opens its menu and Esc goes back to the reply box. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
+  opens its menu and Esc goes back to the reply box. Esc in the reply box leaves it (what was typed
+  stays), and Space and ⇧Space page through the open thread wherever the focus is not on
+  something Space presses or types in, not the list the browser would scroll after a click on a
+  thread. Every Escape the page takes is kept from the browser, which would leave full screen on
+  a Mac. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
   ⌘⇧7/8/9 write (or take off) markdown, and a link pasted over words becomes theirs. The inbox's
   own keys stay: `/`, `j`/`k`, `e` (resolve), `a` (the Thread Agent).
 

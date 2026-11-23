@@ -474,7 +474,7 @@ function wireCards() {
     if (card.target && e.target === card.target && !card.el.contains(e.relatedTarget)) hideCard();
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && card.target) { hideCard(); return; }
+    if (e.key === 'Escape' && card.target) { e.preventDefault(); hideCard(); return; }
     const t = e.target.closest?.('[data-p]');
     if (t && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
@@ -1719,7 +1719,7 @@ function stackPopEl() {
   el.className = 'stkpop s2-float';
   el.hidden = true;
   el.setAttribute('role', 'dialog');
-  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); hideStack(true); } });
+  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideStack(true); } });
   el.addEventListener('click', (e) => { if (e.target.closest('[data-stack-close]')) hideStack(true); });
   document.addEventListener('pointerdown', (e) => {
     if (!el.hidden && !el.contains(e.target) && !e.target.closest('[data-stack]')) hideStack();
@@ -4164,7 +4164,7 @@ function wireExperts(key) {
   };
   el.onkeydown = (e) => {
     if (state.expertsOpen !== key) return;
-    if (e.key === 'Escape') { e.stopPropagation(); closeExperts(key, true); return; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeExperts(key, true); return; }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
     const rows = [...el.querySelectorAll('.expertlist:not([hidden]) [data-expert]')];
@@ -4885,7 +4885,7 @@ function sourcePopEl() {
   el.addEventListener('pointerenter', () => clearTimeout(sourcePop.timer));
   el.addEventListener('pointerleave', leaveSource);
   el.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') hideSource();
+    if (e.key === 'Escape') { e.preventDefault(); hideSource(); }
   });
   // A cited message's time: the message, here (another thread opens at it).
   el.addEventListener('click', (e) => {
@@ -9317,7 +9317,7 @@ function wireSideRoom() {
     followLink(e);
   };
   // Esc closes it from anywhere in it, as from its box (wireSide).
-  panel.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); exitSide(); } };
+  panel.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); exitSide(); } };
 }
 
 // ---------------------------------------------------------------- the sidebar's tab
@@ -9700,6 +9700,8 @@ const SHORTCUTS = [
     ['Next / previous unread thread', '⌥⇧↓ ⌥⇧↑'],
     ['Back / forward', MAC ? '⌘[ ⌘]' : '⌥← ⌥→'],
     ['Next / previous part of the page', 'F6 ⇧F6', '⌘F6 ⌘⇧F6', ...(MAC ? ['⌃⌘→ ⌃⌘←'] : [])],
+    ['Page down / up in the open thread', 'Space ⇧Space'],
+    ['Leave the reply box (what you typed stays)', 'Esc'],
     ['These shortcuts', '⌘/', '?'],
   ]],
   ['Views', [
@@ -9886,6 +9888,26 @@ function messageKey(e) {
     return run(() => { if (button) openMessageMenu(button); });
   }
   return false;
+}
+
+// What Space presses, scrolls or types in itself: there it is not the thread's (see pageKey).
+const OWN_SPACE = 'input, textarea, select, button, a[href], summary, img.att, [contenteditable]:not([contenteditable="false"]), [role="button"], [role^="menuitem"], [role="option"], [role="radio"], [role="checkbox"], [role="switch"], [role="tab"], [tabindex]:not([tabindex="-1"]), [popover], .s2-float, #side';
+
+/**
+ * Space and ⇧Space page down and up through the open thread, as they would a page, wherever the
+ * focus is not on something Space is its own for: not the thread list's, whose scroller the
+ * browser would pick after a click on a thread, and which j and k move through. Whether `e` was one.
+ */
+function pageKey(e) {
+  if (e.key !== ' ' || e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (e.target !== document.body && e.target.closest?.(OWN_SPACE)) return false;
+  const scroller = state.open && $('pane').querySelector(':scope > .scroller');
+  if (!scroller?.getClientRects().length) return false;
+  e.preventDefault();
+  // A page less a little, as the browser's own Space: the last lines stay in sight.
+  const step = Math.max(scroller.clientHeight * 0.875, scroller.clientHeight - 40);
+  scroller.scrollBy({ top: e.shiftKey ? -step : step, behavior: e.repeat || REDUCED_MOTION.matches ? 'auto' : 'smooth' });
+  return true;
 }
 
 /** Slack's ⌘⇧\: the emoji picker of the message in focus, else of the last one may react to. */
@@ -10184,11 +10206,13 @@ async function start() {
     if (!e.target.closest?.('a[data-pile]')) closeSlackChoice();
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && slackMenu.el && !slackMenu.el.hidden) { closeSlackChoice(); return; }
-    if (e.key === 'Escape' && state.headOpen) { closeHeadMenus(true); return; }
+    // Every Escape the page takes is kept from the browser: on a Mac it would leave full screen.
+    if (e.key === 'Escape' && slackMenu.el && !slackMenu.el.hidden) { e.preventDefault(); closeSlackChoice(); return; }
+    if (e.key === 'Escape' && state.headOpen) { e.preventDefault(); closeHeadMenus(true); return; }
     if (headMenuKey(e)) return;
-    if (e.key === 'Escape' && state.filtering) { setFiltering(false); return; }
+    if (e.key === 'Escape' && state.filtering) { e.preventDefault(); setFiltering(false); return; }
     if (e.key === 'Escape' && openedPicker()) {
+      e.preventDefault();
       const button = openedPicker().closest('.col')?.querySelector('[data-picker]');
       closePicker();
       button?.focus();
@@ -10196,10 +10220,18 @@ async function start() {
       if (button && document.activeElement !== button) focusMessage(button.closest('.msg'), false);
       return;
     }
+    // Esc leaves the thread's reply box, what was typed in it kept: j, k and Space are the
+    // thread's again. (A new thread's box, and that of one being started, close it.)
+    if (e.key === 'Escape' && e.target.id === 'reply' && !e.defaultPrevented && !e.isComposing) {
+      e.preventDefault();
+      e.target.blur();
+      return;
+    }
     if (messageKey(e)) return;
     if (globalKey(e)) return;
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
     if (document.querySelector('dialog[open]')) return;
+    if (pageKey(e)) return;
     if (e.key === '/' && $('q')) { e.preventDefault(); if (TAKING_TURNS.matches && state.open) closeThread(); $('q').focus(); $('q').select(); return; }
     if (e.key === '?' && !e.defaultPrevented) { e.preventDefault(); toggleShortcuts(); return; }
     if (e.key === 'Escape' && e.shiftKey) { e.preventDefault(); markAllRead(); return; }
