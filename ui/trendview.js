@@ -292,6 +292,10 @@
     });
     for (const s of shown) {
       const pts = vals.get(s.term).map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+      // A wash of its color under the line, down to the axis.
+      svg.append(el('polygon', {
+        class: `area ${s.paint}`, points: `${x(0).toFixed(1)},${y(0).toFixed(1)} ${pts.join(' ')} ${x(n - 1).toFixed(1)},${y(0).toFixed(1)}`,
+      }));
       svg.append(el('polyline', { class: `line ${s.paint}${s.picked || s.hovered ? ' picked' : ''}`, points: pts.slice(0, -1).join(' ') }));
       // The week under way: dashed, it is not over.
       svg.append(el('polyline', { class: `line ${s.paint} partial`, points: pts.slice(-2).join(' ') }));
@@ -336,11 +340,6 @@
         <span class="swatch ${s.paint}"></span>${esc(s.label)}${note ? ` <span class="sub">${esc(note)}</span>` : ''}</button>
         ${s.picked ? '' : `<button class="x" data-drop="${esc(s.term)}" aria-label="Remove ${esc(s.label)}">×</button>`}</li>`;
     }).join('');
-    const names = [...ctx.graph.all.values()].filter((nd) => ['topic', 'tag', 'product'].includes(nd.type)).map((nd) => nd.label);
-    $('tnames').innerHTML = [...new Set(names)].map((nm) => `<option value="${esc(nm)}"></option>`).join('');
-    if (document.activeElement !== $('tq')) {
-      $('tq').value = termsOf(ctx).map((t) => (t.id && !t.label.includes(',') ? t.label : t.term)).join(', ');
-    }
   }
 
   /** Draws the chart, asking for the words and phrases it does not have yet. */
@@ -354,30 +353,28 @@
     }
   }
 
-  /** The chart's card, under the map. */
+  /**
+   * The chart, over the bottom of the map: the share of the channels with messages that talk about
+   * each line, week by week. What it compares comes from the page's search (`compare`).
+   */
   function card() {
-    return `<section class="card tchart" id="tchart">
-      <div class="thead"><h2>Channels talking about it <span class="sub">% of the channels with messages, week by week</span></h2>
-        <div class="tqrow"><label class="s2-search"><input class="search" id="tq" type="search" list="tnames" autocomplete="off" aria-label="Compare, separated by commas: a topic, an area or a product, words, or ~a phrase"></label><datalist id="tnames"></datalist>
-          <button id="tgo">Compare</button></div></div>
+    return `<section class="tchart" id="tchart" aria-label="The share of the channels with messages that talk about it, week by week">
       <svg id="tsvg" role="img" aria-label="Week by week"></svg><ul class="legend tlegend" id="tlegend"></ul>
       <div class="tip" id="ttip" hidden></div></section>`;
   }
 
-  /** Wires the card: compare, remove a term, hide one. `ctx()` is the page as it is now. */
+  /** Adds `text` to what the chart compares: terms separated by commas, at most MAX_TERMS. */
+  function compare(text, c) {
+    const old = termsOf(c).map((t) => t.term);
+    const added = String(text).split(',').map((s) => s.trim()).filter(Boolean)
+      .map((raw) => termOf(raw, c).term);
+    st.terms = [...new Set([...old, ...added])].slice(-MAX_TERMS).join(', ');
+    c.toUrl();
+    chart(c);
+  }
+
+  /** Wires the chart: remove a term, hide one. `ctx()` is the page as it is now. */
   function wire(ctx) {
-    const compare = () => {
-      const c = ctx();
-      st.terms = $('tq').value.split(',').map((s) => s.trim()).filter(Boolean)
-        .map((raw) => termOf(raw, c).term).slice(0, MAX_TERMS).join(', ');
-      c.toUrl();
-      $('tq').blur();
-      chart(c);
-    };
-    $('tgo').onclick = compare;
-    $('tq').onkeydown = (ev) => {
-      if (ev.key === 'Enter') compare();
-    };
     $('tlegend').onclick = (ev) => {
       const c = ctx();
       const drop = ev.target.closest('[data-drop]');
@@ -444,6 +441,7 @@
     summary,
     card,
     wire,
+    compare,
     chart,
     drawChart,
     compareWith,

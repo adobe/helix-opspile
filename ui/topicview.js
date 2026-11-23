@@ -188,6 +188,8 @@ globalThis.TopicView = (() => {
     v.speck = new T.SphereGeometry(1, 40, 26);
     v.observer = new ResizeObserver(resize);
     v.observer.observe(host);
+    const chart = host.querySelector('.tchart');
+    if (chart) v.observer.observe(chart);
     resize();
     wire(canvas);
     v.last = performance.now();
@@ -205,13 +207,21 @@ globalThis.TopicView = (() => {
     });
   }
 
+  /**
+   * Fits the camera to the map, its middle in the part of it no chart covers: the bottom `inset`
+   * pixels (the chart over it, ui/trendview.js) are drawn but not counted.
+   */
   function resize() {
     if (!v.renderer) return;
     const w = v.host.clientWidth;
     const h = v.host.clientHeight;
+    const chart = v.host.querySelector('.tchart');
+    v.inset = Math.min(chart ? chart.offsetHeight * 0.75 : 0, h / 2);
+    v.viewH = Math.max(h - v.inset, 1);
     v.renderer.setSize(w, h);
     v.composer.setSize(w, h);
-    v.camera.aspect = w / Math.max(h, 1);
+    v.camera.aspect = w / v.viewH;
+    v.camera.setViewOffset(w, v.viewH, 0, 0, w, h);
     v.camera.updateProjectionMatrix();
   }
 
@@ -672,7 +682,7 @@ globalThis.TopicView = (() => {
       o.sprite.visible = show;
       if (show) {
         o.sprite.position.copy(at);
-        o.sprite.scale.set((bw / h) * tan, (bh / h) * tan, 1);
+        o.sprite.scale.set((bw / v.viewH) * tan, (bh / v.viewH) * tan, 1);
         kept.push(box);
         if (!over) shown += 1;
       }

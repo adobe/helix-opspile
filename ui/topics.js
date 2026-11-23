@@ -723,8 +723,8 @@ function render({ refit = false } = {}) {
     body.innerHTML = `<div class="split">
       <div class="col"><div class="card graph" id="graph"><div class="empty" id="graphEmpty" hidden>Nothing to draw: show more kinds, or fewer shared threads.</div>
         <p class="sub how">Drag to turn, scroll to zoom. Click to pick; hold a bubble to open it, or its shell to fold it; double-click for only its threads, and on nothing for all again.</p>
-        <div class="tip" id="tip" hidden></div></div>
-        ${TrendView.card()}</div>
+        <div class="tip" id="tip" hidden></div>
+        ${TrendView.card()}</div></div>
       <aside class="card panel" id="panel"></aside></div>
       ${state.error ? `<div class="hint err">${esc(state.error)}</div>` : ''}`;
     TrendView.wire(trendCtx);
@@ -806,6 +806,8 @@ function wire() {
       if (q.hide.length === TYPES.length) q.hide = q.hide.filter((x) => x !== t);
     });
   };
+  // One search: what it names lights up on the map as you type, a name picked from the list is
+  // picked, and Enter puts it on the chart (words, ~a phrase, names, separated by commas).
   $('find').oninput = (ev) => {
     state.find = ev.target.value;
     const exact = state.graph && [...state.graph.all.values()].find((n) => n.label === state.find);
@@ -816,6 +818,13 @@ function wire() {
     } else {
       focus();
     }
+  };
+  $('find').onkeydown = (ev) => {
+    if (ev.key !== 'Enter' || !ev.target.value.trim()) return;
+    TrendView.compare(ev.target.value, trendCtx());
+    state.find = '';
+    ev.target.value = '';
+    focus();
   };
   $('rebuild').onclick = rebuild;
   $('only').onclick = () => only('');

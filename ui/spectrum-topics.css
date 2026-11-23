@@ -50,7 +50,7 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: 
 .graph canvas.space:active { cursor: grabbing; }
 .graph canvas.space.over { cursor: pointer; }
 .graph .probe { display: none; }
-.graph .how { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+.graph .how { position: absolute; left: 0; right: 0; top: 0; pointer-events: none; }
 #only { display: inline-flex; align-items: center; }
 #only[hidden] { display: none; }
 .graph > .empty { position: absolute; inset: 0; text-align: center; }
@@ -80,14 +80,13 @@ tr.pick { cursor: pointer; }
 .dot { display: inline-block; flex: none; }
 
 
-/* Under the graph, its trends (ui/trendview.js): a card as wide, as tall as the chart needs. */
+/* Over the bottom of the map, its trends (ui/trendview.js): as wide as it, as tall as the chart
+   needs; only the chart and its legend take the pointer, the map shows through the rest. */
 .split > .col { min-height: 0; display: flex; flex-direction: column; }
-.split > .col > .graph { flex: 1; min-height: calc(var(--spectrum-spacing-100) * 30); }
-.tchart { position: relative; flex: none; }
-.tchart .thead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
-.tqrow { display: flex; align-items: center; flex: 1; min-width: calc(var(--spectrum-spacing-100) * 36); max-width: calc(var(--spectrum-spacing-100) * 70); }
-.tqrow .s2-search { flex: 1; }
-.tchart svg { display: block; width: 100%; height: calc(var(--spectrum-spacing-100) * 26); }
+.split > .col > .graph { flex: 1; min-height: calc(var(--spectrum-spacing-100) * 60); }
+.graph > .tchart { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+.graph > .tchart > :is(svg, .tlegend) { pointer-events: auto; }
+.tchart svg { display: block; width: 100%; height: calc(var(--spectrum-spacing-100) * 22); }
 .tchart .hit { cursor: crosshair; }
 .tlegend { display: flex; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
 .tlegend li { display: flex; align-items: center; }
@@ -338,15 +337,18 @@ p.trend { display: flex; align-items: center; }
 .spectrum .k-vendor-group.v1 { --s2-series: var(--spectrum-yellow-1200); }
 .spectrum .k-vendor-group.v2 { --s2-series: var(--spectrum-yellow-800); }
 .spectrum .split > .col { gap: var(--spectrum-spacing-300); }
-.spectrum .tchart .thead { gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin-bottom: var(--spectrum-spacing-100); }
-.spectrum .tchart h2 { margin: 0; font-size: var(--spectrum-font-size-200); }
-.spectrum .tchart h2 .sub { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); }
-.spectrum .tqrow { gap: var(--spectrum-spacing-100); }
+/* The chart on the map: the page's color rising from the bottom, so the bubbles behind fade out
+   under the lines; a wash of each line's color under it. */
+.spectrum .graph > .tchart {
+  padding: var(--spectrum-spacing-400) var(--spectrum-spacing-300) var(--spectrum-spacing-200);
+  background: linear-gradient(to top, var(--spectrum-background-layer-1-color) 70%, transparent);
+}
+.spectrum .tchart .area { fill: var(--s2-series); fill-opacity: .08; stroke: none; }
 .spectrum .tchart .line { fill: none; stroke: var(--s2-series); stroke-width: var(--spectrum-border-width-400); stroke-linejoin: round; stroke-linecap: round; }
 .spectrum .tchart .line.picked { stroke-width: calc(var(--spectrum-border-width-400) * 1.5); }
 .spectrum .tchart .line.partial { stroke-width: var(--spectrum-border-width-200); stroke-dasharray: var(--spectrum-spacing-75) var(--spectrum-spacing-75); }
-.spectrum .tchart .grid { stroke: var(--spectrum-gray-200); stroke-width: var(--spectrum-border-width-100); }
-.spectrum .tchart .grid.month { stroke: var(--spectrum-gray-100); }
+.spectrum .tchart .grid { stroke: var(--spectrum-gray-200); stroke-width: var(--spectrum-border-width-100); stroke-dasharray: var(--spectrum-spacing-50) var(--spectrum-spacing-75); }
+.spectrum .tchart .grid.month { stroke: var(--spectrum-gray-200); stroke-opacity: .5; stroke-dasharray: none; }
 .spectrum .tchart .axis { fill: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-50); }
 .spectrum .tchart .cursor { stroke: var(--spectrum-gray-500); stroke-width: var(--spectrum-border-width-100); stroke-dasharray: var(--spectrum-spacing-50) var(--spectrum-spacing-50); }
 .spectrum .tchart .hit { fill: transparent; }
