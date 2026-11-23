@@ -196,6 +196,26 @@ describe('mentions', () => {
     assert.deepEqual(await writtenMentions(e, key, '@Bob Builder'), [{ ...bob, id: 'U9' }]);
   });
 
+  it('finds @Names that are not all letters, and mentions them on Slack', async () => {
+    const e = withAccounts(env());
+    const key = 'slack:E1:C1:1.1';
+    const add = e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name,
+      fetched_at) VALUES ('slack', 'E1', ?, 'person', ?, '2026-10-21T10:00:00Z')`);
+    // Made-up names as Slack shows them: a company after a dash, pronouns, an apostrophe, accents.
+    add.run('U31', 'Cy Young - Acme');
+    add.run('U32', 'Di Duck (she/her)');
+    add.run('U33', 'Ed O\u2019Hare');
+    add.run('U34', 'Fe\u0301lix Nu\u0301n\u0303ez');
+    const text = '@Cy Young - Acme one small fix.\n\n(@Di Duck (she/her)), **@Ed O\u2019Hare**'
+      + ' and @Fe\u0301lix Nu\u0301n\u0303ez: thanks!';
+    const found = await writtenMentions(e, key, text);
+    assert.deepEqual(found.map((m) => m.id).sort(), ['U31', 'U32', 'U33', 'U34']);
+    assert.equal(
+      slackText(text, found),
+      '<@U31> one small fix.\n\n(<@U32>), *<@U33>* and <@U34>: thanks!',
+    );
+  });
+
   it('mentions the account a person uses when they have two of one name', async () => {
     const e = withAccounts(env());
     const key = 'slack:E1:C1:1.1';
