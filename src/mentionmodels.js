@@ -60,15 +60,21 @@ export async function buildMentionModel(env, now = Date.now()) {
     env.DB.prepare(MEMBERS_SQL).all(),
   ]);
   const model = fitMentions(parse(rows), parse(mentions), members || [], { now });
-  if (!model) {
-    return { built: null, mentions: 0 };
-  }
+  // Without a mention to learn from, an empty model is kept all the same: the next cron runs
+  // do not read the year again until it is a day old.
+  const built = model ? model.at : new Date(now).toISOString();
   await env.DB.prepare(`INSERT INTO mention_models (built_at, mentions, answered, model)
-    VALUES (?, ?, ?, ?)`).bind(model.at, model.mentions, model.answered, JSON.stringify(model))
-    .run();
+    VALUES (?, ?, ?, ?)`).bind(
+    built,
+    model ? model.mentions : 0,
+    model ? model.answered : 0,
+    JSON.stringify(model),
+  ).run();
   await env.DB.prepare(`DELETE FROM mention_models WHERE id NOT IN
     (SELECT id FROM mention_models ORDER BY built_at DESC LIMIT ${KEPT})`).run();
-  return { built: model.at, mentions: model.mentions, answered: model.answered };
+  return {
+    built, mentions: model ? model.mentions : 0, answered: model ? model.answered : 0,
+  };
 }
 
 /** Cron: fits the model when the newest is STALE_HOURS old, or there is none. */
@@ -82,7 +88,10 @@ export async function sweepMentionModel(env, now = Date.now()) {
 
 let kept = null;
 
-/** The newest model, or null before the first; read again once an isolate kept it KEEP_MS. */
+/**
+ * The newest model, or null before the first or when it is empty; read again once an isolate
+ * kept it KEEP_MS.
+ */
 export async function mentionModel(env, now = Date.now()) {
   if (kept && now - kept.read < KEEP_MS) {
     return kept.model;

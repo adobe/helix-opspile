@@ -563,8 +563,8 @@ on the page; two at once both write a row, and the newer is shown.
 
 **Mention model.** none → fit → a day old → fit again (`mention_models`, `src/mentionmodels.js`).
 The cron fits one in a single run and writes a row when it is done; the newest three are kept. A
-fit that finds no mention whose week is over writes nothing, and the finder says nothing of how
-people answer until one is written. An isolate keeps the newest it read for an hour, so a new fit
+fit that finds no mention whose week is over writes an empty model (`model` is `null`), so the
+next runs wait a day too, and the finder says nothing of how people answer while it is the newest. An isolate keeps the newest it read for an hour, so a new fit
 reaches the finder within an hour of it; two cron runs at once both write a row, and the newer is
 used.
 
