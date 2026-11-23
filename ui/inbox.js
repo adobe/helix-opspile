@@ -6086,9 +6086,14 @@ async function deliver(p) {
   if (p.base && state.cache.get(p.thread)?.data?.draft?.updated_at === p.base) setCachedDraft(p.thread, null);
   const invited = invitedSaying(data);
   const remind = remindSaying(data);
+  // The offer to let the agent post waits for what is said of the mentions to be dismissed.
+  const offer = data.postingOffer ? () => offerPosting(p.thread, data.postingOffer) : null;
   if (invited || remind) {
-    toast([invited, remind].filter(Boolean).join(' '), remind ? remindActions(data, p.thread) : null, { stay: missedMention(data) });
-  } else if (data.postingOffer) offerPosting(p.thread, data.postingOffer);
+    const stay = missedMention(data) || Boolean(offer);
+    toast([invited, remind].filter(Boolean).join(' '), remind ? remindActions(data, p.thread) : null, {
+      stay, ...(offer ? { dismiss: { label: 'Dismiss', run: offer } } : {}),
+    });
+  } else if (offer) offer();
   if (p.status === 'delivered' || reworded) showSending(p.thread);
   if (p.status !== 'delivered') animateSending();
   return true;
@@ -7609,15 +7614,19 @@ function toast(text, action, { stay = false, dismiss = null } = {}) {
   document.body.append(el);
 }
 
-/** Copies a toast's link (`act.copy`), and says so on its button for a moment. */
+/**
+ * Copies a toast's link (`act.copy`), and says so on its button for a moment; so too when the
+ * browser refuses, so the note and its other links stay.
+ */
 async function copyFromToast(button, act) {
+  let said = 'Copied ✓';
   try {
     await navigator.clipboard.writeText(act.copy);
   } catch {
-    toast('Could not copy the link: the browser did not let the page write to the clipboard.');
-    return;
+    said = 'Could not copy';
+    button.title = 'The browser did not let the page write to the clipboard.';
   }
-  button.textContent = 'Copied ✓';
+  button.textContent = said;
   setTimeout(() => { button.textContent = act.label; }, 1500);
 }
 
