@@ -1464,8 +1464,9 @@ page: the chart under the graph, and the panel beside both.
   opens and folds there the way its bubble bursts and folds on the graph, and both use the same
   `open`. Each row has its sparkline, its badge (↑ trending, ↓ declining, peaked and when) and
   its channels a week. Filtered to trending, declining or peaked, the trees become one list, the
-  strongest first. A click on a row picks the node, on the graph and on the chart, which shows the
-  pick and the terms compared.
+  strongest first. A click on a row, or on a bubble, picks the node on the graph and adds its
+  line to the chart's (with none yet, to the most trending topics the chart starts with), where
+  it stays until × takes it off; Clear goes back to those.
 - **Terms**, separated by commas (`tq`), are anything the map has, by its name, or words and
   phrases (`GET /api/topics/trends/match`):
   - **Words** are whole words, in a title or a message preview (`LIKE`, then a word-boundary test).

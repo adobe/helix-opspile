@@ -670,7 +670,7 @@ function trees() {
       <h3>Products and features</h3><ul class="tree">${tree(made) || '<li class="sub">No products yet.</li>'}</ul>`;
   }
   return `<div class="seg" role="group" aria-label="Show">${LISTS.map((l) => `<button data-tl="${l.id}" aria-pressed="${state.q.tl === l.id}" title="${esc(l.title)}">${l.label}</button>`).join('')}</div>
-    <p class="hint">Each line is the share of the channels with messages that talk about it, week by week; trending, declining and peaked are said of the last ${Trends.RECENT} full weeks, to ${esc(TrendView.data.weeks[moving.last])}, against the ${Trends.BASE} before. A click picks it on the map and the chart.</p>
+    <p class="hint">Each line is the share of the channels with messages that talk about it, week by week; trending, declining and peaked are said of the last ${Trends.RECENT} full weeks, to ${esc(TrendView.data.weeks[moving.last])}, against the ${Trends.BASE} before. A click picks it on the map and adds its line to the chart, which keeps it until × takes it off.</p>
     ${body}`;
 }
 
@@ -885,7 +885,7 @@ function details(n) {
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
     <p class="sub facts">${facts.map(esc).join(' · ')}</p>
     ${TrendView.summary(TrendView.moving(trendCtx())?.items.get(n.id))}
-    ${TrendView.data ? `<div class="acts"><button data-compare="${esc(n.id)}" title="Keep its line on the chart when you pick another">Keep on the chart</button></div>` : ''}
+
     ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">Clef gave none of these threads a tag: a topic its questions miss.</p>' : ''}
     ${childList(n)}
     ${others.map((t) => relatedList(n, t)).join('')}
@@ -919,6 +919,8 @@ function pick(id) {
   const opened = parent && !parent.open;
   if (opened) state.q.open = [...state.q.open, parent.id];
   state.week = null;
+  // Its line joins the chart's, and stays when another is picked (ui/trendview.js).
+  if (id && TrendView.data) TrendView.add(id, trendCtx());
   toUrl();
   if (opened) drawGraph();
   renderPanel();
@@ -964,6 +966,7 @@ function clickNode(n) {
   }
   if (opens(n)) {
     state.q.sel = n.id;
+    if (TrendView.data) TrendView.add(n.id, trendCtx());
     fold(n.id);
     return;
   }
@@ -1139,8 +1142,7 @@ function wire() {
       toUrl();
       renderPanel();
     }
-    const cmp = ev.target.closest('button[data-compare]');
-    if (cmp) TrendView.compareWith(cmp.dataset.compare, trendCtx());
+
     if (ev.target.closest('#moreThreads')) {
       state.more = true;
       renderPanel();
