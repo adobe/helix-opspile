@@ -16,6 +16,7 @@ import {
 import { EMBEDDING_MODEL } from './rethread.js';
 import { authHeaders, gatewayBaseUrl, modelProblem } from './agent/model.js';
 import { threadVectorId } from './vectors.js';
+import { packVectors, saveAssignments, SAMPLE_VECTORS } from './trends.js';
 import {
   coveredBy, GENERIC, nameKey, productKey, techIndex,
 } from './products.js';
@@ -336,7 +337,7 @@ const WHERE = `t.kind = 'channel' AND t.embedded IS NOT NULL AND t.messages >= ?
 /** The threads a map is of, with their labels, and the Adobe people who posted in them. */
 async function threadsOf(env) {
   const { results: threads } = await env.DB.prepare(`SELECT t.thread, t.team, t.org, t.root_at,
-      t.last_at, t.messages, COALESCE(l.title, t.title) AS title, l.kind, l.topics
+      t.last_at, t.messages, t.embedded, COALESCE(l.title, t.title) AS title, l.kind, l.topics
     FROM threads t LEFT JOIN labels l ON l.thread = t.thread WHERE ${WHERE}`)
     .bind(MIN_MESSAGES).all();
   // Everyone who posted: Adobe's people (`staff`) and the customers', partners' and vendors'.
@@ -662,7 +663,8 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
         + ` map needs ${MIN_THREADS}`,
     };
   }
-  const X = centered(rows.map((t) => vectors.get(t.thread)));
+  const raw = rows.map((t) => vectors.get(t.thread));
+  const X = centered(raw);
   const products = techProductsOf(facts, tech);
   const tagNames = await areaNamesOf(env);
   // Each thread in its likeliest area (labels.topics), or in none; the topics are found within
@@ -760,6 +762,18 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
       ? { staff: true, team: teams.length ? best('team:', teams) || teams[0] : null }
       : { staff: false, org: best('org:') };
   }
+  // The space the topics were found in, for the threads the map does not have (src/trends.js):
+  // the mean (as `centered` took it away), each topic's centre, and a sample of raw vectors.
+  const mean = new Float32Array(raw[0].length);
+  for (const v of raw) {
+    for (let d = 0; d < mean.length; d += 1) {
+      mean[d] += v[d] / raw.length;
+    }
+  }
+  const centres = clusters.map((m) => centroid(m.map((i) => X[i])));
+  const pickSample = random(seed + 1);
+  const sample = raw.map((v) => [pickSample(), v]).sort((a, b) => a[0] - b[0])
+    .slice(0, SAMPLE_VECTORS).map(([, v]) => v);
   const used = new Set(rows.map((t) => t.org));
   const map = {
     // 2: topics found within areas (`topics[].area`), and everyone who posted (`customers`).
@@ -797,11 +811,27 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
     tags: tagNames,
     products: products.products,
   };
-  const built = await env.DB.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map)
-    VALUES (?, ?, ?, ?, ?) RETURNING id`)
-    .bind(map.built_at, by, rows.length, topics.length, JSON.stringify(map)).first();
+  const built = await env.DB.prepare(`INSERT INTO topic_maps (built_at, built_by, threads, k, map,
+      vectors) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`)
+    .bind(
+      map.built_at,
+      by,
+      rows.length,
+      topics.length,
+      JSON.stringify(map),
+      packVectors([mean, ...centres, ...sample]),
+    ).first();
+  // Its threads' topics are its own; the others' the cron finds (src/trends.js assignPending).
+  const topicOf = new Map();
+  clusters.forEach((m, topic) => m.forEach((i) => topicOf.set(i, topic)));
+  await saveAssignments(env, built.id, rows.map((t, i) => ({
+    thread: t.thread, embedded: t.embedded, topic: topicOf.get(i) ?? null, sim: sims[i],
+  })));
   await env.DB.prepare(`DELETE FROM topic_maps WHERE id NOT IN
     (SELECT id FROM topic_maps ORDER BY built_at DESC, id DESC LIMIT ?)`).bind(KEEP).run();
+  // Only the newest's space is used (src/trends.js): the older keep their maps, not it.
+  await env.DB.prepare('UPDATE topic_maps SET vectors = NULL WHERE id != ? AND vectors IS NOT NULL')
+    .bind(built.id).run();
   return {
     id: built.id, built_at: map.built_at, threads: rows.length, k: topics.length, map,
   };
@@ -819,8 +849,10 @@ export async function sweepTopicMap(env, now = new Date()) {
   if (!env.CONTENT || !env.AI) {
     return { skipped: 'no CONTENT index' };
   }
-  const row = await env.DB.prepare('SELECT MAX(built_at) AS at FROM topic_maps').first();
-  if (row && row.at && now.getTime() - Date.parse(row.at) < STALE_DAYS * 86400000) {
+  const row = await env.DB.prepare(`SELECT built_at AS at, vectors IS NOT NULL AS space
+    FROM topic_maps ORDER BY built_at DESC, id DESC LIMIT 1`).first();
+  // One from before maps kept their space is built again: the trends need it (src/trends.js).
+  if (row && row.at && row.space && now.getTime() - Date.parse(row.at) < STALE_DAYS * 86400000) {
     return { fresh: row.at };
   }
   const built = await buildTopicMap(env, { now });

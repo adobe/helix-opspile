@@ -58,6 +58,15 @@ function alone(q) {
  * `db` (a D1 binding, or anything shaped like one) whose concurrent reads go as one batch.
  * At most `most` statements a batch.
  */
+/**
+ * Asked of a wrapper of the database (this one, src/timing.js's): the binding under it. Each
+ * request wraps the binding anew, so what is kept across requests is kept by it (`underlying`).
+ */
+export const UNDERLYING = Symbol('underlying database');
+
+/** The D1 binding under the wrappers `db` may be in. */
+export const underlying = (db) => (db && db[UNDERLYING]) || db;
+
 export function batchedDatabase(db, { most = 100, defer = (fn) => setTimeout(fn, 0) } = {}) {
   if (!db || typeof db.prepare !== 'function' || typeof db.batch !== 'function') {
     return db;
@@ -118,6 +127,9 @@ export function batchedDatabase(db, { most = 100, defer = (fn) => setTimeout(fn,
   };
   return new Proxy(db, {
     get(target, prop) {
+      if (prop === UNDERLYING) {
+        return underlying(target);
+      }
       if (prop === 'prepare') {
         return (sql) => statement(sql, null);
       }
