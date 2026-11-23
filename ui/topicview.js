@@ -16,9 +16,13 @@
  * from THREE_PATH (src/ui-three.js, bundled; the Worker serves it) when it first draws.
  *
  * Each kind in its color of the page (ui/spectrum-topics.css, `--s2-type`, read from the
- * stylesheet): a leaf solid, a group glass with what is in it inside, a group opened a thin shell
- * around its members (an area's topics) or, when they are far apart (a team's people), a hub
- * with a spoke to each. A product no tech stack entry names is glass too, empty.
+ * stylesheet), a group a darker shade of its members' (an area of its topics', a team of its
+ * people's), Adobe's products apart from the vendors': a leaf solid, a group glass with what is
+ * in it inside, a group opened a faint, wide shell around its members (an area's topics) or,
+ * when they are far apart (a team's people), a hub with a spoke to each. A product no tech
+ * stack entry names is glass too, empty. What is trending glows. Each kind takes as much room
+ * as each other (TopicSpace.scales); within one, a bubble's volume is its threads'. What is far
+ * from where the camera looks, nearer or farther, is blurred (a depth of field).
  *
  * - A click picks a bubble (the panel says what it is), and draws a line to each bubble it shares
  *   threads with; the rest fade. A click on nothing unpicks.
@@ -28,7 +32,8 @@
  * - Drag to turn, scroll to zoom. It turns slowly by itself until it is touched, and again three
  *   minutes after (not for those who ask for less motion).
  * - At most MAX_LABELS names, the biggest groups and the most threads first (a pick and what it
- *   shares threads with before them), none over another; the one pointed at besides.
+ *   shares threads with before them), none over another; the one pointed at besides. A name is
+ *   in the space, in front of its bubble, and sharp; a bubble hidden behind another has none.
  */
 globalThis.TopicView = (() => {
   const THREE_PATH = '/inbox/three.js';
@@ -36,14 +41,17 @@ globalThis.TopicView = (() => {
   const RESUME_MS = 3 * 60 * 1000;
   const MAX_LABELS = 10;
   const LINKS = 40;
-  const TYPES = ['topic', 'tag', 'person', 'team', 'org', 'product'];
+  // What the probes read the colors of: each kind's (`data-type`), the names' and the card's.
+  const TYPES = ['topic', 'tag', 'person', 'team', 'org', 'product', 'product-group', 'vendor',
+    'vendor-group', 'label', 'halo', 'card'];
+  const LABEL_PX = 12;
 
   let T = null;
   const v = {
     host: null, handlers: {}, renderer: null, scene: null, camera: null, controls: null,
     objs: new Map(), pickable: [], colors: {}, fly: null, lines: null, frame: 0,
     press: null, hovered: '', sel: '', find: '', related: new Map(), graph: null, pos: null,
-    resume: 0, last: 0, tick: 0, spinning: true,
+    resume: 0, last: 0, tick: 0, spinning: true, glow: new Set(), k: {},
   };
 
   // ---- colors: the page's, per kind ---------------------------------------------------
@@ -54,7 +62,15 @@ globalThis.TopicView = (() => {
       v.colors[type] = new T.Color(getComputedStyle(probe).color);
     }
   }
-  const colorOf = (n) => v.colors[n.type] || v.colors.topic;
+  /** The color of `n`: its kind's; a product's Adobe's or a vendor's, a group's or a leaf's. */
+  function colorKey(n) {
+    if (n.type !== 'product') return n.type;
+    const vendor = n.one === 'Vendor' || n.one === 'Technology'
+      || (n.one === 'Product' && !/^product:tech:adobe\//.test(n.id));
+    const group = TopicSpace.opens(n);
+    return `${vendor ? 'vendor' : 'product'}${group ? '-group' : ''}`;
+  }
+  const colorOf = (n) => v.colors[colorKey(n)] || v.colors.topic;
 
   // ---- materials ------------------------------------------------------------------------
 
@@ -107,10 +123,6 @@ globalThis.TopicView = (() => {
     canvas.setAttribute('role', 'img');
     canvas.setAttribute('aria-label', 'Topics in their areas, people in their teams and customers, and products, in a space where the topics are by what their threads are about');
     host.prepend(canvas);
-    v.labels = document.createElement('div');
-    v.labels.className = 'lbls';
-    v.labels.setAttribute('aria-hidden', 'true');
-    host.append(v.labels);
     for (const type of TYPES) {
       const probe = document.createElement('span');
       probe.className = 'probe';
@@ -122,8 +134,13 @@ globalThis.TopicView = (() => {
       readColors();
       recolor();
     });
-    v.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    v.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     v.scene = new T.Scene();
+    v.scene.background = v.colors.card.clone();
+    v.scene.fog = new T.Fog(v.colors.card.clone(), 150, 600);
+    // The names: drawn after the depth of field, sharp, over the bubbles; one hidden behind a
+    // bubble is not drawn (labels).
+    v.names = new T.Scene();
     v.camera = new T.PerspectiveCamera(45, 1, 0.1, 4000);
     v.camera.position.set(0, 40, 190);
     v.scene.add(new T.HemisphereLight(0xffffff, 0x445566, 1.6));
@@ -144,6 +161,29 @@ globalThis.TopicView = (() => {
       clearTimeout(v.resume);
       if (v.spinning) v.resume = setTimeout(() => { v.controls.autoRotate = true; }, RESUME_MS);
     });
+    // The depth of field: in focus where the camera looks.
+    v.composer = new T.EffectComposer(v.renderer);
+    v.composer.addPass(new T.RenderPass(v.scene, v.camera));
+    v.bokeh = new T.BokehPass(v.scene, v.camera, { focus: 190, aperture: 0.000015, maxblur: 0.004 });
+    // Its depth is of the solid bubbles only: through glass, and names, it is what is behind.
+    const blur = v.bokeh.render.bind(v.bokeh);
+    v.bokeh.render = (...args) => {
+      const hidden = [];
+      for (const o of v.objs.values()) {
+        for (const x of [o.mesh.material.uniforms && o.mesh, o.glow]) {
+          if (x && x.visible) {
+            x.visible = false;
+            hidden.push(x);
+          }
+        }
+      }
+      if (v.lines) hidden.push(v.lines);
+      if (v.lines) v.lines.visible = false;
+      blur(...args);
+      for (const x of hidden) x.visible = true;
+    };
+    v.composer.addPass(v.bokeh);
+    v.composer.addPass(new T.OutputPass());
     v.sphere = new T.SphereGeometry(1, 36, 24);
     v.speck = new T.SphereGeometry(1, 16, 10);
     v.observer = new ResizeObserver(resize);
@@ -160,7 +200,6 @@ globalThis.TopicView = (() => {
     v.observer?.disconnect();
     v.renderer?.dispose();
     v.renderer?.domElement.remove();
-    v.labels?.remove();
     Object.assign(v, {
       host: null, renderer: null, objs: new Map(), pickable: [], lines: null, graph: null,
     });
@@ -171,22 +210,94 @@ globalThis.TopicView = (() => {
     const w = v.host.clientWidth;
     const h = v.host.clientHeight;
     v.renderer.setSize(w, h);
+    v.composer.setSize(w, h);
     v.camera.aspect = w / Math.max(h, 1);
     v.camera.updateProjectionMatrix();
   }
 
   function recolor() {
+    v.scene.background = v.colors.card.clone();
+    v.scene.fog.color = v.colors.card.clone();
     for (const o of v.objs.values()) {
+      dropLabel(o);
       const m = o.mesh.material;
       if (m.uniforms) m.uniforms.color.value = colorOf(o.n);
       else m.color = colorOf(o.n);
       o.spokes?.material.color.copy(colorOf(o.n));
+      o.glow?.material.color.copy(colorOf(o.n));
     }
   }
 
   // ---- what is drawn ---------------------------------------------------------------------
 
   const V3 = (a) => new T.Vector3(a[0], a[1], a[2]);
+
+  /** A name, drawn once into a texture, on a halo of the card's color: a sprite in the space. */
+  function labelSprite(o) {
+    const big = o.shell || TopicSpace.opens(o.n);
+    const px = big ? LABEL_PX + 1 : LABEL_PX;
+    const ratio = 2 * Math.min(devicePixelRatio, 2);
+    const font = `${big || o.key === v.sel ? 'bold ' : ''}${px * ratio}px ${getComputedStyle(v.host).fontFamily}`;
+    const c = document.createElement('canvas');
+    const g = c.getContext('2d');
+    g.font = font;
+    const pad = 4 * ratio;
+    c.width = Math.ceil(g.measureText(o.n.label).width + pad * 2);
+    c.height = Math.ceil(px * ratio * 1.5);
+    g.font = font;
+    g.textBaseline = 'middle';
+    g.textAlign = 'center';
+    g.lineJoin = 'round';
+    g.lineWidth = 4 * ratio;
+    g.strokeStyle = `#${v.colors.halo.getHexString()}`;
+    g.fillStyle = `#${v.colors.label.getHexString()}`;
+    g.strokeText(o.n.label, c.width / 2, c.height / 2);
+    g.fillText(o.n.label, c.width / 2, c.height / 2);
+    const map = new T.CanvasTexture(c);
+    map.colorSpace = T.SRGBColorSpace;
+    const sprite = new T.Sprite(new T.SpriteMaterial({
+      map, transparent: true, depthWrite: false, sizeAttenuation: false, fog: false,
+    }));
+    sprite.center.set(0.5, 0);
+    sprite.renderOrder = 10;
+    sprite.userData = { w: c.width / ratio, h: c.height / ratio, bold: font.startsWith('bold') };
+    sprite.raycast = () => {};
+    sprite.material.depthTest = false;
+    v.names.add(sprite);
+    return sprite;
+  }
+  function dropLabel(o) {
+    if (!o.sprite) return;
+    v.names.remove(o.sprite);
+    o.sprite.material.map.dispose();
+    o.sprite.material.dispose();
+    o.sprite = null;
+  }
+
+  /** A soft ring of a bubble's color around it: what is trending. */
+  let glowMap = null;
+  function glowSprite(o) {
+    if (!glowMap) {
+      const c = document.createElement('canvas');
+      c.width = 128;
+      c.height = 128;
+      const g = c.getContext('2d');
+      const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(0.36, 'rgba(255,255,255,0.9)');
+      grad.addColorStop(0.5, 'rgba(255,255,255,0.45)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 128, 128);
+      glowMap = new T.CanvasTexture(c);
+    }
+    const sprite = new T.Sprite(new T.SpriteMaterial({
+      map: glowMap, color: colorOf(o.n), transparent: true, depthWrite: false,
+    }));
+    sprite.raycast = () => {};
+    v.scene.add(sprite);
+    return sprite;
+  }
 
   function make(key, n, shell, from) {
     const color = colorOf(n);
@@ -200,13 +311,8 @@ globalThis.TopicView = (() => {
     mesh.userData.key = key;
     mesh.renderOrder = shell ? 2 : Number(group);
     v.scene.add(mesh);
-    const label = document.createElement('span');
-    label.className = `lbl${group || shell ? ' group' : ''}`;
-    label.dataset.type = n.type;
-    label.textContent = n.label;
-    v.labels.append(label);
     const o = {
-      key, n, shell, mesh, label, pos: from.clone(), to: from.toArray(), home: from.toArray(),
+      key, n, shell, mesh, sprite: null, pos: from.clone(), to: from.toArray(), home: from.toArray(),
       s: 0, sTo: 0, puff: 1, puffTo: 1, rank: 0,
     };
     v.objs.set(key, o);
@@ -218,8 +324,10 @@ globalThis.TopicView = (() => {
     const o = v.objs.get(key);
     v.scene.remove(o.mesh);
     if (o.spokes) v.scene.remove(o.spokes);
+    if (o.glow) v.scene.remove(o.glow);
+    o.glow?.material.dispose();
     o.mesh.material.dispose();
-    o.label.remove();
+    dropLabel(o);
     v.objs.delete(key);
     v.pickable.splice(v.pickable.indexOf(o.mesh), 1);
   }
@@ -235,8 +343,9 @@ globalThis.TopicView = (() => {
     if (o.specks) o.mesh.remove(o.specks);
     o.specks = new T.Group();
     o.packed = new Map();
-    const R = TopicSpace.radius(o.n);
-    TopicSpace.pack(kids.map((c) => TopicSpace.radius(c) / R)).forEach(({ p, r }, i) => {
+    // To scale: a child's volume against its group's is its threads against the group's.
+    const R = Math.cbrt(o.n.threads.length);
+    TopicSpace.pack(kids.map((c) => Math.cbrt(c.threads.length) / R)).forEach(({ p, r }, i) => {
       const m = new T.Mesh(v.speck, solid(colorOf(kids[i])));
       m.position.set(p[0], p[1], p[2]);
       m.scale.setScalar(r);
@@ -253,16 +362,20 @@ globalThis.TopicView = (() => {
    * to show all of it.
    */
   function draw({
-    graph, pos, open, shown, min, refit = false,
+    graph, pos, open, shown, min, glow = v.glow, refit = false,
   }) {
     if (!v.renderer) return;
     v.graph = graph;
     v.pos = pos;
     v.min = min;
+    v.glow = glow;
+    v.open = open;
+    v.shown = shown;
     const { items, shells } = TopicSpace.drawn(graph, { open, shown, min });
+    v.k = TopicSpace.scales(items);
     const want = new Map();
     for (const n of items) {
-      want.set(n.id, { n, to: TopicSpace.centre(n, graph.all, pos), r: TopicSpace.radius(n) });
+      want.set(n.id, { n, to: TopicSpace.centre(n, graph.all, pos), r: TopicSpace.radius(n, v.k[n.family]) });
     }
     const ancestors = (n) => {
       const out = [];
@@ -279,7 +392,7 @@ globalThis.TopicView = (() => {
       }
       const hub = TopicSpace.hub(g, spread);
       want.set(`shell:${g.id}`, {
-        n: g, shell: true, hub, inside: inside.map((n) => n.id), to: c, r: hub ? 2.2 : spread + 3,
+        n: g, shell: true, hub, inside: inside.map((n) => n.id), to: c, r: hub ? 2.2 : spread * 1.4 + 8,
       });
     }
     const named = new Set(items.filter((n) => TopicSpace.opens(n) || n.type === 'topic').map((n) => n.id));
@@ -313,7 +426,7 @@ globalThis.TopicView = (() => {
       if (w.shell) {
         o.hub = w.hub;
         o.inside = w.inside;
-        o.mesh.material.uniforms.strength.value = w.hub ? 0.9 : 0.3 * Math.min(1, 16 / w.r);
+        o.mesh.material.uniforms.strength.value = w.hub ? 0.9 : 0.12 * Math.min(1, 24 / w.r);
         if (!o.spokes) {
           o.spokes = new T.LineSegments(new T.BufferGeometry(), new T.LineBasicMaterial({
             color: colorOf(w.n), transparent: true, opacity: 0.25,
@@ -323,6 +436,13 @@ globalThis.TopicView = (() => {
         o.spokes.geometry.setAttribute('position', new T.Float32BufferAttribute(new Float32Array(w.inside.length * 6), 3));
       } else if (TopicSpace.opens(w.n)) {
         specks(o);
+      }
+      const glows = !w.shell && glow.has(w.n.id);
+      if (glows && !o.glow) o.glow = glowSprite(o);
+      if (!glows && o.glow) {
+        v.scene.remove(o.glow);
+        o.glow.material.dispose();
+        o.glow = null;
       }
     }
     for (const [key, o] of v.objs) {
@@ -336,6 +456,17 @@ globalThis.TopicView = (() => {
     }
     if (refit) fit(want);
     focus({});
+  }
+
+  /** What glows: the ids of what is trending (ui/trends.js), once the trends are in. */
+  function trending(ids) {
+    if (!v.graph) {
+      v.glow = ids;
+      return;
+    }
+    draw({
+      graph: v.graph, pos: v.pos, open: v.open, shown: v.shown, min: v.min, glow: ids,
+    });
   }
 
   /**
@@ -392,8 +523,9 @@ globalThis.TopicView = (() => {
     for (const o of v.objs.values()) {
       const dim = lit && !o.shell && !lit.has(o.key);
       setFade(o, dim ? 0.18 : 1);
-      o.label.classList.toggle('dim', Boolean(dim));
-      o.label.classList.toggle('sel', o === me);
+      o.dim = Boolean(dim);
+      // A name in bold when picked: drawn again.
+      if (o.sprite && o.sprite.userData.bold !== (o === me || o.shell || TopicSpace.opens(o.n))) dropLabel(o);
       o.lit = Boolean(lit && lit.has(o.key));
     }
   }
@@ -481,12 +613,31 @@ globalThis.TopicView = (() => {
           const m = v.objs.get(id);
           if (m && !m.leaving) r = Math.max(r, Math.hypot(...m.to.map((x, i) => x - o.to[i])) + m.sTo);
         }
-        o.sTo = r + 3;
+        o.sTo = r * 1.4 + 8;
       }
     }
   }
 
-  function labels() {
+  let caster = null;
+  /** Whether a solid bubble is in front of `o`, between it and the camera. */
+  function covered(o, at) {
+    caster = caster || new T.Raycaster();
+    const dir = at.clone().sub(v.camera.position);
+    const far = dir.length();
+    caster.set(v.camera.position, dir.normalize());
+    caster.far = far;
+    for (const h of caster.intersectObjects(v.pickable, false)) {
+      const x = v.objs.get(h.object.userData.key);
+      if (x && x !== o && !x.leaving && !x.mesh.material.uniforms && h.distance < far - 0.5) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The names: in the space, in front of their bubbles; at most MAX_LABELS, by `prio`, none over
+   * another on the screen and none of a bubble hidden behind another; the one pointed at besides.
+   */
+  function labels(check) {
     const w = v.host.clientWidth;
     const h = v.host.clientHeight;
     const kept = [];
@@ -495,29 +646,47 @@ globalThis.TopicView = (() => {
     const list = [];
     for (const o of v.objs.values()) {
       if (!o.leaving && (o.named || o.lit || o.key === v.hovered)) list.push(o);
-      else o.label.classList.remove('on');
+      else if (o.sprite) o.sprite.visible = false;
     }
     list.sort((a, b) => prio(b) - prio(a));
+    const tan = 2 * Math.tan((v.camera.fov * Math.PI) / 360);
+    const toCamera = new T.Vector3();
     const p = new T.Vector3();
     for (const o of list) {
       const over = o.key === v.hovered;
-      p.copy(o.pos).add(new T.Vector3(0, (o.shell && !o.hub ? o.s * 0.75 : o.s * o.puff) + 1.2, 0)).project(v.camera);
+      const r = o.shell && !o.hub ? o.s * 0.72 : o.s * o.puff;
+      // In front of the bubble, over its top.
+      toCamera.copy(v.camera.position).sub(o.pos).normalize();
+      const at = o.pos.clone().addScaledVector(toCamera, o.shell ? 0 : r * 1.02)
+        .addScaledVector(v.camera.up, (o.shell ? r : r * 0.15) + 0.4);
+      p.copy(at).project(v.camera);
       const x = ((p.x + 1) / 2) * w;
       const y = ((1 - p.y) / 2) * h;
-      // As wide as it was drawn, once it was; till then, by its letters.
-      if (o.label.classList.contains('on') && !o.wide) o.wide = o.label.offsetWidth;
-      const bw = (o.wide || o.n.label.length * 6.5) + 6;
-      const bh = o.label.classList.contains('group') ? 18 : 15;
+      if (!o.sprite) o.sprite = labelSprite(o);
+      const { w: bw, h: bh } = o.sprite.userData;
       const box = [x - bw / 2, y - bh, x + bw / 2, y];
-      const free = p.z < 1 && x > 0 && x < w && y > 0 && y < h
+      if (check || o.blocked === undefined) o.blocked = !over && covered(o, at);
+      const free = p.z < 1 && x > 0 && x < w && y > 0 && y < h && !o.blocked && !o.dim
         && !kept.some((k) => box[0] < k[2] && box[2] > k[0] && box[1] < k[3] && box[3] > k[1]);
-      const show = over || (free && shown < MAX_LABELS && (o.named || o.lit));
-      o.label.classList.toggle('on', show);
-      o.label.classList.toggle('over', over);
+      const show = over || (free && shown < MAX_LABELS);
+      o.sprite.visible = show;
       if (show) {
-        o.label.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px) translate(-50%, -100%)`;
+        o.sprite.position.copy(at);
+        o.sprite.scale.set((bw / h) * tan, (bh / h) * tan, 1);
         kept.push(box);
         if (!over) shown += 1;
+      }
+    }
+  }
+
+  /** The glows of what is trending: around their bubbles, breathing. */
+  function breathe(now) {
+    const breath = 0.75 + 0.25 * Math.sin(now / 700);
+    for (const o of v.objs.values()) {
+      if (o.glow) {
+        o.glow.position.copy(o.pos);
+        o.glow.scale.setScalar(o.s * o.puff * 3.2);
+        o.glow.material.opacity = (o.dim ? 0.2 : 0.85) * breath;
       }
     }
   }
@@ -571,8 +740,13 @@ globalThis.TopicView = (() => {
       if (v.controls.target.distanceTo(v.fly.target) < 0.5) v.fly = null;
     }
     v.controls.update();
-    v.renderer.render(v.scene, v.camera);
-    labels();
+    labels(v.tick % 6 === 0);
+    breathe(now);
+    v.bokeh.uniforms.focus.value = v.camera.position.distanceTo(v.controls.target);
+    v.composer.render();
+    v.renderer.autoClear = false;
+    v.renderer.render(v.names, v.camera);
+    v.renderer.autoClear = true;
   }
 
   /** Where bubble `id` is drawn, in the page (`{ x, y }`), or null: for scripts and tests. */
@@ -585,6 +759,6 @@ globalThis.TopicView = (() => {
   }
 
   return {
-    THREE_PATH, mount, draw, focus, fit, resize, screen,
+    THREE_PATH, mount, draw, trending, focus, fit, resize, screen,
   };
 })();

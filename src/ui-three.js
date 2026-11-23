@@ -11,8 +11,8 @@
  */
 
 /**
- * What the Topics page draws its map with (ui/topicview.js): the parts of three.js it uses, and
- * its orbit controls.
+ * What the Topics page draws its map with (ui/topicview.js): the parts of three.js it uses, its
+ * orbit controls and its depth of field.
  *
  * The page does not load this file: scripts/ui-markdown.mjs bundles it into
  * src/ui-three.bundle.js, which the Worker serves at /inbox/three.js, and the page imports that
@@ -20,8 +20,14 @@
  */
 
 export {
-  Box3, BufferGeometry, Color, DirectionalLight, Float32BufferAttribute, Group, HemisphereLight,
-  LineBasicMaterial, LineSegments, Mesh, MeshStandardMaterial, PerspectiveCamera, Raycaster, Scene,
-  ShaderMaterial, Sphere, SphereGeometry, Vector2, Vector3, WebGLRenderer,
+  BufferGeometry, CanvasTexture, Color, DirectionalLight, Float32BufferAttribute, Fog, Group,
+  HemisphereLight, LineBasicMaterial, LineSegments, Mesh, MeshStandardMaterial, PerspectiveCamera,
+  Raycaster, Scene, ShaderMaterial, SphereGeometry, Sprite, SpriteMaterial, SRGBColorSpace, Vector2,
+  Vector3, WebGLRenderer,
 } from 'three';
 export { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+// The depth of field: what is farther than what is looked at, or nearer, is blurred.
+export { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+export { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+export { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
+export { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';

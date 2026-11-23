@@ -58,7 +58,8 @@ const RELATED = [
   { id: 'tag', label: 'Areas' }, { id: 'topic', label: 'Topics' }, { id: 'person', label: 'People' },
   { id: 'org', label: 'Customers' }, { id: 'product', label: 'Products' },
 ];
-const MINS = [1, 2, 3, 5, 8];
+/** The threads a bubble needs to be drawn. */
+const MIN = 5;
 // What the trees show: everything, or only what is trending, declining or peaked (ui/trends.js).
 const LISTS = [
   { id: '', label: 'All', title: 'The areas with their topics, the products with their features' },
@@ -86,7 +87,7 @@ const state = {
   // The teams each Adobe person is on (GET /api/topics), for their team bubbles.
   members: null,
   q: {
-    team: '', hide: [], min: 2, sel: '', open: [], tl: '', only: '',
+    team: '', hide: [], sel: '', open: [], tl: '', only: '',
   },
   // The week of the chart whose threads the panel lists, and the terms they are for.
   week: null,
@@ -102,12 +103,10 @@ const state = {
 
 function fromUrl() {
   const p = new URLSearchParams(location.search);
-  const min = Number(p.get('min'));
   state.q = {
     team: p.get('team') || '',
     tl: LISTS.some((l) => l.id === p.get('tl')) ? p.get('tl') : '',
     hide: (p.get('hide') || '').split(',').filter((t) => TYPE[t]),
-    min: MINS.includes(min) ? min : 2,
     sel: p.get('sel') || '',
     // The groups opened (ui/topicgraph.js), as their ids.
     open: p.getAll('open'),
@@ -124,7 +123,6 @@ function toUrl({ push = true } = {}) {
   if (q.tl) p.set('tl', q.tl);
   for (const [k, v] of TrendView.params()) p.set(k, v);
   if (q.hide.length) p.set('hide', q.hide.join(','));
-  if (q.min !== 2) p.set('min', String(q.min));
   if (q.sel) p.set('sel', q.sel);
   if (q.only) p.set('only', q.only);
   for (const id of q.open) p.append('open', id);
@@ -155,7 +153,7 @@ function graphOf() {
   const names = Object.fromEntries(areaList().map((a) => [a.id, a.name]));
   const m = { ...map(), tags: { ...(map().tags || {}), ...names } };
   const build = (threads) => TopicGraph.build({ ...m, threads }, {
-    team: q.team, shown: shownTypes(), min: q.min, open: q.open, teamName: teamLabel, members: state.members,
+    team: q.team, shown: shownTypes(), min: MIN, open: q.open, teamName: teamLabel, members: state.members,
   });
   const all = build(m.threads);
   // The trends name what they compare from it, which may be outside what is shown.
@@ -198,7 +196,7 @@ async function drawGraph({ refit = false } = {}) {
   if (!host) return;
   const g = graphOf();
   state.graph = g;
-  const shown = TopicSpace.drawn(g, { open: new Set(state.q.open), shown: shownTypes(), min: state.q.min });
+  const shown = TopicSpace.drawn(g, { open: new Set(state.q.open), shown: shownTypes(), min: MIN });
   $('graphEmpty').hidden = shown.items.length > 0;
   const ok = await TopicView.mount(host, {
     onPick: clickNode, onFold: holdNode, onOnly: only, onHover: tip,
@@ -211,9 +209,15 @@ async function drawGraph({ refit = false } = {}) {
   // A later draw may have taken its place while three.js loaded.
   if (state.graph !== g) return;
   TopicView.draw({
-    graph: g, pos: places(), open: new Set(state.q.open), shown: shownTypes(), min: state.q.min, refit,
+    graph: g, pos: places(), open: new Set(state.q.open), shown: shownTypes(), min: MIN, glow: trending(), refit,
   });
   focus();
+}
+
+/** What is trending (ui/trends.js), which glows on the map: their ids, once the trends are in. */
+function trending() {
+  const moving = TrendView.moving(trendCtx());
+  return new Set((moving?.trending || []).map((x) => x.key));
 }
 
 /** Marks what is picked, and what it shares threads with, or what Find finds. */
@@ -222,9 +226,15 @@ function focus() {
 }
 
 /** The tooltip of what is pointed at (`id`), with what holding it does (`hold`). */
+let hovering = 0;
 function tip(id, ev, hold) {
   const t = $('tip');
   const n = id && state.graph?.all.get(id);
+  // What is pointed at, on the chart, a moment after; what is picked again after it.
+  if ((n ? id : '') !== state.hover) {
+    clearTimeout(hovering);
+    hovering = setTimeout(() => TrendView.chart({ ...trendCtx(), sel: state.hover || state.q.sel }), 150);
+  }
   state.hover = n ? id : '';
   if (!n) {
     t.hidden = true;
@@ -450,8 +460,8 @@ function follows(f) {
 }
 
 const followButton = (f, label) => (f && state.me.teams?.length
-  ? `<button class="follow" data-follow="${esc(f.kind)}" data-target="${esc(f.target)}" aria-pressed="${follows(f)}"
-      title="${follows(f) ? `Stop following ${esc(label)}` : `Follow ${esc(label)}: its threads are in your personal view`}">${follows(f) ? 'Following' : 'Follow'}</button>`
+  ? `<button class="follow${follows(f) ? '' : ' primary'}" data-follow="${esc(f.kind)}" data-target="${esc(f.target)}" aria-pressed="${follows(f)}"
+      title="${follows(f) ? `Stop following ${esc(label)}: its threads leave your personal view` : `Follow ${esc(label)}: its threads are in your personal view`}">${follows(f) ? 'Unfollow' : 'Follow'}</button>`
   : '');
 
 async function toggleFollow(kind, target) {
@@ -555,8 +565,8 @@ function details(n) {
   const team = area && area.teams.find(mayArea);
   const parent = n.parent && map() && state.graph.all.get(n.parent);
   return `<div class="head"><span class="dot" data-type="${n.type}"></span><div><div class="sub">${esc(n.one)}${parent ? ` in ${esc(parent.label)}` : ''}</div>
-      <h2>${esc(n.label)}</h2></div>${followButton(followOf(n), n.label)}<button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
-    ${foldButton(n) || team ? `<div class="acts">${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
+      <h2>${esc(n.label)}</h2></div><button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
+    ${followButton(followOf(n), n.label) || foldButton(n) || team ? `<div class="acts">${followButton(followOf(n), n.label)}${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
     ${area && state.editArea && !state.editArea.new && state.editArea.id === area.id ? areaForm() : ''}
     ${area?.what ? `<p class="theme">Clef is asked: is this thread about ${esc(area.what)}?</p>` : ''}
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
@@ -666,8 +676,6 @@ function renderBar() {
   $('team').disabled = !m;
   $('types').innerHTML = TYPES.map((t) => `<button data-type="${t.id}" aria-pressed="${!state.q.hide.includes(t.id)}" title="${esc(t.title)}"${m ? '' : ' disabled'}>
     <span class="dot" data-type="${t.id}"></span>${esc(t.label)}</button>`).join('');
-  $('min').innerHTML = MINS.map((n) => `<option value="${n}"${n === state.q.min ? ' selected' : ''}>${n}+</option>`).join('');
-  $('min').disabled = !m;
   const of = state.q.only && state.graph?.all.get(state.q.only);
   $('only').hidden = !of;
   $('only').innerHTML = of ? `<span class="dot" data-type="${of.type}"></span>Only ${esc(of.label)}<span class="s2-cross" aria-hidden="true"></span>` : '';
@@ -732,6 +740,7 @@ async function load() {
     if (map() && $('panel')) {
       renderPanel();
       TrendView.chart(trendCtx());
+      TopicView.trending(trending());
     }
   });
   try {
@@ -786,7 +795,6 @@ function change(fn) {
 
 function wire() {
   $('team').onchange = (ev) => change((q) => { q.team = ev.target.value; });
-  $('min').onchange = (ev) => change((q) => { q.min = Number(ev.target.value); });
   $('types').onclick = (ev) => {
     const b = ev.target.closest('button[data-type]');
     if (!b) return;

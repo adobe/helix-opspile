@@ -18,9 +18,9 @@
  * - The topics are fixed: each where the map put it (`topics[].at`, src/topicspace.js: what its
  *   threads say once their people, products and customers are taken out), or, on a map from
  *   before, its area on a sphere and the area's topics around it.
- * - The products come next, each pulled to the topics it shares threads with; then the people
- *   (and a customer whose people did not post), pulled to the topics (hardest), the products and
- *   the other people they share threads with. How hard two pull is how many threads they share
+ * - The products come next, each pulled to the few topics it shares the most threads with; then
+ *   the people (and a customer whose people did not post), pulled to theirs (hardest), the
+ *   products and the other people they share threads with. How hard two pull is how many threads they share
  *   against how many each has. A group (an area, a team, a customer, a product) is where its
  *   members are, by their threads.
  * - A group drawn closed shows what is in it: its children at their own size when they fit, else
@@ -31,14 +31,36 @@
 globalThis.TopicSpace = (() => {
   /** The space's size: the farthest topic is this far from the middle. */
   const SCALE = 70;
-  /** A bubble's radius: a leaf's and a group's, by the cube root of its threads (its volume). */
-  const radius = (n, threads = n.threads.length) => (opens(n)
-    ? 1.5 + 1.1 * Math.cbrt(threads) : 0.7 + 0.75 * Math.cbrt(threads));
-  /** How hard each kind pulls each other one into place (none: it does not). */
+  /**
+   * How much room each kind takes (a sum of radii cubed): the same for topics, people and products,
+   * so that one kind of many threads does not fill the space. Within a kind, a bubble's volume is
+   * its threads'.
+   */
+  const ROOM = 0.02 * SCALE ** 3;
+  const MIN_RADIUS = 0.6;
+  /** A bubble's radius, for its kind's scale `k` (`scales`): its volume as its threads. */
+  const radius = (n, k = 1) => Math.max(MIN_RADIUS, k * Math.cbrt(n.threads.length));
+  /** Each kind's scale of the bubbles `items` drawn: each kind's take ROOM together. */
+  function scales(items) {
+    const sum = {};
+    for (const n of items) sum[n.family] = (sum[n.family] || 0) + n.threads.length;
+    return Object.fromEntries(Object.entries(sum).map(([f, t]) => [f, Math.cbrt(ROOM / Math.max(t, 1))]));
+  }
+  /**
+   * How hard each kind pulls each other one into place (none: it does not), and how much more
+   * the threads they share count than they would (`sharp`): the topics pull hardest, and their
+   * pull goes mostly to the topics most of one's threads are in, so that what works on many
+   * topics does not end in the middle of them all.
+   */
   const PULL = {
-    product: { topic: 1, product: 0.15 },
-    person: { topic: 1, product: 0.5, person: 0.6 },
+    product: { topic: 3, product: 0.15 },
+    person: { topic: 3, product: 0.5, person: 0.4 },
   };
+  const SHARP = { topic: 3, product: 1.5, person: 1.5 };
+  /** How many topics pull each: those it shares the most threads with. */
+  const TOPICS_PULLING = 3;
+  /** How far a spring holds two apart. */
+  const REST = 6;
   const SETTLE = { product: 200, person: 160 };
   /** A group whose members are farther apart than this is drawn as a hub with spokes. */
   const HUB = 18;
@@ -136,10 +158,17 @@ globalThis.TopicSpace = (() => {
     for (const [k, s] of shared) {
       const i = Math.floor(k / leaves.length);
       const j = k % leaves.length;
-      const w = (s / Math.sqrt(leaves[i].threads.length * leaves[j].threads.length)) ** 1.5;
-      near[i].push([leaves[j], w]);
-      near[j].push([leaves[i], w]);
+      const w = s / Math.sqrt(leaves[i].threads.length * leaves[j].threads.length);
+      near[i].push([leaves[j], w ** SHARP[kindOf(leaves[j])]]);
+      near[j].push([leaves[i], w ** SHARP[kindOf(leaves[i])]]);
     }
+    // Of the topics, each is pulled only to the few it shares the most with.
+    near.forEach((list, i) => {
+      if (kindOf(leaves[i]) === 'topic') return;
+      const topics = list.filter(([m]) => kindOf(m) === 'topic').sort((a, b) => b[1] - a[1]);
+      const drop = new Set(topics.slice(TOPICS_PULLING).map(([m]) => m));
+      near[i] = list.filter(([m]) => !drop.has(m));
+    });
     const rnd = random(7);
     const settle = (kind) => {
       const movers = leaves.filter((n) => kindOf(n) === kind);
@@ -170,7 +199,7 @@ globalThis.TopicSpace = (() => {
             if (there) {
               const d = sub(there, here);
               const l = len(d) || 1e-3;
-              f = add(f, d, (c * w * (l - 4)) / l);
+              f = add(f, d, (c * w * (l - REST)) / l);
               total += c * w;
             }
           }
@@ -332,6 +361,6 @@ globalThis.TopicSpace = (() => {
   }
 
   return {
-    SCALE, HUB, radius, opens, never, places, centre, drawn, hub, pack, collide, sphere,
+    SCALE, HUB, radius, scales, opens, never, places, centre, drawn, hub, pack, collide, sphere,
   };
 })();

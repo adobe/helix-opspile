@@ -39,13 +39,10 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: 
 
 .split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 52); }
 .graph { position: relative; min-height: 0; overflow: hidden; }
-/* The map: a WebGL canvas (ui/topicview.js), the names over it, and how to use it under it. */
+/* The map: a WebGL canvas (ui/topicview.js), its names in it, and how to use it under it. */
 .graph canvas.space { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; user-select: none; }
 .graph canvas.space:active { cursor: grabbing; }
 .graph canvas.space.over { cursor: pointer; }
-.graph .lbls { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-.graph .lbls .lbl { position: absolute; left: 0; top: 0; white-space: nowrap; visibility: hidden; }
-.graph .lbls .lbl.on { visibility: visible; }
 .graph .probe { display: none; }
 .graph .how { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
 #only { display: inline-flex; align-items: center; }
@@ -163,12 +160,20 @@ p.trend { display: flex; align-items: center; }
 
 /* ---- the kinds: Spectrum 2's categorical palette ------------------------------------------ */
 
-.spectrum [data-type="topic"] { --s2-type: var(--spectrum-indigo-1100); }
+.spectrum [data-type="topic"] { --s2-type: var(--spectrum-indigo-700); }
 .spectrum [data-type="person"] { --s2-type: var(--spectrum-seafoam-700); }
-.spectrum [data-type="tag"] { --s2-type: var(--spectrum-orange-700); }
+.spectrum [data-type="tag"] { --s2-type: var(--spectrum-indigo-1100); }
 .spectrum [data-type="org"] { --s2-type: var(--spectrum-magenta-900); }
 .spectrum [data-type="team"] { --s2-type: var(--spectrum-seafoam-1000); }
 .spectrum [data-type="product"] { --s2-type: var(--spectrum-celery-700); }
+/* On the map, a group a darker shade of its members' (as a team of its people's), and the
+   vendors' technologies apart from Adobe's products. */
+.spectrum [data-type="product-group"] { --s2-type: var(--spectrum-celery-1000); }
+.spectrum [data-type="vendor"] { --s2-type: var(--spectrum-orange-700); }
+.spectrum [data-type="vendor-group"] { --s2-type: var(--spectrum-orange-1000); }
+/* The map's names, and its card, which it is drawn on. */
+.spectrum .probe[data-type="label"] { --s2-type: var(--spectrum-neutral-content-color-default); }
+.spectrum .probe:is([data-type="halo"], [data-type="card"]) { --s2-type: var(--spectrum-background-layer-2-color); }
 /* A product no tech stack entry names: a ring of its color, hollow, so the gaps stand out. */
 .spectrum .dot[data-gap] {
   background: transparent;
@@ -184,17 +189,6 @@ p.trend { display: flex; align-items: center; }
 /* ---- the graph -------------------------------------------------------------------------- */
 
 .spectrum .graph .tools { padding: var(--spectrum-spacing-200); }
-/* A bubble's name: in the text's color, on a halo of the card's, as big at any distance. */
-.spectrum .graph .lbls .lbl {
-  color: var(--spectrum-neutral-content-color-default);
-  font-size: var(--spectrum-font-size-50);
-  text-shadow: 0 0 var(--spectrum-spacing-50) var(--spectrum-background-layer-2-color),
-    0 0 var(--spectrum-spacing-50) var(--spectrum-background-layer-2-color);
-  transition: opacity var(--s2-ease);
-}
-.spectrum .graph .lbls .lbl.group { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .graph .lbls .lbl:is(.sel, .over) { font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .graph .lbls .lbl.dim { opacity: .3; }
 /* Each kind's color, which the map's bubbles take (ui/topicview.js reads it). */
 .spectrum .graph .probe { color: var(--s2-type); }
 .spectrum .graph .how {
