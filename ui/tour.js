@@ -42,13 +42,16 @@ globalThis.Tour = (() => {
 
   /**
    * The stops, for the inbox on screen: `teams` (how many you are in), `simple` (the personal
-   * view as the simple one), `bell` (not while viewing as someone), `pages` (the ids of
-   * ui/header.js's pages you have) and `key` (a shortcut as this keyboard names it). Each is
+   * view as the simple one), `bell` (not while viewing as someone), `follow` (whether you may
+   * follow: not while viewing as someone), `empty` (the personal view has no thread yet, and
+   * shows what to follow instead), `pages` (the ids of ui/header.js's pages you have)
+   * and `key` (a shortcut as this keyboard names it). Each is
    * `{ id, title, html, at }`: `at` lists where on the page it points, the first one on screen
    * wins, and none is a stop in the middle of the screen.
    */
   function steps({
-    teams = 0, simple = false, bell = true, pages = [], key = (k) => k,
+    teams = 0, simple = false, bell = true, follow = true, empty = false, pages = [],
+    key = (k) => k,
   } = {}) {
     const kbd = (k) => `<kbd>${key(k)}</kbd>`;
     const more = pages.map((p) => PAGES[p]).filter(Boolean);
@@ -56,7 +59,9 @@ globalThis.Tour = (() => {
       {
         id: 'welcome',
         title: 'Welcome to Enterprise Support',
-        html: '<p>Customers, partners and vendors write where they already are: in Slack, Teams, Discord and the customer portal. Their threads come together here, for you and your teams to answer. This takes a minute.</p>',
+        html: teams
+          ? '<p>Customers, partners and vendors write where they already are: in Slack, Teams, Discord and the customer portal. Their threads come together here, for you and your teams to answer. This takes a minute.</p>'
+          : '<p>Customers, partners and vendors write where they already are: in Slack, Teams, Discord and the customer portal. Their threads come together here: those you take part in, and those about what you follow. This takes a minute.</p>',
         at: null,
       },
       {
@@ -64,32 +69,40 @@ globalThis.Tour = (() => {
         title: 'Your views',
         html: teams
           ? '<p><b>Personal</b> has the threads you posted in or were mentioned in. Beside it, each of your teams has its inbox: every thread in the team\'s channels and about the technologies it follows, what needs you most first.</p>'
-          : '<p><b>Personal</b> has the threads you posted in or were mentioned in. Once you are in a team, its inbox is beside it: every thread in its channels, what needs you most first.</p>',
+          : '<p><b>Personal</b> has the threads you posted in or were mentioned in, and those about the products, topics and customers you follow. Once you are in a team, its inbox is beside it: every thread in its channels, what needs you most first.</p>',
         at: ['#threads .order'],
       },
       {
         id: 'filters',
         title: 'Filters',
         html: simple
-          ? '<p>Pick a customer to see only their threads. Your teams\' inboxes, and the expert view in your menu, have every filter: whose move it is, urgency, kind, topic, tech stack and more.</p>'
+          ? `<p>Pick a customer to see only their threads. ${teams ? 'Your teams\' inboxes, and the expert view in your menu, have' : 'The expert view, in your menu, has'} every filter: whose move it is, urgency, kind, topic, tech stack and more.</p>`
           : `<p>Click a value to see only its threads; ${kbd('⇧')} click, or the ≠ beside it, leaves them out. <b>Status</b> and <b>Waiting on</b> say whose move it is: start with <b>You</b>, and <b>Us</b>.</p>`,
         at: ['#filters', '#threads [data-filters]'],
       },
       {
-        id: 'threads',
-        title: 'What needs you',
-        html: simple
-          ? `<p>Your threads, the latest first. Open one with a click, or go through them with ${kbd('j')} and ${kbd('k')}.</p>`
-          : `<p>Each thread's mark is its kind (a question, a request, an incident…), in the color of its status; point at it for its urgency, a draft and whose move it is. ${kbd('j')} and ${kbd('k')} go through them.</p>`,
-        at: ['#threads .rows'],
-      },
-      {
         id: 'search',
         title: 'Search',
-        html: `<p>${kbd('/')} searches your teams' threads on every platform, wherever you are.</p>`,
+        html: teams ? `<p>${kbd('/')} searches your teams' threads on every platform, wherever you are.</p>`
+          : `<p>${kbd('/')} searches the threads of your personal view on every platform, wherever you are.</p>`,
         at: ['#threads .find'],
       },
     ];
+    // An empty view has no thread to go through yet: the stop about what to follow says why.
+    if (!empty) {
+      out.splice(
+        3,
+        0,
+        {
+          id: 'threads',
+          title: 'What needs you',
+          html: simple
+            ? `<p>Your threads, the latest first. Open one with a click, or go through them with ${kbd('j')} and ${kbd('k')}.</p>`
+            : `<p>Each thread's mark is its kind (a question, a request, an incident…), in the color of its status; point at it for its urgency, a draft and whose move it is. ${kbd('j')} and ${kbd('k')} go through them.</p>`,
+          at: ['#threads .rows'],
+        },
+      );
+    }
     if (bell) {
       out.push({
         id: 'bell',
@@ -102,16 +115,26 @@ globalThis.Tour = (() => {
       {
         id: 'thread',
         title: 'The thread',
-        html: `<p>A thread opens here, as it is on its platform, and you reply under it. React with 👀 to take it on, or 🛟 to ask your team for help; ✅ on its first message, or ${kbd('e')}, resolves it.</p>`,
+        html: teams
+          ? `<p>A thread opens here, as it is on its platform, and you reply under it. React with 👀 to take it on, or 🛟 to ask your team for help; ✅ on its first message, or ${kbd('e')}, resolves it.</p>`
+          : `<p>A thread opens here, as it is on its platform, and you reply under it as yourself, where the platform lets you post. React with 👀 to take it on; ✅ on its first message, or ${kbd('e')}, resolves it.</p>`,
         at: ['#pane'],
       },
       {
         id: 'agent',
         title: 'The Thread Agent',
-        html: `<p>Where a team has it on, it reads each thread, looks things up and drafts a reply. The draft waits above the reply box for you to send, edit or discard; your team sees it too. Ask it anything in its sidebar (${kbd('a')}): nothing you say there is posted.</p>`,
+        html: `<p>Where a team has it on, it reads each thread, looks things up and drafts a reply. The draft waits above the reply box for you to send, edit or discard; ${teams ? 'your team sees it too' : 'the thread\'s team sees it too'}. Ask it anything in its sidebar (${kbd('a')}): nothing you say there is posted.</p>`,
         at: ['#pane .sidebtn', '#draftbar', '#pane'],
       },
     );
+    if (follow) {
+      out.push({
+        id: 'follow',
+        title: 'Follow what you work on',
+        html: `<p>Follow a product, a topic or a customer: its threads come into <b>Personal</b>, from every team's channels.${teams ? '' : ' On no team, this is how threads come here.'} ${empty ? 'These are suggested from the channels you are in and what is talked about lately; <b>Find something to follow</b>, in your menu, has them too.' : '<b>Find something to follow</b>, in your menu, suggests some from the channels you are in and what is talked about lately.'}</p>`,
+        at: ['#threads .getstarted', '#user'],
+      });
+    }
     if (more.length) {
       out.push({
         id: 'pages',
