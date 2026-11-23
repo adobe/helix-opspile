@@ -338,7 +338,7 @@ function trees() {
     const few = n.type === 'topic' && n.threads.length && tagged(n.threads) / n.threads.length < 0.25;
     return `<li class="tr d${depth}">${shows(n) ? `<button class="chev" data-fold="${esc(n.id)}" aria-expanded="${Boolean(n.open)}" aria-label="${n.open ? 'Fold' : 'Open'} ${esc(n.label)}"></button>` : '<span class="chev"></span>'}
       <button class="pickr" data-sel="${esc(n.id)}"><span class="dot" data-type="${dotType(n)}"${n.gap ? ' data-gap' : ''}></span><span class="nm">${esc(n.label)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ''}${few ? ' <span class="untagged" title="Clef tags few of its threads">·</span>' : ''}</span>
-      ${TrendView.badge(it)}${TrendView.spark(it)}<span class="n" title="Its share of the active channels, the last ${Trends.RECENT} weeks${it ? ` (${it.stats.perWeek.toFixed(1)} channels a week)` : ''}">${it ? TrendView.pct(100 * it.stats.share) : '–'}</span></button></li>`;
+      ${TrendView.badge(it)}${TrendView.spark(it)}<span class="n" title="Its share of the active channels, the last ${Trends.RECENT} weeks${it ? ` (${it.stats.perWeek.toFixed(1)} channels a week)` : ''}">${it ? TrendView.pct(100 * it.stats.share) : '–'}</span></button>${n.type === 'product' ? followBox(n) : ''}</li>`;
   };
   const tree = (roots) => roots.sort((a, b) => recent(b) - recent(a) || a.label.localeCompare(b.label))
     .map((n) => row(n, 0) + (shows(n) && n.open ? n.children.map((id) => g.all.get(id)).filter(Boolean)
@@ -363,7 +363,7 @@ function trees() {
     body = `<ul class="tree">${listed.map((n) => row(n, 0, parentOf(n))).join('') || `<li class="sub">Nothing ${esc(state.q.tl)} now.</li>`}</ul>`;
   } else {
     body = `<h3>Areas and topics</h3><ul class="tree">${tree(areas)}</ul>
-      <h3>Products and features</h3><ul class="tree">${tree(made) || '<li class="sub">No products yet.</li>'}</ul>`;
+      <h3 class="cols">Products and features${state.me.teams?.length ? '<span class="sub">Follow</span>' : ''}</h3><ul class="tree">${tree(made) || '<li class="sub">No products yet.</li>'}</ul>`;
   }
   return `<div class="seg" role="group" aria-label="Show">${LISTS.map((l) => `<button data-tl="${l.id}" aria-pressed="${state.q.tl === l.id}" title="${esc(l.title)}">${l.label}</button>`).join('')}</div>
     <p class="hint">Each line is the share of the active channels (those with a message that week) that talk about it, week by week; trending, declining and peaked are said of the last ${Trends.RECENT} full weeks, to ${esc(TrendView.data.weeks[moving.last])}, against the ${Trends.BASE} before. A click picks it on the map and adds its line to the chart, which keeps it until × takes it off.</p>
@@ -459,13 +459,19 @@ function followOf(n) {
   if (n.type === 'org') return { kind: 'org', target: n.key };
   if (n.type === 'tag' && n.key !== TopicGraph.NONE) return { kind: 'area', target: n.key };
   if (n.type === 'product' && n.key.startsWith('tech:')) return { kind: 'tech', target: n.key.slice(5) };
+  // A product (or a vendor): its features of the tech stack, all of them.
+  if (n.type === 'product' && n.children?.length) {
+    const techs = n.children.filter((id) => id.startsWith('product:tech:')).map((id) => id.slice(13));
+    return techs.length ? { kind: 'tech', target: techs.join(',') } : null;
+  }
   return null;
 }
 
 /** Whether the viewer follows `f` (followOf). */
 function follows(f) {
   if (!f) return false;
-  if (f.kind === 'tech') return (state.follows.me || []).includes(f.target);
+  // Technologies: all of them (a product's features).
+  if (f.kind === 'tech') return f.target.split(',').every((t) => (state.follows.me || []).includes(t));
   return (state.follows.by?.[f.kind] || []).map(String).includes(String(f.target));
 }
 
@@ -474,15 +480,40 @@ const followButton = (f, label, { strong = false } = {}) => (f && state.me.teams
       title="${follows(f) ? `Stop following ${esc(label)}: its threads leave your personal view` : `Follow ${esc(label)}: its threads are in your personal view`}">${follows(f) ? 'Unfollow' : 'Follow'}</button>`
   : '');
 
+/**
+ * A follow on its checkbox in the trees: the product's or feature's threads in the viewer's
+ * personal view.
+ */
+const followBox = (n) => {
+  const f = n.type === 'product' && state.me.teams?.length ? followOf(n) : null;
+  if (!f) return '<span class="fbox"></span>';
+  const on = follows(f);
+  return `<label class="fbox" title="${on ? `Stop following ${esc(n.label)}` : `Follow ${esc(n.label)}: its threads are in your personal view`}">
+    <input type="checkbox" data-follow="${esc(f.kind)}" data-target="${esc(f.target)}"${on ? ' checked' : ''} aria-label="Follow ${esc(n.label)}"></label>`;
+};
+
+/**
+ * Follows `target` of `kind`, or no more; technologies (`tech`) may be several, separated by
+ * commas (a product's features): all followed, or, when they all are, none.
+ */
 async function toggleFollow(kind, target) {
-  const f = { kind, target };
-  const body = kind === 'tech' ? { tech: target, follow: !follows(f) } : { kind, target, follow: !follows(f) };
-  const res = await fetch('/api/follows', {
-    method: 'PUT', credentials: 'same-origin', redirect: 'manual', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  }).catch(() => null);
-  const out = res ? await res.json().catch(() => ({})) : {};
-  if (res && res.ok) state.follows = { ...state.follows, ...out };
-  else state.note = { err: true, text: out.error || 'Could not change what you follow.' };
+  const follow = !follows({ kind, target });
+  const targets = kind === 'tech' ? target.split(',').filter((t) => follows({ kind, target: t }) !== follow) : [target];
+  for (const t of targets) {
+    const body = kind === 'tech' ? { tech: t, follow } : { kind, target: t, follow };
+    // eslint-disable-next-line no-await-in-loop -- a few, one after the other: each answers with all
+    const res = await fetch('/api/follows', {
+      method: 'PUT', credentials: 'same-origin', redirect: 'manual', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    }).catch(() => null);
+    // eslint-disable-next-line no-await-in-loop
+    const out = res ? await res.json().catch(() => ({})) : {};
+    if (res && res.ok) {
+      state.follows = { ...state.follows, ...out };
+    } else {
+      state.note = { err: true, text: out.error || 'Could not change what you follow.' };
+      break;
+    }
+  }
   renderPanel();
 }
 
@@ -599,10 +630,15 @@ function renderPanel() {
     panel.innerHTML = state.week.html || '<div class="empty">Loading…</div>';
     return;
   }
+  // Where it was scrolled to stays when it is the same thing again (a group opened or folded,
+  // a follow, an area saved); something else shown starts at the top.
+  const shows = `${state.q.sel}|${state.q.tl}`;
+  const top = panel.dataset.shows === shows ? panel.scrollTop : 0;
+  panel.dataset.shows = shows;
   panel.innerHTML = n ? details(n) : overview();
   // The meters' fill, as wide as its share: a class per tenth (ui/spectrum-topics.css).
   for (const f of panel.querySelectorAll('.fill[data-w]')) f.classList.add(`w${Math.max(1, Math.round(Number(f.dataset.w) / 10))}`);
-  panel.scrollTop = 0;
+  panel.scrollTop = top;
 }
 
 // ---- the page ---------------------------------------------------------------------------
@@ -862,7 +898,7 @@ function wire() {
     }
     const folding = ev.target.closest('button[data-fold]');
     if (folding) fold(folding.dataset.fold);
-    const follow = ev.target.closest('button[data-follow]');
+    const follow = ev.target.closest('button[data-follow], input[data-follow]');
     if (follow) toggleFollow(follow.dataset.follow, follow.dataset.target);
     const edit = ev.target.closest('button[data-edit-area]');
     if (edit) {

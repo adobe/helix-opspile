@@ -97,6 +97,9 @@ ul.tree { list-style: none; margin: 0; padding: 0; }
 ul.tree li.tr { display: flex; align-items: center; }
 ul.tree .chev { flex: none; }
 ul.tree .pickr { flex: 1; min-width: 0; }
+/* A product's or feature's follow, a checkbox at the end of its row, under the heading's Follow. */
+ul.tree .fbox { flex: none; display: inline-flex; justify-content: center; }
+.panel h3.cols { display: flex; align-items: baseline; justify-content: space-between; }
 .panel ul.tree .pickr { grid-template-columns: auto minmax(0, 1fr) auto auto calc(var(--spectrum-spacing-100) * 4); }
 .spark { display: block; width: calc(var(--spectrum-spacing-100) * 8); height: var(--spectrum-spacing-300); }
 p.trend { display: flex; align-items: center; }
@@ -393,6 +396,8 @@ p.trend { display: flex; align-items: center; }
 .spectrum ul.tree button.chev[aria-expanded="true"]::before { transform: none; }
 .spectrum ul.tree button.chev:hover:not(:disabled) { background: var(--spectrum-gray-100); }
 .spectrum ul.tree li.d1 { padding-left: var(--spectrum-spacing-300); }
+.spectrum ul.tree .fbox { width: var(--spectrum-component-height-100); cursor: pointer; }
+.spectrum .panel h3.cols .sub { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); }
 .spectrum ul.tree .pickr .nm .sub { font-size: var(--spectrum-font-size-75); }
 .spectrum .badge {
   padding: 0 var(--spectrum-spacing-75);

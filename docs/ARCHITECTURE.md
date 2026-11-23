@@ -1539,7 +1539,9 @@ there.
   pick, the areas with their topics and the products with their features are **trees**. A group
   opens and folds there the way its bubble bursts and folds on the graph, and both use the same
   `open`. Each row has its sparkline, its badge (↑ trending, ↓ declining, peaked and when) and
-  its share of the active channels in the last six weeks. Filtered to trending, declining or peaked, the trees become one list, the
+  its share of the active channels in the last six weeks; a product's or feature's row has a
+  checkbox to follow it (a product: all its features of the tech stack), as its panel's Follow
+  does. Opening or folding a group, or a follow, keeps where the panel was scrolled to. Filtered to trending, declining or peaked, the trees become one list, the
   strongest first. A click on a row, or on a bubble, picks the node on the graph and adds its
   line to the chart's (with none yet, to the most trending topics the chart starts with), where
   it stays until × takes it off. **Clear** takes every line off, and so does × on the last one:
