@@ -39,6 +39,7 @@ import {
 import { appPostCheck, postApp } from './postapp.js';
 import { closestEmoji, rankEmoji, workspaceEmoji } from './shortcodes.js';
 import { rankEvents, recordPick } from './rankevents.js';
+import { mentionReminders } from './reminders.js';
 import {
   isSignInDomain, isStaffDomain, personAvatar, toAuthor,
 } from './lookup.js';
@@ -1304,6 +1305,18 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       await settlePost(env, me, body.key, res);
     }
     await logPost(me, body, files, res, { how, ms: Date.now() - started, again: Boolean(again) });
+    // Whom it mentions who may never see it: the page suggests a personal reminder, with the
+    // post's links (src/reminders.js). The post went out: a failure here says nothing.
+    if (res.ok && Array.isArray(body.mentions) && body.mentions.length) {
+      const sent = await res.clone().json();
+      const said = await mentionReminders(env, me, body, sent).catch((e) => {
+        console.log(JSON.stringify({ route: 'post', action: 'reminders', error: e.message }));
+        return { reminders: [] };
+      });
+      if (said.reminders.length) {
+        res = json({ ...sent, ...said }, res.status);
+      }
+    }
     // A reply sent from the shared draft uses it up (unless a colleague changed it since).
     // The post went out: whatever happens here, the answer says so.
     if (res.ok && typeof body.draft === 'string') {

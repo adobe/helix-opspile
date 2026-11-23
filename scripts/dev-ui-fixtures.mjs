@@ -34,10 +34,13 @@ const PEOPLE = [
     key: 'priya', id: 2, name: 'Priya Nair', email: 'priya@example.com', staff: true, title: 'Support engineer',
   },
   {
-    key: 'lena', id: 3, name: 'Lena Berg', email: 'lena@example.com', staff: true,
+    // The mention model gives her odds of an answer under one half (src/reminders.js): a
+    // mention of her says to send a personal reminder.
+    key: 'lena', id: 3, name: 'Lena Berg', email: 'lena@example.com', staff: true, answers: 0.3,
   },
   {
-    key: 'tom', id: 4, name: 'Tom Okafor', email: 'tom@example.com', staff: true,
+    // Away: no post for 23 days, and a mention of him says so.
+    key: 'tom', id: 4, name: 'Tom Okafor', email: 'tom@example.com', staff: true, quiet: 23,
   },
   {
     key: 'sam', id: 5, name: 'Sam Reyes', email: 'sam@acme.example', org: 'acme', staff: false, title: 'Web lead',
