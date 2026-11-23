@@ -2374,7 +2374,7 @@ function banner() {
 
 /**
  * The pages' scripts and shared stylesheets, ui/*.js and ui/*.css, read again on every page
- * load (src/index.js imports them).
+ * load (src/pages.js imports them).
  */
 async function scripts() {
   const names = (await readdir(uiDir)).filter((f) => /\.(js|css)$/.test(f));

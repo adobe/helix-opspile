@@ -26,7 +26,10 @@ code and docs, is the decision model that labels threads and channels.
 
 - `ui/*.html` name their scripts (`<script type="module" src="inbox.js"></script>`), and
   `src/page.js` inlines them where the page is served. Never write a script into a page
-  (`test/ui-scripts.test.js` fails on one). `ui/app.js` is every page's script. It
+  (`test/ui-scripts.test.js` fails on one). A file a page names goes into its Worker's map
+  too, `SCRIPTS` in `src/pages.js` (`PORTAL_SCRIPTS` in `src/portal/pages.js`), which build
+  the pages as the Worker loads: without it the Worker does not start
+  (`test/ui-pages.test.js` builds them from those maps). `ui/app.js` is every page's script. It
   fetches `/api/*` without following redirects: a redirect is Cloudflare Access's sign-in, so
   the page shows "Sign in again" instead of "Failed to fetch" (`POST /__dev/signout` in
   `npm run ui:dev` shows it).

@@ -11,7 +11,6 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { api } from '../src/portal/api.js';
 import { deliver, pruneEvents } from '../src/portal/events.js';
@@ -681,16 +680,6 @@ describe('the customer portal: its page', () => {
     assert.doesNotMatch(html, /PORTAL_EMOJI \*\/ \{ names: \{\}/);
     assert.match(html, /const EMOJI = \{"names":\{"100":"💯"/);
     assert.throws(() => portalPage('<p>no script</p>', {}), /PORTAL_EMOJI/);
-  });
-
-  it('is put together by the Worker from every file it names', () => {
-    // The Worker imports `cloudflare:workers`, so Node reads it as text: a file the page
-    // names and the Worker does not hand over fails only when the Worker is deployed.
-    const worker = readFileSync(new URL('../src/portal/worker.js', import.meta.url), 'utf8');
-    for (const name of PORTAL_FILES) {
-      assert.match(worker, new RegExp(`from '../../ui/${name.replace('.', '\\.')}' with \\{ type: 'text' \\}`), name);
-      assert.match(worker, new RegExp(`'${name.replace('.', '\\.')}': \\w+,`), name);
-    }
   });
 
   it('writes rich text with the inbox\'s shortcuts, and checks its files first', () => {

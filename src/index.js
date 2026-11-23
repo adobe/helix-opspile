@@ -10,35 +10,6 @@
  * governing permissions and limitations under the License.
  */
 
-import inboxHtml from '../ui/inbox.html';
-import adminHtml from '../ui/admin.html';
-import cogsHtml from '../ui/cogs.html';
-import topicsHtml from '../ui/topics.html';
-// The pages' scripts, as text (src/page.js inlines them).
-import inboxJs from '../ui/inbox.js' with { type: 'text' };
-import adminJs from '../ui/admin.js' with { type: 'text' };
-import agentJs from '../ui/agent.js' with { type: 'text' };
-import cogsJs from '../ui/cogs.js' with { type: 'text' };
-import topicsJs from '../ui/topics.js' with { type: 'text' };
-import appJs from '../ui/app.js' with { type: 'text' };
-import headerJs from '../ui/header.js' with { type: 'text' };
-import rankJs from '../ui/rank.js' with { type: 'text' };
-import tableJs from '../ui/table.js' with { type: 'text' };
-import writingJs from '../ui/writing.js' with { type: 'text' };
-import stackJs from '../ui/stack.js' with { type: 'text' };
-import notifyHelpJs from '../ui/notifyhelp.js' with { type: 'text' };
-import tourJs from '../ui/tour.js' with { type: 'text' };
-import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
-import trendsJs from '../ui/trends.js' with { type: 'text' };
-import trendViewJs from '../ui/trendview.js' with { type: 'text' };
-// Spectrum 2's look of every page (README, "Spectrum 2").
-import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
-import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
-import spectrumInboxCss from '../ui/spectrum-inbox.css' with { type: 'text' };
-import spectrumAdminCss from '../ui/spectrum-admin.css' with { type: 'text' };
-import spectrumAgentCss from '../ui/spectrum-agent.css' with { type: 'text' };
-import spectrumCogsCss from '../ui/spectrum-cogs.css' with { type: 'text' };
-import spectrumTopicsCss from '../ui/spectrum-topics.css' with { type: 'text' };
 import { accessEmail } from './access.js';
 import { followed, Meter } from './cogs/meter.js';
 import { rollupCogs } from './cogs/rollup.js';
@@ -66,9 +37,10 @@ import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
+import { fmcScript, fromPreview, highlightScript } from './page.js';
 import {
-  fmcScript, fromPreview, highlightScript, inboxPage, page,
-} from './page.js';
+  ADMIN_PAGE, COGS_PAGE, INBOX_PAGE, TOPICS_PAGE,
+} from './pages.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
 import { sweepChannels } from './channelsweep.js';
@@ -89,36 +61,6 @@ import { pruneDraftUndo } from './draftevents.js';
 import { sweepBackfills } from './backfill.js';
 import { pruneExpertEvents } from './expertevents.js';
 import { prunePostKeys } from './postkeys.js';
-
-const SCRIPTS = {
-  'inbox.js': inboxJs,
-  'admin.js': adminJs,
-  'agent.js': agentJs,
-  'cogs.js': cogsJs,
-  'topics.js': topicsJs,
-  'app.js': appJs,
-  'header.js': headerJs,
-  'rank.js': rankJs,
-  'table.js': tableJs,
-  'writing.js': writingJs,
-  'stack.js': stackJs,
-  'notifyhelp.js': notifyHelpJs,
-  'tour.js': tourJs,
-  'topicgraph.js': topicGraphJs,
-  'trends.js': trendsJs,
-  'trendview.js': trendViewJs,
-  'spectrum-fonts.css': spectrumFontsCss,
-  'spectrum.css': spectrumCss,
-  'spectrum-inbox.css': spectrumInboxCss,
-  'spectrum-admin.css': spectrumAdminCss,
-  'spectrum-agent.css': spectrumAgentCss,
-  'spectrum-cogs.css': spectrumCogsCss,
-  'spectrum-topics.css': spectrumTopicsCss,
-};
-const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
-const ADMIN_PAGE = page(adminHtml, SCRIPTS);
-const COGS_PAGE = page(cogsHtml, SCRIPTS);
-const TOPICS_PAGE = page(topicsHtml, SCRIPTS);
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
