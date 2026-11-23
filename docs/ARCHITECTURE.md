@@ -1395,7 +1395,9 @@ twice its share of all the map's threads). The lift keeps what is
   delivery"), too long, or another topic's, and a topic it did not name, are named on their own
   from the titles. No name names a customer; one given twice gets a number.
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
-  messages), the customers', partners' and vendors' people who posted (`customers`), who each
+  messages), the customers', partners' and vendors' people who posted (`customers`: by
+  `people.id` where they are a person of D1, else, as every customer's person in production, by
+  their platform account, `a:<author_key>`, named as `identities` has it; bots are nobody), who each
   person is to group them by (`peopleOf`: Adobe's by the team they are on whose threads they
   posted in most, or none when they are on no team, the others by the customer of most of their threads), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
   and the **products**: the technologies Clef says the thread is about (`thread_tech.about`), or,
@@ -1406,32 +1408,62 @@ twice its share of all the map's threads). The lift keeps what is
   drawing's part without Tech instead. Maps built before were built from the products Clairic
   named, matched to the tech stack (src/products.js `coveredBy`), and kept the ones no entry
   covered as **gaps**, which the page still lists for those maps.
+- Each topic's **place** on the page (`topics[].at`, three coordinates, the farthest topic 1
+  from the middle; `src/topicspace.js`): a thread's vector is its topic, but also its people, its
+  products and its customer (a team's threads read alike, and so do one customer's), so a topic
+  placed by the plain mean of its threads sits where its people are as much as where its
+  subject is. Every thread is fitted as the sum of a part for its topic, one per person who
+  posted, one per product and one for its customer (ridge regression, a part of n threads
+  shrunk by n / (n + 1), ten sweeps of coordinate descent, a third of a second for 4,000
+  threads), and the topics are placed by the first three principal components of their own
+  parts. On the production threads (835, Nov 2026) a thread's main Adobe poster could be told
+  from its vector 52% of the time and from what is left once those parts are out 17% (chance
+  22%), its customer 77% and 21% (26%), its topic 52% and 46%.
 - The cron builds one when the newest is a week old, and the admin team with **Rebuild**; a row
   of `topic_maps` each (the map as JSON), the newest five kept.
 - The [expert finder](#replying) reads the newest (`src/topicindex.js`): which topic each thread
   is in and who worked each topic's threads, so it can tell a thread agent which topics a person's
   similar threads are in, and list who works a topic (`list_topics`).
 
-The page draws the map as one force-directed graph (its own, after d3-force's model) of three
-kinds, each a **hierarchy of bubbles** (`ui/topicgraph.js`): the topics in their areas (and
-"Not in an area"; on maps before version 2, the tag most of a topic's threads have), the people
-in their teams (Adobe's) or their customers (the others'; a customer whose people did not post
-is a bubble too), and the features of the tech stack in their products (Adobe's) or vendors (the
-others'). A click on a group bursts it into its children where it was; a click on the child
-picked folds them back; a group of one child is that child, but a customer stays a bubble. Each
-node is as big as its threads, a line between two that share threads, thicker the more (with the
-topics shown, a line joins a topic or an area to the others; the topics are the hubs). One kind
-shown alone is joined to itself: two people or products by the threads they share, and two
-topics, which never share a thread, by the Adobe people they share (as many people as the
-threads a line needs, each with that many threads in both). The filters are a team, the kinds
-shown and the threads a line needs; they, the groups opened (`open`) and the pick are the page's
-address. A node picked shows what it is joined to and its threads, each a link into the inbox;
-without a pick, the panel lists the gaps first (**Not in the tech stack**: the products no entry
-names, by their threads; those two customers or more name, then, folded, those of one customer,
-which are as likely a brand or a system of theirs, and a count of the names of one thread; adding one in a team's **Extraction rules**, or its name to an entry's description,
-makes Clef ask about it), then the topics with the share of their threads Clef tagged at all, the
-fewest first on a click: the topics Clef rarely tags are what its topic questions miss. A gap is
-drawn as a hollow ring.
+The page draws the map in three dimensions (`ui/topicview.js`, with three.js from
+`/inbox/three.js`), in a space laid out by `ui/topicspace.js`, of three kinds, each a **hierarchy
+of bubbles** (`ui/topicgraph.js`): the topics in their areas (and "Not in an area"; on maps
+before version 2, the tag most of a topic's threads have), the people in their teams (Adobe's)
+or their customers (the others'; a customer whose people did not post is a bubble too), and the
+features of the tech stack in their products (Adobe's) or vendors (the others'). A group of one
+child is that child, but a customer stays a bubble.
+
+- **The space.** The topics are fixed at their places (`topics[].at`; on a map from before them,
+  each area on a sphere and its topics around it). The products come next, each pulled to the
+  topics it shares threads with, then the people, pulled to the topics (hardest), the products
+  and the other people they share threads with; how hard two pull is the threads they share
+  against how many each has. A group is where its members are, by their threads. The places are
+  of the whole map, so a bubble stays where it was when a team is picked or only some threads
+  are shown. While drawn, bubbles push each other apart, the bigger moving less, and are pulled
+  gently back to their places.
+- **The bubbles.** Each in its kind's color of the page (the stylesheet's, read by the script),
+  as big as its threads (by volume). A closed group is glass with its children inside, at their
+  own size when they fit, else all scaled down alike and packed so none overlaps; an opened one
+  is a thin shell around its members (an area's topics), or, when they are far apart (a team's
+  people), a hub with a spoke to each. A product no tech stack entry names is glass, empty.
+- **Gestures.** Drag turns, scroll zooms; it turns slowly by itself until it is touched, and
+  again three minutes after (not for those who ask for less motion). A click picks a bubble:
+  lines go to the bubbles it shares threads with, and the rest fade. Holding a group pops it (it
+  swells while held, and its children come out of where they sat in it); holding an opened
+  group's shell or a member folds it (it shrinks). A double-click shows **only** that bubble's
+  threads, with all they are about; a double-click on nothing shows all of them again.
+- **Names.** At most ten, the biggest groups and the most threads first, those a pick shares
+  threads with before them, none over another; the one pointed at besides.
+
+The filters are a team, the kinds shown and the threads a bubble needs; they, the groups opened
+(`open`), only what (`only`) and the pick are the page's address. A node picked shows what it
+shares threads with and its threads, each a link into the inbox; without a pick, the panel
+lists the gaps first (**Not in the tech stack**: the products no entry names, by their threads;
+those two customers or more name, then, folded, those of one customer, which are as likely a
+brand or a system of theirs, and a count of the names of one thread; adding one in a team's
+**Extraction rules**, or its name to an entry's description, makes Clef ask about it), then the
+topics with the share of their threads Clef tagged at all, the fewest first on a click: the
+topics Clef rarely tags are what its topic questions miss.
 
 ### Trends
 

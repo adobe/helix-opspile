@@ -76,6 +76,7 @@ import { cleanPick } from '../src/rankevents.js';
 import { suggestMentions } from '../src/mention-match.js';
 import {
   fmcScript, fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
+  threeScript,
 } from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
@@ -2640,7 +2641,8 @@ const server = createServer(async (req, res) => {
     }
     // The code highlighter, as the Worker serves it.
     const asked = { method: req.method, headers: new Headers(req.headers) };
-    const lit = highlightScript(asked, url.pathname) || fmcScript(asked, url.pathname);
+    const lit = highlightScript(asked, url.pathname) || fmcScript(asked, url.pathname)
+      || threeScript(asked, url.pathname);
     if (lit) {
       res.writeHead(lit.status, Object.fromEntries(lit.headers)).end(await lit.text());
       return;

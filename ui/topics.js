@@ -15,38 +15,36 @@
  * (src/topicsapi.js), with the areas (src/areas.js) the teams author and what the viewer follows:
  * a Follow on a person, customer, area or product puts its threads in their personal view, and
  * the admin team and team managers add, rename, describe and delete areas in the panel. What
- * the channel threads are about, found from what was said in them (the topics), drawn as one
- * force-directed graph of three kinds of bubbles, each a hierarchy (ui/topicgraph.js): the
- * topics in their areas, the people in their teams (Adobe's) or their customers (the others'),
- * and the features of the tech stack in their products (Adobe's) or vendors (the others'). A
- * click on a group bursts it into its children where it was; a click on the child picked folds
- * them back into it. A line joins two that share threads, thicker the more; the topics are the
- * hubs, so with them shown a line joins a topic or an area to the others, and without them any
- * two kinds. A node is as big as its threads.
+ * the channel threads are about, found from what was said in them (the topics), drawn in three
+ * dimensions (ui/topicview.js) as three kinds of bubbles, each a hierarchy (ui/topicgraph.js):
+ * the topics in their areas, the people in their teams (Adobe's) or their customers (the
+ * others'), and the features of the tech stack in their products (Adobe's) or vendors (the
+ * others'). The topics are where the map put them, by what their threads say once who said it,
+ * about what and for whom is taken out; the people and products are pulled to the topics and to
+ * each other by the threads they share (ui/topicspace.js). A bubble is as big as its threads.
  *
- * Pointing at a node shows what it is joined to; a click picks it, and the panel beside the graph
- * says what it is: a topic's theme, a group's children, the people, customers, areas and products
- * of its threads, its threads (each a link into the inbox), and how many of them Clef gave a tag
- * at all, which is where Clef's areas miss what the threads are about. Without a pick the panel
- * lists the areas and the topics. The filters (a team, the kinds shown, the threads a line
- * needs), the groups opened and the pick are the page's address; the header brings it back as
- * it was left. Rebuild clusters the threads again (POST /api/admin/topics).
+ * A click picks a bubble, and the panel beside the map says what it is: a topic's theme, a
+ * group's children, the people, customers, areas and products of its threads, its threads (each
+ * a link into the inbox), and how many of them Clef gave a tag at all, which is where Clef's
+ * areas miss what the threads are about. Holding a group pops it into its children; holding its
+ * shell or a child folds it back. A double-click shows only a bubble's threads (`only`), and on
+ * nothing all of them again. Without a pick the panel lists the areas and the topics. The
+ * filters (a team, the kinds shown, the threads a bubble needs), the groups opened, `only` and
+ * the pick are the page's address; the header brings it back as it was left. Rebuild clusters
+ * the threads again (POST /api/admin/topics).
  *
  * Under the graph, how much the channels talk about what is picked, week by week, and what else is
  * compared (ui/trendview.js, its global `TrendView`); in the panel, without a pick, the areas with
  * their topics and the products with their features as trees that fold and open as the graph's
  * bubbles do (the same `open`), each with its trend: trending, declining or peaked.
  *
- * The graph's data is ui/topicgraph.js (its global `TopicGraph`). The layout is the page's own:
- * d3-force's model (many-body repulsion, links as springs, a pull to the centre, collision), in a
- * loop of animation frames; it settles before it is first drawn, and keeps where every node was
- * when the filters change.
+ * The graph's data is ui/topicgraph.js (its global `TopicGraph`), its places ui/topicspace.js
+ * (`TopicSpace`), its drawing ui/topicview.js (`TopicView`).
  */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
-const SVG = 'http://www.w3.org/2000/svg';
 
 // The kinds shown, each a hierarchy (ui/topicgraph.js).
 const TYPES = [
@@ -88,13 +86,15 @@ const state = {
   // The teams each Adobe person is on (GET /api/topics), for their team bubbles.
   members: null,
   q: {
-    team: '', hide: [], min: 2, sel: '', open: [], tl: '',
+    team: '', hide: [], min: 2, sel: '', open: [], tl: '', only: '',
   },
   // The week of the chart whose threads the panel lists, and the terms they are for.
   week: null,
   find: '',
   hover: '',
   graph: null,
+  // The graph of the team, of all its threads (`only` aside).
+  whole: null,
   more: false,
 };
 
@@ -111,6 +111,8 @@ function fromUrl() {
     sel: p.get('sel') || '',
     // The groups opened (ui/topicgraph.js), as their ids.
     open: p.getAll('open'),
+    // Only the threads of this node (a double-click on it).
+    only: p.get('only') || '',
   };
   TrendView.fromUrl();
 }
@@ -124,6 +126,7 @@ function toUrl({ push = true } = {}) {
   if (q.hide.length) p.set('hide', q.hide.join(','));
   if (q.min !== 2) p.set('min', String(q.min));
   if (q.sel) p.set('sel', q.sel);
+  if (q.only) p.set('only', q.only);
   for (const id of q.open) p.append('open', id);
   const url = `${location.pathname}${p.size ? `?${p}` : ''}`;
   if (url !== `${location.pathname}${location.search}`) {
@@ -151,412 +154,92 @@ function graphOf() {
   const { q } = state;
   const names = Object.fromEntries(areaList().map((a) => [a.id, a.name]));
   const m = { ...map(), tags: { ...(map().tags || {}), ...names } };
-  const teamName = (slug) => state.teams[slug] || state.me.teams?.find((t) => t.slug === slug)?.name || slug;
-  return TopicGraph.build(m, {
-    team: q.team, shown: shownTypes(), min: q.min, open: q.open, teamName, members: state.members,
+  const build = (threads) => TopicGraph.build({ ...m, threads }, {
+    team: q.team, shown: shownTypes(), min: q.min, open: q.open, teamName: teamLabel, members: state.members,
   });
-}
-
-// ---- the layout: d3-force's model -------------------------------------------------------
-
-const sim = {
-  nodes: [], edges: [], alpha: 0, target: 0, frame: 0, pos: new Map(),
-};
-const radius = (n) => ({
-  topic: 6, tag: 7, product: 4, person: 3, team: 5, org: 4,
-}[n.type] + Math.sqrt(n.threads.length) * 1.7);
-/** Whether `n` is a group that opens: drawn, with children (ui/topicgraph.js). */
-const opens = (n) => Boolean(n.children?.length) && !n.open;
-
-/** Starts the layout of `graph`, each node where it was, a new one beside a neighbour. */
-function layout(graph) {
-  const degree = new Map();
-  for (const e of graph.edges) {
-    degree.set(e.a.id, (degree.get(e.a.id) || 0) + 1);
-    degree.set(e.b.id, (degree.get(e.b.id) || 0) + 1);
+  const all = build(m.threads);
+  // The trends name what they compare from it, which may be outside what is shown.
+  state.whole = all;
+  // Only the threads of one bubble (a double-click on it), with all that they are about.
+  const of = q.only && all.all.get(q.only);
+  if (!of) {
+    // What only its threads were shown of is not in the team's.
+    q.only = '';
+    return all;
   }
-  const maxW = Math.max(1, ...graph.edges.map((e) => e.w));
-  const fresh = graph.nodes.filter((n) => !sim.pos.has(n.id)).length;
-  graph.nodes.forEach((n, i) => {
-    // Where it was; a child where its group was, burst around it; a group where its children
-    // were, folded back.
-    const kids = (n.children || []).map((id) => sim.pos.get(id)).filter(Boolean);
-    const parent = n.parent && sim.pos.get(n.parent);
-    const turn = i * Math.PI * (3 - Math.sqrt(5));
-    const old = sim.pos.get(n.id)
-      || (parent && { x: parent.x + Math.cos(turn) * 8, y: parent.y + Math.sin(turn) * 8 })
-      || (kids.length && {
-        x: kids.reduce((s, k) => s + k.x, 0) / kids.length,
-        y: kids.reduce((s, k) => s + k.y, 0) / kids.length,
-      });
-    Object.assign(n, { vx: 0, vy: 0, r: radius(n) });
-    if (old) {
-      n.x = old.x;
-      n.y = old.y;
-      return;
-    }
-    const near = [...(graph.neighbors.get(n.id) || [])].map((id) => sim.pos.get(id)).find(Boolean);
-    // Phyllotaxis, as d3 places nodes: evenly spread, the first ones in the middle.
-    const angle = i * Math.PI * (3 - Math.sqrt(5));
-    const dist = near ? 12 : 10 * Math.sqrt(i + 0.5);
-    n.x = (near ? near.x : 0) + Math.cos(angle) * dist;
-    n.y = (near ? near.y : 0) + Math.sin(angle) * dist;
-  });
-  sim.nodes = graph.nodes;
-  sim.edges = graph.edges.map((e) => ({
-    ...e,
-    strength: (0.25 + 0.75 * (e.w / maxW)) / Math.sqrt(Math.min(degree.get(e.a.id), degree.get(e.b.id))),
-    length: 22 + e.a.r + e.b.r,
-  }));
-  for (const e of sim.edges) {
-    const da = degree.get(e.a.id);
-    const db = degree.get(e.b.id);
-    e.bias = da / (da + db);
-  }
-  sim.alpha = fresh > graph.nodes.length / 2 ? 1 : Math.max(sim.alpha, 0.4);
+  const keys = new Set(of.threads.map((t) => t.key));
+  return build(m.threads.filter((t) => keys.has(t.key)));
 }
 
-function tick() {
-  const { nodes, edges } = sim;
-  sim.alpha += (sim.target - sim.alpha) * 0.0228;
-  const a = sim.alpha;
-  // Links: springs to their length, the less connected end moving more.
-  for (const e of edges) {
-    let x = e.b.x + e.b.vx - e.a.x - e.a.vx || 1e-6;
-    let y = e.b.y + e.b.vy - e.a.y - e.a.vy || 1e-6;
-    let l = Math.sqrt(x * x + y * y);
-    l = ((l - e.length) / l) * a * e.strength;
-    x *= l;
-    y *= l;
-    e.b.vx -= x * e.bias;
-    e.b.vy -= y * e.bias;
-    e.a.vx += x * (1 - e.bias);
-    e.a.vy += y * (1 - e.bias);
-  }
-  // Many-body repulsion, stronger for bigger nodes, and nodes that overlap pushed apart.
-  for (let i = 0; i < nodes.length; i += 1) {
-    const p = nodes[i];
-    for (let j = i + 1; j < nodes.length; j += 1) {
-      const q = nodes[j];
-      let dx = q.x - p.x;
-      let dy = q.y - p.y;
-      let d2 = dx * dx + dy * dy;
-      if (d2 < 1e-6) {
-        dx = (i - j) * 1e-3;
-        dy = 1e-3;
-        d2 = dx * dx + dy * dy;
-      }
-      if (d2 < 250000) {
-        const wp = (-(14 + q.r * 7) * a) / d2;
-        const wq = (-(14 + p.r * 7) * a) / d2;
-        p.vx += dx * wp;
-        p.vy += dy * wp;
-        q.vx -= dx * wq;
-        q.vy -= dy * wq;
-      }
-      const min = p.r + q.r + 2;
-      if (d2 < min * min) {
-        const d = Math.sqrt(d2);
-        const push = ((min - d) / d) * 0.5;
-        p.vx -= dx * push * 0.5;
-        p.vy -= dy * push * 0.5;
-        q.vx += dx * push * 0.5;
-        q.vy += dy * push * 0.5;
-      }
-    }
-  }
-  for (const n of nodes) {
-    // A pull to the centre, so the parts that are not joined stay near.
-    n.vx -= n.x * 0.04 * a;
-    n.vy -= n.y * 0.04 * a;
-    if (n.fx !== undefined) {
-      n.x = n.fx;
-      n.y = n.fy;
-      n.vx = 0;
-      n.vy = 0;
-    } else {
-      n.vx *= 0.6;
-      n.vy *= 0.6;
-      n.x += n.vx;
-      n.y += n.vy;
-    }
-    sim.pos.set(n.id, { x: n.x, y: n.y });
-  }
-}
+/** A team's name, for the bubbles of the teams. */
+const teamLabel = (slug) => state.teams[slug] || state.me.teams?.find((t) => t.slug === slug)?.name || slug;
 
-function run() {
-  cancelAnimationFrame(sim.frame);
-  const step = () => {
-    tick();
-    place();
-    if (sim.alpha > 0.004 || sim.target) sim.frame = requestAnimationFrame(step);
-  };
-  sim.frame = requestAnimationFrame(step);
-}
-
-// ---- drawing ----------------------------------------------------------------------------
-
-const view = { x: 0, y: 0, k: 1 };
-let svg = null;
-
-function el(name, attrs = {}) {
-  const e = document.createElementNS(SVG, name);
-  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
-  return e;
-}
-
-function place() {
-  // A line from outline to outline, not from centre to centre: none across a bubble; none at
-  // all where two touch.
-  for (const e of sim.edges) {
-    const dx = e.b.x - e.a.x;
-    const dy = e.b.y - e.a.y;
-    const d = Math.hypot(dx, dy);
-    const gap = d > e.a.r + e.b.r;
-    const ua = gap ? e.a.r / d : 0;
-    const ub = gap ? 1 - e.b.r / d : 0;
-    e.el.setAttribute('x1', (e.a.x + dx * ua).toFixed(1));
-    e.el.setAttribute('y1', (e.a.y + dy * ua).toFixed(1));
-    e.el.setAttribute('x2', (e.a.x + dx * ub).toFixed(1));
-    e.el.setAttribute('y2', (e.a.y + dy * ub).toFixed(1));
-  }
-  for (const n of sim.nodes) n.el.setAttribute('transform', `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`);
-}
-
-function transform() {
-  svg.querySelector('.view').setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
-  // The names stay as big on screen at any zoom (ui/spectrum-topics.css).
-  svg.style.setProperty('--zoom', view.k.toFixed(3));
-}
-
-/** The most children drawn inside a closed group. */
-const KIDS = 30;
+// ---- the map: bubbles in a space (ui/topicspace.js), drawn in 3D (ui/topicview.js) ------
 
 /**
- * The children of closed group `n`, drawn inside it as small circles: the most threads in the
- * middle, on a sunflower spiral (the same as the layout's first places), each as big as its
- * share of the biggest, so a team shows its people and an area its topics before it opens.
+ * Every node's place (TopicSpace.places), of the whole map: the same whatever the filters, so a
+ * bubble is where it was when a team is picked or only some threads are shown.
  */
-function inside(n) {
-  const g = el('g', { class: 'kids', 'aria-hidden': 'true' });
-  const all = state.graph.all;
-  const list = n.children.map((id) => all.get(id)).filter(Boolean)
-    .sort((a, b) => b.threads.length - a.threads.length).slice(0, KIDS);
-  const max = Math.max(1, ...list.map((c) => c.threads.length));
-  // Spacing so the spiral of `list.length` fills four fifths of the group.
-  const step = (n.r * 0.8) / Math.sqrt(list.length);
-  list.forEach((c, i) => {
-    const angle = i * Math.PI * (3 - Math.sqrt(5));
-    const dist = step * Math.sqrt(i + 0.5);
-    const r = step * 0.45 * Math.max(0.4, Math.sqrt(c.threads.length / max));
-    g.append(el('circle', {
-      class: 'kid',
-      'data-type': c.type,
-      cx: (Math.cos(angle) * dist).toFixed(1),
-      cy: (Math.sin(angle) * dist).toFixed(1),
-      r: r.toFixed(1),
-    }));
-  });
-  return g;
+const space = { of: null, pos: null };
+function places() {
+  if (space.of !== state.latest || !space.pos) {
+    const whole = TopicGraph.build(map(), {
+      shown: TYPES.map((t) => t.id), min: 1, teamName: teamLabel, members: state.members,
+    });
+    space.of = state.latest;
+    space.pos = TopicSpace.places(map(), whole);
+  }
+  return space.pos;
 }
 
-/** Zooms and pans so that every node is in sight. */
-function fit() {
-  if (!svg || !sim.nodes.length) return;
-  const box = svg.getBoundingClientRect();
-  const xs = sim.nodes.map((n) => [n.x - n.r, n.x + n.r]).flat();
-  const ys = sim.nodes.map((n) => [n.y - n.r, n.y + n.r]).flat();
-  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
-  const pad = 40;
-  view.k = Math.min(1.5, (box.width - pad * 2) / Math.max(1, x1 - x0), (box.height - pad * 2) / Math.max(1, y1 - y0));
-  view.x = box.width / 2 - ((x0 + x1) / 2) * view.k;
-  view.y = box.height / 2 - ((y0 + y1) / 2) * view.k;
-  transform();
-}
-
-function drawGraph({ refit: asked = false } = {}) {
-  let refit = asked;
+/** Draws the graph of the filters; `refit` flies to show all of it. */
+async function drawGraph({ refit = false } = {}) {
   const host = $('graph');
   if (!host) return;
   const g = graphOf();
   state.graph = g;
-  if (!svg || !host.contains(svg)) {
-    svg = el('svg', { role: 'img', 'aria-label': 'Topics in their areas, people in their teams and customers, and products, joined by the threads they share' });
-    svg.append(el('g', { class: 'view' }));
-    host.append(svg);
-    wireGraph();
-    refit = true;
+  const shown = TopicSpace.drawn(g, { open: new Set(state.q.open), shown: shownTypes(), min: state.q.min });
+  $('graphEmpty').hidden = shown.items.length > 0;
+  const ok = await TopicView.mount(host, {
+    onPick: clickNode, onFold: holdNode, onOnly: only, onHover: tip,
+  });
+  if (!ok) {
+    $('graphEmpty').hidden = false;
+    $('graphEmpty').textContent = 'This browser cannot draw the map (it needs WebGL). The panel has all of it.';
+    return;
   }
-  const v = svg.querySelector('.view');
-  v.replaceChildren();
-  layout(g);
-  const lines = el('g', { class: 'edges' });
-  const maxW = Math.max(1, ...g.edges.map((e) => e.w));
-  for (const e of sim.edges) {
-    e.el = el('line', { class: 'edge', 'stroke-width': (0.5 + 3 * (e.w / maxW)).toFixed(2) });
-    lines.append(e.el);
-  }
-  const dots = el('g', { class: 'nodes' });
-  for (const n of sim.nodes) {
-    n.el = el('g', {
-      class: `node${n.named ? ' named' : ''}`,
-      'data-type': n.type,
-      'data-id': n.id,
-      ...(n.gap ? { 'data-gap': '' } : {}),
-      ...(opens(n) ? { 'data-group': '' } : {}),
-      tabindex: '0',
-      role: 'button',
-      'aria-label': `${n.one} ${n.label}${n.gap ? ', not in the tech stack' : ''}, ${n.threads.length} threads${opens(n) ? `, ${n.children.length} in it: opens` : ''}`,
-    });
-    n.el.append(el('circle', { r: n.r.toFixed(1) }));
-    if (opens(n)) n.el.append(inside(n));
-    const label = el('text', { class: 'lbl', dy: '1em' });
-    label.setAttribute('y', n.r.toFixed(1));
-    label.textContent = n.label.length > 34 ? `${n.label.slice(0, 33)}…` : n.label;
-    // A closed group says how many it holds: an area its topics, a team its people.
-    if (opens(n)) {
-      const count = el('tspan', { class: 'count' });
-      count.textContent = ` ${n.children.length}`;
-      label.append(count);
-    }
-    n.el.append(label);
-    dots.append(n.el);
-  }
-  v.append(lines, dots);
-  $('graphEmpty').hidden = sim.nodes.length > 0;
-  // Settled before it is drawn when most of it is new; otherwise it moves to where it goes.
-  if (sim.alpha >= 1) {
-    for (let i = 0; i < 300; i += 1) tick();
-  }
-  place();
-  if (refit || sim.alpha >= 1) fit();
+  // A later draw may have taken its place while three.js loaded.
+  if (state.graph !== g) return;
+  TopicView.draw({
+    graph: g, pos: places(), open: new Set(state.q.open), shown: shownTypes(), min: state.q.min, refit,
+  });
   focus();
-  run();
 }
 
-/** Marks what is pointed at, or picked, or found, and what it is joined to. */
+/** Marks what is picked, and what it shares threads with, or what Find finds. */
 function focus() {
-  if (!svg) return;
-  const g = state.graph;
-  const id = state.hover || state.q.sel;
-  const find = state.find.trim().toLowerCase();
-  let on = null;
-  const picked = id && g.all.get(id);
-  if (picked && picked.open) {
-    // A group opened: its children.
-    on = new Set([id, ...picked.children]);
-  } else if (picked) {
-    on = new Set([id, ...(g.neighbors.get(id) || [])]);
-  } else if (find) {
-    on = new Set(sim.nodes.filter((n) => n.label.toLowerCase().includes(find)).map((n) => n.id));
-  }
-  svg.classList.toggle('focus', Boolean(on));
-  for (const n of sim.nodes) {
-    n.el.classList.toggle('hi', Boolean(on && on.has(n.id)));
-    n.el.classList.toggle('sel', n.id === state.q.sel);
-  }
-  for (const e of sim.edges) {
-    e.el.classList.toggle('hi', Boolean(on && (id ? (e.a.id === id || e.b.id === id) : (on.has(e.a.id) && on.has(e.b.id)))));
-  }
+  TopicView.focus({ sel: state.q.sel, find: state.find.trim() });
 }
 
-function tip(n, ev) {
+/** The tooltip of what is pointed at (`id`), with what holding it does (`hold`). */
+function tip(id, ev, hold) {
   const t = $('tip');
+  const n = id && state.graph?.all.get(id);
+  state.hover = n ? id : '';
   if (!n) {
     t.hidden = true;
     return;
   }
-  const parent = n.parent && state.graph.all.get(n.parent);
-  const act = (opens(n) && `Click to open its ${n.children.length}`)
-    || (parent && n.id === state.q.sel && `Click to fold into ${parent.label}`) || '';
-  t.innerHTML = `<b>${esc(n.label)}</b><span class="sub">${esc(n.one)}${n.gap ? ', not in the tech stack' : ''} · ${n.threads.length} thread${n.threads.length === 1 ? '' : 's'}</span>${act ? `<span class="sub">${esc(act)}</span>` : ''}`;
+  const acts = [
+    hold?.act === 'pop' && `Hold to open its ${n.children.length}`,
+    hold?.act === 'fold' && `Hold to fold into ${hold.group.label}`,
+    `Double-click for only its threads${state.q.only === id ? ' (shown)' : ''}`,
+  ].filter(Boolean);
+  t.innerHTML = `<b>${esc(n.label)}</b><span class="sub">${esc(n.one)}${n.gap ? ', not in the tech stack' : ''} · ${n.threads.length} thread${n.threads.length === 1 ? '' : 's'}</span><span class="sub">${esc(acts.join(' · '))}</span>`;
   t.hidden = false;
   const box = $('graph').getBoundingClientRect();
   t.style.left = `${Math.min(ev.clientX - box.left + 14, box.width - t.offsetWidth - 8)}px`;
   t.style.top = `${ev.clientY - box.top + 14}px`;
-}
-
-function wireGraph() {
-  const nodeOf = (target) => {
-    const g = target.closest?.('.node');
-    return g ? sim.nodes.find((n) => n.id === g.dataset.id) : null;
-  };
-  let drag = null;
-  svg.addEventListener('pointerdown', (ev) => {
-    const n = nodeOf(ev.target);
-    drag = {
-      n, x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y, moved: false,
-    };
-    svg.setPointerCapture(ev.pointerId);
-  });
-  svg.addEventListener('pointermove', (ev) => {
-    if (!drag) {
-      const n = nodeOf(ev.target);
-      const id = n ? n.id : '';
-      if (id !== state.hover) {
-        state.hover = id;
-        focus();
-      }
-      tip(n, ev);
-      return;
-    }
-    const dx = ev.clientX - drag.x;
-    const dy = ev.clientY - drag.y;
-    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
-    drag.moved = true;
-    tip(null);
-    if (drag.n) {
-      const box = svg.getBoundingClientRect();
-      drag.n.fx = (ev.clientX - box.left - view.x) / view.k;
-      drag.n.fy = (ev.clientY - box.top - view.y) / view.k;
-      if (!sim.target) {
-        sim.target = 0.25;
-        run();
-      }
-    } else {
-      view.x = drag.vx + dx;
-      view.y = drag.vy + dy;
-      transform();
-    }
-  });
-  const end = (ev) => {
-    if (!drag) return;
-    const { n, moved } = drag;
-    drag = null;
-    if (n) {
-      delete n.fx;
-      delete n.fy;
-      sim.target = 0;
-    }
-    if (!moved && ev.type === 'pointerup') clickNode(n);
-  };
-  svg.addEventListener('pointerup', end);
-  svg.addEventListener('pointercancel', end);
-  svg.addEventListener('pointerleave', () => {
-    if (state.hover) {
-      state.hover = '';
-      focus();
-    }
-    tip(null);
-  });
-  svg.addEventListener('wheel', (ev) => {
-    ev.preventDefault();
-    const box = svg.getBoundingClientRect();
-    const k = Math.min(8, Math.max(0.15, view.k * Math.exp(-ev.deltaY * 0.0015)));
-    const px = ev.clientX - box.left;
-    const py = ev.clientY - box.top;
-    view.x = px - ((px - view.x) / view.k) * k;
-    view.y = py - ((py - view.y) / view.k) * k;
-    view.k = k;
-    transform();
-  }, { passive: false });
-  svg.addEventListener('keydown', (ev) => {
-    const n = nodeOf(ev.target);
-    if (n && (ev.key === 'Enter' || ev.key === ' ')) {
-      ev.preventDefault();
-      clickNode(n);
-    }
-  });
 }
 
 // ---- the panel --------------------------------------------------------------------------
@@ -612,7 +295,7 @@ function threadList(threads) {
 /** The page as ui/trendview.js sees it. */
 function trendCtx() {
   return {
-    graph: state.graph,
+    graph: state.whole || state.graph,
     map: map(),
     mapId: state.latest?.id,
     team: state.q.team,
@@ -947,25 +630,31 @@ function fold(id) {
   renderPanel();
 }
 
+/** A click on the map: a bubble is picked, or unpicked; nothing unpicks. */
+function clickNode(id) {
+  pick(id && id !== state.q.sel ? id : '');
+}
+
+/** A bubble held: a group opens (and is picked), or an opened one folds (TopicView). */
+function holdNode(id, act) {
+  if (act === 'pop') state.q.sel = id;
+  fold(id);
+}
+
 /**
- * A click on the graph: a group bursts into its children (and is picked); the child picked folds
- * back into its group; any other node is picked, or unpicked; the background unpicks.
+ * A double-click: only the threads of node `id`, with all they are about (a group opened, to show
+ * what is in it); none, all of them again.
  */
-function clickNode(n) {
-  if (!n) {
-    pick('');
-    return;
-  }
-  if (opens(n)) {
-    state.q.sel = n.id;
-    fold(n.id);
-    return;
-  }
-  if (n.parent && n.id === state.q.sel) {
-    fold(n.parent);
-    return;
-  }
-  pick(n.id === state.q.sel ? '' : n.id);
+function only(id) {
+  const { q } = state;
+  if (!id && !q.only) return;
+  q.only = id;
+  const n = id && state.graph.all.get(id);
+  if (n && TopicSpace.opens(n) && !q.open.includes(id)) q.open = [...q.open, id];
+  if (id) q.sel = id;
+  state.week = null;
+  toUrl();
+  render({ refit: true });
 }
 
 function renderBar() {
@@ -979,10 +668,10 @@ function renderBar() {
     <span class="dot" data-type="${t.id}"></span>${esc(t.label)}</button>`).join('');
   $('min').innerHTML = MINS.map((n) => `<option value="${n}"${n === state.q.min ? ' selected' : ''}>${n}+</option>`).join('');
   $('min').disabled = !m;
-  const [only] = shownTypes();
-  $('min').title = shownTypes().length === 1 && only === 'topic'
-    ? `Join two ${TYPE[only].label.toLowerCase()} when this many people have this many threads in both`
-    : 'Draw a line between two only when this many threads have both';
+  const of = state.q.only && state.graph?.all.get(state.q.only);
+  $('only').hidden = !of;
+  $('only').innerHTML = of ? `<span class="dot" data-type="${of.type}"></span>Only ${esc(of.label)}<span class="s2-cross" aria-hidden="true"></span>` : '';
+  $('only').title = 'Show all the threads again (or double-click on nothing in the map)';
   $('find').disabled = !m;
   $('names').innerHTML = m && state.graph ? [...state.graph.all.values()].map((n) => `<option value="${esc(n.label)}">${esc(n.one)}</option>`).join('') : '';
   const built = state.latest;
@@ -1021,13 +710,13 @@ function render({ refit = false } = {}) {
   if (!$('graph')) {
     body.innerHTML = `<div class="split">
       <div class="col"><div class="card graph" id="graph"><div class="empty" id="graphEmpty" hidden>Nothing to draw: show more kinds, or fewer shared threads.</div>
-        <div class="tools"><button id="fit" title="Show the whole graph">Fit</button></div>
+        <div class="tools"><button id="fit" title="Show all of the map">Fit</button></div>
+        <p class="sub how">Drag to turn, scroll to zoom. Click to pick; hold a bubble to open it, or its shell to fold it; double-click for only its threads, and on nothing for all again.</p>
         <div class="tip" id="tip" hidden></div></div>
         ${TrendView.card()}</div>
       <aside class="card panel" id="panel"></aside></div>
       ${state.error ? `<div class="hint err">${esc(state.error)}</div>` : ''}`;
-    svg = null;
-    $('fit').onclick = fit;
+    $('fit').onclick = () => TopicView.fit();
     TrendView.wire(trendCtx);
   }
   drawGraph({ refit });
@@ -1075,9 +764,10 @@ async function rebuild() {
     state.error = '';
     // Its threads have other topics now.
     TrendView.reload().then(() => render());
-    // A new map: its topics are other ones, so is the layout.
-    sim.pos.clear();
+    // A new map: its topics are other ones, so are the places.
+    space.pos = null;
     if (state.q.sel.startsWith('topic:')) state.q.sel = '';
+    if (state.q.only.startsWith('topic:')) state.q.only = '';
     toUrl({ push: false });
   } catch (e) {
     state.error = `Could not build it: ${e.message}`;
@@ -1118,6 +808,7 @@ function wire() {
     }
   };
   $('rebuild').onclick = rebuild;
+  $('only').onclick = () => only('');
 
   $('body').addEventListener('click', (ev) => {
     const target = ev.target.closest('[data-sel]');
@@ -1191,7 +882,6 @@ function wire() {
   window.addEventListener('resize', () => {
     cancelAnimationFrame(resizing);
     resizing = requestAnimationFrame(() => {
-      fit();
       if (map()) TrendView.drawChart(trendCtx());
     });
   });

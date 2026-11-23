@@ -39,9 +39,17 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: 
 
 .split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 52); }
 .graph { position: relative; min-height: 0; overflow: hidden; }
-.graph svg { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; user-select: none; }
-.graph svg:active { cursor: grabbing; }
-.graph .node { cursor: pointer; }
+/* The map: a WebGL canvas (ui/topicview.js), the names over it, and how to use it under it. */
+.graph canvas.space { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; user-select: none; }
+.graph canvas.space:active { cursor: grabbing; }
+.graph canvas.space.over { cursor: pointer; }
+.graph .lbls { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.graph .lbls .lbl { position: absolute; left: 0; top: 0; white-space: nowrap; visibility: hidden; }
+.graph .lbls .lbl.on { visibility: visible; }
+.graph .probe { display: none; }
+.graph .how { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+#only { display: inline-flex; align-items: center; }
+#only[hidden] { display: none; }
 .graph .tools { position: absolute; top: 0; right: 0; }
 .graph > .empty { position: absolute; inset: 0; text-align: center; }
 .tip { position: absolute; z-index: 5; pointer-events: none; display: flex; flex-direction: column; }
@@ -162,11 +170,6 @@ p.trend { display: flex; align-items: center; }
 .spectrum [data-type="team"] { --s2-type: var(--spectrum-seafoam-1000); }
 .spectrum [data-type="product"] { --s2-type: var(--spectrum-celery-700); }
 /* A product no tech stack entry names: a ring of its color, hollow, so the gaps stand out. */
-.spectrum .node[data-gap] circle {
-  fill: var(--spectrum-background-layer-2-color);
-  stroke: var(--s2-type);
-  stroke-width: var(--spectrum-border-width-400);
-}
 .spectrum .dot[data-gap] {
   background: transparent;
   box-shadow: inset 0 0 0 var(--spectrum-border-width-200) var(--s2-type);
@@ -181,46 +184,25 @@ p.trend { display: flex; align-items: center; }
 /* ---- the graph -------------------------------------------------------------------------- */
 
 .spectrum .graph .tools { padding: var(--spectrum-spacing-200); }
-.spectrum .edge { stroke: var(--spectrum-gray-400); stroke-opacity: .45; transition: stroke-opacity var(--s2-ease); }
-.spectrum .node circle {
-  fill: var(--s2-type);
-  stroke: var(--spectrum-background-layer-2-color);
-  stroke-width: var(--spectrum-border-width-200);
+/* A bubble's name: in the text's color, on a halo of the card's, as big at any distance. */
+.spectrum .graph .lbls .lbl {
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: var(--spectrum-font-size-50);
+  text-shadow: 0 0 var(--spectrum-spacing-50) var(--spectrum-background-layer-2-color),
+    0 0 var(--spectrum-spacing-50) var(--spectrum-background-layer-2-color);
   transition: opacity var(--s2-ease);
 }
-.spectrum .node .lbl {
-  fill: var(--spectrum-neutral-content-color-default);
-  font-size: calc(var(--spectrum-font-size-50) / var(--zoom, 1));
-  text-anchor: middle;
-  pointer-events: none;
-  paint-order: stroke;
-  stroke: var(--spectrum-background-layer-2-color);
-  stroke-width: calc(var(--spectrum-border-width-400) / var(--zoom, 1));
-  stroke-linejoin: round;
+.spectrum .graph .lbls .lbl.group { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .graph .lbls .lbl:is(.sel, .over) { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .graph .lbls .lbl.dim { opacity: .3; }
+/* Each kind's color, which the map's bubbles take (ui/topicview.js reads it). */
+.spectrum .graph .probe { color: var(--s2-type); }
+.spectrum .graph .how {
+  margin: 0;
+  padding: var(--spectrum-spacing-200);
+  font-size: var(--spectrum-font-size-50);
 }
-.spectrum .node[data-type="topic"] .lbl { font-weight: var(--spectrum-bold-font-weight); font-size: calc(var(--spectrum-font-size-75) / var(--zoom, 1)); }
-.spectrum .node:not(.named) .lbl { display: none; }
-/* How many a closed group holds, after its name. */
-.spectrum .node .lbl .count { fill: var(--spectrum-neutral-subdued-content-color-default); font-weight: var(--spectrum-regular-font-weight); }
-/* A group that bursts into its children: light, in a ring of its color, its children inside. */
-.spectrum .node[data-group] > circle {
-  fill-opacity: .25;
-  stroke: var(--s2-type);
-  stroke-width: var(--spectrum-border-width-400);
-}
-.spectrum .node .kid { fill: var(--s2-type); stroke: none; pointer-events: none; }
-/* Each child in its own kind's color (a team's people, an area's topics). */
-.spectrum .node[data-group] { cursor: zoom-in; }
-.spectrum .node:focus-visible { outline: none; }
-.spectrum .node:focus-visible > circle, .spectrum .node.sel > circle {
-  stroke: var(--spectrum-neutral-content-color-default);
-  stroke-width: var(--spectrum-border-width-400);
-}
-/* What is pointed at, picked or found, and what it is joined to: the rest fades. */
-.spectrum svg.focus .node:not(.hi) { opacity: .15; }
-.spectrum svg.focus .node.hi .lbl { display: inline; }
-.spectrum svg.focus .edge:not(.hi) { stroke-opacity: .05; }
-.spectrum svg.focus .edge.hi { stroke: var(--spectrum-gray-700); stroke-opacity: .8; }
+.spectrum #only { gap: var(--spectrum-text-to-visual-100); }
 
 /* The tooltip: a Popover. */
 .spectrum .tip {

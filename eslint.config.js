@@ -83,8 +83,11 @@ export default [
         // The notification troubleshooter's steps, ui/notifyhelp.js (the inbox).
         NotifyHelp: 'readonly',
         Tour: 'readonly',
-        // The Topics page's graph, ui/topicgraph.js.
+        // The Topics page's graph, ui/topicgraph.js, its space, ui/topicspace.js, and its
+        // drawing, ui/topicview.js.
         TopicGraph: 'readonly',
+        TopicSpace: 'readonly',
+        TopicView: 'readonly',
         // The Topics page's trends: their counting, ui/trends.js, and their chart, ui/trendview.js.
         Trends: 'readonly',
         TrendView: 'readonly',

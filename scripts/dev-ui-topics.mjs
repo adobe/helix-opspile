@@ -12,7 +12,8 @@
 
 import { TITLER, topicNames } from '../src/label.js';
 import { EMBEDDING_MODEL } from '../src/rethread.js';
-import { MIN_MESSAGES, productsOf } from '../src/topicmap.js';
+import { centered, MIN_MESSAGES, productsOf } from '../src/topicmap.js';
+import { topicPlaces } from '../src/topicspace.js';
 
 /**
  * The Topics page's made-up map for `npm run ui:dev` (`/inbox/topics`): what src/topicmap.js
@@ -220,6 +221,30 @@ export function topicMapFixture(now = Date.now(), tech = []) {
       id, label, theme, area, size, cohesion: Math.round((0.42 + rnd() * 0.18) * 1000) / 1000,
     };
   });
+  // The topics' places, as src/topicmap.js finds them, from made-up vectors: a thread's is its
+  // topic's (near its area's), and some of each person's who posted and of its customer's.
+  const DIMS = 32;
+  const vec = () => Array.from({ length: DIMS }, () => rnd() - 0.5);
+  const near = (base, k) => base.map((x) => x + (rnd() - 0.5) * k);
+  const areaVec = new Map();
+  const topicVec = topics.map((t) => {
+    if (!areaVec.has(t.area)) {
+      areaVec.set(t.area, vec());
+    }
+    return near(areaVec.get(t.area), 0.6);
+  });
+  const own = new Map();
+  const ownOf = (k) => own.get(k) || own.set(k, vec()).get(k);
+  const X = centered(threads.map((t) => {
+    const parts = [...Object.keys(t.staff), ...Object.keys(t.customers), `org:${t.org}`].map(ownOf);
+    return topicVec[t.topic].map((x, d) => x + parts.reduce((sum, p) => sum + p[d] * 0.4, 0)
+      + (rnd() - 0.5) * 0.3);
+  }));
+  const at = topicPlaces(X, threads.map((t) => t.topic), {
+    people: threads.map((t) => Object.keys({ ...t.staff, ...t.customers })),
+    orgs: threads.map((t) => [t.org]),
+  });
+  topics.forEach((t, i) => Object.assign(t, { at: at[i] }));
   const order = topics.map((t) => t.id).sort((a, b) => topics[b].size - topics[a].size);
   const renumber = new Map(order.map((old, i) => [old, i]));
   const products = productsOf(facts, tech);

@@ -29,6 +29,8 @@ import stackJs from '../ui/stack.js' with { type: 'text' };
 import notifyHelpJs from '../ui/notifyhelp.js' with { type: 'text' };
 import tourJs from '../ui/tour.js' with { type: 'text' };
 import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
+import topicSpaceJs from '../ui/topicspace.js' with { type: 'text' };
+import topicViewJs from '../ui/topicview.js' with { type: 'text' };
 import trendsJs from '../ui/trends.js' with { type: 'text' };
 import trendViewJs from '../ui/trendview.js' with { type: 'text' };
 // Spectrum 2's look of every page (README, "Spectrum 2").
@@ -67,7 +69,7 @@ import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
 import {
-  fmcScript, fromPreview, highlightScript, inboxPage, page,
+  fmcScript, fromPreview, highlightScript, inboxPage, page, threeScript,
 } from './page.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
@@ -104,6 +106,8 @@ const SCRIPTS = {
   'notifyhelp.js': notifyHelpJs,
   'tour.js': tourJs,
   'topicgraph.js': topicGraphJs,
+  'topicspace.js': topicSpaceJs,
+  'topicview.js': topicViewJs,
   'trends.js': trendsJs,
   'trendview.js': trendViewJs,
   'spectrum-fonts.css': spectrumFontsCss,
@@ -276,6 +280,11 @@ const handlers = {
     const fmc = fmcScript(request, pathname);
     if (fmc) {
       return fmc;
+    }
+    // three.js, which the Topics page imports when it first draws its map.
+    const three = threeScript(request, pathname);
+    if (three) {
+      return three;
     }
     if (request.method === 'GET' || request.method === 'HEAD') {
       const iconResponse = icon(pathname);
