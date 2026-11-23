@@ -99,6 +99,15 @@ async function setup({ perGroup = 10 } = {}) {
       post(key, 'c', CY.id, 0);
     }
   }
+  // A customer's own person, who is no person of D1 (as none of them is in production): by
+  // their account, named as it is; and a bot, who is nobody.
+  DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+    VALUES ('slack', 'E1', 'U9', 'person', 'Dee', '2026-10-01T00:00:00Z')`);
+  for (const [author, kind] of [['slack:E1:U9', 'person'], ['slack:E1:B1', 'bot']]) {
+    DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff,
+        counted, author_key, author_kind) VALUES ('slack', 'E1', 'C1', ?, 'slack:E1:C1:0.1',
+        '2026-10-20T00:00:00Z', 0, 1, ?, ?)`).run(`x-${author}`, author, kind);
+  }
   // Left out: too short, a meeting, an alert, not vectorized, and one CONTENT does not have.
   await thread('slack:E1:C1:short', { messages: 2, vector: near(0, 1) });
   await thread('slack:E1:C1:meet', { label: 'meeting', vector: near(1, 1) });
@@ -316,12 +325,17 @@ describe('topic map: building', () => {
     // Not the short, the meeting, the alert, the unvectorized, nor the one CONTENT lacks.
     assert.ok(!map.threads.some((t) => /short|meet|alert|novec|gone/.test(t.key)));
     // Everyone who posted: Adobe's people by the team they are on, the others by their customer.
-    assert.deepEqual(map.people, { 1: 'Ada', 2: 'Bo', 3: 'Cy' });
+    assert.deepEqual(map.people, {
+      1: 'Ada', 2: 'Bo', 3: 'Cy', 'a:slack:E1:U9': 'Dee',
+    });
     const one = map.threads.find((t) => t.key === 'slack:E1:C1:0.1');
     assert.deepEqual(one.staff, { 1: 2 });
-    assert.deepEqual(one.customers, { 3: 1 });
+    assert.deepEqual(one.customers, { 3: 1, 'a:slack:E1:U9': 1 });
     assert.deepEqual(map.peopleOf, {
-      1: { staff: true, team: 'helix' }, 2: { staff: true, team: 'helix' }, 3: { staff: false, org: 'acme' },
+      1: { staff: true, team: 'helix' },
+      2: { staff: true, team: 'helix' },
+      3: { staff: false, org: 'acme' },
+      'a:slack:E1:U9': { staff: false, org: 'acme' },
     });
     assert.deepEqual(one.tags, ['cdn']);
     assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:2.2').tags, []);

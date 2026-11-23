@@ -341,12 +341,24 @@ async function threadsOf(env) {
     FROM threads t LEFT JOIN labels l ON l.thread = t.thread WHERE ${WHERE}`)
     .bind(MIN_MESSAGES).all();
   // Everyone who posted: Adobe's people (`staff`) and the customers', partners' and vendors'.
-  const { results: posts } = await env.DB.prepare(`SELECT m.thread, m.person, p.name,
+  // A person of D1 by their id; anyone else (the customers' people are no person of D1: their
+  // messages have no `person`) by their platform account, `a:<author_key>`, named as it is.
+  const { results: posts } = await env.DB.prepare(`SELECT m.thread,
+      COALESCE(CAST(m.person AS TEXT), 'a:' || m.author_key) AS person, p.name,
       MAX(m.staff) AS staff, COUNT(*) AS n
     FROM messages m JOIN threads t ON t.thread = m.thread LEFT JOIN labels l ON l.thread = t.thread
-    JOIN people p ON p.id = m.person
+    LEFT JOIN people p ON p.id = m.person
     WHERE ${WHERE} AND m.counted = 1 AND m.deleted = 0
-    GROUP BY m.thread, m.person`).bind(MIN_MESSAGES).all();
+      AND (m.person IS NOT NULL OR (m.author_kind = 'person' AND m.author_key IS NOT NULL))
+    GROUP BY m.thread, 2`).bind(MIN_MESSAGES).all();
+  const { results: accounts } = await env.DB.prepare(`SELECT source || ':' || tenant || ':' ||
+      user_id AS author, name FROM identities WHERE kind = 'person' AND person IS NULL`).all();
+  const named = new Map((accounts || []).map((a) => [`a:${a.author}`, a.name]));
+  for (const p of posts || []) {
+    if (!p.name && named.get(p.person)) {
+      p.name = named.get(p.person);
+    }
+  }
   // The teams Adobe's people are on, to group them by.
   const { results: memberships } = await env.DB.prepare(`SELECT person, team FROM team_members
     ORDER BY person, team`).all();
@@ -643,10 +655,10 @@ const round = (x, digits = 3) => Math.round(x * 10 ** digits) / 10 ** digits;
  * - `threads`: `{ key, title, team, org, at, last, messages, kind, tags, topic, sim, staff }`, by
  *   topic, the most typical first; `tags` are Clef's topics (labels.topics), `staff` the Adobe
  *   people who posted, by id, with their messages.
- * - `people` (id → name, Adobe staff only), `orgs` (slug → `{ name, type }`), `tags` (Clef's
- *   topic ids → the names the inbox shows), `products` (id → `{ name, tech, product }`: the
- *   technologies Clef says the threads are about, `tech` the entry, `product` the product that
- *   entry is part of; a thread's `products` are their ids).
+ * - `people` (id → name; `a:<author_key>` for whoever is no person of D1), `orgs` (slug →
+ *   `{ name, type }`), `tags` (Clef's topic ids → the names the inbox shows), `products` (id →
+ *   `{ name, tech, product }`: the technologies Clef says the threads are about, `tech` the entry,
+ *   `product` the product that entry is part of; a thread's `products` are their ids).
  */
 export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed = 1 } = {}) {
   if (!env.CONTENT || !env.AI) {
@@ -731,7 +743,7 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
   for (const p of posts) {
     const into = p.staff ? staff : others;
     into.set(p.thread, { ...into.get(p.thread), [p.person]: p.n });
-    people[p.person] = p.name || `#${p.person}`;
+    people[p.person] = p.name || (String(p.person).startsWith('a:') ? 'Someone' : `#${p.person}`);
   }
   // Who each person is, to group them by: Adobe's by the team they are on whose threads they
   // posted in most (else their first; none when they are on no team: the channels they post in
