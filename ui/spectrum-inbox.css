@@ -179,7 +179,12 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 #threads .kbhit .l1 { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
 #threads .kbhit .l1 .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 #threads .kbhit .l1 .tag { flex: none; }
-#threads .kbhit .l3 { display: -webkit-box; white-space: normal; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* The excerpt, rendered markdown (kbMd): four lines at most, its blocks close together. */
+#threads .kbhit .l3 { max-height: calc(4em * var(--spectrum-line-height-100)); overflow: hidden; overflow-wrap: anywhere; line-height: var(--spectrum-line-height-100); }
+#threads .kbhit .l3 :is(p, ul, ol, pre, blockquote, table) { margin: 0; }
+#threads .kbhit .l3 :is(ul, ol) { padding-left: var(--spectrum-spacing-300); }
+#threads .kbhit .l3 blockquote { padding-left: var(--spectrum-spacing-100); border-left: var(--spectrum-border-width-200) solid var(--line); }
+#threads .kbhit .l3 pre { white-space: pre-wrap; }
 #threads .kbmore { align-self: flex-start; margin: var(--spectrum-spacing-50) var(--spectrum-spacing-300) 0; padding: 0; background: none; border: 0; cursor: pointer; }
 .linkish { padding: 0; border: 0; background: none; color: var(--link); cursor: pointer; text-decoration: underline; }
 /* The message a search result opened the thread at. */
@@ -1698,6 +1703,11 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum #threads .kbhit .title { font-weight: var(--spectrum-bold-font-weight); }
 .spectrum #threads .kbhit :is(.l2, .l3) { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum #threads .kbhit .path { color: var(--spectrum-disabled-content-color); }
+.spectrum #threads .kbhit .l3 :is(code, pre) { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); }
+.spectrum #threads .kbhit .l3 code { padding: 0 var(--spectrum-spacing-75); background: var(--spectrum-gray-100); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum #threads .kbhit .l3 pre code { padding: 0; background: none; }
+.spectrum #threads .kbhit .l3 strong { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum #threads .kbhit .l3 .ln { color: var(--spectrum-neutral-content-color-default); text-decoration: underline; text-underline-offset: var(--spectrum-spacing-50); }
 .spectrum #threads .kbmore { font-family: var(--s2-font); font-size: var(--spectrum-font-size-75); color: var(--spectrum-accent-content-color-default); }
 .spectrum #threads .kbmore:hover { text-decoration: underline; }
 .spectrum .t.unread .when { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }

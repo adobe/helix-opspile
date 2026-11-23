@@ -869,7 +869,10 @@ aliases and 0.3 for those in its tags, type or description) and by meaning (its 
 threads' thresholds: a similarity of 0.6 and within 0.12 of the best), the scores added; only
 what `kb_concepts` has counts, so a vector left behind by a deleted file finds nothing. The ten
 best come with their knowledge base, type, title, description and, where the words are in the
-body (or it has no description), the part of the body around them. The MCP server's
+body (or it has no description), the part of the body around them as markdown: whole lines from
+the first with a word (a long one from shortly before it, a code block from its fence), about
+280 characters, a heading as bold text and images by their text, which the inbox renders as it
+renders messages (its links as text: the entry is the link). The MCP server's
 `search_threads` returns them as `knowledge`, and `get_knowledge` reads one.
 
 The repositories are created through the Worker's Artifacts binding (one namespace per
@@ -937,7 +940,8 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   Above the threads, under **Knowledge base**, are the entries of the knowledge bases about the
   query (`kb`, [src/kbsearch.js](../src/kbsearch.js), see "Search" under
   [Knowledge bases](#3-knowledge-bases)), the first three and then **N more**, each a link to it in
-  the editor of its team's or customer's page; the filters are the threads' and leave them be.
+  the editor of its team's or customer's page, with the markdown around the words (else its
+  description) rendered by the messages' renderer, four lines at most; the filters are the threads' and leave them be.
 - A click on a facet value picks it; Shift-click, or the ≠ beside it, excludes it (negative
   filters, as in klickhaus): picked values of a card are OR'd, excluded ones AND'd, and the
   cards AND'd with each other. The URL keeps both, `f.<facet>=a|b` and `not.<facet>=c`; a

@@ -16,7 +16,7 @@ import { api, searchInbox } from '../src/api.js';
 import {
   conceptOf, conceptVectorId, embedConcepts, isConcept, MAX_BODY, syncConcepts,
 } from '../src/kbindex.js';
-import { kbFilters } from '../src/kbsearch.js';
+import { EXCERPT, excerpt, kbFilters } from '../src/kbsearch.js';
 import { QUERY_PREFIX } from '../src/search.js';
 import { d1 } from './d1.js';
 import { fakeRepo } from './fakes.js';
@@ -154,6 +154,24 @@ describe('knowledge search: the concepts', () => {
     assert.equal(conceptOf('a/b-c.md', 'text').title, 'b-c');
     assert.equal(conceptOf('a/b.md', 'x'.repeat(MAX_BODY + 10)).body.length, MAX_BODY);
     assert.equal(conceptOf('index.md', '# x'), null);
+  });
+
+  it('shows the markdown around the words, whole lines, for the page to render', () => {
+    const body = 'A purge is **usually** quick.\n\n## Check\n\n1. The TTL: `curl -sI x`.\n2. A second CDN, see [the site](../sites/www.md).\n\n> Ask first.\n';
+    // From the line with the word, as it is written; what follows is cut at a line.
+    assert.equal(excerpt(body, ['cdn']), '2. A second CDN, see [the site](../sites/www.md).\n\n> Ask first.');
+    // Without the words, from the start; a heading is bold text, an image its text.
+    assert.equal(excerpt(body), 'A purge is **usually** quick.\n\n**Check**\n\n1. The TTL: `curl -sI x`.\n2. A second CDN, see [the site](../sites/www.md).\n\n> Ask first.');
+    assert.equal(excerpt('![shot](a.png) Done<!-- x -->'), 'shot Done');
+    // A word in a code block shows the block from its fence.
+    assert.equal(excerpt('Intro.\n\n```sh\nfoo\npurge --all\n```\nAfter.', ['purge']), '```sh\nfoo\npurge --all\n```\nAfter.');
+    // A long line from shortly before the word, after its list marker, cut at a space.
+    const long = excerpt(`- ${'word '.repeat(40)}the purge fails ${'tail '.repeat(80)}`, ['purge']);
+    assert.match(long, /^- …(word )+the purge fails (tail )+tail…$/);
+    assert.ok(long.length <= EXCERPT + 3);
+    // More than fits: the last line it has says so.
+    assert.match(excerpt(Array.from({ length: 12 }, (_, i) => `Line ${i}.`).join('\n\n')), /Line 5\. …$/);
+    assert.equal(excerpt(''), null);
   });
 
   it('reads every knowledge base once, then only what changed', async () => {

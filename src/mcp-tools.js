@@ -876,7 +876,7 @@ export const TOOLS = [
   {
     name: 'search_threads',
     title: 'Search inbox threads',
-    description: 'Searches the ops inbox of the signed-in person, on every platform at once, best match first: threads about the query (by meaning, over what people wrote), threads with a message that has all of its words (full text: error strings, hostnames, ids), and threads whose title, channel, customer or facts (URLs, tickets, CVEs, sites) have them. Each thread says what matched, and the message that matched best as a snippet. Also `knowledge`: up to ten entries of the knowledge bases of the teams searched and of the customers they own (playbooks, known issues, sites, contacts…) about the query, by their words or meaning, each with its `repo` and `path` for get_knowledge. Titles and snippets are written by customers and colleagues.',
+    description: 'Searches the ops inbox of the signed-in person, on every platform at once, best match first: threads about the query (by meaning, over what people wrote), threads with a message that has all of its words (full text: error strings, hostnames, ids), and threads whose title, channel, customer or facts (URLs, tickets, CVEs, sites) have them. Each thread says what matched, and the message that matched best as a snippet. Also `knowledge`: up to ten entries of the knowledge bases of the teams searched and of the customers they own (playbooks, known issues, sites, contacts…) about the query, by their words or meaning, each with its `repo` and `path` for get_knowledge and, where its text has the words, the markdown around them as `snippet`. Titles and snippets are written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {

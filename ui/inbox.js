@@ -1876,10 +1876,34 @@ function hitLine(hit) {
 
 /** How many knowledge-base entries a search shows before "N more". */
 const KB_SHOWN = 3;
+/** `html`'s text, not its tags or entities, with the query's words marked. */
+function markHtml(html, words) {
+  const ws = (words || []).filter(Boolean).map(reEscape);
+  if (!ws.length) return html;
+  const re = new RegExp(`(${ws.join('|')})`, 'gi');
+  return html.split(/(<[^>]*>|&[#\w]+;)/).map((part, i) => (i % 2 ? part : part.replace(re, '<mark>$1</mark>'))).join('');
+}
+const kbRendered = new Map();
+/**
+ * An entry's excerpt or description, markdown as the messages' renderer makes it, inside the
+ * entry's link: its links are text (a link in a link is none), and it has no images.
+ */
+function kbMd(src) {
+  let html = kbRendered.get(src);
+  if (html === undefined) {
+    html = Markdown.render(src, { emoji: (name, alone) => emojiHtml(name, { alone }) })
+      .replace(/<a\b[^>]*>/g, '<span class="ln">').replace(/<\/a>/g, '</span>')
+      .replace(/<img\b[^>]*>/g, '');
+    if (kbRendered.size >= 200) kbRendered.delete(kbRendered.keys().next().value);
+    kbRendered.set(src, html);
+  }
+  return html;
+}
 /**
  * The knowledge bases' part of a search (`kb` of GET /api/search): the entries about it, above
- * the threads, each a link to it in the editor of its team's or customer's page. The filters
- * are the threads': they leave these be.
+ * the threads, each a link to it in the editor of its team's or customer's page, with the
+ * markdown around the words (`snippet`), else its description, rendered. The filters are the
+ * threads': they leave these be.
  */
 function kbSection(kb, words) {
   if (!kb.length) return '';
@@ -1889,7 +1913,7 @@ function kbSection(kb, words) {
     return `<a class="kbhit" href="${esc(kbFileHref(k.repo, k.path))}">
       <span class="l1"><span class="title">${marked(k.title, words)}</span>${k.type ? `<span class="tag">${esc(k.type)}</span>` : ''}</span>
       <span class="l2">${esc(k.name)} <span class="path">${esc(k.path)}</span></span>
-      ${line ? `<span class="l3">${marked(line, words)}</span>` : ''}</a>`;
+      ${line ? `<div class="l3 md">${markHtml(kbMd(line), words)}</div>` : ''}</a>`;
   }).join('');
   const more = all ? '' : `<button type="button" class="kbmore" data-kbmore>${kb.length - KB_SHOWN} more in the knowledge bases</button>`;
   return `<section class="kbhits" aria-label="Knowledge base"><h3>Knowledge base <span class="n">${kb.length}</span></h3>${rows}${more}</section>`;

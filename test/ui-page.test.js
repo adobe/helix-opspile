@@ -334,6 +334,9 @@ describe('inbox page', () => {
       state,
       esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'),
       marked: (s) => s,
+      reEscape: (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      emojiHtml: () => '',
+      Markdown: { render: (src) => `<p>${src.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')}</p>` },
       kbFileHref: (repo, path) => `/inbox/admin?${new URLSearchParams({ repo, view: 'kb', path })}`,
     });
     const hit = (i) => ({
@@ -345,7 +348,11 @@ describe('inbox page', () => {
     assert.equal(out.match(/class="kbhit"/g).length, 4);
     assert.match(out, /href="\/inbox\/admin\?repo=kb-team-helix&amp;view=kb&amp;path=playbooks%2Fp1\.md"/);
     assert.match(out, /<span class="tag">Playbook<\/span>/);
-    assert.match(out, /<span class="l3">What to do<\/span>/);
+    assert.match(out, /<div class="l3 md"><p>What to do<\/p><\/div>/);
+    // The excerpt is markdown, rendered; a link in it is text (the entry is the link), and the
+    // words are marked in its text, not in its tags or entities.
+    out = kbSection([{ ...hit(1), snippet: 'Check **the purge**, see [the site](../sites/www.md) &amp; more' }], ['purge', 'amp']);
+    assert.match(out, /<p>Check <strong>the <mark>purge<\/mark><\/strong>, see <span class="ln">the site<\/span> &amp; more<\/p>/);
     out = kbSection([1, 2, 3, 4, 5].map(hit), ['p']);
     assert.equal(out.match(/class="kbhit"/g).length, 3);
     assert.match(out, /data-kbmore>2 more in the knowledge bases</);

@@ -13,7 +13,7 @@
 import { access } from './kbaccess.js';
 import { likePattern as like } from './like.js';
 import {
-  cleanQuery, inParts, MIN_SIMILAR, SIMILAR_WINDOW, snippet, terms, TITLE_BONUS,
+  cleanQuery, inParts, MIN_SIMILAR, SIMILAR_WINDOW, terms, TITLE_BONUS,
 } from './search.js';
 import { ownedCustomers } from './shares.js';
 
@@ -33,6 +33,94 @@ export const KB_WORDS_BONUS = 0.4;
 export const KB_TAG_BONUS = 0.3;
 const KEYWORD_ROWS = 200;
 const VECTOR_K = 20;
+
+/** About how much of a concept's body its excerpt has, and in how many lines at most. */
+export const EXCERPT = 280;
+const EXCERPT_LINES = 6;
+/** How much of a line comes before the word an excerpt starts at, where the line is cut. */
+const LEAD = 60;
+
+const FENCE = /^[ \t]*(```|~~~)/;
+
+/** A line as an excerpt shows it: a heading as bold text, images by their text, no comments. */
+const excerptLine = (line) => line
+  .replace(/<!--[\s\S]*?-->/g, '')
+  .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/\[\^[^\]]+\]/g, '')
+  .replace(/^[ \t]*#{1,6}[ \t]+(.+?)[ \t#]*$/, '**$1**');
+
+/** `line` from about LEAD characters before `at`, after its list or quote marker, with "…". */
+function fromWord(line, at) {
+  const marker = /^[ \t]*(?:>[ \t]*)*(?:[-*+][ \t]+|\d+[.)][ \t]+)?/.exec(line)[0];
+  if (at - marker.length <= LEAD) {
+    return line;
+  }
+  const space = line.indexOf(' ', at - LEAD);
+  const from = space > 0 && space < at ? space + 1 : at;
+  return `${marker}…${line.slice(from)}`;
+}
+
+/**
+ * The part of a concept's markdown `body` an excerpt shows, as markdown, for the page's renderer:
+ * whole lines from the first with one of `words` (from its start without them), about EXCERPT
+ * characters of them, a long line from shortly before the word, the last one cut at a space
+ * with "…". A line in a code block starts from its fence, so the block stays one. Null for an
+ * empty body.
+ */
+export function excerpt(body, words = []) {
+  const lines = String(body || '').split(/\r?\n/);
+  // The line its code block opens at, for each line in one (the fences too), else -1.
+  const fenceOf = [];
+  let open = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (open < 0 && FENCE.test(lines[i])) {
+      open = i;
+      fenceOf.push(i);
+    } else {
+      fenceOf.push(open);
+      if (open >= 0 && FENCE.test(lines[i])) {
+        open = -1;
+      }
+    }
+  }
+  const has = (l) => words.some((w) => l.toLowerCase().includes(w));
+  let start = lines.findIndex((l) => l.trim() && has(l));
+  const hit = start >= 0;
+  if (!hit) {
+    start = lines.findIndex((l) => l.trim());
+    if (start < 0) {
+      return null;
+    }
+  }
+  if (fenceOf[start] >= 0 && fenceOf[start] !== start) {
+    start = fenceOf[start];
+  }
+  const out = [];
+  let size = 0;
+  let i = start;
+  for (; i < lines.length && size < EXCERPT && out.filter(Boolean).length < EXCERPT_LINES; i += 1) {
+    let line = excerptLine(lines[i]);
+    if (i === start && hit && fenceOf[i] < 0) {
+      const at = Math.min(...words.map((w) => line.toLowerCase().indexOf(w)).filter((x) => x >= 0));
+      line = fromWord(line, at);
+    }
+    if (size + line.length > EXCERPT && fenceOf[i] < 0) {
+      const cut = line.lastIndexOf(' ', EXCERPT - size);
+      line = `${line.slice(0, cut > line.length / 3 ? cut : EXCERPT - size).trimEnd()}…`;
+    }
+    out.push(line.trim() ? line : '');
+    size += line.trim().length;
+  }
+  while (out.length && !out[out.length - 1]) {
+    out.pop();
+  }
+  const more = lines.slice(i).some((l) => l.trim());
+  const last = out.length - 1;
+  if (more && last >= 0 && !out[last].endsWith('…') && fenceOf[start + last] < 0) {
+    out[last] = `${out[last]} …`;
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n') || null;
+}
 
 /** How many of the words are in `text`, case aside, as a fraction. */
 const share = (text, words) => {
@@ -142,9 +230,9 @@ export function conceptHit(r, b, words, { all = false, about = 0 } = {}) {
     + KB_TAG_BONUS * Math.max(tagged, described) : 0);
   let text = null;
   if (said > 0) {
-    text = snippet(body, words);
+    text = excerpt(body, words);
   } else if (!r.description && body) {
-    text = snippet(body);
+    text = excerpt(body);
   }
   return {
     repo: r.repo,
@@ -171,7 +259,7 @@ export const bestHits = (hits, limit = KB_RESULTS) => hits
  * The concepts about `q` in the knowledge bases searched for `teams` (`searchedBases`), best
  * first, at most `limit`: `[{ repo, kind, slug, name, path, type, title, description, score,
  * matched, snippet }]`, `matched` saying why (`title`: the title or an alias, `tags`: the tags or
- * the type, `description`, `text`: the body, `topic`: by meaning), `snippet` the part of the
+ * the type, `description`, `text`: the body, `topic`: by meaning), `snippet` the markdown of the
  * body around the first word (or its start, when it has no description), else null. `vector`:
  * the query's (src/search.js `queryVector`), a promise.
  */
