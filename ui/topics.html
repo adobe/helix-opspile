@@ -36,25 +36,28 @@
 <script src="header.js"></script>
 <main id="main">
   <div class="bar" id="bar" hidden>
-    <div class="group">
+    <div class="group seg" id="views" role="group" aria-label="View"></div>
+    <div class="group maponly">
       <select id="team" aria-label="Team"></select>
     </div>
-    <div class="group legend" id="types" role="group" aria-label="Show"></div>
-    <div class="group">
+    <div class="group legend maponly" id="types" role="group" aria-label="Show"></div>
+    <div class="group maponly">
       <label class="lbl" for="min">Shared threads</label>
       <select id="min" title="Draw a line between two only when this many threads have both"></select>
     </div>
-    <div class="group">
+    <div class="group maponly">
       <label class="s2-search"><input class="search" id="find" type="search" list="names" aria-label="Find a person, topic, tag or customer" autocomplete="off"></label>
       <datalist id="names"></datalist>
     </div>
     <span class="spacer"></span>
-    <span class="sub" id="built"></span>
-    <button id="rebuild">Rebuild</button>
+    <span class="sub maponly" id="built"></span>
+    <button class="maponly" id="rebuild">Rebuild</button>
   </div>
   <div id="body"><div class="empty">Loading…</div></div>
 </main>
 <script src="topicgraph.js"></script>
+<script src="trends.js"></script>
+<script src="trendview.js"></script>
 <script type="module" src="topics.js"></script>
 <script src="app.js"></script>
 </body>

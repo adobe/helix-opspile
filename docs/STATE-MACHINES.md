@@ -561,6 +561,14 @@ between: the cron or Rebuild builds one in a single request, a row when it is do
 five are kept. A build that fails (too few threads, no index) writes nothing and leaves the last map
 on the page; two at once both write a row, and the newer is shown.
 
+**Trend map.** none → built → four weeks old → built again (`trend_maps`, `src/trends.js`); only the
+newest is kept. Each thread's topic: none → assigned → stale → assigned again (`trend_threads`). A row
+is stale when its `map` is not the newest or its `embedded` is not the thread's. The cron assigns
+the newest threads first, a batch per run, and a thread whose vector is gone gets no topic instead
+of being asked for again. Until every thread is assigned again after a build, the page counts only
+those assigned to the newest map, and says how many have a topic. A build that fails writes
+nothing and leaves the map that was there.
+
 **Catalog compile.** files → compiled → behind → compiled again (src/catalog.js, src/catalogsync.js).
 A team's `products/` is the source; its `tech_stack` rows (`path` set) and `tech_moves` are replaced
 together in one batch, with `knowledge_bases.catalog_commit` the watermark, written in the same batch.

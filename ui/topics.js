@@ -32,6 +32,10 @@
  * needs), the groups opened and the pick are the page's address; the header brings it back as
  * it was left. Rebuild clusters the threads again (POST /api/admin/topics).
  *
+ * The other view, Trends (`view=trends`), is ui/trendview.js (its global `TrendView`): how much
+ * the channels talk about each topic, area, technology, word or phrase, week by week, and what is
+ * trending, declining or peaked. Both are every member's.
+ *
  * The graph's data is ui/topicgraph.js (its global `TopicGraph`). The layout is the page's own:
  * d3-force's model (many-body repulsion, links as springs, a pull to the centre, collision), in a
  * loop of animation frames; it settles before it is first drawn, and keeps where every node was
@@ -76,7 +80,7 @@ const state = {
   // The teams each Adobe person is on (GET /api/topics), for their team bubbles.
   members: null,
   q: {
-    team: '', hide: [], min: 2, sel: '', open: [],
+    view: 'map', team: '', hide: [], min: 2, sel: '', open: [],
   },
   find: '',
   hover: '',
@@ -92,6 +96,7 @@ function fromUrl() {
   const p = new URLSearchParams(location.search);
   const min = Number(p.get('min'));
   state.q = {
+    view: p.get('view') === 'trends' ? 'trends' : 'map',
     team: p.get('team') || '',
     hide: (p.get('hide') || '').split(',').filter((t) => TYPE[t]),
     min: MINS.includes(min) ? min : 2,
@@ -104,6 +109,10 @@ function fromUrl() {
 function toUrl({ push = true } = {}) {
   const p = new URLSearchParams();
   const { q } = state;
+  if (q.view === 'trends') {
+    p.set('view', 'trends');
+    for (const [k, v] of TrendView.params()) p.set(k, v);
+  }
   if (q.team) p.set('team', q.team);
   if (q.hide.length) p.set('hide', q.hide.join(','));
   if (q.min !== 2) p.set('min', String(q.min));
@@ -885,7 +894,11 @@ function clickNode(n) {
 
 function renderBar() {
   const m = map();
-  $('bar').hidden = !m && !state.available;
+  const trends = state.q.view === 'trends';
+  $('views').innerHTML = [['map', 'Map', 'The topics, people and products, as one graph'],
+    ['trends', 'Trends', 'How much the channels talk about each, week by week, and what is trending, declining or peaked']]
+    .map(([id, label, title]) => `<button data-view="${id}" aria-pressed="${state.q.view === id}" title="${esc(title)}">${label}</button>`).join('');
+  $('bar').hidden = false;
   const teams = m ? [...new Set(m.threads.map((t) => t.team))].sort() : [];
   const teamName = (slug) => state.me.teams?.find((t) => t.slug === slug)?.name || slug;
   $('team').innerHTML = `<option value="">All teams</option>${teams.map((t) => `<option value="${esc(t)}"${t === state.q.team ? ' selected' : ''}>${esc(teamName(t))}</option>`).join('')}`;
@@ -909,6 +922,7 @@ function renderBar() {
     : 'A topic map needs the CONTENT index and Workers AI';
   $('rebuild').textContent = state.building ? 'Building…' : (built ? 'Rebuild' : 'Build');
   $('rebuild').classList.toggle('primary', !built);
+  for (const e of document.querySelectorAll('#bar .maponly')) e.hidden = trends || (e.id === 'rebuild' && !state.may.rebuild);
 }
 
 function ago(iso) {
@@ -921,6 +935,17 @@ function ago(iso) {
 
 function render({ refit = false } = {}) {
   const body = $('body');
+  if (state.q.view === 'trends') {
+    if ($('graph')) body.innerHTML = '';
+    svg = null;
+    renderBar();
+    TrendView.show(body, {
+      me: state.me, may: state.may, esc, ago, toUrl: () => toUrl(),
+    });
+    return;
+  }
+  // From Trends: the map is drawn again.
+  if ($('tchart')) body.innerHTML = '';
   if (state.error && !map()) {
     body.innerHTML = `<div class="empty err">${esc(state.error)}</div>`;
     renderBar();
@@ -1021,6 +1046,10 @@ function wire() {
     }
   };
   $('rebuild').onclick = rebuild;
+  $('views').onclick = (ev) => {
+    const b = ev.target.closest('button[data-view]');
+    if (b && b.dataset.view !== state.q.view) change((q) => { q.view = b.dataset.view; });
+  };
   $('body').addEventListener('click', (ev) => {
     const target = ev.target.closest('[data-sel]');
     if (target && !target.closest('svg')) pick(target.dataset.sel);

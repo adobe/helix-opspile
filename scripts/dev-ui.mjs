@@ -99,6 +99,8 @@ import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { areaFile, compileAreas, isArea } from '../src/areas.js';
 import { topicsPage } from '../src/topicsapi.js';
+import { weeksTo } from '../src/trends.js';
+import { trendsFixture } from './dev-ui-topics.mjs';
 import { findPerson } from '../src/kbpeople.js';
 import { AGENT, createStore } from './dev-ui-fixtures.mjs';
 import { OFFER_AFTER } from '../src/postoffer.js';
@@ -212,6 +214,8 @@ let settings = withDefaults(store.me, {
 let follows = ['da'];
 // What Dana follows besides technologies (src/follows.js `person_follows_by`).
 let followsBy = { org: [], person: [], area: [] };
+// The Trends view's made-up data (dev-ui-topics.mjs), made when it is first asked for.
+let trends = null;
 const followsNow = async () => ({
   me: follows,
   teams: await followsOfTeams(adminApi.env, store.me.teams.map((t) => t.slug)),
@@ -1449,6 +1453,21 @@ async function api(req, res, url) {
       settings,
       follows: await followsNow(),
     });
+  }
+  // The Topics page's Trends (src/trends.js): the made-up half year of dev-ui-topics.mjs, with
+  // its own answers to the words and phrases; there is no CONTENT index to build a map from.
+  if (url.pathname.startsWith('/api/topics/trends')) {
+    trends ||= trendsFixture(Date.now(), weeksTo(new Date()));
+    if (req.method === 'POST') {
+      return json(res, { error: 'the preview has no CONTENT index to find topics in' }, 503);
+    }
+    if (url.pathname === '/api/topics/trends/match') {
+      return json(res, trends.match(url.searchParams.get('term')));
+    }
+    if (url.pathname === '/api/topics/trends/threads') {
+      return json(res, { threads: trends.threads((url.searchParams.get('ids') || '').split(',')) });
+    }
+    return json(res, trends.data);
   }
   // The Topics page (src/topicsapi.js), over the admin pages' D1: its map, the areas the fake
   // knowledge bases have, and Dana's follows; areas are written to the fake knowledge bases.
