@@ -21,6 +21,9 @@ code and docs, is the decision model that labels threads and channels.
   a browser-origin request fails with AADSTS9002326.
 - Code style is `@adobe/eslint-config-helix` (`npm run lint`), ES modules, 2-space indent,
   max line length 100.
+- **A change ends in a pull request:** once it is done and tested, commit it to a branch, push,
+  and open a PR (`gh pr create`), unless you were told not to. A change to the pages gets
+  screenshots in it ("Debugging", below).
 
 ## Non-obvious code
 
@@ -151,9 +154,11 @@ code and docs, is the decision model that labels threads and channels.
   the same browser; `npm run ui:session -- <inbox origin> --cdp http://127.0.0.1:<port>`
   points it at production's API, read-only.
 - **Screenshots for pull requests** come from `npm run ui:dev`, never from production. To
-  attach one, `drop` the files onto the PR's comment box. GitHub writes their
-  `user-attachments` URLs into the box: read them with `eval`, clear the box, and put them in
-  the PR body.
+  attach them, pass the files to `gh`: `gh pr create`, `gh pr edit` and `gh pr comment` take
+  `--attach '<file>#<alt text>'`, once per file. A body that names a file
+  (`![alt](./shot.png)`) gets its `user-attachments` URL there; one it does not name is added at
+  the end. A motion is caught half-way by making its duration long in the page first
+  (`--side-motion` on `main`, for one).
 - **The Worker: `cf`**, the Cloudflare CLI (reads `cloudflare.config.ts`; `--mode prod` or
   `--mode stage`). Find a command with `cf cli search "<task>"`, then `<command> --help`, and
   keep the search anonymous. `cf o11y telemetry query` searches the Worker's logs,
