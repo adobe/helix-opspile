@@ -14,6 +14,7 @@ import { EMOJI_ALIASES, SKIN_TONES, SLACK_EMOJI } from './emoji.js';
 import EDITOR from './ui-editor.bundle.js';
 import FMC, { etag as FMC_ETAG } from './ui-fmc.bundle.js';
 import HIGHLIGHT, { etag as HIGHLIGHT_ETAG } from './ui-highlight.bundle.js';
+import THREE, { etag as THREE_ETAG } from './ui-three.bundle.js';
 import MARKDOWN from './ui-markdown.bundle.js';
 import { assemble, spectrumColor, spectrumTokens } from './pagecore.js';
 
@@ -56,6 +57,9 @@ export const HIGHLIGHT_PATH = '/inbox/highlight.js';
 
 /** Where the inbox imports its stack drawing's renderer from (ui/stack.js, `Stack.wire`). */
 export const FMC_PATH = '/inbox/fmc.js';
+
+/** Where the Topics page imports three.js from (ui/topicview.js, `TopicView.mount`). */
+export const THREE_PATH = '/inbox/three.js';
 
 /** A module the inbox imports, for a GET or HEAD: kept by the browser, asked again by its hash. */
 function moduleResponse(request, code, etag) {
@@ -100,6 +104,21 @@ export function fmcScript(request, pathname) {
     return null;
   }
   return moduleResponse(request, FMC, FMC_ETAG);
+}
+
+/**
+ * three.js (src/ui-three.js) as an ES module, for a GET or HEAD of `THREE_PATH`, or null; some
+ * 570 KB (150 KB compressed), which the Topics page imports when it first draws its map, and the
+ * browser keeps as it does the highlighter.
+ *
+ * @param {{ method: string, headers: Headers }} request
+ * @param {string} pathname
+ */
+export function threeScript(request, pathname) {
+  if (pathname !== THREE_PATH || !['GET', 'HEAD'].includes(request.method)) {
+    return null;
+  }
+  return moduleResponse(request, THREE, THREE_ETAG);
 }
 
 /**

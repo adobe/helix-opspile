@@ -39,10 +39,20 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: 
 
 .split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 52); }
 .graph { position: relative; min-height: 0; overflow: hidden; }
-.graph svg { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; user-select: none; }
-.graph svg:active { cursor: grabbing; }
-.graph .node { cursor: pointer; }
-.graph .tools { position: absolute; top: 0; right: 0; }
+/* The map: a WebGL canvas (ui/topicview.js), its names in it, and how to use it under it. */
+.graph canvas.space { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; user-select: none; }
+/* No frame: the map fades into the page at its edges. */
+.graph canvas.space {
+  mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent),
+    linear-gradient(to bottom, transparent, black 6%, black 94%, transparent);
+  mask-composite: intersect;
+}
+.graph canvas.space:active { cursor: grabbing; }
+.graph canvas.space.over { cursor: pointer; }
+.graph .probe { display: none; }
+.graph .how { position: absolute; left: 0; right: 0; top: 0; pointer-events: none; }
+#only { display: inline-flex; align-items: center; }
+#only[hidden] { display: none; }
 .graph > .empty { position: absolute; inset: 0; text-align: center; }
 .tip { position: absolute; z-index: 5; pointer-events: none; display: flex; flex-direction: column; }
 .tip[hidden], .graph > .empty[hidden] { display: none; }
@@ -70,14 +80,13 @@ tr.pick { cursor: pointer; }
 .dot { display: inline-block; flex: none; }
 
 
-/* Under the graph, its trends (ui/trendview.js): a card as wide, as tall as the chart needs. */
+/* Over the bottom of the map, its trends (ui/trendview.js): as wide as it, as tall as the chart
+   needs; only the chart and its legend take the pointer, the map shows through the rest. */
 .split > .col { min-height: 0; display: flex; flex-direction: column; }
-.split > .col > .graph { flex: 1; min-height: calc(var(--spectrum-spacing-100) * 30); }
-.tchart { position: relative; flex: none; }
-.tchart .thead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
-.tqrow { display: flex; align-items: center; flex: 1; min-width: calc(var(--spectrum-spacing-100) * 36); max-width: calc(var(--spectrum-spacing-100) * 70); }
-.tqrow .s2-search { flex: 1; }
-.tchart svg { display: block; width: 100%; height: calc(var(--spectrum-spacing-100) * 26); }
+.split > .col > .graph { flex: 1; min-height: calc(var(--spectrum-spacing-100) * 60); }
+.graph > .tchart { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+.graph > .tchart > :is(svg, .tlegend) { pointer-events: auto; }
+.tchart svg { display: block; width: 100%; height: calc(var(--spectrum-spacing-100) * 22); }
 .tchart .hit { cursor: crosshair; }
 .tlegend { display: flex; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
 .tlegend li { display: flex; align-items: center; }
@@ -155,18 +164,23 @@ p.trend { display: flex; align-items: center; }
 
 /* ---- the kinds: Spectrum 2's categorical palette ------------------------------------------ */
 
-.spectrum [data-type="topic"] { --s2-type: var(--spectrum-indigo-1100); }
-.spectrum [data-type="person"] { --s2-type: var(--spectrum-seafoam-700); }
-.spectrum [data-type="tag"] { --s2-type: var(--spectrum-orange-700); }
-.spectrum [data-type="org"] { --s2-type: var(--spectrum-magenta-900); }
-.spectrum [data-type="team"] { --s2-type: var(--spectrum-seafoam-1000); }
-.spectrum [data-type="product"] { --s2-type: var(--spectrum-celery-700); }
+.spectrum [data-type="topic"] { --s2-type: var(--spectrum-indigo-700); }
+.spectrum [data-type="person"] { --s2-type: var(--spectrum-red-700); }
+/* Adobe's people in red, the customers' (and the customers) in green. */
+.spectrum [data-type="customer"] { --s2-type: var(--spectrum-seafoam-700); }
+.spectrum [data-type="tag"] { --s2-type: var(--spectrum-indigo-1100); }
+.spectrum [data-type="org"] { --s2-type: var(--spectrum-seafoam-1000); }
+.spectrum [data-type="team"] { --s2-type: var(--spectrum-red-1000); }
+.spectrum [data-type="product"] { --s2-type: var(--spectrum-orange-700); }
+/* On the map, a group a darker shade of its members' (as a team of its people's), and the
+   vendors' technologies apart from Adobe's products. */
+.spectrum [data-type="product-group"] { --s2-type: var(--spectrum-orange-1000); }
+.spectrum [data-type="vendor"] { --s2-type: var(--spectrum-yellow-700); }
+.spectrum [data-type="vendor-group"] { --s2-type: var(--spectrum-yellow-1000); }
+/* The map's names, and its card, which it is drawn on. */
+.spectrum .probe[data-type="label"] { --s2-type: var(--spectrum-neutral-content-color-default); }
+.spectrum .probe:is([data-type="halo"], [data-type="card"]) { --s2-type: var(--spectrum-background-layer-1-color); }
 /* A product no tech stack entry names: a ring of its color, hollow, so the gaps stand out. */
-.spectrum .node[data-gap] circle {
-  fill: var(--spectrum-background-layer-2-color);
-  stroke: var(--s2-type);
-  stroke-width: var(--spectrum-border-width-400);
-}
 .spectrum .dot[data-gap] {
   background: transparent;
   box-shadow: inset 0 0 0 var(--spectrum-border-width-200) var(--s2-type);
@@ -180,47 +194,19 @@ p.trend { display: flex; align-items: center; }
 
 /* ---- the graph -------------------------------------------------------------------------- */
 
-.spectrum .graph .tools { padding: var(--spectrum-spacing-200); }
-.spectrum .edge { stroke: var(--spectrum-gray-400); stroke-opacity: .45; transition: stroke-opacity var(--s2-ease); }
-.spectrum .node circle {
-  fill: var(--s2-type);
-  stroke: var(--spectrum-background-layer-2-color);
-  stroke-width: var(--spectrum-border-width-200);
-  transition: opacity var(--s2-ease);
+/* The map is on the page itself, no card. */
+.spectrum .card.graph { background: transparent; border-radius: 0; }
+/* Each kind's color, which the map's bubbles take (ui/topicview.js reads it). */
+.spectrum .graph .probe { color: var(--s2-type); }
+/* How to use it: only while the pointer is on the map. */
+.spectrum .graph .how { opacity: 0; transition: opacity var(--s2-ease); }
+.spectrum .graph:hover .how { opacity: 1; }
+.spectrum .graph .how {
+  margin: 0;
+  padding: var(--spectrum-spacing-200);
+  font-size: var(--spectrum-font-size-50);
 }
-.spectrum .node .lbl {
-  fill: var(--spectrum-neutral-content-color-default);
-  font-size: calc(var(--spectrum-font-size-50) / var(--zoom, 1));
-  text-anchor: middle;
-  pointer-events: none;
-  paint-order: stroke;
-  stroke: var(--spectrum-background-layer-2-color);
-  stroke-width: calc(var(--spectrum-border-width-400) / var(--zoom, 1));
-  stroke-linejoin: round;
-}
-.spectrum .node[data-type="topic"] .lbl { font-weight: var(--spectrum-bold-font-weight); font-size: calc(var(--spectrum-font-size-75) / var(--zoom, 1)); }
-.spectrum .node:not(.named) .lbl { display: none; }
-/* How many a closed group holds, after its name. */
-.spectrum .node .lbl .count { fill: var(--spectrum-neutral-subdued-content-color-default); font-weight: var(--spectrum-regular-font-weight); }
-/* A group that bursts into its children: light, in a ring of its color, its children inside. */
-.spectrum .node[data-group] > circle {
-  fill-opacity: .25;
-  stroke: var(--s2-type);
-  stroke-width: var(--spectrum-border-width-400);
-}
-.spectrum .node .kid { fill: var(--s2-type); stroke: none; pointer-events: none; }
-/* Each child in its own kind's color (a team's people, an area's topics). */
-.spectrum .node[data-group] { cursor: zoom-in; }
-.spectrum .node:focus-visible { outline: none; }
-.spectrum .node:focus-visible > circle, .spectrum .node.sel > circle {
-  stroke: var(--spectrum-neutral-content-color-default);
-  stroke-width: var(--spectrum-border-width-400);
-}
-/* What is pointed at, picked or found, and what it is joined to: the rest fades. */
-.spectrum svg.focus .node:not(.hi) { opacity: .15; }
-.spectrum svg.focus .node.hi .lbl { display: inline; }
-.spectrum svg.focus .edge:not(.hi) { stroke-opacity: .05; }
-.spectrum svg.focus .edge.hi { stroke: var(--spectrum-gray-700); stroke-opacity: .8; }
+.spectrum #only { gap: var(--spectrum-text-to-visual-100); }
 
 /* The tooltip: a Popover. */
 .spectrum .tip {
@@ -252,7 +238,7 @@ p.trend { display: flex; align-items: center; }
 .spectrum .panel .head .follow { flex: none; }
 .spectrum .panel > .acts { gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
 .spectrum .panel button.follow[aria-pressed="true"] { color: var(--spectrum-accent-content-color-default); border-color: var(--spectrum-accent-background-color-default); }
-.spectrum .panel table.areas td.acts { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-75); white-space: nowrap; }
+.spectrum .panel table.areas td.acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--spectrum-spacing-75); }
 .spectrum .panel table.areas tr.off td:first-child { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .panel table.areas .pickr-a { text-align: left; }
 .spectrum .panel .areaform { display: flex; flex-direction: column; gap: var(--spectrum-spacing-200); margin: var(--spectrum-spacing-200) 0; padding: var(--spectrum-spacing-300); border-radius: var(--spectrum-corner-radius-200); background: var(--spectrum-gray-75); }
@@ -331,16 +317,38 @@ p.trend { display: flex; align-items: center; }
 .spectrum .s5 { --s2-series: var(--spectrum-purple-800); }
 .spectrum .s6 { --s2-series: var(--spectrum-cyan-900); }
 .spectrum .s7 { --s2-series: var(--spectrum-yellow-1000); }
+/* A line of the map's: its bubble's color (TopicSpace.colorKey), then two other shades of it. */
+.spectrum .k-topic { --s2-series: var(--spectrum-indigo-700); }
+.spectrum .k-topic.v1 { --s2-series: var(--spectrum-indigo-500); }
+.spectrum .k-topic.v2 { --s2-series: var(--spectrum-indigo-900); }
+.spectrum .k-tag { --s2-series: var(--spectrum-indigo-1100); }
+.spectrum .k-tag.v1 { --s2-series: var(--spectrum-indigo-1300); }
+.spectrum .k-tag.v2 { --s2-series: var(--spectrum-indigo-1000); }
+.spectrum .k-product { --s2-series: var(--spectrum-orange-700); }
+.spectrum .k-product.v1 { --s2-series: var(--spectrum-orange-500); }
+.spectrum .k-product.v2 { --s2-series: var(--spectrum-orange-900); }
+.spectrum .k-product-group { --s2-series: var(--spectrum-orange-1000); }
+.spectrum .k-product-group.v1 { --s2-series: var(--spectrum-orange-1200); }
+.spectrum .k-product-group.v2 { --s2-series: var(--spectrum-orange-800); }
+.spectrum .k-vendor { --s2-series: var(--spectrum-yellow-700); }
+.spectrum .k-vendor.v1 { --s2-series: var(--spectrum-yellow-500); }
+.spectrum .k-vendor.v2 { --s2-series: var(--spectrum-yellow-900); }
+.spectrum .k-vendor-group { --s2-series: var(--spectrum-yellow-1000); }
+.spectrum .k-vendor-group.v1 { --s2-series: var(--spectrum-yellow-1200); }
+.spectrum .k-vendor-group.v2 { --s2-series: var(--spectrum-yellow-800); }
 .spectrum .split > .col { gap: var(--spectrum-spacing-300); }
-.spectrum .tchart .thead { gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin-bottom: var(--spectrum-spacing-100); }
-.spectrum .tchart h2 { margin: 0; font-size: var(--spectrum-font-size-200); }
-.spectrum .tchart h2 .sub { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); }
-.spectrum .tqrow { gap: var(--spectrum-spacing-100); }
+/* The chart on the map: the page's color rising from the bottom, so the bubbles behind fade out
+   under the lines; a wash of each line's color under it. */
+.spectrum .graph > .tchart {
+  padding: var(--spectrum-spacing-400) var(--spectrum-spacing-300) var(--spectrum-spacing-200);
+  background: linear-gradient(to top, var(--spectrum-background-layer-1-color) 70%, transparent);
+}
+.spectrum .tchart .area { fill: var(--s2-series); fill-opacity: .08; stroke: none; }
 .spectrum .tchart .line { fill: none; stroke: var(--s2-series); stroke-width: var(--spectrum-border-width-400); stroke-linejoin: round; stroke-linecap: round; }
 .spectrum .tchart .line.picked { stroke-width: calc(var(--spectrum-border-width-400) * 1.5); }
 .spectrum .tchart .line.partial { stroke-width: var(--spectrum-border-width-200); stroke-dasharray: var(--spectrum-spacing-75) var(--spectrum-spacing-75); }
-.spectrum .tchart .grid { stroke: var(--spectrum-gray-200); stroke-width: var(--spectrum-border-width-100); }
-.spectrum .tchart .grid.month { stroke: var(--spectrum-gray-100); }
+.spectrum .tchart .grid { stroke: var(--spectrum-gray-200); stroke-width: var(--spectrum-border-width-100); stroke-dasharray: var(--spectrum-spacing-50) var(--spectrum-spacing-75); }
+.spectrum .tchart .grid.month { stroke: var(--spectrum-gray-200); stroke-opacity: .5; stroke-dasharray: none; }
 .spectrum .tchart .axis { fill: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-50); }
 .spectrum .tchart .cursor { stroke: var(--spectrum-gray-500); stroke-width: var(--spectrum-border-width-100); stroke-dasharray: var(--spectrum-spacing-50) var(--spectrum-spacing-50); }
 .spectrum .tchart .hit { fill: transparent; }

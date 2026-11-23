@@ -20,11 +20,11 @@ import { whenBusy } from '../src/agent/delivery.js';
 import {
   inSidebar, keepAnswer, keepAnswers, talk,
 } from '../src/agent/sidebar.js';
-import { agentToolsExtension } from '../src/agent/tools.js';
+import { agentToolsExtension, opspileExtension } from '../src/agent/tools.js';
 import { latestTurn, sidebarTurns, turnSidebar } from '../src/agent/turn.js';
 import {
-  addSidebarMessage, inputText, keepSidebarAnswer, MAX_ANSWER, seeSidebar, sidebarFor, sidebarId,
-  sidebarNote, sidebarOf, unseenAnswers,
+  addSidebarFollowup, addSidebarMessage, inputText, keepSidebarAnswer, MAX_ANSWER, seeSidebar,
+  sidebarFor, sidebarId, sidebarNote, sidebarOf, unseenAnswers,
 } from '../src/sidebar.js';
 import { d1 } from './d1.js';
 
@@ -276,5 +276,95 @@ describe('the sidebar', () => {
     assert.deepEqual([list[1].to, list[1].unseen], [ADA.id, true]);
     assert.equal('unseen' in list[0], false);
     assert.deepEqual(await sidebarFor(e, [OTHER]), []);
+  });
+
+  it('follows up on an answered message: to its person, unseen, three times in a week', async () => {
+    const e = env();
+    const asked = await addSidebarMessage(e, SLACK, {
+      id: sidebarId(), person: ADA.id, name: ADA.name, text: 'Is Bo in the team?',
+    });
+    const at = new Date(Date.parse(asked.at) + 60 * 1000);
+    const follow = (fields, now = at) => addSidebarFollowup(e, SLACK, {
+      to: asked.id, text: 'Bo is in now.', ...fields,
+    }, now);
+    // Not before it is answered, nor for another thread's message or one that is not there.
+    assert.match((await follow()).error, /no answer yet/);
+    await keepSidebarAnswer(e, SLACK, {
+      state: 'done', sidebar: asked.id, text: 'Not yet.', endedAt: asked.at,
+    });
+    const elsewhere = await addSidebarFollowup(e, OTHER, { to: asked.id, text: 'x' }, at);
+    assert.match(elsewhere.error, /no sidebar message/);
+    assert.match((await follow({ to: sidebarId() })).error, /no sidebar message/);
+    assert.match((await follow({ text: '  ' })).error, /write what/);
+    const first = await follow();
+    assert.deepEqual(first.message, {
+      id: `${asked.id}:followup:1`,
+      role: 'agent',
+      by: null,
+      body: 'Bo is in now.',
+      state: 'done',
+      reply_to: asked.id,
+      at: at.toISOString(),
+      to: ADA.id,
+      unseen: true,
+    });
+    assert.equal(first.to, 'Ada');
+    assert.deepEqual(await unseenAnswers(e, [SLACK], ADA.id), new Map([
+      [SLACK, [`${asked.id}:answer`, `${asked.id}:followup:1`]],
+    ]));
+    assert.equal((await follow()).message.id, `${asked.id}:followup:2`);
+    assert.equal((await follow()).message.id, `${asked.id}:followup:3`);
+    assert.match((await follow()).error, /3 times already/);
+    // A week on, it is the note's.
+    const other = await addSidebarMessage(e, SLACK, {
+      id: sidebarId(), person: ADA.id, name: ADA.name, text: 'And Cy?',
+    });
+    await keepSidebarAnswer(e, SLACK, { state: 'done', sidebar: other.id, text: 'No.' });
+    const late = new Date(Date.parse(other.at) + 8 * 24 * 60 * 60 * 1000);
+    const stale = await addSidebarFollowup(e, SLACK, { to: other.id, text: 'x' }, late);
+    assert.match(stale.error, /more than 7 days old/);
+    const ids = (await sidebarFor(e, [SLACK])).map((m) => m.id);
+    assert.deepEqual(ids.filter((id) => id.startsWith(asked.id)), [
+      asked.id, `${asked.id}:answer`, `${asked.id}:followup:1`, `${asked.id}:followup:2`,
+      `${asked.id}:followup:3`,
+    ]);
+  });
+
+  it('follows up from a turn on the thread, never from one that answers the sidebar', async () => {
+    const e = env();
+    const asked = await addSidebarMessage(e, SLACK, {
+      id: sidebarId(), person: ADA.id, name: ADA.name, text: 'Is Bo in the team?',
+    });
+    await keepSidebarAnswer(e, SLACK, { state: 'done', sidebar: asked.id, text: 'Not yet.' });
+    const results = [];
+    const capture = (next) => (context) => {
+      const last = context.messages[context.messages.length - 1];
+      results.push({ text: last.content.map((c) => c.text).join(''), error: last.isError });
+      return next;
+    };
+    const step = (name, args) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
+    const followup = (text) => step('sidebar_followup', { message: asked.id, text });
+    await run([sidebarNote({ id: asked.id, by: 'Ada', text: 'Is Bo in the team?' }), 'New messages in your thread: …'], [
+      () => followup('From the sidebar turn.'),
+      capture(fauxAssistantMessage('Not yet.')),
+      () => followup('Bo is in the team now.'),
+      capture(fauxAssistantMessage('Bo was added; I told Ada in the sidebar.')),
+    ], (registry, transcript) => {
+      registry.install(opspileExtension({
+        env: e,
+        hasThread: true,
+        target: async () => ({
+          key: SLACK, team: 'helix', org: 'acme', source: 'slack', tenant: 'E1', channelId: 'C1',
+        }),
+        inSidebar: () => inSidebar({ harness: { messages: transcript } }),
+      }));
+    });
+    assert.deepEqual(results.map((r) => r.error), [true, false]);
+    assert.match(results[0].text, /^Not while you answer a sidebar message/);
+    assert.match(results[1].text, /^Written to Ada in the sidebar/);
+    const list = await sidebarFor(e, [SLACK]);
+    assert.deepEqual(list.map((m) => [m.role, m.body]), [
+      ['person', 'Is Bo in the team?'], ['agent', 'Not yet.'], ['agent', 'Bo is in the team now.'],
+    ]);
   });
 });

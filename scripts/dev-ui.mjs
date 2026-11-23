@@ -76,6 +76,7 @@ import { cleanPick } from '../src/rankevents.js';
 import { suggestMentions } from '../src/mention-match.js';
 import {
   fmcScript, fromPreview, highlightScript, inboxPage as servedInbox, page as servedPage,
+  threeScript,
 } from '../src/page.js';
 import {
   askClef, candidates, rankEmoji, resolveShortcodes,
@@ -610,6 +611,22 @@ function remindersFor(entry, mentions, id) {
     ? `https://example.slack.com/archives/${entry.ch.channelId}/p${String(id).replace('.', '')}`
     : `https://teams.microsoft.com/l/message/${encodeURIComponent(entry.ch.channelId)}/${encodeURIComponent(id)}`;
   return { reminders, permalink: link };
+}
+
+/**
+ * As src/post.js `mentionedOutside` answers a Teams post: the people it mentions who are not in
+ * the Teams team, where its members are listed (`CHANNELS[…].members`).
+ */
+function outsideFor(entry, mentions) {
+  if (!entry || entry.row.source !== 'teams' || !entry.ch.members) {
+    return {};
+  }
+  const inChannel = channelMember(entry);
+  const ids = new Set((mentions || []).map((m) => String(m.id || m)));
+  const outside = [...store.people.values(), ...store.members]
+    .filter((p) => ids.has(`teams-${p.key}`) && !inChannel(p))
+    .map((p) => ({ name: p.name, ...(p.email ? { email: p.email } : {}) }));
+  return outside.length ? { outside } : {};
 }
 
 function myChannels() {
@@ -1768,6 +1785,7 @@ async function api(req, res, url) {
         aliases: [p.login, String(p.email || '').split('@')[0]].filter(Boolean),
         here: here.has(p.name),
         member: inChannel(p),
+        outside: entry.row.source === 'teams' && Boolean(entry.ch.members) && !inChannel(p),
         staff: p.staff,
         affinity: p.staff ? affinity.get(p.name) || 0 : 0,
       })),
@@ -2154,6 +2172,7 @@ async function api(req, res, url) {
       text: sent,
       ...invitedFor(entry, mentions),
       ...remindersFor(entry, mentions, id),
+      ...outsideFor(entry, mentions),
       ...(agentDraft ? postingOfferFor(entry) : {}),
     });
   }
@@ -2702,7 +2721,8 @@ const server = createServer(async (req, res) => {
     }
     // The code highlighter, as the Worker serves it.
     const asked = { method: req.method, headers: new Headers(req.headers) };
-    const lit = highlightScript(asked, url.pathname) || fmcScript(asked, url.pathname);
+    const lit = highlightScript(asked, url.pathname) || fmcScript(asked, url.pathname)
+      || threeScript(asked, url.pathname);
     if (lit) {
       res.writeHead(lit.status, Object.fromEntries(lit.headers)).end(await lit.text());
       return;

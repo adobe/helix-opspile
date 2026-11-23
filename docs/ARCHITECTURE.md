@@ -1448,38 +1448,72 @@ twice its share of all the map's threads). The lift keeps what is
   drawing's part without Tech instead. Maps built before were built from the products Clairic
   named, matched to the tech stack (src/products.js `coveredBy`), and kept the ones no entry
   covered as **gaps**, which the page still lists for those maps.
+- Each topic's **place** on the page (`topics[].at`, three coordinates, the farthest topic 1
+  from the middle; `src/topicspace.js`): a thread's vector is its topic, but also its people, its
+  products and its customer (a team's threads read alike, and so do one customer's), so a topic
+  placed by the plain mean of its threads sits where its people are as much as where its
+  subject is. Every thread is fitted as the sum of a part for its topic, one per person who
+  posted, one per product and one for its customer (ridge regression, a part of n threads
+  shrunk by n / (n + 1), ten sweeps of coordinate descent, a third of a second for 4,000
+  threads), and the topics are placed by the first three principal components of their own
+  parts. On the production threads (835, Nov 2026) a thread's main Adobe poster could be told
+  from its vector 52% of the time and from what is left once those parts are out 17% (chance
+  22%), its customer 77% and 21% (26%), its topic 52% and 46%.
 - The cron builds one when the newest is a week old, and the admin team with **Rebuild**; a row
   of `topic_maps` each (the map as JSON), the newest five kept.
 - The [expert finder](#replying) reads the newest (`src/topicindex.js`): which topic each thread
   is in and who worked each topic's threads, so it can tell a thread agent which topics a person's
   similar threads are in, and list who works a topic (`list_topics`).
 
-The page draws the map as one force-directed graph (its own, after d3-force's model) of three
-kinds, each a **hierarchy of bubbles** (`ui/topicgraph.js`): the topics in their areas (and
-"Not in an area"; on maps before version 2, the tag most of a topic's threads have), the people
-in their teams (Adobe's) or their customers (the others'; a customer whose people did not post
-is a bubble too), and the features of the tech stack in their products (Adobe's) or vendors (the
-others'). A click on a group bursts it into its children where it was; a click on the child
-picked folds them back; a group of one child is that child, but a customer stays a bubble. Each
-node is as big as its threads, a line between two that share threads, thicker the more (with the
-topics shown, a line joins a topic or an area to the others; the topics are the hubs). One kind
-shown alone is joined to itself: two people or products by the threads they share, and two
-topics, which never share a thread, by the Adobe people they share (as many people as the
-threads a line needs, each with that many threads in both). The filters are a team, the kinds
-shown and the threads a line needs; they, the groups opened (`open`) and the pick are the page's
-address. A node picked shows what it is joined to and its threads, each a link into the inbox;
-without a pick, the panel lists the gaps first (**Not in the tech stack**: the products no entry
-names, by their threads; those two customers or more name, then, folded, those of one customer,
-which are as likely a brand or a system of theirs, and a count of the names of one thread; adding one in a team's **Extraction rules**, or its name to an entry's description,
-makes Clef ask about it), then the topics with the share of their threads Clef tagged at all, the
-fewest first on a click: the topics Clef rarely tags are what its topic questions miss. A gap is
-drawn as a hollow ring.
+The page draws the map in three dimensions (`ui/topicview.js`, with three.js from
+`/inbox/three.js`), in a space laid out by `ui/topicspace.js`, of three kinds, each a **hierarchy
+of bubbles** (`ui/topicgraph.js`): the topics in their areas (and "Not in an area"; on maps
+before version 2, the tag most of a topic's threads have), the people in their teams (Adobe's)
+or their customers (the others'; a customer whose people did not post is a bubble too), and the
+features of the tech stack in their products (Adobe's) or vendors (the others'). A group of one
+child is that child, but a customer stays a bubble.
+
+- **The space.** The topics are fixed at their places (`topics[].at`; on a map from before them,
+  each area on a sphere and its topics around it). The products come next, each pulled to the
+  topics it shares threads with, then the people, pulled to the topics (hardest), the products
+  and the other people they share threads with; how hard two pull is the threads they share
+  against how many each has. A group is where its members are, by their threads. The places are
+  of the whole map, so a bubble stays where it was when a team is picked or only some threads
+  are shown. While drawn, bubbles push each other apart, the bigger moving less, and are pulled
+  gently back to their places.
+- **The bubbles.** Each in its kind's color of the page (the stylesheet's, read by the script),
+  as big as its threads (by volume). A closed group is glass with its children inside, at their
+  own size when they fit, else all scaled down alike and packed so none overlaps; an opened one
+  is a thin shell around its members (an area's topics), or, when they are far apart (a team's
+  people), a hub with a spoke to each. A product no tech stack entry names is glass, empty.
+- **Gestures.** Drag turns, scroll zooms; it turns slowly by itself until it is touched, and
+  again three minutes after (not for those who ask for less motion). A click picks a bubble:
+  lines go to the bubbles it shares threads with, and the rest fade. Holding a group pops it (it
+  swells while held, and its children come out of where they sat in it); holding an opened
+  group's shell or a member folds it (it shrinks). A double-click shows **only** that bubble's
+  threads, with all they are about; a double-click on nothing shows all of them again.
+- **Names.** At most ten, the biggest groups and the most threads first, those a pick shares
+  threads with before them, none over another; the one pointed at besides.
+
+The filters are a team, the kinds shown and the threads a bubble needs; they, the groups opened
+(`open`), only what (`only`) and the pick are the page's address. A node picked shows what it
+shares threads with and its threads, each a link into the inbox; without a pick, the panel
+lists the gaps first (**Not in the tech stack**: the products no entry names, by their threads;
+those two customers or more name, then, folded, those of one customer, which are as likely a
+brand or a system of theirs, and a count of the names of one thread; adding one in a team's
+**Extraction rules**, or its name to an entry's description, makes Clef ask about it), then the
+topics with the share of their threads Clef tagged at all, the fewest first on a click: the
+topics Clef rarely tags are what its topic questions miss.
 
 ### Trends
 
 The Topics page also shows how much the channels talk about each part of the map week by week, as
 Google Trends shows a search term, and what is **trending**, **declining** or **peaked**. It is one
-page: the chart under the graph, and the panel beside both.
+page: the chart over the bottom of the map (the camera keeps the bubbles' middle above it), and
+the panel beside both. The bar's one search finds on the map as you type, and Enter puts what it
+names on the chart (a topic, an area or a product, words, or `~a phrase`, separated by commas);
+the bubble pointed at adds its line while pointed at, a pick or a bubble popped keeps its line
+there.
 
 - **One map.** The trends' topics are the topic map's. Because the map clusters every thread with
   three messages or more, of every month, an old topic is a topic too. The map keeps the space it
@@ -1722,6 +1756,16 @@ in the channel) refuses nobody and is only logged (`route: invite`). Teams adds 
 through an approval flow of its own, and a message written in Slack itself is left to Slack,
 which asks there; a thread agent still points out a mention of someone not in the channel
 (`src/agent/members.js`).
+
+On Teams the inbox cannot add anyone, and Teams itself says nothing: it completes a mention from
+the whole tenant's directory, so a name that fills in looks like a member. Once the Teams team's
+members are listed in full (a list that came back, of no shared channel, under 2000 members), the
+suggestions say "not in team" of whoever is not among them (`outside`, `GET /api/mentionable`),
+and a reply that mentions them says so (`outside` in `POST /api/post`'s answer, with their mail
+address where known, `mentionedOutside` in `src/post.js`): the page's note, which stays until it
+is dismissed, names them and what to ask admin-bot (`@admin-bot add <address>`). A list that says
+someone is out is listed again first when over half a minute old, so someone just added is not
+called out.
 
 **Mention reminders.** A mention reaches someone only if they look: a colleague on leave, or
 one who rarely answers mentions, may never see it. So the answer to a post that mentions Adobe
@@ -2224,6 +2268,14 @@ they when the transcript cannot be read. The input starts with a line that names
 and only an input that starts with it is one: a customer quoting it is told inside a delivery.
 The inboxes of the thread's teams hear of each message and answer through the team's room
 (`{ type: 'sidebar' }`).
+What the agent learns later about a sidebar question goes back there too: the thread's note
+reaches nobody who asked in the sidebar, so in a turn on the thread's messages the agent tells
+them with `sidebar_followup` (the request they waited on went through, what it said turned out
+wrong). A follow-up is one more answer of the agent's to the message (`<id>:followup:<n>`,
+`reply_to` the message, unseen until they see it, so their inbox badges it), only to a message it
+answered already, up to a week old and three times; never while it answers a sidebar message,
+whose closing text is the answer. In the thread, after a message of the thread, it is a run of its
+own: "Thread Agent followed up with you in the sidebar".
 
 **Tool requests.** In the sidebar, the agent can ask for a tool its channel does not have
 (`request_tool`; the record is `tool_requests`, migration 0080, `src/toolrequests.js`, the agent's
@@ -2341,6 +2393,7 @@ written by people outside its control.
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `channel_assignment`, `list_teams`, `request_channel_reassignment` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"). The admin team decides |
 | `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
+| `sidebar_followup` | tells the person who asked something in the sidebar (`message`, its `sb_…` id) what has happened since, from a later turn on the thread's messages (`addSidebarFollowup` in `src/sidebar.js`): a new answer of the agent's to them, under their question; refused while it answers a sidebar message, for a message it did not answer yet, over a week old, or followed up three times |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
 | `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `update_draft` holds a draft's length against the replies staff write (`src/agent/draftlength.js`, log-normal over characters): beyond one standard deviation (42 to 480 characters) it saves with a warning, beyond two (12 to 1625) it saves nothing and says why. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
 | `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app. As no person reads it first, it refuses a reply longer than one standard deviation of staff replies (480 characters, `src/agent/draftlength.js`), which goes into the draft instead, and takes a short one |
