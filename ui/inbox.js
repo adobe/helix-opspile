@@ -4329,13 +4329,15 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // Replies I sent that have not arrived yet: a reply has arrived once a message has the id
   // the platform gave it, or (no id) my text, compared loosely, because the platform rewrites
   // it (emoji as :shortcodes:, Slack's *bold* and _italics_, mentions). One still on its way,
-  // or that failed, stays; one the platform took, for a minute at most. One nobody knows about
-  // stays until it arrives, which settles it, or the person decides. A reply as the bot, which
-  // comes back more slowly (a minute or more), stays for up to `SEND_APP_ARRIVE_MS`.
+  // or that failed, stays; one the platform took and named stays until its message is here (it
+  // says it is not back yet after `sendLate`; a day at most), and one it did not name (Slack's
+  // uploads), which cannot be told from another, for `sendLate`. One nobody knows about stays
+  // until it arrives, which settles it, or the person decides. They are kept in localStorage
+  // meanwhile (`saveSending`), so a reload does not lose them.
   const settled = new Set();
   state.sending = state.sending.filter((p) => {
     if (p.status === 'sending' || p.status === 'failed') return true;
-    if (p.status !== 'unknown' && Date.now() - p.sentAt >= (p.app ? SEND_APP_ARRIVE_MS : 60000)) return false;
+    if (p.status !== 'unknown' && sendLate(p) && (!p.postedId || Date.now() - p.sentAt >= SEND_KEEP_MS)) return false;
     if (p.thread !== key) return true;
     // An earlier message with the same words ("Thanks") is not this one.
     const since = p.status === 'unknown' ? Date.parse(p.at) - SEND_CLOCK_MS : 0;
@@ -4345,6 +4347,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     if (m) settled.add(`${m.thread}|${m.id}`);
     return !m;
   });
+  saveSending();
   // Arrivals come up into view, but not a reply taking the place of its bubble, which looks
   // the same, nor that bubble again when it changes (its bar is through, or it failed).
   const fresh = (m) => (m.pending ? m.fresh : live && state.shownIds
@@ -5805,6 +5808,12 @@ const SEND_KEY_MS = 23 * 60 * 60 * 1000;
 // How long a reply as the bot, which the platform took, waits to come back (its events take
 // longer than a person's, now and then over a minute).
 const SEND_APP_ARRIVE_MS = 3 * 60 * 1000;
+// How long a reply as you, which the platform took, waits to come back before it says it is not
+// back yet; and how long one it named is kept at most, waiting for its message.
+const SEND_ARRIVE_MS = 60 * 1000;
+const SEND_KEEP_MS = 24 * 60 * 60 * 1000;
+/** Whether reply `p`, which the platform took, is late to come back. */
+const sendLate = (p, now = Date.now()) => Boolean(p.sentAt) && now - p.sentAt >= (p.app ? SEND_APP_ARRIVE_MS : SEND_ARRIVE_MS);
 
 /**
  * The bar of reply `p` at `now`: how full it is (0 to 1), how visible, and whether it is
@@ -5840,14 +5849,21 @@ const sendDecides = (p, now) => Boolean(p.asked) || now - Date.parse(p.at) >= SE
  * feed keeps its node while the bar fills), why it failed, or nothing once it is through.
  */
 function sendState(p, now = Date.now()) {
+  // Restored after the page was left: its files stayed with that page, so it cannot go again.
+  const gone = p.filesLost ? '. Its files stayed with the page you left: copy the text and send it again with them' : '';
   if (p.status === 'unknown') {
     const decide = sendDecides(p, now);
-    return `<div class="unsent" role="alert"><span class="why">${decide ? 'May have been sent' : 'Not sure it was sent'}: ${esc(p.error)}</span>
-      <button data-retry="${esc(p.id)}"${decide ? ' title="It may go out twice: check the thread on the platform first"' : ''}>${decide ? 'Send again' : 'Retry'}</button><button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+    return `<div class="unsent" role="alert"><span class="why">${decide ? 'May have been sent' : 'Not sure it was sent'}: ${esc(p.error)}${gone}</span>
+      ${gone ? '' : `<button data-retry="${esc(p.id)}"${decide ? ' title="It may go out twice: check the thread on the platform first"' : ''}>${decide ? 'Send again' : 'Retry'}</button>`}<button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
   }
   if (p.status === 'failed') {
-    return `<div class="unsent" role="alert"><span class="why">Not sent: ${esc(p.error)}</span>
-      <button data-retry="${esc(p.id)}">Retry</button><button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+    return `<div class="unsent" role="alert"><span class="why">Not sent: ${esc(p.error)}${gone}</span>
+      ${gone ? '' : `<button data-retry="${esc(p.id)}">Retry</button>`}<button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+  }
+  if (p.postedId && sendLate(p, now)) {
+    // The platform took it and named it: it is there, only not back in the inbox yet.
+    return `<div class="unsent late" role="status"><span class="why">Sent, not back from ${esc(PLATFORM[p.source] || 'the platform')} yet: it shows here once it is</span>
+      <button data-unsend="${esc(p.id)}" title="Stop showing this: the message shows once it arrives">Hide</button></div>`;
   }
   if (p.status !== 'sending' && p.status !== 'sent') return '';
   return `<div class="sendbar" data-send="${esc(p.id)}" role="progressbar" aria-label="Sending" aria-valuemin="0" aria-valuemax="100"><i></i></div>`;
@@ -5899,6 +5915,7 @@ function appLook(key) {
 
 /** Shows the thread's replies being sent as they are now, if it is open. */
 function showSending(key) {
+  saveSending();
   if (state.open === key && state.cache.get(key)) openThread(key, { live: true, cached: true });
   else if (startedShown() && (key === STARTED || key === started.key)) renderStarted();
 }
@@ -5945,6 +5962,7 @@ async function deliver(p) {
   Object.assign(p, {
     status: 'sending', startedAt: Date.now(), doneAt: null, error: null,
   });
+  saveSending();
   animateSending();
   let res = null;
   let data = {};
@@ -5980,6 +5998,9 @@ async function deliver(p) {
   Object.assign(p, {
     body: reworded ? data.text : p.body, postedId: data.id || null, sentAt: now, doneAt: now, status: REDUCED_MOTION.matches ? 'delivered' : 'sent',
   });
+  saveSending();
+  // Not back by then: its bubble says so (or goes, if the platform did not name it).
+  setTimeout(() => showSending(p.thread), SEND_ARRIVE_MS + 500);
   if (p.base && state.cache.get(p.thread)?.data?.draft?.updated_at === p.base) setCachedDraft(p.thread, null);
   const invited = invitedSaying(data);
   if (invited) toast(invited, null, { stay: missedMention(data) });
@@ -6035,7 +6056,7 @@ async function send(key, thread, draft = null) {
 /** Sends a reply that failed again. */
 function retrySend(id) {
   const p = state.sending.find((x) => x.id === id);
-  if (!p || (p.status !== 'failed' && p.status !== 'unknown')) return;
+  if (!p || p.filesLost || (p.status !== 'failed' && p.status !== 'unknown')) return;
   // The same key, so a post that did go out is not posted again, unless the person decided to.
   Object.assign(p, {
     status: 'sending', startedAt: null, error: null, key: sendDecides(p, Date.now()) ? crypto.randomUUID() : p.key, asked: false,
@@ -6045,20 +6066,143 @@ function retrySend(id) {
   postPending(p);
 }
 
-/** Throws a reply that failed away, with a moment to take that back. */
+/**
+ * Throws a reply that failed away, with a moment to take that back; or stops showing one that
+ * was sent and is late to come back (it shows once it arrives).
+ */
 function discardSend(id) {
   const i = state.sending.findIndex((x) => x.id === id);
-  if (i < 0 || (state.sending[i].status !== 'failed' && state.sending[i].status !== 'unknown')) return;
+  if (i < 0) return;
+  const late = state.sending[i].postedId && sendLate(state.sending[i]);
+  if (!late && state.sending[i].status !== 'failed' && state.sending[i].status !== 'unknown') return;
   const [p] = state.sending.splice(i, 1);
   showSending(p.thread);
-  toast('Reply discarded.', { label: 'Undo', run: () => { state.sending.push(p); showSending(p.thread); } });
+  toast(late ? 'Hidden: the reply was sent, and shows once it arrives.' : 'Reply discarded.', { label: 'Undo', run: () => { state.sending.push(p); showSending(p.thread); } });
 }
 
+// ---------------------------------------------------------------- replies kept until they arrive
+// Replies being sent are kept in localStorage (per person, by id) until their message is back
+// from the platform, they are discarded, or they expire, so that leaving the page (a reload,
+// closing the tab, a crash) does not lose one: the next page shows it again. One that was on its
+// way then says nobody knows whether it went out, with Retry under the same key (the Worker's
+// `post_keys` answers a retry of a post that went out, src/postkeys.js); one the platform took
+// waits for its message, as here. Files cannot be kept: a reply that had some and did not go out
+// cannot be sent again, and says so. New threads (`started`, the composer) are not kept. Other
+// tabs hear of changes (the `storage` event): what is gone there goes here, and a reply's new
+// state is taken over.
+const SENDING_STORE = 'opspile.sending';
+const SENDING_FIELDS = ['thread', 'body', 'mentions', 'kinds', 'base', 'at', 'id', 'key', 'source', 'status', 'postedId', 'sentAt', 'error', 'asked', 'app', 'author', 'avatar', 'authorKey', 'unnamed', 'filesLost'];
+// The longest a reply that did not go out is kept: after that, nobody is going to send it.
+const SENDING_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+// The ids of replies this page has had: one of them no longer here is gone from the store too.
+const sendingKnown = new Set();
+
+/** Whether reply `p` is kept: a reply in a thread the inbox has. */
+const sendingKept = (p) => !p.started && p.thread !== STARTED && p.thread !== NEW;
+
+/** Reply `p` as it is kept: what it shows and how it went, without its files' bytes. */
+function keptReply(p) {
+  const o = Object.fromEntries(SENDING_FIELDS.filter((k) => p[k] !== undefined && p[k] !== null).map((k) => [k, p[k]]));
+  o.files = (p.files || []).map((f) => ({ name: f.name, type: f.type }));
+  return o;
+}
+
+/**
+ * A kept reply `o` as a page that did not send it shows it, at `now`, or null when it is too old.
+ * One that was on its way: nobody knows whether it went out. One the platform took waits for its
+ * message. One that had files and did not go out cannot go again (`filesLost`).
+ */
+function restoredReply(o, now = Date.now()) {
+  if (!o || !o.id || !o.thread || typeof o.body !== 'string') return null;
+  const taken = o.status === 'sent' || o.status === 'delivered';
+  if (taken ? now - (o.sentAt || 0) >= SEND_KEEP_MS : now - Date.parse(o.at) >= SENDING_MAX_MS) return null;
+  const p = {
+    ...o, files: o.files || [], uploads: [], startedAt: null, doneAt: taken ? o.sentAt : null, shown: true,
+  };
+  if (taken) p.status = 'delivered';
+  else if (p.status === 'sending') Object.assign(p, { status: 'unknown', error: 'the page was left while it was being sent', asked: false });
+  if (!taken && p.files.length) p.filesLost = true;
+  return p;
+}
+
+const sendingStoreKey = () => (state.me && !state.as ? `${SENDING_STORE}.${state.me.id}` : null);
+function storedSending() {
+  try { return JSON.parse(localStorage.getItem(sendingStoreKey()) || '{}') || {}; } catch { return {}; }
+}
+
+/** Writes this page's replies being sent to the store, leaving other tabs' alone. */
+function saveSending() {
+  const name = sendingStoreKey();
+  if (!name) return;
+  const stored = storedSending();
+  const here = new Set();
+  for (const p of state.sending) {
+    if (!sendingKept(p)) continue;
+    here.add(p.id);
+    sendingKnown.add(p.id);
+    stored[p.id] = keptReply(p);
+  }
+  for (const id of [...sendingKnown]) {
+    if (here.has(id)) continue;
+    delete stored[id];
+    sendingKnown.delete(id);
+  }
+  const now = Date.now();
+  for (const [id, o] of Object.entries(stored)) if (!restoredReply(o, now)) delete stored[id];
+  try {
+    if (Object.keys(stored).length) localStorage.setItem(name, JSON.stringify(stored));
+    else localStorage.removeItem(name);
+  } catch { /* storage is off, or full: the replies live in this page only */ }
+}
+
+/** Shows the replies a page left behind (the page itself, before a reload), once signed in. */
+function restoreSending() {
+  if (!sendingStoreKey()) return;
+  const now = Date.now();
+  for (const o of Object.values(storedSending())) {
+    if (state.sending.some((p) => p.id === o.id)) continue;
+    const p = restoredReply(o, now);
+    if (!p) continue;
+    state.sending.push(p);
+    sendingKnown.add(p.id);
+    // Not late yet: its bubble says so when it is.
+    const left = p.sentAt && (p.app ? SEND_APP_ARRIVE_MS : SEND_ARRIVE_MS) - (now - p.sentAt);
+    if (left > 0) setTimeout(() => showSending(p.thread), left + 500);
+  }
+  saveSending();
+}
+
+// Another tab changed the store: a reply gone there (it arrived, or was discarded) goes here
+// too, and one that went on there (it was retried and went out) shows so here.
+window.addEventListener('storage', (e) => {
+  if (!e.key || e.key !== sendingStoreKey()) return;
+  let stored = {};
+  try { stored = JSON.parse(e.newValue || '{}') || {}; } catch { return; }
+  const changed = new Set();
+  state.sending = state.sending.filter((p) => {
+    if (!sendingKept(p) || !sendingKnown.has(p.id) || stored[p.id] || p.status === 'sending') return true;
+    sendingKnown.delete(p.id);
+    changed.add(p.thread);
+    return false;
+  });
+  for (const p of state.sending) {
+    const o = stored[p.id];
+    if (!o || p.status === 'sending' || o.status === 'sending' || (o.status === p.status && o.postedId === p.postedId)) continue;
+    const r = restoredReply(o);
+    if (!r) continue;
+    for (const k of ['status', 'postedId', 'sentAt', 'doneAt', 'error', 'asked', 'key', 'body']) p[k] = r[k];
+    changed.add(p.thread);
+  }
+  for (const key of changed) if (state.open === key && state.cache.get(key)) openThread(key, { live: true, cached: true });
+});
+
 // Leaving the page (a reload, closing the tab, the browser's Back out of the inbox) while a
-// reply is still on its way would lose it: the box is already empty, the bubble lives in this
-// page only, and the post may be cut off. The browser asks first, then and only then.
+// reply is still on its way cuts the post off. A reply kept in localStorage comes back on the
+// next page, unsure whether it went out; one with files (whose bytes are not kept), or a new
+// thread, would be lost. The browser asks first, then and only then.
 window.addEventListener('beforeunload', (e) => {
-  if (!state.sending.some((p) => p.status === 'sending') && !state.compose?.posting) return;
+  const losing = state.sending.some((p) => p.status === 'sending' && (!sendingKept(p) || p.uploads?.length));
+  if (!losing && !state.compose?.posting) return;
   e.preventDefault();
   e.returnValue = '';
 });
@@ -6106,6 +6250,8 @@ async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), fi
   Object.assign(p, {
     body: reworded ? res.data.text : p.body, postedId: res.data.id || null, sentAt: now, doneAt: now, status: REDUCED_MOTION.matches ? 'delivered' : 'sent',
   });
+  saveSending();
+  setTimeout(() => showSending(key), SEND_APP_ARRIVE_MS + 500);
   if (p.status !== 'delivered') animateSending();
   const c = state.composers.get(key);
   if (c && c.text.trim() === text.trim()) {
@@ -9810,6 +9956,8 @@ async function start() {
   // A message's link (messageHref): the thread opens at it.
   if (initial.open && initial.msg) state.jump = { key: initial.open, id: `${initial.open}|${initial.msg}`, linked: true };
   syncReading();
+  // Replies a page left behind, still on their way or not back yet (saveSending).
+  restoreSending();
   await loadWho();
   toUrl(false);
   $('filters').onclick = (e) => {

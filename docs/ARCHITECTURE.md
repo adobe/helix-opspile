@@ -1461,9 +1461,14 @@ same post twice, so a reply carries a key, the same on every retry (`post_keys`,
 it, without posting. One that finds the first try unfinished says the reply may have been sent,
 and offers **Send again**, under a new key, so that sending it twice is the person's decision. A
 reply the platform refused is not kept, so its Retry posts. The MCP tools send no key.
-Leaving the page while a reply is still on its way (a reload, closing the tab) asks first,
-with the browser's "Leave page?": the bubble lives in the page only, and the post may be cut
-off.
+A reply the platform took and named waits for its message, however long ingestion takes: after a
+minute it says "Sent, not back from Teams yet" (with Hide), and it goes once the message is in
+the thread, or after a day. Replies being sent are kept in localStorage until then
+(`saveSending`, per person): leaving the page (a reload, closing the tab, a crash) loses none. The
+next page shows each again, one that was still on its way as "Not sure it was sent", with Retry
+under the same key, which the Worker answers without posting again if the post went out. Files are
+not kept: one with files that did not go out says so and can only be discarded, and leaving the
+page while it is on its way asks first, with the browser's "Leave page?", as for a new thread.
 
 **Emoji names.** A `:name:` in a reply goes out as the platform knows it (`src/shortcodes.js`):
 Slack gets Slack's name, Teams and Discord the character. Another platform's name or spelling is

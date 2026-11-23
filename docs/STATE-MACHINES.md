@@ -233,6 +233,15 @@ claim with no answer means nobody knows, and then only the person can decide to 
 lasts a day, so after that Retry turns into Send again. A reply as the bot (`sendAsApp`) shows the same
 way, looking like the bot's replies, from sending to sent; one that did not go out leaves the thread
 and the draft line says why. Once sent it waits up to three minutes to come back, not one.
+A reply the platform took and named (`postedId`) settles only when a message with that id is in the
+thread: after a minute (three as the bot) it says it is sent and not back yet, with Hide, and it goes
+after a day. One the platform did not name (Slack's uploads) still goes after the minute. Every
+reply in a thread the inbox has is kept in localStorage meanwhile (`opspile.sending.<person>`, by id;
+`saveSending`): the next page restores it, a reply that was sending as unknown under the same key,
+one that was sent as delivered and waiting. A reply with files keeps their names only: restored
+unsent, it cannot be retried (`filesLost`), only discarded. Not-sent replies expire after a week.
+Tabs share the store: one gone in another tab (arrived, discarded) goes, one that moved on there
+takes its state.
 
 **Reaction made here.** asked → taken → settled, or refused (`state.reacting`, `ui/inbox.js`). It
 shows on the message at once. It goes once the thread's reactions agree after the platform took it,

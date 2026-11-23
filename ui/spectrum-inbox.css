@@ -1012,6 +1012,9 @@ body:has(dialog.lightbox[open]) .scroller { overflow: hidden; }
   border-radius: 50%; background: var(--red); color: var(--spectrum-white); font-weight: 700; font-size: var(--spectrum-font-size-50); vertical-align: var(--spectrum-border-width-100); }
 .msg .unsent button { border: 0; background: none; padding: 0; color: var(--link); font: inherit; font-weight: 600; cursor: pointer; }
 .msg .unsent button:hover { text-decoration: underline; }
+/* A reply the platform took, not back in the inbox yet: nothing went wrong, so no warning. */
+.msg .unsent.late .why { color: var(--faint); }
+.msg .unsent.late .why::before { content: none; }
 /* A workspace's own emoji, in a line of text; one Clef picked for a name without an image. */
 img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .emoji-near { border-bottom: var(--spectrum-border-width-100) dotted currentColor; cursor: help; }
@@ -2203,6 +2206,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 }
 .spectrum .msg .unsent button { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); background: none; }
 .spectrum .msg .unsent button:hover { color: var(--spectrum-accent-content-color-hover); background: none; }
+.spectrum .msg .unsent.late .why { color: var(--spectrum-neutral-subdued-content-color-default); }
 
 /* Reactions on a message: small ActionButtons on the layer above the bubble, ringed in the
    page's background so they stand off its edge; yours selected in the accent's subtle fill. */
