@@ -1433,6 +1433,67 @@ makes Clef ask about it), then the topics with the share of their threads Clef t
 fewest first on a click: the topics Clef rarely tags are what its topic questions miss. A gap is
 drawn as a hollow ring.
 
+### Trends
+
+The Topics page also shows how much the channels talk about each part of the map week by week, as
+Google Trends shows a search term, and what is **trending**, **declining** or **peaked**. It is one
+page: the chart under the graph, and the panel beside both.
+
+- **One map.** The trends' topics are the topic map's. Because the map clusters every thread with
+  three messages or more, of every month, an old topic is a topic too. The map keeps the space it
+  found its topics in (`topic_maps.vectors`, the newest map's only): the mean, each topic's centre,
+  and a sample of raw thread vectors. Its own threads have their topics from it
+  (`trend_threads`). Every other thread the page counts gets the topic with the nearest centre, or
+  none below `MIN_SIM` (`src/trends.js` `assignPending`). The cron assigns `ASSIGN_BATCH` threads
+  per run: those without a topic in the newest map, and those whose vector changed
+  (`threads.embedded`). A map from before maps kept their space is built again by the next cron.
+- **What is counted.** Channel threads of the last 52 weeks that Clef labelled, not meetings or
+  people's comings and goings, and no internal org's (`trendsData`). A re-threaded group counts
+  as its first thread, with the messages of all its members. `GET /api/topics/trends` sends all of
+  them in compact form (kept for five minutes per isolate). Each one has its channel, customer,
+  team, platform, kind, topic, technologies, and messages by the week they were written. The page
+  does the counting (`ui/trends.js`).
+- **A week counts channels:** of the channels with messages that week, the share that had a
+  matching thread with one, on a three-week mean. A chatty channel counts once, as a person
+  searching ten times counts once in Google Trends. The history import (more, shorter threads,
+  never re-threaded) then counts the same as the live inbox. The map's team filter applies.
+- **The map's hierarchy.** The series are the graph's nodes, under the graph's ids: a topic
+  (`topic:3`) and its area (`tag:cdn`), a feature of the tech stack (`product:tech:…`) and the
+  product it is part of (`product:group:…`, from `tech_stack.product`). In the panel, without a
+  pick, the areas with their topics and the products with their features are **trees**. A group
+  opens and folds there the way its bubble bursts and folds on the graph, and both use the same
+  `open`. Each row has its sparkline, its badge (↑ trending, ↓ declining, peaked and when) and
+  its channels a week. Filtered to trending, declining or peaked, the trees become one list, the
+  strongest first. A click on a row picks the node, on the graph and on the chart, which shows the
+  pick and the terms compared.
+- **Terms**, separated by commas (`tq`), are anything the map has, by its name, or words and
+  phrases (`GET /api/topics/trends/match`):
+  - **Words** are whole words, in a title or a message preview (`LIKE`, then a word-boundary test).
+  - **A phrase** (`~…`) is embedded with bge's query prefix. `CONTENT` is asked month by month for
+    its 100 nearest thread vectors, because one query for all time would return only the 100
+    nearest of the year.
+  - Only phrase matches above a floor count. The floor is `SEMANTIC_Z` standard deviations above
+    the phrase's mean similarity to the map's sample of vectors, because bge makes any two threads
+    0.4 to 0.6 alike. The response is `capped` when a month returned all 100, so that month's
+    count is too low.
+
+  A click on a week lists that week's threads in the panel (`GET /api/topics/trends/threads`, by
+  the rowids the data names them by).
+- **Trending, declining, peaked.** Each node is judged on three things:
+  - **Absolute frequency:** how often it comes up (channel-weeks).
+  - **Relative frequency:** its share in the last six full weeks against the twelve before, as a
+    lift and as a Poisson z, which says how certain that change is for so few or so many.
+  - **Acceleration:** whether its share is rising faster or slower than in the four weeks before.
+
+  **Trending** means up on a "before" it had, with z ≥ 2, at least six channel-weeks, and not
+  falling again; the faster it rises, the higher it ranks. **Declining** means down, with
+  z ≤ −2, from at least eight. **Peaked** means a peak (on a five-week mean) at least 1.8 times
+  its usual share and more than four weeks back, with the share at most 60% of the peak now.
+  Something that is trending again is not listed as peaked, and something that peaked is not
+  listed as declining. What never came up before (an area Clef was only just given) is not
+  trending. Anything mostly one customer's (more than 60% of its channel-weeks) counts half and
+  is marked as such.
+
 ## Replying
 
 Replies are written in the inbox and sent **as the person**, never as a bot: each person

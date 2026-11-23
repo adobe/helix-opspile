@@ -16,7 +16,11 @@
  * - `GET /api/topics`: the newest topic map, every team's areas (src/areas.js), what the viewer
  *   follows, every team's name, and what they may change: the areas of which teams
  *   (`may.areas`), and a rebuild.
- * - `POST /api/topics`: builds a map now, for the admin team and team managers.
+ * - `POST /api/topics`: builds a map now, for the admin team and team managers, and the topics of
+ *   the first of the threads it does not have (the cron finds the rest).
+ * - `GET /api/topics/trends`: what the page's trends count (src/trends.js `trendsData`), kept a
+ *   few minutes; `GET /api/topics/trends/match?term=` the threads a word or a phrase (`~…`) is in
+ *   or about; `GET /api/topics/trends/threads?ids=` some of the threads, to list them.
  * - `POST /api/areas { team, id, title, what }`, `PUT /api/areas { team, id, title?, what?,
  *   enabled? }`, `DELETE /api/areas { team, id }`: an area of `team`'s knowledge base, as a file
  *   at `areas/<id>.md` written as the viewer (the admin team any team's, a manager their teams').
@@ -28,10 +32,21 @@ import { writeKnowledge } from './agent/kbwrite.js';
 import { areaFile, AREAS } from './areas.js';
 import { scalar, splitFrontmatter } from './agent/okf.js';
 import { json } from './http.js';
+import { underlying } from './d1batch.js';
 import { ADMIN_TEAM, isAdmin, managedTeams } from './review.js';
 import { buildTopicMap, latestTopicMap } from './topicmap.js';
+import {
+  assignPending, matchTerm, trendsData, trendThreads,
+} from './trends.js';
 
 const ID = /^[a-z][a-z0-9-]{0,39}$/;
+
+/**
+ * How long GET /api/topics/trends is kept, per database (the binding, not the wrappers each
+ * request puts it in, src/d1batch.js `underlying`): it reads every thread of a year.
+ */
+export const TRENDS_TTL_MS = 5 * 60000;
+const trendsCache = new WeakMap();
 
 /** The teams whose areas `me` may change: every team for the admin team, else those they manage. */
 async function areaTeams(env, me) {
@@ -92,7 +107,34 @@ export async function rebuildTopics(env, me) {
   if (built.error) {
     return json({ error: built.error }, env.CONTENT && env.AI ? 400 : 503);
   }
+  await assignPending(env);
+  trendsCache.delete(underlying(env.DB));
   return json({ latest: await latestTopicMap(env), available: true });
+}
+
+/** /api/topics/trends…, for the members of an ops team (src/api.js checks). */
+export async function trendsApi(env, me, request, url) {
+  const { pathname } = url;
+  if (pathname === '/api/topics/trends' && request.method === 'GET') {
+    const hit = trendsCache.get(underlying(env.DB));
+    if (hit && Date.now() - hit.at < TRENDS_TTL_MS && url.searchParams.get('fresh') !== '1') {
+      return json(hit.body);
+    }
+    const body = await trendsData(env);
+    trendsCache.set(underlying(env.DB), { at: Date.now(), body });
+    return json(body);
+  }
+  if (request.method !== 'GET') {
+    return json({ error: 'GET' }, 405);
+  }
+  if (pathname === '/api/topics/trends/match') {
+    const found = await matchTerm(env, url.searchParams.get('term'));
+    return found.error ? json({ error: found.error }, found.status || 400) : json(found);
+  }
+  if (pathname === '/api/topics/trends/threads') {
+    return json({ threads: await trendThreads(env, (url.searchParams.get('ids') || '').split(',')) });
+  }
+  return json({ error: 'not found' }, 404);
 }
 
 const clean = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);

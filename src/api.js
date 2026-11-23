@@ -80,7 +80,9 @@ import { batchedDatabase } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
 import { orgStacksOf } from './orgstacks.js';
-import { changeArea, rebuildTopics, topicsPage } from './topicsapi.js';
+import {
+  changeArea, rebuildTopics, topicsPage, trendsApi,
+} from './topicsapi.js';
 import { drawDiagram } from './diagrams.js';
 
 /**
@@ -1169,6 +1171,13 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return saveSettings(env, me, await request.json().catch(() => null));
     }
     return json({ error: 'GET or PUT' }, 405);
+  }
+  // The Topics page's trends (src/trends.js), for every member of an ops team, as the map.
+  if (url.pathname.startsWith('/api/topics/trends')) {
+    if (!(me.teams || []).length) {
+      return json({ error: 'trends are for the members of the ops teams' }, 403);
+    }
+    return trendsApi(env, me, request, url);
   }
   // The Topics page, for every member of an ops team (src/topicsapi.js).
   if (url.pathname === '/api/topics') {

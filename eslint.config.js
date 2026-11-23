@@ -85,6 +85,9 @@ export default [
         Tour: 'readonly',
         // The Topics page's graph, ui/topicgraph.js.
         TopicGraph: 'readonly',
+        // The Topics page's trends: their counting, ui/trends.js, and their chart, ui/trendview.js.
+        Trends: 'readonly',
+        TrendView: 'readonly',
         // A team's or a customer's agent, ui/agent.js (in Teams and Customers, ui/admin.js).
         Agent: 'readonly',
         // Content swaps that fade in, ui/app.js.

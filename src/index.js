@@ -29,6 +29,8 @@ import stackJs from '../ui/stack.js' with { type: 'text' };
 import notifyHelpJs from '../ui/notifyhelp.js' with { type: 'text' };
 import tourJs from '../ui/tour.js' with { type: 'text' };
 import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
+import trendsJs from '../ui/trends.js' with { type: 'text' };
+import trendViewJs from '../ui/trendview.js' with { type: 'text' };
 // Spectrum 2's look of every page (README, "Spectrum 2").
 import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
 import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
@@ -79,6 +81,7 @@ import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
 import { sweepMentionModel } from './mentionmodels.js';
 import { sweepTopicMap } from './topicmap.js';
+import { sweepTrends } from './trends.js';
 import { sweepPreviews } from './previews.js';
 import { sweepExports } from './clickhouse.js';
 import { pruneRankEvents } from './rankevents.js';
@@ -102,6 +105,8 @@ const SCRIPTS = {
   'notifyhelp.js': notifyHelpJs,
   'tour.js': tourJs,
   'topicgraph.js': topicGraphJs,
+  'trends.js': trendsJs,
+  'trendview.js': trendViewJs,
   'spectrum-fonts.css': spectrumFontsCss,
   'spectrum.css': spectrumCss,
   'spectrum-inbox.css': spectrumInboxCss,
@@ -395,6 +400,11 @@ const handlers = {
     ctx.waitUntil(sweepTopicMap(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', topicMap: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', topicMap: 'error', error: e.message }))));
+    // The Topics page's trends (src/trends.js): the topics of the threads the newest topic map
+    // does not have.
+    ctx.waitUntil(sweepTrends(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', trends: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', trends: 'error', error: e.message }))));
     ctx.waitUntil(sweepPreviews(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', previews: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', previews: 'error', error: e.message }))));
