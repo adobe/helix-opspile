@@ -160,6 +160,12 @@
       m.trending.filter((x) => x.key.startsWith('topic:')).slice(0, 3)
         .forEach((x) => add({ term: x.key, label: ctx.graph.all.get(x.key)?.label || x.key, id: x.key }));
     }
+    // What is pointed at on the map, beside the rest, to see it against them.
+    if (ctx.hover && m.items.has(ctx.hover)) {
+      add({
+        term: ctx.hover, label: ctx.graph.all.get(ctx.hover)?.label || ctx.hover, id: ctx.hover, hovered: true,
+      });
+    }
     const k = keep(ctx);
     // A line of the map's in the color of its bubble (TopicSpace.colorKey), another shade for a
     // second of the same color; words and phrases in the chart's own palette.
@@ -286,7 +292,7 @@
     });
     for (const s of shown) {
       const pts = vals.get(s.term).map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
-      svg.append(el('polyline', { class: `line ${s.paint}${s.picked ? ' picked' : ''}`, points: pts.slice(0, -1).join(' ') }));
+      svg.append(el('polyline', { class: `line ${s.paint}${s.picked || s.hovered ? ' picked' : ''}`, points: pts.slice(0, -1).join(' ') }));
       // The week under way: dashed, it is not over.
       svg.append(el('polyline', { class: `line ${s.paint} partial`, points: pts.slice(-2).join(' ') }));
     }
@@ -325,7 +331,7 @@
     $('tlegend').innerHTML = series.map((s) => {
       const mt = s.match;
       const note = (mt && mt.pending && 'looking…') || (mt && mt.error) || (mt && mt.capped && 'some months have more than shown')
-        || (mt && mt.semantic && 'by meaning') || (s.picked && 'picked') || '';
+        || (mt && mt.semantic && 'by meaning') || (s.picked && 'picked') || (s.hovered && 'pointed at') || '';
       return `<li${st.hidden.has(s.term) ? ' class="off"' : ''}><button class="term" data-term="${esc(s.term)}" title="Shift-click hides it">
         <span class="swatch ${s.paint}"></span>${esc(s.label)}${note ? ` <span class="sub">${esc(note)}</span>` : ''}</button>
         ${s.picked ? '' : `<button class="x" data-drop="${esc(s.term)}" aria-label="Remove ${esc(s.label)}">×</button>`}</li>`;

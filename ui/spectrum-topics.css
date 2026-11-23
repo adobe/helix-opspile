@@ -239,7 +239,7 @@ p.trend { display: flex; align-items: center; }
 .spectrum .panel .head .follow { flex: none; }
 .spectrum .panel > .acts { gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
 .spectrum .panel button.follow[aria-pressed="true"] { color: var(--spectrum-accent-content-color-default); border-color: var(--spectrum-accent-background-color-default); }
-.spectrum .panel table.areas td.acts { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-75); white-space: nowrap; }
+.spectrum .panel table.areas td.acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--spectrum-spacing-75); }
 .spectrum .panel table.areas tr.off td:first-child { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .panel table.areas .pickr-a { text-align: left; }
 .spectrum .panel .areaform { display: flex; flex-direction: column; gap: var(--spectrum-spacing-200); margin: var(--spectrum-spacing-200) 0; padding: var(--spectrum-spacing-300); border-radius: var(--spectrum-corner-radius-200); background: var(--spectrum-gray-75); }

@@ -230,10 +230,10 @@ let hovering = 0;
 function tip(id, ev, hold) {
   const t = $('tip');
   const n = id && state.graph?.all.get(id);
-  // What is pointed at, on the chart, a moment after; what is picked again after it.
+  // What is pointed at, on the chart beside what is there, a moment after; gone after it.
   if ((n ? id : '') !== state.hover) {
     clearTimeout(hovering);
-    hovering = setTimeout(() => TrendView.chart({ ...trendCtx(), sel: state.hover || state.q.sel }), 150);
+    hovering = setTimeout(() => TrendView.chart({ ...trendCtx(), hover: state.hover }), 150);
   }
   state.hover = n ? id : '';
   if (!n) {
@@ -463,8 +463,8 @@ function follows(f) {
   return (state.follows.by?.[f.kind] || []).map(String).includes(String(f.target));
 }
 
-const followButton = (f, label) => (f && state.me.teams?.length
-  ? `<button class="follow${follows(f) ? '' : ' primary'}" data-follow="${esc(f.kind)}" data-target="${esc(f.target)}" aria-pressed="${follows(f)}"
+const followButton = (f, label, { strong = false } = {}) => (f && state.me.teams?.length
+  ? `<button class="follow${strong && !follows(f) ? ' primary' : ''}" data-follow="${esc(f.kind)}" data-target="${esc(f.target)}" aria-pressed="${follows(f)}"
       title="${follows(f) ? `Stop following ${esc(label)}: its threads leave your personal view` : `Follow ${esc(label)}: its threads are in your personal view`}">${follows(f) ? 'Unfollow' : 'Follow'}</button>`
   : '');
 
@@ -570,7 +570,7 @@ function details(n) {
   const parent = n.parent && map() && state.graph.all.get(n.parent);
   return `<div class="head"><span class="dot" data-type="${dotType(n)}"></span><div><div class="sub">${esc(n.one)}${parent ? ` in ${esc(parent.label)}` : ''}</div>
       <h2>${esc(n.label)}</h2></div><button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
-    ${followButton(followOf(n), n.label) || foldButton(n) || team ? `<div class="acts">${followButton(followOf(n), n.label)}${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
+    ${followButton(followOf(n), n.label) || foldButton(n) || team ? `<div class="acts">${followButton(followOf(n), n.label, { strong: true })}${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
     ${area && state.editArea && !state.editArea.new && state.editArea.id === area.id ? areaForm() : ''}
     ${area?.what ? `<p class="theme">Clef is asked: is this thread about ${esc(area.what)}?</p>` : ''}
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
