@@ -65,16 +65,7 @@ globalThis.TopicView = (() => {
       v.colors[type] = new T.Color(getComputedStyle(probe).color);
     }
   }
-  /** The color of `n`: its kind's; a product's Adobe's or a vendor's, a group's or a leaf's. */
-  function colorKey(n) {
-    if (n.type === 'person') return n.staff ? 'person' : 'customer';
-    if (n.type !== 'product') return n.type;
-    const vendor = n.one === 'Vendor' || n.one === 'Technology'
-      || (n.one === 'Product' && !/^product:tech:adobe\//.test(n.id));
-    const group = TopicSpace.opens(n);
-    return `${vendor ? 'vendor' : 'product'}${group ? '-group' : ''}`;
-  }
-  const colorOf = (n) => v.colors[colorKey(n)] || v.colors.topic;
+  const colorOf = (n) => v.colors[TopicSpace.colorKey(n)] || v.colors.topic;
 
   // ---- materials ------------------------------------------------------------------------
 

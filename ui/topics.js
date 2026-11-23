@@ -258,8 +258,8 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const pct = (n, of) => (of ? `${Math.round((100 * n) / of)}%` : '–');
 const tagged = (threads) => threads.filter((t) => t.tags && t.tags.length).length;
 
-/** The color of node `n`'s dot: its kind's; a customer's person in the customers'. */
-const dotType = (n) => (n.type === 'person' && !n.staff ? 'customer' : n.type);
+/** The color of node `n`'s dot: the one it is drawn in on the map and the chart. */
+const dotType = (n) => TopicSpace.colorKey(n);
 
 /** What the threads are joined to, of one kind, the most threads first. */
 function related(threads, type) {
@@ -722,13 +722,11 @@ function render({ refit = false } = {}) {
   if (!$('graph')) {
     body.innerHTML = `<div class="split">
       <div class="col"><div class="card graph" id="graph"><div class="empty" id="graphEmpty" hidden>Nothing to draw: show more kinds, or fewer shared threads.</div>
-        <div class="tools"><button id="fit" title="Show all of the map">Fit</button></div>
         <p class="sub how">Drag to turn, scroll to zoom. Click to pick; hold a bubble to open it, or its shell to fold it; double-click for only its threads, and on nothing for all again.</p>
         <div class="tip" id="tip" hidden></div></div>
         ${TrendView.card()}</div>
       <aside class="card panel" id="panel"></aside></div>
       ${state.error ? `<div class="hint err">${esc(state.error)}</div>` : ''}`;
-    $('fit').onclick = () => TopicView.fit();
     TrendView.wire(trendCtx);
   }
   drawGraph({ refit });

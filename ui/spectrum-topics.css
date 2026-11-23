@@ -41,13 +41,18 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: 
 .graph { position: relative; min-height: 0; overflow: hidden; }
 /* The map: a WebGL canvas (ui/topicview.js), its names in it, and how to use it under it. */
 .graph canvas.space { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; user-select: none; }
+/* No frame: the map fades into the page at its edges. */
+.graph canvas.space {
+  mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent),
+    linear-gradient(to bottom, transparent, black 6%, black 94%, transparent);
+  mask-composite: intersect;
+}
 .graph canvas.space:active { cursor: grabbing; }
 .graph canvas.space.over { cursor: pointer; }
 .graph .probe { display: none; }
 .graph .how { position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
 #only { display: inline-flex; align-items: center; }
 #only[hidden] { display: none; }
-.graph .tools { position: absolute; top: 0; right: 0; }
 .graph > .empty { position: absolute; inset: 0; text-align: center; }
 .tip { position: absolute; z-index: 5; pointer-events: none; display: flex; flex-direction: column; }
 .tip[hidden], .graph > .empty[hidden] { display: none; }
@@ -175,7 +180,7 @@ p.trend { display: flex; align-items: center; }
 .spectrum [data-type="vendor-group"] { --s2-type: var(--spectrum-yellow-1000); }
 /* The map's names, and its card, which it is drawn on. */
 .spectrum .probe[data-type="label"] { --s2-type: var(--spectrum-neutral-content-color-default); }
-.spectrum .probe:is([data-type="halo"], [data-type="card"]) { --s2-type: var(--spectrum-background-layer-2-color); }
+.spectrum .probe:is([data-type="halo"], [data-type="card"]) { --s2-type: var(--spectrum-background-layer-1-color); }
 /* A product no tech stack entry names: a ring of its color, hollow, so the gaps stand out. */
 .spectrum .dot[data-gap] {
   background: transparent;
@@ -190,9 +195,13 @@ p.trend { display: flex; align-items: center; }
 
 /* ---- the graph -------------------------------------------------------------------------- */
 
-.spectrum .graph .tools { padding: var(--spectrum-spacing-200); }
+/* The map is on the page itself, no card. */
+.spectrum .card.graph { background: transparent; border-radius: 0; }
 /* Each kind's color, which the map's bubbles take (ui/topicview.js reads it). */
 .spectrum .graph .probe { color: var(--s2-type); }
+/* How to use it: only while the pointer is on the map. */
+.spectrum .graph .how { opacity: 0; transition: opacity var(--s2-ease); }
+.spectrum .graph:hover .how { opacity: 1; }
 .spectrum .graph .how {
   margin: 0;
   padding: var(--spectrum-spacing-200);
@@ -309,6 +318,25 @@ p.trend { display: flex; align-items: center; }
 .spectrum .s5 { --s2-series: var(--spectrum-purple-800); }
 .spectrum .s6 { --s2-series: var(--spectrum-cyan-900); }
 .spectrum .s7 { --s2-series: var(--spectrum-yellow-1000); }
+/* A line of the map's: its bubble's color (TopicSpace.colorKey), then two other shades of it. */
+.spectrum .k-topic { --s2-series: var(--spectrum-indigo-700); }
+.spectrum .k-topic.v1 { --s2-series: var(--spectrum-indigo-500); }
+.spectrum .k-topic.v2 { --s2-series: var(--spectrum-indigo-900); }
+.spectrum .k-tag { --s2-series: var(--spectrum-indigo-1100); }
+.spectrum .k-tag.v1 { --s2-series: var(--spectrum-indigo-1300); }
+.spectrum .k-tag.v2 { --s2-series: var(--spectrum-indigo-1000); }
+.spectrum .k-product { --s2-series: var(--spectrum-orange-700); }
+.spectrum .k-product.v1 { --s2-series: var(--spectrum-orange-500); }
+.spectrum .k-product.v2 { --s2-series: var(--spectrum-orange-900); }
+.spectrum .k-product-group { --s2-series: var(--spectrum-orange-1000); }
+.spectrum .k-product-group.v1 { --s2-series: var(--spectrum-orange-1200); }
+.spectrum .k-product-group.v2 { --s2-series: var(--spectrum-orange-800); }
+.spectrum .k-vendor { --s2-series: var(--spectrum-yellow-700); }
+.spectrum .k-vendor.v1 { --s2-series: var(--spectrum-yellow-500); }
+.spectrum .k-vendor.v2 { --s2-series: var(--spectrum-yellow-900); }
+.spectrum .k-vendor-group { --s2-series: var(--spectrum-yellow-1000); }
+.spectrum .k-vendor-group.v1 { --s2-series: var(--spectrum-yellow-1200); }
+.spectrum .k-vendor-group.v2 { --s2-series: var(--spectrum-yellow-800); }
 .spectrum .split > .col { gap: var(--spectrum-spacing-300); }
 .spectrum .tchart .thead { gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin-bottom: var(--spectrum-spacing-100); }
 .spectrum .tchart h2 { margin: 0; font-size: var(--spectrum-font-size-200); }

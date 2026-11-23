@@ -29,6 +29,8 @@
 (() => {
   const SVG = 'http://www.w3.org/2000/svg';
   const COLORS = 8;
+  /** The shades of one color, for lines of the same kind. */
+  const SHADES = 3;
   const MAX_TERMS = 6;
   const LISTED = 30;
   const SMOOTH = 1;
@@ -159,6 +161,17 @@
         .forEach((x) => add({ term: x.key, label: ctx.graph.all.get(x.key)?.label || x.key, id: x.key }));
     }
     const k = keep(ctx);
+    // A line of the map's in the color of its bubble (TopicSpace.colorKey), another shade for a
+    // second of the same color; words and phrases in the chart's own palette.
+    const seen = new Map();
+    const paintOf = (t, i) => {
+      const node = t.id && ctx.graph.all.get(t.id);
+      if (!node || !globalThis.TopicSpace) return `s${i % COLORS}`;
+      const kind = globalThis.TopicSpace.colorKey(node);
+      const n = seen.get(kind) || 0;
+      seen.set(kind, n + 1);
+      return `k-${kind} v${n % SHADES}`;
+    };
     return list.map((t, i) => {
       let counts;
       if (t.id) {
@@ -168,7 +181,7 @@
         counts = Trends.weekly(st.data, (r) => k(r) && Boolean(match?.ids?.has(r[I.id]))).counts;
       }
       return {
-        ...t, color: i % COLORS, counts, match: st.matches.get(t.term), total: counts.reduce((a, b) => a + b, 0),
+        ...t, color: i % COLORS, paint: paintOf(t, i), counts, match: st.matches.get(t.term), total: counts.reduce((a, b) => a + b, 0),
       };
     });
   }
@@ -273,9 +286,9 @@
     });
     for (const s of shown) {
       const pts = vals.get(s.term).map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
-      svg.append(el('polyline', { class: `line s${s.color}${s.picked ? ' picked' : ''}`, points: pts.slice(0, -1).join(' ') }));
+      svg.append(el('polyline', { class: `line ${s.paint}${s.picked ? ' picked' : ''}`, points: pts.slice(0, -1).join(' ') }));
       // The week under way: dashed, it is not over.
-      svg.append(el('polyline', { class: `line s${s.color} partial`, points: pts.slice(-2).join(' ') }));
+      svg.append(el('polyline', { class: `line ${s.paint} partial`, points: pts.slice(-2).join(' ') }));
     }
     const cursor = el('line', {
       class: 'cursor', y1: T, y2: H - B, visibility: 'hidden',
@@ -297,7 +310,7 @@
       cursor.setAttribute('x2', x(i));
       cursor.setAttribute('visibility', 'visible');
       tip.innerHTML = `<b>Week of ${esc(weeks[i])}${i === n - 1 ? ' (so far)' : ''}</b>
-        ${shown.map((s) => `<span class="row"><span class="swatch s${s.color}"></span>${esc(s.label)}: ${s.counts[first + i]} channels, ${totals[first + i] ? pctOf((100 * s.counts[first + i]) / totals[first + i]) : '0%'}</span>`).join('')}
+        ${shown.map((s) => `<span class="row"><span class="swatch ${s.paint}"></span>${esc(s.label)}: ${s.counts[first + i]} channels, ${totals[first + i] ? pctOf((100 * s.counts[first + i]) / totals[first + i]) : '0%'}</span>`).join('')}
         <span class="sub">${totals[first + i]} channels with messages that week · click for its threads</span>`;
       tip.hidden = false;
       const box2 = $('tchart').getBoundingClientRect();
@@ -314,7 +327,7 @@
       const note = (mt && mt.pending && 'looking…') || (mt && mt.error) || (mt && mt.capped && 'some months have more than shown')
         || (mt && mt.semantic && 'by meaning') || (s.picked && 'picked') || '';
       return `<li${st.hidden.has(s.term) ? ' class="off"' : ''}><button class="term" data-term="${esc(s.term)}" title="Shift-click hides it">
-        <span class="swatch s${s.color}"></span>${esc(s.label)}${note ? ` <span class="sub">${esc(note)}</span>` : ''}</button>
+        <span class="swatch ${s.paint}"></span>${esc(s.label)}${note ? ` <span class="sub">${esc(note)}</span>` : ''}</button>
         ${s.picked ? '' : `<button class="x" data-drop="${esc(s.term)}" aria-label="Remove ${esc(s.label)}">×</button>`}</li>`;
     }).join('');
     const names = [...ctx.graph.all.values()].filter((nd) => ['topic', 'tag', 'product'].includes(nd.type)).map((nd) => nd.label);
@@ -408,7 +421,7 @@
     const link = (x) => `/inbox?team=${encodeURIComponent(x.team)}&t=${encodeURIComponent(x.key)}`;
     return `<div class="head"><div><div class="sub">Threads</div><h2>The week of ${esc(st.data.weeks[week])}</h2></div>
         <button class="close" id="unweek" aria-label="Back" title="Back">✕</button></div>
-      ${series.map((s, i) => `<section><h3><span class="swatch s${s.color}"></span>${esc(s.label)} <span class="sub">${lists[i].length}</span></h3>
+      ${series.map((s, i) => `<section><h3><span class="swatch ${s.paint}"></span>${esc(s.label)} <span class="sub">${lists[i].length}</span></h3>
         <ol class="threads">${lists[i].slice(0, LISTED).map((r) => byId.get(r[I.id])).filter(Boolean).map((x) => `<li><a href="${esc(link(x))}" target="_blank" rel="noopener">${esc(x.title || '(no title)')}</a>
           <div class="sub">${esc(orgName(x.org))} · ${esc(x.team)} · ${esc(x.source)} · ${esc(String(x.at).slice(0, 10))} · ${x.messages} message${x.messages === 1 ? '' : 's'}</div></li>`).join('') || '<li class="sub">None</li>'}</ol></section>`).join('')}`;
   }

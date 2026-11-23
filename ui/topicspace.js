@@ -84,6 +84,18 @@ globalThis.TopicSpace = (() => {
   function opens(n) {
     return Boolean(n.children?.length) && (n.type === 'org' || n.children.length > 1);
   }
+  /**
+   * The color `n` is drawn in, as the stylesheet's `data-type` (ui/spectrum-topics.css), the same
+   * on the map, the panel's dots and the chart's lines: its kind's, a group's a darker shade of
+   * its members'; Adobe's people apart from the customers', Adobe's products from the vendors'.
+   */
+  function colorKey(n) {
+    if (n.type === 'person') return n.staff ? 'person' : 'customer';
+    if (n.type !== 'product') return n.type;
+    const vendor = n.one === 'Vendor' || n.one === 'Technology'
+      || (n.one === 'Product' && !/^product:tech:adobe\//.test(n.id));
+    return `${vendor ? 'vendor' : 'product'}${opens(n) ? '-group' : ''}`;
+  }
   /** A group of one: its child stands for it, and it is never drawn. */
   const never = (n) => Boolean(n.children?.length) && !opens(n);
   /** What a leaf is pulled as: a topic, a product, or a person (a customer of no people too). */
@@ -421,7 +433,7 @@ globalThis.TopicSpace = (() => {
   }
 
   return {
-    SCALE, HUB, radius, scales, opens, never, places, centre, drawn, hub, pack, collide, repel,
+    SCALE, HUB, radius, scales, opens, never, colorKey, places, centre, drawn, hub, pack, collide, repel,
     sphere,
   };
 })();
