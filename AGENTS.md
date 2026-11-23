@@ -83,7 +83,8 @@ code and docs, is the decision model that labels threads and channels.
   `src/ui-markdown.bundle.js`, `src/ui-editor.bundle.js` (CodeMirror, the knowledge-base
   editor's text field) and `src/ui-highlight.bundle.js` (@pierre/highlights, the code
   highlighter the Worker serves at `/inbox/highlight.js`) and `src/ui-fmc.bundle.js` (Graphviz
-  and `src/fmc.js`, the stack drawing's renderer, at `/inbox/fmc.js`; all from
+  and `src/fmc.js`, the stack drawing's renderer, at `/inbox/fmc.js`) and `src/ui-three.bundle.js`
+  (three.js, the Topics page's map, at `/inbox/three.js`; all from
   `scripts/ui-markdown.mjs`, not committed), and
   `src/ui-spectrum.bundle.js` (Spectrum 2's tokens, from `@spectrum-css/tokens`, the same
   way). The `.wf-<kind>.ringed` masks at the end of `ui/spectrum-inbox.css` (a

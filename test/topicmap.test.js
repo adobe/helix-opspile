@@ -337,6 +337,10 @@ describe('topic map: building', () => {
       3: { staff: false, org: 'acme' },
       'a:slack:E1:U9': { staff: false, org: 'acme' },
     });
+    // Each topic's place on the page (src/topicspace.js): the farthest 1 from the middle.
+    assert.ok(map.topics.every((t) => t.at.length === 3));
+    const far = Math.max(...map.topics.map((t) => Math.hypot(...t.at)));
+    assert.equal(Math.round(far * 100) / 100, 1);
     assert.deepEqual(one.tags, ['cdn']);
     assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:2.2').tags, []);
     assert.deepEqual(map.orgs, {

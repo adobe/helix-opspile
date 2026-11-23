@@ -17,6 +17,7 @@ import { EMBEDDING_MODEL } from './rethread.js';
 import { authHeaders, gatewayBaseUrl, modelProblem } from './agent/model.js';
 import { threadVectorId } from './vectors.js';
 import { packVectors, saveAssignments, SAMPLE_VECTORS } from './trends.js';
+import { topicPlaces } from './topicspace.js';
 import {
   coveredBy, GENERIC, nameKey, productKey, techIndex,
 } from './products.js';
@@ -650,8 +651,9 @@ const round = (x, digits = 3) => Math.round(x * 10 ** digits) / 10 ** digits;
  * Builds a topic map of the channel threads and keeps it (`topic_maps`): `{ id, built_at,
  * threads, k, map }`, or `{ error }` when there is nothing to build it from. The map:
  *
- * - `topics`: `{ id, label, theme, size, cohesion }`, the biggest first (`cohesion`: the mean
- *   cosine of its threads to its centre, in the centred space).
+ * - `topics`: `{ id, label, theme, size, cohesion, at }`, the biggest first (`cohesion`: the mean
+ *   cosine of its threads to its centre, in the centred space; `at` its place on the page,
+ *   `[x, y, z]`, src/topicspace.js).
  * - `threads`: `{ key, title, team, org, at, last, messages, kind, tags, topic, sim, staff }`, by
  *   topic, the most typical first; `tags` are Clef's topics (labels.topics), `staff` the Adobe
  *   people who posted, by id, with their messages.
@@ -774,6 +776,16 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
       ? { staff: true, team: teams.length ? best('team:', teams) || teams[0] : null }
       : { staff: false, org: best('org:') };
   }
+  // Each topic's place on the page (src/topicspace.js): from what its threads say once their
+  // people's, products' and customer's parts are taken out.
+  const topicOf = new Array(rows.length).fill(null);
+  clusters.forEach((m, topic) => m.forEach((i) => topicOf.splice(i, 1, topic)));
+  const places = topicPlaces(X, topicOf, {
+    people: rows.map((t) => Object.keys({ ...staff.get(t.thread), ...others.get(t.thread) })),
+    products: rows.map((t) => products.of.get(t.thread) || []),
+    orgs: rows.map((t) => (t.org ? [t.org] : [])),
+  });
+  topics.forEach((t, i) => Object.assign(t, { at: places[i] }));
   // The space the topics were found in, for the threads the map does not have (src/trends.js):
   // the mean (as `centered` took it away), each topic's centre, and a sample of raw vectors.
   const mean = new Float32Array(raw[0].length);
@@ -834,10 +846,8 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
       packVectors([mean, ...centres, ...sample]),
     ).first();
   // Its threads' topics are its own; the others' the cron finds (src/trends.js assignPending).
-  const topicOf = new Map();
-  clusters.forEach((m, topic) => m.forEach((i) => topicOf.set(i, topic)));
   await saveAssignments(env, built.id, rows.map((t, i) => ({
-    thread: t.thread, embedded: t.embedded, topic: topicOf.get(i) ?? null, sim: sims[i],
+    thread: t.thread, embedded: t.embedded, topic: topicOf[i], sim: sims[i],
   })));
   await env.DB.prepare(`DELETE FROM topic_maps WHERE id NOT IN
     (SELECT id FROM topic_maps ORDER BY built_at DESC, id DESC LIMIT ?)`).bind(KEEP).run();

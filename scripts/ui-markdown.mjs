@@ -18,7 +18,9 @@
  * src/ui-highlight.bundle.js, src/ui-highlight.js and @pierre/highlights as an ES module, which
  * the Worker serves at /inbox/highlight.js (with its hash, `etag`), for the inbox to import
  * with the first code block it shows; src/ui-fmc.bundle.js, src/ui-fmc.js and Graphviz
- * (@viz-js/viz) the same way, served at /inbox/fmc.js, which draws a customer's stack; and
+ * (@viz-js/viz) the same way, served at /inbox/fmc.js, which draws a customer's stack;
+ * src/ui-three.bundle.js, src/ui-three.js and three.js, served at /inbox/three.js, which draws
+ * the Topics page's map; and
  * src/ui-spectrum.bundle.js, Spectrum 2's design
  * tokens (@spectrum-css/tokens) by name, of which src/page.js puts those ui/spectrum*.css use
  * into the pages under /spectrum.
@@ -60,6 +62,10 @@ export const BUNDLES = [{
   credits: `Includes Graphviz, (c) AT&T and the Graphviz authors, Eclipse Public License 2.0:
  * https://graphviz.org, compiled to WebAssembly by @viz-js/viz, (c) Michael Daines, MIT
  * License: https://github.com/mdaines/viz-js`,
+}, {
+  name: 'ui-three',
+  credits: `Includes three.js, (c) the three.js authors, MIT License:
+ * https://threejs.org`,
 }];
 
 /** A bundle, as the module that src/page.js imports (the markdown renderer by default). */

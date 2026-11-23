@@ -35,6 +35,8 @@ import stackJs from '../ui/stack.js' with { type: 'text' };
 import notifyHelpJs from '../ui/notifyhelp.js' with { type: 'text' };
 import tourJs from '../ui/tour.js' with { type: 'text' };
 import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
+import topicSpaceJs from '../ui/topicspace.js' with { type: 'text' };
+import topicViewJs from '../ui/topicview.js' with { type: 'text' };
 import trendsJs from '../ui/trends.js' with { type: 'text' };
 import trendViewJs from '../ui/trendview.js' with { type: 'text' };
 // Spectrum 2's look of every page (README, "Spectrum 2").
@@ -63,6 +65,8 @@ export const SCRIPTS = {
   'notifyhelp.js': notifyHelpJs,
   'tour.js': tourJs,
   'topicgraph.js': topicGraphJs,
+  'topicspace.js': topicSpaceJs,
+  'topicview.js': topicViewJs,
   'trends.js': trendsJs,
   'trendview.js': trendViewJs,
   'spectrum-fonts.css': spectrumFontsCss,

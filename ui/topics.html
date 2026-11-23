@@ -41,13 +41,10 @@
     </div>
     <div class="group legend" id="types" role="group" aria-label="Show"></div>
     <div class="group">
-      <label class="lbl" for="min">Shared threads</label>
-      <select id="min" title="Draw a line between two only when this many threads have both"></select>
-    </div>
-    <div class="group">
-      <label class="s2-search"><input class="search" id="find" type="search" list="names" aria-label="Find a person, topic, tag or customer" autocomplete="off"></label>
+      <label class="s2-search"><input class="search" id="find" type="search" list="names" aria-label="Find on the map, or Enter to compare on the chart: a topic, an area or a product, words, or ~a phrase, separated by commas" title="Type to find it on the map; Enter puts it on the chart (words, ~a phrase, names, separated by commas)" autocomplete="off"></label>
       <datalist id="names"></datalist>
     </div>
+    <button id="only" hidden></button>
     <span class="spacer"></span>
     <span class="sub" id="built"></span>
     <button id="rebuild">Rebuild</button>
@@ -55,6 +52,8 @@
   <div id="body"><div class="empty">Loading…</div></div>
 </main>
 <script src="topicgraph.js"></script>
+<script src="topicspace.js"></script>
+<script src="topicview.js"></script>
 <script src="trends.js"></script>
 <script src="trendview.js"></script>
 <script type="module" src="topics.js"></script>

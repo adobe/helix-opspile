@@ -38,7 +38,9 @@ import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
-import { fmcScript, fromPreview, highlightScript } from './page.js';
+import {
+  fmcScript, fromPreview, highlightScript, threeScript,
+} from './page.js';
 import {
   ADMIN_PAGE, COGS_PAGE, INBOX_PAGE, TOPICS_PAGE,
 } from './pages.js';
@@ -220,6 +222,11 @@ const handlers = {
     const fmc = fmcScript(request, pathname);
     if (fmc) {
       return fmc;
+    }
+    // three.js, which the Topics page imports when it first draws its map.
+    const three = threeScript(request, pathname);
+    if (three) {
+      return three;
     }
     if (request.method === 'GET' || request.method === 'HEAD') {
       const iconResponse = icon(pathname);
