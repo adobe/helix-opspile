@@ -258,6 +258,9 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const pct = (n, of) => (of ? `${Math.round((100 * n) / of)}%` : '–');
 const tagged = (threads) => threads.filter((t) => t.tags && t.tags.length).length;
 
+/** The color of node `n`'s dot: its kind's; a customer's person in the customers'. */
+const dotType = (n) => (n.type === 'person' && !n.staff ? 'customer' : n.type);
+
 /** What the threads are joined to, of one kind, the most threads first. */
 function related(threads, type) {
   const counts = new Map();
@@ -285,7 +288,7 @@ function relatedList(sel, type) {
   const shown = rows.slice(0, 12);
   return `<section><h3>${esc(RELATED.find((r) => r.id === type).label)} <span class="sub">${rows.length}</span></h3>
     <ul class="rel">${shown.map((r) => `<li><button class="pickr" data-sel="${esc(r.id)}" data-type="${type}">
-      <span class="dot" data-type="${type}"></span><span class="nm">${esc(r.node.label)}</span>
+      <span class="dot" data-type="${dotType(r.node)}"></span><span class="nm">${esc(r.node.label)}</span>
       <span class="meter"><span class="fill" data-w="${Math.round((100 * r.n) / max)}"></span></span>
       <span class="n">${r.n}${of(r)}</span></button></li>`).join('')}</ul>
     ${rows.length > shown.length ? `<div class="sub more">and ${rows.length - shown.length} more</div>` : ''}</section>`;
@@ -334,7 +337,7 @@ function trees() {
     const it = item(n);
     const few = n.type === 'topic' && n.threads.length && tagged(n.threads) / n.threads.length < 0.25;
     return `<li class="tr d${depth}">${shows(n) ? `<button class="chev" data-fold="${esc(n.id)}" aria-expanded="${Boolean(n.open)}" aria-label="${n.open ? 'Fold' : 'Open'} ${esc(n.label)}"></button>` : '<span class="chev"></span>'}
-      <button class="pickr" data-sel="${esc(n.id)}"><span class="dot" data-type="${n.type}"${n.gap ? ' data-gap' : ''}></span><span class="nm">${esc(n.label)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ''}${few ? ' <span class="untagged" title="Clef tags few of its threads">·</span>' : ''}</span>
+      <button class="pickr" data-sel="${esc(n.id)}"><span class="dot" data-type="${dotType(n)}"${n.gap ? ' data-gap' : ''}></span><span class="nm">${esc(n.label)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ''}${few ? ' <span class="untagged" title="Clef tags few of its threads">·</span>' : ''}</span>
       ${TrendView.badge(it)}${TrendView.spark(it)}<span class="n" title="Channels a week, the last ${Trends.RECENT} weeks">${it ? it.stats.perWeek.toFixed(1) : '–'}</span></button></li>`;
   };
   const tree = (roots) => roots.sort((a, b) => recent(b) - recent(a) || a.label.localeCompare(b.label))
@@ -423,7 +426,7 @@ function childList(n) {
   const what = { tag: 'Its topics', team: 'Its people', org: 'Its people' }[n.type] || 'Its features';
   return `<section><h3>${what} <span class="sub">${rows.length}</span></h3>
     <ul class="rel">${rows.map((c) => `<li><button class="pickr" data-sel="${esc(c.id)}" data-type="${c.type}">
-      <span class="dot" data-type="${c.type}"${c.gap ? ' data-gap' : ''}></span><span class="nm">${esc(c.label)}</span>
+      <span class="dot" data-type="${dotType(c)}"${c.gap ? ' data-gap' : ''}></span><span class="nm">${esc(c.label)}</span>
       <span class="meter"><span class="fill" data-w="${Math.round((100 * c.threads.length) / max)}"></span></span>
       <span class="n">${c.threads.length}</span></button></li>`).join('')}</ul></section>`;
 }
@@ -565,7 +568,7 @@ function details(n) {
   const area = n.type === 'tag' ? areaList().find((a) => a.id === n.key) : null;
   const team = area && area.teams.find(mayArea);
   const parent = n.parent && map() && state.graph.all.get(n.parent);
-  return `<div class="head"><span class="dot" data-type="${n.type}"></span><div><div class="sub">${esc(n.one)}${parent ? ` in ${esc(parent.label)}` : ''}</div>
+  return `<div class="head"><span class="dot" data-type="${dotType(n)}"></span><div><div class="sub">${esc(n.one)}${parent ? ` in ${esc(parent.label)}` : ''}</div>
       <h2>${esc(n.label)}</h2></div><button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
     ${followButton(followOf(n), n.label) || foldButton(n) || team ? `<div class="acts">${followButton(followOf(n), n.label)}${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
     ${area && state.editArea && !state.editArea.new && state.editArea.id === area.id ? areaForm() : ''}
@@ -679,7 +682,7 @@ function renderBar() {
     <span class="dot" data-type="${t.id}"></span>${esc(t.label)}</button>`).join('');
   const of = state.q.only && state.graph?.all.get(state.q.only);
   $('only').hidden = !of;
-  $('only').innerHTML = of ? `<span class="dot" data-type="${of.type}"></span>Only ${esc(of.label)}<span class="s2-cross" aria-hidden="true"></span>` : '';
+  $('only').innerHTML = of ? `<span class="dot" data-type="${dotType(of)}"></span>Only ${esc(of.label)}<span class="s2-cross" aria-hidden="true"></span>` : '';
   $('only').title = 'Show all the threads again (or double-click on nothing in the map)';
   $('find').disabled = !m;
   $('names').innerHTML = m && state.graph ? [...state.graph.all.values()].map((n) => `<option value="${esc(n.label)}">${esc(n.one)}</option>`).join('') : '';

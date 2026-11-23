@@ -161,16 +161,18 @@ p.trend { display: flex; align-items: center; }
 /* ---- the kinds: Spectrum 2's categorical palette ------------------------------------------ */
 
 .spectrum [data-type="topic"] { --s2-type: var(--spectrum-indigo-700); }
-.spectrum [data-type="person"] { --s2-type: var(--spectrum-seafoam-700); }
+.spectrum [data-type="person"] { --s2-type: var(--spectrum-red-700); }
+/* Adobe's people in red, the customers' (and the customers) in green. */
+.spectrum [data-type="customer"] { --s2-type: var(--spectrum-seafoam-700); }
 .spectrum [data-type="tag"] { --s2-type: var(--spectrum-indigo-1100); }
-.spectrum [data-type="org"] { --s2-type: var(--spectrum-magenta-900); }
-.spectrum [data-type="team"] { --s2-type: var(--spectrum-seafoam-1000); }
-.spectrum [data-type="product"] { --s2-type: var(--spectrum-celery-700); }
+.spectrum [data-type="org"] { --s2-type: var(--spectrum-seafoam-1000); }
+.spectrum [data-type="team"] { --s2-type: var(--spectrum-red-1000); }
+.spectrum [data-type="product"] { --s2-type: var(--spectrum-orange-700); }
 /* On the map, a group a darker shade of its members' (as a team of its people's), and the
    vendors' technologies apart from Adobe's products. */
-.spectrum [data-type="product-group"] { --s2-type: var(--spectrum-celery-1000); }
-.spectrum [data-type="vendor"] { --s2-type: var(--spectrum-orange-700); }
-.spectrum [data-type="vendor-group"] { --s2-type: var(--spectrum-orange-1000); }
+.spectrum [data-type="product-group"] { --s2-type: var(--spectrum-orange-1000); }
+.spectrum [data-type="vendor"] { --s2-type: var(--spectrum-yellow-700); }
+.spectrum [data-type="vendor-group"] { --s2-type: var(--spectrum-yellow-1000); }
 /* The map's names, and its card, which it is drawn on. */
 .spectrum .probe[data-type="label"] { --s2-type: var(--spectrum-neutral-content-color-default); }
 .spectrum .probe:is([data-type="halo"], [data-type="card"]) { --s2-type: var(--spectrum-background-layer-2-color); }

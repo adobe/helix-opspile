@@ -20,7 +20,8 @@
  *   before, its area on a sphere and the area's topics around it.
  * - The products come next, each pulled to the few topics it shares the most threads with; then
  *   the people (and a customer whose people did not post), pulled to theirs (hardest), the
- *   products and the other people they share threads with. How hard two pull is how many threads they share
+ *   products and the other people they share threads with, each first beside the topic it
+ *   shares the most with; those of a kind near each other push each other away (`repel`). How hard two pull is how many threads they share
  *   against how many each has. A group (an area, a team, a customer, a product) is where its
  *   members are, by their threads.
  * - A group drawn closed shows what is in it: its children at their own size when they fit, else
@@ -59,6 +60,9 @@ globalThis.TopicSpace = (() => {
   const SHARP = { topic: 3, product: 1.5, person: 1.5 };
   /** How many topics pull each: those it shares the most threads with. */
   const TOPICS_PULLING = 3;
+  /** How near two of a kind push each other away, and how hard. */
+  const REPEL = 14;
+  const CHARGE = 1.2;
   /** How far a spring holds two apart. */
   const REST = 6;
   const SETTLE = { product: 200, person: 160 };
@@ -67,6 +71,9 @@ globalThis.TopicSpace = (() => {
   /** The share of a closed bubble its children may fill when scaled down to fit. */
   const DENSITY = 0.42;
   const SKIN = 0.94;
+  /** While drawn, how far apart bubbles would rather be (TopicView: collide's `spread`). */
+  const SPREAD_GAP = 6;
+  const SOFT = 0.04;
 
   const add = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
   const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -173,18 +180,21 @@ globalThis.TopicSpace = (() => {
     const settle = (kind) => {
       const movers = leaves.filter((n) => kindOf(n) === kind);
       const pulls = PULL[kind];
-      // First where its neighbours are, by how much it shares with each; nowhere, the middle.
+      // First beside the topic it shares the most with (else where its neighbours are, by how
+      // much it shares with each; nowhere, the middle).
       for (const n of movers) {
+        const best = near[index.get(n)].filter(([m]) => kindOf(m) === 'topic')
+          .sort((a, b) => b[1] - a[1])[0];
         let w = 0;
         let p = [0, 0, 0];
-        for (const [m, x] of near[index.get(n)]) {
+        for (const [m, x] of best ? [best] : near[index.get(n)]) {
           const c = pulls[kindOf(m)];
           if (c && pos.has(m.id)) {
             p = add(p, pos.get(m.id), x * c);
             w += x * c;
           }
         }
-        pos.set(n.id, add(w ? scale(p, 1 / w) : p, [rnd() * 8, rnd() * 8, rnd() * 8]));
+        pos.set(n.id, add(w ? scale(p, 1 / w) : p, [rnd() * 12, rnd() * 12, rnd() * 12]));
       }
       // Then springs to them, a few units long, cooling.
       for (let it = 0; it < SETTLE[kind]; it += 1) {
@@ -205,11 +215,53 @@ globalThis.TopicSpace = (() => {
           }
           if (total) pos.set(n.id, add(here, f, alpha / total));
         }
+        if (it % 2 === 0) repel(movers.map((n) => pos.get(n.id)), alpha * 2);
       }
     };
     settle('product');
     settle('person');
     return pos;
+  }
+
+  /**
+   * Pushes `points` (in place) apart where they are nearer than REPEL: the nearer, the harder, as
+   * charges do, but only near ones (found on a grid), so a crowd spreads without all of them
+   * flying apart.
+   */
+  function repel(points, alpha = 1) {
+    const cellOf = (x) => Math.floor(x / REPEL);
+    const keyOf = (x, y, z) => ((x + 512) * 1024 + (y + 512)) * 1024 + (z + 512);
+    const grid = new Map();
+    points.forEach((p, i) => {
+      const k = keyOf(cellOf(p[0]), cellOf(p[1]), cellOf(p[2]));
+      if (grid.has(k)) grid.get(k).push(i);
+      else grid.set(k, [i]);
+    });
+    const moves = points.map(() => [0, 0, 0]);
+    points.forEach((a, i) => {
+      const [cx, cy, cz] = a.map(cellOf);
+      for (let x = cx - 1; x <= cx + 1; x += 1) {
+        for (let y = cy - 1; y <= cy + 1; y += 1) {
+          for (let z = cz - 1; z <= cz + 1; z += 1) {
+            for (const j of grid.get(keyOf(x, y, z)) || []) {
+              if (j > i) {
+                const d = sub(points[j], a);
+                const l = len(d) || 1e-3;
+                if (l < REPEL) {
+                  const push = scale(d, (CHARGE * alpha * (1 - l / REPEL)) / l);
+                  moves[i] = add(moves[i], push, -1);
+                  moves[j] = add(moves[j], push);
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+    points.forEach((p, i) => {
+      for (let d = 0; d < 3; d += 1) p.splice(d, 1, p[d] + moves[i][d]);
+    });
+    return points;
   }
 
   /** A group's place: where its leaves drawn are, by their threads; a leaf's its own. */
@@ -302,16 +354,17 @@ globalThis.TopicSpace = (() => {
   /**
    * One step of pushing apart: `bodies` `{ to, home, r }` (`to` where it goes, `home` where it
    * belongs), overlapping ones moved apart by their overlap, the bigger (by volume) moving less,
-   * then each pulled back towards home by `back` (a share of the way). Neighbours are found on
+   * then each pulled back towards home by `back` (a share of the way). With `spread`, those near
+   * each other (closer than `spread` times their radii, and a gap) are pushed apart gently too. Neighbours are found on
    * a grid, so many bodies cost little more than a few.
    */
-  function collide(bodies, back = 0) {
+  function collide(bodies, back = 0, spread = 0) {
     if (back) {
       for (const b of bodies) b.to = add(b.to, sub(b.home, b.to), back);
     }
     let biggest = 1;
     for (const b of bodies) biggest = Math.max(biggest, b.r);
-    const cell = 2 * biggest + 0.5;
+    const cell = 2 * biggest * (1 + spread) + 0.5 + spread * SPREAD_GAP;
     const keyOf = (x, y, z) => ((x + 512) * 1024 + (y + 512)) * 1024 + (z + 512);
     const cellOf = (v) => Math.floor(v / cell);
     for (let it = 0; it < 2; it += 1) {
@@ -338,6 +391,13 @@ globalThis.TopicSpace = (() => {
                   let dy = b.to[1] - a.to[1];
                   let dz = b.to[2] - a.to[2];
                   let l = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                  // Near, not touching: a gentle push apart, which the pull home balances.
+                  const room = (a.r + b.r) * (1 + spread) + spread * SPREAD_GAP;
+                  if (spread && l >= min && l < room) {
+                    const k = (SOFT * (room - l)) / l / 2;
+                    a.to = [a.to[0] - dx * k, a.to[1] - dy * k, a.to[2] - dz * k];
+                    b.to = [b.to[0] + dx * k, b.to[1] + dy * k, b.to[2] + dz * k];
+                  }
                   if (l < min) {
                     if (l < 1e-3) {
                       // On top of each other: apart in a direction of their own.
@@ -361,6 +421,7 @@ globalThis.TopicSpace = (() => {
   }
 
   return {
-    SCALE, HUB, radius, scales, opens, never, places, centre, drawn, hub, pack, collide, sphere,
+    SCALE, HUB, radius, scales, opens, never, places, centre, drawn, hub, pack, collide, repel,
+    sphere,
   };
 })();

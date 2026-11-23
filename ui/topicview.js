@@ -17,7 +17,7 @@
  *
  * Each kind in its color of the page (ui/spectrum-topics.css, `--s2-type`, read from the
  * stylesheet), a group a darker shade of its members' (an area of its topics', a team of its
- * people's), Adobe's products apart from the vendors': a leaf solid, a group glass with what is
+ * people's), Adobe's people apart from the customers', Adobe's products from the vendors': a leaf solid, a group glass with what is
  * in it inside, a group opened a faint, wide shell around its members (an area's topics) or,
  * when they are far apart (a team's people), a hub with a spoke to each. A product no tech
  * stack entry names is glass too, empty. What is trending glows. Each kind takes as much room
@@ -43,9 +43,11 @@ globalThis.TopicView = (() => {
   const MAX_LABELS = 10;
   const LINKS = 40;
   // What the probes read the colors of: each kind's (`data-type`), the names' and the card's.
-  const TYPES = ['topic', 'tag', 'person', 'team', 'org', 'product', 'product-group', 'vendor',
+  const TYPES = ['topic', 'tag', 'person', 'customer', 'team', 'org', 'product', 'product-group', 'vendor',
     'vendor-group', 'label', 'halo', 'card'];
   const LABEL_PX = 12;
+  /** How far apart drawn bubbles would rather be: a share of their radii (TopicSpace.collide). */
+  const SPREAD = 0.8;
 
   let T = null;
   const v = {
@@ -65,6 +67,7 @@ globalThis.TopicView = (() => {
   }
   /** The color of `n`: its kind's; a product's Adobe's or a vendor's, a group's or a leaf's. */
   function colorKey(n) {
+    if (n.type === 'person') return n.staff ? 'person' : 'customer';
     if (n.type !== 'product') return n.type;
     const vendor = n.one === 'Vendor' || n.one === 'Technology'
       || (n.one === 'Product' && !/^product:tech:adobe\//.test(n.id));
@@ -190,8 +193,8 @@ globalThis.TopicView = (() => {
     };
     v.composer.addPass(v.bokeh);
     v.composer.addPass(new T.OutputPass());
-    v.sphere = new T.SphereGeometry(1, 36, 24);
-    v.speck = new T.SphereGeometry(1, 16, 10);
+    v.sphere = new T.SphereGeometry(1, 64, 40);
+    v.speck = new T.SphereGeometry(1, 40, 26);
     v.observer = new ResizeObserver(resize);
     v.observer.observe(host);
     resize();
@@ -610,7 +613,7 @@ globalThis.TopicView = (() => {
   function push(dt) {
     const bodies = [...v.objs.values()].filter((o) => !o.leaving && !o.shell);
     for (const o of bodies) o.r = o.sTo;
-    TopicSpace.collide(bodies, 1 - Math.exp(-dt * 0.6));
+    TopicSpace.collide(bodies, 1 - Math.exp(-dt * 0.6), SPREAD);
     // An area's shell keeps its topics inside.
     for (const o of v.objs.values()) {
       if (o.shell && !o.hub && !o.leaving) {

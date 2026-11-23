@@ -156,7 +156,10 @@ globalThis.TopicGraph = (() => {
         const slug = teamOf(p);
         const g = group('team', slug, slug === NONE ? 'Not on an ops team' : teamName(slug), 'Team');
         if (g) on.add(g);
-        on.add(child(g, node('person', p, map.people[p] || `#${p}`, 'Person')));
+        const person = child(g, node('person', p, map.people[p] || `#${p}`, 'Person'));
+        // Adobe's: drawn in its own color, apart from the customers' people.
+        person.staff = true;
+        on.add(person);
       }
       const org = isCustomer(map, t.org) ? group('org', t.org, map.orgs[t.org]?.name || t.org, 'Customer') : null;
       if (org) on.add(org);
