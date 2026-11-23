@@ -16,12 +16,14 @@ import {
 } from 'node:test';
 import {
   channelPlace, checkState, connections, finishAuth, knownMentions, learnMembers, makeState,
-  mentionable, post,
+  keepTeamsPost, mentionable, post,
   postableChannels, seal, slackText, splitMentions, teamsMessage, unseal, writtenMentions,
 } from '../src/post.js';
 import { htmlToMarkdown } from '../src/html.js';
 import { suggestMentions } from '../src/mention-match.js';
+import { normalize } from '../src/normalize.js';
 import { d1 } from './d1.js';
+import { fakeBucket, quiet } from './fakes.js';
 
 // Made-up keys, ids and people only.
 const KEY = Buffer.alloc(32, 7).toString('base64url');
@@ -783,6 +785,59 @@ describe('connecting and posting', () => {
     }
     assert.equal((await post(e, ME, { channel: 'slack:E1:C1', root: '1.2', text: 'x' }, () => false)).status, 404);
     assert.deepEqual(calls, []);
+  });
+
+  it('keeps a Teams reply as Graph answered it, so it shows before its notification', async () => {
+    const e = env();
+    const queued = [];
+    e.RAW = fakeBucket();
+    e.NORMALIZE = { send: async (body) => queued.push(body) };
+    await finishAuth(e, ME, 'teams', new URL(`https://opspile.test/api/auth/teams/callback?code=c&state=${await makeState(e, 1, 'teams')}`));
+    const inner = globalThis.fetch;
+    const message = {
+      id: '1793796099000',
+      replyToId: '5',
+      createdDateTime: '2026-10-21T10:00:00.000Z',
+      lastModifiedDateTime: '2026-10-21T10:00:00.000Z',
+      from: { user: { id: 'u-ada', displayName: 'Ada' } },
+      body: { contentType: 'html', content: 'On it.' },
+    };
+    globalThis.fetch = async (url, init) => (String(url).includes('/replies')
+      ? Response.json(message, { status: 201 }) : inner(url, init));
+    const later = [];
+    const res = await post(e, ME, { thread: 'teams:T:G:19:c:5', text: 'On it.' }, inTeam, [], {
+      waitUntil: (p) => later.push(p),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).id, '1793796099000');
+    const [key] = await Promise.all(later);
+    assert.equal(key, 'teams/T/G1/19:c/2026/10/21/1792576800000-1793796099000.json');
+    assert.deepEqual(queued, [{ key }]);
+    const kept = JSON.parse(e.RAW.objects.get(key).body);
+    assert.deepEqual(kept.channelIdentity, { teamId: 'G1', channelId: '19:c' });
+    assert.equal(e.RAW.objects.get(key).options.customMetadata.via, 'post');
+    // What the normalizer makes of it: the reply, in its thread.
+    const { message: m } = normalize(key, kept);
+    assert.equal(m.id, '1793796099000');
+    assert.equal(m.channelId, '19:c');
+  });
+
+  it('posts all the same when keeping the Teams reply fails, or Graph answered no message', async () => {
+    const e = env();
+    e.RAW = {
+      put: async () => {
+        throw new Error('R2 down');
+      },
+    };
+    e.NORMALIZE = { send: async () => {} };
+    await finishAuth(e, ME, 'teams', new URL(`https://opspile.test/api/auth/teams/callback?code=c&state=${await makeState(e, 1, 'teams')}`));
+    const inner = globalThis.fetch;
+    globalThis.fetch = async (url, init) => (String(url).includes('/replies')
+      ? Response.json({ id: '7', createdDateTime: '2026-10-21T10:00:00Z' }, { status: 201 })
+      : inner(url, init));
+    const res = await quiet(() => post(e, ME, { thread: 'teams:T:G:19:c:5', text: 'x' }, inTeam));
+    assert.equal(res.status, 200);
+    assert.equal(await keepTeamsPost(e, { tenant: 'T' }, { id: '7' }), null);
   });
 
   it('starts no thread without a channel, or in one that is not a conversation', async () => {

@@ -12,7 +12,9 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { claimPost, prunePostKeys, settlePost } from '../src/postkeys.js';
+import {
+  claimPost, logPost, prunePostKeys, settlePost,
+} from '../src/postkeys.js';
 import { d1 } from './d1.js';
 
 const ME = { id: 7 };
@@ -94,5 +96,50 @@ describe('a reply\'s key', () => {
     assert.deepEqual(await prunePostKeys(e, new Date()), { deleted: 0 });
     assert.deepEqual(await prunePostKeys(e, later), { deleted: 1 });
     assert.equal(await claimPost(e, ME, 'k1'), null);
+  });
+
+  it('logs how each post ended, never its text', async () => {
+    const lines = [];
+    const { log } = console;
+    console.log = (line) => lines.push(JSON.parse(line));
+    try {
+      await logPost(ME, { thread: 't:1', text: 'secret words', key: 'k1' }, [{}], Response.json({
+        ok: true, platform: 'teams', id: '9', text: 'secret words',
+      }), { how: 'me', ms: 12 });
+      await logPost(ME, { channel: 'c:1', root: 5, text: 'x' }, [], Response.json({
+        error: 'Teams: 503', unknown: true,
+      }, { status: 502 }), { how: 'me', ms: 3, again: true });
+    } finally {
+      console.log = log;
+    }
+    assert.deepEqual(lines[0], {
+      route: 'post',
+      action: 'sent',
+      how: 'me',
+      person: 7,
+      thread: 't:1',
+      key: 'k1',
+      files: 1,
+      status: 200,
+      ok: true,
+      platform: 'teams',
+      id: '9',
+      ms: 12,
+    });
+    assert.deepEqual(lines[1], {
+      route: 'post',
+      action: 'sent',
+      how: 'me',
+      person: 7,
+      channel: 'c:1',
+      root: '5',
+      status: 502,
+      ok: false,
+      again: true,
+      error: 'Teams: 503',
+      unknown: true,
+      ms: 3,
+    });
+    assert.doesNotMatch(JSON.stringify(lines), /secret/);
   });
 });

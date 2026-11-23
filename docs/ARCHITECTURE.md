@@ -1453,7 +1453,12 @@ iMessage. The platform takes a reply in about a second (`POST /api/post`); there
 progress to report, so the bar eases towards 90% and completes and fades once the post
 returns. The bubble then stays until the message comes back through ingestion (some ten
 seconds later: the Slack event, the normalize queue's batch, the live update), and the message
-takes its place unchanged. Replies to a thread go out one after the other, in the order they
+takes its place unchanged. On Teams it does not wait for Graph's change notification, which
+Graph may deliver minutes late or retry for long: the message Graph answered the post with is
+kept in pile 1 at once (`keepTeamsPost`, after the answer), under the key the notification's
+fetch of the same version will use, and normalized like any. Every post logs one line, how it
+ended (`route: 'post'`, `action: 'sent'`: who, where, its key, the status, the platform's id or
+error, the time it took; never the text: `logPost` in `src/postkeys.js`). Replies to a thread go out one after the other, in the order they
 were written. One that failed says why, with **Retry** and **Discard**; it stays until then.
 A page that lost the answer cannot know whether the post went out, and a platform would take the
 same post twice, so a reply carries a key, the same on every retry (`post_keys`, migration 0049,
