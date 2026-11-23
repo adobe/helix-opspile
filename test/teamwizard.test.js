@@ -183,4 +183,17 @@ describe('team wizard', () => {
     assert.equal(e.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM rules WHERE value = 'edge'").get().n, 2);
     assert.equal((await call(e, ADA, 'POST', '/api/admin/team-wizard', { prefix: 'widget-', team: 'admin' })).status, 400);
   });
+
+  it('answers what it did when clearing the dismissal fails after the rules are saved', async () => {
+    const e = env();
+    const { prepare } = e.DB;
+    // As D1 overloaded, on the last statement only: the rules and moves are in by then.
+    e.DB.prepare = (sql) => (sql.startsWith('DELETE FROM team_prefix_dismissals')
+      ? { bind: () => ({ run: async () => { throw new Error('D1_ERROR: D1 DB is overloaded.'); } }) }
+      : prepare(sql));
+    const r = await call(e, ADA, 'POST', '/api/admin/team-wizard', { prefix: 'widget-', team: 'edge', people: [] });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.team.slug, 'edge');
+    assert.equal(e.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM rules WHERE value = 'edge'").get().n, 2);
+  });
 });
