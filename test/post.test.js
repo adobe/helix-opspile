@@ -353,6 +353,36 @@ describe('mentions', () => {
     assert.deepEqual(people.map((p) => [p.name, p.member]), [['Bo Zed', true], ['Bob Builder', false]]);
   });
 
+  it('says who is not in the Teams team, once its members are listed in full', async () => {
+    const e = withAccounts(env());
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('teams', 'T', 'u-bea', 'person', 'Bea Inside', '2026-10-21T10:00:00Z')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('teams', 'T', '19:c', 'u-bea')`).run();
+    const ask = async () => (await mentionable(e, 'teams:T:G:19:c:5', 'b', inTeam, { pool: true })).json();
+    // Never listed: nobody can be said to be out.
+    let { people, pool } = await ask();
+    assert.deepEqual(people.map((p) => [p.name, p.member, Boolean(p.outside)]), [
+      ['Bea Inside', true, false], ['Bob Builder', false, false],
+    ]);
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = ? WHERE channel_id = ?')
+      .run('2026-10-21T10:00:00Z', '19:c');
+    ({ people, pool } = await ask());
+    assert.deepEqual(people.map((p) => [p.name, Boolean(p.outside)]), [
+      ['Bea Inside', false], ['Bob Builder', true],
+    ]);
+    assert.equal(pool.accounts.find((a) => a.id === 'u-bob').outside, true);
+    assert.deepEqual(suggestMentions(pool, 'b'), people);
+    // A list that failed, or a shared channel's, says nothing of it.
+    for (const set of ["members_error = 'graph members 403'", 'shared = 1']) {
+      e.DB.sqlite.prepare(`UPDATE channels SET ${set} WHERE channel_id = ?`).run('19:c');
+      // eslint-disable-next-line no-await-in-loop
+      assert.ok(!(await ask()).people.some((p) => p.outside), set);
+      e.DB.sqlite.prepare(`UPDATE channels SET members_error = NULL, shared = 0
+        WHERE channel_id = ?`).run('19:c');
+    }
+  });
+
   it('lists the channel\'s members once a week, and looks up the ones it never saw', async () => {
     const e = withAccounts(env());
     e.DB.sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, fetched_at)
@@ -739,6 +769,44 @@ describe('connecting and posting', () => {
       mentionText: 'helper',
       mentioned: { application: { id: 'b-help', displayName: 'helper', applicationIdentityType: 'bot' } },
     }]);
+  });
+
+  it('says whom a Teams reply mentions who is not in its Teams team, listed again first', async () => {
+    const e = withAccounts(env());
+    const state = await makeState(e, 1, 'teams');
+    await finishAuth(e, ME, 'teams', new URL(`https://opspile.test/api/auth/teams/callback?code=c&state=${state}`));
+    e.DB.sqlite.prepare("UPDATE identities SET email = 'bob@staff.example' WHERE user_id = 'u-bob'").run();
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('teams', 'T', 'u-bea', 'person', 'Bea Inside', '2026-10-21T10:00:00Z')`).run();
+    e.DB.sqlite.prepare(`INSERT INTO channel_members (source, tenant, channel_id, user_id)
+      VALUES ('teams', 'T', '19:c', 'u-bea')`).run();
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = ? WHERE channel_id = ?')
+      .run(new Date(Date.now() - 60 * 1000).toISOString(), '19:c');
+    let team = [{ userId: 'u-bea', email: null, displayName: 'Bea Inside' }];
+    const graphed = [];
+    const learn = {
+      graph: async (path) => {
+        graphed.push(path);
+        return Response.json({ value: team });
+      },
+      getIdentity: async () => null,
+    };
+    const reply = async (text, mentions) => (await post(e, ME, {
+      thread: 'teams:T:G:19:c:5', text, mentions,
+    }, inTeam, [], { learn })).json();
+    // Bob is not in the team, listed again just now: the answer says so, with his address.
+    const out = await reply('thanks @Bob Builder and @Bea Inside', ['u-bob', 'u-bea']);
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.outside, [{ name: 'Bob Builder', email: 'bob@staff.example' }]);
+    assert.equal(graphed.length, 1);
+    // A member, or a bot of the team, is no one to tell about.
+    assert.equal((await reply('thanks @Bea Inside @helper', ['u-bea', 'b-help'])).outside, undefined);
+    // Added since: the list from over half a minute ago is listed again, and he is in.
+    team = [...team, { userId: 'u-bob', email: 'bob@staff.example', displayName: 'Bob Builder' }];
+    e.DB.sqlite.prepare('UPDATE channels SET members_at = ? WHERE channel_id = ?')
+      .run(new Date(Date.now() - 60 * 1000).toISOString(), '19:c');
+    assert.equal((await reply('thanks @Bob Builder', ['u-bob'])).outside, undefined);
+    assert.equal(graphed.length, 2);
   });
 
   it('starts a Slack thread in a channel, and says which entry it will be', async () => {

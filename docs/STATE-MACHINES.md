@@ -426,7 +426,9 @@ while it is, and when the transcript cannot be read. A delivery follows a pendin
 instead of steering into it (`whenBusy`), so no other input becomes its turn's; one that did anyway
 ends it as failed (`sidebarTurns`). Answers are kept from every sidebar turn of the transcript, each
 once per state and text (`sidebar-kept` in the agent's storage, written after them, and only when it changed), so a turn
-queued right behind one does not hide it.
+queued right behind one does not hide it. Answered, a message may be followed up (→ followed up,
+up to three times, within a week of it: `addSidebarFollowup`), by a later turn's `sidebar_followup`:
+`<id>:followup:<n>`, `n` one more than the follow-ups it has, never while a sidebar turn runs.
 
 **Sidebar answer seen.** unseen → seen, and unseen again when a failed answer is replaced
 (`sidebar_messages.seen_at`, migration 0078, `seeSidebar` in `src/sidebar.js`). Only the person it

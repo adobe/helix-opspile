@@ -191,6 +191,10 @@ const CHANNELS = {
     org: 'globex',
     team: 'edge',
     teamId: 'TEAM-EDGE',
+    // Its Teams team's members are listed (Noor since the Provisioning Agent added her): whoever
+    // else is mentioned (Mateo, say) is "not in team", and a reply that mentions them says so,
+    // with what to ask admin-bot.
+    members: ['kira', 'noor'],
   },
   edgeQ: {
     source: 'slack', channelId: 'C0EDGEQ01', name: 'edge-questions', org: 'opspile', team: 'edge',
@@ -757,11 +761,19 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     if (sidebar.length) {
       let asked = null;
       let asker = null;
-      sidebars.set(key, sidebar.map(([who, ago, body, { unseen = false } = {}], i) => {
+      let followups = 0;
+      sidebars.set(key, sidebar.map(([who, ago, body, opts = {}], i) => {
+        const { unseen = false, followup = false } = opts;
         const p = who !== 'agent' && byKey.get(who);
         const id = `sb_${String(threads.size).padStart(8, '0')}-0000-4000-8000-${String(i).padStart(12, '0')}`;
+        if (p) {
+          followups = 0;
+        }
+        if (followup) {
+          followups += 1;
+        }
         const m = {
-          id: p ? id : `${asked}:answer`,
+          id: p ? id : `${asked}:${followup ? `followup:${followups}` : 'answer'}`,
           role: p ? 'person' : 'agent',
           by: p ? { id: p.id, name: p.name } : null,
           body,
@@ -1045,6 +1057,27 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     ],
     label: {
       kind: 'access', next_actor: 'nobody', urgency: 0.2, resolved_p: 0.8, topics: ['auth'],
+    },
+  });
+
+  // Dana mentioned Noor, whose name Teams filled in: she was not in the Teams team. The agent
+  // said so in the sidebar, and once the bot had added her, followed up there ("Thread Agent
+  // followed up with you"), unseen: the row has the purple badge.
+  seed({
+    ch: CHANNELS.cdn,
+    messages: [
+      ['mei', 45, 'Purge API calls answer 403 since we rotated the key. Who can look at it?', { subject: 'Purge API 403 after key rotation' }],
+      ['dana', 40, '@Noor Haddad can you take this?'],
+      ['dana', 20, '@Provisioning Agent add nhaddad@example.com'],
+      ['ourbot', 19.5, 'Added nhaddad@example.com to Globex CDN.'],
+    ],
+    sidebar: [
+      ['dana', 30, 'Her name filled in when I mentioned her, so she is in the team, right?'],
+      ['agent', 29.5, 'No: Teams completes a mention from the whole directory, not from the team. Noor is not a member of Globex CDN, so the mention did not reach her.\n\nAsk the Provisioning Agent to add her, with her address: `add nhaddad@example.com`.'],
+      ['agent', 19, 'Noor is in Globex CDN now: the Provisioning Agent added her a moment ago. Mention her again so she sees Mei\'s question; your first mention did not reach her.', { followup: true, unseen: true }],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 0.9, resolved_p: 0.05, topics: ['cdn'],
     },
   });
 

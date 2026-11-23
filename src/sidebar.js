@@ -43,7 +43,10 @@ export function sidebarNote({ id, by, text }) {
     + ` ${by} asks for it in the draft. It is trusted. Answer ${by} directly, in Markdown, at the`
     + ' end of this turn, as long as the answer needs: that text is shown to them in the sidebar'
     + ' instead of your note. Do what they ask with your other tools (the draft, the knowledge'
-    + ' bases, a lookup) where it fits the thread, and say what you changed.'
+    + ' bases, a lookup) where it fits the thread, and say what you changed. When what they ask'
+    + ' about is settled only later (a request they wait on goes through, a colleague answers,'
+    + ' what you said turns out wrong), tell them in a later turn with sidebar_followup'
+    + ` (message ${id}): your note does not reach them.`
     + `\n\n<sidebar-message>\n${text}\n</sidebar-message>`;
 }
 
@@ -126,6 +129,55 @@ export async function keepSidebarAnswer(env, key, turn) {
       key,
     ).run();
   return Boolean(res && res.meta && res.meta.changes);
+}
+
+/** Follow-ups the agent may write to one sidebar message, and for how long after it. */
+export const MAX_FOLLOWUPS = 3;
+export const FOLLOWUP_DAYS = 7;
+
+/**
+ * The agent's follow-up to sidebar message `to` of entry `key`, from a later turn than the one
+ * that answered it (one on the thread's messages): what the person asked about was settled
+ * since (a request they waited on went through, a colleague answered it, what the agent said
+ * turned out wrong). It is one more answer of the agent's to them (`reply_to` the message, unseen
+ * until they see it, as `keepSidebarAnswer`'s), so their inbox shows it as new. Only to a
+ * person's message of this entry that was answered already, up to `FOLLOWUP_DAYS` old, and
+ * `MAX_FOLLOWUPS` times. `{ message }` as `sidebarFor` shapes it, or `{ error }`.
+ */
+export async function addSidebarFollowup(env, key, { to, text }, now = new Date()) {
+  const body = String(text || '').trim().slice(0, MAX_ANSWER);
+  if (!body) {
+    return { error: 'write what to tell them' };
+  }
+  const q = await env.DB.prepare(`SELECT q.id, q.person, q.at, p.name,
+      (SELECT COUNT(*) FROM sidebar_messages a WHERE a.reply_to = q.id AND a.role = 'agent'
+        AND a.id = q.id || ':answer') AS answered,
+      (SELECT COUNT(*) FROM sidebar_messages a WHERE a.reply_to = q.id AND a.role = 'agent'
+        AND a.id LIKE q.id || ':followup:%') AS followups
+    FROM sidebar_messages q LEFT JOIN people p ON p.id = q.person
+    WHERE q.id = ? AND q.thread = ? AND q.role = 'person'`).bind(String(to || ''), key).first();
+  if (!q) {
+    return { error: `no sidebar message ${to} in this thread: give the id its input named (sb_…)` };
+  }
+  if (!q.answered) {
+    return { error: 'that sidebar message has no answer yet: answer it in that turn, not with a follow-up' };
+  }
+  if (Date.parse(q.at) < now.getTime() - FOLLOWUP_DAYS * 24 * 60 * 60 * 1000) {
+    return { error: `that sidebar message is more than ${FOLLOWUP_DAYS} days old: say it in your note instead` };
+  }
+  if (q.followups >= MAX_FOLLOWUPS) {
+    return { error: `you followed up on that sidebar message ${MAX_FOLLOWUPS} times already: say it in your note instead` };
+  }
+  const id = `${q.id}:followup:${q.followups + 1}`;
+  const at = new Date(Math.max(now.getTime(), Date.parse(q.at))).toISOString();
+  await env.DB.prepare(`INSERT INTO sidebar_messages (id, thread, role, person, body, reply_to, at)
+    VALUES (?, ?, 'agent', ?, ?, ?, ?)`).bind(id, key, q.person, body, q.id, at).run();
+  return {
+    message: shape({
+      id, role: 'agent', person: q.person, body, state: 'done', reply_to: q.id, at,
+    }),
+    to: q.name || 'them',
+  };
 }
 
 /** At most this many answers are marked seen by one request. */

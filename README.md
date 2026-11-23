@@ -626,7 +626,8 @@ The Entra app needs these Microsoft Graph **application** permissions, with admi
 can mention them; `/diag/teams?bots=1` runs that once). `TeamMember.Read.All` is optional: with it,
 the channel suggestions on the admin pages count the members of a Teams team who never post, and
 thread agents can tell who is in a Teams team (`find_member`, and calling out a mention of someone
-who is not); without it the suggestions go by posts and reactions there, and agents say they cannot
+who is not), and so can the reply box (a suggestion "not in team", and a note after a reply that
+mentions them); without it the suggestions go by posts and reactions there, and agents say they cannot
 tell. On Slack they use `conversations.members`, which needs the
 bot scopes `channels:read` (and `groups:read` for private channels).
 `Files.Read.All` (or `Sites.Read.All`) is optional too: with it, the files attached to Teams
