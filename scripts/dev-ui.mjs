@@ -22,6 +22,7 @@
  *   node scripts/dev-ui.mjs --manager  # signed in as the manager of Edge ops, not an admin
  *   node scripts/dev-ui.mjs --member   # signed in as a member of her teams: their agents read-only
  *   node scripts/dev-ui.mjs --no-team  # signed in on no team (no-team mode): Personal only
+ *   node scripts/dev-ui.mjs --new      # as --no-team, signed in for the first time: nothing yet
  *   node scripts/dev-ui.mjs --big      # a prod-sized inbox (some 250 threads, long ones too)
  *   node scripts/dev-ui.mjs --latency=400  # every /api answer waits 400 ms, as production's do
  *   GRAPHVIZ_ORIGIN=http://localhost:8789 npm run ui:dev  # diagrams drawn by `npm run graphviz:dev`
@@ -109,6 +110,7 @@ import { findPerson } from '../src/kbpeople.js';
 import { AGENT, createStore } from './dev-ui-fixtures.mjs';
 import { OFFER_AFTER } from '../src/postoffer.js';
 import { followable, followsOfTeams } from '../src/follows.js';
+import { cleanQuery, suggestionsOf, TREND_DAYS } from '../src/followsuggest.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const uiDir = join(root, 'ui');
@@ -123,7 +125,10 @@ const MANAGER = process.argv.includes('--manager');
 const MEMBER = process.argv.includes('--member');
 // Dana on no team, signed in from one of SIGNIN_DOMAINS (no-team mode): the personal view only,
 // of every team's channels she posted or was mentioned in.
-const NO_TEAM = process.argv.includes('--no-team');
+const NO_TEAM = process.argv.includes('--no-team') || process.argv.includes('--new');
+// Dana on no team, and new: signed in for the first time, never posted or mentioned in a channel
+// the inbox follows, so her personal view is empty.
+const NEWCOMER = process.argv.includes('--new');
 const SIM_EVERY_MS = 25 * 1000;
 // A new root is re-threaded this long after it arrives (src/rethread.js: 30 s).
 const RETHREAD_MS = 30 * 1000;
@@ -215,7 +220,7 @@ let settings = withDefaults(store.me, {
   ],
 });
 // The technologies Dana follows (src/follows.js), and her teams', which the admin pages keep.
-let follows = ['da'];
+let follows = NO_TEAM ? [] : ['da'];
 // What Dana follows besides technologies (src/follows.js `person_follows_by`).
 let followsBy = { org: [], person: [], area: [] };
 // The Trends view's made-up data (dev-ui-topics.mjs), made when it is first asked for.
@@ -327,12 +332,52 @@ const text = (res, body, status = 200) => {
   return true;
 };
 
+/** The channels of ME's personal view: those she posted or was mentioned in. */
+function myChannels() {
+  // A newcomer has posted nowhere and been mentioned nowhere yet.
+  if (NEWCOMER) {
+    return new Set();
+  }
+  const { name } = store.people.get(ME);
+  const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
+  const mentioned = new Set(store.mentions.filter((m) => m.person === ME).map((m) => m.thread));
+  return new Set([...store.threads.values()]
+    .filter((e) => mentioned.has(e.key) || e.messages.some((m) => m.author.name === name))
+    .map(at));
+}
+
 const inTeam = (team) => store.teams.some((t) => t.slug === team && t.members.includes(ME));
+
+/** What entry `e` shows and is about, as `thread_tech` and `thread_areas` would have it. */
+function showsOf(e) {
+  const label = store.labels.get(e.row.thread);
+  return {
+    tech: label?.tech ? Object.keys(label.tech) : (e.ch.tech || []),
+    areas: label?.topics || [],
+  };
+}
 /**
- * As src/shares.js `maySee`: who may work the entry, admins, and whoever talked in its sidebar
- * before see it and talk to its agent; only the first work it.
+ * Whether Dana follows entry `e` (src/follows.js): a technology it shows, its customer, an area
+ * it is in. Conversations only.
  */
-const maySee = (entry) => inTeam(entry.row.team) || ADMIN
+function followedByMe(e) {
+  if (e.row.kind === 'alert' || e.row.kind === 'ignore') {
+    return false;
+  }
+  const { tech, areas } = showsOf(e);
+  return tech.some((t) => follows.includes(t)) || followsBy.org.includes(e.row.org)
+    || areas.some((a) => followsBy.area.includes(a));
+}
+/** As src/shares.js `mayPost`: her teams' channels, and those she posted or was mentioned in. */
+const mayPost = (entry) => inTeam(entry.row.team)
+  || myChannels().has(`${entry.ch.source}:${entry.ch.channelId}`);
+/** As src/shares.js `mayWork`: and what she follows. */
+const mayWork = (entry) => mayPost(entry) || followedByMe(entry);
+/**
+ * As src/shares.js `maySee`: who may work the entry (`mayWork`), admins, and whoever talked in
+ * its sidebar before see it and talk to its agent; only the first work it.
+ */
+const maySee = (entry) => mayWork(entry) || ADMIN
   || (store.sidebars.get(entry.row.logical_thread || entry.row.thread) || [])
     .some((m) => m.role === 'person' && m.by?.id === ME);
 /** As src/agent/stub.js `notTheirs`: a 403 that names the team the thread is filed under. */
@@ -602,15 +647,6 @@ function outsideFor(entry, mentions) {
   return outside.length ? { outside } : {};
 }
 
-function myChannels() {
-  const { name } = store.people.get(ME);
-  const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
-  const mentioned = new Set(store.mentions.filter((m) => m.person === ME).map((m) => m.thread));
-  return new Set([...store.threads.values()]
-    .filter((e) => mentioned.has(e.key) || e.messages.some((m) => m.author.name === name))
-    .map(at));
-}
-
 /** The channels ME may start a thread in, latest activity first, as src/post.js lists them. */
 function postable() {
   const mine = myChannels();
@@ -705,7 +741,8 @@ function inbox(team, before = null, personal = false, only = null) {
   const channels = personal ? myChannels() : null;
   // Whichever team the channels are filed under.
   const inScope = (r) => (personal
-    ? r.kind !== 'alert' && channels.has(`${r.source}:${r.channel_id}`)
+    ? r.kind !== 'alert' && (channels.has(`${r.source}:${r.channel_id}`)
+      || followedByMe(store.threads.get(r.thread)))
     : r.team === team);
   // Paged by inbox entry, as src/api.js's: a re-threaded group counts once, by its latest member.
   const groupOf = (r) => r.logical_thread || r.thread;
@@ -1177,9 +1214,72 @@ function thread(asked) {
     // As src/api.js: whether the thread has an agent, and what the sidebar said to it.
     agent: agentTurn(entry) !== undefined,
     // As src/api.js: whether Dana may work it, or only see it and talk to its agent.
-    can_work: inTeam(entry.row.team),
+    can_work: mayWork(entry),
+    // As src/api.js: whether she replies in it as herself (not in the portal by a follow alone).
+    can_post: mayWork(entry) && (entry.row.source !== 'portal' || mayPost(entry)),
     sidebar: store.sidebars.get(key) || [],
   };
+}
+
+/**
+ * GET /api/follows/suggest from the fake data, as src/followsuggest.js makes it from D1: what
+ * Dana's channels were about, what every team's were about in the last TREND_DAYS (and the
+ * TREND_DAYS before), and the customers whose name has the query.
+ */
+async function suggestNow(q) {
+  const query = cleanQuery(q);
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const split = new Date(now - TREND_DAYS * day).toISOString();
+  const from = new Date(now - 2 * TREND_DAYS * day).toISOString();
+  const trend = { tech: new Map(), area: new Map() };
+  const own = { tech: new Map(), area: new Map(), org: new Map() };
+  const add = (map, id, field) => {
+    const was = map.get(id) || { recent: 0, before: 0 };
+    map.set(id, { ...was, [field]: was[field] + 1 });
+  };
+  const mine = myChannels();
+  // Conversations, one an entry (a re-threaded group as its first thread).
+  const entries = [...store.threads.values()]
+    .filter((e) => !['alert', 'ignore'].includes(e.row.kind) && !e.row.logical_thread);
+  for (const e of entries) {
+    const at = e.row.last_at || e.row.any_at || '';
+    const { tech, areas } = showsOf(e);
+    if (at >= from) {
+      const field = at >= split ? 'recent' : 'before';
+      tech.forEach((t) => add(trend.tech, t, field));
+      areas.forEach((a) => add(trend.area, a, field));
+    }
+    if (mine.has(`${e.ch.source}:${e.ch.channelId}`)) {
+      tech.forEach((t) => own.tech.set(t, (own.tech.get(t) || 0) + 1));
+      areas.forEach((a) => own.area.set(a, (own.area.get(a) || 0) + 1));
+      own.org.set(e.row.org, (own.org.get(e.row.org) || 0) + 1);
+    }
+  }
+  const teamFollows = await followsOfTeams(adminApi.env, store.teams.map((t) => t.slug));
+  const teams = new Map();
+  for (const [slug, list] of Object.entries(teamFollows)) {
+    const name = store.teams.find((x) => x.slug === slug)?.name || slug;
+    for (const t of list) {
+      teams.set(t, [...(teams.get(t) || []), name]);
+    }
+  }
+  const { results: areaRows } = await adminApi.env.DB
+    .prepare('SELECT DISTINCT id, name FROM areas WHERE enabled = 1').all();
+  const slugs = [...new Set([...store.threads.values()].map((e) => e.row.org).filter(Boolean))];
+  const low = query.toLowerCase();
+  return suggestionsOf({
+    query,
+    techs: await followable(adminApi.env),
+    areaList: areaRows || [],
+    teams,
+    trend,
+    own,
+    followed: follows,
+    followedBy: followsBy,
+    orgs: query ? slugs.filter((o) => o.includes(low)) : [...own.org.keys()],
+    names: new Map(),
+  });
 }
 
 async function readJson(req) {
@@ -1533,6 +1633,9 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/areas') {
     return json(res, ...await previewArea(req.method, await readJson(req)));
+  }
+  if (url.pathname === '/api/follows/suggest') {
+    return json(res, await suggestNow(url.searchParams.get('q')));
   }
   if (url.pathname === '/api/follows') {
     // As src/api.js: what Dana follows, changed one technology at a time.

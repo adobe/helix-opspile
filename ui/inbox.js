@@ -2384,6 +2384,24 @@ function endTeam(view) {
   delete state.not.type;
 }
 /** Shown once the personal unread list has nowhere left to scroll, and no facet is filtering it. */
+/**
+ * An empty personal view, before any filter or search: what comes into it, and what to follow
+ * (ui/followsuggest.js), instead of "Nothing matches these filters". Someone on no ops team
+ * starts here.
+ */
+function gettingStarted() {
+  if (!personal() || searching() || mentionsOn() || state.as || !state.follows) return '';
+  if ((state.data?.threads || []).length || state.data?.page?.next) return '';
+  if (viewFacets().some((f) => filterCount(f.id))) return '';
+  const teams = (state.teams || []).length;
+  const why = teams ? 'Your teams\' inboxes are beside it.'
+    : 'You are on no ops team, so following is how threads come here.';
+  return `<div class="getstarted"><h2>Follow what you work on</h2>
+    <p>Your personal view has the threads you post in or are mentioned in, on Slack, Teams, Discord and the customer portal, and the threads about what you follow. ${why}</p>
+    <div class="fs-mount"></div>
+    <button type="button" class="primary gs-done" hidden>Show their threads</button></div>`;
+}
+
 function endNote() {
   if (!personal() || !state.unread || searching() || state.data?.page?.next) return '';
   if (mentionsOn() || viewFacets().some((f) => filterCount(f.id))) return '';
@@ -2607,8 +2625,15 @@ function threadRows() {
   if (!nodes.length) {
     for (const c of list.children) preload.unobserve(c);
     const empty = note || (mentionsOn() ? '<div class="empty">No thread here mentions you.</div>'
-      : '<div class="empty">Nothing matches these filters.</div>');
-    if (list.__empty !== empty) { list.innerHTML = empty; list.__empty = empty; }
+      : (gettingStarted() || '<div class="empty">Nothing matches these filters.</div>'));
+    if (list.__empty !== empty) {
+      list.innerHTML = empty;
+      list.__empty = empty;
+      const mount = list.querySelector('.getstarted .fs-mount');
+      if (mount) mountFollowSuggest(mount);
+      const done = list.querySelector('.getstarted .gs-done');
+      if (done) done.onclick = () => loadInbox();
+    }
   } else {
     list.__empty = '';
     // A row on screen whose thread the list no longer shows folds away where it is: after the
@@ -3118,11 +3143,66 @@ async function toggleFollow(id) {
     toast(`Could not ${follow ? 'follow' : 'unfollow'} it: ${res.data.error || res.status}`);
     return;
   }
-  state.follows = { me: res.data.me, teams: res.data.teams };
+  state.follows = { me: res.data.me, teams: res.data.teams, by: res.data.by || before.by };
   shown();
   const name = vocabName('tech', id);
   toast(follow ? `Following ${name}: threads that show it are in your personal view.` : `No longer following ${name}.`);
-  if (personal()) reloadSoon();
+  afterFollow();
+}
+
+/** What a follow of `kind` (`tech`, `area`, `org`, `person`) is called: a product, a topic… */
+const FOLLOW_NOUN = {
+  tech: 'product', area: 'topic', org: 'customer', person: 'person',
+};
+
+/** Whether you follow `id` of `kind` (a technology, an area, a customer, a person). */
+const followsOn = (kind, id) => (kind === 'tech' ? followsTech(id)
+  : (state.follows?.by?.[kind] || []).map(String).includes(String(id)));
+
+/** The names the follows were shown with (a customer's, a topic's), for your menu. */
+const followNames = new Map();
+const followName = (kind, id) => followNames.get(`${kind}:${id}`)
+  || (kind === 'tech' ? vocabName('tech', id) : kind === 'area' ? vocabName('topics', id)
+    : kind === 'org' ? customerName(id) : String(id));
+
+/**
+ * Follows `id` of `kind`, or no more (`name`, what it is shown as). A technology as the tech
+ * stack's switches do (toggleFollow); the rest by PUT /api/follows `{ kind, target }`.
+ */
+async function toggleFollowOf(kind, id, name) {
+  if (name) followNames.set(`${kind}:${id}`, name);
+  if (kind === 'tech') { await toggleFollow(id); return; }
+  if (state.as || !state.follows) return;
+  const before = state.follows;
+  const follow = !followsOn(kind, id);
+  const list = (before.by?.[kind] || []).map(String);
+  state.follows = {
+    ...before,
+    by: { ...before.by, [kind]: follow ? [...list, String(id)] : list.filter((t) => t !== String(id)) },
+  };
+  renderFollowMenu();
+  const res = await request('PUT', '/api/follows', { kind, target: id, follow }).catch((e) => ({ ok: false, data: { error: e.message } }));
+  if (!res.ok) {
+    state.follows = before;
+    renderFollowMenu();
+    toast(`Could not ${follow ? 'follow' : 'unfollow'} it: ${res.data.error || res.status}`);
+    return;
+  }
+  state.follows = { me: res.data.me, teams: res.data.teams, by: res.data.by };
+  renderFollowMenu();
+  const shown = followName(kind, id);
+  toast(follow ? `Following ${shown}: its threads are in your personal view.` : `No longer following ${shown}.`);
+  afterFollow();
+}
+
+/**
+ * After a follow changed, the personal view loads again; but not from under the getting started
+ * panel, where one follows a few at once: it offers to show their threads instead.
+ */
+function afterFollow() {
+  if (!personal()) return;
+  const done = document.querySelector('#threads .getstarted .gs-done');
+  if (done) done.hidden = false; else reloadSoon();
 }
 
 /** The user menu's list of what you follow, each to unfollow, and what your teams follow. */
@@ -3131,19 +3211,51 @@ function renderFollowMenu() {
   if (!box) return;
   box.hidden = Boolean(state.as) || !state.follows;
   if (box.hidden) return;
-  const mine = state.follows.me || [];
-  $('followList').innerHTML = mine.map((id) => `<button class="item" data-unfollow="${esc(id)}" role="switch" aria-checked="true"><span class="ck s2-check" aria-hidden="true"></span>${esc(vocabName('tech', id))}</button>`).join('');
+  const mine = [...(state.follows.me || []).map((id) => ['tech', id]),
+    ...['area', 'org', 'person'].flatMap((k) => (state.follows.by?.[k] || []).map((id) => [k, id]))];
+  $('followList').innerHTML = mine.map(([kind, id]) => `<button class="item" data-unfollow="${esc(id)}" data-kind="${kind}" role="switch" aria-checked="true" title="A ${FOLLOW_NOUN[kind]}: click to stop following it"><span class="ck s2-check" aria-hidden="true"></span>${esc(followName(kind, id))}</button>`).join('');
   const and = (list) => (list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list[0]);
   const teams = Object.entries(state.follows.teams || {}).filter(([, list]) => list.length)
     .map(([slug, list]) => `${state.teams?.find((t) => t.slug === slug)?.name || slug} follows ${and(list.map((id) => vocabName('tech', id)))} in its inbox.`);
-  $('followHint').textContent = `${mine.length ? 'Threads that show these are in your personal view, in any channel. Click one to stop.' : 'Follow a technology from a thread\'s tech stack: the threads that show it come into your personal view, in any channel.'}${teams.length ? ` ${teams.join(' ')}` : ''}`;
+  $('followHint').textContent = `${mine.length ? 'Their threads are in your personal view, in any channel. Click one to stop.' : 'Follow products, topics and customers: their threads come into your personal view, in any channel.'}${teams.length ? ` ${teams.join(' ')}` : ''}`;
 }
 function wireFollowMenu() {
   $('followList').onclick = (e) => {
     const b = e.target.closest('[data-unfollow]');
-    if (b) toggleFollow(b.dataset.unfollow);
+    if (b) toggleFollowOf(b.dataset.kind || 'tech', b.dataset.unfollow);
   };
+  $('followFind').onclick = () => openFollowSuggest();
   renderFollowMenu();
+}
+
+/** The suggestions, and the search for what to follow (ui/followsuggest.js), drawn into `box`. */
+function mountFollowSuggest(box, intro = '') {
+  return FollowSuggest.mount(box, {
+    intro,
+    load: async (q) => {
+      const res = await request('GET', `/api/follows/suggest${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+      if (!res.ok) throw new Error(res.data.error || String(res.status));
+      return res.data;
+    },
+    isOn: followsOn,
+    toggle: toggleFollowOf,
+  });
+}
+
+/** Your menu's Find something to follow: the suggestions and the search, in a dialog. */
+function openFollowSuggest() {
+  $('menu')?.hidePopover?.();
+  if (state.as || !state.follows) return;
+  const dlg = toNode(`<dialog class="followsheet" aria-labelledby="followsheet-title"><form method="dialog">
+    <div class="top"><h2 id="followsheet-title">Follow what you work on</h2><button class="close" aria-label="Close" title="Close (Esc)"><span class="s2-cross" aria-hidden="true"></span></button></div>
+    <div class="fs-body"></div></form></dialog>`);
+  dlg.addEventListener('close', () => Dialog.remove(dlg));
+  // Enter in the search field finds; it does not close the dialog.
+  dlg.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('input')) e.preventDefault(); });
+  document.body.append(dlg);
+  const picker = mountFollowSuggest(dlg.querySelector('.fs-body'), '<p class="fs-lead">Their threads come into your personal view, in any channel. Suggested from the channels you are in and what is talked about most lately.</p>');
+  dlg.showModal();
+  picker.focus();
 }
 
 function techMenu(data) {
@@ -3341,6 +3453,12 @@ const canSide = (key) => Boolean(state.cache.get(key)?.data?.agent) && !state.da
  * moved to another team), and talk to its agent.
  */
 const canWork = (key) => state.cache.get(key)?.data?.can_work !== false;
+
+/**
+ * Whether you may reply in thread `key` as yourself (`can_post`, src/api.js): where you work it,
+ * but in the customer portal not by a follow of yours alone.
+ */
+const canPost = (key) => state.cache.get(key)?.data?.can_post !== false;
 
 /** Why you cannot talk to the agent of thread `key` in its sidebar, or null when you can. */
 function sideOff(key) {
@@ -4241,6 +4359,7 @@ function composer(thread, resolve = '', key = thread.thread) {
   const agent = sideButton(key);
   // Seen, not worked (an admin's, or a sidebar you talked in before it moved): the sidebar only.
   if (!canWork(key)) return `<div class="composer">${agent}<span class="connect">Filed under a team you are not on: only its team replies.${canSide(key) ? ` You can ask ${AGENT_NAME} in the sidebar.` : ''}</span>${LINES}</div>`;
+  if (!canPost(key)) return `<div class="composer">${agent}<span class="connect">You follow this thread: in the customer portal, only its team and the people of its channel reply.${canSide(key) ? ` You can ask ${AGENT_NAME} in the sidebar.` : ''}</span>${LINES}</div>`;
   if (p === 'discord') {
     // Discord lets only bots post through its API, and opspile posts as the person or not at
     // all: the reply is written in Discord. Connecting the account makes its posts count as yours.
@@ -8654,6 +8773,8 @@ function tourStops() {
     teams: (state.teams || []).length,
     simple: simple(),
     bell: !state.as,
+    follow: !state.as && Boolean(state.follows),
+    empty: Boolean(document.querySelector('#threads .getstarted')),
     pages: [...document.querySelectorAll('#pages a[data-page]')].map((a) => a.dataset.page),
     key: keyLabel,
   });

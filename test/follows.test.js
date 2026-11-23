@@ -18,10 +18,12 @@ import {
 } from '../src/api.js';
 import { entryOf } from '../src/drafts.js';
 import {
-  followable, followersOf, followingTeams, threadAreaStatements, threadTechStatements,
+  entryFollowers, followable, followersOf, followingTeams, threadAreaStatements,
+  threadTechStatements,
 } from '../src/follows.js';
+import { forgetTrends, suggestFollows } from '../src/followsuggest.js';
 import {
-  mayWork, recipients, roomsOf, teamsOf,
+  mayPost, mayReply, mayWork, recipients, roomsOf, teamsOf,
 } from '../src/shares.js';
 import { accessibleRepos } from '../src/agent/repos.js';
 import { d1 } from './d1.js';
@@ -221,23 +223,89 @@ describe('following technologies', () => {
     assert.equal((await recipients(e, { thread: key('C1', '2.1') }, sockets)).length, 0);
   });
 
-  it('opens nothing to someone on no ops team, even with a follow on record', async () => {
-    const e = env();
+  it('lets someone on no ops team follow, and work what they follow', async () => {
+    const e = { ...env(), SIGNIN_DOMAINS: 'staff.example' };
     const solo = asMe(SOLO);
-    assert.equal((await call(e, solo, 'PUT', '/api/follows', { tech: 'xw' })).status, 403);
-    // A row from when they were on a team counts for nothing now.
-    followPerson(e, SOLO.id, 'xw');
-    assert.deepEqual(entries(await inbox(e, solo, null, { personal: true })), []);
+    assert.equal((await call(e, solo, 'PUT', '/api/follows', { tech: 'xw' })).status, 200);
+    assert.deepEqual(entries(await inbox(e, solo, null, { personal: true })), [key('C1', '1.1')]);
     const t = {
       thread: key('C1', '1.1'), team: 'helix', source: 'slack', channel_id: 'C1',
     };
-    assert.ok(!await mayWork(e, solo)(['helix'], t));
-    assert.equal(await thread(e, solo, key('C1', '1.1')), null);
-    assert.deepEqual(await roomsOf(e, solo), []);
+    assert.ok(await mayWork(e, solo)(['helix'], t));
+    // On Slack they reply as themselves, and Slack decides whether they may post in the channel.
+    const seen = await thread(e, solo, key('C1', '1.1'));
+    assert.equal(seen.can_work, true);
+    assert.equal(seen.can_post, true);
+    // Not as the app, which takes the inbox's word for who may post.
+    assert.ok(!await mayPost(e, solo)(['helix'], t));
+    assert.deepEqual(await roomsOf(e, solo), ['helix']);
     const sockets = [{ person: SOLO.id, scoped: true }];
-    assert.equal((await recipients(e, { thread: key('C1', '1.1') }, sockets)).length, 0);
-    // Taking it back is still theirs.
-    assert.equal((await call(e, solo, 'PUT', '/api/follows', { tech: 'xw', follow: false })).status, 200);
+    assert.equal((await recipients(e, { thread: key('C1', '1.1') }, sockets)).length, 1);
+    // They count as listening while they may sign in: on a team, or from SIGNIN_DOMAINS.
+    assert.deepEqual(await entryFollowers(e, key('C1', '1.1')), [SOLO.id]);
+    assert.deepEqual(await entryFollowers({ ...e, SIGNIN_DOMAINS: '' }, key('C1', '1.1')), []);
+    // Customers, people and areas too.
+    assert.equal((await call(e, solo, 'PUT', '/api/follows', { kind: 'org', target: 'globex' })).status, 200);
+    assert.deepEqual(
+      entries(await inbox(e, solo, null, { personal: true })),
+      [key('C1', '1.1'), key('C2', '3.1')],
+    );
+  });
+
+  it('lets a follow alone not post in the customer portal, where the inbox posts for them', async () => {
+    const e = { ...env(), SIGNIN_DOMAINS: 'staff.example' };
+    const k = 'portal:acme.example:P1:9.1';
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        kind, channel_name, title, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES (?, 'portal', 'acme.example', 'P1', '9.1', 'acme', 'helix', 'channel', 'acme',
+        'about 9.1', 'channels/acme/helix/portal-P1/9.1/', ?, ?, ?, 1, ?)`).run(k, AT, AT, AT, AT);
+    e.DB.sqlite.prepare('INSERT INTO thread_tech (thread, tech, p) VALUES (?, ?, ?)').run(k, 'xw', 0.9);
+    followPerson(e, SOLO.id, 'xw');
+    const solo = asMe(SOLO);
+    const seen = await thread(e, solo, k);
+    assert.equal(seen.can_work, true);
+    assert.equal(seen.can_post, false);
+    const place = {
+      thread: k, team: 'helix', source: 'portal', channel_id: 'P1',
+    };
+    assert.ok(!await mayReply(e, solo)(['helix'], place));
+    const r = await call(e, solo, 'POST', '/api/post', { thread: k, text: 'hello' });
+    assert.equal(r.status, 404);
+    // The channel's team posts there.
+    assert.ok(await mayReply(e, asMe(ADA))(['helix'], place));
+    assert.equal((await thread(e, asMe(ADA), k)).can_post, true);
+  });
+
+  it('suggests what the person\'s channels are about, then what is trending, and finds by name', async () => {
+    const e = { ...env(), SIGNIN_DOMAINS: 'staff.example' };
+    forgetTrends();
+    const now = Date.parse(AT) + 24 * 60 * 60 * 1000;
+    // Solo posted in C2 (globex), whose group 3.1 + 4.1 shows da; xw is in two of C1's threads.
+    e.DB.sqlite.prepare('UPDATE messages SET person = ? WHERE thread = ?').run(SOLO.id, key('C2', '3.1'));
+    e.DB.sqlite.prepare('INSERT INTO thread_tech (thread, tech, p) VALUES (?, ?, ?)').run(key('C1', '2.1'), 'xw', 0.8);
+    e.DB.sqlite.exec(`INSERT INTO areas (team, id, name, what, path) VALUES
+      ('admin', 'seo', 'SEO', 'SEO', 'areas/seo.md'), ('admin', 'cdn', 'CDN and caching', 'CDN', 'areas/cdn.md')`);
+    await e.DB.batch(threadAreaStatements(e.DB, key('C2', '4.1'), { seo: 0.9 }));
+    followTeam(e, 'helix', 'xw');
+    const s = await suggestFollows(e, SOLO, { now });
+    assert.deepEqual(s.tech.map((t) => [t.id, t.mine, t.recent]), [['da', 1, 1], ['xw', 0, 2]]);
+    assert.deepEqual(s.tech[1].teams, ['Helix']);
+    assert.deepEqual(s.area.map((a) => a.id), ['seo']);
+    assert.deepEqual(s.org.map((o) => [o.id, o.mine]), [['globex', 1]]);
+    // Not what they follow already.
+    followPerson(e, SOLO.id, 'da');
+    assert.deepEqual((await suggestFollows(e, SOLO, { now })).tech.map((t) => t.id), ['xw']);
+    // A query finds by name every product, topic and customer, followed or not.
+    let q = await suggestFollows(e, SOLO, { q: 'document', now });
+    assert.deepEqual(q.tech.map((t) => t.id), ['da']);
+    q = await suggestFollows(e, SOLO, { q: 'caching', now });
+    assert.deepEqual(q.area.map((a) => a.id), ['cdn']);
+    q = await suggestFollows(e, SOLO, { q: 'acm', now });
+    assert.deepEqual(q.org.map((o) => o.id), ['acme']);
+    // Over the API, for anyone signed in.
+    const r = await call(e, asMe(SOLO), 'GET', '/api/follows/suggest?q=workspace');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.tech.map((t) => t.id), ['xw']);
   });
 
   it('tells a follower that a thread stopped showing what they follow, so it can go', async () => {
@@ -332,7 +400,6 @@ describe('following technologies', () => {
     // What no one may follow, and who may not.
     assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'area', target: 'nope' })).status, 400);
     assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'team', target: 'ew' })).status, 400);
-    assert.equal((await call(e, asMe(SOLO), 'PUT', '/api/follows', { kind: 'org', target: 'acme' })).status, 403);
   });
 
   it('lets a team\'s managers and the admin team pick what the team follows', async () => {

@@ -182,6 +182,23 @@ export const mayWork = (env, me) => async (teams, place) => memberOf(me)(teams)
     || (Boolean(place && place.thread) && followsEntry(env, me.id, place.thread))));
 
 /**
+ * Who may post where the platform does not decide it: in the customer portal, and as the inbox's
+ * app (src/postapp.js). As `mayWork`, but a person's own follow is not enough. On Slack and Teams
+ * they post as themselves, and the platform decides whether they may post in the channel; the
+ * portal and the app take the inbox's word, which is the channel's teams' and its people's (who
+ * posted or were mentioned there).
+ */
+export const mayPost = (env, me) => async (teams, place) => memberOf(me)(teams)
+  || (Boolean(me) && inPersonalChannel(env, me.id, place));
+
+/**
+ * Who may reply as themselves (src/post.js): who may work the thread (`mayWork`), but in the
+ * customer portal, where the inbox posts for them, who may post there (`mayPost`).
+ */
+export const mayReply = (env, me) => (teams, place) => (place && place.source === 'portal'
+  ? mayPost(env, me) : mayWork(env, me))(teams, place);
+
+/**
  * Whether person `person` talked to the agent in the sidebar of thread `thread`'s entry: in its
  * group, on any member's key (a sidebar is kept under the entry's key when it was talked in).
  */

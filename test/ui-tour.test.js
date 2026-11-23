@@ -26,9 +26,9 @@ const ids = (steps) => steps.map((s) => s.id);
 const text = (steps, id) => steps.find((s) => s.id === id).html;
 
 describe('the tour', () => {
-  it('stops at the views, filters, threads, search, bell, thread, agent, pages and your menu', () => {
+  it('stops at the views, filters, threads, search, bell, thread, agent, follows, pages and your menu', () => {
     const steps = Tour.steps({ teams: 2, pages: ['inbox', 'agents', 'topics'] });
-    assert.deepEqual(ids(steps), ['welcome', 'views', 'filters', 'threads', 'search', 'bell', 'thread', 'agent', 'pages', 'menu']);
+    assert.deepEqual(ids(steps), ['welcome', 'views', 'filters', 'threads', 'search', 'bell', 'thread', 'agent', 'follow', 'pages', 'menu']);
     // At most about ten stops, each with its own title, as S2's tours have.
     assert.equal(new Set(steps.map((s) => s.title)).size, steps.length);
     assert.equal(steps[0].at, null);
@@ -41,8 +41,20 @@ describe('the tour', () => {
     const simple = Tour.steps({
       teams: 0, simple: true, bell: false, pages: ['inbox'],
     });
-    assert.deepEqual(ids(simple), ['welcome', 'views', 'filters', 'threads', 'search', 'thread', 'agent', 'menu']);
+    assert.deepEqual(ids(simple), ['welcome', 'views', 'filters', 'threads', 'search', 'thread', 'agent', 'follow', 'menu']);
     assert.match(text(simple, 'views'), /Once you are in a team/);
+    // On no team, nothing speaks of your team: following is how threads come.
+    for (const s of simple) {
+      assert.doesNotMatch(s.html, /your team/i, s.id);
+    }
+    assert.match(text(simple, 'follow'), /On no team, this is how threads come here/);
+    assert.match(text(simple, 'search'), /your personal view/);
+    // An empty personal view: no thread to go through, and the suggestions are on screen.
+    const empty = Tour.steps({ teams: 0, empty: true });
+    assert.ok(!ids(empty).includes('threads'));
+    assert.match(text(empty, 'follow'), /These are suggested/);
+    // Viewing as someone, there is nothing to follow.
+    assert.ok(!ids(Tour.steps({ follow: false })).includes('follow'));
     assert.match(text(simple, 'filters'), /Pick a customer/);
     assert.match(text(simple, 'threads'), /the latest first/);
     const team = Tour.steps({ teams: 1, pages: ['inbox', 'agents', 'teams', 'orgs', 'stats'] });
