@@ -69,7 +69,7 @@ import {
   setPersonFollowBy,
 } from './follows.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
-import { claimPost, settlePost } from './postkeys.js';
+import { claimPost, logPost, settlePost } from './postkeys.js';
 import { postingOffer } from './postoffer.js';
 import {
   ATTENTION, latestMember, readState, unreadInYours, waitingOn,
@@ -1254,26 +1254,26 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     const { body, files } = read;
     const inMine = mayWork(env, me);
     // A retry of a reply that may have gone out does not post it again (src/postkeys.js).
+    const how = url.pathname === '/api/post' ? 'me' : 'app';
+    const started = Date.now();
     const again = await claimPost(env, me, body.key);
     if (again && !again.ok) {
+      await logPost(me, body, files, again, { how, ms: Date.now() - started, again: true });
       return again;
     }
     // As the person, or as the opspile app (where it may post in the channel).
     let res = again;
     if (!res) {
-      res = url.pathname === '/api/post'
-        ? await post(env, me, body, inMine, files) : await postApp(env, me, body, inMine, files);
+      res = how === 'me'
+        ? await post(env, me, body, inMine, files, { waitUntil })
+        : await postApp(env, me, body, inMine, files);
       await settlePost(env, me, body.key, res);
     }
-    if (files.length) {
-      console.log(JSON.stringify({
-        route: 'post', action: 'files', count: files.length, ok: res.ok, status: res.status,
-      }));
-    }
+    await logPost(me, body, files, res, { how, ms: Date.now() - started, again: Boolean(again) });
     // A reply sent from the shared draft uses it up (unless a colleague changed it since).
     // The post went out: whatever happens here, the answer says so.
     if (res.ok && typeof body.draft === 'string') {
-      const sent = { how: url.pathname === '/api/post' ? 'me' : 'app', text: body.text };
+      const sent = { how, text: body.text };
       const used = { thread: body.thread, base: body.draft };
       const done = await discardDraft(env, me, used, inMine, { sent })
         .then((r) => r.json())
