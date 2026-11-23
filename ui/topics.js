@@ -32,9 +32,10 @@
  * needs), the groups opened and the pick are the page's address; the header brings it back as
  * it was left. Rebuild clusters the threads again (POST /api/admin/topics).
  *
- * The other view, Trends (`view=trends`), is ui/trendview.js (its global `TrendView`): how much
- * the channels talk about each topic, area, technology, word or phrase, week by week, and what is
- * trending, declining or peaked. Both are every member's.
+ * Under the graph, how much the channels talk about what is picked, week by week, and what else is
+ * compared (ui/trendview.js, its global `TrendView`); in the panel, without a pick, the areas with
+ * their topics and the products with their features as trees that fold and open as the graph's
+ * bubbles do (the same `open`), each with its trend: trending, declining or peaked.
  *
  * The graph's data is ui/topicgraph.js (its global `TopicGraph`). The layout is the page's own:
  * d3-force's model (many-body repulsion, links as springs, a pull to the centre, collision), in a
@@ -60,6 +61,13 @@ const RELATED = [
   { id: 'org', label: 'Customers' }, { id: 'product', label: 'Products' },
 ];
 const MINS = [1, 2, 3, 5, 8];
+// What the trees show: everything, or only what is trending, declining or peaked (ui/trends.js).
+const LISTS = [
+  { id: '', label: 'All', title: 'The areas with their topics, the products with their features' },
+  { id: 'trending', label: 'Trending', title: 'Up on the 12 weeks before, surely and often enough, and not falling again: the faster it rises, the higher' },
+  { id: 'declining', label: 'Declining', title: 'Down on the 12 weeks before, surely, from often enough' },
+  { id: 'peaked', label: 'Peaked', title: 'Had a peak well above what is usual for it, more than four weeks ago, and is far below it now' },
+];
 const THREADS_SHOWN = 30;
 
 const state = {
@@ -80,14 +88,14 @@ const state = {
   // The teams each Adobe person is on (GET /api/topics), for their team bubbles.
   members: null,
   q: {
-    view: 'map', team: '', hide: [], min: 2, sel: '', open: [],
+    team: '', hide: [], min: 2, sel: '', open: [], tl: '',
   },
+  // The week of the chart whose threads the panel lists, and the terms they are for.
+  week: null,
   find: '',
   hover: '',
   graph: null,
   more: false,
-  // The topics' table: by their threads, or the least tagged first.
-  sort: 'threads',
 };
 
 // ---- the address ------------------------------------------------------------------------
@@ -96,24 +104,23 @@ function fromUrl() {
   const p = new URLSearchParams(location.search);
   const min = Number(p.get('min'));
   state.q = {
-    view: p.get('view') === 'trends' ? 'trends' : 'map',
     team: p.get('team') || '',
+    tl: LISTS.some((l) => l.id === p.get('tl')) ? p.get('tl') : '',
     hide: (p.get('hide') || '').split(',').filter((t) => TYPE[t]),
     min: MINS.includes(min) ? min : 2,
     sel: p.get('sel') || '',
     // The groups opened (ui/topicgraph.js), as their ids.
     open: p.getAll('open'),
   };
+  TrendView.fromUrl();
 }
 
 function toUrl({ push = true } = {}) {
   const p = new URLSearchParams();
   const { q } = state;
-  if (q.view === 'trends') {
-    p.set('view', 'trends');
-    for (const [k, v] of TrendView.params()) p.set(k, v);
-  }
   if (q.team) p.set('team', q.team);
+  if (q.tl) p.set('tl', q.tl);
+  for (const [k, v] of TrendView.params()) p.set(k, v);
   if (q.hide.length) p.set('hide', q.hide.join(','));
   if (q.min !== 2) p.set('min', String(q.min));
   if (q.sel) p.set('sel', q.sel);
@@ -602,30 +609,78 @@ function threadList(threads) {
     ${list.length > shown.length ? `<button class="link" id="moreThreads">Show all ${list.length}</button>` : ''}</section>`;
 }
 
+/** The page as ui/trendview.js sees it. */
+function trendCtx() {
+  return {
+    graph: state.graph,
+    map: map(),
+    mapId: state.latest?.id,
+    team: state.q.team,
+    sel: state.q.sel,
+    toUrl: () => toUrl(),
+    pick,
+    onWeek: showWeek,
+  };
+}
+
+/**
+ * The areas with their topics and the products with their features, as the graph has them: a
+ * group of one is that one, and a group opens and folds as its bubble does (`open`). Each with
+ * its trend; filtered, only what is trending, declining or peaked, the strongest first.
+ */
+function trees() {
+  const g = state.graph;
+  const moving = TrendView.moving(trendCtx());
+  if (!moving) {
+    return `<p class="hint">${TrendView.error ? `Trends: ${esc(TrendView.error)}` : 'Loading the trends…'}</p>`;
+  }
+  const item = (n) => moving.items.get(n.id);
+  const recent = (n) => item(n)?.stats.recent || 0;
+  const shows = (n) => n.children && n.children.length > 1;
+  const row = (n, depth, sub = '') => {
+    const it = item(n);
+    const few = n.type === 'topic' && n.threads.length && tagged(n.threads) / n.threads.length < 0.25;
+    return `<li class="tr d${depth}">${shows(n) ? `<button class="chev" data-fold="${esc(n.id)}" aria-expanded="${Boolean(n.open)}" aria-label="${n.open ? 'Fold' : 'Open'} ${esc(n.label)}"></button>` : '<span class="chev"></span>'}
+      <button class="pickr" data-sel="${esc(n.id)}"><span class="dot" data-type="${n.type}"${n.gap ? ' data-gap' : ''}></span><span class="nm">${esc(n.label)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ''}${few ? ' <span class="untagged" title="Clef tags few of its threads">·</span>' : ''}</span>
+      ${TrendView.badge(it)}${TrendView.spark(it)}<span class="n" title="Channels a week, the last ${Trends.RECENT} weeks">${it ? it.stats.perWeek.toFixed(1) : '–'}</span></button></li>`;
+  };
+  const tree = (roots) => roots.sort((a, b) => recent(b) - recent(a) || a.label.localeCompare(b.label))
+    .map((n) => row(n, 0) + (shows(n) && n.open ? n.children.map((id) => g.all.get(id)).filter(Boolean)
+      .sort((a, b) => recent(b) - recent(a)).map((c) => row(c, 1))
+      .join('') : '')).join('');
+  const all = [...g.all.values()];
+  // The groups of more than one, and what is in none (a group of one is its one).
+  const rootsOf = (group, leaf) => all.filter((n) => (n.type === group && shows(n))
+    || (n.type === leaf && !n.parent && !n.children));
+  const areas = rootsOf('tag', 'topic').filter((n) => n.type !== 'tag' || n.children.length);
+  const made = rootsOf('product', 'product');
+  let body;
+  if (state.q.tl) {
+    const listed = moving[state.q.tl].map((x) => g.all.get(x.key)).filter((n) => n && ['tag', 'topic', 'product'].includes(n.type));
+    const parentOf = (n) => (n.parent ? g.all.get(n.parent)?.label || '' : '');
+    body = `<ul class="tree">${listed.map((n) => row(n, 0, parentOf(n))).join('') || `<li class="sub">Nothing ${esc(state.q.tl)} now.</li>`}</ul>`;
+  } else {
+    body = `<h3>Areas and topics</h3><ul class="tree">${tree(areas)}</ul>
+      <h3>Products and features</h3><ul class="tree">${tree(made) || '<li class="sub">No products yet.</li>'}</ul>`;
+  }
+  return `<div class="seg" role="group" aria-label="Show">${LISTS.map((l) => `<button data-tl="${l.id}" aria-pressed="${state.q.tl === l.id}" title="${esc(l.title)}">${l.label}</button>`).join('')}</div>
+    <p class="hint">Each line is the share of the channels with messages that talk about it, week by week; trending, declining and peaked are said of the last ${Trends.RECENT} full weeks, to ${esc(TrendView.data.weeks[moving.last])}, against the ${Trends.BASE} before. A click picks it on the map and the chart.</p>
+    ${body}`;
+}
+
 function overview() {
   const g = state.graph;
   const m = map();
   const { threads } = g;
-  const share = (n) => tagged(n.threads) / n.threads.length;
-  const topics = [...g.all.values()].filter((n) => n.type === 'topic')
-    .sort((a, b) => (state.sort === 'tagged' ? share(a) - share(b) : 0) || b.threads.length - a.threads.length);
-  const sortBy = (id, label, title) => `<button class="sort" data-sort="${id}" title="${esc(title)}"${state.sort === id ? ' data-on' : ''}>${label}</button>`;
+  const topics = [...g.all.values()].filter((n) => n.type === 'topic');
   const none = threads.length - tagged(threads);
   return `<h2>${plural(topics.length, 'topic')} <span class="sub">${plural(threads.length, 'thread')}</span></h2>
     <p class="hint">Found from what was said in the threads with ${m.min_messages} messages or more (not meetings or
       people's comings and goings), named all at once from their most typical threads, Clef topics and products. <b>${none} of them (${pct(none, threads.length)})
       have no tag from Clef</b>: the topics Clef rarely tags are what its topic questions miss.</p>
+    ${trees()}
     ${gaps()}
-    ${areasSection()}
-    <h3>Topics</h3>
-    <table class="topics"><thead><tr><th>Topic</th><th class="n">${sortBy('threads', 'Threads', 'The most threads first')}</th>
-      <th class="n">${sortBy('tagged', 'Tagged', 'Threads with a tag from Clef: the fewest first')}</th><th>Area</th></tr></thead>
-    <tbody>${topics.map((n) => {
-    const area = g.all.get(`tag:${g.areas[Number(n.key)] || TopicGraph.NONE}`);
-    return `<tr class="pick" data-sel="${esc(n.id)}"><td><div class="name"><span class="dot" data-type="topic"></span><span>${esc(n.label)}</span></div></td>
-      <td class="n">${n.threads.length}</td><td class="n${share(n) < 0.25 ? ' low' : ''}">${pct(tagged(n.threads), n.threads.length)}</td>
-      <td class="m">${esc(area?.label || '–')}</td></tr>`;
-  }).join('')}</tbody></table>`;
+    ${areasSection()}`;
 }
 
 /** The products no tech stack entry names, by their threads: what to add to it. */
@@ -823,6 +878,8 @@ function details(n) {
     ${area?.what ? `<p class="theme">Clef is asked: is this thread about ${esc(area.what)}?</p>` : ''}
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
     <p class="sub facts">${facts.map(esc).join(' · ')}</p>
+    ${TrendView.summary(TrendView.moving(trendCtx())?.items.get(n.id))}
+    ${TrendView.data ? `<div class="acts"><button data-compare="${esc(n.id)}" title="Keep its line on the chart when you pick another">Keep on the chart</button></div>` : ''}
     ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">Clef gave none of these threads a tag: a topic its questions miss.</p>' : ''}
     ${childList(n)}
     ${others.map((t) => relatedList(n, t)).join('')}
@@ -835,6 +892,10 @@ function renderPanel() {
   // Another pick fades in (ui/app.js); the panel is made again with the page's body.
   Swap.watch(panel, () => state.q.sel);
   const n = state.q.sel && state.graph.all.get(state.q.sel);
+  if (state.week) {
+    panel.innerHTML = state.week.html || '<div class="empty">Loading…</div>';
+    return;
+  }
   panel.innerHTML = n ? details(n) : overview();
   // The meters' fill, as wide as its share: a class per tenth (ui/spectrum-topics.css).
   for (const f of panel.querySelectorAll('.fill[data-w]')) f.classList.add(`w${Math.max(1, Math.round(Number(f.dataset.w) / 10))}`);
@@ -851,10 +912,25 @@ function pick(id) {
   const parent = n?.parent && state.graph.all.get(n.parent);
   const opened = parent && !parent.open;
   if (opened) state.q.open = [...state.q.open, parent.id];
+  state.week = null;
   toUrl();
   if (opened) drawGraph();
   renderPanel();
   focus();
+  TrendView.chart(trendCtx());
+}
+
+/** The threads of a week of the chart, in the panel; Back or a pick ends it. */
+async function showWeek(week, terms) {
+  state.week = { week };
+  renderPanel();
+  try {
+    const html = await TrendView.weekThreads(week, terms, trendCtx());
+    if (state.week?.week === week) state.week.html = html;
+  } catch (e) {
+    if (state.week?.week === week) state.week.html = `<div class="hint err">${esc(e.message)}</div>`;
+  }
+  renderPanel();
 }
 
 /** Opens group `id`, or folds it back. */
@@ -894,11 +970,7 @@ function clickNode(n) {
 
 function renderBar() {
   const m = map();
-  const trends = state.q.view === 'trends';
-  $('views').innerHTML = [['map', 'Map', 'The topics, people and products, as one graph'],
-    ['trends', 'Trends', 'How much the channels talk about each, week by week, and what is trending, declining or peaked']]
-    .map(([id, label, title]) => `<button data-view="${id}" aria-pressed="${state.q.view === id}" title="${esc(title)}">${label}</button>`).join('');
-  $('bar').hidden = false;
+  $('bar').hidden = !m && !state.available;
   const teams = m ? [...new Set(m.threads.map((t) => t.team))].sort() : [];
   const teamName = (slug) => state.me.teams?.find((t) => t.slug === slug)?.name || slug;
   $('team').innerHTML = `<option value="">All teams</option>${teams.map((t) => `<option value="${esc(t)}"${t === state.q.team ? ' selected' : ''}>${esc(teamName(t))}</option>`).join('')}`;
@@ -922,7 +994,6 @@ function renderBar() {
     : 'A topic map needs the CONTENT index and Workers AI';
   $('rebuild').textContent = state.building ? 'Building…' : (built ? 'Rebuild' : 'Build');
   $('rebuild').classList.toggle('primary', !built);
-  for (const e of document.querySelectorAll('#bar .maponly')) e.hidden = trends || (e.id === 'rebuild' && !state.may.rebuild);
 }
 
 function ago(iso) {
@@ -935,17 +1006,6 @@ function ago(iso) {
 
 function render({ refit = false } = {}) {
   const body = $('body');
-  if (state.q.view === 'trends') {
-    if ($('graph')) body.innerHTML = '';
-    svg = null;
-    renderBar();
-    TrendView.show(body, {
-      me: state.me, may: state.may, esc, ago, toUrl: () => toUrl(),
-    });
-    return;
-  }
-  // From Trends: the map is drawn again.
-  if ($('tchart')) body.innerHTML = '';
   if (state.error && !map()) {
     body.innerHTML = `<div class="empty err">${esc(state.error)}</div>`;
     renderBar();
@@ -960,21 +1020,31 @@ function render({ refit = false } = {}) {
   }
   if (!$('graph')) {
     body.innerHTML = `<div class="split">
-      <div class="card graph" id="graph"><div class="empty" id="graphEmpty" hidden>Nothing to draw: show more kinds, or fewer shared threads.</div>
+      <div class="col"><div class="card graph" id="graph"><div class="empty" id="graphEmpty" hidden>Nothing to draw: show more kinds, or fewer shared threads.</div>
         <div class="tools"><button id="fit" title="Show the whole graph">Fit</button></div>
         <div class="tip" id="tip" hidden></div></div>
+        ${TrendView.card()}</div>
       <aside class="card panel" id="panel"></aside></div>
       ${state.error ? `<div class="hint err">${esc(state.error)}</div>` : ''}`;
     svg = null;
     $('fit').onclick = fit;
+    TrendView.wire(trendCtx);
   }
   drawGraph({ refit });
   if (state.q.sel && !state.graph.all.has(state.q.sel)) state.q.sel = '';
   renderBar();
   renderPanel();
+  TrendView.chart(trendCtx());
 }
 
 async function load() {
+  // The trends come along; the map is drawn without waiting for them.
+  TrendView.load().then(() => {
+    if (map() && $('panel')) {
+      renderPanel();
+      TrendView.chart(trendCtx());
+    }
+  });
   try {
     const res = await fetch('/api/topics', { credentials: 'same-origin', redirect: 'manual' });
     const body = await res.json().catch(() => ({}));
@@ -1003,6 +1073,8 @@ async function rebuild() {
     if (!res.ok) throw new Error(body.error || `failed (${res.status})`);
     state.latest = body.latest;
     state.error = '';
+    // Its threads have other topics now.
+    TrendView.reload().then(() => render());
     // A new map: its topics are other ones, so is the layout.
     sim.pos.clear();
     if (state.q.sel.startsWith('topic:')) state.q.sel = '';
@@ -1046,19 +1118,23 @@ function wire() {
     }
   };
   $('rebuild').onclick = rebuild;
-  $('views').onclick = (ev) => {
-    const b = ev.target.closest('button[data-view]');
-    if (b && b.dataset.view !== state.q.view) change((q) => { q.view = b.dataset.view; });
-  };
+
   $('body').addEventListener('click', (ev) => {
     const target = ev.target.closest('[data-sel]');
     if (target && !target.closest('svg')) pick(target.dataset.sel);
     if (ev.target.closest('#unpick')) pick('');
-    const sort = ev.target.closest('button[data-sort]');
-    if (sort) {
-      state.sort = sort.dataset.sort;
+    if (ev.target.closest('#unweek')) {
+      state.week = null;
       renderPanel();
     }
+    const tl = ev.target.closest('button[data-tl]');
+    if (tl) {
+      state.q.tl = tl.dataset.tl;
+      toUrl();
+      renderPanel();
+    }
+    const cmp = ev.target.closest('button[data-compare]');
+    if (cmp) TrendView.compareWith(cmp.dataset.compare, trendCtx());
     if (ev.target.closest('#moreThreads')) {
       state.more = true;
       renderPanel();
@@ -1114,7 +1190,10 @@ function wire() {
   let resizing = 0;
   window.addEventListener('resize', () => {
     cancelAnimationFrame(resizing);
-    resizing = requestAnimationFrame(fit);
+    resizing = requestAnimationFrame(() => {
+      fit();
+      if (map()) TrendView.drawChart(trendCtx());
+    });
   });
   window.addEventListener('opspile:signedin', () => load());
 }
@@ -1133,6 +1212,7 @@ function wire() {
     $('body').innerHTML = `<div class="empty">The topic map is for the members of the ops teams. <a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;
     return;
   }
+  TrendView.setEsc(esc);
   fromUrl();
   toUrl({ push: false });
   wire();

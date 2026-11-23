@@ -16,11 +16,11 @@
  * - `GET /api/topics`: the newest topic map, every team's areas (src/areas.js), what the viewer
  *   follows, every team's name, and what they may change: the areas of which teams
  *   (`may.areas`), and a rebuild.
- * - `POST /api/topics`: builds a map now, for the admin team and team managers.
- * - `GET /api/topics/trends`: what the Trends view counts (src/trends.js `trendsData`), kept a
+ * - `POST /api/topics`: builds a map now, for the admin team and team managers, and the topics of
+ *   the first of the threads it does not have (the cron finds the rest).
+ * - `GET /api/topics/trends`: what the page's trends count (src/trends.js `trendsData`), kept a
  *   few minutes; `GET /api/topics/trends/match?term=` the threads a word or a phrase (`~…`) is in
- *   or about; `GET /api/topics/trends/threads?ids=` some of the threads, to list them; and
- *   `POST /api/topics/trends`, a trend map now, for whoever may rebuild the topic map.
+ *   or about; `GET /api/topics/trends/threads?ids=` some of the threads, to list them.
  * - `POST /api/areas { team, id, title, what }`, `PUT /api/areas { team, id, title?, what?,
  *   enabled? }`, `DELETE /api/areas { team, id }`: an area of `team`'s knowledge base, as a file
  *   at `areas/<id>.md` written as the viewer (the admin team any team's, a manager their teams').
@@ -35,10 +35,14 @@ import { json } from './http.js';
 import { ADMIN_TEAM, isAdmin, managedTeams } from './review.js';
 import { buildTopicMap, latestTopicMap } from './topicmap.js';
 import {
-  assignPending, buildTrendMap, matchTerm, trendsData, trendThreads,
+  assignPending, matchTerm, trendsData, trendThreads,
 } from './trends.js';
 
 const ID = /^[a-z][a-z0-9-]{0,39}$/;
+
+/** How long GET /api/topics/trends is kept, per database: it reads every thread of a year. */
+export const TRENDS_TTL_MS = 5 * 60000;
+const trendsCache = new WeakMap();
 
 /** The teams whose areas `me` may change: every team for the admin team, else those they manage. */
 async function areaTeams(env, me) {
@@ -99,12 +103,10 @@ export async function rebuildTopics(env, me) {
   if (built.error) {
     return json({ error: built.error }, env.CONTENT && env.AI ? 400 : 503);
   }
+  await assignPending(env);
+  trendsCache.delete(env.DB);
   return json({ latest: await latestTopicMap(env), available: true });
 }
-
-/** How long GET /api/topics/trends is kept, per database: it reads every thread of a year. */
-export const TRENDS_TTL_MS = 5 * 60000;
-const trendsCache = new WeakMap();
 
 /** /api/topics/trends…, for the members of an ops team (src/api.js checks). */
 export async function trendsApi(env, me, request, url) {
@@ -117,21 +119,6 @@ export async function trendsApi(env, me, request, url) {
     const body = await trendsData(env);
     trendsCache.set(env.DB, { at: Date.now(), body });
     return json(body);
-  }
-  if (pathname === '/api/topics/trends' && request.method === 'POST') {
-    if (me.readonly) {
-      return json({ error: 'read-only while viewing as someone else' }, 403);
-    }
-    if (!(await areaTeams(env, me)).length) {
-      return json({ error: 'the admin team and team managers build the trends' }, 403);
-    }
-    const built = await buildTrendMap(env, { by: (me && me.name) || 'someone' });
-    if (built.error) {
-      return json({ error: built.error }, env.CONTENT && env.AI ? 400 : 503);
-    }
-    await assignPending(env);
-    trendsCache.delete(env.DB);
-    return json(built);
   }
   if (request.method !== 'GET') {
     return json({ error: 'GET' }, 405);

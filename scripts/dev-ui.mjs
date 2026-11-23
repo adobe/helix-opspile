@@ -100,6 +100,7 @@ import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { areaFile, compileAreas, isArea } from '../src/areas.js';
 import { topicsPage } from '../src/topicsapi.js';
 import { weeksTo } from '../src/trends.js';
+import { latestTopicMap } from '../src/topicmap.js';
 import { trendsFixture } from './dev-ui-topics.mjs';
 import { findPerson } from '../src/kbpeople.js';
 import { AGENT, createStore } from './dev-ui-fixtures.mjs';
@@ -1457,7 +1458,7 @@ async function api(req, res, url) {
   // The Topics page's Trends (src/trends.js): the made-up half year of dev-ui-topics.mjs, with
   // its own answers to the words and phrases; there is no CONTENT index to build a map from.
   if (url.pathname.startsWith('/api/topics/trends')) {
-    trends ||= trendsFixture(Date.now(), weeksTo(new Date()));
+    trends ||= trendsFixture(Date.now(), weeksTo(new Date()), await latestTopicMap(adminApi.env));
     if (req.method === 'POST') {
       return json(res, { error: 'the preview has no CONTENT index to find topics in' }, 503);
     }

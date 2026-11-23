@@ -11,7 +11,7 @@
  */
 
 /*
- * The counting of the Topics page's Trends (ui/trendview.js draws it), over what
+ * The counting of the Topics page's trends (ui/trendview.js draws them), over what
  * GET /api/topics/trends sends (src/trends.js `trendsData`): a thread is
  * `[id, week, channel, org, team, source, kind, topic, areas, tech, weeks]`, `weeks` its messages
  * as `[week, count, …]`. Its global `Trends`, with nothing of the page in it, so Node tests it.
@@ -233,7 +233,8 @@
 
   /**
    * What is moving among the series `keysOf` makes of each thread `keep` keeps: `{ trending,
-   * declining, peaked }`, the strongest first, each `{ key, score, stats, orgs, top, spark }`.
+   * declining, peaked }`, the strongest first, and `items`, every series by its key, each
+   * `{ key, list, score, stats, orgs, top, spark, counts }` (`list` the one it is in, or null).
    */
   function moving(data, { keep = () => true, keysOf, unit = 'channels', now = Date.now() }) {
     const { last } = lastFull(data, now);
@@ -265,20 +266,23 @@
     }
     const factor = unit === 'messages' ? MESSAGE_FACTOR : 1;
     const out = { trending: [], declining: [], peaked: [] };
+    const items = new Map();
     for (const [key, s] of series) {
       const st = stats(s.counts, totals, { last, first });
       const c = classify(st, s.orgs, { last, first, factor });
       const spark = s.counts.slice(first, last + 1).map((x, i) => (totals[first + i] ? x / totals[first + i] : 0));
-      for (const list of Object.keys(out)) {
-        if (c[list]) {
-          out[list].push({
-            key, ...c[list], stats: st, spark, first,
-          });
-        }
-      }
+      const list = Object.keys(out).find((l) => c[l]) || null;
+      const item = {
+        key, list, ...(list ? c[list] : customers(s.orgs, last - RECENT + 1, last)), score: list ? c[list].score : 0,
+        stats: st, spark, first, counts: s.counts,
+      };
+      items.set(key, item);
+      if (list) out[list].push(item);
     }
-    for (const list of Object.values(out)) list.sort((a, b) => b.score - a.score);
-    return { ...out, last, first };
+    for (const l of Object.values(out)) l.sort((a, b) => b.score - a.score);
+    return {
+      ...out, items, totals, last, first,
+    };
   }
 
   globalThis.Trends = {

@@ -13,9 +13,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { api } from '../src/api.js';
+import { buildTopicMap } from '../src/topicmap.js';
 import {
-  assignPending, assignTopic, buildTrendMap, mapVectors, matchTerm, mondayOf, packVectors,
-  semanticFloor, stratified, sweepTrends, trendsData, trendThreads, unpackVectors, weeksTo,
+  assignPending, assignTopic, mapVectors, matchTerm, mondayOf, packVectors,
+  semanticFloor, sweepTrends, trendsData, trendThreads, unpackVectors, weeksTo,
 } from '../src/trends.js';
 import { threadVectorId } from '../src/vectors.js';
 import { d1 } from './d1.js';
@@ -144,17 +145,6 @@ describe('trends: weeks and vectors (src/trends.js)', () => {
     assert.equal(assignTopic(near(200), space).topic, null);
   });
 
-  it('samples every month alike, so a busy month does not make all the topics', () => {
-    const rows = [
-      ...Array.from({ length: 90 }, (_, i) => ({ root_at: '2026-09-02', i })),
-      ...Array.from({ length: 10 }, (_, i) => ({ root_at: '2026-05-02', i })),
-    ];
-    const got = stratified(rows, 20);
-    assert.equal(got.length, 20);
-    assert.equal(got.filter((r) => r.root_at.startsWith('2026-05')).length, 10);
-    assert.equal(stratified(rows, 500).length, 100);
-  });
-
   it('sets the floor of a phrase by how alike it is to threads by chance', () => {
     const sample = Array.from({ length: 50 }, (_, i) => near(10 + i));
     const floor = semanticFloor(Float32Array.from(near(10)), sample, 3);
@@ -162,7 +152,7 @@ describe('trends: weeks and vectors (src/trends.js)', () => {
   });
 });
 
-describe('trends: the map, the threads and the matches (src/trends.js)', () => {
+describe('trends: the topics, the threads and the matches (src/trends.js)', () => {
   const ORGS = [
     { slug: 'acme', name: 'Acme', type: 'customer' }, { slug: 'beta', name: 'Beta', type: 'partner' },
     { slug: 'us', name: 'Us', type: 'internal' },
@@ -181,7 +171,8 @@ describe('trends: the map, the threads and the matches (src/trends.js)', () => {
           title: topic === 1 ? 'CDN purge is slow' : `Thread ${w} ${topic}`,
           areas: topic === 1 ? { cdn: 0.9 } : {},
           tech: topic === 2 ? { 'acme/editor': 0.8 } : {},
-          msgs: [[day(7 * w + 1), topic === 3 ? 'the cdns are fine' : 'hello']],
+          // Three messages, so the topic map has it; the third week's one, so it does not.
+          msgs: Array.from({ length: w === 3 ? 1 : 3 }, () => [day(7 * w + 1), topic === 3 ? 'the cdns are fine' : 'hello']),
         });
       }
     }
@@ -196,47 +187,55 @@ describe('trends: the map, the threads and the matches (src/trends.js)', () => {
     key: 'slack:E1:C0:3.9', org: 'acme', root: day(2), group: 'slack:E1:C0:0.1', msgs: [[day(2), 'more on the CDN purge']],
   });
 
-  it('finds topics over every month, names them, and assigns the threads', async () => {
+  it('gives the threads the topic map does not have the topic of the nearest centre', async () => {
     const { env } = await world(threads, { orgs: ORGS });
-    const built = await buildTrendMap(env, { now: NOW, by: 'Ada' });
+    // Before a map with its space, nothing.
+    assert.equal((await assignPending(env, { now: NOW })).assigned, 0);
+    const built = await buildTopicMap(env, { now: NOW, by: 'Ada' });
     assert.ok(built.id, JSON.stringify(built));
-    assert.equal(built.threads, 90);
-    const map = env.DB.rows('SELECT built_by, k, topics FROM trend_maps')[0];
-    assert.equal(map.built_by, 'Ada');
-    assert.equal(JSON.parse(map.topics)[0].label, 'Named topic 0');
-    // Every thread it clustered has its topic, and no topic has two kinds of threads.
+    // The map's threads (three messages and more) have their own topic; the others none yet.
+    const own = env.DB.rows('SELECT thread, topic FROM trend_threads');
+    assert.equal(own.length, built.threads);
+    assert.ok(own.every((r) => !r.thread.includes(':3.')));
+    const first = await assignPending(env, { now: NOW });
+    assert.ok(first.assigned >= 9, JSON.stringify(first));
+    // Each of them in the topic of its kind's threads.
     const rows = env.DB.rows('SELECT thread, topic FROM trend_threads');
-    assert.equal(rows.length, 90);
     const byAxis = new Map();
-    for (const r of rows) {
+    for (const r of rows.filter((x) => x.topic !== null)) {
       const axis = r.thread.split('.').pop();
       byAxis.set(axis, new Set([...(byAxis.get(axis) || []), r.topic]));
     }
-    const all = [...byAxis.values()].flatMap((s) => [...s]);
+    const all = [...byAxis.values()].flatMap((x) => [...x]);
     assert.equal(new Set(all).size, all.length);
     // A thread whose vector changed is assigned again; nothing is left after.
     env.DB.sqlite.exec('UPDATE threads SET embedded = \'new\' WHERE thread = \'slack:E1:C0:0.1\'');
     assert.deepEqual(await assignPending(env, { now: NOW }), { assigned: 1, left: 0 });
     assert.deepEqual(await assignPending(env, { now: NOW }), { assigned: 0, left: 0 });
-    // The cron builds no new map while this one is fresh.
     assert.ok((await sweepTrends(env, NOW)).assigned);
-    assert.ok((await sweepTrends(env, new Date(NOW.getTime() + 29 * 864e5))).built.id);
+    // A newer map: all of them again.
+    await buildTopicMap(env, { now: NOW });
+    assert.ok((await assignPending(env, { now: NOW })).assigned >= 9);
+    assert.equal(env.DB.rows('SELECT COUNT(*) AS n FROM topic_maps WHERE vectors IS NOT NULL')[0].n, 1);
   });
 
   it('sends every counted thread, small, with its messages by week', async () => {
     const { env } = await world(threads, { orgs: ORGS });
-    await buildTrendMap(env, { now: NOW });
+    const built = await buildTopicMap(env, { now: NOW });
+    await assignPending(env, { now: NOW });
     const d = await trendsData(env, { now: NOW });
     assert.equal(d.weeks.length, 52);
     assert.equal(d.threads.length, 90);
     assert.equal(d.channels, 3);
     assert.deepEqual(d.orgs.map((o) => o.slug).sort(), ['acme', 'beta']);
-    assert.ok(d.map.topics.length >= 3);
-    assert.equal(d.map.assigned, 90);
+    assert.equal(d.map.id, built.id);
+    assert.ok(d.map.assigned >= 90);
+    assert.ok(d.threads.every((r) => r[7] >= 0));
+    assert.deepEqual(d.tech, [{ id: 'acme/editor', name: 'acme/editor', product: null }]);
     // The group's first has its member's message too, in the member's week.
     const first = env.DB.rows('SELECT rowid AS id FROM threads WHERE thread = \'slack:E1:C0:0.1\'')[0].id;
     const row = d.threads.find((r) => r[0] === first);
-    assert.deepEqual(row[10], [51, 2]);
+    assert.deepEqual(row[10], [51, 4]);
     assert.deepEqual(row[8].map((i) => d.areas[i].id), ['cdn']);
     // And some of them, to list.
     const [listed] = await trendThreads(env, [first, 'x']);
@@ -245,7 +244,8 @@ describe('trends: the map, the threads and the matches (src/trends.js)', () => {
 
   it('finds whole words, and what a phrase is about, month by month', async () => {
     const { env, queries } = await world(threads, { orgs: ORGS });
-    await buildTrendMap(env, { now: NOW });
+    await buildTopicMap(env, { now: NOW });
+    await assignPending(env, { now: NOW });
     const ids = (keys) => env.DB.rows(`SELECT rowid AS id FROM threads WHERE thread IN (${keys.map(() => '?').join(',')})`, ...keys)
       .map((r) => r.id).sort((a, b) => a - b);
     const purge = await matchTerm(env, 'purge', { now: NOW });
@@ -255,10 +255,10 @@ describe('trends: the map, the threads and the matches (src/trends.js)', () => {
     assert.equal((await matchTerm(env, 'cdn', { now: NOW })).ids.length, 30);
     assert.equal((await matchTerm(env, '%%', { now: NOW })).error.length > 0, true);
     // By chance, threads are far less alike than these three kinds: a sample of many others.
-    const [map] = env.DB.rows('SELECT id, k, vectors FROM trend_maps');
+    const [map] = env.DB.rows('SELECT id, k, vectors FROM topic_maps WHERE vectors IS NOT NULL');
     const space = mapVectors(map.vectors, map.k);
     const others = Array.from({ length: 60 }, (_, i) => near(100 + i));
-    env.DB.sqlite.prepare('UPDATE trend_maps SET vectors = ? WHERE id = ?')
+    env.DB.sqlite.prepare('UPDATE topic_maps SET vectors = ? WHERE id = ?')
       .run(packVectors([space.mean, ...space.centroids, ...others]), map.id);
     const about = await matchTerm(env, '~purging the cache', { now: NOW });
     assert.equal(about.semantic, true);
@@ -281,7 +281,7 @@ describe('trends: the map, the threads and the matches (src/trends.js)', () => {
     assert.equal(r.status, 200);
     assert.equal(r.body.map, null);
     assert.equal(r.body.threads.length, 30);
-    assert.equal((await call(member, 'POST', '/api/topics/trends')).status, 403);
+    assert.equal((await call(member, 'POST', '/api/topics/trends')).status, 405);
     assert.equal((await call(member, 'GET', '/api/topics/trends/match?term=~')).status, 503);
   });
 });

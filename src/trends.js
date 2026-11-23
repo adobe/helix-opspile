@@ -15,21 +15,17 @@ import { likePattern } from './like.js';
 import { EMBEDDING_MODEL } from './rethread.js';
 import { QUERY_PREFIX } from './expertise.js';
 import { threadVectorId } from './vectors.js';
-import { kmeans, nameTopics, random } from './topicmap.js';
 
 /**
- * Trends, the Topics page's other view (docs/ARCHITECTURE.md, "Trends"): how much each topic,
- * area, technology, word or phrase is talked about, week by week, as Google Trends shows a
- * search term. The page does the counting (ui/trends.js); this is what it counts from.
+ * Trends, on the Topics page beside the map (docs/ARCHITECTURE.md, "Trends"): how much each
+ * topic, area, product, feature, word or phrase is talked about, week by week, as Google Trends
+ * shows a search term. The page does the counting (ui/trends.js); this is what it counts from.
  *
- * - A **trend map**: topics found over the channel threads of the last WEEKS weeks, not only the
- *   recent ones a topic map clusters (src/topicmap.js), or every old thread would be in a topic
- *   of now and every topic would look new. A sample of every month's threads, the same number of
- *   each (SAMPLE), is clustered with the topic map's k-means and named by its namer; the means
- *   are kept (`trend_maps`), and kept for STALE_DAYS, so a topic's line means the same throughout.
- * - Each thread's **topic**: the nearest centre, in the centred space the map was found in
- *   (`trend_threads`). The build assigns the threads it sampled; the cron, ASSIGN_BATCH a run,
- *   every other one, and those whose vector changed since.
+ * - The **topics are the topic map's** (src/topicmap.js), which keeps the space it found them in
+ *   with them (`topic_maps.vectors`: the mean, the topics' centres, a sample of the threads'
+ *   vectors). Its own threads have their topic from it; every other thread the page counts, the
+ *   topic of the nearest centre (`trend_threads`), which the cron assigns ASSIGN_BATCH a run, and
+ *   again once a newer map is built or the thread's vector changed.
  * - The **threads** (GET /api/topics/trends): a re-threaded group as its first thread, with the
  *   messages of all of its members; only those Clef labelled, not meetings or people's comings
  *   and goings, and no internal org's. Each with its channel, customer, team, platform, kind,
@@ -41,7 +37,6 @@ import { kmeans, nameTopics, random } from './topicmap.js';
 
 export const WEEKS = 52;
 /** Threads clustered, at most: as many of each month's as there are of the smallest's. */
-export const SAMPLE = 2000;
 /** About one topic per this many threads clustered, MIN_TOPICS to MAX_TOPICS. */
 export const PER_TOPIC = 60;
 export const MIN_TOPICS = 8;
@@ -58,7 +53,6 @@ export const SEMANTIC_Z = 3;
 const GET_BATCH = 20;
 const QUERY_K = 100;
 const DIM = 768;
-const NAMED_TITLES = 15;
 const NOISE = "'meeting', 'people'";
 
 // ---- weeks ----------------------------------------------------------------------------------
@@ -122,7 +116,7 @@ export function unpackVectors(b64) {
   return Array.from({ length: all.length / DIM }, (_, i) => all.subarray(i * DIM, (i + 1) * DIM));
 }
 
-/** `{ mean, centroids, sample }` of a trend map's `vectors`, for `k` topics. */
+/** `{ mean, centroids, sample }` of a topic map's `vectors`, for its `k` topics. */
 export function mapVectors(b64, k) {
   const all = unpackVectors(b64);
   return { mean: all[0], centroids: all.slice(1, 1 + k), sample: all.slice(1 + k) };
@@ -178,138 +172,32 @@ const since = (now) => `${weeksTo(now)[0]}T00:00:00.000Z`;
 const COUNTED = `t.kind = 'channel' AND t.logical_thread IS NULL AND t.root_at >= ?
   AND l.kind IS NOT NULL AND l.kind NOT IN (${NOISE}) AND COALESCE(o.type, 'customer') != 'internal'`;
 
-/**
- * `n` of `rows` (each with `root_at`), as many of each month's as there are to take, seeded:
- * round by round one more of every month that has one left, so a busy month does not make the
- * topics all its own.
- */
-export function stratified(rows, n, seed = 1) {
-  const rnd = random(seed);
-  const months = new Map();
-  for (const r of rows) {
-    const m = r.root_at.slice(0, 7);
-    months.set(m, [...(months.get(m) || []), r]);
-  }
-  const lists = [...months.values()].map((l) => l.map((r) => [rnd(), r]).sort((a, b) => a[0] - b[0])
-    .map(([, r]) => r));
-  const out = [];
-  for (let i = 0; out.length < n && lists.some((l) => l.length > i); i += 1) {
-    for (const l of lists) {
-      if (l.length > i && out.length < n) {
-        out.push(l[i]);
-      }
-    }
-  }
-  return out;
+/** The newest topic map's space: `{ id, k, vectors }`, null when it has none (from before). */
+export async function latestSpace(env) {
+  const row = await env.DB.prepare(`SELECT id, k, vectors FROM topic_maps
+    ORDER BY built_at DESC, id DESC LIMIT 1`).first();
+  return row && row.vectors ? row : null;
 }
 
-const topicCount = (n) => Math.max(MIN_TOPICS, Math.min(MAX_TOPICS, Math.round(n / PER_TOPIC)));
-
-/** The newest trend map (`vectors` only when asked for), or null. */
-export async function latestTrendMap(env, { vectors = false } = {}) {
-  const row = await env.DB.prepare(`SELECT id, built_at, built_by, threads, k, topics, model
-      ${vectors ? ', vectors' : ''} FROM trend_maps ORDER BY built_at DESC, id DESC LIMIT 1`).first();
-  return row ? { ...row, topics: JSON.parse(row.topics) } : null;
-}
-
-async function saveAssignments(env, map, rows) {
+/** Keeps the topic of each of `rows` (`{ thread, embedded, topic, sim }`) in `map`. */
+export async function saveAssignments(env, map, rows) {
   const stmt = env.DB.prepare(`INSERT INTO trend_threads (thread, map, topic, sim, embedded, vid)
     VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (thread) DO UPDATE SET map = excluded.map,
     topic = excluded.topic, sim = excluded.sim, embedded = excluded.embedded, vid = excluded.vid`);
-  for (let i = 0; i < rows.length; i += 100) {
+  const all = await Promise.all(rows.map(async (r) => ({
+    ...r, vid: r.vid || await threadVectorId(r.thread),
+  })));
+  for (let i = 0; i < all.length; i += 100) {
     // eslint-disable-next-line no-await-in-loop
-    await env.DB.batch(rows.slice(i, i + 100).map((r) => stmt.bind(
+    await env.DB.batch(all.slice(i, i + 100).map((r) => stmt.bind(
       r.thread,
       map,
-      r.topic,
-      r.sim === null ? null : Math.round(r.sim * 1000) / 1000,
-      r.embedded,
+      r.topic ?? null,
+      typeof r.sim === 'number' ? Math.round(r.sim * 1000) / 1000 : null,
+      r.embedded ?? null,
       r.vid,
     )));
   }
-}
-
-/**
- * Builds a trend map (`trend_maps`) from a sample of every month's threads, and assigns those:
- * `{ id, threads, k }`, or `{ error }`.
- */
-export async function buildTrendMap(env, { now = new Date(), by = 'cron', seed = 1 } = {}) {
-  if (!env.CONTENT || !env.AI) {
-    return { error: 'trends need the CONTENT index and Workers AI' };
-  }
-  const { results } = await env.DB.prepare(`SELECT t.thread, t.root_at, t.embedded,
-      COALESCE(l.title, t.title) AS title, l.topics
-    FROM threads t JOIN labels l ON l.thread = t.thread LEFT JOIN orgs o ON o.slug = t.org
-    WHERE ${COUNTED} AND t.embedded IS NOT NULL`).bind(since(now)).all();
-  const rows = await Promise.all(stratified(results || [], SAMPLE, seed)
-    .map(async (r) => ({ ...r, vid: await threadVectorId(r.thread) })));
-  const vectors = await vectorsOf(env, rows);
-  const have = rows.filter((r) => vectors.has(r.thread));
-  const k = topicCount(have.length);
-  if (have.length < k * 3) {
-    return { error: `${have.length} threads with a vector: trends need ${MIN_TOPICS * 3}` };
-  }
-  const raw = have.map((r) => unit(vectors.get(r.thread)));
-  const mean = new Float32Array(DIM);
-  for (const v of raw) {
-    for (let i = 0; i < DIM; i += 1) {
-      mean[i] += v[i] / raw.length;
-    }
-  }
-  const X = raw.map((v) => unit(Float32Array.from(v, (x, i) => x - mean[i])));
-  const { labels, sims, centroids } = kmeans(X, k, { seed, restarts: 1, iterations: 20 });
-
-  const members = centroids.map(() => []);
-  labels.forEach((c, i) => members[c].push(i));
-  const top = (list) => [...list.reduce((m, v) => m.set(v, (m.get(v) || 0) + 1), new Map())]
-    .sort((a, b) => b[1] - a[1]).slice(0, 5);
-  const { names, model: namer } = await nameTopics(env, members.map((m, id) => {
-    const typical = [...m].sort((a, b) => sims[b] - sims[a]);
-    return {
-      id,
-      titles: [...new Set(typical.map((i) => have[i].title).filter(Boolean))]
-        .slice(0, NAMED_TITLES),
-      tags: top(m.flatMap((i) => topicList(have[i].topics))),
-      products: [],
-    };
-  }));
-  const seen = new Map();
-  const topics = members.map((m, id) => {
-    let label = names[id]?.label || `Topic ${id + 1}`;
-    const n = (seen.get(label.toLowerCase()) || 0) + 1;
-    seen.set(label.toLowerCase(), n);
-    label = n > 1 ? `${label} (${n})` : label;
-    return {
-      id,
-      label,
-      theme: names[id]?.theme || '',
-      area: top(m.flatMap((i) => topicList(have[i].topics).slice(0, 1)))[0]?.[0] || null,
-      size: m.length,
-    };
-  });
-  const rnd = random(seed + 1);
-  const sample = raw.map((v) => [rnd(), v]).sort((a, b) => a[0] - b[0]).slice(0, SAMPLE_VECTORS)
-    .map(([, v]) => v);
-  const built = await env.DB.prepare(`INSERT INTO trend_maps (built_at, built_by, threads, k,
-      topics, model, vectors) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`)
-    .bind(
-      now.toISOString(),
-      by,
-      have.length,
-      k,
-      JSON.stringify(topics),
-      EMBEDDING_MODEL,
-      packVectors([mean, ...centroids, ...sample]),
-    ).first();
-  await env.DB.prepare('DELETE FROM trend_maps WHERE id != ?').bind(built.id).run();
-  const space = { mean, centroids };
-  await saveAssignments(env, built.id, have.map((r) => ({
-    ...r, ...assignTopic(vectors.get(r.thread), space),
-  })));
-  console.log(JSON.stringify({
-    route: 'trends', built: built.id, threads: have.length, k, namer,
-  }));
-  return { id: built.id, threads: have.length, k };
 }
 
 /**
@@ -317,9 +205,9 @@ export async function buildTrendMap(env, { now = new Date(), by = 'cron', seed =
  * since: `{ assigned, left }`.
  */
 export async function assignPending(env, { now = new Date(), limit = ASSIGN_BATCH } = {}) {
-  const map = await latestTrendMap(env, { vectors: true });
+  const map = await latestSpace(env);
   if (!map) {
-    return { assigned: 0, left: 0 };
+    return { assigned: 0, left: 0, waiting: 'a topic map with its vectors' };
   }
   const { results } = await env.DB.prepare(`SELECT t.thread, t.embedded FROM threads t
       JOIN labels l ON l.thread = t.thread LEFT JOIN orgs o ON o.slug = t.org
@@ -340,14 +228,10 @@ export async function assignPending(env, { now = new Date(), limit = ASSIGN_BATC
   return { assigned: rows.length, left: Math.max(0, (results || []).length - rows.length) };
 }
 
-/** Cron: a trend map once the newest is STALE_DAYS old (or there is none), else assignments. */
+/** Cron: the topics of the threads the newest topic map does not have yet. */
 export async function sweepTrends(env, now = new Date()) {
-  if (!env.CONTENT || !env.AI) {
+  if (!env.CONTENT) {
     return { skipped: 'no CONTENT index' };
-  }
-  const row = await env.DB.prepare('SELECT MAX(built_at) AS at FROM trend_maps').first();
-  if (!row || !row.at || now.getTime() - Date.parse(row.at) >= STALE_DAYS * 86400000) {
-    return { built: await buildTrendMap(env, { now }) };
   }
   return { assigned: await assignPending(env, { now }) };
 }
@@ -378,7 +262,7 @@ const names = () => {
 };
 
 /**
- * GET /api/topics/trends: the newest trend map's topics and every thread the page counts, made
+ * GET /api/topics/trends: every thread the page counts, with the newest topic map's topic, made
  * small: a thread is `[id, week, channel, org, team, source, kind, topic, areas, tech, weeks]`,
  * the names as indexes into the lists beside them, `week` the week it started, and `weeks` its
  * messages as `[week, count, …]` (both as indexes into `weeks`). `id` is the thread's rowid, as
@@ -387,7 +271,8 @@ const names = () => {
 export async function trendsData(env, { now = new Date() } = {}) {
   const weeks = weeksTo(now);
   const from = since(now);
-  const map = await latestTrendMap(env);
+  const map = await env.DB.prepare(`SELECT id, built_at FROM topic_maps
+    ORDER BY built_at DESC, id DESC LIMIT 1`).first();
   const [threads, msgs, orgRows, tech, areaRows, assigned] = await Promise.all([
     env.DB.prepare(`SELECT t.rowid AS id, t.thread, t.source, t.team, t.org, t.root_at, l.kind,
         l.topics, l.about, g.topic
@@ -400,7 +285,7 @@ export async function trendsData(env, { now = new Date() } = {}) {
       WHERE m.counted = 1 AND m.deleted = 0 AND m.at >= ? AND t.kind = 'channel'
       GROUP BY 1, 2`).bind(from).all(),
     env.DB.prepare('SELECT slug, name, type FROM orgs').all(),
-    env.DB.prepare(`SELECT tech, name FROM tech_stack WHERE enabled = 1
+    env.DB.prepare(`SELECT tech, name, product FROM tech_stack WHERE enabled = 1
       ORDER BY team = 'admin' DESC`).all(),
     env.DB.prepare('SELECT id, name FROM areas WHERE enabled = 1 ORDER BY team = \'admin\' DESC').all(),
     map ? env.DB.prepare('SELECT COUNT(*) AS n FROM trend_threads WHERE map = ?').bind(map.id).first()
@@ -438,10 +323,10 @@ export async function trendsData(env, { now = new Date() } = {}) {
     }
   }
   const orgs = new Map((orgRows.results || []).map((o) => [o.slug, o]));
-  const techNames = new Map();
+  const techs = new Map();
   for (const r of tech.results || []) {
-    if (!techNames.has(r.tech)) {
-      techNames.set(r.tech, r.name);
+    if (!techs.has(r.tech)) {
+      techs.set(r.tech, r);
     }
   }
   const areaNames = new Map();
@@ -452,15 +337,8 @@ export async function trendsData(env, { now = new Date() } = {}) {
   }
   return {
     weeks,
-    map: map && {
-      id: map.id,
-      built_at: map.built_at,
-      built_by: map.built_by,
-      threads: map.threads,
-      k: map.k,
-      topics: map.topics,
-      assigned: assigned ? assigned.n : 0,
-    },
+    // The topic map whose topics the threads have (GET /api/topics sends its topics).
+    map: map && { id: map.id, built_at: map.built_at, assigned: assigned ? assigned.n : 0 },
     available: Boolean(env.CONTENT && env.AI),
     // Channels are counted, never named: only how many there are.
     channels: lists.channel.list().length,
@@ -471,7 +349,10 @@ export async function trendsData(env, { now = new Date() } = {}) {
     sources: lists.source.list(),
     kinds: lists.kind.list(),
     areas: lists.area.list().map((id) => ({ id, name: areaNames.get(id) || id })),
-    tech: lists.tech.list().map((id) => ({ id, name: techNames.get(id) || id })),
+    // Each with the product it is part of, as the map groups its features.
+    tech: lists.tech.list().map((id) => ({
+      id, name: techs.get(id)?.name || id, product: techs.get(id)?.product || null,
+    })),
     threads: rows,
   };
 }
@@ -522,9 +403,12 @@ export async function matchTerm(env, term, { now = new Date() } = {}) {
   const t = String(term || '').trim();
   if (t.startsWith('~')) {
     const phrase = t.slice(1).trim().slice(0, 200);
-    const map = await latestTrendMap(env, { vectors: true });
+    const map = await latestSpace(env);
     if (!phrase || !map || !env.CONTENT || !env.AI) {
-      return { error: map ? 'a phrase to look for' : 'no trend map yet', status: map ? 400 : 503 };
+      return {
+        error: map ? 'a phrase to look for' : 'no topic map with its vectors yet',
+        status: map ? 400 : 503,
+      };
     }
     const res = await env.AI.run(EMBEDDING_MODEL, { text: [`${QUERY_PREFIX}${phrase}`] });
     const query = unit(res.data[0]);

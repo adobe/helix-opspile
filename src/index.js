@@ -394,8 +394,8 @@ const handlers = {
     ctx.waitUntil(sweepTopicMap(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', topicMap: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', topicMap: 'error', error: e.message }))));
-    // The Topics page's Trends (src/trends.js): a trend map once it is four weeks old, else
-    // the threads' topics.
+    // The Topics page's trends (src/trends.js): the topics of the threads the newest topic map
+    // does not have.
     ctx.waitUntil(sweepTrends(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', trends: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', trends: 'error', error: e.message }))));

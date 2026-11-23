@@ -273,12 +273,12 @@ const PROFILES = {
 const TREND_WEEKS = 30;
 
 /**
- * The Trends view's data for `npm run ui:dev`, in GET /api/topics/trends's shape (src/trends.js
- * `trendsData`): a trend map of the topic map's made-up topics, and half a year of threads in
- * sixty channels, with topics that are trending, declining and peaked, one of them mostly one
+ * The trends' data for `npm run ui:dev`, in GET /api/topics/trends's shape (src/trends.js
+ * `trendsData`), of the made-up topic map `map` (its topics and products): half a year of threads
+ * in sixty channels, with topics that are trending, declining and peaked, one of them mostly one
  * customer's (the storefront). Seeded. With it what the match and threads endpoints answer.
  */
-export function trendsFixture(now = Date.now(), weeks = []) {
+export function trendsFixture(now = Date.now(), weeks = [], { id: mapId = 1, map = null } = {}) {
   const rnd = random(777);
   const pick = (list) => list[Math.floor(rnd() * list.length)];
   const n = weeks.length;
@@ -294,7 +294,21 @@ export function trendsFixture(now = Date.now(), weeks = []) {
   };
   const areaIds = [...new Set(TOPICS.flatMap(([, , tags]) => Object.keys(tags)))];
   const areaNames = topicNames();
-  const techIds = [...new Set(Object.values(PRODUCTS).flatMap((p) => Object.keys(p)))];
+  // The map's topic of each of TOPICS, and the products its threads have there, and how often.
+  const topics = map?.topics || [];
+  const topicId = TOPICS.map(([label]) => Math.max(0, topics.findIndex((t) => t.label === label)));
+  const techIds = Object.keys(map?.products || {}).filter((pid) => pid.startsWith('tech:'));
+  const productsOfTopic = TOPICS.map((_, t) => {
+    const mine = (map?.threads || []).filter((x) => x.topic === topicId[t]);
+    const counts = new Map();
+    for (const x of mine) {
+      for (const pid of x.products || []) {
+        counts.set(pid, (counts.get(pid) || 0) + 1);
+      }
+    }
+    return [...counts].filter(([pid]) => techIds.includes(pid))
+      .map(([pid, c]) => [pid, c / (mine.length || 1)]);
+  });
   const threads = [];
   const titles = new Map();
   let id = 1000;
@@ -326,10 +340,10 @@ export function trendsFixture(now = Date.now(), weeks = []) {
           msgs.push(w + 1, 1 + Math.floor(rnd() * 3));
         }
         const areas = Object.entries(tags).filter(([, p]) => rnd() < p + 0.2);
-        const tech = Object.entries(PRODUCTS[topic] || {}).filter(([, p]) => rnd() < p);
+        const tech = productsOfTopic[topic].filter(([, p]) => rnd() < p);
         threads.push([
           id, w, c, lists.org.indexOf(ch.org), lists.team.indexOf(ch.team),
-          lists.source.indexOf(ch.source), Math.floor(rnd() * kinds), topic,
+          lists.source.indexOf(ch.source), Math.floor(rnd() * kinds), topicId[topic],
           areas.map(([x]) => areaIds.indexOf(x)), tech.map(([x]) => techIds.indexOf(x)), msgs,
         ]);
         titles.set(id, {
@@ -349,15 +363,7 @@ export function trendsFixture(now = Date.now(), weeks = []) {
   const data = {
     weeks,
     map: {
-      id: 1,
-      built_at: new Date(now - 9 * 86400000).toISOString(),
-      built_by: 'cron',
-      threads: Math.min(2000, threads.length),
-      k: TOPICS.length,
-      topics: TOPICS.map(([label, theme, tags], tid) => ({
-        id: tid, label, theme, area: Object.keys(tags)[0] || null, size: 0,
-      })),
-      assigned: threads.length,
+      id: mapId, built_at: map?.built_at || new Date(now).toISOString(), assigned: threads.length,
     },
     available: true,
     channels: channels.length,
@@ -369,7 +375,9 @@ export function trendsFixture(now = Date.now(), weeks = []) {
     sources: lists.source,
     kinds: lists.kind,
     areas: areaIds.map((a) => ({ id: a, name: areaNames[a] || a })),
-    tech: techIds.map((t) => ({ id: t.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: t })),
+    tech: techIds.map((pid) => ({
+      id: pid.slice(5), name: map.products[pid].name, product: map.products[pid].product || null,
+    })),
     threads,
   };
   const words = (s) => String(s).toLowerCase().split(/[^a-z0-9]+/).filter((x) => x.length > 3);

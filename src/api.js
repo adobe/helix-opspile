@@ -1172,7 +1172,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     return json({ error: 'GET or PUT' }, 405);
   }
-  // The Topics page's Trends (src/trends.js), for every member of an ops team, as the map.
+  // The Topics page's trends (src/trends.js), for every member of an ops team, as the map.
   if (url.pathname.startsWith('/api/topics/trends')) {
     if (!(me.teams || []).length) {
       return json({ error: 'trends are for the members of the ops teams' }, 403);

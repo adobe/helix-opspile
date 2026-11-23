@@ -70,32 +70,30 @@ tr.pick { cursor: pointer; }
 .dot { display: inline-block; flex: none; }
 
 
-/* Trends (ui/trendview.js): its own toolbar, then the chart and the threads beside what is
-   moving. The map's filters are not its. */
-.bar .maponly[hidden] { display: none; }
-.trends { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.tqrow { display: flex; align-items: center; }
-.tqrow .s2-search { flex: 1; }
-.trends .split { flex: 1; min-height: 0; }
-.trends .col { min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+/* Under the graph, its trends (ui/trendview.js): a card as wide, as tall as the chart needs. */
+.split > .col { min-height: 0; display: flex; flex-direction: column; }
+.split > .col > .graph { flex: 1; min-height: calc(var(--spectrum-spacing-100) * 30); }
 .tchart { position: relative; flex: none; }
-.tchart svg { display: block; width: 100%; height: calc(var(--spectrum-spacing-100) * 40); }
+.tchart .thead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.tqrow { display: flex; align-items: center; flex: 1; min-width: calc(var(--spectrum-spacing-100) * 36); max-width: calc(var(--spectrum-spacing-100) * 70); }
+.tqrow .s2-search { flex: 1; }
+.tchart svg { display: block; width: 100%; height: calc(var(--spectrum-spacing-100) * 26); }
 .tchart .hit { cursor: crosshair; }
 .tlegend { display: flex; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; }
 .tlegend li { display: flex; align-items: center; }
 .swatch { display: inline-block; flex: none; }
 .tip .row { display: flex; align-items: center; }
-ol.moving, ul.tlist, #tthreads ol.threads { list-style: none; margin: 0; padding: 0; }
-button.mv { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "nm spark" "sub spark"; align-items: center; width: 100%; text-align: left; }
-button.mv .nm { grid-area: nm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-button.mv .sub { grid-area: sub; white-space: normal; }
-button.mv .spark { grid-area: spark; }
-.spark { display: block; width: calc(var(--spectrum-spacing-100) * 8); height: var(--spectrum-spacing-400); }
-.trends .panel .seg { display: inline-flex; }
+/* The trees of the panel: a row a node, its fold first, a child under its group. */
+ul.tree { list-style: none; margin: 0; padding: 0; }
+ul.tree li.tr { display: flex; align-items: center; }
+ul.tree .chev { flex: none; }
+ul.tree .pickr { flex: 1; min-width: 0; }
+.panel ul.tree .pickr { grid-template-columns: auto minmax(0, 1fr) auto auto calc(var(--spectrum-spacing-100) * 4); }
+.spark { display: block; width: calc(var(--spectrum-spacing-100) * 8); height: var(--spectrum-spacing-300); }
+p.trend { display: flex; align-items: center; }
 
 @media (max-width: 999px) {
   main { overflow: auto; }
-  .trends .col { overflow: visible; }
   .split { grid-template-columns: minmax(0, 1fr); grid-template-rows: calc(var(--spectrum-spacing-100) * 60) auto; }
   .panel { overflow: visible; }
 }
@@ -322,7 +320,8 @@ button.mv .spark { grid-area: spark; }
 .spectrum .name { gap: var(--spectrum-text-to-visual-100); }
 .spectrum .name .dot { margin-top: var(--spectrum-spacing-50); }
 
-/* ---- Trends: a line chart in the categorical palette, its legend Tags, the lists ListViews -- */
+/* ---- Trends: a line chart in the categorical palette, its legend quiet buttons, the trees
+   ListViews with a disclosure each, a badge for what is moving (positive, negative, neutral). - */
 
 .spectrum .s0 { --s2-series: var(--spectrum-indigo-900); }
 .spectrum .s1 { --s2-series: var(--spectrum-orange-700); }
@@ -332,13 +331,13 @@ button.mv .spark { grid-area: spark; }
 .spectrum .s5 { --s2-series: var(--spectrum-purple-800); }
 .spectrum .s6 { --s2-series: var(--spectrum-cyan-900); }
 .spectrum .s7 { --s2-series: var(--spectrum-yellow-1000); }
-.spectrum .tqrow { gap: var(--spectrum-spacing-200); padding-top: var(--spectrum-spacing-200); }
-.spectrum .tbar { gap: var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
-.spectrum .trends .split { gap: var(--spectrum-spacing-300); }
-.spectrum .trends .col { gap: var(--spectrum-spacing-300); }
-.spectrum .tchart h2, .spectrum #tthreads h2 { margin: 0; }
-.spectrum .tchart .hint { margin: var(--spectrum-spacing-50) 0 var(--spectrum-spacing-200); }
+.spectrum .split > .col { gap: var(--spectrum-spacing-300); }
+.spectrum .tchart .thead { gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin-bottom: var(--spectrum-spacing-100); }
+.spectrum .tchart h2 { margin: 0; font-size: var(--spectrum-font-size-200); }
+.spectrum .tchart h2 .sub { font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .tqrow { gap: var(--spectrum-spacing-100); }
 .spectrum .tchart .line { fill: none; stroke: var(--s2-series); stroke-width: var(--spectrum-border-width-400); stroke-linejoin: round; stroke-linecap: round; }
+.spectrum .tchart .line.picked { stroke-width: calc(var(--spectrum-border-width-400) * 1.5); }
 .spectrum .tchart .line.partial { stroke-width: var(--spectrum-border-width-200); stroke-dasharray: var(--spectrum-spacing-75) var(--spectrum-spacing-75); }
 .spectrum .tchart .grid { stroke: var(--spectrum-gray-200); stroke-width: var(--spectrum-border-width-100); }
 .spectrum .tchart .grid.month { stroke: var(--spectrum-gray-100); }
@@ -352,7 +351,7 @@ button.mv .spark { grid-area: spark; }
   background: var(--s2-series);
   border-radius: var(--spectrum-corner-radius-100);
 }
-.spectrum .tlegend { gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin-top: var(--spectrum-spacing-200); }
+.spectrum .tlegend { gap: var(--spectrum-spacing-50) var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-100); }
 .spectrum .tlegend button { min-height: var(--spectrum-component-height-75); padding: 0 var(--spectrum-spacing-75); background: transparent; border: 0; font-weight: var(--spectrum-regular-font-weight); }
 .spectrum .tlegend button.term { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
 .spectrum .tlegend button:hover:not(:disabled) { background: var(--spectrum-gray-100); }
@@ -360,26 +359,48 @@ button.mv .spark { grid-area: spark; }
 .spectrum .tlegend li.off button.term { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .tlegend button.x { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .tip .row { gap: var(--spectrum-spacing-75); }
-.spectrum #tthreads h3 { display: flex; align-items: center; gap: var(--spectrum-spacing-75); margin: var(--spectrum-spacing-300) 0 var(--spectrum-spacing-75); }
-.spectrum #tthreads h3 .swatch { margin-right: 0; }
-.spectrum .trends .panel h2 { margin: 0; }
-.spectrum .trends .panel .seg { margin: var(--spectrum-spacing-200) var(--spectrum-spacing-100) 0 0; }
-.spectrum ol.moving { margin-top: var(--spectrum-spacing-200); }
-.spectrum button.mv {
-  gap: var(--spectrum-spacing-50) var(--spectrum-spacing-200);
-  padding: var(--spectrum-spacing-100);
-  color: var(--spectrum-neutral-content-color-default);
+.spectrum .panel .seg { display: inline-flex; margin-top: var(--spectrum-spacing-200); }
+.spectrum .panel section h3 .swatch { margin-right: var(--spectrum-spacing-75); }
+/* A disclosure: its chevron down when open, pointing at the row when folded. */
+.spectrum ul.tree .chev {
+  width: var(--spectrum-component-height-75);
+  height: var(--spectrum-component-height-75);
+  min-height: 0;
+  padding: 0;
   background: transparent;
   border: 0;
-  border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
-  border-radius: 0;
-  font-weight: var(--spectrum-regular-font-weight);
 }
-.spectrum button.mv:hover:not(:disabled) { background: var(--spectrum-gray-100); }
-.spectrum button.mv .nm { font-weight: var(--spectrum-bold-font-weight); }
-.spectrum button.mv .sub { font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-100); }
-.spectrum .one { color: var(--spectrum-orange-900); }
-.spectrum .spark polyline { fill: none; stroke: var(--spectrum-accent-content-color-default); stroke-width: var(--spectrum-border-width-200); stroke-linejoin: round; }
+.spectrum ul.tree button.chev::before {
+  content: "";
+  display: block;
+  width: var(--spectrum-workflow-icon-size-75);
+  height: var(--spectrum-workflow-icon-size-75);
+  margin: auto;
+  background: var(--spectrum-neutral-subdued-content-color-default);
+  mask: var(--s2-icon-chevron) center / contain no-repeat;
+  transform: rotate(-90deg);
+  transition: transform var(--s2-ease);
+}
+.spectrum ul.tree button.chev[aria-expanded="true"]::before { transform: none; }
+.spectrum ul.tree button.chev:hover:not(:disabled) { background: var(--spectrum-gray-100); }
+.spectrum ul.tree li.d1 { padding-left: var(--spectrum-spacing-300); }
+.spectrum ul.tree .pickr .nm .sub { font-size: var(--spectrum-font-size-75); }
+.spectrum .badge {
+  padding: 0 var(--spectrum-spacing-75);
+  border-radius: var(--spectrum-corner-radius-100);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-line-height-200);
+  white-space: nowrap;
+}
+.spectrum .badge.trending { color: var(--spectrum-positive-color-1000); background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .badge.declining { color: var(--spectrum-negative-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); }
+.spectrum .badge.peaked { color: var(--spectrum-neutral-subdued-content-color-default); background: var(--spectrum-gray-100); }
+.spectrum .badge.one { opacity: .6; }
+.spectrum .spark polyline { fill: none; stroke: var(--spectrum-gray-600); stroke-width: var(--spectrum-border-width-200); stroke-linejoin: round; }
+.spectrum .spark.trending polyline { stroke: var(--spectrum-positive-visual-color); }
+.spectrum .spark.declining polyline { stroke: var(--spectrum-negative-visual-color); }
+.spectrum .spark.peaked polyline { stroke: var(--spectrum-notice-visual-color); }
 .spectrum .spark .grid { stroke: var(--spectrum-gray-300); stroke-width: var(--spectrum-border-width-100); }
-.spectrum ul.tlist li { margin: var(--spectrum-spacing-50) 0; }
-.spectrum .trends .panel .hint.err { color: var(--spectrum-negative-content-color-default); }
+.spectrum p.trend { gap: var(--spectrum-spacing-200); margin: var(--spectrum-spacing-200) 0 0; font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-100); }
+.spectrum p.trend .spark { flex: none; width: calc(var(--spectrum-spacing-100) * 12); height: var(--spectrum-spacing-500); }
