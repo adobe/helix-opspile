@@ -24,6 +24,7 @@ import {
   AREAS, checkArea, compileAreas, isArea,
 } from '../areas.js';
 import { storeOrgStack } from '../orgstacks.js';
+import { indexWrite, isConcept } from '../kbindex.js';
 import { STACK_PATH } from '../stack.js';
 import {
   checkCatalog, compileCatalog, inCatalog, movesOf, storeCatalog, withMovedFrom,
@@ -334,6 +335,25 @@ export async function compileTree(env, artifact, fs, commit) {
   }
 }
 
+/**
+ * The search's rows of the concepts a pushed write changed (src/kbindex.js), from the work
+ * tree: what is there now, with its blob hash, or that it was deleted.
+ */
+async function indexChanged(env, artifact, fs, changes) {
+  const files = await Promise.all(changes.filter((c) => isConcept(c.path)).map(async (c) => {
+    const bytes = await fs.promises.readFile(`${DIR}/${c.path}`).catch(() => null);
+    if (!bytes) {
+      return { path: c.path, deleted: true };
+    }
+    return {
+      path: c.path,
+      hash: (await git.hashBlob({ object: bytes })).oid,
+      text: await fs.promises.readFile(`${DIR}/${c.path}`, 'utf8'),
+    };
+  }));
+  await indexWrite(env, artifact, files);
+}
+
 const rejected = (e) => /PushRejected|not a simple fast-forward|non-fast-forward|fetch first|failed to update ref/i
   .test(`${e && e.code} ${e && e.message}`);
 
@@ -391,6 +411,10 @@ export async function writeKnowledge(env, artifact, changes, {
         }
         // eslint-disable-next-line no-await-in-loop
         await countEntries(env, artifact, fs);
+        // eslint-disable-next-line no-await-in-loop
+        await indexChanged(env, artifact, fs, changes).catch((e) => console.error(JSON.stringify({
+          route: 'kb', action: 'search', artifact, error: e.message,
+        })));
         if (kindOf(artifact) === 'org' && changes.some((c) => c.path === STACK_PATH)) {
           // The customer's stack as the inbox's list shows it (src/orgstacks.js).
           // eslint-disable-next-line no-await-in-loop

@@ -31,6 +31,7 @@ import { SOUNDS } from './sound.js';
 import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { countEntries } from './kbadmin.js';
+import { syncConcepts } from './kbindex.js';
 import { syncCatalogs } from './catalogsync.js';
 import { syncOrgStacks } from './orgstacks.js';
 import { mcp } from './mcp.js';
@@ -245,7 +246,8 @@ const handlers = {
 
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, count the
- * entries of the knowledge bases not counted yet, keep the agents' GitHub mirrors fresh, learn the
+ * entries of the knowledge bases not counted yet, read the concepts the search has not read yet
+ * (src/kbindex.js), keep the agents' GitHub mirrors fresh, learn the
  * bots installed in each Teams team, check the global MCP servers' tools once a day, keep the
  * agents' MCP OAuth grants alive, classify a batch of the admin team's channels for the channel
  * suggestions, write the follow rules' shares (src/followrules.js), join the public Slack channels
@@ -271,6 +273,10 @@ const handlers = {
     ctx.waitUntil(countEntries(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'entries', ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'entries', error: e.message }))));
+    // The knowledge bases' concepts the inbox's search has not read yet, and their vectors.
+    ctx.waitUntil(syncConcepts(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'search', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'search', error: e.message }))));
     // The customers' stack drawings the inbox's list by customer has not read yet.
     ctx.waitUntil(syncOrgStacks(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'stacks', ...r })))

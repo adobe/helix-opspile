@@ -601,6 +601,20 @@ definitions it was kept with; once one of them changes, the fingerprint no longe
 open again. A merge deletes the files of the technology that goes before the other lists it in
 `moved_from`, so the compile sees a new move (src/catalog.js) and rewrites D1.
 
+**Knowledge search rows.** unread → read → behind → read again, per knowledge base
+(`knowledge_bases.search_commit`, `kb_concepts`, src/kbindex.js); per concept, unembedded →
+embedded (`kb_concepts.embedded`). The watermark is the commit the rows were last read from in
+full, `''` for a knowledge base that had no commit then (a new one starts there: nothing to read),
+and NULL for unread, which the cron takes, 30 a run. A full read writes the rows of the changed
+blobs, deletes those of files that are gone and records the watermark in the same batches, the
+watermark last, so a read cut short leaves it NULL; a blob that cannot be read fails the read. A
+write updates the rows of the files it changed after its push and leaves the watermark be; if
+that fails it sets the watermark NULL, so the cron reads the whole tree again. A row whose blob
+changes loses `embedded`; the cron embeds the rows without it, 100 a run, and marks a row only
+`WHERE hash` is still the blob it embedded, so a write in between is embedded again. A deleted
+concept's vector is deleted too, and one left behind is harmless: the search keeps only what
+`kb_concepts` has.
+
 **Lazy fill-ins.** NULL means "not done yet" (`threads.last_text`, `messages.author_kind`,
 `knowledge_bases.entries`). Each has a batch on the cron. NULL must not also mean "nothing there", or
 the same rows stay at the head of the batch.

@@ -123,6 +123,12 @@ code and docs, is the decision model that labels threads and channels.
   `src/discordmd.js` build mdast, and `src/mdast.js` writes it. A platform's quirk goes into its
   module's tree; what every platform needs (spacing around bold, link form) into `src/mdast.js`.
 
+- **The search finds knowledge-base entries in D1, not in Artifacts:** `kb_concepts`
+  (src/kbindex.js) has a row per concept and `CONTENT` a vector (`type: kb`), kept by every
+  write (src/agent/kbwrite.js) and the cron; src/kbsearch.js answers `/api/search`'s `kb` from
+  them. A query of the threads' vectors names its `type` (`message`, `thread`), or it gets
+  the concepts' too.
+
 - **A merged org is a rule:** `loadRules` (src/lookup.js) adds every row of `org_merges` as a
   rule of target `merge`, and `classify` files what the other rules give a merged slug under the
   org it went into (`mergedOrg` in src/rules.js). Get the rules from `loadRules`, never from

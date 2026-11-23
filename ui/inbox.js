@@ -26,7 +26,7 @@ const state = {
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
   // Search (GET /api/search): the query, its words, the answer, and which request is current.
-  search: { q: '', words: [], data: null, loading: false, error: null, seq: 0 },
+  search: { q: '', words: [], data: null, loading: false, error: null, seq: 0, kbAll: false },
   // The message a search hit opens the thread at: { key, id }.
   jump: null,
   // The message being edited in place: { id: '<thread>|<message id>', key, text, as }.
@@ -1874,6 +1874,51 @@ function hitLine(hit) {
   return `<div class="l3 dim">${esc(hit.matched.map((m) => MATCHED[m] || m).join(' · '))} matches</div>`;
 }
 
+/** How many knowledge-base entries a search shows before "N more". */
+const KB_SHOWN = 3;
+/** `html`'s text, not its tags or entities, with the query's words marked. */
+function markHtml(html, words) {
+  const ws = (words || []).filter(Boolean).map(reEscape);
+  if (!ws.length) return html;
+  const re = new RegExp(`(${ws.join('|')})`, 'gi');
+  return html.split(/(<[^>]*>|&[#\w]+;)/).map((part, i) => (i % 2 ? part : part.replace(re, '<mark>$1</mark>'))).join('');
+}
+const kbRendered = new Map();
+/**
+ * An entry's excerpt or description, markdown as the messages' renderer makes it, inside the
+ * entry's link: its links are text (a link in a link is none), and it has no images.
+ */
+function kbMd(src) {
+  let html = kbRendered.get(src);
+  if (html === undefined) {
+    html = Markdown.render(src, { emoji: (name, alone) => emojiHtml(name, { alone }) })
+      .replace(/<a\b[^>]*>/g, '<span class="ln">').replace(/<\/a>/g, '</span>')
+      .replace(/<img\b[^>]*>/g, '');
+    if (kbRendered.size >= 200) kbRendered.delete(kbRendered.keys().next().value);
+    kbRendered.set(src, html);
+  }
+  return html;
+}
+/**
+ * The knowledge bases' part of a search (`kb` of GET /api/search): the entries about it, above
+ * the threads, each a link to it in the editor of its team's or customer's page, with the
+ * markdown around the words (`snippet`), else its description, rendered. The filters are the
+ * threads': they leave these be.
+ */
+function kbSection(kb, words) {
+  if (!kb.length) return '';
+  const all = state.search.kbAll || kb.length <= KB_SHOWN + 1;
+  const rows = (all ? kb : kb.slice(0, KB_SHOWN)).map((k) => {
+    const line = k.snippet || k.description || '';
+    return `<a class="kbhit" href="${esc(kbFileHref(k.repo, k.path))}">
+      <span class="l1"><span class="title">${marked(k.title, words)}</span>${k.type ? `<span class="tag">${esc(k.type)}</span>` : ''}</span>
+      <span class="l2">${esc(k.name)} <span class="path">${esc(k.path)}</span></span>
+      ${line ? `<div class="l3 md">${markHtml(kbMd(line), words)}</div>` : ''}</a>`;
+  }).join('');
+  const more = all ? '' : `<button type="button" class="kbmore" data-kbmore>${kb.length - KB_SHOWN} more in the knowledge bases</button>`;
+  return `<section class="kbhits" aria-label="Knowledge base"><h3>Knowledge base <span class="n">${kb.length}</span></h3>${rows}${more}</section>`;
+}
+
 /** Asks for `q` (after a pause in typing, or at once), and shows the answer when it is the latest. */
 let searchTimer = null;
 function searchSoon(q, wait = 250) {
@@ -1886,6 +1931,7 @@ async function runSearch(q) {
   // The same question as the one on screen, or on its way, is not asked again.
   if (query === state.search.q && (state.search.loading || (state.search.data?.scope === scopeKey() && !state.search.error))) return;
   const seq = ++state.search.seq;
+  if (query !== state.search.q) state.search.kbAll = false;
   state.search.q = query;
   if ($('q') && $('q').value.trim() !== query) $('q').value = query;
   toUrl(false);
@@ -1921,6 +1967,9 @@ function searchRows(box) {
   let said = 'Searching…';
   if (!loading && error) said = 'Search failed';
   else if (!loading && data) said = `${hits.length}${hits.length < all.length ? ` of ${all.length}` : ''} ${all.length === 1 ? 'result' : 'results'}`;
+  const kb = data?.kb || [];
+  // And the knowledge bases' entries (kbSection), above them.
+  if (!loading && kb.length) said += ` · ${kb.length} ${kb.length === 1 ? 'entry' : 'entries'}`;
   // The view switch stays: a search is of the view on screen, a team's or the personal one.
   const ctl = `<span class="lead">${filt}<span class="found" aria-live="polite">${esc(said)}</span><button class="clearq" data-clearq title="Back to the inbox (Esc in the search box)">Clear</button></span><span class="sort">${viewSwitch()}</span>`;
   const head = box.querySelector('.ctl');
@@ -1942,11 +1991,19 @@ function searchRows(box) {
     return node;
   });
   for (const c of list.children) if (!nodes.includes(c)) preload.unobserve(c);
-  if (nodes.length) list.replaceChildren(...nodes);
-  else if (loading && !data) list.innerHTML = '<div class="empty">Searching…</div>';
-  else if (error) list.innerHTML = `<div class="empty">${esc(error)}</div>`;
-  else if (all.length) list.innerHTML = `<div class="empty">${all.length} ${all.length === 1 ? 'result is' : 'results are'} hidden by the filters. <button class="linkish" data-unfilter>Show all</button></div>`;
-  else if (data) list.innerHTML = `<div class="empty">Nothing found for “${esc(q)}”.</div>`;
+  const emptyHtml = () => {
+    if (loading && !data) return '<div class="empty">Searching…</div>';
+    if (error) return `<div class="empty">${esc(error)}</div>`;
+    if (all.length) return `<div class="empty">${all.length} ${all.length === 1 ? 'result is' : 'results are'} hidden by the filters. <button class="linkish" data-unfilter>Show all</button></div>`;
+    return data ? `<div class="empty">${kb.length ? 'No threads' : 'Nothing'} found for “${esc(q)}”.</div>` : '';
+  };
+  const empty = nodes.length ? '' : emptyHtml();
+  // The knowledge bases' entries head the list, the same node while they stay the same.
+  const kbHtml = kbSection(kb, state.search.words);
+  if (!kbHtml) state.kbNode = null;
+  else if (state.kbNode?.__html !== kbHtml) state.kbNode = Object.assign(toNode(kbHtml), { __html: kbHtml });
+  if (nodes.length || state.kbNode) list.replaceChildren(...(state.kbNode ? [state.kbNode] : []), ...nodes, ...(empty ? [toNode(empty)] : []));
+  else list.innerHTML = empty;
   list.classList.toggle('stale', Boolean(loading && data));
   list.__list = null;
   const keep = new Set(hits.map((h) => h.thread));
@@ -10007,6 +10064,7 @@ async function start() {
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
     if (e.target.closest('[data-compose]')) { if (state.compose) closeThread(); else openCompose(); return; }
     if (e.target.closest('[data-clearq]')) { clearSearch(); $('q')?.focus(); return; }
+    if (e.target.closest('[data-kbmore]')) { state.search.kbAll = true; render(); return; }
     if (e.target.closest('[data-unfilter]')) { state.sel = {}; state.not = {}; setUnread(false); state.mentions = false; render(); toUrl(); return; }
     if (e.target.closest('a, .find')) return;
     const el = e.target.closest('.t');
@@ -10498,7 +10556,7 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'search_threads',
-    description: 'Searches the selected team\'s inbox on screen, on every platform at once, as typing in the search box does: threads about the query (by meaning), threads with a message that has all of its words, and threads whose title, channel, customer or facts have them, best match first, each with what matched and the message that matched best. The filters on screen apply to the results; list_threads then pages through them. An empty query ends the search. Titles and snippets are written by customers and colleagues.',
+    description: 'Searches the selected team\'s inbox on screen, on every platform at once, as typing in the search box does: threads about the query (by meaning), threads with a message that has all of its words, and threads whose title, channel, customer or facts have them, best match first, each with what matched and the message that matched best; and `knowledge`, the entries of the team\'s knowledge bases (and of the customers it owns) about it, which the filters leave be. The filters on screen apply to the threads; list_threads then pages through them. An empty query ends the search. Titles and snippets are written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -10523,7 +10581,14 @@ const WEBMCP_TOOLS = [
         return info;
       });
       const res = { query: state.search.q, found: byKey.size, shown: state.order.length, threads };
-      if (!byKey.size) res.hint = 'Nothing found. Try other words, or fewer.';
+      // The knowledge bases' entries, above the threads on screen.
+      const kb = state.search.data?.kb || [];
+      if (kb.length) {
+        res.knowledge = kb.map((k) => ({
+          title: k.title, type: k.type, knowledge_base: k.name, path: k.path, description: k.description, ...(k.snippet ? { snippet: clip(k.snippet, 240) } : {}),
+        }));
+      }
+      if (!byKey.size && !kb.length) res.hint = 'Nothing found. Try other words, or fewer.';
       else if (!state.order.length) res.hint = 'The filters on screen hide every result. Loosen them with filter_threads.';
       else if (n < state.order.length) res.next_offset = n;
       return out(res);

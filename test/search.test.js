@@ -28,6 +28,7 @@ const ADA = {
 };
 const me = { ...ADA, teams: [{ slug: 'helix', name: 'Helix' }] };
 const AT = '2026-10-22T10:00:00.000Z';
+const TYPES = { $in: ['message', 'thread'] };
 const later = (minutes) => new Date(Date.parse(AT) + minutes * 60000).toISOString();
 
 /**
@@ -155,7 +156,8 @@ describe('search: words and snippets', () => {
   });
 
   it('asks the vectors for the team, then the shared channels in parts of under 2 KB', () => {
-    assert.deepEqual(vectorFilters('helix', []), [{ team: 'helix' }]);
+    // Only the threads' and their messages' vectors: the knowledge bases' share the index.
+    assert.deepEqual(vectorFilters('helix', []), [{ type: TYPES, team: 'helix' }]);
     const channels = Array.from({ length: 40 }, (_, i) => `teams:${'t'.repeat(36)}:${'g'.repeat(36)}:19:${i}@thread.tacv2`);
     const filters = vectorFilters('helix', channels);
     assert.ok(filters.length > 2);
@@ -195,7 +197,7 @@ describe('search: the inbox', () => {
 
   it('finds what threads are about, with the message that matched', async () => {
     const { env, asked } = setup();
-    env.matches[JSON.stringify({ team: 'helix' })] = [
+    env.matches[JSON.stringify({ type: TYPES, team: 'helix' })] = [
       vector('slack:E1:C1:3.1', 0.81, { type: 'message', message: 'slack:E1:C1:3.1' }),
       vector('slack:E1:C1:1.1', 0.78),
       vector('teams:T1:G1:C2:4', 0.74),
@@ -204,10 +206,12 @@ describe('search: the inbox', () => {
       // Another team's thread with a stale team on its vector: D1 says no.
       vector('slack:E1:C4:6.1', 0.8),
     ];
-    env.matches[JSON.stringify({ channel: { $in: ['slack:E1:C3'] } })] = [vector('slack:E1:C3:5.1', 0.7)];
+    env.matches[JSON.stringify({ type: TYPES, channel: { $in: ['slack:E1:C3'] } })] = [vector('slack:E1:C3:5.1', 0.7)];
     const r = await searchInbox(env, me, 'helix', 'deploy timeout');
     assert.deepEqual(asked, [`${QUERY_PREFIX}deploy timeout`]);
-    assert.deepEqual(env.filters, [{ team: 'helix' }, { channel: { $in: ['slack:E1:C3'] } }]);
+    assert.deepEqual(env.filters, [
+      { type: TYPES, team: 'helix' }, { type: TYPES, channel: { $in: ['slack:E1:C3'] } },
+    ]);
     // The re-threaded follow-up is its group's entry; the best match first.
     assert.deepEqual(r.hits.map((h) => [h.thread, h.matched, h.score]), [
       ['slack:E1:C1:1.1', ['topic'], 0.81],
@@ -229,7 +233,7 @@ describe('search: the inbox', () => {
 
   it('ranks words in the title over a weaker match by topic', async () => {
     const { env } = setup();
-    env.matches[JSON.stringify({ team: 'helix' })] = [vector('teams:T1:G1:C2:4', 0.8)];
+    env.matches[JSON.stringify({ type: TYPES, team: 'helix' })] = [vector('teams:T1:G1:C2:4', 0.8)];
     const r = await searchInbox(env, me, 'helix', 'sitemap');
     assert.deepEqual(r.hits.map((h) => h.thread), ['slack:E1:C1:2.1', 'teams:T1:G1:C2:4']);
   });
