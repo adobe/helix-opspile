@@ -1430,7 +1430,10 @@ twice its share of all the map's threads). The lift keeps what is
   delivery"), too long, or another topic's, and a topic it did not name, are named on their own
   from the titles. No name names a customer; one given twice gets a number.
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
-  messages), the customers', partners' and vendors' people who posted (`customers`), who each
+  messages), the customers', partners' and vendors' people who posted (`customers`: by
+  `people.id` where they are a person of D1, else, as every customer's person in production, by
+  their platform account, `a:<author_key>`, named as `identities` has it, and not followed from
+  the page; bots are nobody), who each
   person is to group them by (`peopleOf`: Adobe's by the team they are on whose threads they
   posted in most, or none when they are on no team, the others by the customer of most of their threads), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
   and the **products**: the technologies Clef says the thread is about (`thread_tech.about`), or,
