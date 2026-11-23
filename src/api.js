@@ -69,6 +69,7 @@ import {
   followable, followedByTeam, followsOfTeams, personFollows, personFollowsBy, setPersonFollow,
   setPersonFollowBy,
 } from './follows.js';
+import { suggestFollows } from './followsuggest.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { claimPost, logPost, settlePost } from './postkeys.js';
 import { postingOffer } from './postoffer.js';
@@ -1224,6 +1225,12 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return json({ error: 'read-only while viewing as someone else' }, 403);
     }
     return changeArea(env, me, request.method, await request.json().catch(() => ({})));
+  }
+  if (url.pathname === '/api/follows/suggest') {
+    // What to follow (src/followsuggest.js): for anyone signed in, on a team or not; names and
+    // counts only. `q` searches every product, topic and customer by name.
+    return request.method === 'GET' ? json(await suggestFollows(env, me, { q: url.searchParams.get('q') || '' }))
+      : json({ error: 'GET' }, 405);
   }
   if (url.pathname === '/api/follows') {
     // The technologies the person follows, for their personal view (src/follows.js).

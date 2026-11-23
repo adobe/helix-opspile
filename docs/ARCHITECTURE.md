@@ -155,6 +155,17 @@ posted in, and those Clef puts in the area (`thread_areas`, by index, written wi
 `thread_tech` is) are in their personal view the same way, and in `followersOf` for live updates
 and notifications. Teams follow technologies only.
 
+**What to follow, suggested** (`GET /api/follows/suggest`, `src/followsuggest.js`): products
+(technologies), topics (areas) and customers, for everyone signed in. Without a query, what the
+channels of their personal view were about in the last 180 days (`thread_tech`, `thread_areas` and
+the customers of those channels' conversations), then the products and topics of the most
+conversations of every team in the last 30 days, with the 30 days before to say what is rising,
+less what they follow already; customers only from their own channels. With `q`, every product,
+topic and customer whose name has its words. Names and counts only, never a thread; the trending
+counts are the same for everyone, and an isolate keeps them an hour. The inbox shows them in place of
+an empty personal view (where someone on no team starts), and in a dialog from the Following
+section of the menu (`ui/followsuggest.js`).
+
 An org is a slug. What it is called, its icon (a domain, whose favicon is shown, or an image
 URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an org without
 one is a customer shown by its slug and the favicon of its usual mail domain. The inbox and

@@ -21,6 +21,7 @@ import {
   entryFollowers, followable, followersOf, followingTeams, threadAreaStatements,
   threadTechStatements,
 } from '../src/follows.js';
+import { forgetTrends, suggestFollows } from '../src/followsuggest.js';
 import {
   mayPost, mayReply, mayWork, recipients, roomsOf, teamsOf,
 } from '../src/shares.js';
@@ -273,6 +274,38 @@ describe('following technologies', () => {
     // The channel's team posts there.
     assert.ok(await mayReply(e, asMe(ADA))(['helix'], place));
     assert.equal((await thread(e, asMe(ADA), k)).can_post, true);
+  });
+
+  it('suggests what the person\'s channels are about, then what is trending, and finds by name', async () => {
+    const e = { ...env(), SIGNIN_DOMAINS: 'staff.example' };
+    forgetTrends();
+    const now = Date.parse(AT) + 24 * 60 * 60 * 1000;
+    // Solo posted in C2 (globex), whose group 3.1 + 4.1 shows da; xw is in two of C1's threads.
+    e.DB.sqlite.prepare('UPDATE messages SET person = ? WHERE thread = ?').run(SOLO.id, key('C2', '3.1'));
+    e.DB.sqlite.prepare('INSERT INTO thread_tech (thread, tech, p) VALUES (?, ?, ?)').run(key('C1', '2.1'), 'xw', 0.8);
+    e.DB.sqlite.exec(`INSERT INTO areas (team, id, name, what, path) VALUES
+      ('admin', 'seo', 'SEO', 'SEO', 'areas/seo.md'), ('admin', 'cdn', 'CDN and caching', 'CDN', 'areas/cdn.md')`);
+    await e.DB.batch(threadAreaStatements(e.DB, key('C2', '4.1'), { seo: 0.9 }));
+    followTeam(e, 'helix', 'xw');
+    const s = await suggestFollows(e, SOLO, { now });
+    assert.deepEqual(s.tech.map((t) => [t.id, t.mine, t.recent]), [['da', 1, 1], ['xw', 0, 2]]);
+    assert.deepEqual(s.tech[1].teams, ['Helix']);
+    assert.deepEqual(s.area.map((a) => a.id), ['seo']);
+    assert.deepEqual(s.org.map((o) => [o.id, o.mine]), [['globex', 1]]);
+    // Not what they follow already.
+    followPerson(e, SOLO.id, 'da');
+    assert.deepEqual((await suggestFollows(e, SOLO, { now })).tech.map((t) => t.id), ['xw']);
+    // A query finds by name every product, topic and customer, followed or not.
+    let q = await suggestFollows(e, SOLO, { q: 'document', now });
+    assert.deepEqual(q.tech.map((t) => t.id), ['da']);
+    q = await suggestFollows(e, SOLO, { q: 'caching', now });
+    assert.deepEqual(q.area.map((a) => a.id), ['cdn']);
+    q = await suggestFollows(e, SOLO, { q: 'acm', now });
+    assert.deepEqual(q.org.map((o) => o.id), ['acme']);
+    // Over the API, for anyone signed in.
+    const r = await call(e, asMe(SOLO), 'GET', '/api/follows/suggest?q=workspace');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.tech.map((t) => t.id), ['xw']);
   });
 
   it('tells a follower that a thread stopped showing what they follow, so it can go', async () => {
