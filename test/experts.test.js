@@ -17,6 +17,10 @@ import {
   responseTimes, roughly, suggestExpert, titlePairs, topicExperts,
 } from '../src/experts.js';
 import { QUERY_PREFIX } from '../src/expertise.js';
+import { activityOf, postsOf, predictMention } from '../src/mention-model.js';
+import {
+  mentionModel, ROWS_SQL, sweepMentionModel, windowOf,
+} from '../src/mentionmodels.js';
 import { recordExpertEvent } from '../src/expertevents.js';
 import { clearTopicIndex } from '../src/topicindex.js';
 import { d1 } from './d1.js';
@@ -119,49 +123,87 @@ describe('expert finder', () => {
     assert.equal(roughly(50 * 60), 'about 2 days');
   });
 
-  it('counts answered mentions, a group as one thread', async () => {
-    const e = env();
-    e.addThread('slack:E1:C1:1.1');
-    e.addThread('slack:E1:C1:2.1', { logical: 'slack:E1:C1:1.1' });
-    // Bo: mentioned in the group's first thread, answers in its second.
-    e.mention('slack:E1:C1:1.1', 'm1', 2, 3 * DAYS);
-    e.addMessage('slack:E1:C1:2.1', 'a1', 2, 3 * DAYS - 30);
-    // Not answered.
-    e.mention('slack:E1:C1:1.1', 'm2', 2, 2 * DAYS);
-    // Long before the window: it does not count.
-    e.mention('slack:E1:C1:1.1', 'm0', 2, 300 * DAYS);
-    const times = await responseTimes(e, [2], { channel: 'slack:E1:C1', now: NOW });
-    assert.equal(times.get(2).mentions, 2);
-    assert.equal(times.get(2).answered, 1);
+  const T = {
+    source: 'slack', tenant: 'E1', channel_id: 'C1', team: 'helix',
+  };
+
+  it('says nothing of answers before the cron fit a mention model', async () => {
+    const times = await responseTimes(env(), [2], { t: T, threads: [THREAD], now: NOW });
+    assert.equal(times.size, 0);
   });
 
-  it('times new people in a thread from the customer message before them', async () => {
+  it('says what the mention model learnt of people, a group as one thread', async () => {
     const e = env();
-    ['1.1', '2.1', '3.1'].forEach((root, i) => {
-      const thread = `slack:E1:C1:${root}`;
+    // Ada mentions Bo and Cy every day; Bo answers in the group's second thread, Cy never.
+    for (let d = 1; d <= 60; d += 1) {
+      const thread = `slack:E1:C1:${d}.1`;
+      const second = `slack:E1:C1:${d}.2`;
       e.addThread(thread);
-      e.addMessage(thread, `c${i}`, null, (i + 1) * DAYS, { staff: 0 });
-      e.addMessage(thread, `a${i}`, 2, (i + 1) * DAYS - 60);
-      // Already active: this post says nothing.
-      e.addMessage(thread, `b${i}`, 2, (i + 1) * DAYS - 600);
+      e.addThread(second, { logical: thread });
+      e.addMessage(thread, `c${d}`, null, d * DAYS + 5, { staff: 0 });
+      e.addMessage(thread, `m${d}`, 1, d * DAYS);
+      e.mention(thread, `slack:E1:C1:m${d}`, 2, d * DAYS);
+      e.mention(thread, `slack:E1:C1:m${d}`, 3, d * DAYS);
+      e.addMessage(second, `a${d}`, 2, d * DAYS - 30);
+    }
+    // Only mentions whose week is over.
+    assert.deepEqual(await sweepMentionModel(e, NOW), {
+      built: new Date(NOW).toISOString(), mentions: 2 * 54, answered: 54,
     });
-    const times = await responseTimes(e, [2, 3], { channel: 'slack:E1:C1', now: NOW });
-    assert.equal(times.get(2).joins, 3);
-    assert.equal(times.get(2).minutes, 60);
-    assert.equal(times.get(3).joins, 0);
+    const times = await responseTimes(e, [2, 3, 4], { t: T, threads: [THREAD], now: NOW });
+    const bo = times.get(2);
+    assert.equal(bo.mentions, 54);
+    assert.ok(bo.odds > 0.8 && times.get(3).odds < 0.2, `${bo.odds} ${times.get(3).odds}`);
+    assert.ok(bo.minutes >= 5 && bo.minutes <= 120, `${bo.minutes}`);
+    // The finder counts Bo's posts as the model learnt them.
+    const rows = e.DB.sqlite.prepare(ROWS_SQL).all(windowOf(NOW).posts)
+      .map((r) => ({ ...r, at: Date.parse(r.at) }));
+    const channel = 'slack:E1:C1';
+    const expected = predictMention(await mentionModel(e, NOW), {
+      person: 2,
+      channel,
+      at: NOW,
+      activity: activityOf(postsOf(rows).get(2), NOW, channel),
+      staff: 0,
+      member: false,
+    });
+    assert.deepEqual(bo, { ...expected, minutes: Math.round(expected.minutes) });
+    // Di was never mentioned: the model says something, but not enough to tell.
+    assert.equal(times.get(4).mentions, 0);
+    assert.deepEqual(reasonsOf({ response: times.get(4) }), []);
   });
 
-  it('says a response time only with enough answers, and most mentions answered', () => {
+  it('fits the mention model once a day, and keeps the newest few', async () => {
+    const e = env();
+    e.addMessage(THREAD, 'c1', null, 20 * DAYS, { staff: 0 });
+    e.mention(THREAD, 'slack:E1:C1:c1', 2, 20 * DAYS);
+    const at = (days) => NOW + days * DAYS * 60000;
+    assert.equal((await sweepMentionModel(e, at(0))).mentions, 1);
+    assert.deepEqual(await sweepMentionModel(e, at(0.5)), { fresh: new Date(at(0)).toISOString() });
+    for (const days of [1, 2, 3]) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await sweepMentionModel(e, at(days));
+      assert.ok(r.built, JSON.stringify(r));
+    }
+    assert.deepEqual(e.DB.sqlite.prepare('SELECT built_at FROM mention_models ORDER BY built_at')
+      .all().map((r) => r.built_at), [1, 2, 3].map((d) => new Date(at(d)).toISOString()));
+  });
+
+  it('says how people answer mentions once the model knows them', () => {
     const said = (response) => reasonsOf({ response, member: true });
-    const answers = { joins: 3, answered: 3, mentions: 3 };
-    assert.deepEqual(said({ ...answers, minutes: 60 }), ['typically responds in about 1 hour']);
-    assert.deepEqual(said({ ...answers, minutes: 2 }), ['typically responds within minutes']);
-    // Nobody mentioned them: the answers still say something.
+    const known = { mentions: 3, answered: 2 };
+    assert.deepEqual(said({ ...known, odds: 0.85, minutes: 2 }), [
+      'answers nearly all mentions, within minutes']);
+    assert.deepEqual(said({ ...known, odds: 0.7, minutes: 60 }), [
+      'answers most mentions, in about 1 hour']);
+    assert.deepEqual(said({ ...known, odds: 0.5, minutes: 300 }), [
+      'answers about half of mentions, in about 5 hours']);
+    assert.deepEqual(said({ ...known, odds: 0.3, minutes: 300 }), [
+      'answers about a third of mentions, in about 5 hours']);
+    assert.deepEqual(said({ ...known, odds: 0.1, minutes: 300 }), ['answers few mentions']);
     assert.deepEqual(said({
-      minutes: 60, joins: 3, answered: 0, mentions: 0,
-    }), ['typically responds in about 1 hour']);
-    assert.deepEqual(said({ ...answers, minutes: 60, joins: 2 }), []);
-    assert.deepEqual(said({ ...answers, minutes: 60, mentions: 7 }), []);
+      ...known, odds: 0.7, minutes: 60, mentions: 2,
+    }), []);
   });
 
   it('adds up channel, customer, meaning and words, and says why', async () => {

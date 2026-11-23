@@ -1656,7 +1656,7 @@ the dropdowns comes whom a thread agent suggests pulling in ("Agent suggests Len
 when one did; the expert finder's own ranking is not shown.
 
 **Expert finder.** Adobe colleagues worth pulling into a thread who are not in it yet, each
-with why: "knows about this topic", "typically responds in about 4 hours" (`GET /api/experts`,
+with why: "knows about this topic", "answers most mentions, in about 4 hours" (`GET /api/experts`,
 `src/experts.js`). The inbox does not show its ranking: line 2 of a thread's header named the
 top one ("Lena Berg knows about this topic"), with a ▾ list of up to eight, each with ✕ for "not
 the right person", and that was taken out, because its picks were mostly wrong and made the
@@ -1721,21 +1721,33 @@ without an account on the thread's platform, who could not be mentioned. Someone
 accounts there is listed once, by their account for the thread ("One account a person"), with
 the signals of all of them.
 
-A response time comes from a small hierarchical model (`src/response-model.js`) of the last 180
-days. It measures from a customer's message to the first post of someone new to the thread (a
-re-threaded group as one); whoever is already active there is left out, and so is a first post
-no customer came before. That time runs on the person's own clock: each hour counts for as
-much as they usually post in it (UTC hour of day, weekdays and weekends apart, pooled with
+How someone answers comes from the **mention model** (`src/mention-model.js`): of every
+mention of the last year of someone not in the thread yet (a re-threaded group as one; only
+their first mention in it, and none once they posted there), the odds that they post in the
+thread within a week, and how long they take when they do. Both start from what the person's
+posts said at the moment of the mention, counted over the 90 days before it: how long since
+their last post anywhere, how many in the day, the week, the 90 days and the channel, whether
+they are of the thread's team, how many were mentioned with them, how many Adobe people were in
+the thread, and how busy that hour usually is for them. The odds are a logistic regression on
+those, then what the channel and the person add, each pulled towards nothing while its mentions
+are few. The time runs on the person's own clock (`src/response-model.js`: each UTC hour of the
+day, weekdays and weekends apart, counts for as much as they usually post in it, pooled with
 everyone's while they have few posts), so their hours stand for their timezone and a question
-asked as they log off has not waited all night. The log of it is a typical value, plus what the
-channel and then the person add, each counting for as much as its data can carry, and left out
-when its groups do not differ beyond chance. The model is fit per isolate, once an hour; asked
-about now, it runs the person's clock forward and says the minutes on the wall. (Hour and day
-effects on wall-clock time, tried first, did no better than one number for everyone.) It only
-knows who did answer,
-so a time is only said with at least three such answers, and most mentions of the person
-answered in the thread. `npm run response:backtest` says whether the model beats one number for
-everyone. "Not in this
+asked as they log off has not waited all night; its log is a regression on how recently they
+posted, then what the channel and the person add, each counting for as much as its data can
+carry, and left out when its groups do not differ beyond chance. Asked about now, it runs the
+person's clock forward and says the minutes on the wall.
+
+The cron fits it once the newest is a day old (`src/mentionmodels.js`, `mention_models`, the
+newest three kept; about 90 ms and 250 KB of numbers by person and channel id), and the finder
+reads the newest once an hour per isolate. Only a person's numbers are read for a list: their
+posts as counts, the thread's Adobe people and its team. Before the first fit nothing is said.
+It is said with at least three mentions of the person in the model: "answers nearly all",
+"most", "about half of", "about a third of" or "few mentions", with the typical time unless
+it is few. `npm run response:backtest` says whether it beats the person's own share of answered
+mentions for the odds, and the response model, which the finder used before, for the time.
+(Gradient-boosted trees, a longer window, the customer, who mentioned them, and weighting a
+person's recent mentions more did no better.) "Not in this
 channel" is only said with a complete list of the channel's members, as for `find_member`: most
 channels have none, and then nothing is claimed. Such a person ranks lower, as their mention may not reach them; `GET
 /api/experts` lists the members in the background when that is a week old, as the mention
@@ -3240,8 +3252,8 @@ nothing before it knows that.
 
 **The wait model** (`src/wait-model.js`) estimates the customer's **wait**: from their first
 message since Adobe's last post to Adobe's next post in the conversation. That is not the time
-an expert takes to join (`src/response-model.js`, the same model, measures that one for the
-expert list): a customer does not care who answers. Two things say most about a wait:
+an expert takes to answer a mention (`src/mention-model.js` measures that one for the expert
+list, on the same clocks): a customer does not care who answers. Two things say most about a wait:
 
 - its **phase**, how the conversation stood when the customer wrote: `new` (Adobe has not
   written yet), `live` (Adobe wrote in the last 30 minutes), `day` (in the last day) or `old`.
