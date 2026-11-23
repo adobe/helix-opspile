@@ -656,8 +656,14 @@ function trees() {
   const made = rootsOf('product', 'product');
   let body;
   if (state.q.tl) {
-    const listed = moving[state.q.tl].map((x) => g.all.get(x.key)).filter((n) => n && ['tag', 'topic', 'product'].includes(n.type));
-    const parentOf = (n) => (n.parent ? g.all.get(n.parent)?.label || '' : '');
+    // A group of one is its one, listed once (ui/topicgraph.js `distinct`).
+    const listed = TopicGraph.distinct(g, moving[state.q.tl].map((x) => x.key))
+      .filter((n) => ['tag', 'topic', 'product'].includes(n.type));
+    // What it is in, or what is in it: two of the same name (the product Commerce, its feature
+    // Commerce) are told apart.
+    const what = { tag: 'topics', product: 'features' };
+    const parentOf = (n) => (n.parent ? `in ${g.all.get(n.parent)?.label || ''}`
+      : (n.children?.length ? `${n.children.length} ${what[n.type] || ''}` : ''));
     body = `<ul class="tree">${listed.map((n) => row(n, 0, parentOf(n))).join('') || `<li class="sub">Nothing ${esc(state.q.tl)} now.</li>`}</ul>`;
   } else {
     body = `<h3>Areas and topics</h3><ul class="tree">${tree(areas)}</ul>

@@ -243,7 +243,33 @@ globalThis.TopicGraph = (() => {
     };
   }
 
+  /**
+   * What node `id` is on the graph `build` made: a group of one is its one (a customer stays
+   * itself), so a list of nodes does not have the same thing twice (an area of one topic and its
+   * topic, a product of one feature and its feature). The node, or null when the graph has none.
+   */
+  function standsFor(graph, id) {
+    const n = graph.all.get(id);
+    if (!n) return null;
+    if (n.children && n.type !== 'org' && n.children.length === 1) return graph.all.get(n.children[0]) || n;
+    return n;
+  }
+
+  /** `ids` as standsFor has them, each once, in their order. */
+  function distinct(graph, ids) {
+    const seen = new Set();
+    const out = [];
+    for (const id of ids) {
+      const n = standsFor(graph, id);
+      if (n && !seen.has(n.id)) {
+        seen.add(n.id);
+        out.push(n);
+      }
+    }
+    return out;
+  }
+
   return {
-    build, isCustomer, productOf, FAMILIES, NONE,
+    build, isCustomer, productOf, standsFor, distinct, FAMILIES, NONE,
   };
 })();
