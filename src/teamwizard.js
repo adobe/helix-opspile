@@ -195,14 +195,18 @@ async function presenceOf(env) {
     here.set(email, p);
     presence.set(k, here);
   };
-  const held = `EXISTS (SELECT 1 FROM threads t WHERE t.source = x.source AND t.tenant = x.tenant
-    AND t.channel_id = x.channel_id AND t.team IN (?1, ?2))`;
+  // The held channels first (threads_team), then their members by channel_members' key: an
+  // EXISTS per member row instead reads every thread of every channel, millions of rows.
   const [members, posts, reactions] = await Promise.all([
-    rows(env, `SELECT x.source, x.tenant, x.channel_id, COALESCE(x.email, i.email) AS email,
+    rows(env, `WITH held AS (SELECT DISTINCT source, tenant, channel_id FROM threads
+        WHERE team IN (?1, ?2))
+      SELECT x.source, x.tenant, x.channel_id, COALESCE(x.email, i.email) AS email,
         COALESCE(i.name, x.name) AS name, 0 AS staff
-      FROM channel_members x LEFT JOIN identities i ON i.source = x.source AND i.tenant = x.tenant
+      FROM held h JOIN channel_members x ON x.source = h.source AND x.tenant = h.tenant
+        AND x.channel_id = h.channel_id
+      LEFT JOIN identities i ON i.source = x.source AND i.tenant = x.tenant
         AND i.user_id = x.user_id
-      WHERE ${held} AND COALESCE(x.email, i.email) IS NOT NULL`, ...HOLDERS),
+      WHERE COALESCE(x.email, i.email) IS NOT NULL`, ...HOLDERS),
     rows(env, `SELECT t.source, t.tenant, t.channel_id, p.email, p.name, p.staff, COUNT(*) AS n
       FROM threads t JOIN messages m ON m.thread = t.thread JOIN people p ON p.id = m.person
       WHERE t.team IN (?1, ?2) AND m.deleted = 0 AND p.email IS NOT NULL

@@ -1301,8 +1301,13 @@ async function teamWizard(env, me, body) {
     },
     extra: { team: { slug, existing: Boolean(existing) }, members, refused },
   });
-  // Done with it, whatever it had been.
-  await dismissGroup(env, prefix, null, false);
+  // Done with it, whatever it had been. The rules are saved and their moves queued by now: a
+  // failure here must not answer as if they were not (the page would offer the group again).
+  await dismissGroup(env, prefix, null, false).catch((e) => {
+    console.error(JSON.stringify({
+      route: 'admin', teamWizard: prefix, dismissal: 'not cleared', error: e.message,
+    }));
+  });
   console.log(JSON.stringify({
     route: 'admin', teamWizard: prefix, team: slug, existing: Boolean(existing), members: members.length, by: me.id,
   }));
