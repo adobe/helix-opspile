@@ -6085,8 +6085,10 @@ async function deliver(p) {
   setTimeout(() => showSending(p.thread), SEND_ARRIVE_MS + 500);
   if (p.base && state.cache.get(p.thread)?.data?.draft?.updated_at === p.base) setCachedDraft(p.thread, null);
   const invited = invitedSaying(data);
-  if (invited) toast(invited, null, { stay: missedMention(data) });
-  else if (data.postingOffer) offerPosting(p.thread, data.postingOffer);
+  const remind = remindSaying(data);
+  if (invited || remind) {
+    toast([invited, remind].filter(Boolean).join(' '), remind ? remindActions(data, p.thread) : null, { stay: missedMention(data) });
+  } else if (data.postingOffer) offerPosting(p.thread, data.postingOffer);
   if (p.status === 'delivered' || reworded) showSending(p.thread);
   if (p.status !== 'delivered') animateSending();
   return true;
@@ -6812,17 +6814,19 @@ async function postNew() {
   for (const x of startedSending(s)) if (x !== p) x.thread = key;
   ready(key);
   const invited = invitedSaying(res.data);
-  const said = [`Posted in ${channel.name}.`, invited].filter(Boolean).join(' ');
+  const remind = remindSaying(res.data);
+  const said = [`Posted in ${channel.name}.`, invited, remind].filter(Boolean).join(' ');
+  const acts = remind ? remindActions(res.data, key, channel.ref.split(':')[0]) : null;
   // Slack names the files of a post, not the message: it shows in the inbox when it arrives.
   if (!key) s.note = 'Posted. It shows in the inbox as soon as it arrives.';
   // Somewhere else by now: that stays on screen.
   const stay = { stay: missedMention(res.data) };
-  if (state.compose !== c) { toast(said, null, stay); return; }
+  if (state.compose !== c) { toast(said, acts, stay); return; }
   Object.assign(state, { compose: null, awaiting: key });
   syncReading();
   toUrl(false);
   renderThreads();
-  if ((TAKING_TURNS.matches && !key) || invited) toast(said, null, stay);
+  if ((TAKING_TURNS.matches && !key) || invited || remind) toast(said, acts, stay);
   renderStarted();
   animateSending();
   if (key) awaitStarted(key);
@@ -7546,12 +7550,41 @@ function invitedSaying(data) {
 }
 
 /** Whether a post's answer says someone mentioned will not see it: worth more than a moment. */
-const missedMention = (data) => Boolean(data?.uninvited?.length);
+const missedMention = (data) => Boolean(data?.uninvited?.length || data?.reminders?.length);
+
+/** "A", "A and B", "A, B and C". */
+const andList = (items) => (items.length < 3 ? items.join(' and ')
+  : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 
 /**
- * A short note at the bottom; `action` adds a link (`href`) or a button (`run`). With `stay`, it
- * stays until it is dismissed (or the next note), for what someone has to read and act on;
- * `dismiss` (`{ label, run }`) names its Dismiss button and what that does too.
+ * What a post's answer says of whom it mentions who may never see it (src/reminders.js): who and
+ * why, and to send them a personal reminder. Null when there is nobody.
+ */
+function remindSaying(data) {
+  const list = data?.reminders || [];
+  if (!list.length) return null;
+  const them = list.length > 1 ? 'them' : list[0].name;
+  return `${andList(list.map((r) => `${r.name} ${r.said}`))}. Send ${them} a personal reminder with a link to your message.`;
+}
+
+/**
+ * The links of the message a post's answer (`data`, its `id` and `permalink`) made in `thread`
+ * (an inbox key, whose first part is the platform; null while the inbox has no key for it), to
+ * copy for a personal reminder: on its platform, where it has one, and in the inbox.
+ */
+function remindActions(data, thread, source = thread?.split(':')[0]) {
+  const where = PLATFORM[source];
+  return [
+    ...(data.permalink && where ? [{ label: `Copy ${where} URL`, copy: data.permalink }] : []),
+    ...(thread ? [{ label: 'Copy Opspile URL', copy: messageHref({ thread, id: data.id }) }] : []),
+  ];
+}
+
+/**
+ * A short note at the bottom; `action` (or a list of them) adds a link (`href`), a button
+ * (`run`) or a button that copies `copy` to the clipboard and says so, the note staying. With
+ * `stay`, it stays until it is dismissed (or the next note), for what someone has to read and act
+ * on; `dismiss` (`{ label, run }`) names its Dismiss button and what that does too.
  */
 function toast(text, action, { stay = false, dismiss = null } = {}) {
   document.querySelectorAll('.toast:not(.leaving)').forEach(toastOut);
@@ -7559,11 +7592,12 @@ function toast(text, action, { stay = false, dismiss = null } = {}) {
   el.className = 'toast';
   el.setAttribute('role', stay ? 'alert' : 'status');
   el.textContent = text;
-  if (action) {
-    const a = document.createElement(action.href ? 'a' : 'button');
-    a.textContent = action.label;
-    if (action.href) a.href = action.href;
-    else a.onclick = () => { toastOut(el); action.run(); };
+  for (const act of [action].flat().filter(Boolean)) {
+    const a = document.createElement(act.href ? 'a' : 'button');
+    a.textContent = act.label;
+    if (act.href) a.href = act.href;
+    else if (act.copy) a.onclick = () => copyFromToast(a, act);
+    else a.onclick = () => { toastOut(el); act.run(); };
     el.append(a);
   }
   if (stay) {
@@ -7573,6 +7607,18 @@ function toast(text, action, { stay = false, dismiss = null } = {}) {
     el.append(close);
   } else setTimeout(() => toastOut(el), action ? 8000 : 5000);
   document.body.append(el);
+}
+
+/** Copies a toast's link (`act.copy`), and says so on its button for a moment. */
+async function copyFromToast(button, act) {
+  try {
+    await navigator.clipboard.writeText(act.copy);
+  } catch {
+    toast('Could not copy the link: the browser did not let the page write to the clipboard.');
+    return;
+  }
+  button.textContent = 'Copied ✓';
+  setTimeout(() => { button.textContent = act.label; }, 1500);
 }
 
 /**
@@ -7716,8 +7762,8 @@ const msgMenu = {
 };
 
 /**
- * The inbox's address of message `m`: its thread, at it (`m`, `state.jump`), in the view on
- * screen. Nothing else of the view (its filters, a search, whom you view as): the one it is for
+ * The inbox's address of message `m`: its thread, at it (`m`, `state.jump`; the thread alone
+ * without an `id`), in the view on screen. Nothing else of the view (its filters, a search, whom you view as): the one it is for
  * has their own. The thread is the message's own, not its group's: the Worker always reads the
  * messages of the thread asked for, also in a group too large to read them all
  * (MAX_READ_MEMBERS), and the inbox opens the group from it.
@@ -7726,7 +7772,7 @@ function messageHref(m) {
   const q = new URLSearchParams();
   if (!personal() && state.team) q.set('team', state.team);
   q.set('t', m.thread);
-  q.set('m', m.id);
+  if (m.id) q.set('m', m.id);
   return `${location.origin}${location.pathname}?${q}`;
 }
 

@@ -1723,6 +1723,18 @@ through an approval flow of its own, and a message written in Slack itself is le
 which asks there; a thread agent still points out a mention of someone not in the channel
 (`src/agent/members.js`).
 
+**Mention reminders.** A mention reaches someone only if they look: a colleague on leave, or
+one who rarely answers mentions, may never see it. So the answer to a post that mentions Adobe
+people (`POST /api/post`, `POST /api/post/app`, a reply or a new thread) names those who may not
+(`reminders`, `src/reminders.js`): who has not posted for two weeks (or never, anywhere the inbox
+reads), and, of those not in the thread yet, whom the mention model gives odds under one half of
+an answer within a week (see "Expert finder"; only once it knows three mentions of them). Not the
+one who posts, and no customer. The page says so in a toast that stays ("Lena Berg has not posted
+for 3 weeks. Send Lena Berg a personal reminder with a link to your message."), with the
+message's links to copy, as its menu has them: on its platform (`permalink`: Slack's in the
+channel's workspace, Teams' as Graph's `webUrl` is made) and in the inbox. The post has gone out
+by then: a failure to work this out only leaves the answer without it (logged, `route: post`).
+
 **Posting in a channel you are not in.** Slack lets a person post only in a channel they are
 in, and a team answers channels in the inbox that not all of them joined in Slack. When Slack
 refuses a person's post (`POST /api/post`, text or files) with `not_in_channel`, the opspile

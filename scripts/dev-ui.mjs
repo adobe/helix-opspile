@@ -585,6 +585,33 @@ function invitedFor(entry, mentions) {
   };
 }
 
+/**
+ * Whom a post in `entry` mentions who may never see it, as src/reminders.js says (fixtures:
+ * `quiet`, days since their last post; `answers`, the mention model's odds), and the post's
+ * link on its platform.
+ */
+function remindersFor(entry, mentions, id) {
+  const ids = new Set((mentions || []).map((m) => String(m.id || m)));
+  const source = entry ? entry.row.source : null;
+  // The odds are for people not in the thread yet.
+  const here = new Set((entry ? entry.messages : []).map((m) => m.author && m.author.name));
+  const reminders = [...store.people.values()]
+    .filter((p) => p.staff && p.id !== ME && ids.has(`${source}-${p.key}`)
+      && (p.quiet || (p.answers && !here.has(p.name))))
+    .map((p) => (p.quiet ? {
+      id: `${source}-${p.key}`, name: p.name, why: 'quiet', said: `has not posted for ${Math.round(p.quiet / 7)} weeks`, days: p.quiet, odds: null,
+    } : {
+      id: `${source}-${p.key}`, name: p.name, why: 'unlikely', said: 'answers about a third of mentions', days: 1, odds: p.answers,
+    }));
+  if (!reminders.length) {
+    return {};
+  }
+  const link = source === 'slack'
+    ? `https://example.slack.com/archives/${entry.ch.channelId}/p${String(id).replace('.', '')}`
+    : `https://teams.microsoft.com/l/message/${encodeURIComponent(entry.ch.channelId)}/${encodeURIComponent(id)}`;
+  return { reminders, permalink: link };
+}
+
 function myChannels() {
   const { name } = store.people.get(ME);
   const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
@@ -2057,6 +2084,7 @@ async function api(req, res, url) {
         text: String(reply).trim(),
         thread: started.key,
         ...invitedFor([...store.threads.values()].find((t) => t.ch === ch), mentions),
+        ...remindersFor([...store.threads.values()].find((t) => t.ch === ch), mentions, started.id),
       });
     }
     if (app && !store.threads.get(key)?.ch.appPosting) {
@@ -2125,6 +2153,7 @@ async function api(req, res, url) {
       id,
       text: sent,
       ...invitedFor(entry, mentions),
+      ...remindersFor(entry, mentions, id),
       ...(agentDraft ? postingOfferFor(entry) : {}),
     });
   }

@@ -222,9 +222,13 @@ const quietly = (signal, promise) => promise.catch((e) => {
  * entry of `threads`, thread `t`'s, at `now`: person id to `{ odds, minutes, mentions, answered
  * }`, the odds of an answer in it within a week, the typical minutes until it, and the mentions
  * of them the model learnt from, answered or not. Their posts are counted as the model counts
- * them (`activityOf`); nothing without a model yet.
+ * them (`activityOf`); nothing without a model yet. `mentioned` is how many are named in the
+ * message together (one, by default), and `opening` whether it starts the thread (by default,
+ * whether the thread is that young).
  */
-export async function responseTimes(env, people, { t, threads, now = Date.now() } = {}) {
+export async function responseTimes(env, people, {
+  t, threads, now = Date.now(), mentioned = 1, opening = null,
+} = {}) {
   if (!people.length) {
     return new Map();
   }
@@ -275,8 +279,10 @@ export async function responseTimes(env, people, { t, threads, now = Date.now() 
       at: now,
       activity,
       staff: (thread && thread.staff) || 0,
-      opening: Boolean(thread && thread.first) && now - Date.parse(thread.first) < 6 * 60 * 1000,
+      opening: opening ?? (Boolean(thread && thread.first)
+        && now - Date.parse(thread.first) < 6 * 60 * 1000),
       member: members.has(person),
+      mentioned,
     });
     return [person, { ...r, minutes: r.minutes === null ? null : Math.round(r.minutes) }];
   }));
@@ -298,10 +304,10 @@ export function roughly(minutes) {
 }
 
 /** Whether the mention model knows enough of someone to say something. */
-const reliable = (r) => Boolean(r) && r.mentions >= MIN_MENTIONS;
+export const reliable = (r) => Boolean(r) && r.mentions >= MIN_MENTIONS;
 
 /** How many mentions someone answers, in words. */
-function share(odds) {
+export function share(odds) {
   if (odds >= NEARLY_ALL) {
     return 'nearly all';
   }

@@ -486,6 +486,22 @@ describe('shared drafts', () => {
       platform, user_id, access_token, scope, updated_at) VALUES (?, 'slack', 'U1', ?, 'chat:write',
       '2026-10-21T10:00:00Z')`).run(person, await seal(e, 'xoxp-made-up'));
 
+    it('says whom it mentions who may never see it, with its link', async () => {
+      const e = env();
+      await connect(e, 2);
+      // Eve has never posted: the answer suggests a personal reminder.
+      e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, person,
+        fetched_at) VALUES ('slack', 'E1', 'U3', 'person', 'Eve', 3, '2026-10-21T10:00:00Z')`).run();
+      const res = await call(e, BO, 'POST', '/api/post', { thread: ROOT, text: 'Can you look, @Eve?', mentions: ['U3'] });
+      const data = await res.json();
+      assert.equal(res.status, 200, JSON.stringify(data));
+      assert.deepEqual(data.reminders.map((r) => [r.name, r.why]), [['Eve', 'quiet']]);
+      assert.equal(data.permalink, 'https://slack.com/archives/C1/p19?thread_ts=1.1&cid=C1');
+      // Nobody mentioned: nothing to say.
+      const plain = await (await call(e, BO, 'POST', '/api/post', { thread: ROOT, text: 'one' })).json();
+      assert.equal(plain.reminders, undefined);
+    });
+
     it('uses up the draft it was written from', async () => {
       const e = env();
       await connect(e, 2);
