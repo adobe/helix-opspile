@@ -189,6 +189,17 @@ describe('expert finder', () => {
       .all().map((r) => r.built_at), [1, 2, 3].map((d) => new Date(at(d)).toISOString()));
   });
 
+  it('keeps an empty mention model without mentions, and reads the year again a day later', async () => {
+    const e = env();
+    const iso = (ms) => new Date(ms).toISOString();
+    assert.deepEqual(await sweepMentionModel(e, NOW), {
+      built: iso(NOW), mentions: 0, answered: 0,
+    });
+    assert.deepEqual(await sweepMentionModel(e, NOW + 60000), { fresh: iso(NOW) });
+    const times = await responseTimes(e, [2], { t: T, threads: [THREAD], now: NOW });
+    assert.equal(times.size, 0);
+  });
+
   it('says how people answer mentions once the model knows them', () => {
     const said = (response) => reasonsOf({ response, member: true });
     const known = { mentions: 3, answered: 2 };

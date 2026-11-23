@@ -7,6 +7,6 @@ CREATE TABLE mention_models (
   built_at TEXT NOT NULL,
   mentions INTEGER NOT NULL,          -- mentions it learnt from
   answered INTEGER NOT NULL,          -- of them, answered within a week
-  model TEXT NOT NULL                 -- JSON: src/mention-model.js fitMentions
+  model TEXT NOT NULL                 -- JSON: src/mention-model.js fitMentions; null when empty
 );
 CREATE INDEX mention_models_built ON mention_models(built_at);
