@@ -20,7 +20,7 @@ import { likePattern as like } from '../like.js';
  * is in, so that an agent never reads another customer's or team's channel. A re-threaded
  * group is one conversation, under its first thread's key. The exception is an agent with the
  * `any_thread` tool (src/agent/agenttools.js), which resolves a thread anywhere
- * (`resolveAnyThread`).
+ * (`resolveAnyThread`) and lists any channel's (`threadsIn`, src/agent/channelfind.js).
  */
 
 export const MAX_LIST = 50;
@@ -68,18 +68,13 @@ async function similarRoots(env, here, query) {
 }
 
 /**
- * The conversations of the channel of inbox entry `key` other than that entry, latest
- * activity first: `{ threads: [{ thread, title, root_at, last_at, messages, permalink }],
- * more }`. `query` keeps those whose title has it, then those whose first message is about
- * it (by embedding); `before` (a last_at) pages on.
+ * As channelThreads, for the channel `here` (`{ source, tenant, channel_id, keys }`), without
+ * the threads of `keys`: an agent with the `any_thread` tool lists any channel's this way
+ * (src/agent/channelfind.js).
  */
-export async function channelThreads(env, key, { query = '', before = null, limit = DEFAULT_LIST } = {}) {
-  const here = await channelOf(env, key);
-  if (!here) {
-    return { error: 'the thread is not known' };
-  }
+export async function threadsIn(env, here, { query = '', before = null, limit = DEFAULT_LIST } = {}) {
   const n = Math.min(Math.max(Number(limit) || DEFAULT_LIST, 1), MAX_LIST);
-  const bind = [here.channel_id, here.source, here.tenant, JSON.stringify(here.keys)];
+  const bind = [here.channel_id, here.source, here.tenant, JSON.stringify(here.keys || [])];
   const notHere = 'AND t.thread NOT IN (SELECT value FROM json_each(?))';
   const q = String(query || '').trim();
   if (!q) {
@@ -116,6 +111,20 @@ export async function channelThreads(env, key, { query = '', before = null, limi
       .sort((a, b) => rank.get(a.thread) - rank.get(b.thread)));
   }
   return { threads: out.slice(0, n), more: out.length > n };
+}
+
+/**
+ * The conversations of the channel of inbox entry `key` other than that entry, latest
+ * activity first: `{ threads: [{ thread, title, root_at, last_at, messages, permalink }],
+ * more }`. `query` keeps those whose title has it, then those whose first message is about
+ * it (by embedding); `before` (a last_at) pages on.
+ */
+export async function channelThreads(env, key, opts = {}) {
+  const here = await channelOf(env, key);
+  if (!here) {
+    return { error: 'the thread is not known' };
+  }
+  return threadsIn(env, here, opts);
 }
 
 /**

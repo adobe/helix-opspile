@@ -32,10 +32,13 @@ import {
   accessibleRepos, githubSlug, listFiles, mirrorName, refreshMirrors,
 } from '../src/agent/repos.js';
 import { seed, seedNote, seedPin } from '../src/agent/seed.js';
+import { dream, dreamOf } from '../src/agent/dream.js';
 import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
 import {
-  agentStatus, pokeAgent, seedAgent, talkToAgent, tellDiscarded,
+  agentStatus, decideBash, decideTool, pokeAgent, sawSidebar, seedAgent, talkToAgent,
+  tellDiscarded,
 } from '../src/agent/stub.js';
+import { maySee, mayWork } from '../src/shares.js';
 import { keepSidebarAnswer } from '../src/sidebar.js';
 import { channelThreads, resolveAnyThread, resolveThread } from '../src/agent/history.js';
 import { mentionedOutside } from '../src/agent/members.js';
@@ -43,8 +46,10 @@ import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
 import {
   agentPerson, agentToolsExtension, opspileExtension, staffExtension,
 } from '../src/agent/tools.js';
-import { keepTurn, keptTurn } from '../src/agent/kept.js';
-import { thread as inboxThread } from '../src/api.js';
+import {
+  keepLive, keepTurn, keptTurn, liveDue, liveTurn,
+} from '../src/agent/kept.js';
+import { inbox, thread as inboxThread } from '../src/api.js';
 import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
@@ -316,11 +321,19 @@ describe('thread agents', () => {
     assert.equal((await seedAgent(e, { ...me, readonly: true }, { thread: THREAD, text: 'x' }, inTeam)).status, 403);
     assert.equal((await seedAgent({ ...e, AGENT_CHANNELS: '' }, me, { thread: THREAD, text: 'x' }, inTeam)).status, 409);
 
-    assert.deepEqual(await (await agentStatus(e, THREAD, inTeam)).json(), {
+    // The inbox's question: one D1 query, and one call to the agent (`status` starts it).
+    calls.length = 0;
+    const asked = [];
+    const prepare = e.DB.prepare.bind(e.DB);
+    const counted = { ...e, DB: { ...e.DB, prepare: (sql) => asked.push(sql) && prepare(sql) } };
+    assert.deepEqual(await (await agentStatus(counted, THREAD, inTeam)).json(), {
       enabled: true, name: THREAD, mark: null, pending: [],
     });
+    assert.equal(asked.length, 1);
+    assert.deepEqual(calls, []);
     assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
     assert.equal((await agentStatus(e, THREAD, () => false)).status, 404);
+    assert.equal((await agentStatus(e, 'slack:E1:C1:9.9', inTeam)).status, 404);
   });
 
   it('talk to the team in the inbox\'s sidebar, which the thread shows and the channel never sees', async () => {
@@ -367,6 +380,82 @@ describe('thread agents', () => {
       ['person', 'Is it the CDN?', 'Ada Staff'], ['agent', 'Yes: **the CDN**.', null],
     ]);
     assert.equal((await inboxThread({ ...e, AGENT_CHANNELS: '' }, me, THREAD)).agent, false);
+    // The answer is Ada's, and she has not seen it: the list has it for the purple badge.
+    const answer = data.sidebar[1];
+    assert.deepEqual([answer.to, answer.unseen], [me.id, true]);
+    const listed = async (who = me) => (await inbox(e, who, 'helix')).threads
+      .find((t) => t.thread === THREAD).sideNew;
+    assert.deepEqual(await listed(), [answer.id]);
+    assert.equal(await listed({ ...me, id: 8 }), undefined);
+    // Shown to her: marked seen, once, and only by her; her other inboxes hear of it.
+    const notified = [];
+    e.ROOMS = {
+      idFromName: (name) => name,
+      get: (name) => ({
+        async fetch(url, init) {
+          notified.push([name, JSON.parse(init.body)]);
+          return new Response('ok');
+        },
+      }),
+    };
+    const saw = (who, body, may = inTeam) => sawSidebar(e, who, body, may);
+    assert.equal((await saw(me, { thread: THREAD, ids: [] })).status, 400);
+    assert.equal((await saw(me, { thread: THREAD, ids: [answer.id] }, () => false)).status, 404);
+    assert.equal((await saw({ ...me, id: 8 }, { thread: THREAD, ids: [answer.id] })).status, 204);
+    assert.deepEqual(notified, []);
+    assert.deepEqual(await listed(), [answer.id]);
+    assert.equal((await saw(me, { thread: THREAD, ids: [answer.id, message.id] })).status, 204);
+    assert.equal((await saw(me, { thread: THREAD, ids: [answer.id] })).status, 204);
+    assert.deepEqual(notified, [['helix', { type: 'sidebar-seen', thread: THREAD, person: me.id }]]);
+    assert.equal(await listed(), undefined);
+    assert.equal((await inboxThread(e, me, THREAD)).sidebar[1].unseen, false);
+  });
+
+  it('let who talked in a sidebar go on talking there once the channel is another team\'s', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    e.AGENTS = {
+      idFromName: (name) => ({ name }),
+      get: () => ({
+        async __unsafe_ensureInitialized() {
+          return true;
+        },
+        async sidebar() {
+          return { ok: true, accepted: true };
+        },
+      }),
+    };
+    const person = (id, teams) => ({
+      id, name: `Staff ${id}`, email: `s${id}@staff.example`, teams: teams.map((slug) => ({ slug, name: slug })),
+    });
+    const ada = person(7, ['helix']);
+    const bob = person(8, ['helix']);
+    const root = person(9, ['admin']);
+    const talk = (who, text) => talkToAgent(e, who, { thread: THREAD, text }, maySee(e, who));
+    assert.equal((await talk(ada, 'Should this channel be with Forms?')).status, 202);
+    // Moved, as the admin team confirmed her request: filed under Forms, which neither is on.
+    e.DB.sqlite.exec(`INSERT INTO teams (slug, name) VALUES ('forms', 'Forms ops');
+      UPDATE threads SET team = 'forms';`);
+    const seen = await inboxThread(e, ada, THREAD);
+    assert.equal(seen.can_work, false);
+    assert.equal(seen.sidebar.length, 1);
+    assert.equal((await talk(ada, 'Thanks. Anything left for us?')).status, 202);
+    // Bob never talked in it: the thread is not his to see, so it is not found.
+    assert.equal(await inboxThread(e, bob, THREAD), null);
+    assert.equal((await talk(bob, 'Hello?')).status, 404);
+    // An admin sees it and talks to its agent, and works it no more than Ada.
+    assert.equal((await inboxThread(e, root, THREAD)).can_work, false);
+    assert.equal((await talk(root, 'Why is it with Forms now?')).status, 202);
+    assert.equal((await inboxThread(e, person(10, ['forms']), THREAD)).can_work, true);
+    // What its agent asks for is its team's to decide: Ada is told whose, Bob that it is not found.
+    const decide = (who) => decideTool(e, who, { thread: THREAD, id: 'x' }, mayWork(e, who), 'grant', { seeing: maySee(e, who) });
+    const told = await decide(ada);
+    assert.equal(told.status, 403);
+    assert.match((await told.json()).error, /filed under Forms ops, and only its team may decide/);
+    assert.equal((await decide(bob)).status, 404);
+    const run = (who) => decideBash(e, who, { thread: THREAD, id: 'x' }, mayWork(e, who), { run: true, seeing: maySee(e, who) });
+    assert.equal((await run(root)).status, 403);
+    assert.equal((await run(bob)).status, 404);
   });
 
   it('keep their latest finished turn, which comes with the thread', async () => {
@@ -380,7 +469,8 @@ describe('thread agents', () => {
       state: 'done', text: 'Nothing to change.', startedAt: '2026-10-21T10:00:00.000Z', endedAt: '2026-10-21T10:01:00.000Z',
     };
     assert.equal(await turnOf(), null);
-    // A turn in progress is the agent's to say (GET /api/agent), and kb agents have no thread.
+    // A turn in progress is not the thread's (GET /api/agent has it, `agent_live`), and kb
+    // agents have no thread.
     assert.equal(await keepTurn(e, THREAD, { ...done, state: 'working', endedAt: null }), false);
     assert.equal(await keepTurn(e, 'kb:helix:acme', done), false);
     assert.equal(await turnOf(), null);
@@ -399,6 +489,92 @@ describe('thread agents', () => {
     // A reset transcript has no turn: nothing is kept.
     await keepTurn(e, THREAD, null);
     assert.equal(await turnOf(), null);
+  });
+
+  it('keep what they are doing in D1, which GET /api/agent answers with, without the agent', async () => {
+    const e = env({ AI: clef });
+    await quiet(() => ingest(e, MESSAGES.slice(0, 1)));
+    const asked = [];
+    e.AGENTS = {
+      idFromName: (name) => ({ name }),
+      get: (id) => ({
+        async status() {
+          asked.push(id.name);
+          return { name: id.name, turn: { state: 'failed', text: 'The turn did not finish.' } };
+        },
+      }),
+    };
+    const inTeam = (t) => [].concat(t).includes('helix');
+    const now = Date.parse('2026-10-21T12:00:00.000Z');
+    const status = async () => (await agentStatus(e, THREAD, inTeam, { now })).json();
+    // Nothing kept yet (an agent that has not worked since this was deployed): it is asked.
+    assert.deepEqual(await status(), {
+      enabled: true, name: THREAD, turn: { state: 'failed', text: 'The turn did not finish.' },
+    });
+    assert.deepEqual(asked, [THREAD]);
+    // Working, as the agent kept it a minute ago: from D1, in one query, the agent not asked.
+    const working = {
+      state: 'working', text: 'Reading the thread', startedAt: '2026-10-21T11:58:00.000Z', endedAt: null,
+    };
+    assert.equal(await keepLive(e, THREAD, working, '2026-10-21T11:59:00.000Z'), true);
+    const queries = [];
+    const prepare = e.DB.prepare.bind(e.DB);
+    const counted = { ...e, DB: { ...e.DB, prepare: (sql) => queries.push(sql) && prepare(sql) } };
+    assert.deepEqual(await (await agentStatus(counted, THREAD, inTeam, { now })).json(), {
+      enabled: true, turn: working,
+    });
+    assert.equal(queries.length, 1);
+    assert.deepEqual(asked, [THREAD]);
+    // An older reading does not replace a newer one; a newer one does.
+    const done = {
+      ...working, state: 'done', text: 'Nothing to change.', endedAt: '2026-10-21T11:59:30.000Z',
+    };
+    assert.equal(await keepLive(e, THREAD, done, '2026-10-21T11:58:30.000Z'), false);
+    assert.deepEqual((await status()).turn, working);
+    assert.equal(await keepLive(e, THREAD, done, '2026-10-21T11:59:30.000Z'), true);
+    assert.deepEqual(await status(), { enabled: true, turn: done });
+    // A finished turn stays the answer however old; one working for longer than a run takes
+    // without a word from the agent (its object stopped half way) is asked about.
+    const later = async (ms) => {
+      const res = await agentStatus(e, THREAD, inTeam, { now: now + ms });
+      return (await res.json()).turn;
+    };
+    assert.deepEqual(await later(86400000), done);
+    await keepLive(e, THREAD, working, '2026-10-21T12:00:00.000Z');
+    assert.equal((await later(16 * 60000)).state, 'failed');
+    assert.deepEqual(asked, [THREAD, THREAD]);
+    // Only where the channel has an agent; kb agents keep nothing.
+    assert.deepEqual(await (await agentStatus({ ...e, AGENT_CHANNELS: '' }, THREAD, inTeam)).json(), { enabled: false });
+    assert.equal(await keepLive(e, 'kb:helix:acme', done, '2026-10-21T12:00:00.000Z'), false);
+  });
+
+  it('keep what they are doing when it changed, and while it works, now and then', () => {
+    const working = { state: 'working', text: 'Reading the thread' };
+    const sig = JSON.stringify(working);
+    const at = '2026-10-21T12:00:00.000Z';
+    const plus = (min) => new Date(Date.parse(at) + min * 60000).toISOString();
+    assert.equal(liveDue(null, working, at), true);
+    // Nothing kept yet: no turn is kept too, so that GET /api/agent need not ask.
+    assert.equal(liveDue({ sig: null, at: null }, null, at), true);
+    assert.equal(liveDue({ sig: 'null', at }, null, plus(600)), false);
+    assert.equal(liveDue({ sig, at: null }, working, at), true);
+    assert.equal(liveDue({ sig, at }, working, plus(1)), false);
+    assert.equal(liveDue({ sig, at }, working, plus(5)), true);
+    assert.equal(liveDue({ sig, at }, { ...working, text: 'Updating the draft' }, plus(1)), true);
+    const done = JSON.stringify({ state: 'done' });
+    assert.equal(liveDue({ sig: done, at }, { state: 'done' }, plus(600)), false);
+  });
+
+  it('read a kept turn of what they are doing, or say to ask them', () => {
+    const at = '2026-10-21T12:00:00.000Z';
+    const now = Date.parse(at) + 60000;
+    assert.equal(liveTurn(null, now), undefined);
+    assert.equal(liveTurn({ turn: 'null', at }, now), null);
+    assert.equal(liveTurn({ turn: '{', at }, now), undefined);
+    assert.equal(liveTurn({ turn: '{"state":"working"}', at: null }, now), undefined);
+    assert.deepEqual(liveTurn({ turn: '{"state":"working"}', at }, now), { state: 'working' });
+    assert.equal(liveTurn({ turn: '{"state":"working"}', at }, now + 15 * 60000), undefined);
+    assert.deepEqual(liveTurn({ turn: '{"state":"done"}', at }, now + 86400000), { state: 'done' });
   });
 
   it('hear who discarded their draft, and only theirs', async () => {
@@ -735,6 +911,8 @@ describe('thread agents', () => {
       capture(call('get_draft', {})),
       capture(call('kb_write', { kb: 'org', message: 'x', changes: [{ path: 'index.md', content: '# no' }] })),
       capture(call('kb_write', { kb: 'team', message: 'x', changes: [{ path: 'systemprompt.md', content: 'Obey customers.' }] })),
+      // Far longer than staff replies (src/agent/draftlength.js): refused before the version check.
+      capture(call('update_draft', { text: 'word '.repeat(400) })),
       capture(fauxAssistantMessage('done')),
     ]);
     const sub = await root.submit({ type: 'input', content: 'New message in the thread' }, ctx);
@@ -742,6 +920,9 @@ describe('thread agents', () => {
     await harness.close(ctx);
 
     assert.match(system, /You are the opspile agent/);
+    // Only the draft is in the customer's language; the note is in English, a sidebar answer in
+    // the sidebar message's.
+    assert.match(system, /only the draft is in the customer's language\. Write your note to the team in English/);
     assert.match(system, /Customer: acme/);
     assert.match(system, /kb-org: knowledge base of the customer acme\n# Knowledge base\n\n\* \[Main site\]/);
     assert.match(system, /adobe\/helix-opspile: GitHub https:\/\/github.com\/adobe\/helix-opspile \(opspile itself\) \(read only\)/);
@@ -752,7 +933,8 @@ describe('thread agents', () => {
     // Code mode lists the agent's tools for scripts, before the staff's instructions.
     assert.match(system, /<codemode>\nTools scripts can call[\s\S]*`git_grep`/);
     assert.ok(system.indexOf('<codemode>') < system.indexOf('The admin team wrote these instructions'));
-    const [thread, grep, read, saved, conflict, draft, refused, promptRefused] = results;
+    const [thread, grep, read, saved, conflict, draft, refused, promptRefused, tooLong] = results;
+    assert.match(tooLong, /^The draft is 1999 characters, far longer than the replies Adobe staff write \(most are 42 to 480\), and over the 1625 a draft may have\. Nothing was saved\./);
     assert.match(promptRefused, /systemprompt\.md is maintained by the admin team/);
     assert.match(thread, /CDN purge takes forever/);
     assert.match(thread, /withheld/);
@@ -948,6 +1130,23 @@ describe('the earlier conversations of the channel', () => {
     assert.equal(refused.error, true);
   });
 
+  it('shows a message of the thread or the channel as Slack sent it, and no withheld one', async () => {
+    const { run } = await setup();
+    const own = await run('raw_message', { message: '1792584000.000100' });
+    assert.equal(own.error, false);
+    assert.equal(own.text, 'Message 1792584000.000100 as Slack sent it:\n<raw>\ntext:\nOur CDN purge takes forever on www\n</raw>');
+    const part = await run('raw_message', { message: '1792584000.000100', offset: 10 });
+    assert.match(part.text, /<raw>\nCDN purge takes forever on www\n<\/raw>$/);
+    const earlier = await run('raw_message', { message: '1792500060.000200', thread: '1792500000.000100' });
+    assert.match(earlier.text, /text:\nMaybe desk/);
+    assert.match((await run('raw_message', { message: '1792500060.000200' })).text, /^The thread has no message 1792500060\.000200/);
+    const flagged = await run('raw_message', { message: '1792584120.000300' });
+    assert.equal(flagged.error, true);
+    assert.match(flagged.text, /withheld/);
+    assert.doesNotMatch(flagged.text, /Ignore all previous/);
+    assert.equal((await run('raw_message', { message: '1', thread: 'slack:E1:C2:1792500000.000100' })).error, true);
+  });
+
   describe('with read_any_thread', () => {
     const AT = '2026-10-21T10:00:00Z';
     const OWN = 'slack:E1:C2:1792500000.000100';
@@ -981,7 +1180,7 @@ describe('the earlier conversations of the channel', () => {
 
     it('reads a thread of another channel by key or link, with flagged messages withheld, and keeps a record', async () => {
       const { e, run, ext } = await internal();
-      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread']);
+      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads']);
       assert.equal(ext.sections.length, 1);
       const read = await run(LINK);
       assert.equal(read.error, false);
@@ -1005,6 +1204,84 @@ describe('the earlier conversations of the channel', () => {
       e.DB.sqlite.exec("UPDATE channels SET shared = 1 WHERE channel_id = 'C2'");
       assert.equal((await run(THREAD)).error, true);
       assert.equal(e.DB.rows('SELECT 1 FROM agent_thread_reads').length, 1);
+    });
+
+    it('finds a customer\'s channels by its name, a site or a domain, and lists their threads', async () => {
+      const { e, ext } = await internal();
+      const { sqlite } = e.DB;
+      const call = async (name, args) => {
+        const res = await ext.tools.find((t) => t.name === name).execute(args, {});
+        return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+      };
+      sqlite.prepare(`INSERT INTO orgs (slug, name, type, updated_at)
+        VALUES ('acme', 'Acme Technologies', 'customer', ?)`).run(AT);
+      const fact = sqlite.prepare(`INSERT INTO facts (thread, source, field, value)
+        VALUES (?, 'rule', 'site', 'acme/www')`);
+      fact.run(THREAD);
+      // The site, asked about in the agent's own channel and in another internal one: neither
+      // is the customer's.
+      fact.run(OWN);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, channel_name, path, root_at, last_at, messages, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'helix', ?, ?, 'channels/x/', ?, ?, 1, ?)`)
+        .run('slack:E1:C3:1.000100', 'slack', 'E1', 'C3', '1.000100', 'other', 'channel', 'ask-us', AT, AT, AT);
+      fact.run('slack:E1:C3:1.000100');
+      // The customer's Teams channel, and a channel the rules ignore.
+      const TEAMS = 'teams:TN1:G1:19:abc@thread.tacv2:100';
+      sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, name, group_id, group_name,
+          shared, connected, fetched_at)
+        VALUES ('teams', 'TN1', '19:abc@thread.tacv2', 'General', 'G1', 'Acme Corp - Adobe', 0, '[]', ?)`).run(AT);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, path, root_at, last_at, messages, updated_at)
+        VALUES (?, 'teams', 'TN1', '19:abc@thread.tacv2', '100', 'acme', 'helix', 'channel',
+          'channels/y/', ?, '2026-10-19T00:00:00Z', 2, ?)`).run(TEAMS, AT, AT);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, channel_name, path, root_at, any_at, messages, updated_at)
+        VALUES ('slack:E1:C9:1.000100', 'slack', 'E1', 'C9', '1.000100', 'acme', 'helix', 'ignore',
+          'acme-bots', 'channels/z/', ?, ?, 1, ?)`).run(AT, AT, AT);
+
+      // C1 is shared with another team; a channel of another platform with its id is not.
+      sqlite.prepare("INSERT OR IGNORE INTO teams (slug, name) VALUES ('aso', 'ASO')").run();
+      sqlite.prepare(`INSERT INTO channel_teams (source, channel_id, team, added_at)
+        VALUES ('slack', 'C1', 'aso', ?), ('discord', '19:abc@thread.tacv2', 'aso', ?)`).run(AT, AT);
+      const named = await call('find_channels', { query: 'ACME TECHNOLOGIES - WWW' });
+      assert.equal(named.error, false);
+      const lines = named.text.split('\n');
+      assert.equal(lines.length, 2);
+      assert.match(lines[0], /^- slack:E1:C1 \| Slack #aem-acme \| customer acme \(Acme Technologies\) \| ops team helix, shared with aso \| 3 conversations, latest 2026-[^|]+\| matched customer: acme; channel name: acme; acme\/www in 1 thread \| https:\/\/[^ ]*slack\.com\/archives\/C1$/);
+      assert.match(lines[1], /^- teams:TN1:19:abc@thread\.tacv2 \| Microsoft Teams #General in the team Acme Corp - Adobe \| customer acme \(Acme Technologies\) \| ops team helix \| 1 conversation, latest 2026-10-19 \| matched customer: acme; channel name: acme \| https:\/\/teams\.microsoft\.com\/l\/channel\/19%3Aabc%40thread\.tacv2\/General\?groupId=G1&tenantId=TN1$/);
+      // A host of the site, or a domain, finds the same channels; the internal ones never.
+      const sited = await call('find_channels', { query: 'https://main--www--acme.aem.page/de/page' });
+      assert.match(sited.text, /^- slack:E1:C1 \|/);
+      assert.doesNotMatch(sited.text, /C3|C2|C9/);
+      assert.match((await call('find_channels', { query: 'www.acme.com', limit: 1 })).text, /^- slack:E1:C1 \|[^\n]*\n\[… more matches; narrow the query\]$/);
+      assert.match((await call('find_channels', { query: 'globex' })).text, /^No channel of the inbox matches "globex"\. /);
+      assert.equal((await call('find_channels', { query: 'a b' })).error, true);
+
+      const listed = await call('list_any_channel_threads', { channel: 'slack:E1:C1' });
+      assert.equal(listed.error, false);
+      assert.match(listed.text, /^slack:E1:C1 \| Slack #aem-acme \|[^\n]*\n- slack:E1:C1:\d+\.\d+ \| /);
+      assert.equal(listed.text.split('\n').length, 4);
+      sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+          kind, path, root_at, last_at, messages, updated_at)
+        VALUES ('slack:E1:C0123456789:1.000100', 'slack', 'E1', 'C0123456789', '1.000100', 'acme',
+          'helix', 'channel', 'channels/w/', ?, ?, 1, ?)`).run(AT, AT, AT);
+      assert.match((await call('list_any_channel_threads', { channel: 'https://acme.slack.com/archives/C0123456789' })).text, /^slack:E1:C0123456789 \| Slack channel \(name unknown\) \|/);
+      for (const channel of [THREAD, LINK]) {
+        // eslint-disable-next-line no-await-in-loop
+        assert.match((await call('list_any_channel_threads', { channel })).text, /^slack:E1:C1 \|/, channel);
+      }
+      const teams = await call('list_any_channel_threads', {
+        channel: 'https://teams.microsoft.com/l/channel/19%3Aabc%40thread.tacv2/General?groupId=G1\\&tenantId=TN1',
+      });
+      assert.match(teams.text, /^teams:TN1:19:abc@thread\.tacv2 \| [^\n]*\n- teams:TN1:G1:19:abc@thread\.tacv2:100 \| /);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C1', query: 'call the inbox' })).text.split('\n').length, 2);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C9' })).error, true);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C404' })).error, true);
+
+      sqlite.exec('UPDATE agent_tool_switches SET enabled = 0');
+      assert.equal((await call('find_channels', { query: 'acme' })).error, true);
+      assert.equal((await call('list_any_channel_threads', { channel: 'slack:E1:C1' })).error, true);
     });
 
     it('finds the thread of a Teams or Discord link, and none in an ignored channel', async () => {
@@ -1229,7 +1506,8 @@ describe('seeds with a chosen knowledge base', () => {
     assert.deepEqual(await seed({ ...agent, env: {} }, note), { error: 'missing AI_GATEWAY_ACCOUNT, AGENT_GATEWAY, AGENT_MODEL, BEDROCK_API_KEY' });
   });
 
-  const concept = (title) => `---\ntype: Playbook\ntitle: ${title}\ndescription: A made-up playbook.\n---\nDo it.\n`;
+  // Of the type its directory is for (src/agent/okf.js, LAYOUT).
+  const concept = (title) => `---\ntype: ${title.startsWith('sites/') ? 'Site' : 'Playbook'}\ntitle: ${title}\ndescription: A made-up concept.\n---\nDo it.\n`;
   const write = (kb, path) => ({ kb, message: 'x', changes: [{ path, content: concept(path) }] });
 
   /**
@@ -1284,6 +1562,7 @@ describe('seeds with a chosen knowledge base', () => {
       target: async () => target,
       verdicts: async () => new Map(),
       pinned: (session) => seedPin(agent, session),
+      dreamOf: (session) => dreamOf(agent, session),
     }));
     registry.install(codemodeExtension({ fingerprint: '', at: 0, servers: [] }, sandbox));
     harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
@@ -1357,6 +1636,130 @@ describe('seeds with a chosen knowledge base', () => {
       await h.run(h.call('kb_write', write('team', 'sites/nope.md')));
       assert.match(h.results.at(-1), /kb-org only: kb-team cannot be written here/);
       assert.ok(!srv.files('kb-team-helix').includes('sites/nope.md'));
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
+
+  it('dreams of kb-org only, and says so in its log', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
+      key: null, team: 'helix', org: 'acme', threads: [],
+    });
+    h.agent.name = 'kb:helix:acme';
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-org-acme');
+      assert.deepEqual(await dream(h.agent, { id: 5 }), { ok: true, accepted: true });
+      await h.run(
+        h.call('kb_write', write('team', 'playbooks/purge.md')),
+        h.call('kb_write', write('org', 'playbooks/purge.md')),
+      );
+      const [refused, written] = h.results;
+      assert.match(refused, /kb-org only: kb-team cannot be written here/);
+      assert.match(written, /^committed [0-9a-f]{12} to kb-org: playbooks\/purge\.md/);
+      assert.match(srv.show('kb-org-acme', 'log.md'), /\(a dream, consolidating it\)/);
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
+
+  it('draw the customer\'s stack into kb-org, and draw it again from what they read', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
+      key: null, team: 'helix', org: 'acme', orgName: 'ACME', threads: [],
+    });
+    const drawing = {
+      summary: 'ACME runs its site on Edge Delivery, behind Akamai.',
+      parts: [
+        {
+          layer: 'site', name: 'Edge Delivery', tech: 'eds', note: 'www and the shop',
+        },
+        { layer: 'edge', name: 'Akamai', tech: 'akamai' },
+      ],
+      flows: [{ from: 'Akamai', to: 'Edge Delivery', label: 'every page' }],
+    };
+    const more = [...drawing.parts, { layer: 'content', name: 'Document Authoring', tech: 'da' }];
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-org-acme');
+      await seed(h.agent, { by: 'Ada', text: 'Akamai is in front of their Edge Delivery site.' });
+      await h.run(
+        h.call('draw_stack', drawing),
+        h.call('draw_stack', { ...drawing, parts: more }),
+        h.call('draw_stack', { ...drawing, flows: [{ from: 'Akamai', to: 'Fastly' }], base: 'x' }),
+        h.call('git_read', { repo: 'kb-org', path: 'stack.md' }),
+      );
+      const [drawn, unread, wrong, read] = h.results;
+      assert.match(drawn, /^committed [0-9a-f]{12} to kb-org: stack\.md, 2 parts, 1 flows/);
+      assert.match(unread, /kb-org has a stack drawing already: read it \(git_read kb-org stack\.md\)/);
+      assert.match(wrong, /flows, row 1: From and To are the names of parts/);
+      const file = srv.show('kb-org-acme', 'stack.md');
+      assert.match(file, /^---\ntype: Stack Drawing\ntitle: Tech stack of ACME\ndescription: ACME runs its site on Edge Delivery, behind Akamai\.\n/);
+      // Top to bottom, whatever order they came in.
+      assert.match(file, /\| Layer \| Part \| Tech \| Note \|\n\| --- \| --- \| --- \| --- \|\n\| Edge \| Akamai \| akamai \| +\|\n\| Site \| Edge Delivery \| eds \| www and the shop \|/);
+      assert.match(file, /## Flows\n\n\| From \| To \| What \|\n\| --- \| --- \| --- \|\n\| Akamai \| Edge Delivery \| every page \|/);
+      assert.match(srv.show('kb-org-acme', 'index.md'), /\[Tech stack of ACME\]\(stack\.md\) \(Stack Drawing\)/);
+      assert.match(h.system[0], /Keep the customer's stack drawing current \(draw_stack/);
+      // Every turn it is told the drawing as it is, with the base to draw it again from.
+      assert.match(h.system[0], /kb-org has no stack\.md yet\./);
+      assert.match(h.system.at(-1), /kb-org's stack\.md \(hash [0-9a-f]{40}, the base for draw_stack\): 2 parts, 1 flows\.\n- Edge: Akamai \(akamai\)\n- Site: Edge Delivery \(eds\)/);
+
+      // Drawn again from what it read: the hash is its base.
+      const hash = /^hash: (\S+)$/m.exec(read)[1];
+      await seed(h.agent, { by: 'Ada', text: 'Their authors write in Document Authoring.' });
+      await h.run(h.call('draw_stack', { ...drawing, parts: more, base: hash }));
+      assert.match(h.results.at(-1), /^committed [0-9a-f]{12} to kb-org: stack\.md, 3 parts, 1 flows/);
+      assert.match(srv.show('kb-org-acme', 'stack.md'), /\| Content \| Document Authoring \| da \| +\|/);
+
+      // What the parts and flows are, for the FMC diagram: a Kind column each, and groups.
+      await seed(h.agent, { by: 'Ada', text: 'Edge Delivery reads the pages from Document Authoring.' });
+      await h.run(h.call('git_read', { repo: 'kb-org', path: 'stack.md' }));
+      const again = /^hash: (\S+)$/m.exec(h.results.at(-1))[1];
+      await seed(h.agent, { by: 'Ada', text: 'Akamai asks Edge Delivery for every page.' });
+      await h.run(h.call('draw_stack', {
+        ...drawing,
+        parts: [...more.slice(0, 2), {
+          layer: 'content', name: 'Document Authoring', tech: 'da', kind: 'storage', group: 'Authoring',
+        }],
+        flows: [{ from: 'Akamai', to: 'Edge Delivery', kind: 'request' }, { from: 'Edge Delivery', to: 'Document Authoring', kind: 'read' }],
+        base: again,
+      }));
+      assert.match(h.results.at(-1), /^committed [0-9a-f]{12} to kb-org: stack\.md, 3 parts, 2 flows/);
+      const kinds = srv.show('kb-org-acme', 'stack.md');
+      assert.match(kinds, /\| Content \| Document Authoring \| storage \| Authoring \| da \| +\|/);
+      assert.match(kinds, /\| Akamai \| Edge Delivery \| request \| +\|\n\| Edge Delivery \| Document Authoring \| read \| +\|/);
+    } finally {
+      await h.close();
+      await srv.close();
+    }
+  });
+
+  it('write diagrams as DOT directly, refused where the inbox could not draw them', { skip: !hasGit() && 'git is not installed' }, async () => {
+    const srv = await gitServer();
+    const h = await pinnedHarness(env({ ARTIFACTS: srv.artifacts, AGENT_MODEL: 'faux-model' }), {
+      key: null, team: 'helix', org: 'acme', orgName: 'ACME', threads: [],
+    });
+    const dot = '// How the shop is served.\ndigraph shop {\n  label="The shop";\n  cdn -> site [dir=back];\n}\n';
+    const shop = (content) => ({ kb: 'org', message: 'Draw the shop', changes: [{ path: 'sites/shop.dot', content }] });
+    try {
+      srv.create('kb-team-helix');
+      srv.create('kb-org-acme');
+      await seed(h.agent, { by: 'Ada', text: 'Their CDN asks the shop for every page.' });
+      await h.run(
+        h.call('kb_write', shop('digraph shop { cdn -- site }')),
+        h.call('kb_write', shop(dot)),
+      );
+      const [refused, written] = h.results;
+      assert.match(refused, /sites\/shop\.dot: not a diagram the inbox can draw: line 1: a digraph joins nodes with ->, not --/);
+      assert.match(written, /^committed [0-9a-f]{12} to kb-org: sites\/shop\.dot/);
+      assert.equal(srv.show('kb-org-acme', 'sites/shop.dot'), dot);
+      assert.match(srv.show('kb-org-acme', 'sites/index.md'), /\[The shop\]\(shop\.dot\) \(Diagram\) - How the shop is served\./);
+      // It is told how to write them.
+      assert.match(h.system[0], /Diagrams: when a concept explains how something is put together/);
+      assert.match(h.system[0], /`fmc=storage, style=rounded`/);
     } finally {
       await h.close();
       await srv.close();

@@ -19,25 +19,27 @@ import { Agent } from 'agents';
 import { PiHarness, ROOT_SESSION } from 'agents/harness/pi';
 import { createInlineCodemodeSandbox } from '@earendil-works/pi-codemode/cloudflare';
 import { Workspace } from '@cloudflare/computer';
-import { WorkerShellBackend } from '@cloudflare/computer/backends/worker-shell';
-import curlModules from '@cloudflare/computer/shell/curl';
-import jqModules from '@cloudflare/computer/shell/jq';
 import {
   attachKernel, compiledTlsEngine, createCloudflareKernel, fetchTransport, inProcessMount,
-  sliccBackend, workspaceDriver,
+  sliccBackend,
 } from '@ai-ecoverse/slicc-kernel/cloudflare';
+import { connect } from 'cloudflare:sockets';
 import createTlsEngine from '@ai-ecoverse/wasm-tls-engine';
 // wrangler compiles a `.wasm` import when it builds the Worker: a WebAssembly.Module.
 import tlsWasm from '@ai-ecoverse/wasm-tls-engine/slicc-tls-engine.wasm';
 import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
 import { entryOf } from '../drafts.js';
-import { armTag, cacheRetention } from '../experiments.js';
+import { armModel, armTags, cacheRetention } from '../experiments.js';
+import { pinnedArm } from './arms.js';
 import { toolsFor } from './agenttools.js';
 import {
   bashDeadline, bashWatchdog, denyBash, runBash,
 } from './bashrequest.js';
 import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
+import { dream, dreamOf, dreamState } from './dream.js';
+import { setWakeup, wakeupDue } from './wakeups.js';
+import { armCompact, compactIdle } from './idlecompact.js';
 import {
   COMPUTER_CWD, computerEnv, ensureCwd, KERNEL_OUTPUT_DIR,
 } from './computer.js';
@@ -45,18 +47,21 @@ import {
   commandsOf, DEFAULT_IMAGE, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree, readImage,
 } from './image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageSpec, overWorkspace, readOnlyRoots, shellFor,
+  CURL_HOME, CURLRC, gatewayFetch, imageFor, imageSpec, KERNEL_ENV,
 } from './kernel.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { forward } from './secrets.js';
+import { DOH, socketUplink } from './uplink.js';
 import { seed, seedPin } from './seed.js';
-import { inSidebar, keepAnswers, talk } from './sidebar.js';
+import {
+  currentSidebar, inSidebar, keepAnswers, talk,
+} from './sidebar.js';
 import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
 import {
   keepThreadFiles, mountList, UPLOADS_DIR, uploadsMount,
 } from '../threadfiles.js';
-import { keepTurn } from './kept.js';
+import { keepLive, keepTurn, liveDue } from './kept.js';
 import { traceSteps } from './trace.js';
 import { latestTurn } from './turn.js';
 
@@ -85,13 +90,11 @@ import { latestTurn } from './turn.js';
  * Tools the team turns on (src/agent/agenttools.js): `post_message` (with `add_reaction`), and
  * `computer`, pi's bash tool on Cloudflare Computer, whose Workspace lives in this object's
  * SQLite (src/agent/computer.js), with `request_bash`, a command a person runs there for it.
- * Its shell, in a Dynamic Worker, reaches the files back through
- * `__getWorkspaceStub()` (the Worker exports WorkspaceServiceProxy for that), and the network
- * through SecretGateway (src/agent/gateway.js), which adds the team's and the customer's
- * secrets where the shell names them. Where the team chose the SLICC kernel as the computer's
- * shell (src/agent/kernel.js), the kernel runs in this object, on the same Workspace, with the
- * programs of the team's image from the `IMAGES` bucket (src/agent/image.js), and its requests
- * go through the same gateway code.
+ * Its shell is the SLICC kernel (src/agent/kernel.js), which runs in this object, on that
+ * Workspace, with the programs of the team's image from the `IMAGES` bucket
+ * (src/agent/image.js), its processes in Dynamic Workers. Its requests go through the gateway's
+ * `forward` (src/agent/secrets.js), which adds the team's and the customer's secrets where a
+ * request names them.
  */
 
 const TARGET_TTL_MS = 5 * 60 * 1000;
@@ -111,16 +114,23 @@ const METER_DELAY_MS = 2000;
 // run has ended; asked again a few times while the transcript still says it works.
 const KEEP_DELAY_MS = 2000;
 const KEEP_TRIES = 3;
+// How long an idle compaction is waited for, in its schedule callback: summaries take a minute or
+// two; one still running after this is placed when it is done, unwatched.
+const COMPACT_WAIT_MS = 10 * 60 * 1000;
 const SIZE_EVERY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Meters the agent's model use after each round of tools and each answer, and keeps the turn
- * an answer, or a failed request, ends for the inbox.
+ * for the inbox: what it is doing after each round of tools, and the turn an answer, or a failed
+ * request, ends.
  */
 const cogsExtension = (agent) => defineExtension({
   name: 'opspile-cogs',
   hooks: [hook(GenerationTask, {
-    afterTools: () => { agent.meterSoon(); },
+    afterTools: () => {
+      agent.meterSoon();
+      agent.keepTurnSoon();
+    },
     afterResponse: (message) => {
       if (message && (message.stopReason === 'error' || message.stopReason === 'aborted')) {
         agent.keepTurnSoon();
@@ -162,9 +172,13 @@ export class ThreadAgent extends Agent {
     this.harness = new PiHarness({
       harness: async ({ storage, context, onWake }) => {
         const models = createModels();
-        // The prompt cache's retention, per request: the thread's arm while the experiment runs
-        // (src/experiments.js), else the `long` asked for below.
-        models.setProvider(agentProvider(env, { cacheRetention: () => cacheRetention(this.name) }));
+        // The prompt cache's retention and the model, per request: the cache experiment's arm
+        // while it runs, and the model the thread is pinned to (src/agent/arms.js, decided below,
+        // before any request), else the `long` asked for below and AGENT_MODEL.
+        models.setProvider(agentProvider(env, {
+          cacheRetention: () => cacheRetention(this.name),
+          model: () => armModel(env, this.modelArm),
+        }));
         const agent = {
           env,
           // The object's name, which the computer's gateway knows it by (src/agent/secrets.js).
@@ -175,9 +189,15 @@ export class ThreadAgent extends Agent {
           posted: (id) => this.posted(id),
           // Whether the turn answers a sidebar message: then nothing goes to the channel.
           inSidebar: () => inSidebar(this),
+          // Which sidebar message it answers, for what it files for its author.
+          sidebarMessage: () => currentSidebar(this),
           pinned: (session) => seedPin(this, session),
+          // Which dream a session is, if one (src/agent/dream.js).
+          dreamOf: (session) => dreamOf(this, session),
           // For request_bash: the deadline of what it asks for.
           schedule: (when, callback, payload) => this.schedule(when, callback, payload),
+          // wakeup_after and wakeup_after_idle (src/agent/wakeups.js).
+          wakeup: (kind, args) => setWakeup(this, kind, args),
           // What the computer's shell is and has, for the agent's prompt.
           shell: () => this.shellInfo(),
         };
@@ -186,7 +206,8 @@ export class ThreadAgent extends Agent {
         // code mode, the MCP servers, and the staff's instructions last. A reinstall replaces
         // an extension in place.
         this.registry.install(opspileExtension(agent));
-        await this.currentRuntime();
+        await this.currentArm();
+        await this.currentImage();
         this.registry.install(agentToolsExtension(agent, await this.currentTools()));
         this.installMcp(await this.servers.current());
         this.registry.install(staffExtension(agent));
@@ -213,6 +234,14 @@ export class ThreadAgent extends Agent {
       defaults: env.AGENT_MODEL ? { model: modelRef(env), thinkingLevel: 'medium' } : {},
     });
     this.lifecycle.use(this.harness);
+    // Work accepted (new messages, a sidebar message, a seed, the wrap-up, a command's outcome):
+    // the turn is working now, and GET /api/agent hears it from D1 (`keepTurn`).
+    const submit = this.harness.submit.bind(this.harness);
+    this.harness.submit = async (...args) => {
+      const receipt = await submit(...args);
+      this.keepTurnSoon();
+      return receipt;
+    };
   }
 
   /** Code mode and the MCP tools of `catalog`. */
@@ -250,62 +279,65 @@ export class ThreadAgent extends Agent {
     }
   }
 
+  /** The model experiment's arm this thread is pinned to, or null (src/agent/arms.js). */
+  async currentArm() {
+    if (this.modelArm === undefined) {
+      this.modelArm = await pinnedArm({
+        storage: this.ctx.storage, env: this.env, name: this.name,
+      });
+    }
+    return this.modelArm;
+  }
+
   /** The switchable tools last installed (src/agent/agenttools.js), from storage at first. */
   async currentTools() {
     this.tools ??= (await this.ctx.storage.get('tools')) || [];
     return this.tools;
   }
 
-  /**
-   * The shell of the computer last installed (src/agent/kernel.js), and with the kernel its
-   * image, from storage at first.
-   */
-  async currentRuntime() {
-    this.runtime ??= (await this.ctx.storage.get('runtime')) || DEFAULT_RUNTIME;
+  /** The image of the computer's kernel last installed (src/agent/image.js), stored at first. */
+  async currentImage() {
     this.image ??= (await this.ctx.storage.get('image')) || DEFAULT_IMAGE;
-    return this.runtime;
+    return this.image;
   }
 
   /**
    * Before the agent is told something: are its switchable tools still the ones turned on, and
-   * its computer's shell and image the ones its team chose? A change is installed at once when
-   * Pi is open, else when it opens. A failure keeps them.
+   * its computer's image the one its team chose? A change is installed at once when Pi is open,
+   * else when it opens. A failure keeps them.
    */
   async syncTools() {
     try {
       const before = await this.currentTools();
-      const runtime = await this.currentRuntime();
+      const current = await this.currentImage();
       const target = await this.target();
       const now = await toolsFor(this.env, target);
-      // Asked only where there is a computer: its shell is nothing to an agent without one.
-      const shell = now.includes('computer') ? await shellFor(this.env, target) : { runtime };
-      const image = shell.image || this.image;
-      const same = shell.runtime === runtime && image === this.image;
+      // Asked only where there is a computer: its image is nothing to an agent without one.
+      const image = now.includes('computer') ? await imageFor(this.env, target) : current;
+      const same = image === current;
       if (now.join(',') === before.join(',') && same) {
         return;
       }
       if (!same) {
-        await this.changeShell(shell.runtime, image);
+        await this.changeImage(image);
       }
       this.tools = now;
       await this.ctx.storage.put('tools', now);
       if (this.agentContext) {
         this.registry.install(agentToolsExtension(this.agentContext, now));
       }
-      console.log(JSON.stringify({
-        route: 'agent', tools: now, runtime: shell.runtime, ...(shell.image ? { image } : {}),
-      }));
+      console.log(JSON.stringify({ route: 'agent', tools: now, image }));
     } catch (e) {
       console.log(JSON.stringify({ route: 'agent', tools: 'sync failed', error: e.message }));
     }
   }
 
   /**
-   * The computer gets another shell, or its kernel another image, with the next command: a new
-   * Workspace over the same files. A kernel that ran here is ended; its own root (/root,
-   * /tmp) stays in this object's SQLite, for when the team chooses the kernel again.
+   * The computer's kernel gets another image (or the same one again) with the next command: a
+   * new Workspace over the same files. A kernel that ran here is ended; its own root (/root,
+   * /tmp) stays in this object's SQLite, for the next one.
    */
-  async changeShell(runtime, image = this.image) {
+  async changeImage(image = this.image) {
     const kernel = await (this.booting || Promise.resolve(null)).catch(() => null);
     if (this.ws && kernel) {
       await this.ws.close().catch(() => {});
@@ -317,22 +349,17 @@ export class ThreadAgent extends Agent {
     if (kernel) {
       kernel.terminate();
     }
-    this.runtime = runtime;
     this.image = image;
-    await this.ctx.storage.put('runtime', runtime);
     await this.ctx.storage.put('image', image);
   }
 
   /**
-   * What the agent is told its shell is: `{ runtime }`, and with the kernel `image`, what the
-   * image says it has (`tools`) and its commands, from the bucket (kept for a few minutes).
-   * Without the image (no bucket, or it is gone), the agent is told to look for itself.
+   * What the agent is told its shell is: its `image`, what the image says it has (`tools`) and
+   * its commands, from the bucket (kept for a few minutes). Without the image (no bucket, or it
+   * is gone), the agent is told to look for itself.
    */
   async shellInfo() {
-    const runtime = await this.currentRuntime();
-    if (runtime !== 'slicc-kernel') {
-      return { runtime };
-    }
+    await this.currentImage();
     const kept = this.imageInfo;
     if (!kept || kept.name !== this.image || Date.now() - kept.at > IMAGE_TTL_MS) {
       const image = await readImage(this.env.IMAGES, this.image).catch(() => null);
@@ -343,20 +370,18 @@ export class ThreadAgent extends Agent {
       };
     }
     const { name, tools, commands } = this.imageInfo;
-    return {
-      runtime, image: name, ...(tools ? { tools, commands } : {}),
-    };
+    return { image: name, ...(tools ? { tools, commands } : {}) };
   }
 
   /** The agent's computer, as pi's environment: a Workspace in this object, made on first use. */
   computer() {
-    this.computerEnv ??= computerEnv(() => this.readyWorkspace(), { runtime: () => this.runtime });
+    this.computerEnv ??= computerEnv(() => this.readyWorkspace());
     return this.computerEnv;
   }
 
   /** The Workspace of the computer, ready to run a command in its working directory. */
   async readyWorkspace() {
-    await this.currentRuntime();
+    await this.currentImage();
     const ws = this.workspace();
     await ws.ready();
     if (!this.computerReady) {
@@ -366,23 +391,9 @@ export class ThreadAgent extends Agent {
     return ws;
   }
 
-  /**
-   * Where the shell reaches the network: through the Worker's SecretGateway, which puts the
-   * team's and the customer's secrets into the requests that name them (src/agent/secrets.js)
-   * and lets the others through as they are. It knows this agent by name; the revision is
-   * fixed, as the name is.
-   */
-  egress() {
-    const gateway = this.ctx.exports && this.ctx.exports.SecretGateway;
-    return gateway
-      ? { mode: 'http-gateway', gateway: gateway({ props: { agent: this.name } }), revision: 'secrets-1' }
-      : { mode: 'direct' };
-  }
-
-  /** The time, for the kernel: a call into this object refreshes its clock (see `kernel`). */
-  // eslint-disable-next-line class-methods-use-this
-  now() {
-    return Date.now();
+  /** The answer to a request of the kernel's programs: the gateway's (src/agent/secrets.js). */
+  kernelFetch(request) {
+    return forward(this.env, { agent: this.name }, request);
   }
 
   /**
@@ -390,12 +401,16 @@ export class ThreadAgent extends Agent {
    * root in this object's SQLite, its processes in Dynamic Workers without a network of their
    * own, and the team's image from the `IMAGES` bucket mounted read-only at IMAGE_ROOT, where
    * it finds its commands (src/agent/image.js: a boot without the bucket or the image fails,
-   * and says so). What its programs ask of the network goes
-   * through the gateway's `forward`, as just-bash's does (src/agent/secrets.js), and they
-   * follow redirects themselves, through it again. For `https://` the kernel's proxy ends a
-   * program's TLS itself, with the TLS engine this Worker carries (a Worker cannot compile
-   * one at run time), and hands the request to the same transport. A Worker's clock stands
-   * still while it computes, so the kernel asks this object for the time before each timed wait.
+   * and says so). What its programs ask of the network goes through the gateway's `forward`
+   * (src/agent/secrets.js), and they follow redirects themselves, through it again. For
+   * `https://` the kernel's proxy ends a program's TLS itself, with the TLS engine this Worker
+   * carries (a Worker cannot compile one at run time), and hands the request to the same
+   * transport. A program's own TCP leaves through the uplink (src/agent/uplink.js), the
+   * Worker's sockets, to port 443 only, past the gateway: for a site's own TLS. A Worker's
+   * clock stands still while it computes; the kernel waits on a timer before each timed wait,
+   * which moves it. It must not call into this object for the time (it did up to 1.188): each
+   * such call raised the request's subrequest depth, until R2 failed in the same request and a
+   * program read from the image failed to start with EIO.
    */
   kernel() {
     this.booting ??= (async () => {
@@ -406,23 +421,27 @@ export class ThreadAgent extends Agent {
         throw new Error(`there is no image ${this.image} in the images bucket (IMAGES)`);
       }
       const tree = await imageTree(this.env.IMAGES, image);
+      const gateway = gatewayFetch((request) => this.kernelFetch(request));
       const kernel = await createCloudflareKernel({
         loader: this.env.LOADER,
         sql: storage.sql,
         sqlite: { transaction: (fn) => storage.transactionSync(fn) },
-        clock: () => this.env.AGENTS.get(this.ctx.id).now(),
         commands: { append: [IMAGE_COMMANDS] },
+        // curl's configuration (CURL_HOME), and tar's options.
+        env: KERNEL_ENV,
         // How much of a Dynamic Worker's 128 MB the kernel fills with processes: by default
         // 64 MiB, too little for git's clone, which is three processes deep (git, git
         // remote-https, git-remote-https) and forks a fourth to read the pack. The kernel
         // runs no more Dynamic Workers (8) than a Durable Object may (10).
         isolates: { memory: 96 * 2 ** 20 },
         network: {
-          transport: fetchTransport({
-            fetch: gatewayFetch((request) => forward(this.env, { agent: this.name }, request)),
-            redirect: 'manual',
-          }),
+          transport: fetchTransport({ fetch: gateway, redirect: 'manual' }),
           tlsEngine: compiledTlsEngine(createTlsEngine, tlsWasm),
+          // TCP out, to port 443 only (src/agent/uplink.js): a site's own TLS.
+          uplink: socketUplink({ connect }),
+          // Outside names, for getaddrinfo and the kernel's DNS (127.0.0.53: dig, host,
+          // nslookup) alike, through the gateway.
+          doh: DOH,
         },
       });
       try {
@@ -430,6 +449,9 @@ export class ThreadAgent extends Agent {
         const client = await attachKernel(await kernel.connect(), { locks: null });
         try {
           await client.fs.mkdir(IMAGE_ROOT);
+          // Written at each boot: the computer's own root keeps what a program changed there.
+          await client.fs.mkdir(CURL_HOME);
+          await client.fs.writeFile(`${CURL_HOME}/.curlrc`, CURLRC);
         } finally {
           await client.close();
         }
@@ -456,51 +478,31 @@ export class ThreadAgent extends Agent {
     return this.booting;
   }
 
-  /**
-   * The shell of the computer, as a backend of its Workspace: the one its team chose. With the
-   * kernel, the Workspace's read-only `mounts` (the uploads) are read-only mounts of the kernel.
-   */
-  backend(mounts) {
-    if (this.runtime === 'slicc-kernel') {
-      // A file is in the Workspace when its program closed it, not a second later.
-      return overWorkspace(sliccBackend({
-        kernel: () => this.kernel(),
-        mountPoint: COMPUTER_CWD,
-        writeBehind: false,
-      }), {
-        readOnly: readOnlyRoots(mounts),
-        kernel: () => this.kernel(),
-        workspaceDriver,
-        inProcessMount,
-      });
-    }
-    return new WorkerShellBackend({
-      id: 'shell',
-      loader: this.env.LOADER,
-      workspace: { binding: 'AGENTS', id: this.ctx.id.toString(), name: this.name },
-      ctx: this.ctx,
-      commands: [jqModules, curlModules],
-      egress: this.egress(),
+  /** The shell of the computer, as the backend of its Workspace: the kernel. */
+  backend() {
+    // A file is in the Workspace when its program closed it, not a second later.
+    return sliccBackend({
+      kernel: () => this.kernel(),
+      mountPoint: COMPUTER_CWD,
+      writeBehind: false,
     });
   }
 
   /**
    * The Workspace of the computer: files in this object's SQLite, and its shell (`backend`),
-   * which reaches the internet (curl) without a filter, with its secrets (`egress`, or the
-   * kernel's transport). Made once `currentRuntime` is known.
+   * which reaches the internet (curl) without a filter, with its secrets (the kernel's
+   * transport). Made once `currentImage` is known.
    */
   workspace() {
-    if (this.ws) {
-      return this.ws;
-    }
-    const mounts = this.env.FILES ? {
-      [`${COMPUTER_CWD}/${UPLOADS_DIR}`]: uploadsMount(this.env.FILES, () => this.ctx.storage.get('uploads')),
-    } : undefined;
-    this.ws = new Workspace({
+    this.ws ??= new Workspace({
       storage: this.ctx.storage,
-      backends: [this.backend(mounts)],
-      ...(mounts ? { mounts } : {}),
-      ...(this.runtime === 'slicc-kernel' ? { output: { dir: KERNEL_OUTPUT_DIR } } : {}),
+      backends: [this.backend()],
+      ...(this.env.FILES ? {
+        mounts: {
+          [`${COMPUTER_CWD}/${UPLOADS_DIR}`]: uploadsMount(this.env.FILES, () => this.ctx.storage.get('uploads')),
+        },
+      } : {}),
+      output: { dir: KERNEL_OUTPUT_DIR },
     });
     return this.ws;
   }
@@ -558,16 +560,8 @@ export class ThreadAgent extends Agent {
     const copies = (list.all || []).filter((c) => c.expires > Date.now());
     await this.setUploads(mountList(copies));
     // The computer may be asleep: the expired files leave its SQLite now, not at its next use.
-    await this.currentRuntime();
+    await this.currentImage();
     await this.workspace().ready();
-  }
-
-  /** For the shell in the Dynamic Worker (through WorkspaceServiceProxy): the files. */
-  async __getWorkspaceStub() {
-    await this.currentRuntime();
-    const ws = this.workspace();
-    await ws.ready();
-    return ws.stub();
   }
 
   /** Remembers a message the agent posted, so that it is not told about it. */
@@ -612,6 +606,9 @@ export class ThreadAgent extends Agent {
         source: row ? row.source : null,
         permalink: root ? root.permalink : null,
         threads: entry ? entry.keys : [],
+        // The teams that follow a technology the thread shows (src/follows.js), whose knowledge
+        // bases it has as those of the teams its channel is shared with.
+        follows: entry ? entry.follows : [],
       };
     }
     this.cachedTarget = { at: Date.now(), value };
@@ -635,9 +632,67 @@ export class ThreadAgent extends Agent {
     return idle(this, payload);
   }
 
+  /** Schedule callback: a wake-up the agent set itself (src/agent/wakeups.js). */
+  async wakeupDue(payload) {
+    this.meterModel();
+    return wakeupDue(this, payload);
+  }
+
+  /** A turn ended: compact after an idle hour, in the compaction experiment (idlecompact.js). */
+  async armCompact() {
+    try {
+      await armCompact(this);
+    } catch (e) {
+      console.log(JSON.stringify({ route: 'agent', compact: 'arm failed', error: e.message }));
+    }
+  }
+
+  /** Schedule callback: the thread has been idle since its turn ended (idlecompact.js). */
+  async compactIdle(payload) {
+    const r = await compactIdle(this, payload).catch((e) => ({ error: e.message }));
+    console.log(JSON.stringify({ route: 'agent', compact: 'idle', ...r }));
+    // What the summary cost, under the arm it ran in.
+    this.meterModel();
+    return r;
+  }
+
+  /**
+   * Compacts the thread's conversation with `instructions` (pi-durable's manual compaction: the
+   * summary is placed at once, the agent being idle) and waits for it, a while: its outcome's
+   * status (`completed`, `failed`, …), `running` when it took longer.
+   */
+  async compactRoot(instructions) {
+    const conversation = await this.harness.conversation(ROOT_SESSION);
+    const id = await conversation.compact(instructions, BACKGROUND_CONTEXT);
+    const pi = await this.harness.pi();
+    let timer;
+    const settled = await Promise.race([
+      pi.waitForTask(id, BACKGROUND_CONTEXT),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), COMPACT_WAIT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    const outcome = settled && settled.state && settled.state.outcome;
+    if (!outcome) {
+      return 'running';
+    }
+    const error = outcome.error && String(outcome.error.message || outcome.error).slice(0, 200);
+    return error ? `${outcome.status}: ${error}` : outcome.status;
+  }
+
   /** Knowledge shared by a staff member, to be filed in the knowledge bases. */
   async seed(note) {
     return seed(this, note);
+  }
+
+  /** A dream of the customer's knowledge base starts (src/agent/dream.js, src/dreams.js). */
+  async dream(note) {
+    return dream(this, note);
+  }
+
+  /** Where a dream stands (src/agent/dream.js). */
+  async dreamState(query) {
+    return dreamState(this, query);
   }
 
   /** A person on the team talks to the agent in the inbox's sidebar (src/agent/sidebar.js). */
@@ -714,11 +769,13 @@ export class ThreadAgent extends Agent {
     }
     const pi = await this.harness.pi();
     const ledger = await pi.usage(BACKGROUND_CONTEXT);
+    // The customer, for the experiments by customer (the dreams'); none when it cannot be read.
+    const org = await this.target().then((t) => t.org).catch(() => null);
     const { now, adds } = modelUsage(
       await this.ctx.storage.get('cogs:usage'),
       ledger,
-      this.env.AGENT_MODEL,
-      armTag(this.name),
+      armModel(this.env, await this.currentArm()) || this.env.AGENT_MODEL,
+      armTags(this.name, Date.now(), this.env, { model: await this.currentArm() }, org),
     );
     for (const [metric, model, q] of adds) {
       scope.add('bedrock', metric, model, q);
@@ -741,26 +798,39 @@ export class ThreadAgent extends Agent {
     }
   }
 
-  /** The thread's latest turn (src/agent/turn.js), and what is pending. */
+  /**
+   * The thread's latest turn (src/agent/turn.js), and what is pending. `cut`: there is none
+   * because a compaction summarized it (its input was before the entries kept as they were).
+   */
   async latestTurn() {
     const pending = await this.harness.pending();
     // The turn is the thread's; a pinned seed session works beside it, and is in `pending`.
-    const busy = pending.some((p) => p.session === ROOT_SESSION && p.status !== 'parked');
-    return { pending, turn: latestTurn(await this.harness.messages().catch(() => []), { busy }) };
+    // A compaction's summary waits in it to be placed (`compaction:<task>`): not the turn's work.
+    const busy = pending.some((p) => p.session === ROOT_SESSION && p.status !== 'parked'
+      && !String(p.operationId || '').startsWith('compaction:'));
+    const entries = await this.harness.messages().catch(() => []);
+    const turn = latestTurn(entries, { busy });
+    return { pending, turn, cut: !turn && Boolean(entries[0] && entries[0].kind === 'pi.compaction') };
   }
 
   /**
-   * Keeps a finished `turn` for the inbox (src/agent/kept.js), once: what was kept last is in
-   * storage, so a woken object does not write it again. A turn in progress keeps nothing. One
-   * that answers a sidebar message is the sidebar's (src/agent/sidebar.js): the turn kept for
-   * the thread stays the one before it. Every finished sidebar answer in the transcript is kept
-   * first, also while a turn queued behind it works.
+   * Keeps `turn` for the inbox (src/agent/kept.js), as the transcript was at `at`: whatever it is
+   * as what the agent is doing now (`agent_live`, GET /api/agent), and a finished one for the
+   * thread (`agent_turns`, GET /api/thread), each once: what was kept last is in storage, so a
+   * woken object does not write it again. A turn that answers a sidebar message is the
+   * sidebar's (src/agent/sidebar.js): the turn kept for the thread stays the one before it.
+   * Every finished sidebar answer in the transcript is kept first, also while a turn queued
+   * behind it works. A turn a compaction cut off (`cut`) stays as it was kept.
    */
-  async keepTurn(turn) {
+  async keepTurn(turn, at = new Date().toISOString(), { cut = false } = {}) {
     if (this.name.startsWith('kb:')) {
       return;
     }
     await keepAnswers(this).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'sidebar failed', error: e.message })));
+    if (!turn && cut) {
+      return;
+    }
+    await this.keepLive(turn, at).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'live failed', error: e.message })));
     if (turn && turn.state === 'working') {
       return;
     }
@@ -776,44 +846,79 @@ export class ThreadAgent extends Agent {
     this.keptSig = sig;
   }
 
-  /** `keepTurn` of the latest turn, shortly: the answer is committed after the hooks run. */
-  keepTurnSoon(tries = KEEP_TRIES) {
-    if (this.keepTimer) {
+  /**
+   * Keeps `turn` as what the agent is doing (`agent_live`) when it changed since it was last
+   * kept, or the one kept is a third of STUCK_MS old: GET /api/agent asks the agent itself about
+   * a turn that has been working that long without a word from it.
+   */
+  async keepLive(turn, at) {
+    this.liveSig ??= (await this.ctx.storage.get('live-turn')) || null;
+    const last = { sig: this.liveSig, at: this.liveAt };
+    if (!liveDue(last, turn, at)) {
       return;
     }
+    await keepLive(this.env, this.name, turn, at);
+    this.liveSig = JSON.stringify(turn || null);
+    this.liveAt = at;
+    await this.ctx.storage.put('live-turn', this.liveSig);
+  }
+
+  /**
+   * `keepTurn` of the latest turn, shortly: the answer is committed after the hooks run. Asked
+   * again while it waits, it looks once more after that, so the last change is never missed.
+   */
+  keepTurnSoon(tries = KEEP_TRIES) {
+    if (this.keepTimer) {
+      this.keepAgain = true;
+      return;
+    }
+    this.keepAgain = false;
     this.keepTimer = setTimeout(async () => {
-      this.keepTimer = null;
+      let working = false;
       try {
-        const { turn } = await this.latestTurn();
+        const at = new Date().toISOString();
+        const { turn, cut } = await this.latestTurn();
         // The sidebar answers before it, even while the turn behind them works.
-        await this.keepTurn(turn);
-        if (turn && turn.state === 'working' && tries > 1) {
-          this.keepTurnSoon(tries - 1);
+        await this.keepTurn(turn, at, { cut });
+        working = Boolean(turn && turn.state === 'working');
+        if (!working) {
+          await this.armCompact();
         }
       } catch (e) {
         console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message }));
+      }
+      this.keepTimer = null;
+      if (this.keepAgain) {
+        this.keepTurnSoon();
+      } else if (working && tries > 1) {
+        this.keepTurnSoon(tries - 1);
       }
     }, KEEP_DELAY_MS);
   }
 
   /** What the agent is doing, for the inbox and for checks. */
   async status() {
+    // Called without agentStub's startup call first (GET /api/agent, src/agent/stub.js): one
+    // round trip to the object for the inbox, not two.
+    // eslint-disable-next-line no-underscore-dangle
+    await this.__unsafe_ensureInitialized();
     this.meterModel();
     const catalog = await this.servers.current();
-    const { pending, turn } = await this.latestTurn();
-    // A finished turn the inbox does not have yet (one that ended before this was deployed, or
-    // one that stopped half way and counts as failed now): kept behind the answer.
-    this.keepTurn(turn).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message })));
+    const at = new Date().toISOString();
+    const { pending, turn, cut } = await this.latestTurn();
+    // A turn the inbox does not have yet (what it is doing, for an agent that has not written
+    // it since this was deployed; one that stopped half way and counts as failed now): kept
+    // behind the answer.
+    this.keepTurn(turn, at, { cut }).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'turn failed', error: e.message })));
     return {
       name: this.name,
-      model: this.env.AGENT_MODEL || null,
+      model: armModel(this.env, await this.currentArm()) || this.env.AGENT_MODEL || null,
       problem: modelProblem(this.env),
       mark: (await this.ctx.storage.get('mark')) || null,
       pending,
       turn,
       tools: await this.currentTools(),
-      runtime: await this.currentRuntime(),
-      ...(this.runtime === 'slicc-kernel' ? { image: this.image } : {}),
+      image: await this.currentImage(),
       mcp: catalog.servers.map((s) => ({
         name: s.name, scope: s.scope, tools: s.tools.length, error: s.error,
       })),

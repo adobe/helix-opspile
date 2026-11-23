@@ -18,9 +18,9 @@ import { unseal } from '../post.js';
  * customer that the agents use from their shell without ever holding them.
  *
  * The shell (src/agent/computer.js) has each as a variable, `$NAME`, whose value is only a
- * placeholder (`opspile-secret-NAME`). Every request the shell makes goes through the Worker's
- * SecretGateway (src/agent/gateway.js; Cloudflare Computer's `http-gateway` egress, the Dynamic
- * Worker's `globalOutbound`), which runs `forward` on it:
+ * placeholder (`opspile-secret-NAME`). Every request the shell's programs make leaves through
+ * the SLICC kernel's proxy and its transport (src/agent/kernel.js, `gatewayFetch`), which runs
+ * `forward` on it, in the agent's own object:
  *
  * - a request that names no secret goes out as it is;
  * - one that names secrets, in its URL, its headers (a Basic `Authorization` decoded too) or a
@@ -33,7 +33,7 @@ import { unseal } from '../post.js';
  * - what comes back has the values replaced by their placeholders again, in its headers and
  *   its body, as they are or escaped, should the host repeat them.
  *
- * The gateway knows the agent by name only (its props, set by the ThreadAgent object) and reads
+ * The gateway knows the agent by name only (set by the ThreadAgent object) and reads
  * its team's and customer's secrets from D1 on every request that names one, so a change, or a
  * thread moved to another team, counts at once. Values are sealed with TOKEN_KEY, unsealed
  * only here, and never shown again: not to the agent, not in the editor.
@@ -325,10 +325,26 @@ const refuse = (host, why) => new Response(
 );
 
 /**
- * The gateway's answer to `request`, a request of the shell of the agent `props.agent`: sent
- * with the secrets it names put in, or refused (see above). `fetch` sends it.
+ * The secrets the agent `props.agent` may use, from D1: `Map<name, { hosts, value }>`, `value`
+ * a function that unseals it.
  */
-export async function forward(env, props, request, { fetch: send = fetch } = {}) {
+async function agentSecrets(env, props) {
+  const rows = await secretRows(env, await agentScope(env, props && props.agent), { values: true });
+  return new Map([...rows].map(([name, r]) => [name, {
+    hosts: r.hosts, value: () => unseal(env, r.value),
+  }]));
+}
+
+/**
+ * The gateway's answer to `request`, a request of the shell of the agent `props.agent`: sent
+ * with the secrets it names put in, or refused (see above). `fetch` sends it. `secrets` is
+ * where they come from, `async () => Map<name, { hosts, value }>` (`value` a function that
+ * gives it), by default the agent's team's and customer's in D1; the dev computer, which has
+ * no D1, has its own (scripts/dev-computer/worker.mjs).
+ */
+export async function forward(env, props, request, {
+  fetch: send = fetch, secrets = () => agentSecrets(env, props),
+} = {}) {
   const headerList = [...request.headers];
   const basic = basicOf(request.headers.get('authorization'));
   const body = await bodyText(request);
@@ -342,7 +358,7 @@ export async function forward(env, props, request, { fetch: send = fetch } = {})
     return send(request);
   }
   const url = new URL(request.url);
-  const rows = await secretRows(env, await agentScope(env, props && props.agent), { values: true });
+  const rows = await secrets();
   const why = [];
   for (const name of named) {
     const s = rows.get(name);
@@ -359,7 +375,7 @@ export async function forward(env, props, request, { fetch: send = fetch } = {})
   const values = new Map();
   for (const name of named) {
     // eslint-disable-next-line no-await-in-loop
-    values.set(name, await unseal(env, rows.get(name).value));
+    values.set(name, await rows.get(name).value());
   }
   const put = (s, how = 'raw') => s.replace(FIND, (m, name) => (values.has(name)
     ? ESCAPE[how](values.get(name)) : m));

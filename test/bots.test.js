@@ -12,13 +12,17 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { installedBots, syncInstalledBots } from '../src/bots.js';
+import {
+  botIconPath, installedBots, syncInstalledBots, teamsBotIcon,
+} from '../src/bots.js';
 import { recordBots } from '../src/normalizer.js';
 import { mentionable } from '../src/post.js';
 import { d1 } from './d1.js';
+import { quiet } from './fakes.js';
 
 // Made-up ids and names only.
 const T = 'T';
+const APP = '00000000-0000-4000-8000-000000000001';
 const NOW = Date.UTC(2026, 9, 23, 12, 0, 0);
 const app = (botId, displayName) => ({
   id: `inst-${displayName}`,
@@ -146,10 +150,107 @@ describe('syncInstalledBots', () => {
     assert.equal(calls.length, 1);
   });
 
+  it('gives a bot its app\'s icon, of the version installed, and keeps the name it posts as', async () => {
+    const e = env();
+    const versioned = (def) => ({
+      id: 'inst-helper',
+      teamsAppDefinition: {
+        id: def, teamsAppId: APP, displayName: 'helper', bot: { id: 'b-1' },
+      },
+    });
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('teams', ?, 'b-1', 'bot', 'helper-agent', '2026-10-01T00:00:00Z')`).run(T);
+    await syncInstalledBots(e, { graph: fakeGraph({ G1: [versioned('ZGVmIzE=')], G2: [] }).graph, now: NOW });
+    const avatar = () => e.DB.rows("SELECT name, avatar FROM identities WHERE user_id = 'b-1'")[0];
+    assert.deepEqual(avatar(), { name: 'helper-agent', avatar: botIconPath(APP, 'ZGVmIzE=') });
+    assert.equal(avatar().avatar, `/api/bots/icon?app=${APP}&def=ZGVmIzE%3D`);
+    // A new version: a new definition, a new URL.
+    await syncInstalledBots(e, { graph: fakeGraph({ G1: [versioned('ZGVmIzI=')], G2: [] }).graph, now: NOW });
+    assert.equal(avatar().avatar, botIconPath(APP, 'ZGVmIzI='));
+    // Listed without the ids: the picture stays.
+    await syncInstalledBots(e, { graph: fakeGraph({ G1: [app('b-1', 'helper')], G2: [] }).graph, now: NOW });
+    assert.equal(avatar().avatar, botIconPath(APP, 'ZGVmIzI='));
+  });
+
   it('does nothing without Teams channels', async () => {
     const e = { DB: d1(), MS_TENANT_ID: T };
     assert.deepEqual(await syncInstalledBots(e, { graph: () => assert.fail('no call'), now: NOW }), {
       teams: 0, bots: 0, removed: 0, failed: 0,
     });
+  });
+});
+
+describe('teamsBotIcon', () => {
+  const DEF = 'ZGVmIzE=';
+  const url = (id = APP, def = DEF) => new URL(`https://opspile.test${botIconPath(id, def) || '/api/bots/icon?app=x&def=y'}`);
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  /** A fake Graph whose colorIcon names `webUrl`, and whose hosted content is `icon`. */
+  const graphWith = (webUrl, icon = { type: 'image/png', bytes: PNG }) => {
+    const calls = [];
+    const graph = async (path, init = {}) => {
+      calls.push(path);
+      if (path.endsWith('/colorIcon')) {
+        return Response.json({ webUrl });
+      }
+      assert.equal(init.headers.accept, 'image/*');
+      return new Response(icon.bytes, { headers: { 'content-type': icon.type } });
+    };
+    return { graph, calls };
+  };
+  const fakeCache = () => {
+    const kept = new Map();
+    return {
+      kept,
+      match: async (req) => kept.get(req.url)?.clone(),
+      put: async (req, res) => { kept.set(req.url, res); },
+    };
+  };
+
+  it('passes on the hosted icon of an app of the tenant\'s own, fetched with the token', async () => {
+    const hosted = `https://graph.microsoft.com/beta/appCatalogs/teamsApps/${APP}/appDefinitions/${DEF}/colorIcon/hostedContent/$value`;
+    const { graph, calls } = graphWith(hosted);
+    const cache = fakeCache();
+    const res = await teamsBotIcon({}, url(), { graph, cache });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual(new Uint8Array(await res.arrayBuffer()), PNG);
+    assert.deepEqual(calls, [
+      `https://graph.microsoft.com/beta/appCatalogs/teamsApps/${APP}/appDefinitions/ZGVmIzE%3D/colorIcon`,
+      hosted,
+    ]);
+    // Asked again: from the cache, Graph is not.
+    const again = await teamsBotIcon({}, url(), { graph: () => assert.fail('no call'), cache });
+    assert.deepEqual(new Uint8Array(await again.arrayBuffer()), PNG);
+  });
+
+  it('fetches a store app\'s public icon without the token', async () => {
+    const { graph, calls } = graphWith('https://icons.example/helper.png');
+    const real = globalThis.fetch;
+    const seen = [];
+    globalThis.fetch = async (u, init) => {
+      seen.push([String(u), init]);
+      return new Response(PNG, { headers: { 'content-type': 'image/png' } });
+    };
+    try {
+      const res = await teamsBotIcon({}, url(), { graph, cache: null });
+      assert.equal(res.status, 200);
+    } finally {
+      globalThis.fetch = real;
+    }
+    assert.equal(calls.length, 1);
+    assert.deepEqual(seen, [['https://icons.example/helper.png', undefined]]);
+  });
+
+  it('passes on no SVG, no other ids and nothing Graph does not give', async () => {
+    const hosted = 'https://graph.microsoft.com/beta/hosted/$value';
+    const status = async (graph, u = url()) => {
+      const res = await quiet(() => teamsBotIcon({}, u, { graph, cache: null }));
+      return res.status;
+    };
+    assert.equal(await status(graphWith(hosted, { type: 'image/svg+xml', bytes: '<svg/>' }).graph), 404);
+    assert.equal(await status(() => assert.fail('no call'), url('nope')), 404);
+    assert.equal(await status(async () => Response.json({ error: {} }, { status: 403 })), 404);
+    assert.equal(await status(graphWith('http://icons.example/helper.png').graph), 404);
   });
 });

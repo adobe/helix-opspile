@@ -12,7 +12,8 @@
 
 import { discordApi, discordAvatar, staffRolesOf } from './discord.js';
 import { cachedGraph } from './graph.js';
-import { sha256 } from './raw.js';
+import { gravatar } from './raw.js';
+import { mergeRule } from './rules.js';
 
 /** The Slack Connect teams of a channel (a conversation object): every team but its own. */
 export const connectedTeams = (c) => [...new Set([
@@ -147,14 +148,15 @@ async function fetchSlackChannel(env, tenant, channelId, now) {
     connected: JSON.stringify(connected),
     topic: (c.purpose && c.purpose.value) || (c.topic && c.topic.value) || null,
     domain: team ? await slackDomain(env, team, now) : '',
+    archived: Boolean(c.is_archived),
   };
 }
 
 async function fetchTeamsChannel(env, teamId, channelId) {
   const t = encodeURIComponent(teamId);
   const [team, channel] = await Promise.all([
-    graphJson(env, `/teams/${t}?$select=displayName,description`),
-    graphJson(env, `/teams/${t}/channels/${encodeURIComponent(channelId)}?$select=displayName,description,membershipType`),
+    graphJson(env, `/teams/${t}?$select=displayName,description,isArchived`),
+    graphJson(env, `/teams/${t}/channels/${encodeURIComponent(channelId)}?$select=displayName,description,membershipType,isArchived`),
   ]);
   return {
     name: channel.displayName,
@@ -163,6 +165,9 @@ async function fetchTeamsChannel(env, teamId, channelId) {
     shared: channel.membershipType === 'shared' ? 1 : 0,
     connected: '[]',
     topic: channel.description || team.description || null,
+    // An archived team's channels are archived too.
+    archived: Boolean(channel.isArchived || team.isArchived),
+    teamArchived: Boolean(team.isArchived),
   };
 }
 
@@ -182,6 +187,22 @@ async function fetchDiscordChannel(env, guild, channelId) {
     shared: 0,
     connected: '[]',
     topic: ch.topic || null,
+  };
+}
+
+/**
+ * A customer portal channel, from what its event says of it (`channelHint`, src/normalize.js):
+ * the portal is not asked. Its lobby (the customer's mail domain) is its group, named as the
+ * customer calls itself, and customers are in it by definition, so it is shared.
+ */
+function portalChannel(tenant, hint) {
+  return {
+    name: hint.name,
+    group_id: tenant,
+    group_name: hint.company || null,
+    shared: 1,
+    connected: '[]',
+    topic: hint.topic || null,
   };
 }
 
@@ -225,25 +246,39 @@ const classifiedChanged = (row, next) => CLASSIFIED
  * The channel's metadata, from D1 or the platform. A failed lookup is not fatal: the
  * message is filed with what is known, and the next message retries the lookup.
  *
- * `refresh` asks the platform even when the row is fresh (a Teams notice of a rename). When
+ * `refresh` asks the platform even when the row is fresh (a notice of a rename or an archive), and
+ * `at` (when the message it is looked up for was sent) does when the row has the channel archived
+ * before then. A lookup records whether the channel is archived (`archived_at`). When
  * the lookup changed what the rules read, `onChange(before, after)` (the channel as `toChannel`
  * gives it) runs before the row is written: `followChange` (src/refile.js) queues its threads'
  * moves there. The row is the guard, so it comes last; when `onChange` fails, so does this, with
  * the row as it was, and a retry finds the change again.
  */
 export async function getChannel(env, {
-  source, tenant, channelId, groupId, refresh,
+  source, tenant, channelId, groupId, refresh, channelHint, at,
 }, now = Date.now(), { onChange } = {}) {
   const row = await env.DB.prepare(
     'SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?',
   ).bind(source, tenant, channelId).first();
-  // Slack channels looked up before links named their workspace are looked up again.
-  if (!refresh && fresh(row, now) && row.name && (source !== 'slack' || row.domain != null)) {
+  if (source === 'portal') {
+    // The event is the lookup: the row follows it when it says something else (or is a day
+    // old), and without a hint the row stands.
+    const hinted = channelHint && channelHint.name ? portalChannel(tenant, channelHint) : null;
+    if (!hinted || (fresh(row, now) && !['name', 'group_name', 'topic']
+      .some((k) => (row[k] ?? null) !== (hinted[k] ?? null)))) {
+      return toChannel(row, source, channelId);
+    }
+  } else if (!refresh && fresh(row, now) && row.name && (source !== 'slack' || row.domain != null)
+    && !(row.archived_at && at && at > row.archived_at)) {
+    // Slack channels looked up before links named their workspace are looked up again, and so
+    // are archived ones that get a message from after they were archived: they were restored.
     return toChannel(row, source, channelId);
   }
   let f;
   try {
-    if (source === 'slack') {
+    if (source === 'portal') {
+      f = portalChannel(tenant, channelHint);
+    } else if (source === 'slack') {
       f = await fetchSlackChannel(env, tenant, channelId, now);
     } else if (source === 'discord') {
       f = await fetchDiscordChannel(env, tenant, channelId);
@@ -264,14 +299,24 @@ export async function getChannel(env, {
     if (f.domain && f.domain !== (row && row.domain)) {
       await relinkSlackChannel(env, tenant, channelId, f.domain);
     }
+    if (f.teamArchived && f.group_id) {
+      // An archived Teams team's channels are all archived: the rest of them get no message to
+      // say so. A restored one's are left to their own lookups, since a channel can be archived
+      // on its own too.
+      await env.DB.prepare(`UPDATE channels SET archived_at = ?
+        WHERE source = 'teams' AND tenant = ? AND group_id = ? AND archived_at IS NULL`)
+        .bind(new Date(now).toISOString(), tenant, f.group_id).run();
+    }
     await env.DB.prepare(`INSERT INTO channels
       (source, tenant, channel_id, name, group_id, group_name, shared, connected, topic, domain,
-        fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        fetched_at, archived_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (source, tenant, channel_id) DO UPDATE SET name = excluded.name,
         group_id = excluded.group_id, group_name = excluded.group_name,
         shared = excluded.shared, connected = excluded.connected,
-        topic = excluded.topic, domain = excluded.domain, fetched_at = excluded.fetched_at`)
+        topic = excluded.topic, domain = excluded.domain, fetched_at = excluded.fetched_at,
+        archived_at = CASE WHEN excluded.archived_at IS NULL THEN NULL
+          ELSE COALESCE(channels.archived_at, excluded.archived_at) END`)
       .bind(
         source,
         tenant,
@@ -284,6 +329,8 @@ export async function getChannel(env, {
         f.topic ? String(f.topic).slice(0, 500) : null,
         f.domain ?? null,
         new Date(now).toISOString(),
+        // Archived since the first lookup that saw it so (the platforms do not say when).
+        f.archived ? new Date(now).toISOString() : null,
       )
       .run();
     return toChannel(f, source, channelId);
@@ -327,11 +374,21 @@ export async function updateChannelName(env, {
   return renamed && Boolean(written.meta && written.meta.changes);
 }
 
-/** Gravatar URL for an email; Gravatar answers 404 when there is no picture. */
-export async function gravatar(email) {
-  return email
-    ? `https://gravatar.com/avatar/${await sha256(String(email).trim().toLowerCase())}?s=96&d=404`
-    : '';
+export { gravatar };
+
+/**
+ * A person's picture, for the header (and for what they write in the customer portal,
+ * src/portalsource.js): an account of theirs with one (Slack's first, a platform's own picture
+ * before Gravatar's), else Gravatar's for their email, which answers 404 where there is none
+ * (the header keeps the initials then).
+ */
+export async function personAvatar(env, me) {
+  const row = await env.DB.prepare(`SELECT avatar FROM identities
+    WHERE (person = ? OR email = ?) AND kind = 'person' AND avatar IS NOT NULL AND avatar != ''
+    ORDER BY avatar LIKE 'https://gravatar.com/%',
+      CASE source WHEN 'slack' THEN 0 WHEN 'teams' THEN 1 ELSE 2 END, fetched_at DESC
+    LIMIT 1`).bind(me.id ?? null, me.email || null).first();
+  return row?.avatar || await gravatar(me.email) || null;
 }
 
 /** Other names of an account, without blanks or repeats (`identities.aliases`). */
@@ -434,13 +491,42 @@ export async function getIdentity(env, ref, now = Date.now()) {
     FROM identities i LEFT JOIN people p ON p.id = i.person
     WHERE i.source = ? AND i.tenant = ? AND i.user_id = ?`)
     .bind(ref.source, ref.tenant, ref.userId).first();
-  // Rows cached before avatars existed have avatar NULL; '' means "looked, none".
-  if (fresh(row, now) && row.avatar !== null && row.avatar !== undefined) {
+  if (ref.source === 'portal') {
+    // A portal account is what its events say of it (their author's name and mail address):
+    // the portal is not asked. A reference without them (a reaction's, a mention's) is the row.
+    if (!ref.name && !ref.email) {
+      return row || {
+        kind: 'person', name: ref.userId, email: null, home: null,
+      };
+    }
+    // A reference that says nothing of a picture (a mention's, a lobby member's) keeps the row's.
+    const same = row && row.name === (ref.name || null)
+      && (row.email || null) === (ref.email || null)
+      && (ref.avatar === undefined || (ref.avatar ? row.avatar === ref.avatar
+        : !String(row.avatar || '').startsWith('/api/portal/avatar/')));
+    if (same && fresh(row, now)) {
+      return row;
+    }
+  } else if (fresh(row, now) && row.avatar !== null && row.avatar !== undefined) {
+    // Rows cached before avatars existed have avatar NULL; '' means "looked, none".
     return row;
   }
   let f;
   try {
-    if (ref.source === 'slack') {
+    if (ref.source === 'portal') {
+      f = {
+        kind: 'person',
+        name: ref.name || ref.email,
+        email: ref.email || null,
+        home: null,
+        // The picture the event names (one uploaded in the portal, or the inbox's own of its
+        // people); without one, the row's when the reference says nothing, else their Gravatar.
+        avatar: ref.avatar || (ref.avatar === undefined && row && row.avatar)
+          || await gravatar(ref.email),
+        title: null,
+        company: null,
+      };
+    } else if (ref.source === 'slack') {
       f = await fetchSlackUser(env, ref.userId);
     } else if (ref.source === 'discord') {
       f = await fetchDiscordUser(env, ref.tenant, ref.userId, ref.name);
@@ -505,27 +591,77 @@ export async function getIdentity(env, ref, now = Date.now()) {
     person: person ? person.id : null,
     person_staff: person ? person.staff : null,
     person_name: person ? person.name : null,
+    // An admin's say (the admin page's Bots), which looking the account up again leaves alone.
+    ours: (row && row.ours) ?? null,
+    display_name: (row && row.display_name) ?? null,
+    display_avatar: (row && row.display_avatar) ?? null,
+  };
+}
+
+/**
+ * A bot that posts without a user account (a Slack bot's bot id, a Teams app's), as
+ * `identities` keeps it: `{ kind, name, email, staff, ours, display_name, avatar }`. Its row
+ * is written the first time it posts, if nothing wrote it before (`recordBots`, a Slack
+ * `bots.info`), so the admin page lists it and an admin can say it is Adobe's, and name it. The
+ * platform is not asked: the picture is the one the message came with (a Slack `bot_profile`'s
+ * icon), kept when the row has none.
+ */
+export async function botIdentity(env, {
+  source, tenant, botId, name, avatar,
+}, now = Date.now()) {
+  const row = await env.DB.prepare(`SELECT kind, name, email, staff, ours, display_name, avatar
+    FROM identities WHERE source = ? AND tenant = ? AND user_id = ?`)
+    .bind(source, tenant, botId).first();
+  if (row) {
+    if (avatar && !row.avatar) {
+      await env.DB.prepare(`UPDATE identities SET avatar = ?
+        WHERE source = ? AND tenant = ? AND user_id = ? AND (avatar IS NULL OR avatar = '')`)
+        .bind(avatar, source, tenant, botId).run();
+    }
+    return row;
+  }
+  await env.DB.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at,
+      avatar) VALUES (?, ?, ?, 'bot', ?, ?, ?) ON CONFLICT (source, tenant, user_id) DO NOTHING`)
+    .bind(source, tenant, botId, name || null, new Date(now).toISOString(), avatar || null).run();
+  return {
+    kind: 'bot',
+    name: name || null,
+    email: null,
+    staff: null,
+    ours: null,
+    display_name: null,
+    avatar: avatar || null,
   };
 }
 
 /**
  * `{ kind, name, org, staff }` for the frontmatter. Staff are people marked as staff in
- * D1, or whose mail domain is one of STAFF_DOMAINS; the org of everyone else is their
- * mail domain (on Teams everyone is a guest, so the tenant says nothing).
+ * D1, or whose mail domain is one of STAFF_DOMAINS, and the bots an admin said are Adobe's
+ * (`ours`: a bot has no mail address); the org of everyone else is their mail domain (on
+ * Teams everyone is a guest, so the tenant says nothing). A bot's name is the one an admin gave
+ * it (`display_name`, the admin page's Bots), else its platform's.
  */
 export function toAuthor(env, identity) {
   const domain = domainOf(identity.email);
   const staff = Boolean(identity.person_staff) || Boolean(identity.staff)
-    || isStaffDomain(env, identity.email);
+    || Boolean(identity.ours) || isStaffDomain(env, identity.email);
+  const shown = identity.kind === 'bot' ? identity.display_name : null;
   return {
     kind: identity.kind || 'person',
-    name: identity.person_name || identity.name || null,
+    name: shown || identity.person_name || identity.name || null,
     org: domain,
     staff,
   };
 }
 
+/**
+ * The rules (`rules`), and the merged orgs as rules of target `merge` (`org_merges`, see
+ * src/rules.js `mergeRule`), which file what the others give a merged org under its new one.
+ */
 export async function loadRules(env) {
-  const { results } = await env.DB.prepare('SELECT * FROM rules').all();
-  return results || [];
+  const [{ results }, merges] = await Promise.all([
+    env.DB.prepare('SELECT * FROM rules').all(),
+    env.DB.prepare('SELECT slug, into_slug FROM org_merges').all(),
+  ]);
+  return [...(results || []), ...((merges && merges.results) || []).map(mergeRule)];
 }

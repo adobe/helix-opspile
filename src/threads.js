@@ -90,8 +90,8 @@ export async function advanceWatermark(db, person, thread, at, via, now = new Da
 export async function indexMessage(db, m, now = new Date()) {
   await db.prepare(`INSERT INTO messages
     (source, tenant, channel_id, id, thread, at, author, person, staff, counted, deleted, title,
-     permalink, author_key, preview, author_kind, edited, attachments)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     permalink, author_key, preview, author_kind, edited, attachments, imported)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, channel_id, id) DO UPDATE SET thread = excluded.thread,
       at = excluded.at, author = excluded.author, person = excluded.person,
       staff = excluded.staff, counted = excluded.counted,
@@ -102,7 +102,9 @@ export async function indexMessage(db, m, now = new Date()) {
       preview = COALESCE(excluded.preview, messages.preview),
       author_kind = COALESCE(excluded.author_kind, messages.author_kind),
       edited = COALESCE(excluded.edited, messages.edited),
-      attachments = COALESCE(excluded.attachments, messages.attachments)`)
+      attachments = COALESCE(excluded.attachments, messages.attachments),
+      -- Heard of any other way than the history import once, and it was never only imported.
+      imported = MIN(messages.imported, excluded.imported)`)
     .bind(
       m.source,
       m.tenant,
@@ -122,6 +124,7 @@ export async function indexMessage(db, m, now = new Date()) {
       m.authorKind || null,
       m.edited == null ? null : Number(Boolean(m.edited)),
       m.attachments ?? null,
+      m.imported ? 1 : 0,
     )
     .run();
 
@@ -129,7 +132,8 @@ export async function indexMessage(db, m, now = new Date()) {
   // The thread row is derived from its messages, so it is the same in any order.
   await db.prepare(`INSERT INTO threads
     (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name, title, path,
-     root_at, last_at, last_id, last_author, last_staff, last_text, any_at, messages, updated_at)
+     root_at, last_at, last_id, last_author, last_staff, last_text, any_at, messages, updated_at,
+     imported)
     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
       -- What was said titles a thread; a system notice (a meeting started) only one without.
       COALESCE(
@@ -144,7 +148,9 @@ export async function indexMessage(db, m, now = new Date()) {
       (SELECT MAX(at) FROM messages WHERE thread = ?1 AND deleted = 0),
       (SELECT COUNT(*) FROM messages WHERE thread = ?1 AND deleted = 0
         AND COALESCE(author_kind, '') != 'system'),
-      ?13
+      ?13,
+      -- Imported while every message is (src/history.js).
+      (SELECT COALESCE(MIN(imported), 0) FROM messages WHERE thread = ?1)
     FROM (SELECT NULL) LEFT JOIN (
       SELECT at, id, author, staff, preview FROM messages
       WHERE thread = ?1 AND counted = 1 AND deleted = 0 ORDER BY at DESC LIMIT 1
@@ -157,7 +163,8 @@ export async function indexMessage(db, m, now = new Date()) {
       last_at = excluded.last_at, last_id = excluded.last_id,
       last_author = excluded.last_author, last_staff = excluded.last_staff,
       last_text = excluded.last_text,
-      any_at = excluded.any_at, messages = excluded.messages, updated_at = excluded.updated_at`)
+      any_at = excluded.any_at, messages = excluded.messages, updated_at = excluded.updated_at,
+      imported = excluded.imported`)
     .bind(
       m.thread,
       m.source,
@@ -208,12 +215,13 @@ export function latestMember(members) {
  * Who a thread waits on: `us`, `customer`, `vendor` or `nobody`. Clef's `next_actor` (on
  * `label`) answers it, but a label can be stale or wrong: when Adobe posted last, the thread
  * does not wait on us, whatever the label says. Without a label, a thread waits on us when
- * someone outside Adobe posted last. Alerts and threads nobody posted in wait on nobody.
+ * someone outside Adobe posted last. Alerts, threads nobody posted in and imported threads (the
+ * history import's, src/history.js: over before the inbox began) wait on nobody.
  *
- * @param {object} t a thread with `kind`, `last_staff` (1, 0, or null) and `label`
+ * @param {object} t a thread with `kind`, `last_staff` (1, 0, or null), `label` and `imported`
  */
 export function waitingOn(t) {
-  if (t.kind === 'alert' || t.last_staff == null) {
+  if (t.kind === 'alert' || t.last_staff == null || Number(t.imported)) {
     return 'nobody';
   }
   // 🙏 after the last message: thanks, nothing is pending.
@@ -257,20 +265,25 @@ function group(rows) {
  *   - `mentionedMe` / `mentionedTeam`: I / these teammates were mentioned after they
  *     last read the thread
  *   - `unreadMentions`: how many messages mention me after I last read the thread
+ *   - `unreadForYou`: what the red badge counts, as Slack's: the messages I have not read that
+ *     mention me or are in a thread of mine (`yours`, see unreadInYours), at least the mentions
  *   - `attention`: the most pressing of ATTENTION that applies, or null
+ *
+ * An imported thread (src/history.js) is read by everyone: it was over before the inbox began.
  */
-export function readState(threads, marks, mentions, me) {
+export function readState(threads, marks, mentions, me, yours = new Map()) {
   const marksBy = group(marks);
   const mentionsBy = group(mentions);
   return threads.map((t) => {
     const alert = t.kind === 'alert';
+    const imported = Boolean(Number(t.imported));
     const last = alert ? t.any_at : t.last_at;
     const ws = marksBy.get(t.thread) || [];
     const readAt = new Map(ws.map((w) => [w.person, w.read_at]));
-    const caughtUp = (w) => Boolean(last) && w.read_at >= last;
+    const caughtUp = (w) => imported || (Boolean(last) && w.read_at >= last);
     const readers = ws.filter((w) => w.in_team && caughtUp(w)).map((w) => w.person);
-    const mine = readers.includes(me);
-    const fresh = (m) => !readAt.has(m.person) || m.at > readAt.get(m.person);
+    const mine = imported || readers.includes(me);
+    const fresh = (m) => !imported && (!readAt.has(m.person) || m.at > readAt.get(m.person));
     const ms = (mentionsBy.get(t.thread) || []).filter(fresh);
     const unreadMentions = ms.filter((m) => m.person === me).length;
     const mentionedMe = unreadMentions > 0;
@@ -279,11 +292,13 @@ export function readState(threads, marks, mentions, me) {
       readers,
       unread: Boolean(last) && !mine,
       seenByOthers: !mine && readers.some((p) => p !== me),
-      unseen: Boolean(last) && readers.length === 0,
+      unseen: !imported && Boolean(last) && readers.length === 0,
       // Alert threads are bot posts: nobody outside is waiting for Adobe to look.
-      unseenByAdobe: !alert && Boolean(last) && !ws.some((w) => w.staff && caughtUp(w)),
+      unseenByAdobe: !alert && !imported && Boolean(last)
+        && !ws.some((w) => w.staff && caughtUp(w)),
       mentionedMe,
       unreadMentions,
+      unreadForYou: Math.max(unreadMentions, imported ? 0 : yours.get(t.thread) || 0),
       mentionedTeam,
     };
     const applies = {
@@ -295,6 +310,42 @@ export function readState(threads, marks, mentions, me) {
     };
     return { ...t, ...state, attention: ATTENTION.find((a) => applies[a]) || null };
   });
+}
+
+/**
+ * What the red badge counts of `threads` for person `me`, as Slack counts its badge: the
+ * messages they have not read (after their watermark on the message's thread) that mention them,
+ * and in a thread of theirs (one they posted or were mentioned in; a re-threaded group's members
+ * among `threads` are one thread) the people's messages from someone else since they first were
+ * in it. A message counts once. Bots' and deleted messages do not, but a bot's mention does.
+ *
+ * @returns {Promise<Map<string, number>>} thread to count, without the threads of none
+ */
+export async function unreadInYours(db, threads, me) {
+  if (!threads.length) {
+    return new Map();
+  }
+  const { results } = await db.prepare(`WITH k AS (SELECT value AS thread FROM json_each(?1)),
+    -- An imported thread (src/history.js) has nothing unread.
+    g AS (SELECT t.thread, COALESCE(t.logical_thread, t.thread) AS g FROM threads t
+      WHERE t.thread IN (SELECT thread FROM k) AND t.imported = 0),
+    -- When the viewer was first in each group: posted in it or mentioned ('~' sorts last: never).
+    since AS (SELECT g.g, MIN(MIN(
+        COALESCE((SELECT MIN(a.at) FROM messages a WHERE a.thread = g.thread AND a.person = ?2
+          AND a.deleted = 0), '~'),
+        COALESCE((SELECT MIN(b.at) FROM mentions b WHERE b.thread = g.thread
+          AND +b.person = ?2), '~'))) AS at
+      FROM g GROUP BY g.g HAVING at < '~')
+    SELECT m.thread, COUNT(*) AS n
+    FROM g JOIN since s ON s.g = g.g
+      JOIN messages m ON m.thread = g.thread AND m.at >= s.at
+      LEFT JOIN watermarks w ON w.thread = g.thread AND w.person = ?2
+    WHERE m.deleted = 0 AND (w.read_at IS NULL OR m.at > w.read_at)
+      AND ((m.counted = 1 AND m.person IS NOT ?2) OR EXISTS (SELECT 1 FROM mentions n
+        WHERE n.thread = m.thread AND n.person = ?2
+          AND n.message = m.source || ':' || m.tenant || ':' || m.channel_id || ':' || m.id))
+    GROUP BY m.thread`).bind(JSON.stringify(threads), me).all();
+  return new Map((results || []).map((r) => [r.thread, r.n]));
 }
 
 /**

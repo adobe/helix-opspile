@@ -25,12 +25,17 @@ const MAX_TEXT = 1200;
 const DOING = {
   read_thread: 'Reading the thread',
   read_any_thread: 'Reading another thread',
+  find_channels: 'Looking for the customer\'s channel',
+  list_any_channel_threads: 'Looking through another channel',
   get_draft: 'Reading the draft',
   read_file: 'Reading an attached file',
+  raw_message: 'Reading a message as it was sent',
   update_draft: 'Updating the draft',
   discard_draft: 'Discarding the draft',
   kb_write: 'Filing what it learned in the knowledge bases',
   request_bash: 'Asking the team to run a command',
+  wakeup_after: 'Setting itself a reminder',
+  wakeup_after_idle: 'Setting itself a reminder',
 };
 
 /** What a tool call is doing, in a few words. */
@@ -57,7 +62,7 @@ const texts = (m) => (Array.isArray(m.content) ? m.content : [])
 const calls = (m) => (Array.isArray(m.content) ? m.content : []).filter((c) => c.type === 'toolCall');
 
 // Longer than a model request and its retries take.
-const STUCK_MS = 15 * 60 * 1000;
+export const STUCK_MS = 15 * 60 * 1000;
 
 /** The id of the sidebar message the latest turn of `entries` answers, or null. */
 export function turnSidebar(entries) {

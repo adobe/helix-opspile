@@ -35,44 +35,60 @@
   </button>
   <div id="menu" class="menu" popover>
     <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
+    <div class="cols"><div class="col">
     <section id="asBox" hidden><h4><label for="as">View as</label></h4><select id="as"></select>
       <p class="hint">See the inbox as someone else, read-only.</p></section>
     <section id="expertBox" hidden><h4>Personal view</h4>
       <button class="item" id="expertView" role="switch" aria-checked="false"><span class="ck s2-check" aria-hidden="true"></span>Expert view</button>
       <p class="hint">Every filter, and each thread's status, people and reactions.</p></section>
+    <section id="followBox" hidden><h4>Following</h4><div id="followList"></div>
+      <p class="hint" id="followHint"></p></section>
+    </div><div class="col">
     <section id="notifyBox" hidden><h4>Notifications</h4>
       <button class="item" id="notifyMentions" role="switch" aria-checked="true"><span class="ck s2-check" aria-hidden="true"></span>When someone mentions me</button>
       <button class="item" id="notifyThreads" role="switch" aria-checked="true" title="Threads you posted in, were mentioned in or put 👀 on"><span class="ck s2-check" aria-hidden="true"></span>When someone writes in my threads</button>
-      <button class="item" id="notifySound" role="switch" aria-checked="true" title="On this device: a chime with each notification"><span class="ck s2-check" aria-hidden="true"></span>Play a sound</button>
+      <button class="item" id="notifySound" role="switch" aria-checked="false" title="On this device: a chime with each notification"><span class="ck s2-check" aria-hidden="true"></span>Play a sound</button>
       <div id="bells"></div>
       <p class="hint" id="notifyHint"></p>
-      <button class="item allow" id="notifyAllow" hidden>Allow notifications in this browser</button></section>
+      <button class="item allow" id="notifyAllow" hidden>Allow notifications in this browser</button>
+      <button class="item allow" id="notifyTest" hidden title="A notification and the chime, then: did you see a banner? If not, how to show them">Send a test notification</button>
+      <button class="item allow" id="notifyFix" hidden aria-haspopup="dialog"></button></section>
     <section id="tracesBox" hidden><h4>Thread Agent</h4>
-      <button class="item" id="tracesAll" role="switch" aria-checked="true"><span class="ck s2-check" aria-hidden="true"></span>Show its thinking under threads</button>
+      <button class="item" id="tracesAll" role="switch" aria-checked="false"><span class="ck s2-check" aria-hidden="true"></span>Show its thinking under threads</button>
       <div id="tracesHere" hidden><label class="hint" for="tracesChannel" id="tracesChannelLabel"></label><select id="tracesChannel">
         <option value="">As everywhere</option><option value="on">Shown</option><option value="off">Hidden</option></select></div>
       <p class="hint" id="tracesHint"></p></section>
+    </div><div class="col">
     <section><h4>Keyboard</h4><dl class="keys">
       <dt>Search, on every platform</dt><dd><kbd>/</kbd></dd>
       <dt>Next / previous thread</dt><dd><kbd>j</kbd> <kbd>k</kbd></dd>
       <dt title="with ✅ on its first message, or take your ✅ off again">Resolve the open thread</dt><dd><kbd>e</kbd></dd>
       <dt title="in the reply box: your team sees it">Save the reply as a draft</dt><dd><kbd>⌘S</kbd></dd>
       <dt title="or the ≠ beside it; click it again to stop excluding">Exclude a filter value</dt><dd><kbd>⇧</kbd> click</dd>
-    </dl></section>
-    <section><a class="item" id="logout" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
+    </dl><button class="item" id="keysAll" aria-keyshortcuts="Meta+/ Control+/">All keyboard shortcuts<kbd class="end">⌘/</kbd></button></section>
+    <section><button class="item" id="tourAgain" title="A minute's tour of the inbox"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.6 5.4L9.1 9.1 5.4 10.6 6.9 6.9z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>Show me around</button><a class="item" id="logout" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
+    </div></div>
   </div>
 </header>
 <script src="header.js"></script>
 <main>
-  <section id="filters" aria-label="Filters"></section>
+  <section id="filters" aria-label="Filters"><div id="facets"></div></section>
   <section id="threads" aria-label="Threads"><div class="empty">Loading…</div></section>
+  <div class="grip" id="grip-filters" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="filters" aria-label="Width of the filters" title="Drag to size the filters; double-click for the screen's own"></div>
+  <div class="grip" id="grip-list" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="threads" aria-label="Width of the thread list" title="Drag to size the thread list; double-click for the screen's own"></div>
+  <div class="grip" id="grip-side" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="side" aria-label="Width of the sidebar" title="Drag to size the sidebar; double-click for the screen's own"></div>
   <section id="pane" aria-label="Messages"><div class="empty pick">Pick a thread.</div></section>
   <section id="side" aria-label="Sidebar with Thread Agent" hidden></section>
   <div id="side-join" aria-hidden="true" hidden><svg><clipPath id="side-join-clip"><rect></rect><rect></rect></clipPath><path clip-path="url(#side-join-clip)"></path></svg></div>
+  <button id="side-tab" type="button" aria-controls="side" aria-expanded="false" hidden></button>
 </main>
 <script src="markdown.js"></script>
 <script src="rank.js"></script>
 <script src="table.js"></script>
+<script src="writing.js"></script>
+<script src="stack.js"></script>
+<script src="notifyhelp.js"></script>
+<script src="tour.js"></script>
 <script type="module" src="inbox.js"></script>
 <script src="app.js"></script>
 </body>

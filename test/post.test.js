@@ -19,7 +19,7 @@ import {
   mentionable, post,
   postableChannels, seal, slackText, splitMentions, teamsMessage, unseal, writtenMentions,
 } from '../src/post.js';
-import { htmlToMarkdown } from '../src/markdown.js';
+import { htmlToMarkdown } from '../src/html.js';
 import { suggestMentions } from '../src/mention-match.js';
 import { d1 } from './d1.js';
 
@@ -611,6 +611,34 @@ describe('connecting and posting', () => {
     const sent = calls.find((c) => c.u.endsWith('/chat.postMessage'));
     assert.equal(sent.init.headers.authorization, 'Bearer xoxp-ada');
     assert.deepEqual(JSON.parse(sent.init.body), { channel: 'C1', thread_ts: '1.1', text: 'On it.' });
+  });
+
+  it('sends a table to Slack as a markdown block, with mentions, the text as mrkdwn', async () => {
+    const e = withAccounts(env());
+    await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      updated_at) VALUES (1, 'slack', 'U1', ?, '2026-10-21T10:00:00Z')`).run(await seal(e, 'xoxp-ada'));
+    const text = '@Bob Builder, **per minute**:\n\n| UTC | total |\n|---|---|\n| 13:18 | 16,172 |';
+    const res = await post(e, ME, { thread: 'slack:E1:C1:1.1', text, mentions: [{ id: 'U2' }] }, inTeam);
+    assert.equal(res.status, 200);
+    const sent = JSON.parse(calls.find((c) => c.u.endsWith('/chat.postMessage')).init.body);
+    assert.deepEqual(sent.blocks, [{ type: 'markdown', text: text.replace('@Bob Builder', '<@U2>') }]);
+    assert.match(sent.text, /^<@U2>, \*per minute\*:/);
+  });
+
+  it('sends a table as text alone when Slack refuses its blocks', async () => {
+    const e = env();
+    await e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token,
+      updated_at) VALUES (1, 'slack', 'U1', ?, '2026-10-21T10:00:00Z')`).run(await seal(e, 'xoxp-ada'));
+    const inner = globalThis.fetch;
+    globalThis.fetch = async (url, init) => (String(url).endsWith('/chat.postMessage')
+      && JSON.parse(init.body).blocks
+      ? (calls.push({ u: String(url), init }), Response.json({ ok: false, error: 'invalid_blocks' }))
+      : inner(url, init));
+    const res = await post(e, ME, { thread: 'slack:E1:C1:1.1', text: '| a |\n|---|\n| 1 |' }, inTeam);
+    assert.equal(res.status, 200);
+    const posts = calls.filter((c) => c.u.endsWith('/chat.postMessage'));
+    assert.equal(posts.length, 2);
+    assert.equal(JSON.parse(posts[1].init.body).blocks, undefined);
   });
 
   it('keeps a folded root in its group once a reply of the group goes to its thread', async () => {

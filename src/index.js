@@ -12,26 +12,29 @@
 
 import inboxHtml from '../ui/inbox.html';
 import adminHtml from '../ui/admin.html';
-import kbHtml from '../ui/kb.html';
 import cogsHtml from '../ui/cogs.html';
 import topicsHtml from '../ui/topics.html';
 // The pages' scripts, as text (src/page.js inlines them).
 import inboxJs from '../ui/inbox.js' with { type: 'text' };
 import adminJs from '../ui/admin.js' with { type: 'text' };
-import kbJs from '../ui/kb.js' with { type: 'text' };
+import agentJs from '../ui/agent.js' with { type: 'text' };
 import cogsJs from '../ui/cogs.js' with { type: 'text' };
 import topicsJs from '../ui/topics.js' with { type: 'text' };
 import appJs from '../ui/app.js' with { type: 'text' };
 import headerJs from '../ui/header.js' with { type: 'text' };
 import rankJs from '../ui/rank.js' with { type: 'text' };
 import tableJs from '../ui/table.js' with { type: 'text' };
+import writingJs from '../ui/writing.js' with { type: 'text' };
+import stackJs from '../ui/stack.js' with { type: 'text' };
+import notifyHelpJs from '../ui/notifyhelp.js' with { type: 'text' };
+import tourJs from '../ui/tour.js' with { type: 'text' };
 import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
 // Spectrum 2's look of every page (README, "Spectrum 2").
 import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
 import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
 import spectrumInboxCss from '../ui/spectrum-inbox.css' with { type: 'text' };
 import spectrumAdminCss from '../ui/spectrum-admin.css' with { type: 'text' };
-import spectrumKbCss from '../ui/spectrum-kb.css' with { type: 'text' };
+import spectrumAgentCss from '../ui/spectrum-agent.css' with { type: 'text' };
 import spectrumCogsCss from '../ui/spectrum-cogs.css' with { type: 'text' };
 import spectrumTopicsCss from '../ui/spectrum-topics.css' with { type: 'text' };
 import { accessEmail } from './access.js';
@@ -48,21 +51,26 @@ import { sweepLabels } from './label.js';
 import { sweepRethreads } from './rethread.js';
 import { diagTeams } from './diag.js';
 import { discordEnabled } from './discord.js';
+import { runDreams } from './dreams.js';
 import { json, text } from './http.js';
 import { ICONS } from './icons.js';
 import { SOUNDS } from './sound.js';
 import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { countEntries } from './kbadmin.js';
+import { syncCatalogs } from './catalogsync.js';
+import { syncOrgStacks } from './orgstacks.js';
 import { mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
 import {
-  fromPreview, highlightScript, inboxPage, page,
+  fmcScript, fromPreview, highlightScript, inboxPage, page,
 } from './page.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
+import { sweepChannels } from './channelsweep.js';
+import { syncFollowRules } from './followrules.js';
 import { ensureSubscription } from './subscription.js';
 import { moved } from './moved.js';
 import { classifyChannels } from './suggest.js';
@@ -81,25 +89,28 @@ import { prunePostKeys } from './postkeys.js';
 const SCRIPTS = {
   'inbox.js': inboxJs,
   'admin.js': adminJs,
-  'kb.js': kbJs,
+  'agent.js': agentJs,
   'cogs.js': cogsJs,
   'topics.js': topicsJs,
   'app.js': appJs,
   'header.js': headerJs,
   'rank.js': rankJs,
   'table.js': tableJs,
+  'writing.js': writingJs,
+  'stack.js': stackJs,
+  'notifyhelp.js': notifyHelpJs,
+  'tour.js': tourJs,
   'topicgraph.js': topicGraphJs,
   'spectrum-fonts.css': spectrumFontsCss,
   'spectrum.css': spectrumCss,
   'spectrum-inbox.css': spectrumInboxCss,
   'spectrum-admin.css': spectrumAdminCss,
-  'spectrum-kb.css': spectrumKbCss,
+  'spectrum-agent.css': spectrumAgentCss,
   'spectrum-cogs.css': spectrumCogsCss,
   'spectrum-topics.css': spectrumTopicsCss,
 };
 const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
 const ADMIN_PAGE = page(adminHtml, SCRIPTS);
-const KB_PAGE = page(kbHtml, SCRIPTS);
 const COGS_PAGE = page(cogsHtml, SCRIPTS);
 const TOPICS_PAGE = page(topicsHtml, SCRIPTS);
 
@@ -215,16 +226,18 @@ const handlers = {
       return oauthResponse;
     }
     if (pathname === '/inbox/admin') {
-      // Teams and orgs (admin team; the API checks), under /inbox like the editor.
+      // Teams and customers, with their agents (the API checks who sees what). Under /inbox,
+      // so the same Access application covers it.
       return new Response(ADMIN_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
     }
     if (pathname === '/inbox/kb') {
-      // The knowledge-base editor (admin team; the API checks). Under /inbox, so the same
-      // Access application covers it.
-      return new Response(KB_PAGE, {
-        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
+      // The knowledge-base editor that was: its links (a knowledge base, a file, a view) open
+      // the same on the team's or the customer's page, which reads them (ui/admin.js `wanted`).
+      return new Response(null, {
+        status: 302,
+        headers: { location: `/inbox/admin${url.search}`, 'cache-control': 'no-store' },
       });
     }
     if (pathname === '/inbox/cogs') {
@@ -254,6 +267,11 @@ const handlers = {
     if (highlighter) {
       return highlighter;
     }
+    // The stack drawing's renderer, which it imports with the first stack it shows.
+    const fmc = fmcScript(request, pathname);
+    if (fmc) {
+      return fmc;
+    }
     if (request.method === 'GET' || request.method === 'HEAD') {
       const iconResponse = icon(pathname);
       if (iconResponse) {
@@ -279,16 +297,16 @@ const handlers = {
 
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, count the
- * entries of the knowledge bases not counted yet, keep the
- * agents' GitHub mirrors fresh, learn the bots installed in each Teams team, check the global
- * MCP servers' tools once a day, keep the agents' MCP OAuth grants alive, classify a batch of
- * the admin team's channels for the channel suggestions, join the public Slack channels the app
- * is not in (SLACK_JOIN_TEAMS), enqueue the threads whose message and thread vectors are
- * behind, fill in the latest message's text of threads indexed before it was kept, delete
- * the thread list's picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals
- * kept for an Undo of a discarded draft past its time (src/draftevents.js), and enqueue the
- * threads whose klickhaus rows are behind; build the Topics page's map once a week; and roll up
- * what the days used, for COGS.
+ * entries of the knowledge bases not counted yet, keep the agents' GitHub mirrors fresh, learn the
+ * bots installed in each Teams team, check the global MCP servers' tools once a day, keep the
+ * agents' MCP OAuth grants alive, classify a batch of the admin team's channels for the channel
+ * suggestions, write the follow rules' shares (src/followrules.js), join the public Slack channels
+ * the app is not in (SLACK_JOIN_TEAMS), look up again the channels not looked up for a week (to
+ * learn which are archived), enqueue the threads whose message and thread vectors are behind, fill
+ * in the latest message's text of threads indexed before it was kept, delete the thread list's
+ * picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals kept for an Undo of a
+ * discarded draft past its time (src/draftevents.js), and enqueue the threads whose klickhaus rows
+ * are behind; build the Topics page's map once a week; and roll up what the days used, for COGS.
  */
   async scheduled(controller, env, ctx) {
     // What the days cost so far, for the COGS dashboard (src/cogs/rollup.js).
@@ -304,6 +322,14 @@ const handlers = {
     ctx.waitUntil(countEntries(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'entries', ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'entries', error: e.message }))));
+    // The customers' stack drawings the inbox's list by customer has not read yet.
+    ctx.waitUntil(syncOrgStacks(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'stacks', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'stacks', error: e.message }))));
+    // The teams' catalogs of products whose knowledge base moved on without a compile.
+    ctx.waitUntil(syncCatalogs(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'catalog', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'catalog', error: e.message }))));
     // The sign-in allow list follows the teams, in case a change in D1 bypassed the admin pages.
     ctx.waitUntil(syncAccessQuietly(env, 'cron'));
     ctx.waitUntil(refreshMirrors(env)
@@ -323,6 +349,10 @@ const handlers = {
     ctx.waitUntil(keepOAuthAlive(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', mcpOauth: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', mcpOauth: 'error', error: e.message }))));
+    // Customers quiet for eight hours consolidate their knowledge base, in the dream experiment.
+    ctx.waitUntil(runDreams(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', dreams: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', dreams: 'error', error: e.message }))));
     ctx.waitUntil(refreshGlobalTools(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', mcpGlobals: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', mcpGlobals: 'error', error: e.message }))));
@@ -335,6 +365,14 @@ const handlers = {
     ctx.waitUntil(joinPublicChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', slackJoin: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', slackJoin: 'error', error: e.message }))));
+    // The follow rules' shares (src/followrules.js), for the channels seen or renamed since.
+    ctx.waitUntil(syncFollowRules(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', followRules: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', followRules: 'error', error: e.message }))));
+    // Channels looked up a week ago, again: archived ones get no messages to say so.
+    ctx.waitUntil(sweepChannels(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', channels: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', channels: 'error', error: e.message }))));
     ctx.waitUntil(sweepRethreads(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', rethreads: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', rethreads: 'error', error: e.message }))));
@@ -417,7 +455,5 @@ export default {
 export { TeamRoom } from './room.js';
 export { ThreadAgent } from './agent/agent.js';
 export { DiscordPoller } from './poller.js';
-// The way back from an agent's shell (a Dynamic Worker) to its files (src/agent/computer.js).
-export { WorkspaceServiceProxy } from '@cloudflare/computer';
-// Where the shells of the agents' computers reach the network, with their secrets.
-export { SecretGateway } from './agent/gateway.js';
+// Where the customer portal's events arrive (src/portalsource.js).
+export { PortalSource } from './portalentry.js';

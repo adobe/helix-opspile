@@ -14,8 +14,14 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { keptAccounts } from '../src/accounts.js';
 import { inbox, searchInbox, thread } from '../src/api.js';
+import { inChannel } from '../src/shares.js';
+import { followersOf, followingTeams } from '../src/follows.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
+import { rollupCogs } from '../src/cogs/rollup.js';
+import { pruneExpertEvents } from '../src/expertevents.js';
+import { pruneRankEvents } from '../src/rankevents.js';
+import { teamOptions } from '../src/suggest.js';
 
 /** The plans of every query `fn` asks D1, as SQLite would run them. */
 async function plans(fn) {
@@ -66,11 +72,25 @@ describe('inbox queries', () => {
     assert.deepEqual(threadScans, []);
   });
 
+  it('count a team inbox\'s entries from an index, in order, when loading the inbox', async () => {
+    // An alert channel files tens of thousands of threads under its team (migration 0069).
+    for (const asked of [
+      await plans((env) => inbox(env, me, 'helix')),
+      await plans((env) => inbox(env, me, 'helix', { groups: ['slack:E1:C1:1.1'] })),
+    ]) {
+      const [p] = asked.filter((q) => q.sql.startsWith('SELECT g, n, total, latest'));
+      assert.ok(p.plan.some((d) => /SEARCH t USING COVERING INDEX threads_inbox \(team=\?/.test(d)), p.plan.join('\n'));
+      // The team's own threads come grouped: no sort before the shared channels' (UNION ALL).
+      const own = p.plan.slice(p.plan.indexOf('LEFT-MOST SUBQUERY'), p.plan.indexOf('UNION ALL'));
+      assert.ok(own.length && !own.some((d) => /TEMP B-TREE/.test(d)), p.plan.join('\n'));
+    }
+  });
+
   it('search threads by team, and identities and messages by index, when searching', async () => {
     const asked = await plans((env) => searchInbox(env, me, 'helix', 'acme'));
     // The words (titles, facts), then the entries found, as the inbox has them.
     assert.ok(asked.some((p) => p.sql.startsWith('SELECT f.thread')));
-    assert.ok(asked.some((p) => p.sql.startsWith('SELECT COALESCE(logical_thread, thread) AS g')));
+    assert.ok(asked.some((p) => p.sql.startsWith('SELECT g, n, total, latest')));
     assert.deepEqual(scans(asked), []);
     assert.deepEqual(asked.filter((p) => p.plan.some((d) => /^SCAN (threads|t)\b/.test(d))), []);
   });
@@ -81,8 +101,39 @@ describe('inbox queries', () => {
     assert.deepEqual(ps.filter((p) => p.plan.some((d) => /^SCAN (threads|t)\b/.test(d))), []);
   });
 
+  it('read the latest members of each entry by index when loading the inbox', async () => {
+    // Not every thread of the inbox ranked to find them (migration 0068): an alert channel
+    // folds thousands of posts into one entry.
+    for (const asked of [
+      await plans((env) => inbox(env, me, 'helix')),
+      await plans((env) => inbox(env, me, null, { personal: true })),
+    ]) {
+      const [p] = asked.filter((q) => q.sql.startsWith('WITH g(k) AS'));
+      assert.ok(p, 'the members query');
+      assert.ok(p.plan.some((d) => /SEARCH y USING INDEX threads_group_latest \(logical_thread=\?\)/.test(d)), p.plan.join('\n'));
+    }
+  });
+
   it('search identities and messages by index when opening a thread', async () => {
     assert.deepEqual(scans(await plans((env) => thread(env, me, 'slack:E1:C1:1.1'))), []);
+  });
+
+  it('find who is in a channel by their mentions, not by the channel\'s threads', async () => {
+    // Asked for every event of a channel that someone off its team hears about (src/room.js),
+    // and whenever they open one of its threads: an alert channel has tens of thousands.
+    const [p] = await plans((env) => inChannel(env, [1], { source: 'slack', channel_id: 'C1' }));
+    assert.ok(p.plan.some((d) => /SEARCH n USING (COVERING )?INDEX mentions_person/.test(d)), p.plan.join('\n'));
+    assert.ok(!p.plan.some((d) => /threads_channel/.test(d)), p.plan.join('\n'));
+  });
+
+  it('find who follows a thread by its entry\'s posts and what they show, by index', async () => {
+    // Asked whenever a thread is opened, worked or announced (src/follows.js).
+    for (const [p] of [
+      await plans((env) => followingTeams(env, 'slack:E1:C1:1.1')),
+      await plans((env) => followersOf(env, [1], 'slack:E1:C1:1.1')),
+    ]) {
+      assert.deepEqual(p.plan.filter((d) => /^SCAN (threads|thread_tech|team_follows|person_follows|x|g)\b/.test(d)), [], p.plan.join('\n'));
+    }
   });
 
   it('search the messages and channels of a person\'s accounts by index', async () => {
@@ -92,5 +143,33 @@ describe('inbox queries', () => {
     assert.deepEqual(p.plan.filter((d) => /^SCAN (identities|messages|channel_members|[iowxm])\b/.test(d)), []);
     assert.ok(p.plan.some((d) => /USING (COVERING )?INDEX messages_author/.test(d)), p.plan.join('\n'));
     assert.ok(p.plan.some((d) => /USING (COVERING )?INDEX channel_members_user/.test(d)), p.plan.join('\n'));
+  });
+});
+
+describe('cron queries', () => {
+  it('find the old events and picks to delete by when they were, not by reading them all', async () => {
+    for (const prune of [pruneExpertEvents, pruneRankEvents]) {
+      // eslint-disable-next-line no-await-in-loop
+      const ps = await plans((env) => prune(env));
+      assert.deepEqual(ps.filter((p) => p.plan.some((d) => /^SCAN (expert_events|rank_events)\b/.test(d))), []);
+      assert.ok(ps.some((p) => p.plan.some((d) => /USING (COVERING )?INDEX (expert_events|rank_events)_at/.test(d))), JSON.stringify(ps));
+    }
+  });
+
+  it('search a team\'s channels by team and by share for the channel suggestions', async () => {
+    const ps = await plans((env) => teamOptions(env));
+    const [p] = ps.filter((q) => q.sql.startsWith('SELECT COALESCE(c.group_name'));
+    assert.ok(p, 'the channels query');
+    assert.ok(!p.plan.some((d) => /^SCAN t\b/.test(d)), p.plan.join('\n'));
+    assert.ok(p.plan.some((d) => /SEARCH t USING INDEX threads_team/.test(d)), p.plan.join('\n'));
+  });
+
+  it('look up each day of the COGS backfill by the primary key', async () => {
+    const ps = await plans((env) => rollupCogs(env, { now: Date.parse('2026-11-02T12:00:00Z') }));
+    const days = ps.filter((p) => p.sql.startsWith('WITH RECURSIVE d(day)'));
+    assert.ok(days.length, 'the missing days query');
+    for (const p of days) {
+      assert.ok(p.plan.some((d) => /SEARCH t .*USING PRIMARY KEY \(day=\?/.test(d)), p.plan.join('\n'));
+    }
   });
 });

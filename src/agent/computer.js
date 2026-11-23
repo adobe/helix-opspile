@@ -13,19 +13,15 @@
 import {
   err, ExecutionError, FileError, ok,
 } from '@earendil-works/pi-durable/env';
-import { DEFAULT_RUNTIME, timedOut } from './kernel.js';
+import { timedOut } from './kernel.js';
 
 /**
  * The agent's computer (its `computer` tool): pi's own `bash` tool, run on Cloudflare
- * Computer (@cloudflare/computer). The ThreadAgent object holds a Workspace, a filesystem in
- * its own SQLite, with a WorkerShellBackend: just-bash in a Dynamic Worker (env.LOADER) that
- * reads and writes that filesystem over RPC, with jq and curl, and network access through the
- * Worker's SecretGateway (egress `http-gateway`: no filter, but
- * the team's and the customer's secrets go in where a request names them, src/agent/secrets.js).
+ * Computer's Workspace (@cloudflare/computer), a filesystem in the ThreadAgent object's own
+ * SQLite, whose shell is GNU bash with real programs on the SLICC kernel (src/agent/kernel.js),
+ * with the network through the gateway's `forward` (no filter, but the team's and the
+ * customer's secrets go in where a request names them, src/agent/secrets.js).
  * Each thread keeps its files from one turn to the next, under COMPUTER_CWD.
- *
- * A team can choose another shell for its agents, on the same Workspace: GNU bash and real
- * programs on the SLICC kernel (src/agent/kernel.js, `runtime` below).
  *
  * This file is the bridge: an ExecutionEnv for pi-durable whose `exec` runs a command on the
  * workspace. pi's file tools (read, write, edit) are not installed, so the rest of the
@@ -35,9 +31,8 @@ import { DEFAULT_RUNTIME, timedOut } from './kernel.js';
 export const COMPUTER_CWD = '/workspace';
 
 /**
- * Where a Workspace saves output that was too long, for the kernel's shell: it sees the
- * Workspace's files under COMPUTER_CWD only, and the agent is told to read the file there.
- * just-bash sees all of them, and keeps the Workspace's own `/.computer/output`.
+ * Where the Workspace saves output that was too long: the kernel's shell sees the Workspace's
+ * files under COMPUTER_CWD only, and the agent is told to read the file there.
  */
 export const KERNEL_OUTPUT_DIR = `${COMPUTER_CWD}/.computer/output`;
 
@@ -62,9 +57,8 @@ const unsupported = async (path) => err(new FileError('not_supported', 'only the
 /**
  * An ExecutionEnv over `workspace()`, which resolves to a Workspace (or anything with
  * `runtime.exec(source, options)` as @cloudflare/computer's): created on first use.
- * `runtime()` names the shell the Workspace runs (src/agent/kernel.js), asked for each command.
  */
-export function computerEnv(workspace, { id = 'computer', runtime = () => DEFAULT_RUNTIME } = {}) {
+export function computerEnv(workspace, { id = 'computer' } = {}) {
   return {
     id,
     cwd: COMPUTER_CWD,
@@ -105,7 +99,7 @@ export function computerEnv(workspace, { id = 'computer', runtime = () => DEFAUL
       }
       // The shell's answer to a run it stopped at `timeoutMs`.
       const seconds = (Date.now() - started) / 1000;
-      if (options.timeout && timedOut(runtime(), result.exitCode, seconds, options.timeout)) {
+      if (options.timeout && timedOut(result.exitCode, seconds, options.timeout)) {
         return err(new ExecutionError('timeout', 'timed out'));
       }
       const saved = result.truncated && (result.truncated.stdout || result.truncated.stderr);

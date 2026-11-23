@@ -32,10 +32,17 @@ async function call(DB, method, body, viewer = me) {
 }
 
 describe('settings', () => {
-  it('notifies of mentions and my threads by default, with no bells, and shows the agent\'s thinking', async () => {
+  it('notifies of mentions and my threads by default, with no bells, and hides the agent\'s thinking', async () => {
     const DB = d1({ people: PEOPLE, teams: TEAMS });
     assert.deepEqual((await call(DB, 'GET')).body, {
-      mentions: true, threads: true, bells: [], traces: true, channelTraces: {}, expert: false,
+      mentions: true,
+      threads: true,
+      bells: [],
+      traces: false,
+      channelTraces: {},
+      postingDeclined: [],
+      expert: false,
+      toured: false,
     });
     const url = new URL('https://opspile.test/api/me');
     const res = await api(new Request(url), { DB }, url, { viewer: me });
@@ -54,9 +61,11 @@ describe('settings', () => {
         { view: 'helix', sel: { kind: ['access', 'incident'], type: ['conversation'] }, not: {} },
         { view: '~personal', sel: {}, not: {} },
       ],
-      traces: true,
+      traces: false,
       channelTraces: {},
+      postingDeclined: [],
       expert: false,
+      toured: false,
     });
     r = await call(DB, 'PUT', { mentions: false });
     assert.deepEqual([r.body.mentions, r.body.bells.length], [false, 2]);
@@ -67,6 +76,10 @@ describe('settings', () => {
     r = await call(DB, 'PUT', { expert: true });
     assert.deepEqual([r.body.expert, r.body.threads], [true, false]);
     assert.equal((await call(DB, 'PUT', { expert: 'yes' })).status, 400);
+    // The tour: offered until taken or declined, then not again.
+    r = await call(DB, 'PUT', { toured: true });
+    assert.deepEqual([r.body.toured, r.body.expert], [true, true]);
+    assert.equal((await call(DB, 'PUT', { toured: 1 })).status, 400);
   });
 
   it('turns my threads on for those whose settings were stored before it existed', () => {
@@ -95,10 +108,14 @@ describe('settings', () => {
     assert.deepEqual(s.bells, [{ view: 'helix', sel: {}, not: {} }]);
   });
 
-  it('hide the agent\'s thinking everywhere, and per channel, where a channel\'s wins', async () => {
+  it('show the agent\'s thinking everywhere, and per channel, where a channel\'s wins', async () => {
     const DB = d1({ people: PEOPLE, teams: TEAMS });
-    let r = await call(DB, 'PUT', { traces: false });
-    assert.deepEqual([r.body.traces, r.body.channelTraces, r.body.mentions], [false, {}, true]);
+    let r = await call(DB, 'PUT', { traces: true });
+    assert.deepEqual([r.body.traces, r.body.channelTraces, r.body.mentions], [true, {}, true]);
+    // Kept as chosen: a later default does not change it.
+    assert.equal(withDefaults(me, { traces: true }).traces, true);
+    r = await call(DB, 'PUT', { traces: false });
+    assert.deepEqual([r.body.traces, r.body.channelTraces], [false, {}]);
     r = await call(DB, 'PUT', { channelTraces: { C1: true, '19:abc@thread.tacv2': false } });
     assert.deepEqual(r.body.channelTraces, { C1: true, '19:abc@thread.tacv2': false });
     // Only the channels named change; null lets one follow `traces` again.
@@ -117,6 +134,24 @@ describe('settings', () => {
       assert.equal((await call(DB, 'PUT', body)).status, 400, JSON.stringify(body).slice(0, 80));
     }
     assert.deepEqual((await call(DB, 'GET')).body, r.body);
+  });
+
+  it('keeps the channels where I declined to let the agent post, adding to them', async () => {
+    const DB = d1({ people: PEOPLE, teams: TEAMS });
+    let r = await call(DB, 'PUT', { postingDeclined: ['C1'] });
+    assert.deepEqual(r.body.postingDeclined, ['C1']);
+    r = await call(DB, 'PUT', { postingDeclined: ['19:abc@thread.tacv2', 'C1'] });
+    assert.deepEqual(r.body.postingDeclined, ['C1', '19:abc@thread.tacv2']);
+    assert.deepEqual((await call(DB, 'GET')).body.postingDeclined, r.body.postingDeclined);
+    for (const body of [
+      { postingDeclined: 'C1' },
+      { postingDeclined: ['a b'] },
+      { postingDeclined: [1] },
+    ]) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await call(DB, 'PUT', body)).status, 400, JSON.stringify(body));
+    }
+    assert.deepEqual(withDefaults(me, { postingDeclined: ['C1', 'C1', 7, 'a b'] }).postingDeclined, ['C1']);
   });
 
   it('is read-only, and someone else\'s are not shown, while viewing as them', async () => {

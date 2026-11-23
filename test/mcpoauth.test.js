@@ -168,7 +168,7 @@ describe('MCP servers that sign in with OAuth', () => {
     assert.equal(back.pathname, '/api/kb/mcp/oauth/callback');
     assert.equal(done.status, 302);
     const to = new URL(done.location, ORIGIN);
-    assert.equal(to.pathname, '/inbox/kb');
+    assert.equal(to.pathname, '/inbox/admin');
     assert.deepEqual(Object.fromEntries(to.searchParams), { repo: 'kb-team-helix', view: 'mcp', mcp_connected: String(server.id) });
 
     const listed = await call(admin, 'GET', '/api/kb/mcp?repo=kb-team-helix');

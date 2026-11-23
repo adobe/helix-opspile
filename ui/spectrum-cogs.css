@@ -75,6 +75,12 @@ label.check { display: flex; align-items: center; cursor: pointer; }
 .chart { position: relative; }
 .chart { min-height: calc(var(--spectrum-spacing-100) * 27 + var(--spectrum-spacing-75)); }
 .chart svg { display: block; overflow: visible; }
+/* A drawing a new answer replaced, fading out over the new one, and what the new one no longer
+   has, fading out where it was (ui/cogs.js, `morph`): nothing to point at. */
+.chart > svg.ghost, .treemap > svg.ghost { position: absolute; top: 0; left: 0; }
+.chart .ghost, .treemap .ghost { pointer-events: none; }
+/* Bars and tiles move by transforms (`morph`): their edges keep their width meanwhile. */
+.chart rect, .treemap rect { vector-effect: non-scaling-stroke; }
 
 
 .chart .hover { opacity: 0; }
@@ -361,7 +367,8 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
  * the same in both schemes' values. ui/cogs.js names the service of every dot and column
  * (`data-series`): Amazon Bedrock A, Workers AI B, AI Search C, Durable Objects D, Workers E,
  * Workers Logs F, R2 G, D1 H, Vectorize I, Queues J, Artifacts K, Browser Run L, Workers
- * Analytics Engine M, Cloudflare Access N; any other service is F, as Workers Logs.
+ * Analytics Engine M, Cloudflare Access N, Web Search API O; any other service is F, as Workers
+ * Logs.
  */
 .spectrum [data-series] { --s2-series: var(--spectrum-pink-700); }
 .spectrum [data-series="bedrock"] { --s2-series: var(--spectrum-indigo-1100); }
@@ -378,6 +385,7 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
 .spectrum [data-series="browser_run"] { --s2-series: var(--spectrum-cyan-1000); }
 .spectrum [data-series="analytics_engine"] { --s2-series: var(--spectrum-silver-1200); }
 .spectrum [data-series="zero_trust"] { --s2-series: var(--spectrum-turquoise-1000); }
+.spectrum [data-series="web_search"] { --s2-series: var(--spectrum-cinnamon-700); }
 /*
  * The customers or teams the chart and the treemap are by (`data-series` g0 to g9, biggest
  * first): the palette's first ten, A to J. The rest together, Other, are its M, silver.
@@ -491,9 +499,13 @@ details.card[open] > summary { margin-bottom: calc(var(--spectrum-spacing-50) + 
   letter-spacing: normal;
   text-transform: none;
   border-radius: var(--spectrum-corner-radius-75);
+  transition: margin-bottom var(--s2-out);
 }
 .spectrum details.card > summary::marker { color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum details.card[open] > summary { margin-bottom: var(--spectrum-spacing-200); }
+.spectrum details.card[open] > summary {
+  margin-bottom: var(--spectrum-spacing-200);
+  transition: margin-bottom var(--s2-pop-in); /* with the fold (spectrum.css) */
+}
 .spectrum .prices td { font-size: var(--spectrum-font-size-75); }
 .spectrum .prices a { font-weight: var(--spectrum-medium-font-weight); }
 

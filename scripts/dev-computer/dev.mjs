@@ -18,15 +18,16 @@
  *   npm run computer:dev              # http://localhost:8788
  *   PORT=9000 npm run computer:dev
  *
- * It starts `wrangler dev` and, once that answers, puts every object of the images into the
- * Worker's `IMAGES` bucket through the Worker itself (`PUT /images/<key>`), as
- * `npm run computer:images` puts them into a deployment's.
+ * It starts `wrangler dev` and, once that answers, puts the objects of the images its
+ * `IMAGES` bucket lacks there through the Worker itself (`syncImages`, scripts/dev-computer/
+ * check.mjs), as `npm run computer:images` puts them into a deployment's.
  */
 
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build, objectsOf } from '../computer-images.mjs';
+import { syncImages } from './check.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const port = process.env.PORT || '8788';
@@ -56,14 +57,9 @@ async function ready() {
   throw new Error(`wrangler dev did not answer on ${origin}`);
 }
 
-const objects = objectsOf(await build());
+const built = await build();
 await ready();
-for (const o of objects) {
-  // eslint-disable-next-line no-await-in-loop
-  const res = await fetch(`${origin}/images/${o.key}`, { method: 'PUT', body: o.body });
-  if (!res.ok) {
-    throw new Error(`could not put ${o.key}: ${res.status}`);
-  }
-}
-console.log(`computer:dev: ${objects.length} image objects are in the local bucket; try\n`
-  + `  curl ${origin} -d '{"command":"uname -a; ls /usr/bin | wc -l","runtime":"slicc-kernel"}'`);
+await syncImages(origin, built, { token: process.env.COMPUTER_TOKEN, log: () => {} });
+console.log(`computer:dev: ${objectsOf(built).length} image objects are in the local bucket; try\n`
+  + `  curl ${origin} -d '{"command":"uname -a; ls /usr/bin | wc -l"}'\n`
+  + `  npm run computer:check -- ${origin}`);

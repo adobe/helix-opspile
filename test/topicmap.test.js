@@ -15,7 +15,7 @@ import { describe, it } from 'node:test';
 import { api } from '../src/api.js';
 import {
   buildTopicMap, centered, coveredBy, KEEP, kmeans, latestTopicMap, MIN_THREADS, NAMER_ALL,
-  parseNames, productKey, productsOf, sweepTopicMap, techIndex, topicCount,
+  areaTopics, shares, parseNames, productKey, productsOf, sweepTopicMap, techIndex, topicCount,
 } from '../src/topicmap.js';
 import { threadVectorId } from '../src/vectors.js';
 import { d1 } from './d1.js';
@@ -79,15 +79,20 @@ async function setup({ perGroup = 10 } = {}) {
         org: group.org,
         title: `${group.words} ${i}`,
         vector: near(g, i),
-        topics: g === 0 && i % 2 ? '{"cdn":0.93}' : null,
+        // Each group in an area of its own, the checkout threads in none.
+        topics: [JSON.stringify({ cdn: 0.93 }), JSON.stringify({ auth: 0.9 }), null][g],
         label: 'question',
       });
       if (g === 0) {
-        // The cache threads name a CDN the tech stack has, one it does not, and generic words.
-        DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value, confidence)
-          VALUES (?, 'clairic', 'product', ?, 0.9)`).run(key, i % 2 ? 'Akamai' : 'Contentstack');
-        DB.sqlite.prepare(`INSERT INTO facts (thread, source, field, value, confidence)
-          VALUES (?, 'clairic', 'product', 'CDN', 0.9)`).run(key);
+        // The cache threads: Clef says half are about Akamai, the other half show Fastly but are
+        // not about it; GitHub, on a label that was never asked "about", counts as it shows.
+        DB.sqlite.prepare("UPDATE labels SET about = '{}' WHERE thread = ?").run(key);
+        DB.sqlite.prepare('INSERT INTO thread_tech (thread, tech, p, about) VALUES (?, ?, 0.9, ?)')
+          .run(key, i % 2 ? 'akamai' : 'fastly', i % 2 ? 0.9 : null);
+        if (i === 2) {
+          DB.sqlite.prepare('UPDATE labels SET about = NULL WHERE thread = ?').run(key);
+          DB.sqlite.prepare("INSERT INTO thread_tech (thread, tech, p) VALUES (?, 'github', 1)").run(key);
+        }
       }
       post(key, 'a', group.staff, 1);
       post(key, 'b', group.staff, 1);
@@ -293,6 +298,9 @@ describe('topic map: building', () => {
     assert.equal(built.k, 3);
     const { map } = built;
     assert.deepEqual(map.topics.map((t) => t.size), [10, 10, 10]);
+    // Found within their areas, the threads in none last.
+    assert.deepEqual(map.topics.map((t) => t.area), ['cdn', 'auth', null]);
+    assert.equal(map.version, 2);
     // Each topic is one group's threads, the most typical first.
     for (const topic of map.topics) {
       const own = map.threads.filter((t) => t.topic === topic.id);
@@ -307,29 +315,76 @@ describe('topic map: building', () => {
     assert.ok(env.calls.ai.every((u) => u.startsWith('Threads, the most typical first:\n- ')));
     // Not the short, the meeting, the alert, the unvectorized, nor the one CONTENT lacks.
     assert.ok(!map.threads.some((t) => /short|meet|alert|novec|gone/.test(t.key)));
-    // Only Adobe people, with their messages; the customers' and the tags as Clef has them.
-    assert.deepEqual(map.people, { 1: 'Ada', 2: 'Bo' });
+    // Everyone who posted: Adobe's people by the team they are on, the others by their customer.
+    assert.deepEqual(map.people, { 1: 'Ada', 2: 'Bo', 3: 'Cy' });
     const one = map.threads.find((t) => t.key === 'slack:E1:C1:0.1');
     assert.deepEqual(one.staff, { 1: 2 });
+    assert.deepEqual(one.customers, { 3: 1 });
+    assert.deepEqual(map.peopleOf, {
+      1: { staff: true, team: 'helix' }, 2: { staff: true, team: 'helix' }, 3: { staff: false, org: 'acme' },
+    });
     assert.deepEqual(one.tags, ['cdn']);
-    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').tags, []);
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:2.2').tags, []);
     assert.deepEqual(map.orgs, {
       acme: { name: 'ACME', type: 'customer' }, globex: { name: 'Globex', type: 'partner' },
     });
     assert.equal(map.tags.cdn, 'Caching and delivery');
-    // The products: Akamai is the tech stack's (migration 0043), Contentstack a gap, CDN generic.
+    // The products: what Clef says a thread is about, or shows where it was not asked that.
     assert.deepEqual(map.products, {
       'tech:akamai': { name: 'Akamai', tech: 'akamai', product: 'CDN' },
-      'new:contentstack': { name: 'Contentstack', tech: null, product: null },
+      'tech:fastly': { name: 'Fastly', tech: 'fastly', product: 'CDN' },
+      'tech:github': { name: 'GitHub', tech: 'github', product: 'Code hosting' },
     });
     assert.deepEqual(one.products, ['tech:akamai']);
-    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').products, ['new:contentstack']);
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').products.sort(), ['tech:fastly', 'tech:github']);
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.4').products, []);
     assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:1.2').products, []);
     assert.equal(map.built_by, 'Ada');
 
     const latest = await latestTopicMap(env);
     assert.equal(latest.id, built.id);
     assert.deepEqual(latest.map, map);
+  });
+
+  it('finds an area\'s topics, and dissolves one that is one customer\'s, team\'s or product\'s', () => {
+    // Two directions in one area: one shared by three customers, the other one customer's.
+    const X = [];
+    const orgs = [];
+    for (let i = 0; i < 24; i += 1) {
+      X.push(Float32Array.from(near(i < 12 ? 0 : 1, i)));
+      orgs.push(i < 12 ? ['acme', 'globex', 'initech'][i % 3] : 'hooli');
+    }
+    const unit = (v) => {
+      const n = Math.hypot(...v);
+      return v.map((x) => x / n);
+    };
+    const idx = X.map((_, i) => i);
+    const vectors = X.map(unit);
+    const kept = areaTopics(vectors, idx, { customer: orgs.map((o) => [o]) });
+    // The one customer's topic went: its threads are in the one left.
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0].members.length, 24);
+    // Without the customers, both directions stay.
+    assert.equal(areaTopics(vectors, idx, {}).length, 2);
+    // Everywhere is no concentration: a team on every thread splits nothing.
+    assert.equal(areaTopics(vectors, idx, { team: idx.map(() => ['helix']) }).length, 2);
+    // An area that could not split says what it is concentrated on, if anything.
+    assert.equal(kept[0].concentrated, null);
+    // Against all the map's threads: a customer on a quarter of them, all of an area's, is; the
+    // team on 70% of them, on all of an area's, is not (it is everywhere).
+    const twelve = idx.slice(0, 12);
+    const overall = shares({ customer: idx.map((i) => [i < 6 ? 'acme' : 'other']) }, idx);
+    const one = areaTopics(vectors, twelve, { customer: idx.map(() => ['acme']) }, { overall });
+    assert.deepEqual([one.length, one[0].concentrated], [1, 'customer:acme']);
+    const team = idx.map(() => ['helix']);
+    const everywhere = shares({ team: idx.map((i) => [i < 17 ? 'helix' : 'cdn']) }, idx);
+    const [helix] = areaTopics(vectors, twelve, { team }, { overall: everywhere });
+    assert.equal(helix.concentrated, null);
+    // At most `max` topics.
+    assert.equal(areaTopics(vectors, idx, {}, { max: 1 }).length, 1);
+    // A thread with no customer is nobody's: no `customer:null`.
+    const none = areaTopics(vectors, idx, { customer: idx.map((i) => (i < 12 ? [] : ['hooli'])) });
+    assert.ok(none.every((t) => t.concentrated !== 'customer:null'));
   });
 
   it('names every topic in one call, from titles, concerns and products, and fixes what it misses', async () => {
@@ -345,8 +400,8 @@ describe('topic map: building', () => {
     assert.equal(env.calls.all.length, 1);
     const [user] = env.calls.all;
     assert.match(user, /^Topic 0 \(10 titles shown\):\n- /);
-    assert.match(user, /Concerns: Caching and delivery \(5\)/);
-    assert.match(user, /Products: (?=.*Akamai \(CDN\) \(5\))(?=.*Contentstack \(5\))/);
+    assert.match(user, /Concerns: Caching and delivery \(10\)/);
+    assert.match(user, /Products: (?=.*Akamai \(CDN\) \(5\))(?=.*Fastly \(CDN\) \(1\))/);
     const topicOf = (word) => map.threads.find((t) => t.title.startsWith(word)).topic;
     const label = (word) => map.topics[topicOf(word)].label;
     // Its name, in sentence case; the vague one and the missing one named on their own.
@@ -397,6 +452,15 @@ describe('topic map: building', () => {
       + '{"id":2,"name":"Content delivery issues"},{"id":3,"name":"x"},{"id":9,"name":"Out of range"}] done', 4);
     assert.deepEqual(names.map((n) => n && n.label), ['CDN purge', null, null, null]);
     assert.deepEqual(parseNames('no json', 2), [null, null]);
+  });
+
+  it('drops a name the model garbled, and a mangled theme', () => {
+    const names = parseNames(JSON.stringify([
+      { id: 0, name: 'Kauf Rear Kauf stash Kauf', theme: 'Customers need purges to work.' },
+      { id: 1, name: 'CDN purge\uFF5C', theme: 'Customers need purges to work.' },
+      { id: 2, name: 'CDN purge and stale cache', theme: 'Customers need partic\uFFFDadier.' },
+    ]), 3);
+    assert.deepEqual(names, [null, null, { label: 'CDN purge and stale cache', theme: '' }]);
   });
 
   it('needs enough threads, and the index and Workers AI', async () => {

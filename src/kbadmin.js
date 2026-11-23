@@ -14,7 +14,9 @@ import {
   agentChannels, agentStates, setAgent, setTeamDefault, teamDefault,
 } from './agent/enabled.js';
 import { writeKnowledge } from './agent/kbwrite.js';
-import { isEntry, SYSTEM_PROMPT } from './agent/okf.js';
+import {
+  isEntry, scalar, splitFrontmatter, SYSTEM_PROMPT,
+} from './agent/okf.js';
 import {
   commitLog, countFiles, listFiles, readBlobs, readText,
 } from './agent/repos.js';
@@ -24,16 +26,19 @@ import { access, mayEdit, mayRead } from './kbaccess.js';
 import { isAdmin, managesTeam } from './review.js';
 import { toolAdmin } from './tooladmin.js';
 import { extractionAdmin } from './extractadmin.js';
+import { repoName } from './kb.js';
+import { parseStack, STACK_PATH, stackView } from './stack.js';
+import { resolveTech, techMoves } from './catalog.js';
 
 /**
- * The knowledge-base editor's API (`/inbox/kb`). The admin team and team managers list
- * the knowledge bases, list and read their files, and change them as the signed-in person
- * (team managers: those of their teams and of the customers their teams own); the members of
- * a team read its knowledge base and those of the customers it owns, and see their agents,
- * without changing them (src/kbaccess.js). Writes go through the same path as the agents'
- * (OKF checks, indexes and log by code, retry on a concurrent push), are committed with the
- * person as author and stamped `human:<email>`, and may also change `systemprompt.md`, which
- * agents cannot.
+ * The agents' API (their sections of the Teams and Customers pages, ui/agent.js). The admin
+ * team and team managers list the knowledge bases, list and read their files, and change them
+ * as the signed-in person (team managers: those of their teams and of the customers their
+ * teams own); the members of a team read its knowledge base and those of the customers it
+ * owns, and see their agents, without changing them (src/kbaccess.js). Writes go through the
+ * same path as the agents' (OKF checks, indexes and log by code, retry on a concurrent push),
+ * are committed with the person as author and stamped `human:<email>`, and may also change
+ * `systemprompt.md`, which agents cannot.
  */
 
 const MAX_MESSAGE = 200;
@@ -149,8 +154,8 @@ async function toolCounts(env) {
 
 /**
  * GET /api/kb: every knowledge base `me` may read, teams first, with the team's or customer's
- * name, its entries (null until counted), how many channels with agents and tools it has, and
- * whether `me` may change it (`may`).
+ * name (a customer's display name, else its slug), its entries (null until counted), how many
+ * channels with agents and tools it has, and whether `me` may change it (`may`).
  */
 async function listBases(env, me) {
   const [agents, tools, may, { results }] = await Promise.all([
@@ -158,8 +163,11 @@ async function listBases(env, me) {
     toolCounts(env),
     access(env, me),
     env.DB.prepare(`SELECT k.repo, k.kind, k.slug, k.created_at, k.entries,
-        t.name AS team_name
+        t.name AS team_name, o.name AS org_name
       FROM knowledge_bases k LEFT JOIN teams t ON k.kind = 'team' AND t.slug = k.slug
+      LEFT JOIN orgs o ON k.kind = 'org' AND o.slug = k.slug
+      -- A merged customer's is the one it was merged into now (src/orgmerge.js).
+      WHERE NOT (k.kind = 'org' AND k.slug IN (SELECT slug FROM org_merges))
       ORDER BY CASE k.kind WHEN 'team' THEN 0 ELSE 1 END, k.slug`).all(),
   ]);
   return json({
@@ -168,7 +176,7 @@ async function listBases(env, me) {
       repo: r.repo,
       kind: r.kind,
       slug: r.slug,
-      name: r.team_name || r.slug,
+      name: r.team_name || r.org_name || r.slug,
       created_at: r.created_at,
       entries: r.entries ?? null,
       agents: agents.size(`${r.kind}:${r.slug}`),
@@ -286,8 +294,16 @@ async function change(env, me, body, remove) {
   if (res.unchanged) {
     return json({ ok: true, unchanged: true });
   }
-  const now = remove ? null : await readText(env, body.repo, path).catch(() => null);
-  return json({ ok: true, commit: res.commit, hash: now && !now.error ? now.hash : null });
+  const now = remove ? null
+    : await readText(env, body.repo, path, { full: true }).catch(() => null);
+  const saved = now && !now.error ? now : null;
+  // A stack drawing's Tech set from the catalog (src/stacktech.js): what was saved is not what
+  // was typed, so the editor is told, with the saved text.
+  const filled = res.filled?.length
+    ? { filled: res.filled, content: saved ? saved.text : null } : {};
+  return json({
+    ok: true, commit: res.commit, hash: saved ? saved.hash : null, ...filled,
+  });
 }
 
 // ---- thread agents ----------------------------------------------------------------------
@@ -383,6 +399,44 @@ async function switchAgent(env, me, body) {
   return json({ ok: true, channel, agent });
 }
 
+/**
+ * GET /api/kb/stack?org=: the customer's stack drawing (`stack.md` of its knowledge base,
+ * src/stack.js) as the inbox draws it, `{ org, repo, path, hash, drawing, by, at, may }`;
+ * `drawing` is null while it has none, `error` says why one cannot be drawn. For whoever may
+ * read the knowledge base; anyone else, or a customer without one, gets a 404.
+ */
+async function stack(env, me, org) {
+  const repo = repoName('org', String(org || ''));
+  const base = repo && await knownRepo(env, repo);
+  if (!base || !await mayRead(env, me, base)) {
+    return json({ error: 'no such knowledge base' }, 404);
+  }
+  const out = {
+    org: base.slug, repo, path: STACK_PATH, may: await mayEdit(env, me, base),
+  };
+  const file = env.ARTIFACTS ? await readText(env, repo, STACK_PATH, { full: true })
+    .catch(() => ({ error: 'unreadable' })) : { error: 'knowledge bases are not configured' };
+  if (file.error) {
+    return json({ ...out, drawing: null });
+  }
+  const parsed = parseStack(file.text);
+  if (!parsed.error) {
+    // A part named by an id from before the catalog is the technology that id moved to.
+    const moves = await techMoves(env);
+    parsed.parts = parsed.parts.map((x) => ({ ...x, tech: resolveTech(x.tech, moves) }));
+  }
+  // `generated: { by: …, at: … }`, stamped by every write (src/agent/okf.js stampGenerated).
+  const fm = splitFrontmatter(file.text);
+  const stamp = /\{\s*by:\s*([^,}]+),\s*at:\s*([^}\s]+)\s*\}/.exec((fm && scalar(fm.yaml, 'generated')) || '');
+  return json({
+    ...out,
+    hash: file.hash,
+    by: stamp ? stamp[1].trim() : null,
+    at: stamp ? stamp[2].trim() : null,
+    ...(parsed.error ? { drawing: null, error: parsed.error } : { drawing: stackView(parsed) }),
+  });
+}
+
 /** Routes `/api/kb*` (see src/kbaccess.js). Returns null for other paths. */
 export async function kbAdmin(request, env, url, me) {
   if (url.pathname === '/api/kb' && request.method === 'GET') {
@@ -405,6 +459,9 @@ export async function kbAdmin(request, env, url, me) {
   const extraction = await extractionAdmin(request, env, url, me);
   if (extraction) {
     return extraction;
+  }
+  if (url.pathname === '/api/kb/stack' && request.method === 'GET') {
+    return stack(env, me, url.searchParams.get('org'));
   }
   if (url.pathname === '/api/kb/channels' && request.method === 'GET') {
     const base = await knownRepo(env, url.searchParams.get('repo'));

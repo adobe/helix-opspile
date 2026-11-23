@@ -15,6 +15,7 @@ import {
 } from './deliver.js';
 import { mentionedOutside } from './members.js';
 import { modelProblem } from './model.js';
+import { rearmIdle } from './wakeups.js';
 
 /**
  * How a thread agent is told about messages. `agent` is the ThreadAgent (its `env`, `ctx`,
@@ -27,7 +28,9 @@ import { modelProblem } from './model.js';
 export const IDLE_SECONDS = 24 * 60 * 60;
 
 export const IDLE_PROMPT = 'Nothing has been posted in the thread for a day. Look at where it stands:'
-  + ' if something worth remembering came out of it, put it into the knowledge bases; if the'
+  + ' if something worth remembering came out of it, put it into the knowledge bases, and if it'
+  + ' showed anything about the customer\'s stack that their stack drawing lacks or has wrong,'
+  + ' draw it again; if the'
   + ' team owes the customer an answer or a follow-up, make sure the draft has it; otherwise'
   + ' change nothing.';
 
@@ -63,8 +66,12 @@ export async function verdictsOf(agent, messages) {
   return out;
 }
 
-/** Wakes the agent a day after message `mark`, unless another one comes first. */
+/**
+ * Wakes the agent a day after message `mark`, unless another one comes first; and counts the
+ * wake-ups it set with wakeup_after_idle from `mark` again (src/agent/wakeups.js).
+ */
 export async function armIdle(agent, mark) {
+  await rearmIdle(agent, mark);
   const previous = await agent.ctx.storage.get('idle');
   if (previous) {
     await agent.cancelSchedule(previous).catch(() => false);

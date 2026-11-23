@@ -22,10 +22,14 @@ import { json } from './http.js';
  *   inbox (its slug) or the personal view (`~personal`), with the filters set on it, picked
  *   (`sel`) and excluded (`not`), by facet: `{ view, sel: { kind: ['incident'] }, not: {} }`.
  * - `traces`: whether the thread agent's thinking shows under a thread (what it is doing while
- *   it works, its note once done); on unless they turn it off.
+ *   it works, its note once done); off unless they turn it on.
  * - `channelTraces`: the same, by channel id, where it differs: a channel's wins over `traces`.
+ * - `postingDeclined`: the channels, by id, where they said no when the inbox offered to let
+ *   the agent post its replies itself (src/postoffer.js): it does not ask them there again.
  * - `expert`: the personal view as the expert view, with every filter and each thread's status,
  *   people and reactions, instead of the simple one; off unless they turn it on.
+ * - `toured`: whether the inbox has offered them its tour (ui/tour.js) and they took it or said
+ *   no thanks: it offers it once, and your menu's Show me around has it again.
  *
  * The browser shows the notifications and the agent's thinking (ui/inbox.js): the server keeps
  * the settings only.
@@ -34,9 +38,11 @@ export const DEFAULTS = Object.freeze({
   mentions: true,
   threads: true,
   bells: Object.freeze([]),
-  traces: true,
+  traces: false,
   channelTraces: Object.freeze({}),
+  postingDeclined: Object.freeze([]),
   expert: false,
+  toured: false,
 });
 
 export const PERSONAL = '~personal';
@@ -115,13 +121,17 @@ export function withDefaults(me, stored) {
       channelTraces[id] = on;
     }
   }
+  const postingDeclined = [...new Set((Array.isArray(s.postingDeclined) ? s.postingDeclined : [])
+    .filter((id) => typeof id === 'string' && CHANNEL.test(id)))].slice(0, MAX_CHANNELS);
   return {
     mentions: typeof s.mentions === 'boolean' ? s.mentions : DEFAULTS.mentions,
     threads: typeof s.threads === 'boolean' ? s.threads : DEFAULTS.threads,
     bells,
     traces: typeof s.traces === 'boolean' ? s.traces : DEFAULTS.traces,
     channelTraces,
+    postingDeclined,
     expert: typeof s.expert === 'boolean' ? s.expert : DEFAULTS.expert,
+    toured: typeof s.toured === 'boolean' ? s.toured : DEFAULTS.toured,
   };
 }
 
@@ -140,16 +150,17 @@ export async function readSettings(env, me) {
 
 /**
  * The settings `now` with what `body` changes (`mentions`, `threads`, `bells`, `traces`,
- * `channelTraces`, `expert`; `bells` replaces the list, `channelTraces` changes the channels it
- * names, and `null` lets a channel follow `traces` again): `{ settings }`, or `{ error }` when
- * the body is not settings.
+ * `channelTraces`, `postingDeclined`, `expert`, `toured`; `bells` replaces the list,
+ * `channelTraces` changes the channels it names, and `null` lets a channel follow `traces` again;
+ * `postingDeclined` adds the channels it lists): `{ settings }`, or `{ error }` when the body is
+ * not settings.
  */
 export function mergeSettings(me, now, body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return { error: 'expected a JSON object' };
   }
   const next = { ...now };
-  for (const key of ['mentions', 'threads', 'expert']) {
+  for (const key of ['mentions', 'threads', 'expert', 'toured']) {
     if (key in body) {
       if (typeof body[key] !== 'boolean') {
         return { error: `\`${key}\` is true or false` };
@@ -192,6 +203,17 @@ export function mergeSettings(me, now, body) {
       return { error: `\`channelTraces\` has at most ${MAX_CHANNELS} channels` };
     }
     next.channelTraces = merged;
+  }
+  if ('postingDeclined' in body) {
+    const add = body.postingDeclined;
+    if (!Array.isArray(add) || !add.every((id) => typeof id === 'string' && CHANNEL.test(id))) {
+      return { error: '`postingDeclined` is a list of channel ids' };
+    }
+    const merged = [...new Set([...now.postingDeclined, ...add])];
+    if (merged.length > MAX_CHANNELS) {
+      return { error: `\`postingDeclined\` has at most ${MAX_CHANNELS} channels` };
+    }
+    next.postingDeclined = merged;
   }
   return { settings: withDefaults(me, next) };
 }

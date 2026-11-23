@@ -13,6 +13,7 @@
 import { cogsReport } from './cogs/report.js';
 import { rollupCogs } from './cogs/rollup.js';
 import { buildTopicMap, latestTopicMap } from './topicmap.js';
+import { queueRelabel } from './label.js';
 import { PLATFORMS } from './platforms.js';
 import { json } from './http.js';
 import { likePattern } from './like.js';
@@ -27,16 +28,38 @@ import {
 } from './review.js';
 import { classify, slug as toSlug, UNASSIGNED } from './rules.js';
 import {
-  isHolding, share, sharesByChannel, unshare,
+  isHolding, share, sharesByChannel, sharesOf, unshare,
 } from './shares.js';
 import { syncAccessQuietly } from './accesssync.js';
-import { faviconProxy, findIcons, orgDomain } from './favicons.js';
+import { faviconProxy, findIcons } from './favicons.js';
+import {
+  closeMergeRequest, dismissPair, forgetFacts, listMergeRequests, mailDomains, mergeOrgs,
+  openMergeCount, orgDuplicates, requestMerge, unmergeOrg,
+} from './orgmerge.js';
 import {
   claimRequest, closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf,
   recordOutcome,
   reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
+import { unassignedSuggestions } from './orgassign.js';
+import {
+  dismissGroup, teamGroup, teamGroups, wizardRules,
+} from './teamwizard.js';
+import {
+  getBot, listBots, setBot, unreviewedCount,
+} from './ourbots.js';
+import { followable, setTeamFollow, teamFollows } from './follows.js';
+import { portalAuthor, portalBound, portalCall } from './portalsource.js';
+import { openConflictCount, resolveConflict, techConflicts } from './techconflicts.js';
+import { ruleConflicts, settlement } from './ruleconflicts.js';
+import {
+  isRuleShare, knownChannels, syncFollowRules, wantedFollows,
+} from './followrules.js';
+import {
+  getPortalRequest, listPortalRequests, portalOpenCount, recordDeclined, recordOpened,
+  reopenDeclined,
+} from './portalrequests.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -45,8 +68,13 @@ import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
  *   email), remove, promote to team manager or demote;
  * - rules: the regular-expression rules that file channels under a team, an org or a kind
  *   (`^aem-` style prefixes, Teams team names, Slack Connect teams), and manual assignments
- *   of one channel (a `channel_id` rule with priority 10);
+ *   of one channel (a `channel_id` rule with priority 10); follow rules, which share the
+ *   channels they match with a team (src/followrules.js); and the conflicts between team
+ *   rules, which the admin team settles under Requests (src/ruleconflicts.js);
  * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments;
+ * - bots: which of the bots the inbox knows are Adobe's, and so count as staff, and which only
+ *   post alerts, each with its latest messages (src/ourbots.js); a bot nobody said either of is
+ *   a request, under Requests;
  * - shared channels (migration 0024): a channel is filed under one team, its first, and can be
  *   shared with more. Adding a team to a channel moves it only when the admin team (or nobody)
  *   holds it; a channel another team holds is shared with the new one instead.
@@ -57,18 +85,29 @@ import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
  * request, migration 0028, src/requests.js); the admin team confirms the request, which runs
  * the same assignment it makes by hand, or declines it. Everything else is for the admin team.
  *
+ * Customers ask too, from the customer portal (src/portalrequests.js): a lobby there asks for
+ * a channel. The admin team opens one (`portal/open`: the portal makes the channel, and it is
+ * filed under a team and a customer by hand, shared with more teams, and gets its welcome
+ * message) or declines (`portal/decline`); a team's managers open one for their team when it
+ * follows a technology the lobby picked.
+ *
  * Every rule change can be tried first (`dryRun`): the answer lists the channels that would
  * move. Applied, the moves go to the NORMALIZE queue as `refile` jobs (src/refile.js).
  *
  * A team's page also suggests channels the admin team holds that the team might want: where
- * its members are active, or where Clef says they belong (src/suggest.js).
+ * its members are active, or where Clef says they belong (src/suggest.js). And the team wizard
+ * suggests teams: the admin team's channels grouped by the prefix of their names, with the
+ * people in most of them (src/teamwizard.js); `team-wizard` makes one a team, its members and
+ * its rules in one go, or gives a team that exists the rules.
  */
 
 export const MANUAL_PRIORITY = 10;
+// Above every rule id D1 gives: the ids of rules planned but not saved yet.
+const MAX_RULE_ID = Number.MAX_SAFE_INTEGER - 1000;
 const MANUAL_NOTE = 'manual assignment';
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const FIELDS = ['name', 'group_name', 'connected', 'channel_id'];
-const TARGETS = ['team', 'org', 'kind'];
+const TARGETS = ['team', 'org', 'kind', 'follow'];
 const KINDS = ['channel', 'alert', 'ignore'];
 const TYPES = ['customer', 'partner', 'vendor', 'internal'];
 const ICON = /^(https:\/\/\S{1,500}|[a-z0-9.-]+\.[a-z]{2,})$/i;
@@ -90,7 +129,7 @@ async function rows(env, sql, ...args) {
 const CHANNEL_FIELDS = [['name', 'name'], ['groupName', 'group_name'], ['orgName', 'org_name'], ['org', 'org'], ['channelId', 'channel_id']];
 
 /** A channel's platform as the admin pages name it. */
-const platformLabel = (c) => ({ teams: 'Teams', discord: 'Discord' }[c.source] || `Slack${c.shared ? ' Connect' : ''}`);
+const platformLabel = (c) => ({ teams: 'Teams', discord: 'Discord', portal: 'Portal' }[c.source] || `Slack${c.shared ? ' Connect' : ''}`);
 
 /**
  * A channel's name as the admin pages show it: on Teams with its team (`acme-support › Main`),
@@ -165,9 +204,9 @@ function matchScore(c, needle) {
 }
 
 /**
- * Every channel opspile has seen, with where its threads are filed, its manual rules and
- * Clef's suggestion. With `q`, only the channels every word of it matches (`channelMatch`),
- * the ones whose name or Teams team matches first.
+ * Every channel opspile has seen but the archived ones, with where its threads are filed, its
+ * manual rules and Clef's suggestion. With `q`, only the channels every word of it matches
+ * (`channelMatch`), the ones whose name or Teams team matches first.
  */
 async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}) {
   const filed = await rows(env, `SELECT c.source, c.tenant, c.channel_id, c.name, c.group_name, c.shared,
@@ -176,11 +215,19 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
     FROM channels c LEFT JOIN threads t ON t.source = c.source AND t.tenant = c.tenant
       AND t.channel_id = c.channel_id
     LEFT JOIN orgs o ON o.slug = t.org
+    WHERE c.archived_at IS NULL
     GROUP BY c.source, c.tenant, c.channel_id, t.team, t.org, t.kind
     ORDER BY latest DESC`);
   const labels = new Map((await rows(env, 'SELECT * FROM channel_labels'))
     .map((l) => [`${l.source}:${l.tenant}:${l.channel_id}`, l]));
   const shares = await sharesByChannel(env);
+  // The shares a follow rule made (src/followrules.js): the rule's, not taken away by hand.
+  const byRule = new Map();
+  for (const r of await rows(env, `SELECT source, channel_id, team FROM channel_teams
+    WHERE added_by LIKE 'rule:%'`)) {
+    const k = `${r.source}:${r.channel_id}`;
+    byRule.set(k, [...(byRule.get(k) || []), r.team]);
+  }
   const needle = q.toLowerCase().trim();
   const words = searchWords(needle);
   const teamNames = words.length
@@ -206,6 +253,7 @@ async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}
         shared: Boolean(c.shared),
         team: c.team,
         sharedWith,
+        followedByRule: (byRule.get(`${c.source}:${c.channel_id}`) || []).filter((t) => t !== c.team),
         org: c.org,
         orgName: c.org_name || null,
         kind: c.kind,
@@ -263,7 +311,10 @@ async function ruleFrom(env, body) {
   if (target === 'kind' && !KINDS.includes(value)) {
     return { error: `a kind is one of ${KINDS.join(', ')}` };
   }
-  if (target === 'team' && !template) {
+  if (target === 'follow' && template) {
+    return { error: 'a follow rule names its team' };
+  }
+  if ((target === 'team' || target === 'follow') && !template) {
     value = toSlug(value);
     if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(value).first()) {
       return { error: `there is no team ${value}; create it first` };
@@ -279,14 +330,26 @@ async function ruleFrom(env, body) {
   };
 }
 
-/** Saves a rule change, or with `dryRun` only says what it would move. */
-async function applyRules(env, me, { next, dryRun, write }) {
-  const moves = await plan(env, next);
+/**
+ * Saves a rule change, or with `dryRun` only says what it would move. `extra` goes with the
+ * answer, either way. The follow rules' shares follow the change (src/followrules.js): a failure
+ * there is left to the cron, since the rules are saved. `only` keeps the moves a change is about
+ * (a merge: the merged org's channels), and leaves the channels filed otherwise than the rules
+ * say for some other reason where they are.
+ */
+async function applyRules(env, me, {
+  next, dryRun, write, extra = {}, only = null,
+}) {
+  const moves = (await plan(env, next)).filter(only || (() => true));
   if (dryRun) {
-    return json({ dryRun: true, moves });
+    return json({ dryRun: true, moves, ...extra });
   }
   const saved = await write();
   const jobs = await enqueueMoves(env, moves);
+  const follows = await syncFollowRules(env).catch((e) => {
+    console.error(JSON.stringify({ route: 'admin', rules: 'follows not synced', error: e.message }));
+    return { error: e.message };
+  });
   // In the team's inbox now: nothing left to ask for. The rule is saved and its moves are queued,
   // so a failure here must not answer as if it were not; the request stays open, and says so.
   await settleMoved(env, me, moves).catch((e) => {
@@ -304,7 +367,7 @@ async function applyRules(env, me, { next, dryRun, write }) {
     route: 'admin', rules: 'changed', by: me.id, moves: moves.length, jobs,
   }));
   return json({
-    ok: true, ...saved, moves, jobs,
+    ok: true, ...saved, moves, jobs, follows, ...extra,
   });
 }
 
@@ -422,6 +485,13 @@ async function unshareChannel(env, me, body) {
   if (!channelId || !slug || !source) {
     return bad('give a source, a channelId and a team');
   }
+  const row = await env.DB.prepare(`SELECT added_by FROM channel_teams WHERE source = ?
+    AND channel_id = ? AND team = ?`).bind(source, channelId, slug).first();
+  if (row && isRuleShare(row.added_by)) {
+    return json({
+      error: `a follow rule shares this channel with this team (${row.added_by}): change the rule on the team's page`,
+    }, 409);
+  }
   const removed = await unshare(env, { source, channelId, team: slug });
   if (!removed) {
     return json({ error: 'this channel is not shared with this team' }, 404);
@@ -498,6 +568,52 @@ async function assign(env, me, body, remove) {
   return res;
 }
 
+/**
+ * POST /api/admin/swap `{ source, channelId, team }`: a channel shared with `team` is filed
+ * under it instead (a manual assignment, as `assign` with `move` makes, so its folders,
+ * knowledge base and agents move), and the team it was filed under keeps it in its inbox,
+ * shared. For the admin team, and for whoever manages both teams. A channel the admin team
+ * (or nobody) held is moved only: those teams hold, they do not share.
+ */
+async function swapChannel(env, me, body) {
+  const channelId = clean(body.channelId);
+  const slug = clean(body.team);
+  const source = clean(body.source);
+  if (!channelId || !slug || !source) {
+    return bad('give a source, a channelId and a team');
+  }
+  if (!(await sharesOf(env, source, channelId)).includes(slug)) {
+    return json({ error: 'this channel is not shared with this team' }, 404);
+  }
+  const home = await homeOf(env, await loadRules(env), source, channelId);
+  const from = home.team;
+  if (from === slug) {
+    return json({ error: 'this channel is filed under this team already' }, 409);
+  }
+  if (!isAdmin(me) && !(managesTeam(me, slug) && managesTeam(me, from))) {
+    return json({ error: 'only the admin team, or a manager of both teams, may swap them' }, 403);
+  }
+  const res = await assign(env, me, {
+    target: 'team', source, channelId, value: slug, move: true,
+  }, false);
+  if (!res.ok) {
+    return res;
+  }
+  const done = await res.json();
+  const shared = !isHolding(from) && await share(env, {
+    source, channelId, team: from, by: me.email || String(me.id),
+  });
+  console.log(JSON.stringify({
+    route: 'admin', share: 'swapped', by: me.id, team: slug, from, moves: done.moves.length,
+  }));
+  return json({
+    ...done,
+    swapped: {
+      source, channelId, team: slug, from, shared: Boolean(shared),
+    },
+  });
+}
+
 // ---- assignment requests ----------------------------------------------------------------
 
 /**
@@ -507,14 +623,120 @@ async function assign(env, me, body, remove) {
  */
 async function requestList(env, me, { status, count }) {
   const teams = isAdmin(me) ? null : managedTeams(me);
-  const open = await openCount(env, teams);
+  // The customers waiting in the portal count too: they are the admin team's to answer; and so do
+  // the conflicts between the teams' technologies (src/techconflicts.js), the admin team's only.
+  const conflicts = isAdmin(me) ? await techConflicts(env) : [];
+  // And the conflicts between team rules (src/ruleconflicts.js), the admin team's too.
+  const rules = isAdmin(me) ? await ruleConflicts(env) : [];
+  // And the merges of customers asked for (src/orgmerge.js), the admin team's too.
+  const merges = isAdmin(me) ? await openMergeCount(env) : 0;
+  // And the bots nobody said whose they are (src/ourbots.js), the admin team's too.
+  const bots = isAdmin(me) ? await unreviewedCount(env) : 0;
+  const open = await openCount(env, teams) + await portalOpenCount(env, teams)
+    + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length + merges + bots;
   if (count) {
     return json({ open });
   }
   return json({
     requests: await listRequests(env, { teams, status: ['open', 'decided'].includes(status) ? status : null }),
+    portal: await listPortalRequests(env, { teams }),
+    portalBound: portalBound(env),
+    conflicts,
+    ruleConflicts: rules,
+    orgMerges: isAdmin(me) ? await listMergeRequests(env, me, { limit: 30 }) : [],
     open,
   });
+}
+
+/**
+ * POST /api/admin/rule-conflicts `{ key, action, side?, follow?, fingerprint?, note?, dryRun? }`:
+ * the admin team settles a conflict between team rules (src/ruleconflicts.js). `win`: side
+ * `side` (`a` or `b`) files the channels both rules match, the other rule leaves them out, and
+ * with `follow` the other team follows them (a follow rule); `keep`: as it is. `fingerprint` is
+ * the conflict's as it was shown: a conflict that changed since is not settled (409). `dryRun`
+ * answers with the channels it would move (`moves`) and the ones the other team would follow
+ * (`follows`); applied, with the conflicts as they are after it.
+ */
+async function settleRuleConflict(env, me, body) {
+  const key = clean(body.key, 500);
+  const action = clean(body.action);
+  const rules = await loadRules(env);
+  const c = (await ruleConflicts(env, { rules })).find((x) => x.key === key);
+  if (!c) {
+    return json({ error: 'no such conflict: it may be settled already', ruleConflicts: await ruleConflicts(env) }, 404);
+  }
+  if (body.fingerprint && body.fingerprint !== c.fingerprint) {
+    return json({ error: 'the conflict changed since it was shown: look at it again', conflict: c }, 409);
+  }
+  if (action === 'keep') {
+    if (body.dryRun) {
+      return json({ dryRun: true, moves: [], follows: [] });
+    }
+    await env.DB.prepare(`INSERT INTO rule_conflict_keeps (key, fingerprint, kept_by, kept_at, note)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET fingerprint = excluded.fingerprint,
+        kept_by = excluded.kept_by, kept_at = excluded.kept_at, note = excluded.note`)
+      .bind(key, c.fingerprint, ...stamp(me), clean(body.note, 300) || null).run();
+    console.log(JSON.stringify({ route: 'admin', ruleConflict: 'kept', by: me.id }));
+    return json({ ok: true, done: 'kept', ruleConflicts: await ruleConflicts(env) });
+  }
+  if (action !== 'win') {
+    return bad('action is win or keep');
+  }
+  const side = clean(body.side);
+  const s = settlement(c, side, rules, { follow: Boolean(body.follow) });
+  if (s.error) {
+    return bad(s.error);
+  }
+  const loser = side === 'a' ? c.b : c.a;
+  // The channels the other team follows after it.
+  const live = (await knownChannels(env)).filter((x) => !x.archived);
+  const followed = [...wantedFollows(s.next, live).values()]
+    .filter((w) => w.team === loser.team && (w.rule > MAX_RULE_ID || w.rule === loser.rules[0].id))
+    .map((w) => live.find((x) => x.source === w.source && x.channelId === w.channelId))
+    .filter(Boolean)
+    .map((x) => ({
+      source: x.source, channelId: x.channelId, name: x.name, groupName: x.groupName,
+    }));
+  const res = await applyRules(env, me, {
+    next: s.next,
+    dryRun: body.dryRun,
+    extra: { follows: followed },
+    write: async () => {
+      const [by, at] = stamp(me);
+      await env.DB.batch([
+        ...s.updates.map((u) => (u.target
+          ? env.DB.prepare('UPDATE rules SET target = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+            .bind(u.target, by, at, u.id)
+          : env.DB.prepare('UPDATE rules SET pattern = ?, updated_by = ?, updated_at = ? WHERE id = ?')
+            .bind(u.pattern, by, at, u.id))),
+        ...s.deletes.map((id) => env.DB.prepare('DELETE FROM rules WHERE id = ?').bind(id)),
+        ...s.inserts.map((r) => env.DB.prepare(`INSERT INTO rules (target, priority, source, field,
+            pattern, value, note, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .bind(...ruleValues(r), by, at)),
+      ]);
+      console.log(JSON.stringify({
+        route: 'admin', ruleConflict: 'win', side, follow: Boolean(body.follow), by: me.id,
+      }));
+      return { done: 'win' };
+    },
+  });
+  if (body.dryRun || !res.ok) {
+    return res;
+  }
+  return json({ ...(await res.json()), ruleConflicts: await ruleConflicts(env) });
+}
+
+/**
+ * POST /api/admin/conflicts `{ key, action, … }`: the admin team settles a conflict between the
+ * teams' technologies (src/techconflicts.js `resolveConflict`); the answer has the conflicts as
+ * they are after it.
+ */
+async function settleConflict(env, me, body) {
+  const r = await resolveConflict(env, me, body);
+  if (r.error) {
+    return json({ error: r.error, changes: r.changes || [] }, r.status || 400);
+  }
+  return json({ ...r, conflicts: await techConflicts(env) });
 }
 
 /** An open request, or the answer that says why it cannot be decided. */
@@ -539,7 +761,8 @@ async function assigned(env, { source, channelId }, slug) {
 
 /**
  * POST /api/admin/requests/confirm `{ id, dryRun?, move? }`: the admin team grants a request.
- * It is the manual assignment of `assign`, as if made on the team's page: `dryRun` says what
+ * It is the manual assignment of `assign`, as if made on the team's page (with `move` when the
+ * request asks for a move, src/requests.js): `dryRun` says what
  * it would move (or that it would share the channel), and applied, the channel is re-filed or
  * shared and the request is confirmed, with who confirmed it and what came of it.
  */
@@ -554,7 +777,8 @@ async function confirmRequest(env, me, body) {
     source: channel.source,
     channelId: channel.channelId,
     value: request.team,
-    move: body.move,
+    // A move request moves, whoever holds the channel; the admin team may move any request.
+    move: body.move || request.move,
     dryRun: body.dryRun,
   }, false);
   if (body.dryRun) {
@@ -618,24 +842,187 @@ async function withdrawRequest(env, me, body) {
   return closed.closed ? json({ ok: true, ...closed }) : json({ error: 'decided meanwhile', ...closed }, 409);
 }
 
+// ---- customer portal requests -----------------------------------------------------------
+
+const DEFAULT_CHANNEL = 'support';
+
+/**
+ * POST /api/admin/portal/open `{ id, team, name?, org?, share?, topic?, welcome? }`: opens a
+ * channel in the customer portal for the lobby of request `id`, and puts it in the inbox. The
+ * portal makes the channel (every member of the lobby is in it); here it is filed under `team`
+ * and the customer `org` by hand, as a manual assignment does, shared with the teams of
+ * `share`, and `welcome` is posted in it as the person who opens it, which starts its first
+ * thread. The admin team picks any team and customer; a manager opens it for a team they
+ * manage that follows a technology the lobby picked, under the customer the inbox suggests.
+ * A lobby that has a channel can get another the same way.
+ */
+async function openPortal(env, me, body) {
+  const r = await getPortalRequest(env, body.id);
+  if (!r) {
+    return json({ error: 'no such request' }, 404);
+  }
+  if (r.status === 'declined') {
+    return json({ error: 'this request was declined: the customer asks again first', request: r }, 409);
+  }
+  const everything = isAdmin(me);
+  const slug = toSlug(clean(body.team));
+  if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
+    return bad('give the team the channel is for');
+  }
+  if (!everything && !r.teams.some((t) => t.team === slug)) {
+    return json({ error: 'your team follows none of the technologies this customer picked' }, 403);
+  }
+  if (!portalBound(env)) {
+    return json({ error: 'the customer portal is not connected to this inbox' }, 409);
+  }
+  const name = toSlug(clean(body.name, 80) || r.suggest.name);
+  const customer = everything && clean(body.org) ? toSlug(clean(body.org)) : r.suggest.org;
+  if (!SLUG.test(customer)) {
+    return bad('a customer is lowercase letters, digits and -, like acme');
+  }
+  const topic = clean(body.topic, 300) || null;
+  const opened = await portalCall(env, 'open', {
+    domain: r.domain,
+    name: name === UNASSIGNED ? DEFAULT_CHANNEL : name,
+    topic,
+    by: await portalAuthor(env, me),
+  });
+  if (opened.error || !opened.channel) {
+    return json({ error: opened.error || 'the portal opened no channel' }, opened.status === 404 ? 404 : 502);
+  }
+  const channelId = opened.channel.id;
+  const now = new Date().toISOString();
+  // The channel as the inbox knows it, before its first message says the same.
+  await env.DB.prepare(`INSERT INTO channels (source, tenant, channel_id, name, group_id,
+      group_name, shared, connected, topic, fetched_at)
+    VALUES ('portal', ?, ?, ?, ?, ?, 1, '[]', ?, ?) ON CONFLICT DO NOTHING`)
+    .bind(r.domain, channelId, opened.channel.name, r.domain, r.company, topic, now).run();
+  // A customer the inbox has not met is named as it calls itself, with the logo it uploaded
+  // in the portal (served by this Worker, so an address under its origin), else its domain's.
+  const origin = String(env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
+  const icon = r.logo && origin ? `${origin}/api/portal/logo/${r.domain}` : r.domain;
+  await env.DB.prepare(`INSERT INTO orgs (slug, name, type, icon, updated_at)
+    VALUES (?, ?, 'customer', ?, ?) ON CONFLICT (slug) DO NOTHING`)
+    .bind(customer, r.company || null, icon, now).run();
+  await ensureKnowledgeBase(env, 'org', customer).catch(() => null);
+  for (const [target, value] of [['team', slug], ['org', customer]]) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await assign(env, me, {
+      target, source: 'portal', channelId, value, move: true,
+    }, false);
+    if (!res.ok) {
+      // eslint-disable-next-line no-await-in-loop
+      const { error } = await res.json().catch(() => ({}));
+      return json({
+        error: `the channel is open in the portal, but could not be filed under ${value}: ${error || res.status}. Assign it on the team's page.`,
+        channel: { source: 'portal', channelId },
+      }, 502);
+    }
+  }
+  const shared = [];
+  const others = everything && Array.isArray(body.share)
+    ? body.share.map((x) => toSlug(clean(x))) : [];
+  for (const other of others.filter((x) => x !== slug)) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(other).first()) {
+      // eslint-disable-next-line no-await-in-loop
+      await share(env, {
+        source: 'portal', channelId, team: other, by: me.email || String(me.id),
+      });
+      shared.push(other);
+    }
+  }
+  const request = await recordOpened(env, me, r.id, { channelId, team: slug, org: customer });
+  // The welcome message, as the person: it comes back through the portal's events, and is the
+  // channel's first thread.
+  const text = String(body.welcome ?? '').trim().slice(0, 8000);
+  const welcome = text ? await portalCall(env, 'post', {
+    domain: r.domain, channel: channelId, text, author: await portalAuthor(env, me),
+  }) : null;
+  console.log(JSON.stringify({
+    route: 'admin',
+    portal: 'opened',
+    by: me.id,
+    id: r.id,
+    team: slug,
+    shared: shared.length,
+    welcome: Boolean(welcome && welcome.ok),
+  }));
+  return json({
+    ok: true,
+    request,
+    channel: {
+      source: 'portal',
+      tenant: r.domain,
+      channelId,
+      name: opened.channel.name,
+      team: slug,
+      org: customer,
+    },
+    shared,
+    ...(welcome ? {
+      welcome: welcome.ok ? { id: welcome.id } : { error: welcome.error },
+      ...(welcome.ok ? { thread: `portal:${r.domain}:${channelId}:${welcome.id}` } : {}),
+    } : {}),
+  });
+}
+
+/**
+ * POST /api/admin/portal/decline `{ id, reason? }`: the admin team turns a lobby's request
+ * down, with a reason the customer reads in the portal. They may ask again.
+ */
+async function declinePortal(env, me, body) {
+  const r = await getPortalRequest(env, body.id);
+  if (!r) {
+    return json({ error: 'no such request' }, 404);
+  }
+  const reason = clean(body.reason, 500) || null;
+  if (r.status !== 'open' || !await recordDeclined(env, me, r.id, reason)) {
+    return json({
+      error: `this request is ${r.status} already`, request: await getPortalRequest(env, r.id),
+    }, 409);
+  }
+  const res = await portalCall(env, 'decline', { domain: r.domain, reason });
+  // A lobby that is not waiting any more (it has a channel, or was declined) is as it is.
+  if (res.error && res.status !== 409) {
+    await reopenDeclined(env, r.id);
+    return json({ error: res.error, request: await getPortalRequest(env, r.id) }, 502);
+  }
+  console.log(JSON.stringify({
+    route: 'admin', portal: 'declined', by: me.id, id: r.id,
+  }));
+  return json({ ok: true, request: await getPortalRequest(env, r.id) });
+}
+
 // ---- teams and members ------------------------------------------------------------------
+
+/** SQL: the channel of the threads row `t` is not archived (the lists count no archived ones). */
+const LIVE = (t) => `NOT EXISTS (SELECT 1 FROM channels ac WHERE ac.source = ${t}.source
+  AND ac.tenant = ${t}.tenant AND ac.channel_id = ${t}.channel_id AND ac.archived_at IS NOT NULL)`;
 
 async function listTeams(env, me) {
   const all = await rows(env, `SELECT t.slug, t.name, t.self_managed,
       (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug) AS members,
       (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug AND m.role = 'manager') AS managers,
-      (SELECT COUNT(*) FROM rules r WHERE r.target = 'team' AND r.value = t.slug) AS rules,
-      (SELECT COUNT(DISTINCT th.channel_id) FROM threads th WHERE th.team = t.slug) AS channels,
+      (SELECT COUNT(*) FROM rules r WHERE r.target IN ('team', 'follow') AND r.value = t.slug) AS rules,
+      (SELECT COUNT(DISTINCT th.channel_id) FROM threads th WHERE th.team = t.slug
+        AND ${LIVE('th')}) AS channels,
       (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug) AS threads,
       (SELECT COUNT(*) FROM channel_teams s WHERE s.team = t.slug) AS shared
     FROM teams t ORDER BY t.name`);
   const everything = isAdmin(me);
   const teams = all.filter((t) => everything || managedTeams(me).includes(t.slug))
     .map((t) => ({ ...t, self_managed: Boolean(t.self_managed) }));
-  const unassigned = everything ? await env.DB.prepare(`SELECT COUNT(DISTINCT channel_id) AS channels,
-      COUNT(*) AS threads FROM threads WHERE team = ?`).bind(UNASSIGNED).first() : null;
-  // The open assignment requests: the admin team's to decide, the managers' to wait for.
-  const requests = await openCount(env, everything ? null : managedTeams(me));
+  const unassigned = everything ? await env.DB.prepare(`SELECT
+      COUNT(DISTINCT CASE WHEN ${LIVE('t')} THEN t.channel_id END) AS channels,
+      COUNT(*) AS threads FROM threads t WHERE t.team = ?`).bind(UNASSIGNED).first() : null;
+  // The open assignment requests: the admin team's to decide, the managers' to wait for; and
+  // the customers waiting in the portal, theirs to open a channel for.
+  const scope = everything ? null : managedTeams(me);
+  const requests = await openCount(env, scope) + await portalOpenCount(env, scope)
+    + (everything ? await openConflictCount(env)
+      + (await ruleConflicts(env, { kept: false })).length + await openMergeCount(env)
+      + await unreviewedCount(env) : 0);
   // Every team's name, for a manager's page to say where a channel is now.
   const names = Object.fromEntries(all.map((t) => [t.slug, t.name]));
   return json({
@@ -653,11 +1040,19 @@ async function team(env, slug, me) {
     team: t ? { ...t, self_managed: Boolean(t.self_managed) } : { slug, name: 'Unassigned', self_managed: false },
     members: await rows(env, `SELECT p.id, p.name, p.email, p.staff, m.role FROM team_members m
       JOIN people p ON p.id = m.person WHERE m.team = ? ORDER BY p.name`, slug),
-    rules: rules.filter((r) => r.target === 'team' && (r.value === slug || /\$\d/.test(r.value)))
+    rules: rules.filter((r) => (r.target === 'team' && (r.value === slug || /\$\d/.test(r.value)))
+      || (r.target === 'follow' && r.value === slug))
       .sort((a, b) => a.priority - b.priority || a.id - b.id),
     channels: await channelList(env, rules, { team: slug }),
     // What the team's managers asked the admin team for, and what came of it.
     requests: t ? await listRequests(env, { teams: [slug], limit: 50 }) : [],
+    // The customers in the portal who picked a technology the team follows.
+    portal: t ? await listPortalRequests(env, { teams: [slug], limit: 50 }) : [],
+    portalBound: portalBound(env),
+    // The technologies it follows (src/follows.js), and what it may follow.
+    ...(t ? {
+      follows: await teamFollows(env, slug), followable: await followable(env, slug),
+    } : {}),
     // The admin team decides which channels a team gets: what it might want of the admin
     // team's channels.
     ...(isAdmin(me) && t && slug !== ADMIN_TEAM ? await suggestionsFor(env, slug) : {}),
@@ -665,9 +1060,35 @@ async function team(env, slug, me) {
 }
 
 /**
+ * PUT /api/admin/follows `{ team, tech, follow }`: team `team` follows technology `tech` (or, with
+ * `follow: false`, no more), so that the threads that show it are in its inbox (src/follows.js).
+ * The team's managers and the admin team. Answers with what the team follows now.
+ */
+async function followTech(env, me, body) {
+  const slug = clean(body.team);
+  const t = slug && await env.DB.prepare('SELECT slug FROM teams WHERE slug = ?').bind(slug).first();
+  if (!t) {
+    return json({ error: 'no such team' }, 404);
+  }
+  const res = await setTeamFollow(env, {
+    team: slug,
+    tech: clean(body.tech),
+    follow: body.follow !== false,
+    by: me.email || String(me.id),
+  });
+  if (res.error) {
+    return bad(res.error);
+  }
+  console.log(JSON.stringify({
+    route: 'admin', follows: slug, tech: clean(body.tech), follow: body.follow !== false, by: me.id,
+  }));
+  return json({ ok: true, changed: res.changed, follows: await teamFollows(env, slug) });
+}
+
+/**
  * What a new team starts with, as `by` (a name): thread agents on by default in its channels
  * (`agent_teams`), and the agent tools and global MCP servers marked `newTeams` on for the
- * team. Its managers switch any of them off in the knowledge-base editor.
+ * team. Its managers switch any of them off on the team's page (ui/agent.js).
  */
 async function newTeamDefaults(env, slug, by) {
   await setTeamDefault(env, slug, true, by);
@@ -739,7 +1160,7 @@ async function deleteTeam(env, body) {
     return bad('the admin team cannot be deleted');
   }
   const used = await env.DB.prepare(`SELECT
-      (SELECT COUNT(*) FROM rules WHERE target = 'team' AND value = ?) AS rules,
+      (SELECT COUNT(*) FROM rules WHERE target IN ('team', 'follow') AND value = ?) AS rules,
       (SELECT COUNT(*) FROM threads WHERE team = ?) AS threads`).bind(slug, slug).first();
   if (used.rules || used.threads) {
     return json({
@@ -814,6 +1235,86 @@ async function setRole(env, body) {
 }
 
 /**
+ * POST /api/admin/team-wizard `{ prefix, slug, name } | { prefix, team }, people, dryRun`: the
+ * team wizard's group of `prefix` (src/teamwizard.js) made a team: a new one (`slug`, `name`)
+ * or one that exists (`team`), with `people` (`[{ email, name }]`) as its members and the rules
+ * that file the group's channels under it. With `dryRun`, only what the rules would move.
+ */
+async function teamWizard(env, me, body) {
+  const prefix = clean(body.prefix).toLowerCase();
+  const group = prefix && await teamGroup(env, prefix);
+  if (!group) {
+    return json({ error: `no channel of the admin team starts with ${prefix || 'that'} now` }, 404);
+  }
+  const existing = clean(body.team);
+  const slug = existing || clean(body.slug).toLowerCase();
+  if (existing) {
+    if (existing === ADMIN_TEAM) {
+      return bad('the admin team has these channels already');
+    }
+    if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(existing).first()) {
+      return json({ error: 'no such team' }, 404);
+    }
+  } else if (!SLUG.test(slug)) {
+    return bad('a team slug is lowercase letters, digits and -, like edge-ops');
+  } else if (!clean(body.name)) {
+    return bad('give the team a name');
+  }
+  const rules = wizardRules(group, slug);
+  const current = await loadRules(env);
+  const next = [...current, ...rules.map((r, i) => ({ ...r, id: Number.MAX_SAFE_INTEGER - i }))];
+  if (body.dryRun) {
+    return json({ dryRun: true, moves: await plan(env, next), rules });
+  }
+  if (!existing) {
+    const made = await createTeam(env, me, { slug, name: body.name });
+    if (!made.ok) {
+      return made;
+    }
+  }
+  const members = [];
+  const refused = [];
+  const asked = (Array.isArray(body.people) ? body.people : []).slice(0, 100);
+  for (const p of asked) {
+    // One after the other: each reads what the one before wrote (the person, the identities).
+    // eslint-disable-next-line no-await-in-loop
+    const res = await addMember(env, { team: slug, email: p && p.email, name: p && p.name });
+    // eslint-disable-next-line no-await-in-loop
+    const answer = await res.json();
+    if (res.ok) {
+      members.push(answer.person);
+    } else {
+      refused.push({ email: clean(p && p.email), error: answer.error });
+    }
+  }
+  const done = await applyRules(env, me, {
+    next,
+    write: async () => {
+      const saved = [];
+      for (const rule of rules) {
+        // eslint-disable-next-line no-await-in-loop
+        saved.push(await env.DB.prepare(`INSERT INTO rules (target, priority, source, field, pattern,
+            value, note, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
+          .bind(...ruleValues(rule), ...stamp(me)).first());
+      }
+      return { rules: saved };
+    },
+    extra: { team: { slug, existing: Boolean(existing) }, members, refused },
+  });
+  // Done with it, whatever it had been.
+  await dismissGroup(env, prefix, null, false);
+  console.log(JSON.stringify({
+    route: 'admin', teamWizard: prefix, team: slug, existing: Boolean(existing), members: members.length, by: me.id,
+  }));
+  if (!members.length || !done.ok) {
+    return done;
+  }
+  // The sign-in allow list follows the new members, as for one added on the team's page.
+  const access = await syncAccessQuietly(env, 'team wizard');
+  return json({ ...await done.json(), access }, done.status);
+}
+
+/**
  * GET /api/admin/people?q=&team=: people to add to a team, for the autocomplete. Everyone
  * opspile knows by name or email: people in D1, and platform accounts with an email that
  * are not linked to one yet (somebody who posted but was never added). Staff first; the
@@ -873,52 +1374,60 @@ async function removeMember(env, me, body) {
 // ---- orgs -------------------------------------------------------------------------------
 
 /**
- * The mail domains of the people outside Adobe who post in an org's threads (all orgs', or
- * `slug`'s), most people first: `Map<org, [domain]>`. Free mail and tenant domains are left
- * out; the first is the org's usual mail domain, whose favicon it has without an icon.
- */
-async function mailDomains(env, slug = null) {
-  const list = await rows(env, `SELECT t.org, LOWER(SUBSTR(i.email, INSTR(i.email, '@') + 1)) AS domain,
-      COUNT(DISTINCT m.thread || ' ' || m.author_key) AS n
-    FROM messages m JOIN threads t ON t.thread = m.thread
-    JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
-    WHERE m.staff = 0 AND m.deleted = 0 AND m.counted = 1 AND i.email LIKE '%_@_%'
-      AND (?1 IS NULL OR t.org = ?1)
-    GROUP BY t.org, domain ORDER BY t.org, n DESC, domain`, slug);
-  const by = new Map();
-  for (const r of list) {
-    if (orgDomain(env, r.domain)) {
-      if (!by.has(r.org)) {
-        by.set(r.org, []);
-      }
-      by.get(r.org).push(r.domain);
-    }
-  }
-  return by;
-}
-
-/**
  * Every org: the ones with a row, and every slug the rules filed threads or a base under.
  * `domain` is its usual mail domain, whose favicon it is shown with when it has no icon.
  */
 async function listOrgs(env) {
   const list = await rows(env, `SELECT s.slug, o.name, COALESCE(o.type, 'customer') AS type, o.icon,
-      (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug) AS channels,
+      (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug AND ${LIVE('t')})
+        AS channels,
       (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug) AS threads,
       (SELECT MAX(COALESCE(last_at, any_at)) FROM threads t WHERE t.org = s.slug) AS latest
     FROM (SELECT slug FROM orgs UNION SELECT DISTINCT org FROM threads
       UNION SELECT slug FROM knowledge_bases WHERE kind = 'org') s
     LEFT JOIN orgs o ON o.slug = s.slug
-    WHERE s.slug != ?
+    WHERE s.slug != ? AND s.slug NOT IN (SELECT slug FROM org_merges)
     ORDER BY COALESCE(o.name, s.slug)`, UNASSIGNED);
   const domains = await mailDomains(env);
   for (const o of list) {
     o.domain = (domains.get(o.slug) || [])[0] || null;
   }
-  return json({ orgs: list, types: TYPES });
+  // The channels no rule files under an org, which Unassigned lists to be given one.
+  const unassigned = await env.DB.prepare(`SELECT
+      COUNT(DISTINCT CASE WHEN ${LIVE('t')} THEN t.channel_id END) AS channels,
+      COUNT(*) AS threads FROM threads t WHERE t.org = ? AND t.kind != 'ignore'`).bind(UNASSIGNED).first();
+  return json({ orgs: list, types: TYPES, unassigned });
+}
+
+/**
+ * GET /api/admin/org?slug=_unassigned: the channels no rule files under an org (not the ignored
+ * ones), each with the orgs it may belong to, or a new org it may be (`suggestions` by channel
+ * id, src/orgassign.js). The admin team gives each one an org by hand (`assign`).
+ */
+async function unassignedOrg(env) {
+  const rules = await loadRules(env);
+  const channels = (await channelList(env, rules, { org: UNASSIGNED }))
+    .filter((c) => c.kind !== 'ignore');
+  return json({
+    org: {
+      slug: UNASSIGNED, name: null, type: 'customer', icon: null,
+    },
+    unassigned: true,
+    channels,
+    suggestions: await unassignedSuggestions(env, channels, rules),
+    types: TYPES,
+  });
 }
 
 async function org(env, slug) {
+  if (slug === UNASSIGNED) {
+    return unassignedOrg(env);
+  }
+  // A merged org is the one it was merged into now (src/orgmerge.js).
+  const merged = await env.DB.prepare('SELECT into_slug FROM org_merges WHERE slug = ?').bind(slug).first();
+  if (merged) {
+    return json({ error: `${slug} was merged into ${merged.into_slug}`, mergedInto: merged.into_slug }, 404);
+  }
   const row = await env.DB.prepare('SELECT slug, name, type, icon, updated_at FROM orgs WHERE slug = ?').bind(slug).first();
   const rules = await loadRules(env);
   const channels = await channelList(env, rules, { org: slug });
@@ -938,6 +1447,9 @@ async function org(env, slug) {
     rules: orgRules,
     channels,
     types: TYPES,
+    // The orgs merged into this one, which an admin may take out again.
+    merged: await rows(env, `SELECT slug, name, merged_by, merged_at FROM org_merges
+      WHERE into_slug = ? ORDER BY merged_at DESC`, slug),
   });
 }
 
@@ -964,6 +1476,10 @@ async function saveOrg(env, body, create) {
     return bad(f.error);
   }
   const now = new Date().toISOString();
+  const merged = await env.DB.prepare('SELECT into_slug FROM org_merges WHERE slug = ?').bind(slug).first();
+  if (merged) {
+    return json({ error: `${slug} was merged into ${merged.into_slug}; undo that on ${merged.into_slug}'s page first` }, 409);
+  }
   if (create) {
     const { meta } = await env.DB.prepare(`INSERT INTO orgs (slug, name, type, icon, updated_at)
       VALUES (?, ?, ?, ?, ?) ON CONFLICT (slug) DO NOTHING`).bind(slug, f.name, f.type, f.icon, now).run();
@@ -977,11 +1493,14 @@ async function saveOrg(env, body, create) {
       ON CONFLICT (slug) DO UPDATE SET name = excluded.name, type = excluded.type,
         icon = excluded.icon, updated_at = excluded.updated_at`).bind(slug, f.name, f.type, f.icon, now).run();
   }
+  // Its name, type and icon are what the duplicate search compares.
+  forgetFacts();
   return json({ ok: true, org: { slug, ...f, updated_at: now } });
 }
 
 async function deleteOrg(env, body) {
   const { meta } = await env.DB.prepare('DELETE FROM orgs WHERE slug = ?').bind(clean(body.slug)).run();
+  forgetFacts();
   return meta.changes ? json({ ok: true }) : json({ error: 'this org has no name, icon or type to delete' }, 404);
 }
 
@@ -1030,6 +1549,12 @@ async function withAccessSync(env, why, pending) {
   return json({ ...body, access }, res.status);
 }
 
+/**
+ * The routes of `/api/admin/*` for every member of an ops team, not only the admin team and
+ * team managers: the duplicate customers they see, and asking for a merge (src/orgmerge.js).
+ */
+export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests'];
+
 export async function admin(request, env, url, me) {
   const p = url.pathname;
   if (!p.startsWith('/api/admin/')) {
@@ -1042,10 +1567,13 @@ export async function admin(request, env, url, me) {
   // Team managers: their teams' members, the channel search, and requests for their teams.
   const teamOf = m === 'GET' ? q('team') || q('slug') : clean(body.team);
   const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members',
-    'GET channels', 'GET requests', 'POST requests', 'DELETE requests'];
+    'GET channels', 'GET requests', 'POST requests', 'DELETE requests', 'PUT follows',
+    'POST portal/open', 'POST swap'];
   // Every manager may search channels; the requests they see are their teams' (`requests`).
   const anyTeam = ['GET teams', 'GET channels', 'GET requests'];
-  if (!isAdmin(me)) {
+  // Duplicate customers: anyone on a team sees those of the customers it owns, and asks for a
+  // merge (src/orgmerge.js checks which).
+  if (!isAdmin(me) && !STAFF_ROUTES.includes(route)) {
     if (!forManagers.includes(route)) {
       return json({ error: 'for the admin team' }, 403);
     }
@@ -1062,20 +1590,37 @@ export async function admin(request, env, url, me) {
     case 'POST members': return withAccessSync(env, 'member added', addMember(env, body));
     case 'PUT members': return setRole(env, body);
     case 'GET people': return people(env, clean(url.searchParams.get('q')), q('team'));
+    case 'GET team-groups': return json(await teamGroups(env));
+    case 'POST team-wizard': return teamWizard(env, me, body);
+    case 'POST team-wizard/dismiss': return await dismissGroup(env, clean(body.prefix).toLowerCase(), me.email || String(me.id))
+      ? json({ ok: true }) : json({ error: 'no such group of channels now' }, 404);
+    case 'DELETE team-wizard/dismiss': return json({ ok: await dismissGroup(env, clean(body.prefix).toLowerCase(), null, false) });
     case 'DELETE members': return withAccessSync(env, 'member removed', removeMember(env, me, body));
-    case 'GET rules': return json({ rules: await loadRules(env), fields: FIELDS, kinds: KINDS });
+    case 'GET rules': return json({
+      // The merges are the orgs' (GET org-duplicates), not rules anyone edits.
+      rules: (await loadRules(env)).filter((r) => r.target !== 'merge'), fields: FIELDS, kinds: KINDS,
+    });
     case 'POST rules': return createRule(env, me, body);
     case 'PUT rules': return updateRule(env, me, body);
     case 'DELETE rules': return deleteRule(env, me, body);
     case 'POST assign': return assign(env, me, body, false);
     case 'DELETE assign': return assign(env, me, body, true);
     case 'DELETE share': return unshareChannel(env, me, body);
+    case 'POST swap': return swapChannel(env, me, body);
+    case 'PUT follows': return followTech(env, me, body);
     case 'GET channels': return json({ channels: (await channelList(env, await loadRules(env), { q: q('q') })).slice(0, 100) });
     case 'GET requests': return requestList(env, me, { status: q('status'), count: q('count') });
     case 'POST requests': return createRequest(env, me, body);
     case 'DELETE requests': return withdrawRequest(env, me, body);
     case 'POST requests/confirm': return confirmRequest(env, me, body);
     case 'POST requests/decline': return declineRequest(env, me, body);
+    case 'POST portal/open': return openPortal(env, me, body);
+    case 'POST portal/decline': return declinePortal(env, me, body);
+    case 'POST conflicts': return settleConflict(env, me, body);
+    case 'POST rule-conflicts': return settleRuleConflict(env, me, body);
+    // Channel threads labeled again though they did not change (src/label.js queueRelabel).
+    case 'POST relabel': return env.NORMALIZE ? json(await queueRelabel(env, body))
+      : json({ error: 'no queue' }, 503);
     case 'POST classify': return json(await classifyChannels(env, {
       limit: Math.min(Math.max(Number(body.limit) || 10, 1), 25),
     }));
@@ -1084,8 +1629,18 @@ export async function admin(request, env, url, me) {
     case 'PUT orgs': return saveOrg(env, body, false);
     case 'DELETE orgs': return deleteOrg(env, body);
     case 'GET org': return org(env, q('slug'));
+    case 'GET org-duplicates': return orgDuplicates(env, me, { pair: q('pair'), fresh: Boolean(q('fresh')) });
+    case 'POST org-duplicates/dismiss': return dismissPair(env, me, body);
+    case 'POST org-merge': return mergeOrgs(env, me, body, { applyRules });
+    case 'DELETE org-merge': return unmergeOrg(env, me, body, { applyRules });
+    case 'POST org-merge-requests': return requestMerge(env, me, body);
+    case 'DELETE org-merge-requests': return closeMergeRequest(env, me, body, 'withdrawn');
+    case 'POST org-merge-requests/decline': return closeMergeRequest(env, me, body, 'declined');
     case 'GET org-icons': return orgIcons(env, q('slug'), Boolean(q('fresh')));
-    case 'GET favicon': return faviconProxy(q('domain'));
+    case 'GET favicon': return faviconProxy(q('domain'), { request });
+    case 'GET bots': return listBots(env);
+    case 'GET bot': return getBot(env, url.searchParams.get('key'));
+    case 'PUT bots': return setBot(env, me, body);
     case 'GET cogs': return json(await cogsReport(env, url));
     case 'POST cogs/rollup': return json(await rollupCogs(env));
     case 'GET topics': return json({

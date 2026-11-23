@@ -392,27 +392,150 @@ export async function findIcons(env, org, { fresh = false } = {}) {
   return icons;
 }
 
+// ---- the favicon proxy --------------------------------------------------------------------
+
+/** A favicon, in the browser and in the data center's cache: a week. */
+const FAVICON_S = 7 * 24 * 60 * 60;
+/** Google's globe (no favicon): an hour in the browser, a day in the data center's cache. */
+const NO_FAVICON_S = 60 * 60;
+const NO_FAVICON_EDGE_S = 24 * 60 * 60;
+/** Google did not answer: a minute, in the browser only. */
+const FAILED_S = 60;
+const FAVICON_FETCH_MS = 5000;
+const MAX_FAVICON_BYTES = 256 * 1024;
+/** What the proxy passes on (sniffed, not as Google says): no SVG, no HTML. */
+const FAVICON_TYPE = {
+  png: 'image/png', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', ico: 'image/x-icon',
+};
+const faviconKey = (domain) => `https://opspile.cache/favicon/v1/${domain}`;
+const SAFE = { 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'" };
+
+// The favicons being fetched in this isolate, by domain: a page asking for one many times at
+// once (a list of a customer's threads) fetches it once.
+const fetching = new Map();
+
 /**
- * GET /api/admin/favicon?domain=: Google's favicon of a domain, or 404 when Google has none
- * (it answers its globe then, which a page cannot tell from a favicon), so that the admin
- * pages show which orgs have no icon.
+ * Google's favicon of `domain`, after its redirects (it answers a 301 to one of several
+ * gstatic hosts, a different one each time): `{ bytes, type }`, `{ none: true }` for its globe
+ * (404), or `{ failed: true }` when it did not answer in time or answered an error.
  */
-export async function faviconProxy(domain) {
+async function fetchFavicon(domain, fetchImpl) {
+  try {
+    const res = await fetchImpl(googleFavicon(domain), {
+      redirect: 'follow',
+      headers: { 'user-agent': UA, accept: ACCEPT.image },
+      signal: AbortSignal.timeout(FAVICON_FETCH_MS),
+      cf: { cacheTtlByStatus: { '200-299': FAVICON_S, 404: NO_FAVICON_EDGE_S, '500-599': 0 } },
+    });
+    if (res.status === 404) {
+      await res.body?.cancel();
+      return { none: true };
+    }
+    if (!res.ok) {
+      await res.body?.cancel();
+      return { failed: true };
+    }
+    const bytes = await bytesOf(res, MAX_FAVICON_BYTES);
+    const type = bytes && FAVICON_TYPE[sniff(bytes)];
+    return type ? { bytes, type } : { none: true };
+  } catch {
+    return { failed: true };
+  }
+}
+
+/** A short ETag of an image's bytes. */
+async function etagOf(bytes) {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return `"${[...d.slice(0, 12)].map((x) => x.toString(16).padStart(2, '0')).join('')}"`;
+}
+
+/** What the browser is answered for a favicon (`{ bytes, type, etag }`), or for none. */
+function faviconAnswer(icon, request) {
+  if (icon.failed) {
+    return new Response(null, { status: 502, headers: { 'cache-control': `private, max-age=${FAILED_S}` } });
+  }
+  if (icon.none) {
+    return new Response(null, { status: 404, headers: { 'cache-control': `private, max-age=${NO_FAVICON_S}` } });
+  }
+  const headers = {
+    ...SAFE,
+    'content-type': icon.type,
+    // A week without asking, and a week more shown while it is asked again: an org's favicon
+    // seldom changes, and the inbox shows it on every row.
+    'cache-control': `private, max-age=${FAVICON_S}, stale-while-revalidate=${FAVICON_S}`,
+    etag: icon.etag,
+  };
+  const asked = request && request.headers.get('if-none-match');
+  if (asked && asked.split(/\s*,\s*/).some((t) => t.replace(/^W\//, '') === icon.etag)) {
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(icon.bytes, { headers });
+}
+
+/** What the data center's cache has for `domain`: `{ bytes, type, etag }`, `{ none }`, or null. */
+async function cachedFavicon(cache, domain) {
+  const hit = cache && await cache.match(faviconKey(domain)).catch(() => null);
+  if (!hit) {
+    return null;
+  }
+  if (hit.headers.get('x-opspile-favicon') === 'none') {
+    return { none: true };
+  }
+  return {
+    bytes: new Uint8Array(await hit.arrayBuffer()),
+    type: hit.headers.get('content-type'),
+    etag: hit.headers.get('etag'),
+  };
+}
+
+/** Keeps what Google answered for `domain` in the data center's cache, unless it failed. */
+function keepFavicon(cache, domain, icon) {
+  if (!cache || icon.failed) {
+    return null;
+  }
+  const res = icon.none
+    ? new Response(null, { headers: { 'x-opspile-favicon': 'none', 'cache-control': `max-age=${NO_FAVICON_EDGE_S}` } })
+    : new Response(icon.bytes, {
+      headers: { 'content-type': icon.type, etag: icon.etag, 'cache-control': `max-age=${FAVICON_S}` },
+    });
+  return cache.put(faviconKey(domain), res).catch(() => {});
+}
+
+/**
+ * GET /api/favicon?domain= (and /api/admin/favicon, as before): Google's favicon of a domain,
+ * from this origin at one address per domain, so a browser keeps it (a week, and a week more
+ * while it asks again) instead of following Google's redirect to another host each time.
+ * Google's redirects are followed here, and the image kept in the data center's cache (the
+ * Cache API) for a week. 404 when Google has none (it answers its globe then, which a page
+ * cannot tell from a favicon), for an hour, so the pages show an org without its icon; 502,
+ * for a minute, when Google did not answer. Only raster images are passed on, never an SVG.
+ */
+export async function faviconProxy(domain, {
+  request = null, cache, waitUntil = null, fetchImpl = fetch,
+} = {}) {
   const d = String(domain || '').toLowerCase();
   if (!DOMAIN.test(d)) {
     return new Response('not a domain', { status: 400 });
   }
-  const res = await fetch(googleFavicon(d), {
-    redirect: 'follow',
-    cf: { cacheTtl: 86400, cacheEverything: true },
-  }).catch(() => null);
-  if (!res || !res.ok) {
-    return new Response(null, { status: 404, headers: { 'cache-control': 'private, max-age=3600' } });
+  const store = cache === undefined ? (typeof caches !== 'undefined' && caches.default) || null : cache;
+  const hit = await cachedFavicon(store, d);
+  if (hit) {
+    return faviconAnswer(hit, request);
   }
-  return new Response(res.body, {
-    headers: {
-      'content-type': res.headers.get('content-type') || 'image/png',
-      'cache-control': 'private, max-age=86400',
-    },
-  });
+  if (!fetching.has(d)) {
+    fetching.set(d, (async () => {
+      const icon = await fetchFavicon(d, fetchImpl);
+      if (icon.bytes) {
+        icon.etag = await etagOf(icon.bytes);
+      }
+      const kept = keepFavicon(store, d, icon);
+      if (kept && waitUntil) {
+        waitUntil(kept);
+      } else if (kept) {
+        await kept;
+      }
+      return icon;
+    })().finally(() => fetching.delete(d)));
+  }
+  return faviconAnswer(await fetching.get(d), request);
 }

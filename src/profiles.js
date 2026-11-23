@@ -71,7 +71,8 @@ export async function profiles(env, keys) {
     env.DB.prepare(`WITH k AS (
       SELECT json_extract(value, '$[0]') AS s, json_extract(value, '$[1]') AS t,
         json_extract(value, '$[2]') AS u FROM json_each(?))
-    SELECT i.source, i.tenant, i.user_id, i.kind, COALESCE(p.name, i.name) AS name, i.avatar,
+    SELECT i.source, i.tenant, i.user_id, i.kind, COALESCE(i.display_name, p.name, i.name) AS name,
+      COALESCE(i.display_avatar, i.avatar) AS avatar,
       i.email, i.title, i.company, i.person,
       MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
     FROM k JOIN identities i ON i.source = k.s AND i.tenant = k.t AND i.user_id = k.u
@@ -144,41 +145,53 @@ export function mentionCandidates(texts) {
 }
 
 /**
- * Who the people the texts `@` mention are to us, by the name they go by: `{ [name]:
- * 'adobe'|'partner'|'customer'|'bot' }`. A name is looked up among the platform accounts of
- * the thread's workspace (Slack) or tenant (Teams, Discord) and among people, and among those
- * the thread's messages mention (D1's `mentions`). A name that stands for people of different
- * kinds is left out, as is everything else unknown. Emails stay here.
+ * Who the people the texts `@` mention are, by the name they go by: `kinds`, `{ [name]:
+ * 'adobe'|'partner'|'customer'|'bot' }`, and `keys`, `{ [name]: identity key }`, their account
+ * on the thread's platform, whose profile card a mention shows (`profiles`). A name is looked
+ * up among the platform accounts of the thread's workspace (Slack) or tenant (Teams, Discord)
+ * and among people, and among those the thread's messages mention (D1's `mentions`). A name
+ * that stands for people of different kinds is left out of `kinds`, one that stands for more
+ * than one person out of `keys`, as is everything else unknown. Emails stay here.
  *
  * @param {object} env bindings
  * @param {{ source: string, tenant: string, threads: string[] }} where the thread
  * @param {string[]} texts the messages' markdown
  */
-export async function mentionKinds(env, { source, tenant, threads }, texts) {
+export async function mentionedPeople(env, { source, tenant, threads }, texts) {
   const names = mentionCandidates(texts);
   if (!names.length) {
-    return {};
+    return { kinds: {}, keys: {} };
   }
   const list = JSON.stringify(names);
   const [{ results: accounts }, { results: people }, { results: partnerRows }] = await Promise.all([
     env.DB.prepare(`SELECT i.kind, COALESCE(p.name, i.name) AS name, i.name AS handle,
         COALESCE(p.email, i.email) AS email,
-        MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
+        MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff,
+        i.person, i.source || ':' || i.tenant || ':' || i.user_id AS key
       FROM identities i LEFT JOIN people p ON p.id = i.person
       WHERE i.source = ? AND i.tenant = ? AND i.kind != 'system'
         AND i.name IN (SELECT value FROM json_each(?))`)
       .bind(source, tenant, list).all(),
-    env.DB.prepare(`SELECT 'person' AS kind, name, email, staff FROM people
-      WHERE name IN (SELECT value FROM json_each(?))
-      UNION SELECT 'person', p.name, p.email, p.staff
-      FROM mentions n JOIN people p ON p.id = n.person
-      WHERE n.thread IN (SELECT value FROM json_each(?))`)
-      .bind(list, JSON.stringify(threads || [])).all(),
+    // A person's account on the thread's platform, if they have one there.
+    env.DB.prepare(`WITH named AS (SELECT id, name, email, staff FROM people
+        WHERE name IN (SELECT value FROM json_each(?))
+        UNION SELECT p.id, p.name, p.email, p.staff
+        FROM mentions n JOIN people p ON p.id = n.person
+        WHERE n.thread IN (SELECT value FROM json_each(?)))
+      SELECT 'person' AS kind, name, email, staff, id AS person,
+        (SELECT i.source || ':' || i.tenant || ':' || i.user_id FROM identities i
+          WHERE i.person = named.id AND i.source = ? AND i.tenant = ? AND i.kind != 'system'
+          ORDER BY i.user_id LIMIT 1) AS key
+      FROM named`)
+      .bind(list, JSON.stringify(threads || []), source, tenant).all(),
     env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
   ]);
   const partners = new Map((partnerRows || [])
     .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const kinds = new Map();
+  // By name: the account and the person it is of; null where the name is of more than one.
+  const keys = new Map();
+  const same = (a, b) => a.key === b.key || (a.person != null && a.person === b.person);
   for (const r of [...(accounts || []), ...(people || [])]) {
     const relation = relationOf(env, r, partners);
     // The account's name only where it is not the person's, written differently.
@@ -187,7 +200,25 @@ export async function mentionKinds(env, { source, tenant, threads }, texts) {
     for (const name of [r.name, handle].filter(Boolean)) {
       const seen = kinds.get(name);
       kinds.set(name, seen === undefined || seen === relation ? relation : null);
+      const was = keys.get(name);
+      const who = { key: r.key || null, person: r.person ?? null };
+      if (was === undefined) {
+        keys.set(name, who);
+      } else if (was && !same(was, who)) {
+        keys.set(name, null);
+      } else if (was && !was.key) {
+        keys.set(name, { ...was, key: who.key });
+      }
     }
   }
-  return Object.fromEntries([...kinds].filter(([, relation]) => relation));
+  return {
+    kinds: Object.fromEntries([...kinds].filter(([, relation]) => relation)),
+    keys: Object.fromEntries([...keys].filter(([, who]) => who && who.key)
+      .map(([name, who]) => [name, who.key])),
+  };
+}
+
+/** `kinds` of `mentionedPeople`. */
+export async function mentionKinds(env, where, texts) {
+  return (await mentionedPeople(env, where, texts)).kinds;
 }

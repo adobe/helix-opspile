@@ -33,39 +33,53 @@ export const MAX_TOOLS = 200;
 const CONNECT_TIMEOUT_MS = 15_000;
 export const CALL_TIMEOUT_MS = 120_000;
 
+// A server granted to thread ?n (src/toolrequests.js), until ?n+1, on top of its switches.
+const GRANTED = (n) => `EXISTS (SELECT 1 FROM tool_requests g WHERE g.thread = ?${n}
+  AND g.kind = 'server' AND g.name = CAST(s.id AS TEXT) AND g.status = 'granted'
+  AND g.expires_at > ?${n + 1})`;
+
 /**
- * The servers of a team and an org on in channel `channelId` (its own switch, else the server's),
- * team first, then the global servers on for the team or the channel; without their headers.
+ * The servers of a team and an org on in channel `channelId` (its own switch, else the server's)
+ * or granted to the thread `key` in its sidebar (src/toolrequests.js), team first, then the
+ * global servers on for the team or the channel (and for its platform, `source`), or granted;
+ * without their headers.
  */
-export async function serversFor(env, { team, org, channelId }) {
+export async function serversFor(env, {
+  team, org, channelId, source, key,
+}) {
   const { results } = await env.DB.prepare(`SELECT s.id, s.scope, s.slug, s.name, s.url,
       s.description, s.allow, s.updated_at FROM mcp_servers s
-      LEFT JOIN mcp_server_switches w ON w.server_id = s.id AND w.channel = ?
-    WHERE COALESCE(w.enabled, s.enabled) = 1
-      AND ((s.scope = 'team' AND s.slug = ?) OR (s.scope = 'org' AND s.slug = ?))
+      LEFT JOIN mcp_server_switches w ON w.server_id = s.id AND w.channel = ?1
+    WHERE (COALESCE(w.enabled, s.enabled) = 1 OR ${GRANTED(4)})
+      AND ((s.scope = 'team' AND s.slug = ?2) OR (s.scope = 'org' AND s.slug = ?3))
     ORDER BY CASE s.scope WHEN 'team' THEN 0 ELSE 1 END, s.name`)
-    .bind(channelId || '', team || '', org || '').all();
-  return [...(results || []), ...await globalServersFor(env, { team, channelId })];
+    .bind(channelId || '', team || '', org || '', key || '', new Date().toISOString()).all();
+  return [...(results || []), ...await globalServersFor(env, {
+    team, channelId, source, key,
+  })];
 }
 
 /**
  * One server with its request headers, unsealed, or for an OAuth server the `authProvider`
  * that gives the transport its tokens; null when it is gone or off: in channel `channelId` (its
- * own switch, else the server's), or, with `anywhere` (the editor's check), in every channel.
- * Throws for an OAuth server nobody connected, or whose grant stopped working.
+ * own switch, else the server's) and not granted to the agent's thread (`thread`), or, with
+ * `anywhere` (the editor's check), in every channel. Throws for an OAuth server nobody
+ * connected, or whose grant stopped working.
  */
 export async function serverWithHeaders(env, id, {
-  fetch: fetchFn, channelId, anywhere = false,
+  fetch: fetchFn, channelId, thread, anywhere = false,
 } = {}) {
   if (String(id).startsWith('global:')) {
     return globalConnection(env, id);
   }
   const row = await env.DB.prepare(`SELECT id, scope, slug, name, url, headers, auth, oauth_by,
-      oauth_error, updated_at FROM mcp_servers s WHERE id = ?
+      oauth_error, updated_at FROM mcp_servers s WHERE id = ?1
       AND (COALESCE((SELECT w.enabled FROM mcp_server_switches w WHERE w.server_id = s.id
-        AND w.channel = ?), s.enabled) = 1
-      OR (? = 1 AND EXISTS (SELECT 1 FROM mcp_server_switches w WHERE w.server_id = s.id
-        AND w.enabled = 1)))`).bind(id, channelId || '', anywhere ? 1 : 0).first();
+        AND w.channel = ?2), s.enabled) = 1
+      OR (?3 = 1 AND EXISTS (SELECT 1 FROM mcp_server_switches w WHERE w.server_id = s.id
+        AND w.enabled = 1))
+      OR ${GRANTED(4)})`)
+    .bind(id, channelId || '', anywhere ? 1 : 0, thread || '', new Date().toISOString()).first();
   if (!row) {
     return null;
   }
@@ -108,13 +122,17 @@ function noStream(fetchFn) {
   };
 }
 
-/** A connected client for `{ url, headers, authProvider? }`. */
+/**
+ * A connected client for `{ url, headers, authProvider?, fetch? }`. A server's own `fetch` wins
+ * over the one given: only a global server's connection has one (src/agent/globals.js), to reach
+ * it through a service binding; a row of `mcp_servers` never does.
+ */
 export async function connect(server, { fetch: fetchFn = globalThis.fetch } = {}) {
   const client = new Client(CLIENT_INFO, {
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
   });
   const transport = new StreamableHTTPClientTransport(new URL(server.url), {
-    fetch: noStream(fetchFn),
+    fetch: noStream(server.fetch || fetchFn),
     requestInit: { headers: server.headers || {} },
     ...(server.authProvider ? { authProvider: server.authProvider } : {}),
   });

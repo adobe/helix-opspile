@@ -17,16 +17,21 @@ import {
   CHANNEL_PEOPLE, kept, keptAccounts, placeArgs,
 } from './accounts.js';
 import { json } from './http.js';
-import { invitedFields, inviteMentioned } from './invite.js';
+import { inviteAuthor, invitedFields, inviteMentioned } from './invite.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
 import { threadExperts } from './expertise.js';
 import { suggestMentions } from './mention-match.js';
 import { markdownToMrkdwn } from './markdown.js';
+import { readMarkdown } from './mdast.js';
 import { mentionCandidates } from './profiles.js';
 import {
   inPersonalView, personalChannels, sharesByChannel, teamsOf,
 } from './shares.js';
 import { refreshMembers } from './suggest.js';
+import { MESSAGE_ID } from './portal/ids.js';
+import {
+  portalAuthor, portalBound, portalCall, portalUpload,
+} from './portalsource.js';
 import { resolveShortcodes } from './shortcodes.js';
 import { messageHtml } from './ui-markdown.js';
 
@@ -149,6 +154,12 @@ async function saveToken(env, person, platform, t) {
 }
 
 /**
+ * The customer portal among a person's platforms, where its Worker is bound: nobody connects an
+ * account for it, and the portal takes the inbox's word for who posts, reacts or edits.
+ */
+const portalOn = (env) => (portalBound(env) ? { portal: true } : {});
+
+/**
  * Whether the person's tokens may react: Slack tokens from before `reactions:write` was
  * asked for may not (they need to connect again); `ChannelMessage.Send` already may.
  */
@@ -160,6 +171,7 @@ export async function reactable(env, person) {
     slack: by.has('slack') && by.get('slack').split(/[\s,]+/).includes('reactions:write'),
     teams: by.has('teams'),
     discord: false,
+    ...portalOn(env),
   };
 }
 
@@ -183,7 +195,9 @@ export async function editable(env, person) {
       teams = 'reconnect';
     }
   }
-  return { slack: by.has('slack'), teams, discord: false };
+  return {
+    slack: by.has('slack'), teams, discord: false, ...portalOn(env),
+  };
 }
 
 /**
@@ -194,15 +208,23 @@ export async function editable(env, person) {
 export async function attachable(env, person) {
   const { results } = await env.DB.prepare('SELECT platform, scope FROM user_tokens WHERE person = ?')
     .bind(person).all();
-  return Object.fromEntries((results || []).filter((r) => r.platform !== 'discord')
-    .map((r) => [r.platform, personRule(r.platform, r.scope)]));
+  return {
+    ...Object.fromEntries((results || []).filter((r) => r.platform !== 'discord')
+      .map((r) => [r.platform, personRule(r.platform, r.scope)])),
+    ...(portalBound(env) ? { portal: personRule('portal') } : {}),
+  };
 }
 
 export async function connections(env, person) {
   const { results } = await env.DB.prepare('SELECT platform FROM user_tokens WHERE person = ?')
     .bind(person).all();
   const set = new Set((results || []).map((r) => r.platform));
-  return { slack: set.has('slack'), teams: set.has('teams'), discord: set.has('discord') };
+  return {
+    slack: set.has('slack'),
+    teams: set.has('teams'),
+    discord: set.has('discord'),
+    ...portalOn(env),
+  };
 }
 
 /**
@@ -506,6 +528,46 @@ const markMentions = (body, mentions, mark) => splitMentions(body, mentions)
  */
 export const slackMarkdown = (body, mentions = []) => markMentions(body, mentions, (p) => `<@${p.id}>`);
 
+/** Whether a markdown tree has a table anywhere (in a list item or a quote too). */
+const hasTable = (node) => node.type === 'table' || (node.children || []).some(hasTable);
+
+/**
+ * The `blocks` of a person's Slack post or edit: a reply with a table is a `markdown` block,
+ * which Slack renders itself, tables too, where mrkdwn has none (the `text` keeps its pipes);
+ * any other reply has none, and its mrkdwn `text` is the message. Undefined for none.
+ */
+export function slackBlocks(body, mentions = []) {
+  return hasTable(readMarkdown(body))
+    ? [{ type: 'markdown', text: slackMarkdown(body, mentions) }] : undefined;
+}
+
+/** Slack refusing the blocks of a message, which it takes as text alone. */
+export const SLACK_BLOCKS_REFUSED = [
+  'invalid_blocks', 'invalid_blocks_format', 'msg_blocks_too_long', 'block_mismatch',
+];
+
+/**
+ * Calls Slack `method` with `payload` and its `blocks` (src/post.js `slackBlocks`); when Slack
+ * refuses those, which posts nothing, once more as `text` alone. Slack's answer, as JSON, or
+ * `{ status }` when it gave none.
+ */
+export async function slackWithBlocks(token, method, payload, blocks) {
+  const call = async (b) => {
+    const res = await fetch(`https://slack.com/api/${method}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ ...payload, ...(b ? { blocks: b } : {}) }),
+    });
+    return res.json().catch(() => ({ status: res.status }));
+  };
+  const data = await call(blocks);
+  if (blocks && !data.ok && SLACK_BLOCKS_REFUSED.includes(data.error)) {
+    console.warn(JSON.stringify({ route: 'slack', method, blocks: data.error }));
+    return call();
+  }
+  return data;
+}
+
 /**
  * A Discord message's `content` and `allowed_mentions` (the opspile bot's posts): mentions as
  * `<@id>`, and the mentioned people are the only ones it pings (not `@everyone`, nor a role).
@@ -612,8 +674,9 @@ export async function channelPlace(env, ref) {
     ORDER BY t.any_at DESC LIMIT 1`).bind(id.join(':'), source, tenant).first();
 }
 
-// The id a platform gives the first message of a thread: a Slack `ts`, a Teams message id.
-const ROOT_ID = { slack: /^\d{1,12}\.\d{1,8}$/, teams: /^\d{1,20}$/ };
+// The id a platform gives the first message of a thread: a Slack `ts`, a Teams message id, a
+// portal message id.
+const ROOT_ID = { slack: /^\d{1,12}\.\d{1,8}$/, teams: /^\d{1,20}$/, portal: MESSAGE_ID };
 
 /**
  * The inbox entry a message `id` starts in channel `t`, as src/normalize.js will key it (the
@@ -891,7 +954,7 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
   const found = Promise.all([
     t.source === 'teams' && t.group_id
       ? env.DB.prepare(`SELECT i.user_id AS id, ${BOT_NAME} AS name, i.name AS posts_as,
-          i.avatar ${BOTS} ORDER BY b.at DESC`).bind(t.tenant, t.group_id).all()
+          COALESCE(i.display_avatar, i.avatar) AS avatar ${BOTS} ORDER BY b.at DESC`).bind(t.tenant, t.group_id).all()
       : { results: [] },
     env.DB.prepare(`SELECT i.user_id AS id, i.person, ${NAME} AS name, i.name AS account_name,
         i.aliases, COALESCE(i.email, p.email) AS email, i.avatar,
@@ -985,6 +1048,9 @@ const SLACK_RECONNECT = ['invalid_auth', 'token_revoked', 'not_authed', 'missing
  * `@Name` of one of them in the text becomes a real platform mention, so the person is
  * notified. On Slack, the Adobe people among them who are not in the channel are added to it
  * first (src/invite.js): `invited` in the answer, and `uninvited` whom Slack would not add.
+ * When Slack refuses the post because the person is not in the channel, the opspile app adds
+ * them and it goes again, once: `joined` in the answer (`joinedWorkspace` when they were added
+ * to the channel's workspace too).
  * Emoji `:names:` go as the platform knows them (src/shortcodes.js); `text` in the answer is
  * the reply as sent. Files go with the text, in the same message. The reply then
  * arrives like any other message, through the platform's events.
@@ -1017,6 +1083,45 @@ export async function post(env, me, request, inTeam, files = []) {
   if (t.source === 'discord') {
     return json({ error: 'reply in Discord: the inbox cannot post there as you' }, 409);
   }
+  if (t.source === 'portal') {
+    // The customer portal: nobody connects an account for it. The inbox says who posts, by
+    // their mail address (src/portalsource.js), and the text goes as it is: markdown, in
+    // which an `@Name` of someone in the channel is a mention there.
+    const refused = checkFiles(personRule('portal'), files);
+    if (refused) {
+      return json({ error: refused }, 400);
+    }
+    const { text: sent } = await resolveShortcodes(env, body, {
+      source: t.source, tenant: t.tenant,
+    });
+    await routeReply(env, key, t);
+    const author = await portalAuthor(env, me);
+    // The files first, then the message that carries them.
+    const up = await portalUpload(env, t, files, author);
+    if (up.error) {
+      return json({ error: `Portal: ${up.error}` }, 502);
+    }
+    const res = await portalCall(env, 'post', {
+      domain: t.tenant,
+      channel: t.channel_id,
+      root: t === place && !key ? undefined : t.root_id,
+      text: sent,
+      files: up.ids,
+      author,
+    });
+    if (res.error) {
+      return json({
+        error: `Portal: ${res.error}`, unknown: res.unknown || undefined,
+      }, res.status === 409 ? 409 : 502);
+    }
+    return json({
+      ok: true,
+      platform: 'portal',
+      id: res.id,
+      text: sent,
+      ...(t === place && !key ? { thread: threadOf(t, res.id) } : {}),
+    });
+  }
   const { token, scope, userId } = await personalToken(env, me.id, t.source) || {};
   if (!token) {
     const name = t.source === 'slack' ? 'Slack' : 'Microsoft';
@@ -1044,39 +1149,59 @@ export async function post(env, me, request, inTeam, files = []) {
   if (t.source === 'slack') {
     // Colleagues mentioned who are not in the channel are added first, so the mention reaches
     // them (src/invite.js).
-    const invited = invitedFields(await inviteMentioned(env, t, mentions, { except: userId }));
-    if (files.length) {
-      const up = await slackUpload(token, {
+    const invitedSome = await inviteMentioned(env, t, mentions, { except: userId });
+    const send = () => (files.length
+      ? slackUpload(token, {
         channel: t.channel_id, threadTs: t.root_id, comment: sent && slackText(sent, mentions),
-      }, files);
-      if (up.error === 'missing_scope') {
-        // A token from before files:write, or one it was taken from.
-        return json({
-          error: 'Slack: the inbox needs your permission to upload files: connect your Slack account again',
-          reconnect: 'slack',
-          files: true,
-        }, 409);
+      }, files)
+      // A table goes as a `markdown` block, which Slack renders (mrkdwn has no tables).
+      : slackWithBlocks(token, 'chat.postMessage', {
+        channel: t.channel_id, thread_ts: t.root_id, text: slackText(sent, mentions),
+      }, slackBlocks(sent, mentions)));
+    let data = await send();
+    // Slack lets a person post only where they are in: the app adds them, and it goes again.
+    let joined = null;
+    if (data.error === 'not_in_channel') {
+      joined = await inviteAuthor(env, t, { id: userId, name: me.name });
+      if (joined?.invited.length) {
+        data = await send();
       }
-      if (up.error) {
-        const connect = SLACK_RECONNECT.includes(up.error) ? 'slack' : undefined;
-        return json({ error: `Slack: ${up.error}`, connect }, 502);
+    }
+    const invited = {
+      ...invitedFields(invitedSome),
+      ...(joined?.invited.length ? { joined: true } : {}),
+      ...(joined?.invited[0]?.workspace ? { joinedWorkspace: true } : {}),
+    };
+    if (data.error === 'missing_scope' && files.length) {
+      // A token from before files:write, or one it was taken from.
+      return json({
+        error: 'Slack: the inbox needs your permission to upload files: connect your Slack account again',
+        reconnect: 'slack',
+        files: true,
+      }, 409);
+    }
+    if (data.error === 'not_in_channel' && joined && !joined.invited.length) {
+      // The app could not add them: Slack's reason, where it gave one.
+      const why = joined.refused[0]?.error;
+      return json({
+        error: `Slack: not_in_channel, and the bot could not add you${why ? ` (${why})` : ''}: join the channel in Slack`,
+      }, 502);
+    }
+    if (files.length) {
+      if (data.error) {
+        const connect = SLACK_RECONNECT.includes(data.error) ? 'slack' : undefined;
+        return json({ error: `Slack: ${data.error}`, connect }, 502);
       }
       // Slack names the files, not the message, which arrives through the events.
       return json({
-        ok: true, platform: 'slack', id: null, files: up.files, text: sent, ...invited,
+        ok: true, platform: 'slack', id: null, files: data.files, text: sent, ...invited,
       });
     }
-    const res = await fetch('https://slack.com/api/chat.postMessage', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({
-        channel: t.channel_id, thread_ts: t.root_id, text: slackText(sent, mentions),
-      }),
-    });
-    const data = await res.json();
     if (!data.ok) {
       const reconnect = SLACK_RECONNECT.includes(data.error);
-      return json({ error: `Slack: ${data.error}`, connect: reconnect ? 'slack' : undefined }, 502);
+      return json({
+        error: `Slack: ${data.error || data.status}`, connect: reconnect ? 'slack' : undefined,
+      }, 502);
     }
     return json({
       ok: true, platform: 'slack', id: data.ts, text: sent, ...started(data.ts), ...invited,
@@ -1117,6 +1242,30 @@ export async function post(env, me, request, inTeam, files = []) {
   return json({
     ok: true, platform: 'teams', id: data.id, text: sent, ...started(data.id),
   });
+}
+
+/**
+ * POST /api/typing `{ thread }`: the signed-in person is writing a reply in the thread. Only the
+ * customer portal is told (src/portal/platform.js `typing`), which shows its customers who is
+ * writing for a few seconds; Slack and Teams take no such word from an app. Staff only, in
+ * their teams; 204 whether or not anyone was told.
+ */
+export async function typing(env, me, request, inTeam) {
+  const key = request && request.thread;
+  const t = key ? await target(env, key) : null;
+  if (!t || !await inTeam(await teamsOf(env, t), t)) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (t.source === 'portal' && isStaffDomain(env, me.email) && portalBound(env)) {
+    // Who writes, by their mail address: the portal keeps the picture it has of them.
+    await portalCall(env, 'typing', {
+      domain: t.tenant,
+      channel: t.channel_id,
+      root: t.root_id,
+      author: { email: me.email, name: me.name || undefined },
+    });
+  }
+  return new Response(null, { status: 204 });
 }
 
 export async function disconnect(env, me, platform) {

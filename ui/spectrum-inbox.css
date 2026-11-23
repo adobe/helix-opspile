@@ -122,11 +122,10 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .t:hover { background: var(--hover); }
 
 .t .l1, .t .l2 { display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; }
-.t .dot { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: 50%; }
 .t .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .t .when { flex: none; }
-.t .l2 { padding-left: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100)); }
+.t .l2 { padding-left: calc(var(--spectrum-component-height-50) + 3 * var(--spectrum-spacing-100)); }
 .t .cust { display: flex; align-items: center; gap: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); max-width: 34%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .t .cust img { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); flex: none; }
 .faces { display: flex; flex: none; }
@@ -166,7 +165,7 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 #threads .count .clearq:hover { color: var(--ink); }
 /* A search result: a third line with the message that matched, the query's words marked. */
 .t.hit { height: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-200)); grid-template-rows: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) var(--spectrum-spacing-400) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)); contain-intrinsic-size: auto calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-200)); }
-.t .l3 { min-width: 0; padding-left: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100)); font-size: var(--spectrum-font-size-75); color: var(--mute); overflow: hidden;
+.t .l3 { min-width: 0; padding-left: calc(var(--spectrum-component-height-50) + 3 * var(--spectrum-spacing-100)); font-size: var(--spectrum-font-size-75); color: var(--mute); overflow: hidden;
   white-space: nowrap; text-overflow: ellipsis; }
 .t .l3 b { color: var(--ink); font-weight: 600; }
 .t .l3 .tag { margin-right: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
@@ -176,6 +175,19 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 /* The message a search result opened the thread at. */
 .msg .bubble { transition: box-shadow var(--spectrum-animation-duration-1000) ease-out; }
 .msg.found .bubble { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--yellow); }
+/* The message a link was for (a message's menu, "Copy Opspile URL"; `?m=`): ringed and lit
+   for a moment, which fades out over 3s (markFound keeps it 3.2s); with less motion it is
+   simply there for as long, and then gone. */
+.msg.linked .bubble { animation: linked var(--spectrum-animation-duration-6000) var(--spectrum-animation-ease-in) both; }
+@keyframes linked {
+  from, 40% { box-shadow: 0 0 0 var(--spectrum-border-width-400) var(--spectrum-notice-visual-color), 0 0 var(--spectrum-spacing-300) var(--spectrum-spacing-100) var(--spectrum-notice-subtle-background-color-default); }
+  to { box-shadow: 0 0 0 var(--spectrum-border-width-400) transparent, 0 0 var(--spectrum-spacing-300) var(--spectrum-spacing-100) transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg.linked .bubble { animation: none; box-shadow: 0 0 0 var(--spectrum-border-width-400) var(--spectrum-notice-visual-color); }
+}
+/* What a message's menu said (a copy), for a screen reader only. */
+.said { position: absolute; width: var(--spectrum-border-width-100); height: var(--spectrum-border-width-100); overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* Each of your teams, then Personal: one switch, the active one highlighted. */
 #threads .count .order { display: flex; min-width: 0;
  }
@@ -207,13 +219,6 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .tag { padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); border: var(--spectrum-border-width-100) solid var(--line); white-space: nowrap; }
 .tag.hot { color: var(--red); border-color: var(--red); }
 .tag.us { color: var(--yellow); border-color: var(--yellow); }
-.t .dot { --ring: var(--faint); }
-.t .dot.c-critical { --ring: var(--spectrum-red-1100); } .t .dot.c-hot { --ring: var(--red); } .t .dot.c-you { --ring: var(--accent); }
-.t .dot.c-waiting { --ring: var(--yellow); } .t .dot.c-silent { --ring: var(--purple); }
-.t .dot.c-team { --ring: var(--green); }
-.t .dot.ring { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--col), 0 0 0 calc(var(--spectrum-border-width-100) * 3.5) var(--ring); }
-.t.sel .dot.ring { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--sel), 0 0 0 calc(var(--spectrum-border-width-100) * 3.5) var(--ring); }
-.t .dot.ring:not([class*="c-"]) { background: transparent; }
 
 /*
  * The filters are a column of their own on the frame. Folded to a rail (below) they slide out
@@ -273,6 +278,12 @@ main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-a
 }
 
 .t.enter { animation: push-in var(--spectrum-animation-duration-700) ease-out; overflow: hidden; }
+/* How the rows move while the list changes under them (moveRows in ui/inbox.js): a row slides
+   to its new place, one that leaves folds away faster, one that comes into view fades in. */
+#threads { --row-move: var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-in-out);
+  --row-leave: var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-in);
+  --row-in: var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
+.t.leaving { overflow: hidden; pointer-events: none; }
 @keyframes push-in { from { height: 0; padding-top: 0; opacity: 0; } to { height: var(--row-h, var(--spectrum-spacing-800)); opacity: 1; } }
 .msg.enter, .sys.enter { animation: rise var(--spectrum-animation-duration-700) ease-out; }
 @keyframes rise { from { transform: translateY(calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-50))); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -300,7 +311,7 @@ main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-a
 
 .composer .attach:hover, .composer .attach:focus-visible { background: var(--hover); color: var(--ink); }
 .composer .attach[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
-.tray { flex-basis: 100%; flex-wrap: wrap; }
+.tray { position: relative; flex-basis: 100%; display: flex; flex-wrap: wrap; min-width: 0; }
 .tray[hidden] { display: none; }
 .tray .chip { position: relative; height: var(--spectrum-spacing-800); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); background: var(--card);
   display: flex; align-items: center; gap: var(--spectrum-spacing-100); max-width: calc(var(--spectrum-spacing-100) * 30); }
@@ -315,6 +326,15 @@ main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-a
   border: var(--spectrum-border-width-100) solid var(--line); background: var(--card); color: var(--ink); font-size: var(--spectrum-font-size-100); line-height: 1; cursor: pointer; }
 .tray .chip .x:hover, .tray .chip .x:focus-visible { background: var(--red); border-color: var(--red); color: var(--spectrum-white); }
 .tray .attach-error { flex-basis: 100%; color: var(--red); font-size: var(--spectrum-font-size-75); }
+/* How the reply box's rows come and go within a thread (foldRow in ui/inbox.js): the tray and
+   the lines under the box grow into their place as S2's overlays arrive, eased out, and fold away
+   faster, eased in; a file's chip fades in and out, and the others slide to their places. While a
+   row grows or folds it is cut at its edges, but for the × buttons that stand off its chips. */
+.composer { --fold-in: var(--spectrum-animation-duration-400); --fold-in-ease: var(--spectrum-animation-ease-out);
+  --fold-out: var(--spectrum-animation-duration-200); --fold-out-ease: var(--spectrum-animation-ease-in); }
+.composer .draftbar.folding { overflow: clip; }
+.tray.folding { overflow: clip; overflow-clip-margin: var(--spectrum-spacing-100); }
+.tray .chip.gone { position: absolute; margin: 0; pointer-events: none; }
 #pane { position: relative; }
 #pane .dropzone { position: absolute; inset: var(--spectrum-spacing-100); z-index: 6; display: flex; align-items: center; justify-content: center;
   border: var(--spectrum-border-width-200) dashed var(--accent); border-radius: var(--spectrum-corner-radius-800); background: color-mix(in srgb, var(--pane) 86%, transparent);
@@ -333,6 +353,26 @@ dialog.confirm p { margin: 0 0 calc(var(--spectrum-spacing-50) + var(--spectrum-
 dialog.confirm .bubble { max-height: 40vh; overflow: auto; }
 dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-200); }
 dialog.confirm .send { border-radius: var(--spectrum-corner-radius-100); padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); background: var(--me); color: var(--spectrum-white); border: 0; }
+/* Keyboard shortcuts (⌘/ or your menu): their groups side by side where they fit, the sheet
+   scrolling under its title where they do not. */
+dialog.keysheet { width: min(calc(var(--spectrum-spacing-100) * 110), 94vw); max-height: 86vh; padding: 0; overflow: hidden; }
+dialog.keysheet form { display: flex; flex-direction: column; max-height: 86vh; }
+dialog:is(.keysheet, .notifyhelp) .top { display: flex; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); }
+dialog:is(.keysheet, .notifyhelp) .close { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
+dialog.keysheet .groups { overflow: auto; columns: 2 calc(var(--spectrum-spacing-100) * 40); }
+dialog.keysheet section { break-inside: avoid; }
+dialog.keysheet .keys { display: grid; grid-template-columns: 1fr auto; margin: 0; }
+dialog.keysheet .keys dd { margin: 0; text-align: right; white-space: nowrap; }
+/* The notification troubleshooter (ui/notifyhelp.js, with the confirm dialog's buttons): its
+   step scrolling under its title, the drawings of the system's settings as wide as the text. */
+dialog.notifyhelp { width: min(calc(var(--spectrum-spacing-100) * 70), 94vw); max-height: 88vh; overflow: hidden; }
+dialog.notifyhelp form { display: flex; flex-direction: column; max-height: 88vh; }
+dialog.notifyhelp .nh-body { overflow: auto; }
+dialog.notifyhelp .apply { flex-wrap: wrap; }
+.nh-steps { margin: 0; padding-left: var(--spectrum-spacing-400); }
+.nh-fig { margin: var(--spectrum-spacing-200) 0px var(--spectrum-spacing-300); }
+.nh-pic { display: block; width: 100%; height: auto; }
+.menu .item kbd.end { margin-left: auto; }
 .toast { position: fixed; bottom: calc(var(--spectrum-spacing-300) + var(--safe-bottom)); left: 50%; transform: translateX(-50%); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
   border-radius: var(--spectrum-corner-radius-700); padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); font-size: var(--spectrum-font-size-100); z-index: 10; }
 kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
@@ -390,6 +430,10 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .ph .hmi { display: flex; align-items: baseline; justify-content: space-between; gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); text-decoration: none; }
 .ph .hmi span { min-width: 0; overflow-wrap: anywhere; }
 .ph .hmi small { flex: none; }
+/* A technology's follow switch, at the end of its line (ui/inbox.js `followButton`). */
+.ph .hmi:has(.hmfollow) { align-items: center; }
+.ph .hmi:has(.hmfollow) > span { flex: 1; }
+.ph .hmi .hmfollow { flex: none; }
 .ph .hmi.member { flex-direction: column; align-items: flex-start; justify-content: center; gap: 0px; }
 /* A link: its favicon, then its address on one line, cut in the middle (the path before its last
    segment goes first, the page it names stays), then its note. */
@@ -471,6 +515,8 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .sc-body .sm .face { position: relative; flex: none; }
 .sc-body .sm .col { max-width: min(80%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
 .sc-body .sm.person .col { align-items: flex-end; }
+/* No wider than its column, as a bubble in the thread (below). */
+.sc-body .sm .col > .bubble { max-width: 100%; }
 .sc-body .sm .who { margin: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-50); }
 .sc-body .sm.pending .bubble { opacity: .7; }
 .sc-body .sc-foot { display: flex; justify-content: center; }
@@ -478,6 +524,23 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .sc-body :is(.sc-continue, .sc-wait) .bubble-ico { position: static; padding: 0; }
 .sc-body .sc-wait .bubble-ico { display: inline-block; vertical-align: middle; margin-right: var(--spectrum-spacing-75); }
 .sidechat.blank .sc-body { padding-top: var(--spectrum-spacing-200); }
+/* The purple badge (sideBadge): answers to you in a sidebar that you have not seen, on the
+   thread's row, and New on its folded line. */
+.sidebadge { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50); white-space: nowrap; }
+.sidebadge .bubble-ico { position: static; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); padding: 0; }
+/* A tool the agent asked for (toolCard, ui/inbox.js): a card under its answer, lined up with
+   its bubbles: what it asks for, why, what it does, and how it stands or Deny and Grant. */
+.sc-body .tq { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); min-width: 0;
+  max-width: min(80%, calc(var(--spectrum-spacing-100) * 95));
+  margin: 0 0 0 calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500) + var(--spectrum-spacing-100));
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
+.sc-body .tq-head { display: flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; }
+.sc-body .tq-head svg { flex: none; }
+.sc-body .tq :is(.tq-why, .tq-about) { margin: 0; overflow-wrap: anywhere; }
+.sc-body .tq-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
+.sc-body .tq-foot :is(.tq-note, .tq-st) { flex: 1 1 auto; min-width: 0; }
+.sc-body .tq-foot .acts { flex: none; display: flex; gap: var(--spectrum-spacing-100); margin-left: auto; }
+.sc-body .tq button { cursor: pointer; }
 .composer .sidebtn { position: relative; display: grid; place-items: center; cursor: pointer; }
 .composer .sidebtn .av { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); }
 .composer .sidebtn .bubble-ico { right: var(--spectrum-spacing-50); bottom: var(--spectrum-spacing-50); width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); padding: 0; }
@@ -485,6 +548,8 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 :is(.side-bar, .sp-head) .face { position: relative; flex: none; }
 .side-what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .composer.sidebar .side-exit { flex: none; font: inherit; cursor: pointer; }
+/* The panel's box where you may not ask the agent (sidePanelBox): why, in its place. */
+.composer.sidebar .side-off { flex: 1; margin: 0; }
 /* The sidebar beside the thread (placeSidePanel): a panel at the right edge of the thread's
    column, which makes room for it. While it shows, the content area is shared 3 : 5 : 3 between
    the list, the thread and the panel: the thread, which has the code and the logs, stays the
@@ -508,14 +573,138 @@ main.siding #pane { margin-right: calc(var(--side-w) * var(--side-open, 1)); }
    (--side-in). Without a line in sight it slides in from the edge, clipped there. Closing, the
    same backwards. Open, the line stays joined to the panel: `#side-join` bridges the gap
    between them, with a rounded inner corner on either side, and opens the panel's edge where
-   the line meets it; it is clipped to where the thread scrolls, as the line is. */
+   the line meets it; it is clipped to where the thread scrolls, as the line is. A conversation
+   started in the open panel joins it too: once its new line is in sight, the line comes out of
+   the panel, right to left, and the inner corners round off (joinLine). Coming out, the line is
+   drawn by `#side-join` under its content (`.emerging`, clipped to where it is out). */
 main { --side-motion: var(--spectrum-animation-duration-1000); }
 #side > * { opacity: var(--side-in, 1); }
 main.side-veiled #side { opacity: 0; pointer-events: none; }
 main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 100%)); clip-path: inset(0px calc((1 - var(--side-open)) * 100%) 0px 0px); }
 #side-join { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
 #side-join[hidden] { display: none; }
+.sidechat.emerging { position: relative; z-index: 3; clip-path: inset(0px 0px 0px 100%); }
 #side-join svg { display: block; width: 100%; height: 100%; }
+/* The sidebar's tab (wireSideTab in ui/inbox.js): on the thread's right edge, halfway down, where
+   the panel comes from; open, on the panel's edge, which it goes back into. Pulled, the panel
+   comes or goes with it (--side-open). Only where the panel has room beside the thread. */
+#side-tab { display: none; }
+@media (min-width: 1100px) {
+  #side-tab { display: grid; place-items: center; grid-row: 1; grid-column: 3; justify-self: end; align-self: center; position: relative; z-index: 4;
+    width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-800); padding: 0px; cursor: pointer; touch-action: none; }
+  #side-tab[hidden] { display: none; }
+  main.siding #side-tab { margin-right: calc(var(--side-w) * var(--side-open, 1)); }
+  #side-tab.pulling { cursor: grabbing; }
+}
+
+/* ==== Wide screens: the bands, and the columns you size =======================================
+   Three bands past a desktop's screen: ultrawide from 2400px (a 2560px screen), megawide from
+   3200px (3440px) and hyperwide from 4800px (5120px). In each the filters flow into one more
+   column (2, 3, 4: `#facets`, in reading order, balanced, a group never split), the list takes
+   a smaller share of what is left (30%, 26%, 22%), as its rows need no more, and the sidebar may
+   grow wider, so the thread keeps most of the room. Each column of filters is a little wider
+   than the one column is (--facet-w), as there is room, so fewer labels are cut short. The simple personal view keeps one column
+   of filters: it has one group.
+   Wherever the filters are a column (from 1100px, not folded to the rail) the edges between the
+   filters, the list, the thread and the sidebar are grips (`.grip`, wireColumns in
+   ui/inbox.js): dragging one sizes its column (`main.sized-f`, `.sized-l`, `.sized-s`, with
+   `--user-filters-w`, `--user-list-w`, `--user-side-w`), kept per band. The filters flow into as
+   many columns as their width has room for, so widening them is what adds one. The thread never
+   gets narrower than --pane-least, the sidebar no wider than half of the thread's column. */
+:root { --facet-w: calc(var(--filters-w) - var(--spectrum-spacing-300) - var(--frame-gap)); --facet-gap: var(--spectrum-spacing-500);
+  --list-least: calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)); --pane-least: calc(var(--spectrum-spacing-100) * 55); --list-share: 34%; }
+#facets { display: contents; }
+@media (min-width: 1100px) {
+  main:not(.rail):not(.simple) #facets { display: block; columns: auto var(--facet-w); column-gap: var(--facet-gap); }
+  main:not(.rail):not(.simple) #facets > .card { break-inside: avoid; margin-bottom: var(--fr-h); }
+}
+@media (min-width: 2400px) {
+  main:not(.simple) { --filters-w: calc(var(--facet-w) * 2 + var(--facet-gap) + var(--spectrum-spacing-300) + var(--frame-gap)); }
+  :root { --facet-w: calc(var(--filters-w) - var(--spectrum-spacing-300) - var(--frame-gap) + var(--spectrum-spacing-500)); }
+  main { --list-share: 30%; --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 80));
+    grid-template-columns: var(--nav-w) minmax(var(--list-least), var(--list-share)) 1fr; }
+  main.siding { grid-template-columns: var(--nav-w) minmax(var(--list-least), calc(var(--list-share) + ((100% - var(--nav-w)) * 3 / 11 - var(--list-share)) * var(--side-open, 1))) 1fr; }
+}
+@media (min-width: 3200px) {
+  main:not(.simple) { --filters-w: calc(var(--facet-w) * 3 + var(--facet-gap) * 2 + var(--spectrum-spacing-300) + var(--frame-gap)); }
+  main { --list-share: 26%; --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 90)); }
+}
+@media (min-width: 4800px) {
+  main:not(.simple) { --filters-w: calc(var(--facet-w) * 4 + var(--facet-gap) * 3 + var(--spectrum-spacing-300) + var(--frame-gap)); }
+  main { --list-share: 22%; --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), 37.5%, calc(var(--spectrum-spacing-100) * 110)); }
+}
+/* The filters as one table, wherever they are a column (from 1100px, not the rail, not the
+   simple personal view), so a row reads across and the columns of filters line up side by side:
+   - Across: every row has the same tracks, at the same widths in every card: its color, its
+     icon, the label, the unread mentions (`.men`, out of `.lw` into a track of their own, so
+     the badges stand in a column and not wherever a label ends), the count, and the bar. The
+     count's track is as wide as the most threads any value can have (`--fr-digits`, the digits
+     of the list's length, set by filterCards in ui/inbox.js), so the bars start at one edge in
+     every card, whatever its counts; the bar's track grows with a column made wider by hand. A
+     group's title (`.fg`) starts where the labels do.
+   - Down: rows, a group's title and a card's title are all --fr-h high, and a card's gap is
+     one more, so every row of every column sits on the same lines as its neighbors'.
+   In the rail the label and its mentions stay together (`.lw`): there only the badge shows. */
+@media (min-width: 1100px) {
+  main:not(.rail):not(.simple) #facets { --fr-h: calc(var(--spectrum-spacing-400) + var(--spectrum-spacing-75));
+    --fr-gap: var(--spectrum-text-to-visual-100); --fr-bar: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-600)); }
+  .spectrum main:not(.rail):not(.simple) #facets .card h3 { height: var(--fr-h); margin: 0px; align-items: flex-end;
+    padding-bottom: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+  main:not(.rail):not(.simple) #facets .fg { height: var(--fr-h); display: flex; align-items: flex-end; overflow: hidden; white-space: nowrap;
+    margin: 0px var(--spectrum-spacing-75) 0px calc(var(--spectrum-spacing-75) * 2 + var(--spectrum-spacing-50) + var(--spectrum-spacing-300) + var(--fr-gap) * 2);
+    padding-bottom: var(--spectrum-spacing-75); }
+  main:not(.rail):not(.simple) #facets .fr { height: var(--fr-h); padding-top: 0px; padding-bottom: 0px; column-gap: var(--fr-gap);
+    grid-template-columns: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-300)) minmax(0px, 1fr) auto
+      minmax(calc(var(--fr-digits, 2) * 1ch), max-content) max(var(--fr-bar), 22%); }
+  main:not(.rail):not(.simple) #facets .fr .lw { display: contents; }
+  main:not(.rail):not(.simple) #facets .fr .men { grid-column: 4; grid-row: 1; justify-self: end; }
+  main:not(.rail):not(.simple) #facets .fr .n { grid-column: 5; grid-row: 1; }
+  main:not(.rail):not(.simple) #facets .fr .bar { grid-column: 6; grid-row: 1; }
+}
+/* A reading width for the two conversations, the thread and the sidebar: past --read-w their
+   content keeps to a column in the middle, with the room left over as padding on either side, so
+   the people on the left and Adobe on the right stay within a glance of each other. That holds
+   for all of the thread's column: its header, the messages, the reply box and the rows over it
+   (the draft, the commands the agent asks to run and the ones it ran). The edges, dividers and
+   scrollbars stay where they are. */
+:root { --read-w: calc(var(--spectrum-spacing-100) * 130); }
+@media (min-width: 1100px) {
+  :is(#pane > .ph, #pane .feed, #pane .composer) { --read-edge: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50));
+    padding-left: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); padding-right: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); }
+  :is(#side .sc-body, #side .composer) { --read-edge: var(--spectrum-spacing-300);
+    padding-left: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); padding-right: max(var(--read-edge), calc((100% - var(--read-w)) / 2)); }
+  #side .sp-head { padding-left: max(var(--spectrum-spacing-300), calc((100% - var(--read-w)) / 2));
+    padding-right: max(var(--spectrum-spacing-200), calc((100% - var(--read-w)) / 2)); }
+}
+/* Sized by hand, only where the grips are (from 1100px): under it the drawer's and the phone's
+   layouts are as they are, whatever was sized on a wider screen. Whatever is sized, the thread
+   keeps --pane-room: --pane-least, and with the sidebar out room for it as well. Wider filters
+   leave the list its least and the thread its room, and the list gives way to them. */
+@media (min-width: 1100px) {
+  main { --pane-room: var(--pane-least); }
+  main.siding { --pane-room: calc(var(--spectrum-spacing-100) * 110); }
+  main.sized-f:not(.rail) { --filters-w: min(var(--user-filters-w), 100% - var(--list-least) - var(--pane-room)); }
+  main.sized-f { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(var(--list-share), 100% - var(--nav-w) - var(--pane-room))) 1fr; }
+  main.sized-f.siding { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(calc(var(--list-share) + ((100% - var(--nav-w)) * 3 / 11 - var(--list-share)) * var(--side-open, 1)), 100% - var(--nav-w) - var(--pane-room))) 1fr; }
+  main.sized-l.sized-l { grid-template-columns: var(--nav-w) minmax(var(--list-least), min(var(--user-list-w), 100% - var(--nav-w) - var(--pane-room))) 1fr; }
+  main.sized-s { --side-w: clamp(calc(var(--spectrum-spacing-100) * 45), var(--user-side-w), 50%); }
+}
+/* The grips: a strip on the edge, which shows the edge in the accent color under the pointer,
+   focused or dragged. The list's and the sidebar's sit on the thread's and the sidebar's side
+   of their edge, off the scrollbar beside it. While one is dragged nothing eases or selects. */
+.grip { display: none; }
+@media (min-width: 1100px) {
+  .grip { display: block; grid-row: 1; position: relative; z-index: 5; width: var(--spectrum-spacing-100); cursor: col-resize; touch-action: none; outline: none; }
+  .grip::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(50% - var(--spectrum-border-width-100)); width: var(--spectrum-border-width-200);
+    background: var(--accent); opacity: 0; transition: opacity var(--spectrum-animation-duration-100) var(--spectrum-animation-ease-out); }
+  .grip:hover::after, .grip.dragging::after { opacity: 1; }
+  .grip:focus-visible::after { opacity: 1; width: var(--spectrum-focus-indicator-thickness); left: calc(50% - var(--spectrum-focus-indicator-thickness) / 2); }
+  #grip-filters { grid-column: 2; justify-self: start; translate: -50% 0; }
+  #grip-list { grid-column: 3; justify-self: start; }
+  #grip-side { grid-column: 3; justify-self: end; margin-right: calc(var(--side-w) * var(--side-open, 1) - var(--spectrum-spacing-100)); }
+  main.rail #grip-filters, main:not(.siding) #grip-side, main:has(> #side[hidden]) #grip-side { display: none; }
+  main.resizing, main.resizing * { cursor: col-resize; user-select: none; transition: none !important; }
+}
 #side .sp-head { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
 #side .sp-close { flex: none; display: grid; place-items: center; padding: 0; cursor: pointer; }
 #side .scroller { flex: 1; overflow: hidden auto; overscroll-behavior: contain; }
@@ -534,6 +723,10 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 .msg.adobe { flex-direction: row-reverse; }
 .msg .col { max-width: min(74%, calc(var(--spectrum-spacing-100) * 95)); display: flex; flex-direction: column; align-items: flex-start; }
 .msg.adobe .col { align-items: flex-end; }
+/* A bubble is no wider than its column, whatever it holds: a file's name it cuts, a table or a
+   code block that cannot wrap it scrolls. Wider, it would grow past the column towards the
+   start of the line, off the feed's left edge on Adobe's side (aligned to the end). */
+.msg .col > .bubble { max-width: 100%; }
 /* The header line: who and when, then the quick reactions (below, with their rules). It is as
    wide as the feed has room beside the avatar (`--msg-line`), not as the bubble, and takes none
    of the column's width (the margin takes it back): the bubble alone says how wide a message
@@ -568,7 +761,10 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 
 .bubble > :last-child { margin-bottom: 0; }
 .bubble hr { border: 0; border-top: var(--spectrum-border-width-100) solid currentColor; opacity: .3; margin: var(--spectrum-spacing-100) 0; }
-.bubble table { border-collapse: collapse; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; display: block; overflow-x: auto; }
+/* A table scrolls sideways in its bubble rather than squeeze its columns: its cells break a
+   word only where it does not fit (`break-word`), not anywhere, as the bubble does, which
+   would shrink them to a letter's width. */
+.bubble table { border-collapse: collapse; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; display: block; overflow-x: auto; overflow-wrap: break-word; }
 .bubble th, .bubble td { border: var(--spectrum-border-width-100) solid color-mix(in srgb, currentColor 25%, transparent); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-100); }
 .bubble li > input[type=checkbox] { margin: 0 var(--spectrum-spacing-75) 0 calc(-1 * var(--spectrum-spacing-50)); vertical-align: calc(-1 * var(--spectrum-border-width-100)); }
 
@@ -592,8 +788,10 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 .linkpick { position: fixed; z-index: 21; display: flex; flex-direction: column; min-width: calc(var(--spectrum-spacing-100) * 21); padding: var(--spectrum-spacing-75);
   background: var(--card); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-400) var(--spectrum-transparent-black-400); }
 .linkpick[hidden] { display: none; }
-.linkpick a { color: var(--ink); text-decoration: none; font-size: var(--spectrum-font-size-75); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-400); }
-.linkpick a:hover, .linkpick a:focus-visible { background: var(--sel); outline: none; }
+.linkpick :is(a, button) { color: var(--ink); text-decoration: none; font-size: var(--spectrum-font-size-75); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-400); }
+.linkpick :is(a, button):hover, .linkpick :is(a, button):focus-visible { background: var(--sel); outline: none; }
+/* A message's menu (its ⋮): its items are buttons, which copy. */
+.linkpick button { display: flex; align-items: center; border: 0; background: none; font-family: inherit; text-align: start; cursor: pointer; white-space: nowrap; }
 .bubble ul, .bubble ol { margin: var(--spectrum-spacing-75) 0; padding-left: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); }
 .bubble img.att { display: block; max-width: 100%; max-height: calc(var(--spectrum-spacing-100) * 45); border-radius: var(--spectrum-corner-radius-700); margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0; cursor: zoom-in; }
 /* Sized images keep their aspect ratio as the bubble narrows; the rest get a placeholder box. */
@@ -842,26 +1040,32 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .sendwrap .resolve[aria-pressed="true"] { background: var(--sel); }
 
 /* The thread's shared draft, on its own line under the reply box: a dashed card. Its first row
-   says who saved it and when, then its tools (icons: view, edit, discard) and, past a hairline,
-   the ways to send it; under them how it starts (all of it, viewed), and its sources. In a
-   narrow card, the sends get a row of their own at the bottom, side by side. */
+   says who saved it and when; under it how it starts (all of it, viewed), then its sources and,
+   on their right, its tools (icons: view, edit, discard) and, past a hairline, the ways to send
+   it. They are at the bottom because the card grows upwards: opening it under the pointer moves
+   none of them. In a narrow card, the sources get a row of their own above them. */
 .composer { flex-wrap: wrap; }
 .draftbar { flex-basis: 100%; min-width: 0; container: draft / inline-size;
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
 .draftbar[hidden] { display: none; }
-.draftbar .dl { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "head tools sends" "text text text" "srcs srcs srcs";
+.draftbar .dl { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "head head head" "text text text" "srcs tools sends";
   align-items: center; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
 .draftbar .head { grid-area: head; display: flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; white-space: nowrap; }
 .draftbar .pen { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
 .draftbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.draftbar .tools { grid-area: tools; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
-.draftbar .sends { grid-area: sends; display: flex; align-items: center; gap: var(--spectrum-spacing-100);
+.draftbar .tools { grid-area: tools; align-self: end; display: flex; align-items: center; gap: var(--spectrum-spacing-50); }
+.draftbar .sends { grid-area: sends; align-self: end; display: flex; align-items: center; gap: var(--spectrum-spacing-100);
   padding-left: var(--spectrum-spacing-100); border-left: var(--spectrum-border-width-100) solid var(--line); }
 .draftbar button { flex: none; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
 .draftbar button svg { flex: none; }
 .draftbar .pv { grid-area: text; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: var(--spectrum-spacing-100); }
 /* Viewed: all of it, rendered as the message it will be (its Markdown), on the card, not a bubble. */
 .draftbar.open .pv { white-space: normal; max-height: 30vh; overflow: auto; }
+/* Opening and closing, it grows and shrinks (`resizeDraft`): opening settles, closing is faster,
+   and all of the draft shows as it goes, cut off below. */
+.draftbar { --draft-open: var(--spectrum-animation-duration-500); --draft-open-ease: var(--spectrum-animation-ease-out);
+  --draft-close: var(--spectrum-animation-duration-200); --draft-close-ease: var(--spectrum-animation-ease-in); }
+.draftbar .pv.resizing { white-space: normal; overflow: hidden; }
 .draftbar .pv .md.bubble { max-width: none; padding: 0; border-radius: 0; background: none; color: inherit; }
 /* Closed: how it starts, still rendered, on one line: its blocks run on as text, a space (or a
    list's number) between them, and what has no place in a line of text is left out. */
@@ -878,8 +1082,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .draftbar .pv .line :is(img.att, .gallery, .files, video, audio, hr, input, .quote-by) { display: none; }
 .draftbar button:disabled { opacity: .5; cursor: default; }
 @container draft (max-width: 560px) {
-  .draftbar .dl { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head tools" "text text" "srcs srcs" "sends sends"; }
-  .draftbar .sends { padding: var(--spectrum-spacing-50) 0 0; border-left: 0; }
+  .draftbar .dl { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "head head" "text text" "srcs srcs" "tools sends"; }
   .draftbar .sends button { flex: 1; }
 }
 /* The draft's sources: on their own row of its line, only ever in the inbox. */
@@ -966,11 +1169,23 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .linestab .chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .linestab svg { flex: none; }
   .linestab .chev { margin-left: auto; }
-  .linesdrawer { display: none; }
-  /* Over the thread and what floats in it, under a toast: Undo of a discard is in one. */
-  .linesdrawer.open { position: fixed; inset: 0; z-index: 9; display: flex; flex-direction: column; justify-content: flex-end; }
+  /* Over the thread and what floats in it, under a toast: Undo of a discard is in one.
+     The sheet rises from the bottom edge as a Dialog arrives, the dim fading in with it, and
+     drops back faster when it closes: `allow-discrete` keeps the drawer displayed, and no
+     longer in the way of a tap, until the sheet is gone. One the thread's composer brings
+     back already open (it was drawn again) is `still`: there, not rising again. */
+  .linesdrawer { position: fixed; inset: 0; z-index: 9; display: none; flex-direction: column; justify-content: flex-end; pointer-events: none;
+    transition: background-color var(--s2-out), display var(--s2-out) allow-discrete; }
+  .linesdrawer.open { display: flex; pointer-events: auto;
+    transition: background-color var(--s2-dialog-in), display var(--s2-dialog-in) allow-discrete; }
   .linesdrawer .sheet { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); max-height: 85dvh; overflow: hidden auto; overscroll-behavior: contain;
-    padding: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-200) + var(--safe-bottom)); }
+    padding: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-200) + var(--safe-bottom));
+    translate: 0px 100%; transition: translate var(--s2-out); }
+  .linesdrawer.open .sheet { translate: 0px 0px; transition: translate var(--s2-dialog-in); }
+  @starting-style {
+    .linesdrawer.open .sheet { translate: 0px 100%; }
+  }
+  .linesdrawer.still, .linesdrawer.still .sheet { transition: none; }
   .lineshead { position: sticky; top: 0; z-index: 1; flex: none; display: flex; align-items: center; justify-content: space-between;
     margin: 0 calc(-1 * var(--spectrum-spacing-200)); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-300); }
   .linesclose { cursor: pointer; }
@@ -1009,19 +1224,28 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
    They show once the pointer has rested on the bubble for a moment, not as it passes over the
    thread, and go a moment after it left, which is the time it has to reach them across the
    header, or from a bubble shorter than its header; focus, and their open picker, show them
-   at once. */
+   at once. They arrive as a Popover does, fading in from 2px below, and leave faster. The
+   visibility goes with the fade (visible while it runs), so hidden they take no pointer and
+   no Tab, and with less motion it is the step it was, at the same moments. */
 .msg .quick-at { flex: none; display: flex; align-items: flex-end; height: 0; margin: 0 var(--spectrum-spacing-100); }
 .msg .quick { position: relative; top: var(--spectrum-spacing-50); z-index: 3; flex: none; display: flex;
- visibility: hidden; transition: visibility var(--spectrum-animation-duration-0) linear var(--spectrum-animation-duration-1000); }
+ visibility: hidden; opacity: 0; translate: 0 var(--spectrum-spacing-50);
+ transition: var(--s2-out) var(--spectrum-animation-duration-1000); transition-property: opacity, translate, visibility; }
 .msg.cont .quick { top: var(--spectrum-spacing-300); }
-.msg:has(.bubble:hover) .quick { visibility: visible; transition-delay: var(--spectrum-animation-duration-600); }
-.msg .quick:hover, .msg .quick:focus-within, .msg .quick:has([aria-expanded="true"]) { visibility: visible; transition-delay: var(--spectrum-animation-duration-0); }
+.msg:has(.bubble:hover) .quick { visibility: visible; opacity: 1; translate: none;
+ transition: var(--s2-pop-in) var(--spectrum-animation-duration-600); transition-property: opacity, translate, visibility; }
+.msg:focus-visible .quick, .msg .quick:hover, .msg .quick:focus-within, .msg .quick:has([aria-expanded="true"]) { visibility: visible; opacity: 1; translate: none;
+ transition: var(--s2-pop-in); transition-property: opacity, translate, visibility; }
 .msg .quick button { font-size: var(--spectrum-font-size-200); line-height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); padding: var(--spectrum-spacing-50) calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); }
 .msg .quick button:hover, .msg .quick button:focus-visible { background: var(--hover); }
 .msg .quick button[aria-pressed="true"] { background: var(--sel); }
 .msg .quick .more { font-size: var(--spectrum-font-size-100); }
 .msg .quick .edit { font-size: var(--spectrum-font-size-100); }
 .msg .quick .edit:not(:last-child) { margin-right: var(--spectrum-spacing-50); }
+/* The ⋮, last: the message's menu, set off from the reactions before it. */
+.msg .quick .acts { display: flex; align-items: center; justify-content: center; }
+.msg .quick .acts:not(:first-child) { margin-left: var(--spectrum-spacing-50); }
+.msg .quick .acts svg { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
 /* Editing one of your messages in place: the bubble is the editor. */
 .msg.editing .col { width: min(74%, calc(var(--spectrum-spacing-100) * 95)); }
 .bubble.editing { position: relative; width: 100%; box-sizing: border-box; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
@@ -1110,6 +1334,9 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 [data-p]:focus-visible { outline: var(--spectrum-border-width-200) solid var(--accent); outline-offset: var(--spectrum-border-width-100); }
 .msg .who b[data-p] { cursor: default; }
 .msg .who b[data-p]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
+/* A mention with a profile card, as the author's name: the card shows on hover. */
+.bubble .mention[data-p] { cursor: default; }
+.bubble .mention[data-p]:hover { text-decoration: underline dotted; text-underline-offset: var(--spectrum-spacing-50); }
 /* The time says its whole date when pointed at, as the name shows its card: in the thread, and
    in the sidebar's messages wherever they show. */
 .feed time[title], .sc-body time[title] { cursor: default; }
@@ -1123,7 +1350,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .pcard .nm { font-size: var(--spectrum-font-size-100); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pcard .ttl { color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pcard .chips { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); flex-wrap: wrap; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
-.pcard .rel { font-size: var(--spectrum-font-size-50); font-weight: 650; padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); border-radius: var(--spectrum-corner-radius-600); color: var(--spectrum-white); }
+.pcard .rel { font-size: var(--spectrum-font-size-50); font-weight: 650; padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); border: var(--spectrum-border-width-100) solid transparent; border-radius: var(--spectrum-corner-radius-600); color: var(--spectrum-white); }
 .pcard .rel.adobe { background: var(--me); } .pcard .rel.partner { background: var(--spectrum-purple-background-color-default); }
 .pcard .rel.customer { background: var(--spectrum-orange-background-color-default); } .pcard .rel.bot { background: var(--faint); }
 .pcard dl { display: grid; grid-template-columns: auto 1fr; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); margin: 0; }
@@ -1131,6 +1358,12 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .pcard dd { margin: 0; min-width: 0; display: flex; gap: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); align-items: center; overflow-wrap: anywhere; }
 .pcard dd img { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); border-radius: var(--spectrum-corner-radius-75); flex: none; }
 .pcard .note { color: var(--mute); font-size: var(--spectrum-font-size-75); margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
+/* Who they are in the thread's knowledge bases, and the question to ask the agent about them. */
+.pcard .kb { margin-top: var(--spectrum-spacing-200); padding-top: var(--spectrum-spacing-100); border-top: var(--spectrum-border-width-100) solid var(--line); display: grid; gap: var(--spectrum-spacing-100); }
+.pcard .kb p { margin: 0 0 var(--spectrum-spacing-50); overflow-wrap: anywhere; }
+.pcard .kb a { font-size: var(--spectrum-font-size-50); }
+.pcard .ask-about { display: flex; align-items: center; gap: var(--spectrum-spacing-75); width: 100%; margin-top: var(--spectrum-spacing-200); font: inherit; text-align: left; cursor: pointer; }
+.pcard .ask-about .bubble-ico { position: static; flex: none; padding: 0; }
 
 .rv .apply { display: flex; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
 .rv .apply .send { border-radius: var(--spectrum-corner-radius-100); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-200); background: var(--me); color: var(--spectrum-white); border: 0; }
@@ -1151,16 +1384,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
  * "Y replies, X mentions", then the latest reply as far as it fits before the reactions, grey
  * in unread rows too, so the bold title leads.
  */
-/* A resolved row's ✓ takes the status dot's place, as wide as the dot so the titles line up. */
-.t .ok { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); display: flex; justify-content: center;
- }
-/* A draft's pencil does too, in the status's color (the dot's), as wide as a ringed dot. */
-.t .pen { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); display: flex; justify-content: center;
-  color: var(--faint); }
-.t .pen svg { flex: none; width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
-.t .pen.s-critical { color: var(--spectrum-red-1100); } .t .pen.s-hot { color: var(--red); } .t .pen.s-you { color: var(--accent); }
-.t .pen.s-waiting { color: var(--yellow); } .t .pen.s-silent { color: var(--purple); }
-.t .pen.s-team { color: var(--green); }
 #threads { background: var(--row-read); }
 .t { --row-bg: var(--row-read); background: var(--row-bg); }
 .t.unread { --row-bg: var(--row-unread); }
@@ -1176,7 +1399,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   white-space: nowrap; }
 .t .tags { flex: none; }
 .t .faces .av, .t .moods .em { border-color: var(--row-bg); }
-.t .dot.ring { box-shadow: 0 0 0 var(--spectrum-spacing-50) var(--row-bg), 0 0 0 calc(var(--spectrum-border-width-100) * 3.5) var(--ring); }
 
 
 /*
@@ -1260,10 +1482,14 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 @media (max-width: 699px) {
   /* Clipped, not hidden: nothing may scroll the page sideways to the thread off its edge. */
   main { grid-template-columns: 100%; overflow: hidden; overflow: clip; }
-  #threads, #pane { grid-area: 1 / 1; border: 0; transition: transform var(--spectrum-animation-duration-500) ease-out, visibility var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-500); }
+  #threads, #pane { grid-area: 1 / 1; border: 0; }
   #pane { transform: translateX(100%); visibility: hidden; }
-  main.reading #pane { transform: none; visibility: visible; transition: transform var(--spectrum-animation-duration-500) ease-out; }
+  main.reading #pane { transform: none; visibility: visible; }
   main.reading #threads { transform: translateX(-25%); visibility: hidden; }
+  /* The one coming into view is visible as it starts to; the one leaving hidden once it is out
+     (until then it is on screen, under or beside the other). */
+  #threads, main.reading #pane { transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out); }
+  #pane, main.reading #threads { transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out), visibility var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-500); }
   .t, #threads .count { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); padding-right: var(--spectrum-spacing-200); }
   .t .cust { max-width: 40%; }
   .ph { display: grid; column-gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-75); }
@@ -1291,7 +1517,8 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .empty { padding: var(--spectrum-spacing-500) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); }
 }
 @media (max-width: 1099px) and (prefers-reduced-motion: reduce) {
-  #filters, main.filtering #filters, main::after, #threads, #pane, main.reading #pane { transition: none; }
+  #filters, main.filtering #filters, main::after, #threads, #pane, main.reading #pane, main.reading #threads { transition: none; }
+  .linesdrawer, .linesdrawer.open, .linesdrawer .sheet, .linesdrawer.open .sheet { transition: none; }
 }
 /* Back or Forward that the browser has already animated (the iPhone's edge swipe) does not slide again. */
 main.instant #threads, main.instant #pane, main.instant.reading #pane { transition: none; }
@@ -1333,12 +1560,14 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   --s2-popover: var(--spectrum-background-layer-2-color);
   --s2-pill: calc(var(--s2-ctl) / 2);
 }
-.spectrum .c-critical, .spectrum .t .dot.c-critical { --ring: var(--spectrum-red-1100); background: var(--spectrum-red-1100) !important; }
+.spectrum .c-critical { --ring: var(--spectrum-red-1100); background: var(--spectrum-red-1100) !important; }
 .spectrum .c-slack {
   background: linear-gradient(var(--spectrum-cyan-visual-color) 25%, var(--spectrum-green-visual-color) 0 50%,
     var(--spectrum-yellow-visual-color) 0 75%, var(--spectrum-magenta-visual-color) 0) !important;
 }
 .spectrum .c-discord { background: var(--spectrum-purple-visual-color) !important; }
+/* The customer portal, Adobe's own: its red. */
+.spectrum .c-portal { background: var(--spectrum-red-visual-color) !important; }
 
 /* Avatar: round and bold (its colors are every page's, ui/spectrum.css). */
 .spectrum .av { border-radius: 50%; font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-white); }
@@ -1451,7 +1680,6 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .t.unread .replies.re { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .replies .men { color: var(--spectrum-red-900); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .snip { color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .t .ok { color: var(--spectrum-positive-visual-color); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .cust img, .spectrum .ph .sub img, .spectrum .chans img { border-radius: var(--spectrum-corner-radius-75); }
 /* Faces: an AvatarGroup, each ringed in the row's own layer. */
 .spectrum .moods .em { background: var(--spectrum-gray-100); }
@@ -1600,6 +1828,23 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .ph a.hmi:hover, .spectrum .ph a.hmi:focus-visible { background: var(--s2-down); color: var(--spectrum-neutral-content-color-hover); outline: none; }
 .spectrum .ph a.hmi:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
 .spectrum .ph .hmi small { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .hmfollow {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  background: transparent;
+  font: inherit;
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-content-color-default);
+  cursor: pointer;
+  transition: background-color var(--s2-ease), color var(--s2-ease);
+}
+.spectrum .ph .hmfollow:hover { background: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .ph .hmfollow:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .ph .hmfollow[aria-pressed="true"] { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); border-color: transparent; }
+.spectrum .ph .hmfollow[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
 
 /* The feed's landmarks: the day as a subtle neutral Badge, dividers and events subdued. */
 .spectrum .day span {
@@ -1737,6 +1982,25 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 /* The one you are writing in has an edge, as a field with the focus has; so have the ones the
    panel beside the thread shows. */
 .spectrum .sidechat:is(.live, .paneled) { border-color: var(--spectrum-purple-visual-color); }
+/* An answer to you in it you have not seen: the edge too, and the purple badge (S2's
+   NotificationBadge, in the sidebar's purple) where the row and the line say so. */
+.spectrum .sidechat.fresh { border-color: var(--spectrum-purple-visual-color); }
+.spectrum .sidechat.fresh .sc-what { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .sidebadge {
+  min-width: var(--spectrum-component-height-50);
+  height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-spacing-75);
+  box-sizing: border-box;
+  justify-content: center;
+  border-radius: calc(var(--spectrum-component-height-50) / 2);
+  background: var(--spectrum-purple-background-color-default);
+  color: var(--spectrum-white);
+  font-family: var(--s2-font);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-component-height-50);
+}
+.spectrum .sidebadge .bubble-ico { color: inherit; background: none; }
 .spectrum .sidechat .sc-head {
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
   border: 0;
@@ -1784,6 +2048,37 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   font-weight: var(--spectrum-bold-font-weight);
 }
 .spectrum .sc-body .sc-continue:hover { background: var(--spectrum-purple-subtle-background-color-default); }
+/* A tool request: in the notice color's subtle fill while it waits, as a command request's, since
+   granting it is a decision; in gray once that is made. Grant is the accent Button, Deny and End
+   now outline ones. */
+.spectrum .sc-body .tq {
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  background: var(--spectrum-notice-subtle-background-color-default);
+}
+.spectrum .sc-body .tq:not(.pending) { background: var(--spectrum-gray-75); }
+.spectrum .sc-body .tq-head { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sc-body .tq-head b { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .sc-body .tq-head svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .sc-body .tq-why { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sc-body .tq.granted .tq-st { color: var(--spectrum-positive-visual-color); }
+.spectrum .sc-body .tq button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-75);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-400);
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  color: var(--spectrum-neutral-content-color-default);
+  background: transparent;
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .sc-body .tq button:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
+.spectrum .sc-body .tq button.grant { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
+.spectrum .sc-body .tq button.grant:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-hover); }
+.spectrum .sc-body .tq button.grant:active:not(:disabled) { background: var(--spectrum-accent-background-color-down); }
+.spectrum .sc-body .tq button:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .sc-body .tq button:disabled { color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
 .spectrum .sc-body :is(.sc-continue, .sc-wait) .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
 .spectrum .composer .sidebtn {
   width: var(--spectrum-component-height-200);
@@ -1801,6 +2096,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum :is(.side-bar, .sp-head) { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .side-what b { color: var(--spectrum-purple-1000); font-size: var(--spectrum-font-size-100); }
 .spectrum .side-what small { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .composer.sidebar .side-off { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .composer.sidebar .side-exit {
   padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200);
   border: var(--spectrum-border-width-200) solid var(--spectrum-gray-400);
@@ -1834,6 +2130,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   stroke: var(--spectrum-purple-visual-color);
   stroke-width: var(--spectrum-border-width-200);
 }
+/* Coming out of the panel, its edge and fill are `#side-join`'s. */
+.spectrum .sidechat.emerging { border-color: transparent; background: none; }
 /* The line joined to the panel is part of it: no hover of its own, which would stop at the join. */
 .spectrum .sidechat.joined .sc-head:hover { background: none; }
 .spectrum #side .sp-close {
@@ -1852,6 +2150,34 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum #side .sp-when.found { color: var(--spectrum-purple-1000); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum #side .sp-head { border-bottom: var(--spectrum-border-width-100) solid var(--side-line); }
 .spectrum #side .composer.sidebar { border-top: var(--spectrum-border-width-100) solid var(--side-line); background: none; }
+/* The tab is the sidebar's purple, a filled tab with the speech bubble, its open side on the edge
+   it comes out of. Under the pointer it comes out a little further. A dot: an answer to you
+   waits in the sidebar. As the agent sets to work or is done, it wiggles, out of the edge and
+   back, once. */
+.spectrum #side-tab {
+  border: 0;
+  border-radius: var(--s2-radius) 0px 0px var(--s2-radius);
+  background: var(--spectrum-purple-background-color-default);
+  color: var(--spectrum-white);
+  box-shadow: var(--content-shadow);
+  transform-origin: right center;
+  transition: width var(--s2-ease), background-color var(--s2-ease);
+}
+.spectrum #side-tab:hover, .spectrum #side-tab.pulling { width: calc(var(--spectrum-spacing-400) + var(--spectrum-spacing-75)); background: var(--spectrum-purple-1000); }
+.spectrum #side-tab:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum #side-tab .bubble-ico { position: static; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); padding: 0px; color: inherit; background: none; }
+.spectrum #side-tab .dot { display: none; position: absolute; top: var(--spectrum-spacing-100); left: var(--spectrum-spacing-75);
+  width: var(--spectrum-spacing-100); height: var(--spectrum-spacing-100); border-radius: 50%; background: var(--spectrum-white); }
+.spectrum #side-tab.fresh .dot { display: block; }
+.spectrum #side-tab.wiggle { animation: side-tab-wiggle var(--spectrum-animation-duration-1000) var(--spectrum-animation-ease-in-out); }
+@keyframes side-tab-wiggle {
+  0%, 100% { rotate: 0deg; translate: 0px 0px; }
+  15% { rotate: -9deg; translate: calc(-1 * var(--spectrum-spacing-100)) 0px; }
+  30% { rotate: 7deg; translate: calc(-1 * var(--spectrum-spacing-75)) 0px; }
+  45% { rotate: -5deg; translate: calc(-1 * var(--spectrum-spacing-50)) 0px; }
+  60% { rotate: 3deg; translate: 0px 0px; }
+  75% { rotate: -1deg; }
+}
 .spectrum .file-view .fv-wait .spin {
   width: var(--spectrum-progress-circle-size-small);
   height: var(--spectrum-progress-circle-size-small);
@@ -1906,8 +2232,12 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .picker button:hover, .spectrum .picker button:focus-visible { background: var(--s2-down); }
 .spectrum .msg .quick button[aria-pressed="true"] { background: var(--spectrum-accent-subtle-background-color-default); }
 .spectrum .msg .quick .more { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* A message in focus (↑ from an empty reply box, or F6): S2's focus ring around it. */
+.spectrum #pane .msg[data-id]:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); border-radius: var(--s2-radius); }
 .spectrum .msg .quick .edit { color: var(--spectrum-neutral-content-color-default); }
 .spectrum .msg .quick .edit:not(:last-child) { border-radius: var(--spectrum-corner-radius-100) 0 0 var(--spectrum-corner-radius-100); box-shadow: var(--spectrum-border-width-100) 0 0 var(--spectrum-gray-200); }
+.spectrum .msg .quick .acts { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .msg .quick .acts:not(:first-child) { border-radius: 0 var(--spectrum-corner-radius-100) var(--spectrum-corner-radius-100) 0; box-shadow: calc(var(--spectrum-border-width-100) * -1) 0 0 var(--spectrum-gray-200); }
 
 /* Files on a message: a card each on the bubble's own overlay, the kind's badge in S2's
    categorical backgrounds (those that take white text), "Preview" a small ActionButton. */
@@ -1997,7 +2327,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .fv-request .fv-text { border: 0; border-radius: var(--spectrum-corner-radius-100); background: var(--spectrum-background-layer-1-color); }
 /* The preview's dialog: S2's Dialog, full-size (a Takeover's proportions), its header plain. */
 .spectrum dialog.file-dialog { border: 0; border-radius: var(--spectrum-corner-radius-extra-large-default); box-shadow: var(--s2-elevated); font-size: var(--spectrum-font-size-100); }
-.spectrum dialog.file-dialog::backdrop { background: var(--spectrum-overlay-color); opacity: var(--spectrum-overlay-opacity); }
+/* Its opacity is ui/spectrum.css's, which fades it in and out with the dialog. */
+.spectrum dialog.file-dialog::backdrop { background: var(--spectrum-overlay-color); }
 .spectrum .file-dialog .fv-head { gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-400); border-bottom-color: var(--spectrum-gray-200); }
 .spectrum .file-dialog .fv-title { font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-heading-color); }
 .spectrum .file-dialog .fv-link { color: var(--spectrum-accent-content-color-default); }
@@ -2104,7 +2435,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   box-shadow: var(--s2-elevated);
 }
 .spectrum :is(.mentions, .chans, .expertlist, .linkpick) { padding: var(--spectrum-spacing-75); }
-.spectrum :is(.mentions li, .chans li, .expertlist button, .linkpick a) {
+.spectrum :is(.mentions li, .chans li, .expertlist button, .linkpick a, .linkpick button) {
   min-height: var(--s2-ctl);
   gap: var(--spectrum-text-to-visual-100);
   padding: var(--spectrum-spacing-75) var(--spectrum-component-edge-to-text-100);
@@ -2113,11 +2444,11 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   background: none;
   font-size: var(--spectrum-font-size-100);
 }
-.spectrum :is(.mentions li.on, .chans li.on, .chans li[data-i]:hover, .expertlist button:hover, .expertlist button:focus-visible, .linkpick a:hover, .linkpick a:focus-visible) {
+.spectrum :is(.mentions li.on, .chans li.on, .chans li[data-i]:hover, .expertlist button:hover, .expertlist button:focus-visible, .linkpick :is(a, button):hover, .linkpick :is(a, button):focus-visible) {
   color: var(--spectrum-neutral-content-color-hover);
   background: var(--s2-down);
 }
-.spectrum :is(.expertlist button, .linkpick a):focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum :is(.expertlist button, .linkpick a, .linkpick button):focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
 .spectrum .chans li.none { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum :is(.mentions, .chans) .hint { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .expertlist b { font-weight: var(--spectrum-medium-font-weight); color: var(--spectrum-neutral-content-color-default); }
@@ -2128,13 +2459,15 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .ph.newthread .cancel { font-size: var(--spectrum-font-size-75); }
 
 /* Profile cards: a Popover with a large Avatar, the relation a bold Badge in its category's
-   S2 color. */
+   S2 color. The Badge has the box of the Tag beside it (its padding, and a border, transparent),
+   so the two are as tall and their text on one line. */
 .spectrum .pcard { font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
 .spectrum .pcard .nm { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .pcard .ttl, .spectrum .pcard .note { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .pcard dt { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .pcard .rel {
-  padding: 0 var(--spectrum-spacing-100);
+  padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100));
+  border: var(--spectrum-border-width-100) solid transparent;
   border-radius: var(--spectrum-corner-radius-100);
   font-size: var(--spectrum-font-size-50);
   font-weight: var(--spectrum-bold-font-weight);
@@ -2144,6 +2477,27 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .pcard .rel.partner { background: var(--spectrum-purple-background-color-default); }
 .spectrum .pcard .rel.customer { background: var(--spectrum-cinnamon-background-color-default); }
 .spectrum .pcard .rel.bot { background: var(--spectrum-gray-background-color-default); }
+/* Its knowledge-base part under a divider, the Contact's description as body text and where it
+   is a quiet link; the question to the agent a quiet button in the sidebar's purple. */
+.spectrum .pcard .kb { border-top-color: var(--spectrum-gray-200); }
+.spectrum .pcard .kb p { color: var(--spectrum-neutral-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .pcard .kb a { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .pcard .kb a:hover { color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .pcard :is(.kb.pending, .kb.none, .kb-stale) { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .pcard .ask-about {
+  padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-purple-visual-color);
+  border-radius: calc(var(--spectrum-component-height-100) / 2);
+  background: var(--spectrum-background-layer-2-color);
+  color: var(--spectrum-purple-1000);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .pcard .ask-about:hover { background: var(--spectrum-purple-subtle-background-color-default); }
+.spectrum .pcard .ask-about:focus-visible { outline: var(--s2-focus); }
+.spectrum .pcard .ask-about .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+/* A picture in a thread is a button: a click asks the agent about them. */
+.spectrum .feed .face .av[data-p] { cursor: pointer; }
 /* A source of the draft beside it: the header plain, the quote S2's quiet blockquote. */
 .spectrum .srcpop .head { font-size: var(--spectrum-font-size-75); border-bottom-color: var(--spectrum-gray-200); }
 .spectrum .srcpop .host, .spectrum .srcpop .only { font-size: var(--spectrum-font-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
@@ -2160,6 +2514,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border-radius: var(--spectrum-corner-radius-large-default);
   background: var(--spectrum-accent-subtle-background-color-default);
 }
+/* Text selected in the draft: the page's selection is the card's own fill, so it would not show. */
+.spectrum .draftbar ::selection { background: var(--spectrum-accent-color-500); }
 .spectrum .draftbar .pen { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .draftbar svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
 .spectrum .draftbar .by { color: var(--spectrum-neutral-subdued-content-color-default); }
@@ -2291,8 +2647,13 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .linestab svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
 .spectrum .linestab .chip.ask { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .linestab .chip.draft { color: var(--spectrum-accent-content-color-default); }
-.spectrum .linesdrawer.open { background: var(--spectrum-transparent-black-500); }
-.spectrum .linesdrawer.open .sheet {
+/* The sheet keeps its look while it drops away: only the dim is the open drawer's. */
+.spectrum .linesdrawer { background-color: transparent; }
+.spectrum .linesdrawer.open { background-color: var(--spectrum-transparent-black-500); }
+@starting-style {
+  .spectrum .linesdrawer.open { background-color: transparent; }
+}
+.spectrum .linesdrawer .sheet {
   background: var(--pane);
   border-radius: var(--spectrum-corner-radius-large-default) var(--spectrum-corner-radius-large-default) 0 0;
   box-shadow: var(--s2-elevated);
@@ -2411,9 +2772,59 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border-radius: var(--spectrum-corner-radius-extra-large-default);
   box-shadow: var(--s2-elevated);
 }
-.spectrum dialog.confirm::backdrop { background: var(--spectrum-overlay-color); opacity: var(--spectrum-overlay-opacity); }
+/* Its opacity is ui/spectrum.css's, which fades it in and out with the dialog. */
+.spectrum dialog.confirm::backdrop { background: var(--spectrum-overlay-color); }
 .spectrum dialog.confirm p { margin-bottom: var(--spectrum-spacing-200); }
 .spectrum dialog.confirm .apply { margin-top: var(--spectrum-spacing-400); }
+/* The keyboard shortcuts: S2's Dialog, its groups headed as a Menu's sections are. */
+.spectrum dialog.keysheet { color: var(--ink); background: var(--spectrum-background-layer-2-color); border: 0; border-radius: var(--spectrum-corner-radius-extra-large-default); box-shadow: var(--s2-elevated); }
+.spectrum dialog.keysheet::backdrop { background: var(--spectrum-overlay-color); }
+.spectrum dialog.keysheet .top { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-400) var(--spectrum-spacing-200); }
+.spectrum dialog.keysheet h2 { margin: 0; font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum dialog.keysheet .close { width: var(--spectrum-spacing-600); height: var(--spectrum-spacing-600); border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
+.spectrum dialog.keysheet .close:hover { background: var(--spectrum-gray-200); }
+.spectrum dialog.keysheet .groups { padding: 0 var(--spectrum-spacing-400) var(--spectrum-spacing-400); column-gap: var(--spectrum-spacing-500); }
+.spectrum dialog.keysheet section { padding-top: var(--spectrum-spacing-200); }
+.spectrum dialog.keysheet h3 { margin: 0 0 var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum dialog.keysheet .keys { gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); font-size: var(--spectrum-font-size-100); }
+.spectrum dialog.keysheet .keys dd { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum dialog.keysheet kbd { border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); border-radius: var(--spectrum-corner-radius-75); font-size: var(--spectrum-font-size-75); }
+/* The notification troubleshooter: S2's Dialog, as the shortcuts' is, its steps headed as
+   sections. Its drawings of System Settings are in S2's colors, the window on the base layer,
+   its boxes a step lighter, and a negative ring where to click. */
+.spectrum dialog.notifyhelp { padding: 0px; }
+.spectrum dialog.notifyhelp .top { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-400) var(--spectrum-spacing-200); }
+.spectrum dialog.notifyhelp h2 { margin: 0px; font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum dialog.notifyhelp .close { width: var(--spectrum-spacing-600); height: var(--spectrum-spacing-600); border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
+.spectrum dialog.notifyhelp .close:hover { background: var(--spectrum-gray-200); }
+.spectrum dialog.notifyhelp .nh-body { padding: 0px var(--spectrum-spacing-400) var(--spectrum-spacing-400); }
+.spectrum dialog.notifyhelp h3 { margin: var(--spectrum-spacing-300) 0px var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum dialog.notifyhelp a { color: var(--link); }
+.spectrum dialog.notifyhelp .apply { margin-top: var(--spectrum-spacing-300); }
+.spectrum .nh-note, .spectrum .nh-fig figcaption { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .nh-fig figcaption { margin-top: var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); }
+.spectrum .nh-pic text { fill: var(--spectrum-neutral-content-color-default); }
+.spectrum .nh-pic .nh-dim { fill: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .nh-pic :is(.nh-strong, .nh-title) { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .nh-pic .nh-on { fill: var(--spectrum-white); }
+.spectrum .nh-pic :is(.nh-win, .nh-bar) { fill: var(--spectrum-gray-50); stroke: var(--spectrum-gray-300); }
+.spectrum .nh-pic .nh-side { fill: var(--spectrum-gray-100); }
+.spectrum .nh-pic .nh-box { fill: var(--spectrum-gray-100); }
+.spectrum .nh-pic .nh-sep { stroke: var(--spectrum-gray-300); }
+.spectrum .nh-pic :is(.nh-sel, .nh-field, .nh-btn) { fill: var(--spectrum-gray-300); }
+.spectrum .nh-pic .nh-ico { fill: var(--spectrum-gray-visual-color); }
+.spectrum .nh-pic .nh-ico.blue { fill: var(--spectrum-blue-visual-color); }
+.spectrum .nh-pic .nh-ico.red, .spectrum .nh-pic .nh-tl.r { fill: var(--spectrum-red-visual-color); }
+.spectrum .nh-pic .nh-ico.magenta { fill: var(--spectrum-magenta-visual-color); }
+.spectrum .nh-pic .nh-ico.indigo, .spectrum .nh-pic .nh-moon { fill: var(--spectrum-indigo-visual-color); }
+.spectrum .nh-pic .nh-tl.y { fill: var(--spectrum-yellow-visual-color); }
+.spectrum .nh-pic .nh-tl.g { fill: var(--spectrum-green-visual-color); }
+.spectrum .nh-pic .nh-tog { fill: var(--spectrum-gray-400); }
+.spectrum .nh-pic :is(.nh-tog.on, .nh-btn.on) { fill: var(--spectrum-accent-background-color-default); }
+.spectrum .nh-pic .nh-knob { fill: var(--spectrum-white); }
+.spectrum .nh-pic .nh-tick { fill: none; stroke: var(--spectrum-white); stroke-linecap: round; stroke-linejoin: round; }
+.spectrum .nh-pic .nh-glyph { fill: none; stroke: var(--spectrum-neutral-content-color-default); stroke-linecap: round; }
+.spectrum .nh-pic .nh-ring { fill: none; stroke: var(--spectrum-negative-visual-color); }
 
 /* Toasts: S2's neutral Toast (white text on neutral-subdued, the large radius, elevated), its
    action an outline Button for static white. */
@@ -2429,6 +2840,21 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border: 0;
   border-radius: var(--spectrum-corner-radius-large-default);
   box-shadow: var(--s2-elevated);
+}
+/* A toast rises a little as it fades in, and fades out faster than it came: S2's Toast. One that
+   replaces it fades in where it was, so the two cross-fade rather than stack. */
+.spectrum .toast {
+  opacity: 1;
+  translate: 0px 0px;
+  transition: opacity var(--s2-pop-in), translate var(--s2-pop-in);
+}
+@starting-style {
+  .spectrum .toast { opacity: 0; translate: 0px var(--spectrum-spacing-200); }
+}
+.spectrum .toast.leaving {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--s2-out), translate var(--s2-out);
 }
 .spectrum .toast :is(button, a) {
   margin-left: 0;
@@ -2513,6 +2939,8 @@ main.simple .t.dotted .l2 { padding-left: calc(var(--spectrum-spacing-300) + var
 main.simple .t .cust { flex: none; }
 main.simple .t .snip:empty { flex: 1; }
 main.simple .t .men { flex: none; margin-left: auto; }
+main.simple .t .sidebadge { margin-left: auto; }
+main.simple .t .sidebadge + .men { margin-left: 0; }
 main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); border-radius: 50%; }
 /* The list by customer: a heading each, the threads it shows, "N more", and with nothing new. */
 #threads .rows > .grp { display: flex; align-items: center; gap: var(--spectrum-spacing-100); width: 100%;
@@ -2520,7 +2948,7 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
   border: 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); border-radius: 0; text-align: left; cursor: pointer; }
 #threads .rows > .grp.sticky { position: sticky; top: var(--list-head, 0px); z-index: 1; padding-top: var(--spectrum-spacing-100); }
 #threads .rows > .grp .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#threads .rows > .grp .back { margin-left: auto; flex: none; }
+#threads .rows > .grp .back { margin-left: auto; flex: none; padding: 0; border: 0; background: none; font-family: inherit; cursor: pointer; }
 #threads .rows > .grp-more { display: block; width: 100%; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) var(--spectrum-spacing-100) calc(var(--spectrum-spacing-200) + var(--spectrum-spacing-300) + var(--spectrum-border-width-100));
   border: 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); border-radius: 0; text-align: left; cursor: pointer; }
 #threads .rows > .grp-quiet { padding: var(--spectrum-spacing-300) var(--spectrum-spacing-200); line-height: 1.5; }
@@ -2632,9 +3060,48 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 }
 .spectrum .fr .ico.wf { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); justify-self: center; border-radius: 0; color: var(--spectrum-neutral-content-color-default); }
 .spectrum .fr .lab.dim ~ .ico.wf, .spectrum .fr:has(.lab.dim) .ico.wf { color: var(--spectrum-disabled-content-color); }
-.spectrum .moods .em .wf { width: var(--spectrum-workflow-icon-size-xxs); height: var(--spectrum-workflow-icon-size-xxs); color: var(--spectrum-neutral-content-color-default); }
-.spectrum .moods .em.critical .wf { color: var(--spectrum-negative-visual-color); }
-.spectrum .moods .em.high .wf { color: var(--spectrum-notice-visual-color); }
+/* A row's status mark (statusMark in ui/inbox.js), a stack: a slot as wide as the kind and two
+   chips peeking out behind it, so titles line up whatever a row has (.l2 and .l3 start past
+   it); more chips wait behind the second. Pointing at it spreads them out, over the title, on
+   an elevated layer. */
+.t .mks { --mk-d: var(--spectrum-component-height-50); --mk-peek: var(--spectrum-spacing-100);
+ flex: none; position: relative; align-self: stretch; width: calc(var(--mk-d) + 2 * var(--mk-peek)); }
+.t .mk { --mk-bg: var(--row-bg); position: absolute; z-index: 1; top: 50%; left: calc(-1 * var(--spectrum-spacing-75)); translate: 0 -50%; display: flex; padding: var(--spectrum-spacing-75); border-radius: calc(var(--mk-d) / 2 + var(--spectrum-spacing-75));
+ transition: background-color var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out), box-shadow var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
+.t .mk:hover { --mk-bg: var(--spectrum-background-elevated-color); z-index: 3; background: var(--mk-bg); box-shadow: var(--spectrum-drop-shadow-x) var(--spectrum-drop-shadow-y) var(--spectrum-drop-shadow-blur) var(--spectrum-drop-shadow-elevated-color); }
+.t .mi { position: relative; flex: none; box-sizing: border-box; width: var(--mk-d); height: var(--mk-d); display: grid; place-items: center; border-radius: 50%;
+ background: var(--spectrum-gray-200); border: var(--spectrum-border-width-200) solid var(--mk-bg); margin-left: calc(var(--mk-peek) - var(--mk-d));
+ transition: margin-left var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out), border-color var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
+.t .mi:nth-child(n + 4) { margin-left: calc(-1 * var(--mk-d)); }
+.t .mk:hover .mi { margin-left: var(--spectrum-spacing-50); }
+.t .mk .mi:first-child { margin-left: 0; background: var(--mk-bg); border-color: transparent; }
+.t .mi:nth-child(1) { z-index: 6; } .t .mi:nth-child(2) { z-index: 5; } .t .mi:nth-child(3) { z-index: 4; }
+.t .mi:nth-child(4) { z-index: 3; } .t .mi:nth-child(5) { z-index: 2; } .t .mi:nth-child(6) { z-index: 1; }
+.spectrum .t .mi .wf { width: var(--spectrum-workflow-icon-size-xxs); height: var(--spectrum-workflow-icon-size-xxs); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .t .mi.k .wf { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+/* Unread: the icon smaller, inside an outline of its own shape (.ringed), as the pencil's is. */
+/* A halo of the row's layer, so the chips behind start a gap away from its outline. */
+.t .mk .mi.k.ring { border-width: 0; box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--mk-bg); }
+.spectrum .t .mi.k.ring .wf { width: var(--mk-d); height: var(--mk-d); color: currentColor; }
+.spectrum .t .mi.k { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .t .mi.k:not(.s-quiet) .wf { color: currentColor; }
+.spectrum .t .mi.k.s-critical { color: var(--spectrum-red-1100); } .spectrum .t .mi.k.s-hot { color: var(--red); } .spectrum .t .mi.k.s-you { color: var(--accent); }
+.spectrum .t .mi.k.s-waiting { color: var(--yellow); } .spectrum .t .mi.k.s-silent { color: var(--purple); } .spectrum .t .mi.k.s-team { color: var(--green); }
+/* Behind the kind, a chip shows its edge in its meaning's color; spread out, its icon on a subtle one. */
+.t .mi:not(:first-child) .wf { opacity: 0; transition: opacity var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
+.t .mk:hover .mi .wf { opacity: 1; }
+.t .mi:not(:first-child) { transition: margin-left var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out), background-color var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out), border-color var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out); }
+.spectrum .t .mi.draft, .spectrum .t .mi.us { background: var(--spectrum-gray-500); }
+.spectrum .t .mi.critical { background: var(--spectrum-negative-visual-color); }
+.spectrum .t .mi.high { background: var(--spectrum-notice-visual-color); }
+.spectrum .t .mi.ok { background: var(--spectrum-positive-visual-color); }
+.spectrum .t .mk:hover .mi.draft, .spectrum .t .mk:hover .mi.us { background: var(--spectrum-gray-200); }
+.spectrum .t .mk:hover .mi.critical { background: var(--spectrum-negative-subtle-background-color-default); }
+.spectrum .t .mk:hover .mi.high { background: var(--spectrum-notice-subtle-background-color-default); }
+.spectrum .t .mk:hover .mi.ok { background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .t .mi.critical .wf { color: var(--spectrum-negative-visual-color); }
+.spectrum .t .mi.high .wf { color: var(--spectrum-notice-visual-color); }
+.spectrum .t .mi.ok .wf { color: var(--spectrum-positive-visual-color); }
 @media (forced-colors: active) { .spectrum .wf { background: CanvasText; } }
 .spectrum .wf-chevron-down { --wf: var(--s2-icon-chevron); }
 .spectrum .wf-alert-diamond { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTEwLDE4Ljc5NDkyYy0uNjAxMDcsMC0xLjE2NjUtLjIzNDM4LTEuNTkxMzEtLjY1OTE4TDEuODY0MjYsMTEuNTkwODJjLS44NzY0Ni0uODc2OTUtLjg3NjQ2LTIuMzA0NjktLjAwMDQ5LTMuMTgxNjRMOC40MDkxOCwxLjg2NDI2Yy44NDg2My0uODQ5NjEsMi4zMzI1Mi0uODQ5NjEsMy4xODIxMywwbDYuNTQ0NDMsNi41NDQ5MmMuODc2NDYuODc2OTUuODc2NDYsMi4zMDQ2OS4wMDA0OSwzLjE4MTY0aC0uMDAwNDlsLTYuNTQ0OTIsNi41NDQ5MmMtLjQyNDMyLjQyNDgtLjk4OTc1LjY1OTE4LTEuNTkwODIuNjU5MThaTTEwLDIuNzA1MDhjLS4yMDAyLDAtLjM4ODY3LjA3ODEyLS41Mjk3OS4yMTk3M2wtNi41NDU0MSw2LjU0NDkyYy0uMjkxOTkuMjkxOTktLjI5MTk5Ljc2ODU1LjAwMDQ5LDEuMDYwNTVsNi41NDQ0Myw2LjU0NDkyYy4yODMyLjI4MzIuNzc3ODMuMjgzMiwxLjA2MDA2LDBsNi41NDQ5Mi02LjU0NDkyYy4yOTI0OC0uMjkxOTkuMjkyNDgtLjc2ODU1LDAtMS4wNjA1NWwtNi41NDQ0My02LjU0NDkyYy0uMTQxNi0uMTQxNi0uMzMwMDgtLjIxOTczLS41MzAyNy0uMjE5NzNaIiBzdHJva2Utd2lkdGg9IjAiLz48cGF0aCBkPSJNOS45OTkzNiwxNC45OTgzNGMtLjIzMDY1LjAwODEyLS40NTUzOC0uMDczNzgtLjYyNjYxLS4yMjgzNS0uMzMwMzMtLjM2NDYyLS4zMzAzMy0uOTE5OTMsMC0xLjI4NDU1LjE2OTM1LS4xNTgzMi4zOTQ4My0uMjQyNzkuNjI2NjQtLjIzNDc2LjIzNjM1LS4wMDk0Ny40NjU4OS4wODAyNi42MzMwMi4yNDc0NS4xNjIwNy4xNjc3LjI0OTE2LjM5Mzg2LjI0MTM3LjYyNjgxLjAxMjM4LjIzNDY5LS4wNjk1OS40NjQ2LS4yMjc3LjYzODY0LS4xNzM1OC4xNjQ1NS0uNDA3ODYuMjQ5NTktLjY0NjcxLjIzNDc1WiIgc3Ryb2tlLXdpZHRoPSIwIi8+PHBhdGggZD0iTTEwLDExLjYyNWMtLjQxNDA2LDAtLjc1LS4zMzU5NC0uNzUtLjc1di01YzAtLjQxNDA2LjMzNTk0LS43NS43NS0uNzVzLjc1LjMzNTk0Ljc1Ljc1djVjMCwuNDE0MDYtLjMzNTk0Ljc1LS43NS43NVoiIHN0cm9rZS13aWR0aD0iMCIvPjwvc3ZnPg=="); }
@@ -2669,3 +3136,163 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
    placeholder (ui/spectrum.css, "A field has its label above it"). */
 .spectrum .chanpick .fld { margin-bottom: var(--spectrum-spacing-75); }
 .spectrum .chanpick > .hint { display: block; margin-top: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+/* A customer's heading in the list by customer: its name (only this customer) and the key parts
+   of its stack, the likeliest technology of each layer (ui/inbox.js `stackLine`), which open the
+   stack's drawing. */
+#threads .rows > .grp > .gn { display: flex; align-items: center; gap: var(--spectrum-spacing-100); flex: 0 1 auto; min-width: 0; max-width: 60%;
+  padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+#threads .rows > .grp > .stk-line { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: var(--spectrum-spacing-50) var(--spectrum-spacing-75); border: 0; border-radius: var(--s2-radius); background: none; text-align: left; cursor: pointer; }
+#threads .rows > .grp > .stk-line > span + span::before { content: "·"; padding: 0 var(--spectrum-spacing-75); }
+.spectrum #threads .rows > .grp > .stk-line { color: var(--faint); font-family: var(--s2-font); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-regular-font-weight); }
+.spectrum #threads .rows > .grp > .stk-line:hover, .spectrum #threads .rows > .grp > .stk-line[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
+.spectrum #threads .rows > .grp > .stk-line:focus-visible { outline: var(--s2-focus); }
+.spectrum #pane .hmpop .stk-open { width: 100%; border: 0; background: none; color: var(--link); font: inherit; text-align: left; cursor: pointer; }
+
+/* The stack's drawing (ui/stack.js): its layers, top to bottom, each a row of its parts, and the
+   flows between them as arrows behind the parts. A part under the pointer lights its flows. */
+.stkpop { position: fixed; z-index: 7; display: flex; flex-direction: column; width: min(calc(100vw - var(--spectrum-spacing-300)), 60em); max-height: calc(100vh - var(--spectrum-spacing-400));
+  overflow: auto; background: var(--card); color: var(--ink); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); box-shadow: var(--s2-elevated); font-family: var(--s2-font); }
+.stkpop .stk-head { display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300) 0; }
+.stkpop .stk-head h3 { flex: 1; min-width: 0; margin: 0; font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); }
+.stkpop .stk-x { display: grid; place-items: center; width: var(--s2-ctl); height: var(--s2-ctl); padding: 0; border: 0; border-radius: var(--s2-radius); background: none; color: var(--mute); cursor: pointer; }
+.stkpop .stk-x:hover { background: var(--hover); color: var(--ink); }
+.stkpop .stk { display: flex; flex-direction: column; gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
+.stkpop .stk-sum, .stkpop .stk-notes { font-size: var(--spectrum-font-size-100); line-height: 1.5; color: var(--mute); }
+.stkpop .stk-sum p, .stkpop .stk-notes p { margin: 0 0 var(--spectrum-spacing-100); }
+.stkpop .stk-notes { padding-top: var(--spectrum-spacing-100); border-top: var(--spectrum-border-width-100) solid var(--line); }
+.stkpop .stk-draw { position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-400); padding: var(--spectrum-spacing-200) 0px; }
+/* The parts as a list until the diagram is drawn (or for good, when it cannot be): hidden while
+   the renderer loads, which is quick once the browser has it. */
+.stkpop .stk-draw[aria-busy="true"] .stk-rows { visibility: hidden; }
+.stkpop .stk-draw.drawn .stk-rows { display: none; }
+.stkpop .stk-svg:empty { display: none; }
+.stkpop .stk-svg { overflow: auto; }
+.stkpop .stk-layer { position: relative; display: grid; grid-template-columns: 8em 1fr; align-items: start; gap: var(--spectrum-spacing-200); }
+.stkpop .stk-ln { padding-top: var(--spectrum-spacing-100); color: var(--faint); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); text-transform: uppercase; letter-spacing: 0.04em; }
+.stkpop .stk-parts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-200); }
+.stkpop .stk-part { --layer: var(--faint); position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 7em; max-width: 14em;
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
+  border-left: var(--spectrum-border-width-400) solid var(--layer); border-radius: var(--s2-radius); font-size: var(--spectrum-font-size-100);
+  transition: opacity var(--s2-ease), border-color var(--s2-ease); }
+.stkpop .stk-part:focus-visible { outline: var(--s2-focus); }
+.stkpop .stk-part b { font-weight: var(--spectrum-bold-font-weight); }
+.stkpop .stk-part small { color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.4; }
+.stkpop .stk-part small code { font-size: var(--spectrum-font-size-50); }
+.stkpop .stk-draw.lit .stk-part { opacity: 0.45; }
+.stkpop .stk-draw.lit .stk-part.on { opacity: 1; border-color: var(--accent); border-left-color: var(--layer); }
+.stkpop .stk-layer[data-layer="edge"] .stk-part { --layer: var(--cyan); }
+.stkpop .stk-layer[data-layer="site"] .stk-part { --layer: var(--accent); }
+.stkpop .stk-layer[data-layer="content"] .stk-part { --layer: var(--lime); }
+.stkpop .stk-layer[data-layer="code"] .stk-part { --layer: var(--slate); }
+.stkpop .stk-layer[data-layer="commerce"] .stk-part { --layer: var(--orange); }
+.stkpop .stk-layer[data-layer="martech"] .stk-part { --layer: var(--purple); }
+.stkpop .stk-layer[data-layer="identity"] .stk-part { --layer: var(--pink); }
+.stk-draw.lit .fmc .fmc-edge, .stk-draw.lit .fmc .fmc-arrow, .stk-draw.lit .fmc .fmc-channel, .stk-draw.lit .fmc .fmc-node[data-part] { opacity: 0.3; }
+.stk-draw.lit .fmc .fmc-node.on, .stk-draw.lit .fmc .fmc-node[data-part].on, .stk-draw.lit .fmc .fmc-edge.on, .stk-draw.lit .fmc .fmc-arrow.on { opacity: 1; }
+.stk-draw.lit .fmc .fmc-edge.on { stroke: var(--accent); }
+.stk-draw.lit .fmc .fmc-arrow.on { fill: var(--accent); }
+.stk-draw.lit .fmc .fmc-node.on .fmc-shape { stroke: var(--accent); }
+.stkpop .stk-cap { min-height: calc(var(--spectrum-font-size-75) * 1.5); color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.5; }
+.stkpop .stk-cap b { color: var(--ink); font-weight: var(--spectrum-bold-font-weight); }
+.stkpop .stk-more { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); }
+.stkpop .stk-mh { margin-right: var(--spectrum-spacing-75); color: var(--faint); }
+.stkpop .stk-chip { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--s2-radius); color: var(--mute); }
+.stkpop.guess .stk-part { background: var(--col); }
+.stkpop .stk-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  border-top: var(--spectrum-border-width-100) solid var(--line); color: var(--faint); font-size: var(--spectrum-font-size-75); }
+.stkpop .stk-foot a { margin-left: auto; color: var(--link); }
+@media (max-width: 640px) { .stkpop .stk-layer { grid-template-columns: 1fr; gap: var(--spectrum-spacing-75); } }
+/* The tour (ui/tour.js): S2's coach marks, one after the other, each beside what it is about,
+   with S2's coach indicator around that: a ring in its shape, 2px away, that pulses (but for
+   those who ask for less motion). Both are placed by the script, in the top layer. */
+.spectrum .coach {
+  position: fixed; inset: auto; margin: 0;
+  width: var(--spectrum-coach-mark-width); max-width: calc(100vw - var(--spectrum-spacing-300));
+  padding: var(--spectrum-coach-mark-edge-to-content);
+  color: var(--ink);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+  font-size: var(--spectrum-coach-mark-body-size);
+  line-height: var(--spectrum-line-height-200);
+  overflow: visible;
+}
+.spectrum .coach .cm-head { display: flex; align-items: flex-start; gap: var(--spectrum-spacing-100); }
+.spectrum .coach h2 { flex: 1; margin: 0; font-size: var(--spectrum-coach-mark-title-size); font-weight: var(--spectrum-extra-bold-font-weight); line-height: var(--spectrum-line-height-100); }
+.spectrum .coach .cm-more {
+  flex: none; display: grid; place-items: center;
+  width: var(--spectrum-component-height-75); height: var(--spectrum-component-height-75);
+  margin: calc(var(--spectrum-spacing-50) * -1) calc(var(--spectrum-spacing-75) * -1) 0 0; padding: 0;
+  border: 0; border-radius: var(--spectrum-corner-radius-100); background: transparent;
+  color: var(--spectrum-neutral-content-color-default);
+}
+.spectrum .coach .cm-more svg { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); fill: currentColor; }
+.spectrum .coach .cm-text { margin-top: var(--spectrum-spacing-200); }
+.spectrum .coach .cm-text :is(p, ul) { margin: 0; }
+.spectrum .coach .cm-text ul { padding-left: var(--spectrum-spacing-300); }
+.spectrum .coach .cm-text li + li { margin-top: var(--spectrum-spacing-75); }
+.spectrum .coach .cm-text b { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .coach .cm-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-300); }
+.spectrum .coach .cm-step { color: var(--spectrum-coach-mark-pagination-color); font-size: var(--spectrum-coach-mark-pagination-body-size); }
+.spectrum .coach .cm-acts { display: flex; gap: var(--spectrum-spacing-100); }
+/* Previous is a quiet secondary Button, Next (Finish) the primary one. */
+.spectrum .coach .cm-prev {
+  min-height: var(--s2-ctl);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-100);
+  border: 0; border-radius: calc(var(--s2-ctl) / 2);
+  background: transparent;
+  font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum .coach .cm-prev[hidden] { display: none; }
+.spectrum .coach-menu {
+  position: fixed; inset: auto; margin: 0;
+  min-width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-700));
+  padding: var(--spectrum-spacing-75);
+  color: var(--ink);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-medium-size-medium);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .coach-menu:popover-open { display: flex; flex-direction: column; }
+.spectrum .coach-menu button {
+  min-height: var(--spectrum-component-height-100);
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  border: 0; border-radius: var(--spectrum-corner-radius-100);
+  background: none; text-align: left;
+  color: var(--spectrum-neutral-content-color-default);
+}
+.spectrum .coach-menu button:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
+.spectrum .coach-ring {
+  position: fixed; inset: auto; margin: 0; padding: 0;
+  box-sizing: border-box;
+  background: transparent;
+  border: var(--spectrum-border-width-200) solid var(--spectrum-coach-indicator-ring-default-color);
+  pointer-events: none;
+  overflow: visible;
+}
+.spectrum .coach-ring.off { visibility: hidden; }
+.spectrum .coach-ring::after {
+  content: ""; position: absolute; inset: calc(var(--spectrum-border-width-200) * -1);
+  border: inherit; border-radius: inherit; opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .spectrum .coach-ring::after { animation: coach-pulse var(--spectrum-animation-duration-4000) var(--spectrum-animation-ease-out) infinite; }
+}
+@keyframes coach-pulse {
+  0% { inset: calc(var(--spectrum-border-width-200) * -1); opacity: 1; }
+  60%, 100% { inset: calc(var(--spectrum-coach-indicator-gap) * -1); opacity: 0; }
+}
+/* Ringed kinds: written by scripts/wf-rings.mjs, do not edit. */
+.spectrum .wf-cloud-error.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNMTAuODYgMi4xNUwxMS44NSAyLjE0TDEyLjQ4IDIuMjJMMTMuNDIgMi40OEwxNC4wNiAyLjc1TDE0LjczIDMuMTVMMTUuMjMgMy41NEwxNS45OSA0LjMxTDE2LjQ5IDUuMDJMMTYuODcgNS43N0wxNy4xMSA2LjQ4TDE3LjI2IDcuMTlMMTcuMyA3Ljk0TDE4LjE3IDguNzdMMTguNTggOS4zMUwxOS4wNyAxMC4yM0wxOS4yOCAxMC43N0wxOS4zOSAxMS4xOUwxOS41MyAxMi4yN0wxOS40NiAxMy4zNUwxOS4zMyAxMy45OEwxOS4xOCAxNC40NEwxOC43NyAxNS4zTDE4LjQgMTUuODhMMTcuOTYgMTYuNEwxNy4zMSAxNi45OEwxNi43MyAxNy4zOEwxNi4yNyAxNy42MkwxNS40OCAxNy45MkwxNC44NSAxOC4wN0wxNC4yNyAxOC4xNEwxMy40IDE4LjE0TDEyLjg1IDE4LjA3TDEyLjI3IDE3Ljk0TDExLjUyIDE3LjY2TDEwLjY5IDE3LjJMMTAuMSAxNy4zOEw5LjY1IDE3LjQ0TDUuNDQgMTcuNDRMNC44MSAxNy4zOEw0LjI3IDE3LjI2TDMuNzMgMTcuMDdMMy4xMSAxNi43N0wyLjgxIDE2LjU4TDIuMjYgMTYuMTVMMS42NiAxNS40OEwxLjM2IDE1LjA2TDEuMDcgMTQuNDhMMC44MSAxMy43N0wwLjcxIDEzLjI3TDAuNjQgMTIuNkwwLjcgMTEuNzNMMC45IDEwLjlMMS4yNyAxMC4wN0wxLjY5IDkuNDRMMi4yOSA4LjgxTDIuNDYgOC4xNUwyLjYyIDcuNzNMMy4xMiA2Ljc3TDMuNTQgNi4yM0w0LjEgNS42OEw0LjczIDUuMjJMNS40OCA0Ljg0TDYuMSA0LjYxTDYuNjUgNC40OUw3LjQgMy42N0w4LjAyIDMuMThMOC42NSAyLjhMOS4yNyAyLjUyTDkuODUgMi4zMlpNMTAuOTIgMy40TDExLjc3IDMuMzlMMTIuMjcgMy40NUwxMy4wMiAzLjY2TDEzLjQ4IDMuODZMMTMuOSA0LjFMMTQuMzYgNC40NEwxNS4wNiA1LjE1TDE1LjQzIDUuNjlMMTUuNzMgNi4yOUwxNS45NSA3LjAyTDE2LjAzIDcuNDRMMTYuMDMgNy45OEwxNS45OSA4LjMxTDE2LjA0IDguNTJMMTYuMTMgOC42NUwxNi42OSA5LjA2TDE3LjI3IDkuNjRMMTcuNDggOS45MUwxNy45MSAxMC42OUwxOC4xNiAxMS40NEwxOC4yOCAxMi4zMUwxOC4yMiAxMy4xOUwxNy45OSAxNC4wNkwxNy42NCAxNC43N0wxNy4zNSAxNS4xOEwxNi44NSAxNS43M0wxNi41MSAxNi4wMkwxNi4wMiAxNi4zNUwxNS4xIDE2LjcyTDE0LjYgMTYuODVMMTQuMSAxNi45TDEzLjQ4IDE2Ljg5TDEyLjUyIDE2LjcxTDExLjc3IDE2LjM5TDExLjAyIDE1Ljg5TDEwLjc3IDE1LjhMMTAuNjQgMTUuODFMMTAuMDYgMTYuMDlMOS42IDE2LjE5TDUuNTIgMTYuMkw0LjYgMTYuMDZMNC4xOSAxNS45MUwzLjY1IDE1LjY0TDIuOTMgMTUuMDZMMi40MiAxNC40TDIuMTUgMTMuODVMMi4wMSAxMy40NEwxLjk0IDEzLjA2TDEuODkgMTIuNEwxLjk2IDExLjc3TDIuMDcgMTEuMzVMMi4yMSAxMC45OEwyLjQgMTAuNkwyLjY2IDEwLjIzTDMuNDYgOS40TDMuNjYgOC40OEw0LjAzIDcuNjlMNC40OCA3LjA2TDUuMTYgNi40NEw1LjQ0IDYuMjZMNi4xIDUuOTNMNi40OCA1LjgxTDcuMzUgNS42MUw4LjE1IDQuNjhMOC45NCA0LjA3TDkuMzEgMy44Nkw5Ljc3IDMuNjZMMTAuMjcgMy41WiIvPjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDEwIDEwKSBzY2FsZSgwLjcpIHRyYW5zbGF0ZSgtMTAgLTEwKSI+PHBhdGggZD0iTTE1LjUsOS4wMjExMmMtMi40ODUzNSwwLTQuNSwyLjAxNDcxLTQuNSw0LjVzMi4wMTQ2NSw0LjUsNC41LDQuNSw0LjQ3OTk4LTIuMDE0NzcsNC40Nzk5OC00LjUtMS45OTQ3NS00LjUtNC40Nzk5OC00LjVaTTE2LjQ1LDE1LjkxNThjMCwuNDcyNDEtLjQyNTQzLjg1NTY5LS45NS44NTU2OXMtLjk1LS4zODMyOC0uOTUtLjg1NTY5di0uMjg4NjNjMC0uNDcyNDEuNDI1NDMtLjg1NTY5Ljk1LS44NTU2OXMuOTUuMzgzMjguOTUuODU1Njl2LjI4ODYzWk0xNi4zNzUsMTMuNDIwOWMwLC40MTQwNi0uMzkxODUuNzUtLjg3NS43NXMtLjg3NS0uMzM1OTQtLjg3NS0uNzV2LTIuNjQ5NDFjMC0uNDE0MDYuMzkxODUtLjc1Ljg3NS0uNzVzLjg3NS4zMzU5NC44NzUuNzV2Mi42NDk0MVoiLz48cGF0aCBkPSJNOS4yNSwxNi45OTgwNUgzLjcxNzc3Yy0xLjkwMzMyLDAtMy40NTIxNS0xLjU0Nzg1LTMuNDUyMTUtMy40NTExNywwLTEuNDkyMTkuOTY2OC0yLjc4MDI3LDIuMzI0MjItMy4yNS0uMDQyOTctLjIzMTQ1LS4wNjQ0NS0uNDY1ODItLjA2NDQ1LS43MDMxMiwwLTIuMTc5NjksMS44MDk1Ny0zLjk1MjE1LDQuMDMzMi0zLjk1MjE1LjI3OTMsMCwuNTU3NjIuMDI5My44MzEwNS4wODc4OS42Mzc3LTEuOTU4OTgsMi40NzY1Ni0zLjM0NzY2LDQuNTg4ODctMy4zNDc2NiwyLjQ5NjA5LDAsNC41NjczOCwxLjg3MDEyLDQuODE4MzYsNC4zNTA1OS4wNDE5OS40MTIxMS0uMjU4NzkuNzc5My0uNjcwOS44MjEyOS0uNDAwMzkuMDQ5OC0uNzc5My0uMjU3ODEtLjgyMTI5LS42NzA5LS4xNzI4NS0xLjcxMDk0LTEuNjAzNTItMy4wMDA5OC0zLjMyNjE3LTMuMDAwOTgtMS42NjMwOSwwLTMuMDgwMDgsMS4yNTE5NS0zLjI5Njg4LDIuOTEyMTEtLjAzMTI1LjIzNTM1LS4xNzE4OC40NDIzOC0uMzc4OTEuNTU3NjItLjIwODAxLjExNzE5LS40NTg5OC4xMjUtLjY3NDguMDI4MzItLjM0ODYzLS4xNTgyLS43MDg5OC0uMjM4MjgtMS4wNjkzNC0uMjM4MjgtMS4zOTY0OCwwLTIuNTMzMiwxLjA5OTYxLTIuNTMzMiwyLjQ1MjE1LDAsLjMzMjAzLjA2OTM0LjY1NjI1LjIwNjA1Ljk2NDg0LjA5OTYxLjIyMzYzLjA4MzAxLjQ4MjQyLS4wNDM5NS42OTIzOHMtLjM0ODYzLjM0Mzc1LS41OTM3NS4zNTkzOGMtMS4wMjUzOS4wNjY0MS0xLjgyODEyLjkxNjk5LTEuODI4MTIsMS45MzY1MiwwLDEuMDc2MTcuODc1OTgsMS45NTExNywxLjk1MjE1LDEuOTUxMTdoNS41MzIyM2MuNDE0MDYsMCwuNzUuMzM1OTQuNzUuNzVzLS4zMzU5NC43NS0uNzUuNzVaIi8+PC9nPjwvc3ZnPg=="); }
+.spectrum .wf-lock.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNOS41NyAxLjUyTDEwLjUyIDEuNTNMMTEuMDYgMS42TDExLjczIDEuNzZMMTIuMzEgMS45N0wxMy4wMiAyLjMyTDEzLjkxIDIuOTRMMTQuNjIgMy42NUwxNS4xMyA0LjM1TDE1LjU5IDUuMjdMMTUuNzkgNS44MUwxNS45MSA2LjI3TDE2LjQyIDYuNzdMMTYuNjUgNy4wNkwxNyA3LjZMMTcuMjUgOC4yM0wxNy4zNyA4LjczTDE3LjQ1IDkuNEwxNy40NCAxNC4xOUwxNy4yNyAxNS4xOUwxNy4xMyAxNS42TDE2Ljk1IDE1Ljk4TDE2LjY5IDE2LjQxTDE2LjQyIDE2LjczTDE1Ljk0IDE3LjJMMTUuNTYgMTcuNDdMMTQuOTMgMTcuODFMMTQuNTYgMTcuOTZMMTQuMSAxOC4wN0wxMy42OSAxOC4xMUw2LjMxIDE4LjExTDUuNzcgMTguMDRMNS4yNyAxNy45TDQuNjkgMTcuNjJMNCAxNy4xNUwzLjUyIDE2LjY3TDMuMjggMTYuMzVMMi45NCAxNS43N0wyLjc1IDE1LjI3TDIuNjQgMTQuODFMMi41NiAxNC4xOUwyLjU2IDkuMzFMMi43MiA4LjM1TDIuOTggNy42NUwzLjQ0IDYuOTRMNC4wOSA2LjI3TDQuMjEgNS44MUw0LjQxIDUuMjdMNC45IDQuMzJMNS4zOCAzLjY1TDYuMDQgMi45OEw2Ljg1IDIuMzlMNy43MyAxLjk1TDguNjUgMS42NlpNOS42MyAyLjc3TDEwLjM1IDIuNzdMMTAuODEgMi44M0wxMS4zNSAyLjk2TDExLjgxIDMuMTFMMTIuNDQgMy40MkwxMy4xIDMuODlMMTMuNjkgNC40OEwxNC4wNyA1LjAyTDE0LjUzIDUuOThMMTQuNzkgNi45NEwxNS41OSA3LjczTDE1Ljg3IDguMTVMMTYuMDQgOC41NkwxNi4yIDkuNEwxNi4yIDE0LjFMMTYuMTIgMTQuNjVMMTUuOTUgMTUuMTlMMTUuNTcgMTUuODFMMTUuMDIgMTYuMzNMMTQuNzcgMTYuNDlMMTQuMjMgMTYuNzVMMTMuNjUgMTYuODZMNi4xNSAxNi44NUw1LjY1IDE2LjdMNS4yIDE2LjQ4TDQuOSAxNi4yN0w0LjMzIDE1LjY5TDQuMTEgMTUuMzFMMy45NiAxNC45NEwzLjggMTQuMTVMMy44IDkuMzVMMy45MyA4LjY1TDQuMDkgOC4yM0w0LjQ4IDcuNjVMNS4xOSA2Ljk4TDUuMjYgNi44MUw1LjQ3IDUuOThMNS44OCA1LjFMNi4zMSA0LjQ4TDYuODUgMy45M0w3LjUyIDMuNDVMOC4xOSAzLjExTDguOTQgMi44OFoiLz48ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMCAxMCkgc2NhbGUoMC43KSB0cmFuc2xhdGUoLTEwIC0xMCkiPjxwYXRoIGQ9Ik0xMS4yNSwxMS41YzAtLjY4OTQ1LS41NjA1NS0xLjI1LTEuMjUtMS4yNXMtMS4yNS41NjA1NS0xLjI1LDEuMjVjMCwuNDAyNTkuMjAzNjEuNzQ0ODcuNS45NzM2M3YuNzc2MzdjMCwuNDE0MDYuMzM1OTQuNzUuNzUuNzVzLjc1LS4zMzU5NC43NS0uNzV2LS43NzYzN2MuMjk2MzktLjIyODc2LjUtLjU3MTA0LjUtLjk3MzYzWiIvPjxwYXRoIGQ9Ik0xNSw3LjAyNTM5di0uNTI1MzljMC0yLjc1Njg0LTIuMjQzMTYtNS01LTVzLTUsMi4yNDMxNi01LDV2LjUyNTM5Yy0xLjEyMTU4LjEyNjIyLTIsMS4wNzAwNy0yLDIuMjI0NjF2Ni41YzAsMS4yNDAyMywxLjAwOTc3LDIuMjUsMi4yNSwyLjI1aDkuNWMxLjI0MDIzLDAsMi4yNS0xLjAwOTc3LDIuMjUtMi4yNXYtNi41YzAtMS4xNTQ1NC0uODc4NDItMi4wOTgzOS0yLTIuMjI0NjFaTTEwLDNjMS45Mjk2OSwwLDMuNSwxLjU3MDMxLDMuNSwzLjV2LjVoLTd2LS41YzAtMS45Mjk2OSwxLjU3MDMxLTMuNSwzLjUtMy41Wk0xNS41LDE1Ljc1YzAsLjQxMzA5LS4zMzY5MS43NS0uNzUuNzVINS4yNWMtLjQxMzA5LDAtLjc1LS4zMzY5MS0uNzUtLjc1di02LjVjMC0uNDEzMDkuMzM2OTEtLjc1Ljc1LS43NWg5LjVjLjQxMzA5LDAsLjc1LjMzNjkxLjc1Ljc1djYuNVoiLz48L2c+PC9zdmc+"); }
+.spectrum .wf-help.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNOS40IDEuMzVMMTAuNDggMS4zNUwxMS4xIDEuNEwxMS44NSAxLjUzTDEyLjU2IDEuNzJMMTMuMzggMi4wMkwxNC4zNSAyLjUxTDE0LjkxIDIuODVMMTUuNjYgMy40NEwxNi41NCA0LjMxTDE3LjEyIDUuMDZMMTcuNDkgNS42NUwxNy45MyA2LjUyTDE4LjE1IDcuMDRMMTguNDUgOC4wNkwxOC41OCA4LjgxTDE4LjY1IDkuNDRMMTguNjUgMTAuNDhMMTguNTggMTEuMTlMMTguNDUgMTEuOTRMMTguMTUgMTIuOTZMMTcuOTUgMTMuNDRMMTcuNDcgMTQuNEwxNy4xMiAxNC45NEwxNi41NiAxNS42NkwxNS42OSAxNi41NEwxNC45NCAxNy4xMkwxNC4zNSAxNy40OUwxMy40OCAxNy45M0wxMi45NiAxOC4xNUwxMS45NCAxOC40NUwxMS4xOSAxOC41OEwxMC41NiAxOC42NUw5LjUyIDE4LjY1TDguODEgMTguNThMOC4wNiAxOC40NUw3LjA0IDE4LjE1TDYuNTYgMTcuOTVMNS42IDE3LjQ3TDUuMDYgMTcuMTJMNC4zNCAxNi41NkwzLjQ2IDE1LjY5TDIuODggMTQuOTRMMi41MSAxNC4zNUwyLjA3IDEzLjQ4TDEuODUgMTIuOTZMMS41NSAxMS45NEwxLjQyIDExLjE5TDEuMzUgMTAuNTZMMS4zNSA5LjUyTDEuNDIgOC44MUwxLjU1IDguMDZMMS44NSA3LjA0TDIuMDUgNi41NkwyLjUzIDUuNkwyLjg4IDUuMDZMMy40NCA0LjM0TDQuNCAzLjM5TDUuMSAyLjg1TDUuNzcgMi40NEw2LjY1IDIuMDFMNy40OCAxLjcxTDguMjMgMS41MVpNOS40NiAyLjZMMTAuNDQgMi42TDEwLjk4IDIuNjVMMTEuNiAyLjc1TDEyLjE5IDIuOTFMMTIuOSAzLjE3TDEzLjczIDMuNTlMMTQuMTkgMy44OEwxNC44MSA0LjM2TDE1LjY0IDUuMTlMMTYuMTIgNS44MUwxNi40MyA2LjMxTDE2Ljg1IDcuMTVMMTcuMSA3Ljg1TDE3LjI1IDguNDRMMTcuNCA5LjUyTDE3LjQgMTAuNDRMMTcuMzUgMTAuOThMMTcuMjUgMTEuNkwxNi45NiAxMi41NkwxNi4zOSAxMy43N0wxNi4xMiAxNC4xOUwxNS42MSAxNC44NUwxNC44NSAxNS42MUwxNC4yMiAxNi4xTDEzLjczIDE2LjQxTDEyLjk0IDE2LjgxTDEyLjE5IDE3LjA5TDExLjYgMTcuMjVMMTAuNDggMTcuNEw5LjU2IDE3LjRMOS4wMiAxNy4zNUw4LjQgMTcuMjVMNy40NCAxNi45Nkw2LjIzIDE2LjM5TDUuODEgMTYuMTJMNS4xNSAxNS42MUw0LjM5IDE0Ljg1TDMuOSAxNC4yMkwzLjU5IDEzLjczTDMuMTkgMTIuOTRMMi45MSAxMi4xOUwyLjc1IDExLjZMMi42IDEwLjQ4TDIuNiA5LjU2TDIuNjUgOS4wMkwyLjc1IDguNEwyLjkxIDcuODFMMy4xNyA3LjFMMy41OSA2LjI3TDMuODggNS44MUw0LjM2IDUuMTlMNS4xOSA0LjM2TDUuODEgMy44OEw2LjMxIDMuNTdMNy4xNSAzLjE1TDcuODUgMi45TDguNDQgMi43NVoiLz48ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMCAxMCkgc2NhbGUoMC43KSB0cmFuc2xhdGUoLTEwIC0xMCkiPjxwYXRoIGQ9Im05Ljk4ODEsMTUuNTI2NzljLS4yMzA2NS4wMDgxMy0uNDU1MzgtLjA3Mzg3LS42MjY2MS0uMjI4NjItLjMzMDMzLS4zNjUwNS0uMzMwMzMtLjkyMTAyLDAtMS4yODYwNy4xNjkzNS0uMTU4NTEuMzk0ODMtLjI0MzA4LjYyNjY0LS4yMzUwNC4yMzYzNS0uMDA5NDguNDY1ODkuMDgwMzUuNjMzMDIuMjQ3NzUuMTYyMDcuMTY3OS4yNDkxNi4zOTQzMi4yNDEzNy42Mjc1NS4wMTIzOC4yMzQ5Ny0uMDY5NTkuNDY1MTUtLjIyNzcuNjM5NC0uMTczNTguMTY0NzQtLjQwNzg2LjI0OTg4LS42NDY3MS4yMzUwM1oiLz48cGF0aCBkPSJtMTAsMTguNzVjLTQuODI1MiwwLTguNzUtMy45MjQ4LTguNzUtOC43NVM1LjE3NDgsMS4yNSwxMCwxLjI1czguNzUsMy45MjQ4LDguNzUsOC43NS0zLjkyNDgsOC43NS04Ljc1LDguNzVabTAtMTZjLTMuOTk4MDUsMC03LjI1LDMuMjUxOTUtNy4yNSw3LjI1czMuMjUxOTUsNy4yNSw3LjI1LDcuMjUsNy4yNS0zLjI1MTk1LDcuMjUtNy4yNS0zLjI1MTk1LTcuMjUtNy4yNS03LjI1WiIvPjxwYXRoIGQ9Im05Ljk5MjE5LDEyLjcwNjA1Yy0uNDE0MDYsMC0uNzUtLjMzNTk0LS43NS0uNzUsMC0xLjAyMjQ2LjA3MDMxLTEuNzEzODcsMS4wMzkwNi0yLjY4MjYyLjc4NTE2LS43ODYxMy45MTc5Ny0xLjEwMTU2LjkxNzk3LTEuNjUxMzcsMC0uMjA5OTYtLjA2NjQxLTEuMjU3ODEtMS4zNzQwMi0xLjI1NzgxLTEuMzY1MjMsMC0xLjUxMDc0LDEuMTU2MjUtMS41MjYzNywxLjM4NzctLjAyNjM3LjQxMzA5LS4zOTI1OC43MjA3LS43OTY4OC42OTkyMi0uNDE0MDYtLjAyNzM0LS43MjY1Ni0uMzgzNzktLjY5OTIyLS43OTY4OC4wNjM0OC0uOTY0ODQuNzc2MzctMi43OTAwNCwzLjAyMjQ2LTIuNzkwMDQsMS44ODY3MiwwLDIuODc0MDIsMS4zODc3LDIuODc0MDIsMi43NTc4MSwwLDEuMTQzNTUtLjQ1NzAzLDEuODEwNTUtMS4zNTc0MiwyLjcxMTkxLS41NzYxNy41NzYxNy0uNTk5NjEuODExNTItLjU5OTYxLDEuNjIyMDcsMCwuNDE0MDYtLjMzNTk0Ljc1LS43NS43NVoiLz48L2c+PC9zdmc+"); }
+.spectrum .wf-hand.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNMTAuMDIgMS41MkwxMC42NSAxLjUyTDExLjE5IDEuNkwxMS43NyAxLjc3TDEyLjI3IDJMMTIuNzMgMi4wM0wxMy4zMSAyLjE0TDEzLjg1IDIuMzRMMTQuNjMgMi43N0wxNS4wMiAzLjA5TDE1LjI4IDMuMzVMMTUuNzEgMy45NEwxNS45NSA0LjRMMTYuNzMgNC44OUwxNy40NCA1LjYyTDE3LjcgNi4wMkwxOC4wMSA2LjY1TDE4LjE3IDcuMTlMMTguMjMgNy42TDE4LjIyIDguNjlMMTcuNTQgMTIuNTJMMTcuMjkgMTMuNDhMMTcuMDEgMTQuMjNMMTYuMzggMTUuNDRMMTUuNzQgMTYuMjdMMTUuMTkgMTYuODRMMTQuMjMgMTcuNTVMMTMuNCAxNy45N0wxMi43NyAxOC4yMUwxMi4xIDE4LjM3TDExLjE1IDE4LjQ4TDEwLjM1IDE4LjQ5TDkuNjkgMTguNDNMOC41NiAxOC4xOUw3Ljg1IDE3Ljk1TDcuMDYgMTcuNTZMNi40NCAxNy4xNUw2LjAyIDE2LjgzTDUuMjkgMTYuMTVMNC40NCAxNS4xNUwyLjY1IDEyLjZMMi4zIDEyLjA2TDEuOTkgMTEuNDRMMS44MyAxMC45TDEuNzcgMTAuNDhMMS43NiA5LjY5TDEuODEgOS4yN0wyIDguNkwyLjI4IDguMDJMMi42NSA3LjQ3TDMuMjIgNi45TDMuNzMgNi41NUw0LjQgNi4yM0w0LjUgNS42TDQuNyA0Ljk4TDQuOTcgNC40NEw1LjM1IDMuOTJMNS45MyAzLjM1TDYuNCAzLjA1TDcuMDYgMi43Mkw3LjY1IDIuNTZMOC4xNSAyLjE3TDguODUgMS44TDkuNCAxLjYyWk0xMC4wOCAyLjc3TDEwLjU2IDIuNzdMMTEuMDYgMi44NUwxMS40IDIuOTZMMTEuOTQgMy4yM0wxMi41NiAzLjI3TDEzLjA2IDMuMzdMMTMuMzQgMy40OEwxMy44NSAzLjc1TDE0LjIzIDQuMDZMMTQuNTIgNC40MUwxNC43IDQuNjlMMTUuMDIgNS4zM0wxNS44OCA1LjgxTDE2LjQzIDYuMzVMMTYuNjIgNi42NUwxNi44NSA3LjFMMTYuOTggNy42OUwxNi45OCA4LjUyTDE2LjMzIDEyLjIzTDE2LjAyIDEzLjMzTDE1LjgxIDEzLjg0TDE1LjM1IDE0LjczTDE0LjczIDE1LjUyTDE0LjIzIDE2LjAyTDEzLjYgMTYuNDdMMTIuOSAxNi44M0wxMi40IDE3LjAyTDExLjY1IDE3LjE4TDExLjA2IDE3LjIzTDEwLjQgMTcuMjRMOS44NSAxNy4xOUw4Ljk4IDE3LjAyTDguMzUgMTYuOEw3LjY1IDE2LjQ1TDYuODUgMTUuODlMNi4xOSAxNS4yN0w1LjQxIDE0LjM1TDMuNzEgMTEuOTRMMy40IDExLjQ4TDMuMTcgMTEuMDJMMy4wMiAxMC40TDMuMDQgOS41MkwzLjE4IDkuMDJMMy40IDguNThMMy42NSA4LjIzTDQuMTQgNy43N0w0LjczIDcuNDVMNS40IDcuMjZMNS41NiA3LjFMNS42NCA2Ljg1TDUuNjQgNi40TDUuNzMgNS44MUw1Ljk4IDUuMTlMNi4yNyA0Ljc3TDYuNzMgNC4zMUw2Ljk4IDQuMTVMNy41NiAzLjg3TDguMjMgMy43MUw4Ljc3IDMuMjVMOS4zMSAyLjk2TDkuNjUgMi44NVoiLz48ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMCAxMCkgc2NhbGUoMC43KSB0cmFuc2xhdGUoLTEwIC0xMCkiPjxwYXRoIGQ9Im0xNi40MDAzOSw1LjEyNTk4Yy0uMzU2OTMtLjA2MDc5LS43MDUzMi0uMDE4OC0xLjAyNzM0LjA4OTZ2LS44NzA4NWMwLTEuMTcxODgtLjk1MzEyLTIuMTI1LTIuMTI1LTIuMTI1LS4zOTA5OSwwLS43MDMuMTA4ODktLjk1MzYxLjI4Nzg0LS4zNzU5OC0uNTk5MzctMS4wMzc5Ni0xLjAwMTcxLTEuNzk2MzktMS4wMDE3MS0uOTY1ODIsMC0xLjc3MzY4LjY1MTM3LTIuMDMxMjUsMS41MzUxNi0uMjI1NTktLjA4MTc5LS40NjUzMy0uMTMzNzktLjcxODc1LS4xMzM3OS0xLjE3MTg4LDAtMi4xMjUuOTUzMTItMi4xMjUsMi4xMjV2My42OTYyOWMtLjMyMzI0LS40MTM1Ny0uNzc1NzYtLjY5NDM0LTEuMjk1OS0uNzg2MTMtLjU2MTUyLS4xMDE1Ni0xLjEyNS4wMjYzNy0xLjU4Nzg5LjM1MTU2LS40NjU4Mi4zMjUyLS43NzUzOS44MTI1LS44NzQwMiwxLjM3MTA5LS4wOTg2My41NTk1Ny4wMjYzNywxLjEyMzA1LjM1MTU2LDEuNTg4ODdsMi43NSwzLjkxNjAyYzEuODQxOCwyLjM4MDg2LDMuNTYyNSwzLjMyMzI0LDYuMDkxOCwzLjMyMzI0LjA1NDY5LDAsLjEwOTM4LDAsLjE2NTA0LS4wMDA5OCwzLjIyNDYxLS4wMjgzMiw1LjUxODU1LTIuNDA1MjcsNi4xMzM3OS02LjM0NjY4bC43ODAyNy00LjU2NzM4Yy4xOTYyOS0xLjE1NTI3LS41ODMwMS0yLjI1NDg4LTEuNzM3My0yLjQ1MjE1Wm0tLjUyMzQ0LDYuNzc4MzJjLS41MDA5OCwzLjIxMTkxLTIuMjAyMTUsNS4wNjY0MS00LjY3MTg4LDUuMDg3ODktMi4xMjUuMDIzNDQtMy40NjE5MS0uNjgzNTktNS4wMzAyNy0yLjcxMTkxbC0yLjcyOTQ5LTMuODg2NzJjLS4wOTU3LS4xMzY3Mi0uMTMyODEtLjMwMjczLS4xMDM1Mi0uNDY3NzcuMDI5My0uMTY0MDYuMTIwMTItLjMwNzYyLjI1Njg0LS40MDMzMi4yODIyMy0uMTk3MjcuNjcyODUtLjEyOTg4Ljg3MjA3LjE1NTI3bDEuMjg5MDYsMS44MzAwOGMuMjM5MjYuMzM4ODcuNzA3MDMuNDIyODUsMS4wNDQ5Mi4xODE2NC4xODc1LS4xMzE4NC4yODY4Ny0uMzM0NDcuMzA2MDMtLjU0NjE0LjAwNzItLjAwNDY0LjAxMjMzLS4wMjA3NS4wMTIzMy0uMDY3MTR2LTYuMDQzOTVjMC0uMzQ0NzMuMjgwMjctLjYyNS42MjUtLjYyNXMuNjI1LjI4MDI3LjYyNS42MjV2My43NTc4MWMwLC40MTQwNi4zMzU5NC43NS43NS43NXMuNzUtLjMzNTk0Ljc1LS43NVYzLjYzMDg2YzAtLjM0NDczLjI4MDI3LS42MjUuNjI1LS42MjVzLjYyNS4yODAyNy42MjUuNjI1djUuMDMwMjdjMCwuNDE0MDYuMzM1OTQuNzUuNzUuNzVzLjc1LS4zMzU5NC43NS0uNzV2LTQuMzE2NDFjMC0uMzQ0NzMuMjgwMjctLjYyNS42MjUtLjYyNXMuNjI1LjI4MDI3LjYyNS42MjV2Mi43NzI0NmMwLC4wMzAyNy0uMDAwODYuMTkxOTctLjAwMDg2LjE5MTk3bC0uMjgzMzIsMS42NTg2MWMtLjA2OTM0LjQwODIuMjA1MDguNzk1OS42MTMyOC44NjUyMy40MDEzNy4wNzUyLjc5NDkyLS4yMDQxLjg2NTIzLS42MTMyOGwuMzU5MzgtMi4xMDQ0OWMuMDU3NjItLjMzODg3LjM2OTE0LS41NjgzNi43MjE2OC0uNTEwNzQuMzM4ODcuMDU3NjIuNTY4MzYuMzgxODQuNTEwNzQuNzIxNjhsLS43ODIyMyw0LjU3ODEyWiIvPjwvZz48L3N2Zz4="); }
+.spectrum .wf-key.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNMTQuMTEgMS4yN0wxNC41NiAxLjI3TDE0Ljk4IDEuMzJMMTUuNDQgMS40NkwxNS44MSAxLjYzTDE2LjE1IDEuODNMMTYuNDIgMi4wNkwxNi43OCAyLjQ0TDE3LjAyIDIuNzlMMTcuMiAzLjE1TDE3LjMzIDMuNTJMMTcuMzkgMy45TDE3LjQxIDQuMzVMMTcuOTQgNC44OEwxOC4yMSA1LjIzTDE4LjQzIDUuNjVMMTguNiA2LjE5TDE4LjY1IDYuNjlMMTguNjIgNy40TDE4LjQ4IDcuOUwxOC4yMyA4LjQyTDE3LjgyIDguOThMMTYuNjIgMTAuMzVMMTYuMTIgMTAuODVMMTUuODEgMTEuMUwxNS42IDExLjQ5TDE1LjM1IDExLjgzTDE0LjczIDEyLjRMMTQuMTUgMTIuNzJMMTMuNDQgMTIuOTJMMTIuNjkgMTIuOTNMMTIuMDIgMTIuNzlMMTIuMTggMTMuNjVMMTIuMTkgMTQuNjlMMTIuMTQgMTUuMTVMMTEuOTMgMTUuOUwxMS42MiAxNi41NkwxMS4yMyAxNy4xNEwxMC42MiAxNy43N0wxMC4xOSAxOC4xMUw5LjQgMTguNTRMOC44MSAxOC43NUw4LjIzIDE4Ljg4TDcuNTIgMTguOTVMNi45IDE4LjkzTDUuODUgMTguNzRMNS4wNiAxOC40N0w0LjQxIDE4LjE1TDMuNDcgMTcuNDhMMi43NiAxNi43N0wyLjE3IDE1Ljk0TDEuODYgMTUuMzFMMS42NyAxNC44MUwxLjQ0IDEzLjczTDEuNDUgMTIuNzNMMS41NCAxMi4xOUwxLjY5IDExLjY1TDIuMSAxMC43OUwyLjQ3IDEwLjI3TDMuMDYgOS42N0wzLjUyIDkuMzNMNC4wNiA5LjAzTDQuODUgOC43NEw1LjYgOC41OEw2LjYgOC41NUw3LjA2IDguNkwxMS45OCAyLjQyTDEyLjQ3IDEuOTRMMTIuOSAxLjY1TDEzLjU2IDEuMzhaTTE0LjE3IDIuNTJMMTQuNjkgMi41NEwxNS4yMyAyLjczTDE1LjU2IDIuOTdMMTUuODEgMy4yM0wxNS45NSAzLjQ0TDE2LjA5IDMuNzNMMTYuMTQgMy45OEwxNi4xMyA0Ljc3TDE2LjE2IDQuOUwxNi4yNyA1LjA0TDE2LjY1IDUuMzVMMTcuMDYgNS43N0wxNy4yMyA2LjAzTDE3LjM2IDYuNEwxNy40IDYuNjlMMTcuMzkgNy4xOUwxNy4zIDcuNDhMMTcuMTEgNy44NUwxNS42OSA5LjUyTDE1LjIzIDkuOThMMTQuODQgMTAuMjNMMTQuNDcgMTAuOTRMMTQuMTUgMTEuMjdMMTMuOTQgMTEuNDNMMTMuNCAxMS42NUwxMi45IDExLjdMMTIuNiAxMS42NUwxMi4yNyAxMS41NEwxMS41NiAxMS4xTDExLjM1IDExLjEyTDExLjExIDExLjM1TDEwLjU2IDEyLjA2TDEwLjUgMTIuMjdMMTAuNTIgMTIuNDRMMTAuODEgMTMuMTVMMTAuOTQgMTMuNzdMMTAuOTQgMTQuNzNMMTAuODIgMTUuMjdMMTAuNTYgMTUuOUwxMC4zMSAxNi4yOEw5LjY5IDE2LjkzTDkuMzUgMTcuMTZMOC43NyAxNy40NUw4LjMxIDE3LjU5TDcuNTYgMTcuN0w3LjAyIDE3LjY5TDYuMTUgMTcuNTNMNS41MiAxNy4zTDQuOTggMTcuMDNMNC4yNyAxNi41MkwzLjczIDE1Ljk4TDMuMjYgMTUuMzFMMi44NiAxNC40NEwyLjY5IDEzLjZMMi42OSAxMi44NUwyLjg3IDEyLjA2TDMuMjIgMTEuMzVMMy40NCAxMS4wNkwzLjk4IDEwLjUzTDQuNDggMTAuMjFMNC45IDEwLjA0TDUuNDQgOS44OEw1Ljg1IDkuODFMNi42NSA5LjgxTDcuNCA5LjkyTDcuNTYgOS44OEw3LjczIDkuNzZMMTIuODUgMy4zMUwxMy4yMyAyLjkzTDEzLjQ0IDIuNzhMMTMuNzcgMi42MloiLz48ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMCAxMCkgc2NhbGUoMC43KSB0cmFuc2xhdGUoLTEwIC0xMCkiPjxwYXRoIGQ9Ik0yLjA3MzI0LDEyLjY2Nzk3YzEuMTA5MzgtMS4zMjMyNCwzLjI0MjgtMS40Njg3NSw1LjAxNjM2LS40NDE4OUwxNS42NTYyNSwxLjQzMTY0Yy4yNTc4MS0uMzI0MjIuNzMwNDctLjM3Njk1LDEuMDUzNzEtLjEyMjA3LjMyNTIuMjU3ODEuMzc4OTEuNzI5NDkuMTIyMDcsMS4wNTM3MWwtLjU2MDc5LjcwNjU0LDIuMjExMTgsMS44NTU5NmMuMTU0My4xMjg5MS4yNS4zMTU0My4yNjU2Mi41MTY2LjAxNTYyLjIwMDItLjA1MDc4LjM5OTQxLS4xODI2Mi41NTA3OGwtMi4xMDc0MiwyLjQxNTA0Yy0uMTQ4NDQuMTY5OTItLjM1NjQ1LjI1Njg0LS41NjU0My4yNTY4NC0uMTcwOSwwLS4zNDE4LS4wNTc2Mi0uNDgyNDItLjE3NTc4bC0yLjA2NDU4LTEuNzMyOTEtLjYyMjA3Ljc4Mzk0LDIuMDQ1MDQsMS43MTU1OGMuMzE3MzguMjY1NjIuMzU4NC43MzkyNi4wOTE4LDEuMDU2NjQtLjE0ODQ0LjE3Njc2LS4zNjAzNS4yNjc1OC0uNTc0MjIuMjY3NTgtLjE3MDksMC0uMzQxOC0uMDU3NjItLjQ4MjQyLS4xNzU3OGwtMi4wMTI5NC0xLjY4ODcyLTMuNTI1NTEsNC40NDIxNGMuNzAyMDMuNzM2NTcsMS4xNTYzNywxLjYyNzQ0LDEuMjUzMywyLjU0MTUuMDkxOC44NzMwNS0uMTQ3NDYsMS42OTkyMi0uNjc0OCwyLjMyODEyLS42MjU5OC43NDUxMi0xLjU3OTEsMS4xMTkxNC0yLjYwOTM4LDEuMTE5MTQtMS4wMTE3MiwwLTIuMDk3NjYtLjM2MDM1LTMuMDIwNTEtMS4wODIwMy0xLjAzMzItLjgwNzYyLTEuNjk0MzQtMS45Mjc3My0xLjgxNDQ1LTMuMDcxMjktLjA5MDgyLS44NzIwNy4xNDg0NC0xLjY5ODI0LjY3MzgzLTIuMzI1MlpNMTUuODExNTIsNi44NjcxOWwxLjEyMTA5LTEuMjg0MTgtMS41OTQxMi0xLjMzNzg5LTEuMDYwMTgsMS4zMzU4MiwxLjUzMzIsMS4yODYyNVpNMi44OTE2LDE0LjgzNjkxYy4wNzYxNy43MzA0Ny41NDI5NywxLjQ5NTEyLDEuMjQ2MDksMi4wNDU5LDEuMjE0ODQuOTQ3MjcsMi44NDM3NSwxLjAzMTI1LDMuNTU2NjQuMTgwNjYuMzM2OTEtLjQwMjM0LjM2NjIxLS44Nzc5My4zMzIwMy0xLjIwNzAzLS4wNzcxNS0uNzMwNDctLjU0Mjk3LTEuNDk0MTQtMS4yNDcwNy0yLjA0NDkyLS42NTEzNy0uNTA5NzctMS40MjE4OC0uNzY5NTMtMi4xMDY0NS0uNzY5NTMtLjU5MDgyLDAtMS4xMTkxNC4xOTQzNC0xLjQ1MDIuNTg4ODctLjMzNTk0LjQwMTM3LS4zNjUyMy44Nzc5My0uMzMxMDUsMS4yMDYwNVoiLz48L2c+PC9zdmc+"); }
+.spectrum .wf-community.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNNi4xNSAxLjk0TDYuNiAxLjkzTDcuMTkgMkw4LjA2IDIuMjJMOS4wNiAyLjcxTDkuNzcgMy4zTDEwLjI3IDMuMjlMMTAuNjkgMi44OUwxMS4xIDIuNjFMMTEuOTQgMi4yMkwxMi41NiAyLjA1TDEzLjMxIDEuOTRMMTMuNjkgMS45M0wxNC40IDEuOTlMMTQuODEgMi4wN0wxNS43MyAyLjM4TDE2LjE5IDIuNjFMMTYuNjcgMi45NEwxNy4wMiAzLjIxTDE3LjQ2IDMuNjVMMTcuNzkgNC4wNkwxOC4wOSA0LjUyTDE4LjQ0IDUuMjNMMTguNzEgNi4xTDE4LjgyIDYuNzdMMTguODIgNy42TDE4Ljc0IDguMjNMMTguNjIgOC43N0wxOC4zNSA5LjUxTDE4LjA0IDEwLjFMMTguNDYgMTAuNTJMMTguNzYgMTAuOUwxOS4xMSAxMS40TDE5LjMgMTEuNzdMMTkuNDUgMTIuMjNMMTkuNTIgMTIuNkwxOS41MyAxMy4xOUwxOS40OCAxMy42TDE5LjM2IDE0LjAyTDE5LjE1IDE0LjQ3TDE4Ljk2IDE0Ljc3TDE4LjcxIDE1LjA2TDE4LjM1IDE1LjRMMTcuOTQgMTUuNjZMMTcuNCAxNS45TDE2Ljg0IDE2LjAyTDE2LjU2IDE2LjU5TDE2LjI0IDE3LjA2TDE1LjkgMTcuNEwxNS40NCAxNy43MkwxNC44NSAxNy45OUwxNC4yNyAxOC4xTDEzLjQ0IDE4LjFMMTIuNzcgMTcuOTNMMTIuMSAxNy41N0wxMS41OSAxNy4xTDExLjE3IDE2LjQ4TDEwLjg2IDE1LjY5TDEwLjUyIDE1LjU0TDEwLjE5IDE1LjQ5TDkuOSAxNS40OUw5LjUyIDE1LjU2TDkuMiAxNS42OUw5IDE2LjMxTDguNjIgMTYuOTRMOC4yNCAxNy4zNUw3LjczIDE3LjcyTDcuMjMgMTcuOTZMNi43MyAxOC4wOEw1Ljk4IDE4LjExTDUuNDggMTguMDVMNC45NCAxNy44N0w0LjMxIDE3LjUxTDMuOTggMTcuMjFMMy43MyAxNi45MUwzLjQ4IDE2LjUxTDMuMjcgMTYuMDRMMi41NiAxNS44OUwxLjg4IDE1LjU2TDEuNiAxNS4zNUwxLjI5IDE1LjA2TDAuOTEgMTQuNTZMMC42NCAxNC4wMkwwLjUxIDEzLjUyTDAuNDcgMTIuNzdMMC41NCAxMi4yN0wwLjcyIDExLjczTDAuOTQgMTEuMzJMMS40OCAxMC42TDEuOTYgMTAuMUwxLjY1IDkuNTJMMS4zOSA4LjgxTDEuMTkgNy43N0wxLjIxIDYuNTZMMS4zNSA1Ljg1TDEuNTcgNS4xOUwxLjkgNC41NEwyLjI3IDMuOThMMi45MiAzLjI3TDMuMzggMi45TDMuOSAyLjU3TDQuNTIgMi4yOEw1LjE5IDIuMDdaTTYuMjEgMy4xOUw2LjUyIDMuMThMNy4wNiAzLjI1TDcuNTIgMy4zNkw3LjkgMy41MUw4LjUyIDMuODVMOS4xNSA0LjUyTDkuNCA0LjZMOS42OSA0LjU1TDEwLjc3IDQuNTZMMTAuOTQgNC40NUwxMS40NCAzLjg5TDExLjczIDMuNjlMMTIuNDggMy4zNkwxMi45OCAzLjI0TDEzLjQ4IDMuMThMMTQuMjcgMy4yNEwxNS4wNiAzLjQ2TDE1LjU2IDMuN0wxNi4xOSA0LjE1TDE2LjU2IDQuNTJMMTcuMDQgNS4xOUwxNy4yOSA1LjczTDE3LjQ0IDYuMTlMMTcuNTUgNi43M0wxNy41NyA3LjY1TDE3LjQzIDguNEwxNy4wOCA5LjI3TDE2Ljc1IDkuNzdMMTYuNDggMTAuMUwxNi40MiAxMC4yN0wxNi40NSAxMC40TDE2LjU1IDEwLjUyTDE3LjE1IDEwLjk4TDE3LjU2IDExLjRMMTcuOTQgMTEuODlMMTguMTUgMTIuMjdMMTguMjcgMTIuNzNMMTguMjYgMTMuMzFMMTguMTQgMTMuNjlMMTcuODUgMTQuMTVMMTcuNDkgMTQuNDhMMTcuMDIgMTQuNzFMMTYuNjUgMTQuNzhMMTYuMDYgMTQuNzVMMTUuODUgMTQuODFMMTUuNzMgMTQuOThMMTUuNjggMTUuNDRMMTUuNiAxNS43M0wxNS40NCAxNi4wMkwxNS4yMyAxNi4zMUwxNS4wMiAxNi41TDE0LjYgMTYuNzRMMTQuMzUgMTYuODNMMTQuMDYgMTYuODZMMTMuNCAxNi44MkwxMy4xNSAxNi43MkwxMi43NyAxNi41MUwxMi41MiAxNi4yN0wxMi4zIDE1Ljk0TDEyLjE1IDE1LjZMMTIuMDYgMTUuMThMMTEuODkgMTQuOUwxMS41MiAxNC42MkwxMS4xNSAxNC40M0wxMC43NCAxNC4zMUwxMC4zMSAxNC4yNEw5Ljc3IDE0LjI0TDkuMTkgMTQuMzVMOC42NCAxNC41Nkw4LjI3IDE0LjgyTDguMSAxNS4wMkw4LjAyIDE1LjE5TDcuODcgMTUuNzdMNy43NCAxNi4wMkw3LjQ4IDE2LjM1TDcuMTUgMTYuNjFMNi45IDE2Ljc0TDYuNjUgMTYuODNMNi4zNSAxNi44Nkw1LjkgMTYuODZMNS42IDE2Ljc5TDUuMTkgMTYuNkw0Ljk0IDE2LjRMNC43NSAxNi4xOUw0LjUxIDE1Ljc3TDQuNDEgMTUuNDhMNC4zNiAxNC45OEw0LjIzIDE0LjgxTDMuOTggMTQuNzRMMy42NSAxNC43OEwzLjEgMTQuNzVMMi42NSAxNC41NkwyLjM1IDE0LjM1TDIuMDEgMTMuOThMMS43OCAxMy40OEwxLjcyIDEzLjFMMS43MyAxMi43M0wxLjc4IDEyLjQ4TDEuOTUgMTIuMDZMMi40NCAxMS40TDIuODUgMTAuOThMMy40NSAxMC41MkwzLjU1IDEwLjRMMy41OCAxMC4yN0wzLjUyIDEwLjFMMy4yMyA5Ljc0TDIuODIgOS4wNkwyLjU4IDguNDRMMi41IDguMDZMMi40MyA3LjZMMi40NCA2LjgxTDIuNTYgNi4xOUwyLjcxIDUuNzNMMi45NiA1LjE5TDMuMjQgNC43N0wzLjc3IDQuMThMNC4xIDMuOTJMNC40OCAzLjY3TDQuOTQgMy40Nkw1LjQ4IDMuMjlaIi8+PGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMTAgMTApIHNjYWxlKDAuNykgdHJhbnNsYXRlKC0xMCAtMTApIj48cGF0aCBkPSJNMTAuMDU4NzMsMTEuOTk4MDVjLTIuMDg4ODcsMC0zLjc4ODA5LTEuNzg0MTgtMy43ODgwOS0zLjk3NzU0czEuNjk5MjItMy45Nzg1MiwzLjc4ODA5LTMuOTc4NTIsMy43ODgwOSwxLjc4NTE2LDMuNzg4MDksMy45Nzg1Mi0xLjY5OTIyLDMuOTc3NTQtMy43ODgwOSwzLjk3NzU0Wk0xMC4wNTg3Myw1LjU0MTk5Yy0xLjI2MTcyLDAtMi4yODgwOSwxLjExMjMtMi4yODgwOSwyLjQ3ODUyczEuMDI2MzcsMi40Nzc1NCwyLjI4ODA5LDIuNDc3NTQsMi4yODgwOS0xLjExMTMzLDIuMjg4MDktMi40Nzc1NC0xLjAyNjM3LTIuNDc4NTItMi4yODgwOS0yLjQ3ODUyWiIvPjxwYXRoIGQ9Ik00LjU1MzM2LDE3Ljk5ODA1Yy0uMDI2ODYsMC0uMDU0Mi0uMDAwOTgtLjA4MTU0LS4wMDM5MS0uNDEyMTEtLjA0NDkyLS43MDk0Ny0uNDE1MDQtLjY2NTA0LS44MjcxNS4yNzU4OC0yLjU0NTksMi45NjMzOC00LjQ2NjgsNi4yNTE5NS00LjQ2NjgsMy4yNjQ2NSwwLDYuMDExMjMsMS45NjU4Miw2LjI1MjkzLDQuNDc1NTkuMDM5NTUuNDEzMDktLjI2MjIxLjc3OTMtLjY3NDguODE4MzYtLjQxNTA0LjA0Mjk3LS43NzgzMi0uMjYyNy0uODE4MzYtLjY3MzgzLS4xNjU1My0xLjcyMDctMi4zMDA3OC0zLjEyMDEyLTQuNzU5NzctMy4xMjAxMi0yLjQ3OTQ5LDAtNC41NzA4LDEuMzc0MDItNC43NjA3NCwzLjEyODkxLS4wNDE1LjM4Mzc5LS4zNjY3LjY2ODk1LS43NDQ2My42Njg5NVoiLz48cGF0aCBkPSJNLjc0OTY1LDE1Yy0uMTM2NzIsMC0uMjc1MzktLjAzNzExLS4zOTk0MS0uMTE1MjMtLjM1MDU5LS4yMjA3LS40NTU1Ny0uNjg0NTctLjIzNDM4LTEuMDM1MTYuODU1OTYtMS4zNTc0MiwyLjQzOTk0LTIuMzExNTIsNC4zNDUyMS0yLjYxNDI2LjQxMjYtLjA3MTI5Ljc5MzQ2LjIxMjg5Ljg1ODg5LjYyMjA3LjA2NDk0LjQwOTE4LS4yMTM4Ny43OTM5NS0uNjIyNTYuODU4NC0xLjQ1NzUyLjIzMjQyLTIuNjk1OC45NTUwOC0zLjMxMjk5LDEuOTM0NTctLjE0MjU4LjIyNTU5LS4zODYyMy4zNDk2MS0uNjM0NzcuMzQ5NjFaIi8+PHBhdGggZD0iTTQuMTg2NjYsMTBjLS4wNTI3MywwLS4xMDU5Ni0uMDA1ODYtLjE1OTY3LS4wMTc1OC0xLjc0NzU2LS4zNzg5MS0zLjAxNjExLTIuMDE3NTgtMy4wMTYxMS0zLjg5NDUzLDAtMi4xOTMzNiwxLjY5OTIyLTMuOTc3NTQsMy43ODc2LTMuOTc3NTQuNjg0NTcsMCwxLjM1NTQ3LjE5MzM2LDEuOTM5OTQuNTU5NTcuMzUxMDcuMjE5NzMuNDU3NTIuNjgyNjIuMjM3NzksMS4wMzQxOC0uMjIwNy4zNTA1OS0uNjg0MDguNDU1MDgtMS4wMzM2OS4yMzczLS4zNDU3LS4yMTY4LS43NDEyMS0uMzMxMDUtMS4xNDQwNC0uMzMxMDUtMS4yNjEyMywwLTIuMjg3NiwxLjExMTMzLTIuMjg3NiwyLjQ3NzU0LDAsMS4xNzY3Ni43NzE0OCwyLjE5ODI0LDEuODM0NDcsMi40Mjk2OS40MDQ3OS4wODc4OS42NjE2Mi40ODczLjU3MzczLjg5MTYtLjA3NjE3LjM1MTU2LS4zODcyMS41OTA4Mi0uNzMyNDIuNTkwODJaIi8+PHBhdGggZD0iTTE5LjI1MDM1LDE1Yy0uMjQ5MDIsMC0uNDkyMTktLjEyNDAyLS42MzQ3Ny0uMzQ5NjEtLjYxNzE5LS45Nzk0OS0xLjg1NTQ3LTEuNzAyMTUtMy4zMTI5OS0xLjkzNDU3LS40MDg2OS0uMDY0NDUtLjY4NzUtLjQ0OTIyLS42MjI1Ni0uODU4NC4wNjU0My0uNDA5MTguNDQ5MjItLjY5MjM4Ljg1ODg5LS42MjIwNywxLjkwNTI3LjMwMjczLDMuNDg5MjYsMS4yNTY4NCw0LjM0NTIxLDIuNjE0MjYuMjIxMTkuMzUwNTkuMTE2MjEuODE0NDUtLjIzNDM4LDEuMDM1MTYtLjEyNDAyLjA3ODEyLS4yNjI3LjExNTIzLS4zOTk0MS4xMTUyM1oiLz48cGF0aCBkPSJNMTUuODEzMzQsMTBjLS4zNDU3LDAtLjY1NjI1LS4yMzkyNi0uNzMyNDItLjU5MDgyLS4wODc4OS0uNDA0My4xNjg5NS0uODAzNzEuNTczNzMtLjg5MTYsMS4wNjI5OS0uMjMxNDUsMS44MzQ0Ny0xLjI1MjkzLDEuODM0NDctMi40Mjk2OSwwLTEuMzY2MjEtMS4wMjYzNy0yLjQ3NzU0LTIuMjg3Ni0yLjQ3NzU0LS40MDI4MywwLS43OTgzNC4xMTQyNi0xLjE0NDA0LjMzMTA1LS4zNDkxMi4yMTc3Ny0uODEzNDguMTEzMjgtMS4wMzM2OS0uMjM3My0uMjE5NzMtLjM1MTU2LS4xMTMyOC0uODE0NDUuMjM3NzktMS4wMzQxOC41ODQ0Ny0uMzY2MjEsMS4yNTUzNy0uNTU5NTcsMS45Mzk5NC0uNTU5NTcsMi4wODgzOCwwLDMuNzg3NiwxLjc4NDE4LDMuNzg3NiwzLjk3NzU0LDAsMS44NzY5NS0xLjI2ODU1LDMuNTE1NjItMy4wMTYxMSwzLjg5NDUzLS4wNTM3MS4wMTE3Mi0uMTA2OTMuMDE3NTgtLjE1OTY3LjAxNzU4WiIvPjwvZz48L3N2Zz4="); }
+.spectrum .wf-calendar.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNNy41NyAxLjM1TDguMzEgMS4zNkw4Ljk2IDEuNTJMOS41MiAxLjc5TDkuOTggMi4xNkwxMC42NSAxLjY5TDExLjQgMS40MUwxMS44MSAxLjM1TDEyLjMxIDEuMzVMMTIuNjkgMS4zOUwxMy4wMiAxLjQ3TDEzLjUyIDEuNjlMMTMuODcgMS45TDE0LjE3IDIuMTVMMTQuNiAyLjZMMTUuMTUgMi43MkwxNS41NiAyLjg1TDE1Ljk0IDMuMDNMMTYuNCAzLjNMMTYuNjkgMy41NEwxNy4xOSA0LjA1TDE3LjYyIDQuNjlMMTcuOTYgNS40NEwxOC4xMSA2LjIzTDE4LjA5IDE0LjY5TDE4LjAxIDE1LjA2TDE3LjgyIDE1LjZMMTcuNTggMTYuMUwxNy4zNSAxNi40NUwxNi42NiAxNy4xOUwxNi4wMiAxNy42MkwxNS41NiAxNy44NEwxNS4xIDE4TDE0LjQ4IDE4LjExTDUuMzUgMTguMUw0Ljk4IDE4LjAyTDQuNDQgMTcuODRMMy45NCAxNy42TDMuNTYgMTcuMzZMMy4yNyAxNy4xM0wyLjgxIDE2LjY2TDIuMzggMTYuMDJMMi4xNiAxNS41NkwyIDE1LjFMMS44OSAxNC40NEwxLjg5IDYuMzFMMS45MyA1LjlMMi4wNyA1LjM1TDIuNCA0LjY1TDIuNjkgNC4yTDMuMjcgMy41OEwzLjU2IDMuMzNMNC40IDIuODdMNC44MSAyLjczTDUuNCAyLjZMNi4wMiAxLjk4TDYuNjUgMS42MUw3LjEgMS40M1pNNy42MyAyLjZMOC4yMyAyLjYxTDguNzcgMi44TDguOTggMi45NEw5LjMxIDMuMjdMOS42IDMuN0w5LjczIDMuNzdMOS45IDMuOEwxMC4xIDMuOEwxMC4zNSAzLjczTDEwLjY1IDMuMzJMMTAuOTQgMy4wMkwxMS4zNSAyLjc0TDExLjkgMi42TDEyLjMxIDIuNkwxMi42IDIuNjVMMTMuMDIgMi44NEwxMy4yMyAyLjk4TDEzLjUyIDMuMjdMMTMuNzcgMy42NkwxMy45IDMuNzZMMTQuOSAzLjk0TDE1LjIyIDQuMDZMMTUuNjUgNC4zMUwxNi4yMyA0Ljg1TDE2LjQ5IDUuMjNMMTYuNzUgNS43N0wxNi44NiA2LjMxTDE2Ljg2IDE0LjQ4TDE2LjY4IDE1LjFMMTYuMzMgMTUuNzNMMTUuODUgMTYuMjNMMTUuNDggMTYuNDlMMTUuMDIgMTYuNzFMMTQuNjUgMTYuODNMMTQuNCAxNi44Nkw1LjUyIDE2Ljg2TDQuOSAxNi42OEw0LjI3IDE2LjMzTDMuNzcgMTUuODVMMy41MSAxNS40OEwzLjI5IDE1LjAyTDMuMTcgMTQuNjVMMy4xNCAxNC40TDMuMTQgNi4zNUwzLjIzIDUuODFMMy40OCA1LjI3TDMuNjcgNC45OEw0LjI4IDQuMzVMNC42OSA0LjExTDUuMDYgMy45Nkw2LjEgMy43Nkw2LjI3IDMuNjFMNi41MiAzLjIzTDYuODEgMi45NUw3LjI3IDIuN1oiLz48ZyB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMCAxMCkgc2NhbGUoMC43KSB0cmFuc2xhdGUoLTEwIC0xMCkiPjxwYXRoIGQ9Im0xNS43NSwzaC0ydi0xYzAtLjQxNDA2LS4zMzU5NC0uNzUtLjc1LS43NXMtLjc1LjMzNTk0LS43NS43NXYxaC00LjV2LTFjMC0uNDE0MDYtLjMzNTk0LS43NS0uNzUtLjc1cy0uNzUuMzM1OTQtLjc1Ljc1djFoLTJjLTEuMjQwNzIsMC0yLjI1LDEuMDA5NzctMi4yNSwyLjI1djEwLjVjMCwxLjI0MDIzLDEuMDA5MjgsMi4yNSwyLjI1LDIuMjVoMTEuNWMxLjI0MDcyLDAsMi4yNS0xLjAwOTc3LDIuMjUtMi4yNVY1LjI1YzAtMS4yNDAyMy0xLjAwOTI4LTIuMjUtMi4yNS0yLjI1Wm0tMTEuNSwxLjVoMnYuNWMwLC40MTQwNi4zMzU5NC43NS43NS43NXMuNzUtLjMzNTk0Ljc1LS43NXYtLjVoNC41di41YzAsLjQxNDA2LjMzNTk0Ljc1Ljc1Ljc1cy43NS0uMzM1OTQuNzUtLjc1di0uNWgyYy40MTM1NywwLC43NS4zMzY5MS43NS43NXYxLjc1SDMuNXYtMS43NWMwLS40MTMwOS4zMzY0My0uNzUuNzUtLjc1Wm0xMS41LDEySDQuMjVjLS40MTM1NywwLS43NS0uMzM2OTEtLjc1LS43NXYtNy4yNWgxM3Y3LjI1YzAsLjQxMzA5LS4zMzY0My43NS0uNzUuNzVaIi8+PHJlY3QgeD0iNSIgeT0iMTAiIHdpZHRoPSIyIiBoZWlnaHQ9IjIiIHJ4PSIxIiByeT0iMSIvPjxyZWN0IHg9IjkiIHk9IjEwIiB3aWR0aD0iMiIgaGVpZ2h0PSIyIiByeD0iMSIgcnk9IjEiLz48cmVjdCB4PSIxMyIgeT0iMTAiIHdpZHRoPSIyIiBoZWlnaHQ9IjIiIHJ4PSIxIiByeT0iMSIvPjxyZWN0IHg9IjUiIHk9IjEzIiB3aWR0aD0iMiIgaGVpZ2h0PSIyIiByeD0iMSIgcnk9IjEiLz48cmVjdCB4PSI5IiB5PSIxMyIgd2lkdGg9IjIiIGhlaWdodD0iMiIgcng9IjEiIHJ5PSIxIi8+PHJlY3QgeD0iMTMiIHk9IjEzIiB3aWR0aD0iMiIgaGVpZ2h0PSIyIiByeD0iMSIgcnk9IjEiLz48L2c+PC9zdmc+"); }
+.spectrum .wf-bell.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNOS41NyAxLjUyTDEwLjQ4IDEuNTJMMTEuMSAxLjU5TDExLjk0IDEuNzhMMTIuNTYgMi4wMUwxMy4yNyAyLjM2TDEzLjc3IDIuNjdMMTQuMzcgMy4xNUwxNS4wMiAzLjgxTDE1LjQgNC4zMUwxNS43NCA0Ljg1TDE2LjAyIDUuNEwxNi4yMSA1LjlMMTYuNDkgNy4xTDE2LjU3IDguMjdMMTYuNjggOC43N0wxNy4wNiA5LjU2TDE3LjgyIDEwLjk0TDE4LjAzIDExLjUyTDE4LjE1IDEyLjE5TDE4LjEzIDEzLjMxTDE4IDEzLjg1TDE3LjgyIDE0LjMxTDE3LjM1IDE1LjFMMTYuNiAxNS44NkwxNi4wMiAxNi4yNUwxNS42NSAxNi40M0wxNS4xOSAxNi41OEwxNC40OCAxNi43M0wxMy42OSAxNi43NEwxMy4wNiAxNy40NkwxMi42IDE3LjgzTDEyLjE3IDE4LjFMMTEuMzUgMTguNDZMMTAuNzMgMTguNkwxMC4zNSAxOC42NUw5LjQ0IDE4LjYzTDguNDggMTguNEw3LjkgMTguMTRMNy4zNSAxNy44TDYuODMgMTcuMzVMNi4zMSAxNi43NEw1LjU2IDE2LjczTDQuOTQgMTYuNjJMNC4zMSAxNi40MUwzLjc0IDE2LjFMMy4yMyAxNS43MUwyLjczIDE1LjJMMi40NyAxNC44NUwyLjIzIDE0LjQ0TDIuMDMgMTMuOTRMMS45IDEzLjQ0TDEuODUgMTMuMDZMMS44NiAxMi4wNkwyLjAxIDExLjM1TDIuMyAxMC42OUwzLjE5IDkuMTVMMy40IDguNjlMMy41NSA4LjA2TDMuNjMgNi45OEwzLjgzIDYuMUw0LjIzIDUuMUw0LjczIDQuMjdMNS4xIDMuNzlMNS44NSAzLjA0TDYuMjcgMi43Mkw2Ljk0IDIuM0w3LjQ4IDIuMDNMOC4xOSAxLjc4TDguNzMgMS42NFpNOS42MyAyLjc3TDEwLjQgMi43NkwxMC45IDIuODJMMTEuNiAyLjk4TDEyLjEgMy4xN0wxMi43MSAzLjQ4TDEzLjIzIDMuODJMMTMuNzMgNC4yN0wxNC4yMiA0LjgxTDE0LjY2IDUuNDhMMTQuODkgNS45NEwxNS4wNiA2LjRMMTUuMjcgNy4zNUwxNS4yOCA3Ljk4TDE1LjM2IDguNjVMMTUuNTIgOS4yM0wxNS45NyAxMC4xOUwxNi42NiAxMS40TDE2LjgyIDExLjgxTDE2LjkgMTIuMjdMMTYuODkgMTMuMUwxNi44MSAxMy40OEwxNi42OCAxMy44MUwxNi4zNSAxNC4zNUwxNS43NyAxNC45M0wxNS4yMyAxNS4yNEwxNC43MyAxNS40MUwxNC4zMSAxNS40OEwxMy4yMyAxNS40OUwxMy4wMiAxNS41NEwxMi44NSAxNS42OEwxMi42MiAxNi4wNkwxMi4zMiAxNi40NEwxMS44MiAxNi44NUwxMS40IDE3LjFMMTEuMDIgMTcuMjVMMTAuMjcgMTcuNEw5LjY5IDE3LjRMOS4zMSAxNy4zNEw4Ljk0IDE3LjI0TDguNDggMTcuMDRMOC4xMiAxNi44MUw3LjczIDE2LjQ4TDcuNCAxNi4wOUw3LjEgMTUuNjNMNi45NCAxNS41Mkw2Ljc3IDE1LjQ5TDUuNTYgMTUuNDdMNC45IDE1LjI5TDQuNDggMTUuMUw0LjE0IDE0Ljg1TDMuNTYgMTQuMjNMMy4zNiAxMy45TDMuMjIgMTMuNTZMMy4xIDEyLjk4TDMuMSAxMi4xOUwzLjIxIDExLjczTDMuNDIgMTEuMjNMNC4yOCA5Ljc3TDQuNjUgOC45NEw0LjggOC4xOUw0Ljg2IDcuMTlMNS4wMSA2LjUyTDUuMzQgNS42OUw1LjYgNS4yM0w1Ljk4IDQuNjlMNi42NSA0LjAyTDcuMzEgMy41M0w3LjkgMy4yMUw4LjQ4IDNMOC45NCAyLjg3WiIvPjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDEwIDEwKSBzY2FsZSgwLjcpIHRyYW5zbGF0ZSgtMTAgLTEwKSI+PHBhdGggZD0ibTE3Ljc4NjEzLDEyLjY3NTc4Yy0uMTY4NDYtLjMwODU5LS4zNDA4Mi0uNjA3NDItLjUxMTIzLS45MDIzNC0uODI2NjYtMS40MzQ1Ny0xLjU0MTAyLTIuNjcyODUtMS41NDEwMi00LjYyMDEyLDAtMy4xMTkxNC0yLjUzNzYtNS42NTcyMy01LjY1NzIzLTUuNjU3MjNzLTUuNjU3MjMsMi41MzgwOS01LjY1NzIzLDUuNjU3MjNjMCwxLjc2NjYtLjc1ODc5LDMuMDQ4ODMtMS41NjIwMSw0LjQwNTI3LS4yMjAyMS4zNzIwNy0uNDQxNDEuNzQ2MDktLjY0OTQxLDEuMTMwODYtLjM3NTk4LjY5NjI5LS4zNTY5MywxLjUyMDUxLjA1MDc4LDIuMjA0MS40MTIxMS42OTA0MywxLjEzNjcyLDEuMTAyNTQsMS45Mzg0OCwxLjEwMjU0aDMuMDUyMjVjMCwxLjUxNjYsMS4yMzM0LDIuNzUsMi43NSwyLjc1czIuNzUtMS4yMzM0LDIuNzUtMi43NWgzLjA1NTE4Yy44MDMyMiwwLDEuNTI3ODMtLjQxMzA5LDEuOTM4OTYtMS4xMDU0Ny40MDc3MS0uNjg3NS40MjM4My0xLjUxNTYyLjA0MjQ4LTIuMjE0ODRabS03Ljc4NjYyLDQuNTcwMzFjLS42ODk0NSwwLTEuMjUtLjU2MDU1LTEuMjUtMS4yNWgyLjVjMCwuNjg5NDUtLjU2MDU1LDEuMjUtMS4yNSwxLjI1Wm02LjQ1NDEtMy4xMjEwOWMtLjA2NjQxLjExMTMzLS4yNjIyMS4zNzEwOS0uNjQ4OTMuMzcxMDlINC4xOTcyN2MtLjI2ODU1LDAtLjUxMTcyLS4xMzg2Ny0uNjUwMzktLjM3MTA5LS4wNjQ0NS0uMTA4NC0uMTk1MzEtLjM5NTUxLS4wMTg1NS0uNzIyNjYuMTk4MjQtLjM2ODE2LjQwOTY3LS43MjQ2MS42MTk2My0xLjA3OTEuODcxMDktMS40NzA3LDEuNzcxNDgtMi45OTIxOSwxLjc3MTQ4LTUuMTY5OTIsMC0yLjI1MzkxLDEuOTAzODEtNC4xNTcyMyw0LjE1NzIzLTQuMTU3MjNzNC4xNTcyMywxLjkwMzMyLDQuMTU3MjMsNC4xNTcyM2MwLDIuMzQ4NjMuODg1MjUsMy44ODM3OSwxLjc0MTcsNS4zNjkxNC4xNjQ1NS4yODUxNi4zMzA1Ny41NzMyNC40OTM2NS44NzIwNy4xODA2Ni4zMzEwNS4wNDkzMi42MjEwOS0uMDE1NjIuNzMwNDdaIi8+PC9nPjwvc3ZnPg=="); }
+.spectrum .wf-comment.ringed { --wf: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZmlsbC1ydWxlPSJldmVub2RkIiBkPSJNNS43MyAxLjlMMTQuMDYgMS44OUwxNC40NCAxLjkyTDE1LjA2IDIuMDVMMTUuNTIgMi4xOUwxNi4xOSAyLjUxTDE2Ljk0IDMuMDFMMTcuNjUgMy43MUwxOC4xMyA0LjRMMTguMzUgNC44MUwxOC42NCA1LjU2TDE4Ljc5IDYuMzFMMTguODIgNi42OUwxOC44MiAxMS4zNUwxOC43NyAxMS43M0wxOC42MiAxMi4zNUwxOC40NSAxMi44NUwxOC4yMyAxMy4zMUwxNy43NyAxNC4wMkwxNy4xMiAxNC43M0wxNi42OSAxNS4wN0wxNi4xNSAxNS40MUwxNS40NCAxNS43M0wxNC44MSAxNS45MkwxNC4wNiAxNi4wM0wxMS41MiAxNi4wNEw5LjI3IDE4LjE5TDguNjUgMTguNTZMOC4xNSAxOC43NEw3LjczIDE4LjgxTDcuMTUgMTguODJMNi43NyAxOC43OEw2LjQ0IDE4LjY5TDUuNjUgMTguMzFMNS4zNSAxOC4wOEw1LjAyIDE3Ljc0TDQuNzMgMTcuMzRMNC40OSAxNi44MUw0LjMzIDE2LjE5TDQuMyAxNS42NUwzLjczIDE1LjM0TDMuMyAxNS4wNkwyLjg4IDE0LjczTDIuNTQgMTQuNEwyLjE5IDEzLjk3TDEuODkgMTMuNTJMMS40OSAxMi42OUwxLjI5IDEyLjAyTDEuMTggMTEuMzVMMS4xOCA2LjU2TDEuMzUgNS42TDEuNjMgNC44NUwxLjkgNC4zNkwyLjQ0IDMuNjJMMy4xIDIuOThMMy45IDIuNDZMNC4zNSAyLjI0TDQuODEgMi4wOFpNNS43OSAzLjE1TDE0LjE5IDMuMTRMMTQuNzcgMy4yNkwxNS4yMyAzLjQyTDE1Ljg1IDMuNzZMMTYuMjMgNC4wNkwxNi43MyA0LjU3TDE3LjE0IDUuMTlMMTcuNDMgNS45TDE3LjU3IDYuNjVMMTcuNTUgMTEuNDRMMTcuNDMgMTEuOThMMTcuMjcgMTIuNDNMMTcuMDMgMTIuOUwxNi41MyAxMy41NkwxNi4wMiAxNC4wMUwxNS42MyAxNC4yN0wxNC45OCAxNC41N0wxNC41MiAxNC43TDE0LjAyIDE0Ljc4TDExLjIzIDE0Ljc4TDExLjAyIDE0LjgzTDEwLjE5IDE1LjU2TDguNTIgMTcuMTlMOC4zMSAxNy4zM0w3Ljk0IDE3LjVMNy41NiAxNy41N0w2Ljk0IDE3LjU0TDYuNDQgMTcuMzNMNi4xNSAxNy4xMUw1Ljg1IDE2Ljc3TDUuNjUgMTYuMzVMNS41NiAxNS45TDUuNTUgMTUuMDZMNS40OCAxNC44MUw1LjI3IDE0LjY2TDQuNzMgMTQuNDVMNC4zMSAxNC4yNEwzLjczIDEzLjgxTDMuNCAxMy40OEwyLjk3IDEyLjlMMi43MSAxMi40TDIuNTYgMTEuOTRMMi40MyAxMS4yN0wyLjQzIDYuNkwyLjU2IDUuOTRMMi43OCA1LjM1TDIuOTMgNS4wNkwzLjI3IDQuNTZMMy44MSA0LjAyTDQuMDggMy44MUw0Ljg1IDMuMzlMNS4yMyAzLjI2WiIvPjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDEwIDEwKSBzY2FsZSgwLjcpIHRyYW5zbGF0ZSgtMTAgLTEwKSI+PHBhdGggZD0ibTYuMjUsMTljLS4wOTkxMiwwLS4xOTg3My0uMDE5NTMtLjI5MzQ2LS4wNTk1Ny0uMjc2ODYtLjExODE2LS40NTY1NC0uMzg5NjUtLjQ1NjU0LS42OTA0M3YtMy4yNWgtLjc1Yy0yLjA2Nzg3LDAtMy43NS0xLjY4MjYyLTMuNzUtMy43NXYtNS41YzAtMi4wNjczOCwxLjY4MjEzLTMuNzUsMy43NS0zLjc1aDEwLjVjMi4wNjc4NywwLDMuNzUsMS42ODI2MiwzLjc1LDMuNzV2NS41YzAsMi4wNjczOC0xLjY4MjEzLDMuNzUtMy43NSwzLjc1aC00LjU0Mjk3bC0zLjkzNzAxLDMuNzkwMDRjLS4xNDI1OC4xMzc3LS4zMjk1OS4yMDk5Ni0uNTIwMDIuMjA5OTZabS0xLjUtMTUuNWMtMS4yNDA3MiwwLTIuMjUsMS4wMDk3Ny0yLjI1LDIuMjV2NS41YzAsMS4yNDAyMywxLjAwOTI4LDIuMjUsMi4yNSwyLjI1aDEuNWMuNDE0MDYsMCwuNzUuMzM1OTQuNzUuNzV2Mi4yMzczbDIuODg0NzctMi43NzczNGMuMTM5NjUtLjEzNDc3LjMyNjE3LS4yMDk5Ni41MjAwMi0uMjA5OTZoNC44NDUyMWMxLjI0MDcyLDAsMi4yNS0xLjAwOTc3LDIuMjUtMi4yNXYtNS41YzAtMS4yNDAyMy0xLjAwOTI4LTIuMjUtMi4yNS0yLjI1SDQuNzVaIi8+PC9nPjwvc3ZnPg=="); }
+/* End of the ringed kinds. */

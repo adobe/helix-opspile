@@ -17,7 +17,10 @@ import {
 } from '../src/page.js';
 import { PAGES, SCRIPTS } from './ui.js';
 
-const NAMES = ['inbox', 'admin', 'kb', 'cogs', 'topics'];
+const NAMES = ['inbox', 'admin', 'cogs', 'topics', 'portal'];
+/** The stylesheets a page links (ui/<name>.html), in order, but the built tokens. */
+const linked = (name) => [...PAGES[`${name}.html`].matchAll(/<link rel="stylesheet" href="([\w.-]+)">/g)]
+  .map((m) => m[1]).filter((f) => f !== 'spectrum-tokens.css');
 const served = (name) => (name === 'inbox' ? inboxPage : page)(PAGES[`${name}.html`], SCRIPTS);
 const STYLESHEETS = Object.keys(SCRIPTS).filter((f) => /^spectrum(-[a-z]+)?\.css$/.test(f) && f !== 'spectrum-fonts.css');
 
@@ -33,7 +36,7 @@ describe('Spectrum 2', () => {
       assert.ok(fonts > 0 && shared > fonts && its > shared, name);
       assert.ok(its < html.indexOf('</head>'), name);
       // The tokens the stylesheets use, light and dark, between the fonts and the stylesheets.
-      const tokens = spectrumTokens(`${SCRIPTS['spectrum-fonts.css']}\n${SCRIPTS['spectrum.css']}\n${SCRIPTS[`spectrum-${name}.css`]}`);
+      const tokens = spectrumTokens(linked(name).map((f) => SCRIPTS[f]).join('\n'));
       const at = html.indexOf(tokens);
       assert.ok(at > fonts && at < shared, name);
       assert.match(tokens, /--spectrum-background-base-color:/, name);
@@ -56,10 +59,11 @@ describe('Spectrum 2', () => {
     assert.match(shared, /:where\(\.spectrum\) body \{ background: var\(--frame\);/);
     // The header is part of the frame: no fill of its own, and no line under it.
     assert.match(shared, /\.spectrum header \{[^}]*background: transparent;\s*border-bottom: 0;/);
-    // The inbox's list and thread, and a knowledge base's files and editor, are one container.
-    for (const file of ['spectrum-inbox.css', 'spectrum-kb.css']) {
-      assert.match(SCRIPTS[file], /\.spectrum main::before \{ content: ""; grid-row: 1; grid-column: [^;]+; background: var\(--content\);\s*border-radius: var\(--content-radius\); box-shadow: var\(--content-shadow\); \}/, file);
-    }
+    // The inbox's list and thread are one container; a knowledge base's files and editor are
+    // in the admin pages' content area, with a divider between them.
+    assert.match(SCRIPTS['spectrum-inbox.css'], /\.spectrum main::before \{ content: ""; grid-row: 1; grid-column: [^;]+; background: var\(--content\);\s*border-radius: var\(--content-radius\); box-shadow: var\(--content-shadow\); \}/);
+    assert.match(SCRIPTS['spectrum-agent.css'], /\.spectrum \.agent #files, \.spectrum \.agent #editor \{ background: transparent; \}/);
+    assert.match(SCRIPTS['spectrum-agent.css'], /\.spectrum \.agent\.kb #editor \{ border-left: var\(--spectrum-border-width-100\) solid var\(--line\); \}/);
     assert.match(SCRIPTS['spectrum-admin.css'], /\.spectrum #detail \{[^}]*background: var\(--content\);\s*border-radius: var\(--content-radius\);\s*box-shadow: var\(--content-shadow\);/);
     // Nothing on a page hangs over another part of it at rest: the open thread's row is
     // selected where it is, and a filter group has no card or shadow until it slides out.
@@ -151,6 +155,18 @@ describe('Spectrum 2', () => {
     assert.match(SCRIPTS['admin.js'], /dlg\.setAttribute\('role', 'alertdialog'\)/);
   });
 
+  it('moves a channel to the team picked under its name, in a Popover the table does not cut off', () => {
+    const js = SCRIPTS['admin.js'];
+    // The admin team's channel names open the list of teams; picking one moves, never shares.
+    assert.match(js, /<button class="link chan" data-move="\$\{esc\(c\.channelId\)\}" aria-haspopup="dialog"/);
+    assert.match(js, /el\.popover = 'auto';/);
+    assert.match(js, /assignHere\(c, t\.slug, \{ move: true \}\)/);
+    assert.match(js, /target, value, channelId, source, \.\.\.\(move \? \{ move: true \} : \{\}\),/);
+    // Only open is it displayed: a `display` of its own would show it closed too.
+    assert.match(SCRIPTS['spectrum-admin.css'], /\.movepop:popover-open \{ display: flex; \}/);
+    assert.doesNotMatch(SCRIPTS['spectrum-admin.css'], /\.movepop \{[^}]*display:/);
+  });
+
   it('shows what a filter\'s value or a thread is with Spectrum 2\'s workflow icons, not emoji', () => {
     const js = SCRIPTS['inbox.js'];
     const css = SCRIPTS['spectrum-inbox.css'];
@@ -190,6 +206,23 @@ describe('Spectrum 2', () => {
     assert.match(shared, /@starting-style \{\s*\.spectrum \[popover\]:popover-open \{ opacity: 0;/);
     assert.match(shared, /@starting-style \{\s*\.spectrum dialog:not\(\.lightbox\)\[open\] \{ opacity: 0;/);
     assert.match(shared, /prefers-reduced-motion: reduce\) \{\s*\.spectrum \*, [^{]*\{ transition-duration: var\(--spectrum-animation-duration-0\) !important; \}/);
+    assert.match(shared, /prefers-reduced-motion: reduce\) \{\s*[^{]*\.spectrum dialog::backdrop \{ transition-duration: var\(--spectrum-animation-duration-0\) !important; \}/);
+    // A closed dialog stays until it has left (ui/app.js), and its underlay leaves with it: no
+    // page pins the underlay's opacity (but the lightbox's, which animates itself), which would
+    // keep it dark until the dialog is gone.
+    assert.match(SCRIPTS['app.js'], /window\.Dialog = /);
+    for (const name of ['admin.js', 'agent.js', 'inbox.js', 'table.js']) {
+      assert.match(SCRIPTS[name], /Dialog\.remove\(dlg\)/, name);
+    }
+    const pageCss = Object.entries(SCRIPTS).filter(([n]) => /^spectrum-.*\.css$/.test(n));
+    for (const [name, css] of pageCss) {
+      assert.doesNotMatch(css, /dialog(?!\.lightbox)[^{},]*::backdrop \{[^}]*[\s;]opacity:/, name);
+    }
+    // Folds grow open and fold away, ease-out in and ease-in out; not for reduced motion.
+    assert.match(shared, /\.spectrum details \{ interpolate-size: allow-keywords; \}/);
+    assert.match(shared, /\.spectrum details::details-content \{\s*block-size: 0;\s*opacity: 0;[^}]*transition: block-size var\(--s2-out\)/);
+    assert.match(shared, /\.spectrum details\[open\]::details-content \{\s*block-size: auto;\s*opacity: 1;\s*transition: block-size var\(--s2-pop-in\)/);
+    assert.match(shared, /prefers-reduced-motion: reduce\) \{\s*\.spectrum details::details-content, \.spectrum details\[open\]::details-content \{\s*transition-duration: var\(--spectrum-animation-duration-0\);/);
     // New rows and messages do not slide in for reduced motion either.
     assert.match(SCRIPTS['spectrum-inbox.css'], /prefers-reduced-motion: reduce\) \{ \.t\.enter, \.msg\.enter, \.sys\.enter \{ animation: none; \} \}/);
   });

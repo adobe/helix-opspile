@@ -12,6 +12,7 @@
 
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import { createProvider } from '@earendil-works/pi-ai/models';
+import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
 import { ANTHROPIC_MODELS } from '@earendil-works/pi-ai/providers/anthropic.models';
 import { fitImages } from './images.js';
 
@@ -64,8 +65,8 @@ export function catalogEntry(bedrockId) {
  * The model as pi-ai describes it: what pi-ai knows about the Claude model (adaptive
  * thinking, limits, prices, prompt caching), at Bedrock's address.
  */
-export function agentModel(env) {
-  const known = catalogEntry(env.AGENT_MODEL);
+export function agentModel(env, id = env.AGENT_MODEL) {
+  const known = catalogEntry(id);
   return {
     reasoning: true,
     input: ['text'],
@@ -75,8 +76,8 @@ export function agentModel(env) {
       input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
     },
     ...(known || {}),
-    id: env.AGENT_MODEL,
-    name: known ? `${known.name} (Bedrock)` : env.AGENT_MODEL,
+    id,
+    name: known ? `${known.name} (Bedrock)` : id,
     api: 'anthropic-messages',
     provider: PROVIDER,
     baseUrl: gatewayBaseUrl(env),
@@ -121,28 +122,104 @@ export function fittingApi(api) {
 }
 
 /**
- * The API asking for the prompt cache retention `retention()` says, when it is called, instead
- * of the one the request has: the agent's experiment arm (src/experiments.js), which changes
- * while the agent runs. A request that asks for none (a compaction's) keeps asking for none.
+ * Whether a failed request says the model cannot be used at all (not enabled for the account,
+ * no such inference profile), rather than that this request failed: a 403, a 404, or a 400 about
+ * the model identifier, before any of the answer came.
  */
-export function retainingApi(api, retention) {
-  if (!retention) {
-    return api;
-  }
-  const keep = (options) => (options && options.cacheRetention === 'none' ? options
-    : { ...options, cacheRetention: retention() });
-  return {
-    ...api,
-    stream: (model, context, options) => api.stream(model, context, keep(options)),
-    streamSimple: (model, context, options) => api.streamSimple(model, context, keep(options)),
+export const unusableModel = (message) => /\b(?:403|404)\b|access ?denied|not (?:authorized|entitled|subscribed)|don'?t have access|(?:invalid|unknown|unsupported) model|model identifier|model (?:id )?(?:is )?not (?:found|supported|available)|marketplace/i
+  .test(String(message?.errorMessage || ''));
+
+/** How long an arm's model that could not be used is not asked again, in this isolate. */
+const UNUSABLE_MS = 10 * 60 * 1000;
+const unusable = new Map();
+
+/**
+ * `first()`'s stream, or `fallback()`'s when the first fails with `unusableModel` before any of
+ * its answer: `onFallback(error)` is told. The other events pass as they come.
+ */
+export function fallbackStream(first, fallback, onFallback = () => {}) {
+  const out = new AssistantMessageEventStream();
+  const pipe = async (stream, { switchable }) => {
+    for await (const event of stream) {
+      if (switchable && event.type === 'error' && unusableModel(event.error)) {
+        onFallback(event.error);
+        return pipe(fallback(), { switchable: false });
+      }
+      // eslint-disable-next-line no-param-reassign
+      switchable = false;
+      out.push(event);
+    }
+    return out.end();
   };
+  pipe(first(), { switchable: true }).catch((e) => {
+    out.push({
+      type: 'error',
+      reason: 'error',
+      error: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage: e.message,
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: {
+            input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0,
+          },
+        },
+        timestamp: Date.now(),
+      },
+    });
+    out.end();
+  });
+  return out;
 }
 
 /**
- * A pi-ai provider with one model, authenticated from the Worker's secrets. `cacheRetention`,
- * a function, picks each request's prompt cache retention (`retainingApi`).
+ * The API as the agent's experiment arms (src/experiments.js) have it at each request, since they
+ * change while the agent runs: `retention()`, the prompt cache retention instead of the one the
+ * request asks for (one that asks for none, a compaction's, keeps asking for none); `model()`, a
+ * Bedrock model id to ask instead of the session's, or null. That model is asked as itself (its
+ * prices and limits, and pi-ai drops the other model's thinking from the history), and a model
+ * that cannot be used falls back to the session's (`fallbackStream`), for UNUSABLE_MS, logged.
  */
-export function agentProvider(env, { cacheRetention } = {}) {
+export function armApi(api, { env = {}, retention, model } = {}) {
+  if (!retention && !model) {
+    return api;
+  }
+  const keep = (options) => (!retention || (options && options.cacheRetention === 'none') ? options
+    : { ...options, cacheRetention: retention() });
+  const swap = (method) => (base, context, options) => {
+    const opts = keep(options);
+    const id = model ? model() : null;
+    if (!id || id === base.id || (unusable.get(id) || 0) > Date.now()) {
+      return api[method](base, context, opts);
+    }
+    return fallbackStream(
+      () => api[method]({ ...agentModel(env, id), baseUrl: base.baseUrl }, context, opts),
+      () => api[method](base, context, opts),
+      (error) => {
+        unusable.set(id, Date.now() + UNUSABLE_MS);
+        console.log(JSON.stringify({
+          route: 'agent', experiment: 'model unusable', model: id, fallback: base.id, error: error.errorMessage,
+        }));
+      },
+    );
+  };
+  return { ...api, stream: swap('stream'), streamSimple: swap('streamSimple') };
+}
+
+/** Forgets the arms' models that could not be used (`armApi`), for tests. */
+export const resetUnusable = () => unusable.clear();
+
+/**
+ * A pi-ai provider with one model, authenticated from the Worker's secrets. `cacheRetention` and
+ * `model`, functions, pick each request's prompt cache retention and model (`armApi`).
+ */
+export function agentProvider(env, { cacheRetention, model } = {}) {
   return createProvider({
     id: PROVIDER,
     name: 'Amazon Bedrock via AI Gateway',
@@ -155,7 +232,7 @@ export function agentProvider(env, { cacheRetention } = {}) {
       },
     },
     models: env.AGENT_MODEL ? [agentModel(env)] : [],
-    api: retainingApi(fittingApi(anthropicMessagesApi()), cacheRetention),
+    api: armApi(fittingApi(anthropicMessagesApi()), { env, retention: cacheRetention, model }),
   });
 }
 

@@ -18,6 +18,7 @@ import {
 } from './lookup.js';
 import { followChange } from './refile.js';
 import { ADMIN_TEAM } from './review.js';
+import { sharedWith } from './shares.js';
 
 /**
  * Channel suggestions for the admin pages. The admin team holds every channel no rule files
@@ -129,7 +130,8 @@ export async function refreshMembers(env, ch, deps = {}, now = Date.now()) {
         return i ? { ...m, name: i.name, email: i.email } : m;
       });
     } else if (ch.source !== 'teams') {
-      // Discord lists a server's members only with a privileged intent opspile does not ask for.
+      // Discord lists a server's members only with a privileged intent opspile does not ask for,
+      // and the customer portal's are its lobby's, which its events name.
       throw new Error(`members are not listed on ${platformName(ch.source)}`);
     } else {
       if (!ch.group_id) {
@@ -198,10 +200,12 @@ export async function channelFacts(env, ch, ctx = {}) {
     FROM channel_members cm LEFT JOIN people p ON p.email = cm.email
     WHERE cm.source = ? AND cm.tenant = ? AND cm.channel_id = ?`, ...k);
   // What each technology is, as the teams describe it to Clef (src/extract.js).
-  const tech = (await rows(env, `SELECT c.tech, COALESCE((SELECT s.description FROM tech_stack s
-        WHERE s.tech = c.tech ORDER BY s.team = 'admin' DESC LIMIT 1), c.tech) AS what
-    FROM channel_tech c WHERE c.source = ? AND c.tenant = ? AND c.channel_id = ?
-    ORDER BY c.p DESC`, ...k)).map((r) => r.what);
+  // What its threads show (thread_tech), the most threads first.
+  const tech = (await rows(env, `SELECT g.tech, COALESCE((SELECT s.description FROM tech_stack s
+        WHERE s.tech = g.tech ORDER BY s.team = 'admin' DESC LIMIT 1), g.tech) AS what
+    FROM thread_tech g JOIN threads t ON t.thread = g.thread
+    WHERE t.source = ? AND t.tenant = ? AND t.channel_id = ?
+    GROUP BY g.tech ORDER BY COUNT(*) DESC, MAX(g.p) DESC`, ...k)).map((r) => r.what);
   const staff = (p) => Boolean(p.staff) || isStaffDomain(env, p.email);
   const teamsFor = (p) => (p.email ? teamsOf.get(p.email) || [] : [])
     .filter((t) => t !== ADMIN_TEAM).map((t) => teamName.get(t) || t);
@@ -243,6 +247,8 @@ export function channelState(f) {
     lines.push(`Channel: "${f.name || '?'}" in the Microsoft Teams team "${f.groupName || '?'}"`);
   } else if (f.source === 'discord') {
     lines.push(`Channel: #${f.name || '?'} in the Discord server "${f.groupName || '?'}"`);
+  } else if (f.source === 'portal') {
+    lines.push(`Channel: #${f.name || '?'} in the customer portal, opened for "${f.groupName || '?'}"`);
   } else {
     lines.push(`Channel: #${f.name || '?'} on Slack`);
   }
@@ -300,13 +306,13 @@ export async function teamOptions(env) {
   const criteria = {};
   for (const t of teams) {
     // The channels it holds and the ones shared with it (migration 0024): a team that only
-    // shares channels is known by them too, not by its members alone.
+    // shares channels is known by them too, not by its members alone. `sharedWith`, not EXISTS:
+    // the threads are searched by team and by channel, not every thread read for every team.
     // eslint-disable-next-line no-await-in-loop
     const channels = await rows(env, `SELECT COALESCE(c.group_name || ' / ' || c.name, c.name, t.channel_name) AS name,
         COUNT(*) AS n
       FROM threads t LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
-      WHERE t.team = ?1 OR EXISTS (SELECT 1 FROM channel_teams ct WHERE ct.team = ?1
-        AND ct.source = t.source AND ct.channel_id = t.channel_id)
+      WHERE t.team = ?1 OR ${sharedWith('t', '?1')}
       GROUP BY t.source, t.tenant, t.channel_id ORDER BY n DESC LIMIT ?2`, t.slug, SAMPLE_CHANNELS);
     // eslint-disable-next-line no-await-in-loop
     const members = await rows(env, `SELECT p.name FROM team_members tm JOIN people p ON p.id = tm.person
@@ -386,7 +392,8 @@ export async function classifyChannel(env, ch, ctx, now = Date.now()) {
 /**
  * Classifies up to `limit` of the admin team's channels: first the ones Clef has not seen,
  * then the ones that changed since (new activity, other ops teams to choose from) or whose
- * label is a week old. Their members are listed again when that is a week old too.
+ * label is a week old. Their members are listed again when that is a week old too. Archived
+ * channels are left out.
  *
  * `deps.slack` and `deps.graph` replace the platform calls (tests).
  */
@@ -404,8 +411,8 @@ export async function classifyChannels(env, { limit = BATCH, now = Date.now(), .
       GROUP BY source, tenant, channel_id) a
     JOIN channels c ON c.source = a.source AND c.tenant = a.tenant AND c.channel_id = a.channel_id
     LEFT JOIN channel_labels l ON l.source = a.source AND l.tenant = a.tenant AND l.channel_id = a.channel_id
-    WHERE l.labeled_at IS NULL OR l.options IS NOT ? OR l.labeled_through IS NOT COALESCE(a.through, '')
-      OR l.labeled_at < ?
+    WHERE c.archived_at IS NULL AND (l.labeled_at IS NULL OR l.options IS NOT ?
+      OR l.labeled_through IS NOT COALESCE(a.through, '') OR l.labeled_at < ?)
     ORDER BY l.labeled_at IS NOT NULL, a.through DESC`, ADMIN_TEAM, options.options, stale);
   out.pending = Math.max(0, due.length - limit);
   const ctx = {
@@ -514,7 +521,7 @@ export async function suggestionsFor(env, team) {
     FROM threads t
     LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
     LEFT JOIN channel_labels l ON l.source = t.source AND l.tenant = t.tenant AND l.channel_id = t.channel_id
-    WHERE t.team = ? GROUP BY t.source, t.tenant, t.channel_id`, ADMIN_TEAM);
+    WHERE t.team = ? AND c.archived_at IS NULL GROUP BY t.source, t.tenant, t.channel_id`, ADMIN_TEAM);
   // A channel shared with the team already is in its inbox (migration 0024): not suggested,
   // though it still counts in the corpus below.
   const shared = new Set((await rows(env, 'SELECT source, channel_id FROM channel_teams WHERE team = ?', team))

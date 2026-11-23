@@ -17,32 +17,37 @@ import { beforeEach, describe, it } from 'node:test';
 import { computerEnv } from '../src/agent/computer.js';
 import {
   commandsOf, DEFAULT_IMAGE, forgetImages, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree,
-  isImageName, listImages, readImage,
+  imageReads, isImageName, keptOfImages, listImages, readImage, sizeImageCache,
 } from '../src/agent/image.js';
 import {
-  DEFAULT_RUNTIME, gatewayFetch, imageSpec, isRuntime, overWorkspace, patientFs, readOnlyRoots,
-  readOnlySpec, runtimeFor, RUNTIMES, setTeamImage, setTeamRuntime, shellFor, teamImage,
-  teamRuntime, timedOut,
+  CURL_HOME, CURLRC, gatewayFetch, imageFor, imageSpec, KERNEL_ENV, setTeamImage, teamImage,
+  timedOut,
 } from '../src/agent/kernel.js';
 import {
   bucketOf, build, buildLayer, IMAGES, imagePackage, indexOf, layerNames, LAYERS, missingFrom,
-  objectsOf, toolNames,
+  objectsOf, PIECE_BYTES, toolNames,
 } from '../scripts/computer-images.mjs';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
 
 // Made-up teams, packages and hosts only.
 
-const fsError = (code, message) => Object.assign(new Error(`${code}: ${message}`), { code });
-
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 const put = (bucket, key, body) => bucket.objects.set(key, { body, options: {}, version: 'v' });
+
+/** The hashes of `text` in pieces of `size`: what a layer says of a blob's pieces. */
+const piecesOf = (text, size) => ({
+  size,
+  sha256: Array.from({ length: Math.ceil(text.length / size) }, (_, i) => (
+    sha(text.slice(i * size, (i + 1) * size)))),
+});
 
 /**
  * Puts a layer of `files` (`{ path: text }`; a text of 40 characters or more is a blob, a
  * shorter one is in the layer itself) into `bucket`: what an image's manifest says of it.
+ * With `piece`, a blob longer than that has the hashes of its pieces of that size too.
  */
-function layer(bucket, name, files) {
+function layer(bucket, name, files, { piece } = {}) {
   const list = Object.entries(files).map(([path, text]) => {
     const blob = text.length >= 40;
     if (blob) {
@@ -53,6 +58,7 @@ function layer(bucket, name, files) {
       mode: path.endsWith('.json') ? 0o444 : 0o555,
       size: text.length,
       ...(blob ? { sha256: sha(text) } : { data: Buffer.from(text).toString('base64') }),
+      ...(blob && piece && text.length > piece ? { pieces: piecesOf(text, piece) } : {}),
     };
   });
   const body = `${JSON.stringify({ v: 1, name, files: list })}\n`;
@@ -80,54 +86,26 @@ function image(bucket, name, layers, commands = []) {
 const PROGRAM = 'a program of forty characters or more, a blob';
 const utf8 = (bytes) => new TextDecoder().decode(bytes);
 
-describe('the computer\'s shells', () => {
-  it('are just-bash unless the team has another, and one this deployment knows', async () => {
-    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }, { slug: 'edge', name: 'Edge' }] });
-    const env = { DB };
-    assert.equal(DEFAULT_RUNTIME, 'just-bash');
-    assert.deepEqual(RUNTIMES.map((r) => r.runtime), ['just-bash', 'slicc-kernel']);
-    assert.equal(isRuntime('slicc-kernel'), true);
-    assert.equal(isRuntime('docker'), false);
-    assert.deepEqual(await teamRuntime(env, 'helix'), { runtime: 'just-bash' });
-    assert.equal(await runtimeFor(env, { team: 'helix' }), 'just-bash');
-    assert.equal(await runtimeFor(env, { team: null }), 'just-bash');
-    assert.equal(await runtimeFor({}, { team: 'helix' }), 'just-bash');
-
-    const chosen = await setTeamRuntime(env, { team: 'helix', runtime: 'slicc-kernel', by: 'Ada' });
-    assert.equal(chosen.runtime, 'slicc-kernel');
-    assert.equal(chosen.by, 'Ada');
-    assert.deepEqual(await teamRuntime(env, 'helix'), chosen);
-    assert.equal(await runtimeFor(env, { team: 'helix' }), 'slicc-kernel');
-    // Another team's is its own.
-    assert.equal(await runtimeFor(env, { team: 'edge' }), 'just-bash');
-
-    await setTeamRuntime(env, { team: 'helix', runtime: 'just-bash', by: 'Bo' });
-    assert.equal((await teamRuntime(env, 'helix')).by, 'Bo');
-    assert.equal(DB.rows('SELECT COUNT(*) AS n FROM agent_tool_options')[0].n, 1);
-
-    // What a later deployment wrote, read after a rollback.
-    DB.sqlite.exec("UPDATE agent_tool_options SET value = 'firecracker'");
-    assert.deepEqual(await teamRuntime(env, 'helix'), { runtime: 'just-bash' });
-  });
-
-  it('have an image with the kernel, the base one unless the team has another', async () => {
+describe('the computer\'s shell', () => {
+  it('has an image, the base one unless the team has another', async () => {
     const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }, { slug: 'edge', name: 'Edge' }] });
     const env = { DB };
     assert.equal(DEFAULT_IMAGE, 'base');
     assert.deepEqual(await teamImage(env, 'helix'), { image: 'base' });
-    // just-bash has no image, whatever was chosen.
-    await setTeamImage(env, { team: 'helix', image: 'data', by: 'Ada' });
-    assert.deepEqual(await shellFor(env, { team: 'helix' }), { runtime: 'just-bash' });
-    assert.equal((await teamImage(env, 'helix')).by, 'Ada');
-    await setTeamRuntime(env, { team: 'helix', runtime: 'slicc-kernel', by: 'Ada' });
-    assert.deepEqual(await shellFor(env, { team: 'helix' }), { runtime: 'slicc-kernel', image: 'data' });
-    assert.equal(await runtimeFor(env, { team: 'helix' }), 'slicc-kernel');
-    // The two are rows of their own.
-    assert.deepEqual(DB.rows('SELECT name, value FROM agent_tool_options ORDER BY name'), [
-      { name: 'image', value: 'data' }, { name: 'runtime', value: 'slicc-kernel' },
+    assert.equal(await imageFor(env, { team: 'helix' }), 'base');
+    assert.equal(await imageFor(env, { team: null }), 'base');
+    assert.equal(await imageFor({}, { team: 'helix' }), 'base');
+    const chosen = await setTeamImage(env, { team: 'helix', image: 'data', by: 'Ada' });
+    assert.deepEqual([chosen.image, chosen.by], ['data', 'Ada']);
+    assert.deepEqual(await teamImage(env, 'helix'), chosen);
+    assert.equal(await imageFor(env, { team: 'helix' }), 'data');
+    // Another team's is its own.
+    assert.equal(await imageFor(env, { team: 'edge' }), 'base');
+    await setTeamImage(env, { team: 'helix', image: 'github', by: 'Bo' });
+    assert.equal((await teamImage(env, 'helix')).by, 'Bo');
+    assert.deepEqual(DB.rows('SELECT name, value FROM agent_tool_options'), [
+      { name: 'image', value: 'github' },
     ]);
-    await setTeamRuntime(env, { team: 'edge', runtime: 'slicc-kernel', by: 'Bo' });
-    assert.deepEqual(await shellFor(env, { team: 'edge' }), { runtime: 'slicc-kernel', image: 'base' });
     // A name no image can have is the default.
     DB.sqlite.exec("UPDATE agent_tool_options SET value = '../etc' WHERE name = 'image'");
     assert.deepEqual(await teamImage(env, 'helix'), { image: 'base' });
@@ -136,17 +114,19 @@ describe('the computer\'s shells', () => {
     assert.equal(isImageName(''), false);
   });
 
-  it('say when they stopped a run whose time was up', () => {
-    // just-bash says 124 and nothing else.
-    assert.equal(timedOut('just-bash', 124, 0, 5), true);
-    assert.equal(timedOut(undefined, 124, 0, 5), true);
-    assert.equal(timedOut('just-bash', 143, 9, 5), false);
+  it('gives curl a configuration without the proxy\'s headers, and tar its options', () => {
+    assert.equal(KERNEL_ENV.CURL_HOME, CURL_HOME);
+    assert.match(CURLRC, /^suppress-connect-headers$/m);
+    assert.equal(KERNEL_ENV.TAR_OPTIONS, '--no-same-owner');
+  });
+
+  it('says when it stopped a run whose time was up', () => {
     // The kernel ends bash with SIGTERM, then SIGKILL; a command can end that way by itself.
-    assert.equal(timedOut('slicc-kernel', 143, 5.1, 5), true);
-    assert.equal(timedOut('slicc-kernel', 137, 10.2, 5), true);
-    assert.equal(timedOut('slicc-kernel', 143, 0.4, 5), false);
-    assert.equal(timedOut('slicc-kernel', 124, 9, 5), false);
-    assert.equal(timedOut('slicc-kernel', 0, 9, 5), false);
+    assert.equal(timedOut(143, 5.1, 5), true);
+    assert.equal(timedOut(137, 10.2, 5), true);
+    assert.equal(timedOut(143, 0.4, 5), false);
+    assert.equal(timedOut(124, 9, 5), false);
+    assert.equal(timedOut(0, 9, 5), false);
   });
 
   it('report a run the kernel stopped as a timeout, by its time', async () => {
@@ -162,14 +142,13 @@ describe('the computer\'s shells', () => {
         }),
       },
     });
-    const runtime = () => 'slicc-kernel';
-    const stopped = await computerEnv(ws(143, 30), { runtime }).exec('sleep 9', { timeout: 0.02 });
+    const stopped = await computerEnv(ws(143, 30)).exec('sleep 9', { timeout: 0.02 });
     assert.equal(stopped.ok, false);
     assert.equal(stopped.error.code, 'timeout');
     // `kill $$` in a command that had time left is the command's own end.
-    const own = await computerEnv(ws(143, 0), { runtime }).exec('kill $$', { timeout: 30 });
+    const own = await computerEnv(ws(143, 0)).exec('kill $$', { timeout: 30 });
     assert.deepEqual(own, { ok: true, value: { exitCode: 143 } });
-    const none = await computerEnv(ws(143, 0), { runtime }).exec('kill $$', {});
+    const none = await computerEnv(ws(143, 0)).exec('kill $$', {});
     assert.deepEqual(none, { ok: true, value: { exitCode: 143 } });
   });
 });
@@ -326,6 +305,8 @@ describe('a kernel\'s image, from the bucket', () => {
   });
 
   it('keeps the blobs it read up to a limit, the least recently used going first', async () => {
+    // Smaller than the Worker's, so that the files can be.
+    sizeImageCache({ bytes: 32 * 1024 * 1024, fileMax: 16 * 1024 * 1024 });
     const bucket = fakeBucket();
     const big = (c) => c.repeat(12 * 1024 * 1024);
     const files = Object.fromEntries(['a', 'b', 'c'].map((c) => [`bin/${c}`, big(c)]));
@@ -354,6 +335,206 @@ describe('a kernel\'s image, from the bucket', () => {
     assert.equal(gets.length, 3);
     assert.equal(await first('b'), 'b');
     assert.equal(gets.length, 4);
+  });
+
+  it('keeps a file over what one may be kept by its open file only, read once however it is read', async () => {
+    // Smaller than the Worker's, so that the files can be.
+    sizeImageCache({ bytes: 32 * 1024 * 1024, fileMax: 16 * 1024 * 1024 });
+    const bucket = fakeBucket();
+    const files = { 'bin/gh': 'g'.repeat(17 * 1024 * 1024) };
+    const manifest = image(bucket, 'huge', [layer(bucket, 'huge', files)]);
+    const gets = [];
+    const counting = {
+      get: (key) => {
+        gets.push(key);
+        return bucket.get(key);
+      },
+    };
+    const { handlers } = imageDriver(counting, await imageTree(bucket, manifest));
+    const fh = await handlers.open('/bin/gh', {});
+    const reads = await Promise.all([0, 1, 2].map((i) => handlers.read(fh, i * 1024 * 1024, 4)));
+    assert.deepEqual(reads.map((r) => r.length), [4, 4, 4]);
+    await handlers.read(fh, 16 * 1024 * 1024, 4);
+    assert.equal(gets.length, 1);
+    await handlers.release(fh);
+    // Opened again, it is read from the bucket again: the isolate kept no copy.
+    const again = await handlers.open('/bin/gh', {});
+    await handlers.read(again, 0, 4);
+    assert.equal(gets.length, 2);
+    await assert.rejects(handlers.read(fh, 0, 4), { code: 'EBADF' });
+  });
+
+  /** A bucket that records what is asked of it: `[key, range]`, `range` null for a whole one. */
+  function recording(bucket) {
+    const gets = [];
+    return {
+      gets,
+      get: (key, options) => {
+        gets.push([key, options?.range ? [options.range.offset, options.range.length] : null]);
+        return bucket.get(key, options);
+      },
+    };
+  }
+
+  it('reads of a file with pieces the pieces a read covers, one GET for each run of them', async () => {
+    const bucket = fakeBucket();
+    const data = 'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(3);
+    const manifest = image(bucket, 'paged', [layer(bucket, 'paged', { 'share/data': data }, { piece: 16 })]);
+    const tree = await imageTree(bucket, manifest);
+    assert.equal(tree.files.get('/share/data').pieces.sha256.length, 7);
+    const counting = recording(bucket);
+    const { handlers } = imageDriver(counting, tree);
+    const key = `blobs/${sha(data)}`;
+    const fh = await handlers.open('/share/data', {});
+    // Within one piece: that piece.
+    assert.equal(utf8(await handlers.read(fh, 20, 10)), data.slice(20, 30));
+    assert.deepEqual(counting.gets, [[key, [16, 16]]]);
+    // Across pieces, the one read before kept: one GET for each run of the others.
+    assert.equal(utf8(await handlers.read(fh, 10, 90)), data.slice(10, 100));
+    assert.deepEqual(counting.gets.slice(1), [[key, [0, 16]], [key, [32, 76]]]);
+    // To the end, and past it, from memory; nothing at all past the end.
+    assert.equal(utf8(await handlers.read(fh, 100, 50)), data.slice(100));
+    assert.equal((await handlers.read(fh, 108, 1)).length, 0);
+    assert.equal((await handlers.read(fh, 0, 0)).length, 0);
+    assert.equal(counting.gets.length, 3);
+    // What is read is a copy: the kernel may take its buffer.
+    (await handlers.read(fh, 0, 108)).fill(0);
+    assert.equal(utf8(await handlers.read(fh, 0, 108)), data);
+    assert.deepEqual(keptOfImages(), { entries: 7, bytes: 108 });
+
+    // A read of all of it, in an isolate that kept nothing, is one GET of the whole blob.
+    forgetImages();
+    counting.gets.length = 0;
+    const again = await handlers.open('/share/data', {});
+    assert.equal(utf8(await handlers.read(again, 0, 1000)), data);
+    assert.deepEqual(counting.gets, [[key, null]]);
+    // Two reads of the same piece at once ask the bucket once.
+    forgetImages();
+    counting.gets.length = 0;
+    const both = await Promise.all([handlers.read(again, 0, 4), handlers.read(again, 8, 4)]);
+    assert.deepEqual(both.map(utf8), ['abcd', 'ijkl']);
+    assert.equal(counting.gets.length, 1);
+  });
+
+  it('checks each piece by its own hash, and keeps none of a read that failed', async () => {
+    const bucket = fakeBucket();
+    const data = 'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(3);
+    const manifest = image(bucket, 'paged', [layer(bucket, 'paged', { 'share/data': data }, { piece: 16 })]);
+    const { handlers } = imageDriver(bucket, await imageTree(bucket, manifest));
+    const key = `blobs/${sha(data)}`;
+    const fh = await handlers.open('/share/data', {});
+    put(bucket, key, `${data.slice(0, 40)}X${data.slice(41)}`);
+    // The first piece is right, the third is not.
+    assert.equal(utf8(await handlers.read(fh, 0, 4)), 'abcd');
+    await assert.rejects(handlers.read(fh, 36, 4), { code: 'EIO', message: /at piece 2/ });
+    // Shorter than its name says.
+    put(bucket, key, data.slice(0, 100));
+    await assert.rejects(handlers.read(fh, 90, 18), { code: 'EIO', message: /is not the file it names/ });
+    bucket.objects.delete(key);
+    await assert.rejects(handlers.read(fh, 50, 4), { code: 'EIO', message: /has no blobs\// });
+    assert.deepEqual(keptOfImages(), { entries: 1, bytes: 16 });
+    put(bucket, key, data);
+    assert.equal(utf8(await handlers.read(fh, 0, 108)), data);
+  });
+
+  it('reads a file whose pieces it cannot use as a whole blob, as one without them', async () => {
+    const bucket = fakeBucket();
+    const data = 'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(3);
+    const ref = layer(bucket, 'odd', { 'share/data': data }, { piece: 16 });
+    // Pieces that do not cover the file, or of no size: as from a build this one does not know.
+    const key = `layers/${ref.digest}.json`;
+    const { body } = bucket.objects.get(key);
+    const whole = async (size) => {
+      const changed = body.replace('"pieces":{"size":16', `"pieces":{"size":${size}`);
+      const other = { ...ref, digest: sha(changed) };
+      put(bucket, `layers/${other.digest}.json`, changed);
+      const tree = await imageTree(bucket, image(bucket, `odd-${size}`, [other]));
+      assert.equal(tree.files.get('/share/data').pieces, undefined);
+      const counting = recording(bucket);
+      const { handlers } = imageDriver(counting, tree);
+      const fh = await handlers.open('/share/data', {});
+      assert.equal(utf8(await handlers.read(fh, 20, 10)), data.slice(20, 30));
+      assert.deepEqual(counting.gets, [[`blobs/${sha(data)}`, null]]);
+      forgetImages();
+    };
+    await whole(32);
+    await whole(0);
+  });
+
+  it('keeps none of a file with pieces over what one may be, but the last pieces its mount read', async () => {
+    // Smaller than the Worker's, so that the files can be.
+    sizeImageCache({ bytes: 32 * 1024 * 1024, fileMax: 16 * 1024 * 1024 });
+    const bucket = fakeBucket();
+    const MiB = 1024 * 1024;
+    const data = Array.from({ length: 17 }, (_, i) => String.fromCharCode(97 + i).repeat(MiB)).join('');
+    const manifest = image(bucket, 'huge', [layer(bucket, 'huge', { 'bin/gh': data }, { piece: MiB })]);
+    const counting = recording(bucket);
+    const { handlers } = imageDriver(counting, await imageTree(bucket, manifest));
+    const key = `blobs/${sha(data)}`;
+    // As the kernel reads a program: whole, in runs of 8 MiB, each one GET.
+    const fh = await handlers.open('/bin/gh', {});
+    const runs = await Promise.all([0, 8, 16].map((at) => handlers.read(fh, at * MiB, 8 * MiB)));
+    assert.deepEqual(runs.map((r) => r.length), [8 * MiB, 8 * MiB, MiB]);
+    assert.equal(utf8(runs[2].subarray(0, 1)), 'q');
+    assert.deepEqual(counting.gets, [
+      [key, [0, 8 * MiB]], [key, [8 * MiB, 8 * MiB]], [key, [16 * MiB, MiB]],
+    ]);
+    assert.deepEqual(keptOfImages(), { entries: 0, bytes: 0 });
+    await handlers.release(fh);
+    // As it reads a data file, a page and 1 MiB on, each read through a file of its own: the
+    // piece the one before read last is read once.
+    counting.gets.length = 0;
+    const page = 64 * 1024;
+    for (const at of [page, page + MiB, page + 2 * MiB]) {
+      // eslint-disable-next-line no-await-in-loop
+      const one = await handlers.open('/bin/gh', {});
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await handlers.read(one, at, MiB)).length, MiB);
+      // eslint-disable-next-line no-await-in-loop
+      await handlers.release(one);
+    }
+    assert.deepEqual(counting.gets, [
+      [key, [0, 2 * MiB]], [key, [2 * MiB, MiB]], [key, [3 * MiB, MiB]],
+    ]);
+    // Another mount, another agent's, holds none of them.
+    const other = imageDriver(counting, await imageTree(bucket, manifest)).handlers;
+    await other.read(await other.open('/bin/gh', {}), 3 * MiB, 4);
+    assert.equal(counting.gets.length, 4);
+    assert.deepEqual(keptOfImages(), { entries: 0, bytes: 0 });
+  });
+
+  it('counts what it asked of the bucket, and keeps what its budget lets it', async () => {
+    const bucket = fakeBucket();
+    const MiB = 1024 * 1024;
+    const data = ['x', 'y', 'z'].map((c) => c.repeat(MiB)).join('');
+    const manifest = image(bucket, 'sized', [layer(bucket, 'sized', { 'bin/x': data }, { piece: MiB })]);
+    const { handlers } = imageDriver(bucket, await imageTree(bucket, manifest));
+    const read = async () => handlers.read(await handlers.open('/bin/x', {}), 0, 3 * MiB);
+    await read();
+    await read();
+    assert.deepEqual(imageReads(), {
+      gets: 1,
+      fetched: 3 * MiB,
+      hits: 3,
+      entries: 3,
+      bytes: 3 * MiB,
+      budget: 48 * MiB,
+      fileMax: 24 * MiB,
+    });
+    // A smaller budget lets the oldest go; a file over what one may keep is not kept.
+    assert.deepEqual(sizeImageCache({ bytes: 2 * MiB, fileMax: 4 * MiB }), {
+      bytes: 2 * MiB, fileMax: 2 * MiB,
+    });
+    assert.equal(imageReads().bytes, 2 * MiB);
+    await read();
+    assert.equal(imageReads().gets, 2);
+    assert.equal(imageReads().bytes, 2 * MiB);
+    sizeImageCache({ bytes: 8 * MiB, fileMax: 8 * MiB });
+    await read();
+    assert.equal(imageReads().bytes, 3 * MiB);
+    // forgetImages puts the budget back.
+    forgetImages();
+    assert.equal(imageReads().budget, 48 * MiB);
   });
 
   it('is mounted read-only, at the place the kernel looks for its commands', () => {
@@ -476,16 +657,16 @@ describe('the images this repository builds', () => {
       assert.match(devDependencies[name] || '', /^\d/, `${name} is pinned to one version`);
     }
     const built = await build();
-    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data']);
+    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data', 'github', 'graphviz']);
     assert.ok(IMAGES.every((i) => isImageName(i.name) && i.title && i.description));
     const [base, data] = built.images;
     assert.equal(base.v, 2);
-    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net', 'js', 'git', 'formats']);
+    assert.deepEqual(base.layers.map((l) => l.name), ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'diagrams']);
     // The second image is the first one's layers, the same ones, and one more.
-    assert.deepEqual(data.layers.slice(0, 7), base.layers);
-    assert.deepEqual(data.layers.map((l) => l.name).slice(7), ['data']);
+    assert.deepEqual(data.layers.slice(0, 9), base.layers);
+    assert.deepEqual(data.layers.map((l) => l.name).slice(9), ['data']);
     assert.notEqual(base.digest, data.digest);
-    assert.equal(data.bytes, base.bytes + data.layers[7].bytes);
+    assert.equal(data.bytes, base.bytes + data.layers[9].bytes);
     // A layer and a blob are named by what they are.
     for (const l of built.layers.values()) {
       assert.equal(sha(l.body), l.digest);
@@ -493,6 +674,16 @@ describe('the images this repository builds', () => {
     }
     for (const [hash, body] of built.blobs) {
       assert.equal(sha(body), hash);
+    }
+    // A blob over a piece has the hash of each piece too, a smaller one none.
+    const blobbed = [...built.layers.values()].flatMap((l) => l.layer.files)
+      .filter((f) => f.sha256);
+    assert.ok(blobbed.some((f) => f.size <= PIECE_BYTES));
+    assert.ok(blobbed.some((f) => f.size > 16 * PIECE_BYTES));
+    for (const f of blobbed) {
+      const body = built.blobs.get(f.sha256);
+      const pieces = f.size > PIECE_BYTES ? piecesOf(body, PIECE_BYTES) : undefined;
+      assert.deepEqual(f.pieces, pieces, f.path);
     }
     // An Emscripten program comes with its glue as an empty file, its wasm as a blob, and
     // its manifest in the layer.
@@ -525,27 +716,45 @@ describe('the images this repository builds', () => {
     assert.ok(git.some((f) => f.path.startsWith(`${at}share/git-core/templates/`)));
     assert.ok(built.layers.get('formats').layer.files
       .some((f) => f.path === 'node_modules/@ai-ecoverse/wasm-file/share/misc/magic.mgc'));
-    assert.ok(['dig', 'git', 'yq', 'html2markdown', 'file', 'xxd', 'xz', 'patch']
+    assert.ok(built.layers.get('tls').layer.files
+      .some((f) => f.path === 'node_modules/@ai-ecoverse/wasix-openssl-cli/etc/ssl/openssl.cnf'));
+    // gh, with the imports module the kernel runs beside it, in an image of its own.
+    const github = built.images[2];
+    assert.deepEqual(github.layers.slice(0, base.layers.length), base.layers);
+    assert.ok(commandsOf(github).includes('gh') && !commandsOf(base).includes('gh'));
+    assert.deepEqual(
+      built.layers.get('github').layer.files.map((f) => f.path.split('/').slice(-2).join('/')),
+      ['bin/gh.wasm', 'host/gh-host.mjs', 'wasi-gh/package.json'],
+    );
+    assert.ok(['dig', 'git', 'yq', 'html2markdown', 'file', 'xxd', 'xz', 'patch', 'openssl', 'rg']
       .every((c) => commandsOf(base).includes(c)));
-    assert.ok(['rg', 'sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
+    assert.ok(['sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
       && !commandsOf(base).includes(c)));
-    await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, rg' }] }), /tells the agent of rg/);
+    await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, sqlite3' }] }), /tells the agent of sqlite3/);
     await assert.rejects(build({ images: [{ ...IMAGES[0], layers: ['gpu'] }] }), /has a layer gpu, which there is none of/);
 
     // A kernel's file system serves what was built, from a bucket with its objects.
     const objects = objectsOf(built);
     const bucket = fakeBucket(Object.fromEntries(objects.map((o) => [o.key, o.body])));
     const digests = (list) => list.map((i) => [i.name, i.digest]);
-    assert.deepEqual(digests(await listImages(bucket)), digests(built.images));
-    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'js', 'git', 'formats', 'data']);
+    // The index lists the images teams choose from: not the renderer Worker's.
+    const listed = built.images.filter((i) => !i.internal);
+    assert.deepEqual(digests(await listImages(bucket)), digests(listed));
+    assert.equal((await readImage(bucket, 'graphviz')).commands.join(), 'dot');
+    assert.deepEqual((await listImages(bucket))[1].layers, ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'diagrams', 'data']);
     const tree = await imageTree(bucket, await readImage(bucket, 'data'));
     const { handlers } = imageDriver(bucket, tree);
     const packages = await handlers.readdir('/node_modules/@ai-ecoverse');
-    assert.equal(packages.length, Object.values(LAYERS).flat().length);
+    // Every package but gh's, which is in the GitHub image only.
+    assert.equal(packages.length, Object.values(LAYERS).flat().length - LAYERS.github.length);
     const fh = await handlers.open('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm', {});
     assert.deepEqual([...await handlers.read(fh, 0, 4)], [0, 0x61, 0x73, 0x6d]);
     const { size } = await handlers.getattr('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm');
     assert.ok(size > 1e6);
+    // Its pieces, read across two of them, are the file's bytes.
+    const bash = built.blobs.get(tree.files.get('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm').sha256);
+    const across = await handlers.read(fh, PIECE_BYTES - 10, 20);
+    assert.deepEqual(Buffer.from(across), bash.subarray(PIECE_BYTES - 10, PIECE_BYTES + 10));
   });
 
   it('are in one layer what they are in another: a layer\'s digest follows its files alone', async () => {
@@ -553,7 +762,7 @@ describe('the images this repository builds', () => {
     const one = await buildLayer('net', LAYERS.net, modules);
     const same = await buildLayer('net', LAYERS.net, modules);
     assert.equal(one.digest, same.digest);
-    assert.deepEqual(one.commands, ['curl', 'dig']);
+    assert.deepEqual(one.commands, ['curl', 'dig', 'host', 'nslookup']);
     const other = await buildLayer('net', [...LAYERS.net, ...LAYERS.archive], modules);
     assert.notEqual(one.digest, other.digest);
     const paths = other.layer.files.map((f) => f.path);
@@ -567,8 +776,8 @@ describe('the images this repository builds', () => {
     const kinds = keys.map((k) => k.split('/')[0]);
     assert.deepEqual([...new Set(kinds)], ['blobs', 'layers', 'images']);
     assert.equal(keys.at(-1), 'images/index.json');
-    assert.deepEqual(keys.slice(-3, -1), ['images/base.json', 'images/data.json']);
-    assert.equal(kinds.filter((k) => k === 'layers').length, 8);
+    assert.deepEqual(keys.slice(-5, -1), ['images/base.json', 'images/data.json', 'images/github.json', 'images/graphviz.json']);
+    assert.equal(kinds.filter((k) => k === 'layers').length, 11);
     assert.deepEqual(JSON.parse(objects.at(-1).body), indexOf(built.images));
     // An empty bucket lacks them all, and one that fails to answer too.
     assert.equal((await missingFrom(objects, async () => null)).length, objects.length);
@@ -591,7 +800,7 @@ describe('the images this repository builds', () => {
     have.set('images/data.json', 'an older manifest');
     const missing = (await missingFrom(objects, read)).map((o) => o.key);
     assert.deepEqual(missing, [...[...data.blobs].sort(), data.key, 'images/data.json']);
-    assert.equal(data.blobs.length, 3);
+    assert.equal(data.blobs.length, 2);
     assert.equal(bucketOf('prod'), 'helix-opspile-images');
     assert.equal(bucketOf('stage'), 'helix-opspile-images-stage');
   });
@@ -623,199 +832,5 @@ describe('the kernel\'s way to the network', () => {
     assert.equal(await request.text(), 'a=1');
     await fetch('http://example.com/');
     assert.equal(seen[1].method, 'GET');
-  });
-});
-
-describe('the kernel on a Workspace', () => {
-  /** A Workspace's fs with a read-only mount: no change to a directory the mount is in. */
-  function workspaceFs({ dirs = [], files = [], readOnly = [] } = {}) {
-    const made = [];
-    return {
-      made,
-      name: 'fs',
-      async stat(path) {
-        if (dirs.includes(path)) {
-          return { isDirectory: true, isFile: false };
-        }
-        if (files.includes(path)) {
-          return { isDirectory: false, isFile: true };
-        }
-        throw fsError('ENOENT', path);
-      },
-      async mkdir(path, options) {
-        const root = readOnly.find((r) => r === path || r.startsWith(`${path}/`));
-        if (root) {
-          throw fsError('EROFS', `read-only mount at ${root}: cannot modify: ${path}`);
-        }
-        if (files.includes(path)) {
-          throw fsError('EEXIST', path);
-        }
-        made.push([path, options]);
-      },
-      async readdir() {
-        return [this.name];
-      },
-    };
-  }
-
-  it('leaves a directory that is there alone, where the kernel makes its mount point', async () => {
-    const fs = workspaceFs({ dirs: ['/workspace'], readOnly: ['/workspace/uploads'] });
-    await assert.rejects(fs.mkdir('/workspace', { recursive: true }), { code: 'EROFS' });
-    const patient = patientFs(fs);
-    await patient.mkdir('/workspace', { recursive: true });
-    assert.deepEqual(fs.made, []);
-    // One that is not there is made, and a plain mkdir is the Workspace's to answer.
-    await patient.mkdir('/workspace/out', { recursive: true });
-    await patient.mkdir('/workspace/new');
-    assert.deepEqual(fs.made, [['/workspace/out', { recursive: true }], ['/workspace/new', undefined]]);
-    await assert.rejects(patient.mkdir('/workspace'), { code: 'EROFS' });
-    // Everything else is the Workspace's own, on the Workspace.
-    assert.deepEqual(await patient.readdir('/'), ['fs']);
-    assert.equal(patient.name, 'fs');
-  });
-
-  it('lets a file in the way, and a failing stat, come through', async () => {
-    const fs = workspaceFs({ files: ['/workspace'] });
-    await assert.rejects(patientFs(fs).mkdir('/workspace', { recursive: true }), { code: 'EEXIST' });
-    const broken = {
-      stat: async () => {
-        throw fsError('EIO', 'gone');
-      },
-      mkdir: async () => undefined,
-    };
-    await assert.rejects(patientFs(broken).mkdir('/workspace', { recursive: true }), { code: 'EIO' });
-  });
-
-  it('connects the kernel\'s backend to the Workspace through it', async () => {
-    const fs = workspaceFs({ dirs: ['/workspace'], readOnly: ['/workspace/uploads'] });
-    const host = { fs, db: 'db' };
-    const backend = overWorkspace({
-      id: 'slicc',
-      type: 'slicc-kernel',
-      callable: false,
-      description: 'GNU bash',
-      async connect(h) {
-        await h.fs.mkdir('/workspace', { recursive: true });
-        return { db: h.db, close: async () => undefined };
-      },
-    });
-    assert.equal(backend.id, 'slicc');
-    assert.equal(backend.type, 'slicc-kernel');
-    assert.equal(backend.callable, false);
-    assert.equal(backend.description, 'GNU bash');
-    assert.equal((await backend.connect(host)).db, 'db');
-    assert.deepEqual(fs.made, []);
-  });
-
-  /**
-   * A kernel, the kernel's backend and its driver, each saying what was asked of it into
-   * `calls`. `umountFails` and `mountFails` are targets whose umount or mount fails.
-   */
-  function kernelOnWorkspace({ umountFails = [], mountFails = [] } = {}) {
-    const calls = [];
-    const kernel = {
-      async mount(spec) {
-        calls.push(['mount', spec.target, spec.options, spec.driver.handlers.root]);
-        if (mountFails.includes(spec.target)) {
-          throw fsError('EIO', spec.target);
-        }
-      },
-      async umount(target) {
-        calls.push(['umount', target]);
-        if (umountFails.includes(target)) {
-          throw fsError('EBUSY', `${target} has open files`);
-        }
-      },
-    };
-    let connections = 0;
-    const backend = {
-      id: 'slicc',
-      async connect() {
-        connections += 1;
-        const n = connections;
-        calls.push(['connect', n]);
-        return { runtimeId: n, close: async () => calls.push(['close', n]) };
-      },
-    };
-    const options = {
-      readOnly: ['/workspace/uploads', '/workspace/gone'],
-      kernel: async () => kernel,
-      workspaceDriver: (fs, { root }) => ({ root, fs, capabilities: { ranges: true } }),
-      inProcessMount: (spec, driver) => ({ ...spec, driver }),
-    };
-    const fs = workspaceFs({ dirs: ['/workspace', '/workspace/uploads'] });
-    return {
-      calls, backend, options, host: { fs },
-    };
-  }
-
-  it('says which of a Workspace\'s mounts are read-only, and how the kernel mounts one', () => {
-    assert.deepEqual(readOnlyRoots({
-      '/workspace/uploads': { mode: 'read-only' },
-      '/workspace/cache': { mode: 'read-write' },
-      '/workspace/later': () => ({ mode: 'read-only' }),
-    }), ['/workspace/uploads']);
-    assert.deepEqual(readOnlyRoots(undefined), []);
-    assert.deepEqual(readOnlySpec('/workspace/uploads'), {
-      type: 'workspace',
-      source: 'workspace:/workspace/uploads',
-      target: '/workspace/uploads',
-      options: { ro: '' },
-    });
-  });
-
-  it('mounts the uploads read-only in the kernel, after its own mount, so a write fails at open', async () => {
-    const {
-      calls, backend, options, host,
-    } = kernelOnWorkspace();
-    const handle = await overWorkspace(backend, options).connect(host);
-    assert.equal(handle.runtimeId, 1);
-    // One that is not in the Workspace is not mounted.
-    assert.deepEqual(calls, [
-      ['connect', 1],
-      ['mount', '/workspace/uploads', { ro: '' }, '/workspace/uploads'],
-    ]);
-    await handle.close();
-    assert.deepEqual(calls.slice(2), [['umount', '/workspace/uploads'], ['close', 1]]);
-  });
-
-  it('mounts them anew with each connection, which outlived ones do not take away', async () => {
-    const {
-      calls, backend, options, host,
-    } = kernelOnWorkspace();
-    const shell = overWorkspace(backend, options);
-    const first = await shell.connect(host);
-    // A new Workspace (the uploads changed): the backend closes the connection before it itself.
-    const second = await shell.connect(host);
-    assert.deepEqual(calls.slice(2), [
-      ['connect', 2],
-      ['umount', '/workspace/uploads'],
-      ['mount', '/workspace/uploads', { ro: '' }, '/workspace/uploads'],
-    ]);
-    await first.close();
-    assert.deepEqual(calls.slice(5), [['close', 1]]);
-    await second.close();
-    assert.deepEqual(calls.slice(6), [['umount', '/workspace/uploads'], ['close', 2]]);
-  });
-
-  it('keeps a mount that is still in use, and closes a connection whose mount fails', async () => {
-    const busy = kernelOnWorkspace({ umountFails: ['/workspace/uploads'] });
-    const shell = overWorkspace(busy.backend, busy.options);
-    await shell.connect(busy.host);
-    const second = await shell.connect(busy.host);
-    assert.deepEqual(busy.calls.slice(2), [['connect', 2], ['umount', '/workspace/uploads']]);
-    // It is the second connection's to take away now.
-    await second.close();
-    assert.deepEqual(busy.calls.slice(4), [['umount', '/workspace/uploads'], ['close', 2]]);
-
-    const broken = kernelOnWorkspace({ mountFails: ['/workspace/uploads'] });
-    await assert.rejects(
-      overWorkspace(broken.backend, broken.options).connect(broken.host),
-      { code: 'EIO' },
-    );
-    assert.deepEqual(broken.calls.slice(1), [
-      ['mount', '/workspace/uploads', { ro: '' }, '/workspace/uploads'],
-      ['close', 1],
-    ]);
   });
 });

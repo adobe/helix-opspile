@@ -25,7 +25,7 @@ const ADA = {
 const BO = {
   id: 2, email: 'bo@staff.example', name: 'Bo', staff: 1, teams: ['helix'],
 };
-const asMe = (p) => ({ ...p, teams: p.teams.map((slug) => ({ slug })) });
+const asMe = (p) => ({ ...p, teams: p.teams.map((t) => (typeof t === 'string' ? { slug: t } : t)) });
 const RULES = [
   {
     id: 1, target: 'org', priority: 100, source: null, field: 'name', pattern: '^aem-(.+)$', value: '$1',
@@ -93,6 +93,16 @@ describe('admin: teams and members', () => {
     assert.equal((await call(e, { ...ADA, readonly: true }, 'POST', '/api/admin/teams', { slug: 'x', name: 'X' })).status, 403);
   });
 
+  it('relabels channel threads for the admin team only, and needs the queue', async () => {
+    const e = env();
+    assert.equal((await call(e, BO, 'POST', '/api/admin/relabel', {})).status, 403);
+    const r = await call(e, ADA, 'POST', '/api/admin/relabel', { limit: 10 });
+    assert.equal(r.status, 200);
+    assert.deepEqual(Object.keys(r.body).sort(), ['next', 'queued']);
+    const none = { ...e, NORMALIZE: undefined };
+    assert.equal((await call(none, ADA, 'POST', '/api/admin/relabel', {})).status, 503);
+  });
+
   it('creates, renames and deletes teams, and adds and removes members', async () => {
     const e = env();
     let r = await call(e, ADA, 'GET', '/api/admin/teams');
@@ -110,7 +120,7 @@ describe('admin: teams and members', () => {
       { team: 'search', enabled: 1, changed_by: 'Ada' },
     ]);
     assert.deepEqual(rowsOf(`SELECT tool, scope, target, enabled, changed_by
-      FROM agent_tool_switches ORDER BY tool`), ['computer', 'extraction_rules'].map((tool) => ({
+      FROM agent_tool_switches ORDER BY tool`), ['computer', 'extraction_rules', 'label', 'resolve', 'web_search'].map((tool) => ({
       tool, scope: 'team', target: 'search', enabled: 1, changed_by: 'Ada',
     })));
     assert.deepEqual(rowsOf(`SELECT server, scope, target, enabled, changed_by
@@ -746,6 +756,44 @@ describe('admin: shared channels', () => {
     });
     assert.equal((await call(e, ADA, 'DELETE', '/api/admin/teams', { slug: 'search' })).status, 200);
     assert.deepEqual(e.DB.rows('SELECT team FROM channel_teams'), []);
+  });
+
+  it('swaps the team a shared channel is filed under, for the admin team or a manager of both', async () => {
+    const e = env();
+    // Helix holds C1 by rule; it is shared with edge.
+    await call(e, ADA, 'POST', '/api/admin/assign', {
+      target: 'team', channelId: 'C1', source: 'slack', value: 'edge',
+    });
+    const swap = (me, team = 'edge') => call(e, me, 'POST', '/api/admin/swap', {
+      source: 'slack', channelId: 'C1', team,
+    });
+    const manager = (...slugs) => ({ ...BO, teams: slugs.map((slug) => ({ slug, role: 'manager' })) });
+    // A member, or a manager of one of the two teams only, may not.
+    assert.equal((await swap(BO)).status, 403);
+    assert.equal((await swap(manager('edge'))).status, 403);
+    assert.equal((await swap(manager('helix'))).status, 403);
+    // Not shared with that team: nothing to swap.
+    assert.equal((await swap(ADA, 'admin')).status, 404);
+
+    let r = await swap(manager('edge', 'helix'));
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.swapped, {
+      source: 'slack', channelId: 'C1', team: 'edge', from: 'helix', shared: true,
+    });
+    assert.deepEqual(r.body.moves.map((m) => m.to.team), ['edge']);
+    assert.equal(r.body.rule.value, 'edge');
+    assert.deepEqual(e.DB.rows('SELECT team FROM channel_teams'), [{ team: 'helix' }]);
+    await drain(e);
+    assert.deepEqual(e.DB.rows("SELECT DISTINCT team FROM threads WHERE channel_id = 'C1'"), [{ team: 'edge' }]);
+    r = await call(e, ADA, 'GET', '/api/admin/team?slug=helix');
+    const c = r.body.channels.find((x) => x.channelId === 'C1');
+    assert.deepEqual([c.team, c.sharedWith], ['edge', ['helix']]);
+
+    // And back, by the admin team.
+    r = await swap(ADA, 'helix');
+    assert.deepEqual([r.status, r.body.swapped.from, r.body.moves.map((m) => m.to.team)], [200, 'edge', ['helix']]);
+    assert.deepEqual(e.DB.rows('SELECT team FROM channel_teams'), [{ team: 'edge' }]);
+    assert.equal((await swap(ADA, 'helix')).status, 404);
   });
 });
 

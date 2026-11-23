@@ -16,8 +16,10 @@ import { parse } from './channels.js';
 import { json } from './http.js';
 import { isStaffDomain } from './lookup.js';
 import {
-  knownMentions, mentionsByName, personalToken, slackText, TEAMS_EDIT_SCOPE, teamsMessage,
+  knownMentions, mentionsByName, personalToken, slackBlocks, slackText, slackWithBlocks,
+  TEAMS_EDIT_SCOPE, teamsMessage,
 } from './post.js';
+import { portalAccount, portalAuthor, portalCall } from './portalsource.js';
 import { mentionCandidates } from './profiles.js';
 import { segment } from './raw.js';
 import { teamsOf } from './shares.js';
@@ -28,7 +30,8 @@ import { resolveShortcodes } from './shortcodes.js';
  *
  * - **as the person**, a message they posted, with their own token: Slack `chat.update`
  *   (user scope `chat:write`, which covers their own messages), Teams `PATCH` on the channel
- *   message or reply (delegated `ChannelMessage.ReadWrite`, see TEAMS_EDITS). Discord lets only
+ *   message or reply (delegated `ChannelMessage.ReadWrite`, see TEAMS_EDITS); in the customer
+ *   portal, which changes a message for its author (src/portalsource.js). Discord lets only
  *   bots edit through its API: people edit there.
  * - **as the opspile app**, a message the person posted as the app (`app_posts`): Slack
  *   `chat.update` with the bot token, Teams the Bot Connector's update activity, Discord
@@ -74,6 +77,20 @@ async function editAsUser(env, me, t, msg, body, ids) {
   if (t.source === 'discord') {
     return { error: 'edit it in Discord: the inbox cannot edit there as you', status: 409 };
   }
+  if (t.source === 'portal') {
+    // The customer portal changes a message for its author, whom the inbox names.
+    if (msg.author_key !== `${t.source}:${t.tenant}:${await portalAccount(me.email)}`) {
+      return { error: 'this message was posted by someone else', status: 403 };
+    }
+    const res = await portalCall(env, 'edit', {
+      domain: t.tenant,
+      channel: t.channel_id,
+      id: msg.id,
+      text: body,
+      author: await portalAuthor(env, me),
+    });
+    return res.ok ? { ok: true } : { error: `Portal: ${res.error}`, status: res.status === 409 ? 409 : 502 };
+  }
   const tok = await personalToken(env, me.id, t.source);
   const name = t.source === 'slack' ? 'Slack' : 'Microsoft';
   if (!tok) {
@@ -85,15 +102,14 @@ async function editAsUser(env, me, t, msg, body, ids) {
   }
   const mentions = await mentionsFor(env, t, msg.id, ids);
   if (t.source === 'slack') {
-    const res = await fetch('https://slack.com/api/chat.update', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${tok.token}`, 'content-type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({ channel: t.channel_id, ts: msg.id, text: slackText(body, mentions) }),
-    });
-    const data = await res.json().catch(() => ({}));
+    // As a reply goes: a table as a `markdown` block. Without blocks, the `text` replaces the
+    // ones the message had.
+    const data = await slackWithBlocks(tok.token, 'chat.update', {
+      channel: t.channel_id, ts: msg.id, text: slackText(body, mentions),
+    }, slackBlocks(body, mentions));
     if (!data.ok) {
       return {
-        error: SLACK_SAYS[data.error] || `Slack: ${data.error || res.status}`,
+        error: SLACK_SAYS[data.error] || `Slack: ${data.error || data.status}`,
         status: SLACK_SAYS[data.error] ? 409 : 502,
         connect: SLACK_RECONNECT.includes(data.error) ? 'slack' : undefined,
       };

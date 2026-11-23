@@ -99,7 +99,7 @@ describe('the admin team\'s extraction rules', () => {
 });
 
 describe('a team\'s rules and tech stack', () => {
-  it('apply to its channels, on top of the admin team\'s, and a team\'s technology replaces the admin team\'s', async () => {
+  it('apply to its channels, on top of the admin team\'s; a team\'s technology replaces the others\' there and is asked everywhere', async () => {
     const e = env();
     const { rule } = await saveRule(e, 'helix', {
       name: 'Order ids', field: 'order', pattern: '\\bORD-(\\d{6})\\b', value: '$1',
@@ -123,7 +123,9 @@ describe('a team\'s rules and tech stack', () => {
     assert.equal(edge.find((t) => t.tech === 'akamai').description, 'Akamai as CDN (Property Manager, EdgeWorkers)');
     assert.ok(!helix.some((t) => t.tech === 'gdrive'));
     assert.ok(edge.some((t) => t.tech === 'gdrive'));
-    assert.ok(helix.some((t) => t.tech === 'sitecore') && !edge.some((t) => t.tech === 'sitecore'));
+    // The union: a team's own technology is asked in every channel, with its aliases merged
+    // into the admin team's where both have it.
+    assert.ok(helix.some((t) => t.tech === 'sitecore') && edge.some((t) => t.tech === 'sitecore'));
     assert.equal(helix.find((t) => t.tech === 'sitecore').product, 'Content sources');
     // The names it also goes by: trimmed, each once (migration 0057 seeds the admin team's).
     await saveTech(e, 'helix', { tech: 'sitecore', aliases: ' Sitecore XM ,sitecore xm,  XM Cloud ' }, 'Bo');

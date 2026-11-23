@@ -145,6 +145,8 @@ describe('ui markdown', () => {
 
   it('ends a quote where its `>` lines do, as Slack does, but not in code', () => {
     assert.equal(md('> asked\nanswer'), '<blockquote><p>asked</p></blockquote><p>answer</p>');
+    // A code span on a line of its own opens no code block.
+    assert.equal(md('```x```\n> asked\nanswer'), '<p><code>x</code></p><blockquote><p>asked</p></blockquote><p>answer</p>');
     assert.equal(md('> one\n> two\nthree\nfour'), '<blockquote><p>one<br />two</p></blockquote><p>three<br />four</p>');
     assert.equal(md('```\n> a\nb\n```'), '<pre><code>&gt; a\nb\n</code></pre>'.replace(/\n/g, ''));
     assert.equal(messageHtml('> asked\nanswer'), '<blockquote><p>asked</p></blockquote><p>answer</p>');
@@ -249,6 +251,21 @@ describe('ui markdown', () => {
       '<p><span class="mention adobe" title="Adobe">@Ada Lovelace</span>, '
         + '<span class="mention external customer" title="Customer, not Adobe">@Grace O\'Hara</span>, '
         + '<span class="mention external partner" title="Partner, not Adobe">@Someone</span> and '
+        + '<span class="mention">@Nobody</span></p>',
+    );
+  });
+
+  it('gives mentions the profile card of the person they name', () => {
+    const keys = { 'ada lovelace': 'slack:E1:U"1', someone: 'local:person:0::Someone' };
+    const out = render('@Ada Lovelace, @Someone and @Nobody', {
+      ...opts,
+      kindOf: (name) => (name === 'Ada Lovelace' ? 'adobe' : undefined),
+      person: (name) => keys[name.toLowerCase()],
+    });
+    assert.equal(
+      out,
+      '<p><span class="mention adobe" data-p="slack:E1:U&quot;1" role="button" tabindex="0">@Ada Lovelace</span>, '
+        + '<span class="mention" data-p="local:person:0::Someone" role="button" tabindex="0">@Someone</span> and '
         + '<span class="mention">@Nobody</span></p>',
     );
   });

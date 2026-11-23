@@ -11,18 +11,22 @@
  */
 
 import { accessEmail } from './access.js';
-import { admin } from './admin.js';
+import { admin, STAFF_ROUTES } from './admin.js';
 import { kbAdmin } from './kbadmin.js';
+import { personInKb } from './kbpeople.js';
 import {
-  agentStatus, decideBash, seedAgent, talkToAgent, tellDiscarded,
+  agentStatus, decideBash, decideTool, sawSidebar, seedAgent, talkToAgent, tellDiscarded,
 } from './agent/stub.js';
 import { agentEnabled } from './agent/enabled.js';
 import { keptTurn } from './agent/kept.js';
-import { sidebarFor } from './sidebar.js';
+import { sidebarFor, unseenAnswers } from './sidebar.js';
+import { toolRequestsFor } from './toolrequests.js';
 import {
   discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, saveDraft,
 } from './drafts.js';
 import { requestsFor } from './bashrequests.js';
+import { teamsBotIcon } from './bots.js';
+import { faviconProxy } from './favicons.js';
 import { refreshAttachment } from './discord.js';
 import { edit } from './edit.js';
 import { expertEvents, recordExpertEvent } from './expertevents.js';
@@ -30,21 +34,27 @@ import { experts } from './experts.js';
 import { cachedGraph } from './graph.js';
 import {
   attachable, connections, disconnect, editable, finishAuth, mentionable, post,
-  postableChannels, reactable, startAuth,
+  postableChannels, reactable, startAuth, typing,
 } from './post.js';
 import { appPostCheck, postApp } from './postapp.js';
 import { closestEmoji, rankEmoji, workspaceEmoji } from './shortcodes.js';
 import { rankEvents, recordPick } from './rankevents.js';
-import { gravatar, isSignInDomain, isStaffDomain } from './lookup.js';
+import {
+  isSignInDomain, isStaffDomain, personAvatar, toAuthor,
+} from './lookup.js';
 import { appRule, readPost } from './attach.js';
+import { openPortalFile, portalFetch, portalFileOf } from './portalsource.js';
+import { agentLabelsFor } from './agentlabels.js';
 import { react, resolve } from './react.js';
 import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
 import { folderFiles } from './filecache.js';
-import { filePoster, streamFile, threadFile } from './fileview.js';
+import {
+  filePoster, openThreadFile, streamFile, threadFile,
+} from './fileview.js';
 import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
-import { mentionKinds, profiles, relationOf } from './profiles.js';
+import { mentionedPeople, profiles, relationOf } from './profiles.js';
 import { channelLinks, channelRefs, nameChannelIds } from './channelrefs.js';
 import { slackMessageLinks } from './slacklinks.js';
 import { json, text } from './http.js';
@@ -52,17 +62,26 @@ import {
   ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
 import {
-  inPersonalView, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
+  inPersonalInbox, maySee, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
 } from './shares.js';
+import {
+  followable, followedByTeam, followsOfTeams, personFollows, personFollowsBy, setPersonFollow,
+  setPersonFollowBy,
+} from './follows.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { claimPost, settlePost } from './postkeys.js';
+import { postingOffer } from './postoffer.js';
 import {
-  ATTENTION, latestMember, readState, waitingOn,
+  ATTENTION, latestMember, readState, unreadInYours, waitingOn,
 } from './threads.js';
 import { find, MAX_RESULTS, withSnippets } from './search.js';
 import { Timing, withTiming } from './timing.js';
+import { batchedDatabase } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
+import { orgStacksOf } from './orgstacks.js';
+import { changeArea, rebuildTopics, topicsPage } from './topicsapi.js';
+import { drawDiagram } from './diagrams.js';
 
 /**
  * The inbox API behind Cloudflare Access. Every request is tied to a person in D1 by the
@@ -77,6 +96,29 @@ const MAX_PARTICIPANTS = 5;
 
 const identityJoin = "LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key";
 const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
+
+/**
+ * A bot's message author as its account says now (`account`: the message's row, with its
+ * identity's `account_kind`, `ours`, `account_staff`, `account_email` and `display_name`): an
+ * admin who says a bot is Adobe's, or takes it back (under Requests on the admin page), moves
+ * the messages it wrote before to that side too, whose frontmatter says what was so when they
+ * were written, and the name an admin gives it goes on them too. A bot nobody decided on
+ * (`ours` NULL) keeps its frontmatter's side.
+ */
+export function botAuthor(env, author, account) {
+  if (!author || author.kind !== 'bot' || !account || account.account_kind !== 'bot') {
+    return author;
+  }
+  const named = account.display_name && account.display_name !== author.name
+    ? { ...author, name: account.display_name } : author;
+  if (account.ours === null || account.ours === undefined) {
+    return named;
+  }
+  const { staff } = toAuthor(env, {
+    kind: 'bot', staff: account.account_staff, email: account.account_email, ours: account.ours,
+  });
+  return staff === Boolean(named.staff) ? named : { ...named, staff };
+}
 
 /**
  * People in each thread, in order of first post (up to five), and the customer's mail
@@ -217,17 +259,17 @@ export async function viewer(request, env, options) {
 }
 
 /**
- * The viewer's picture, for the header: an account of theirs with one (Slack's first, a
- * platform's own picture before Gravatar's), else Gravatar's for their email, which answers
- * 404 where there is none (the header keeps the initials then).
+ * What `me` follows (src/follows.js): `{ me: [tech], teams: { [slug]: [tech] } }`, theirs and
+ * their teams'.
  */
-async function avatarOf(env, me) {
-  const row = await env.DB.prepare(`SELECT avatar FROM identities
-    WHERE (person = ? OR email = ?) AND kind = 'person' AND avatar IS NOT NULL AND avatar != ''
-    ORDER BY avatar LIKE 'https://gravatar.com/%',
-      CASE source WHEN 'slack' THEN 0 WHEN 'teams' THEN 1 ELSE 2 END, fetched_at DESC
-    LIMIT 1`).bind(me.id, me.email || null).first();
-  return row?.avatar || await gravatar(me.email) || null;
+async function followsOf(env, me) {
+  const [mine, teams, by] = await Promise.all([
+    personFollows(env, me.id),
+    followsOfTeams(env, (me.teams || []).map((t) => t.slug)),
+    personFollowsBy(env, me.id),
+  ]);
+  // `me` the technologies, as before; `by` the customers, people and areas.
+  return { me: mine, teams, by };
 }
 
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
@@ -238,9 +280,9 @@ const inTeam = (me, teams) => memberOf(me)(teams);
  * or for someone on no team a channel of their personal view.
  */
 async function canSee(env, me, key) {
-  const row = await env.DB.prepare('SELECT team, source, channel_id FROM threads WHERE thread = ?')
+  const row = await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
     .bind(key).first();
-  return Boolean(row) && (isAdmin(me) || mayWork(env, me)(await teamsOf(env, row), row));
+  return Boolean(row) && maySee(env, me)(await teamsOf(env, row), row);
 }
 
 /**
@@ -266,18 +308,19 @@ async function members(env, teams) {
 
 /**
  * SQL: the thread row `alias` is in the inbox, with `?1` bound to `inboxTeams(…).value`. A
- * team's inbox has its own channels and the channels shared with it. The personal view has
- * the conversations in the channels the viewer posted or was mentioned in (`me`: the parameter
- * bound to their id), whichever team they are filed under, on a team or not; alerts are not
- * in it.
+ * team's inbox has its own channels, the channels shared with it and the threads that show a
+ * technology it follows (src/follows.js). The personal view has the conversations in the
+ * channels the viewer posted or was mentioned in (`me`: the parameter bound to their id), and
+ * those that show a technology they follow, whichever team they are filed under, on a team or
+ * not; alerts are not in it.
  */
 function inInbox(alias, personal, me) {
   if (!personal) {
-    return `(${alias}.team = ?1 OR ${sharedWith(alias, '?1')})`;
+    return `(${alias}.team = ?1 OR ${sharedWith(alias, '?1')} OR ${followedByTeam(alias, '?1')})`;
   }
   // ?1 (the viewer's teams) is not needed here, but is bound: say so, so it stays numbered.
   return `?1 IS NOT NULL AND ${alias}.kind != 'alert'
-    AND ${inPersonalView(alias, me)}`;
+    AND ${inPersonalInbox(alias, me)}`;
 }
 
 const rank = (a) => (a ? ATTENTION.indexOf(a) : ATTENTION.length);
@@ -325,6 +368,7 @@ export function fold(threads) {
       last_staff: latest.last_staff,
       last_text: latest.last_text,
       messages: ms.reduce((n, m) => n + (m.messages || 0), 0),
+      imported: ms.every((m) => Number(m.imported)) ? 1 : 0,
       participants: people,
       staffPosted: ms.some((m) => m.staffPosted),
       label: latest.label || anchor.label || null,
@@ -335,6 +379,7 @@ export function fold(threads) {
       seenByOthers: ms.some((m) => m.seenByOthers),
       mentionedMe: ms.some((m) => m.mentionedMe),
       unreadMentions: ms.reduce((n, m) => n + (m.unreadMentions || 0), 0),
+      unreadForYou: ms.reduce((n, m) => n + (m.unreadForYou || 0), 0),
       mentionedTeam: [...new Set(ms.flatMap((m) => m.mentionedTeam || []))],
       readers: latest.readers,
       reactions: Object.values(ms.flatMap((m) => m.reactions || []).reduce((acc, r) => {
@@ -359,15 +404,16 @@ export function fold(threads) {
  * last.
  */
 async function unreadElsewhere(env, me) {
-  const outside = `NOT (t.kind != 'alert' AND ${inPersonalView('t', '?1')})`;
+  const outside = `NOT (t.kind != 'alert' AND ${inPersonalInbox('t', '?1')})`;
   const { results } = await env.DB.prepare(`WITH mine AS (
       SELECT m.team, t.name,
         (SELECT COUNT(*) FROM team_members c WHERE c.team = m.team) AS members
       FROM team_members m JOIN teams t ON t.slug = m.team WHERE m.person = ?1
     ), unread AS (
-      SELECT COALESCE(t.logical_thread, t.thread) AS g, t.team AS filed, t.source, t.channel_id
+      SELECT COALESCE(t.logical_thread, t.thread) AS g, t.team AS filed, t.source, t.channel_id,
+        t.thread, t.logical_thread
       FROM threads t LEFT JOIN watermarks w ON w.thread = t.thread AND w.person = ?1
-      WHERE t.kind != 'ignore'
+      WHERE t.kind != 'ignore' AND t.imported = 0
         AND CASE WHEN t.kind = 'alert' THEN t.any_at ELSE t.last_at END IS NOT NULL
         AND (w.read_at IS NULL OR w.read_at < CASE WHEN t.kind = 'alert' THEN t.any_at
           ELSE t.last_at END)
@@ -377,6 +423,7 @@ async function unreadElsewhere(env, me) {
       SELECT COUNT(DISTINCT u.g) FROM unread u
       WHERE u.filed = m.team OR (u.source, u.channel_id) IN (
         SELECT c.source, c.channel_id FROM channel_teams c WHERE c.team = m.team)
+        OR ${followedByTeam('u', 'm.team')}
     ) AS unread
     FROM mine m`).bind(me.id).all();
   return (results || []).filter((r) => r.unread > 0).map((r) => ({
@@ -414,17 +461,33 @@ export async function inbox(env, me, team, {
   roomsP.catch(() => {});
   // The latest groups (a re-threaded group counts once), then for each group its first
   // thread (title, link) and its five most recent members (activity, read state).
-  const { results: groups } = await env.DB.prepare(`SELECT COALESCE(logical_thread, thread) AS g,
-      COUNT(*) AS n, SUM(messages) AS total, MAX(COALESCE(last_at, any_at)) AS latest
-    -- The team's own channels, and the channels shared with it (migration 0024).
-    FROM threads WHERE ${inInbox('threads', personal, '?5')} AND kind != 'ignore'
+  const shown = (t) => `${t}.kind != 'ignore'
       -- Threads of nothing but system events ("has joined the channel", a member was added)
       -- are not shown: no person posted, and no message has an author account (bots do).
-      AND NOT (kind = 'channel' AND last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
-        WHERE m.thread = threads.thread AND m.author_key IS NOT NULL AND m.deleted = 0))
-      ${only ? 'AND COALESCE(logical_thread, thread) IN (SELECT value FROM json_each(?6))' : ''}
-    GROUP BY g
-    HAVING ?2 IS NULL OR latest < ?2 OR (latest = ?2 AND g < ?3)
+      AND NOT (${t}.kind = 'channel' AND ${t}.last_at IS NULL AND NOT EXISTS (SELECT 1 FROM messages m
+        WHERE m.thread = ${t}.thread AND m.author_key IS NOT NULL AND m.deleted = 0))
+      ${only ? `AND COALESCE(${t}.logical_thread, ${t}.thread) IN (SELECT value FROM json_each(?6))` : ''}`;
+  const sums = `COALESCE(t.logical_thread, t.thread) AS g, COUNT(*) AS n, SUM(t.messages) AS total,
+      MAX(COALESCE(t.last_at, t.any_at)) AS latest`;
+  // A team's inbox: the team's own channels' threads group by group from `threads_inbox`
+  // (migration 0069), which has all this needs, then those of the channels shared with it
+  // (migration 0024), then the other threads that show a technology it follows (migration
+  // 0072). An alert channel files tens of thousands of threads under its team: as one
+  // `team = ? OR <shared channel>`, every one of them was read from the table and sorted.
+  const grouped = personal
+    ? `SELECT ${sums} FROM threads t WHERE ${inInbox('t', personal, '?5')} AND ${shown('t')}
+      GROUP BY g`
+    : `SELECT g, SUM(n) AS n, SUM(total) AS total, MAX(latest) AS latest FROM (
+        SELECT ${sums} FROM threads t WHERE t.team = ?1 AND ${shown('t')}
+          GROUP BY COALESCE(t.logical_thread, t.thread)
+        UNION ALL SELECT ${sums} FROM threads t
+          WHERE t.team != ?1 AND ${sharedWith('t', '?1')} AND ${shown('t')} GROUP BY 1
+        UNION ALL SELECT ${sums} FROM threads t
+          WHERE t.team != ?1 AND NOT ${sharedWith('t', '?1')} AND ${followedByTeam('t', '?1')}
+            AND ${shown('t')} GROUP BY 1)
+      GROUP BY g`;
+  const { results: groups } = await env.DB.prepare(`SELECT g, n, total, latest FROM (${grouped})
+    WHERE ?2 IS NULL OR latest < ?2 OR (latest = ?2 AND g < ?3)
     ORDER BY latest DESC, g DESC LIMIT ?4`)
     .bind(...[scope.value, only ? null : beforeAt, beforeG, only ? only.length + 1 : size + 1]
       .concat(personal || only ? [personal ? me.id : null] : [])
@@ -437,19 +500,27 @@ export async function inbox(env, me, team, {
   const last = (groups || [])[groups.length - 1];
   const page = { next: more && last ? `${last.latest}|${last.g}` : null, before: before || null };
   const groupKeys = JSON.stringify((groups || []).map((g) => g.g));
-  const { results: threads } = await env.DB.prepare(`SELECT thread, source, org, team, kind,
+  // Each group's first thread and its five latest members, these by index (migration 0068): an
+  // alert channel folds thousands of posts into one entry, and ranking every thread of the
+  // inbox to find them was the query D1 spent the most time on.
+  const { results: threads } = await env.DB.prepare(`WITH g(k) AS (SELECT value FROM json_each(?2)),
+      c(thread) AS (SELECT k FROM g
+        UNION SELECT x.thread FROM g JOIN threads x ON x.thread IN (SELECT y.thread FROM threads y
+          WHERE y.logical_thread = g.k AND ${inInbox('y', personal, '?3')} AND y.kind != 'ignore'
+          ORDER BY COALESCE(y.last_at, y.any_at) DESC LIMIT 5))
+    SELECT thread, source, org, team, kind,
       channel_name, title, root_at, last_at, last_author, last_staff, last_text, any_at,
-      messages,
+      messages, imported,
       root_at IS NOT NULL AS root_known, logical_thread,
       (SELECT m.permalink FROM messages m WHERE m.thread = r.thread AND m.deleted = 0
         AND m.permalink IS NOT NULL ORDER BY (m.id = r.root_id) DESC, m.at LIMIT 1)
         AS permalink
     FROM (SELECT t.*, ROW_NUMBER() OVER (PARTITION BY COALESCE(t.logical_thread, t.thread)
           ORDER BY COALESCE(t.last_at, t.any_at) DESC) AS rn
-        FROM threads t
+        FROM c JOIN threads t ON t.thread = c.thread
         WHERE ${inInbox('t', personal, '?3')} AND t.kind != 'ignore'
-          AND COALESCE(t.logical_thread, t.thread) IN (SELECT value FROM json_each(?2))) r
-    WHERE r.rn <= 5 OR r.thread IN (SELECT value FROM json_each(?2))`)
+          AND COALESCE(t.logical_thread, t.thread) IN g) r
+    WHERE r.rn <= 5 OR r.thread IN g`)
     .bind(...[scope.value, groupKeys, personal ? me.id : []].flat()).all();
   const sizes = new Map((groups || []).map((g) => [g.g, g]));
   if (!threads.length) {
@@ -470,7 +541,7 @@ export async function inbox(env, me, team, {
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
-    { results: techRows }, techVocab, elsewhere,
+    { results: techRows }, stacks, techVocab, elsewhere, yours, unseen, agentLabels,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
     // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
@@ -522,15 +593,23 @@ export async function inbox(env, me, team, {
     membersP,
     orgsOf(env, threads.map((t) => t.org)),
     env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
-    // The tech stack of each thread's channel (src/label.js recordTech), for the tech facet.
-    env.DB.prepare(`SELECT t.thread, c.tech FROM threads t JOIN channel_tech c
-        ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
-      WHERE t.thread IN (SELECT value FROM json_each(?)) AND c.p >= ? ORDER BY c.p DESC`)
+    // What each thread shows (thread_tech, its own label), for the tech facet.
+    env.DB.prepare(`SELECT thread, tech, p FROM thread_tech
+      WHERE thread IN (SELECT value FROM json_each(?)) AND p >= ? ORDER BY p DESC`)
       .bind(keys, TECH_MIN).all(),
+    // Each customer's stack, as its stack drawing has it (src/orgstacks.js), for the list by
+    // customer: the customer-level record; Clef's answers are the threads'.
+    orgStacksOf(env, threads.map((t) => t.org)),
     // The team's names for its technologies (the personal view, across teams: the admin team's).
     vocab(env, personal ? null : team),
     // Only once the personal view has been loaded to the end: the list says so then.
     personal && !only && !more ? unreadElsewhere(env, me) : null,
+    // What the red badge counts: unread mentions, and what is new in the viewer's threads.
+    unreadInYours(env.DB, threadKeys, me.id),
+    // The agent's answers to the viewer in a sidebar they have not seen: the purple badge.
+    unseenAnswers(env, [...threadKeys, ...threads.map((t) => t.logical_thread)], me.id),
+    // What the threads' agents said of them (src/agentlabels.js), in place of Clef's answers.
+    agentLabelsFor(env.DB, threadKeys),
   ]);
   const by = (rows, f) => {
     const m = new Map();
@@ -548,7 +627,11 @@ export async function inbox(env, me, team, {
   const namedBy = by(named, (r) => ({ person: r.person, staff: Boolean(r.staff) }));
   const labelBy = new Map((labels || []).map(({ topics, ...l }) => [
     l.thread, {
-      ...effectiveLabel(l, reviews.filter((r) => r.thread === l.thread)),
+      ...effectiveLabel(
+        l,
+        reviews.filter((r) => r.thread === l.thread),
+        agentLabels.filter((r) => r.thread === l.thread),
+      ),
       topics: topicList(topics),
     },
   ]));
@@ -564,6 +647,7 @@ export async function inbox(env, me, team, {
   // Profile cards of everyone in the avatar stacks, once per person.
   const cards = await profiles(env, [...people.values()]
     .flatMap((t) => t.participants.map((p) => p.key)));
+  const states = readState(threads, marks || [], mentions || [], me.id, yours);
   return {
     team: personal ? null : team,
     personal,
@@ -578,9 +662,10 @@ export async function inbox(env, me, team, {
     teams: myTeams,
     members: teamMembers,
     vocab: techVocab,
+    stacks,
     ...(elsewhere ? { elsewhere } : {}),
     // Channel ids Slack sent without the name, in titles and last texts, as the names.
-    threads: await nameChannelIds(env, fold(readState(threads, marks || [], mentions || [], me.id)
+    threads: await nameChannelIds(env, fold(states
       .map((t) => {
         const label = labelBy.get(t.thread) || null;
         return {
@@ -604,7 +689,12 @@ export async function inbox(env, me, team, {
       // Totals over the whole group, not just the members loaded here.
       const sized = g && g.n > 1 ? { ...entry, occurrences: g.n, messages: g.total } : entry;
       const draft = draftSummary(draftOf(drafts, [t.thread, ...t.members.map((m) => m.thread)]));
-      return { ...sized, waiting_on: waitingOn(sized), draft };
+      // A sidebar is kept under the entry's key when it was talked in: a member's, before a fold.
+      const sideNew = [...new Set([t.thread, ...t.members.map((m) => m.thread)])]
+        .flatMap((k) => unseen.get(k) || []);
+      return {
+        ...sized, waiting_on: waitingOn(sized), draft, ...(sideNew.length ? { sideNew } : {}),
+      };
     })),
   };
 }
@@ -687,19 +777,16 @@ export function readMembers(group, keep = [], most = MAX_READ_MEMBERS) {
 
 /**
  * The technologies an inbox entry shows, likeliest first, as `[{ tech, p }]`: each member's
- * (`labels.tech`, the highest of any member). Where no member has been labeled since labels
- * had them, those whose highest probability in the channel one of its threads set
- * (`channel_tech.thread`).
+ * (`labels.tech`, the highest of any member).
  */
-export function threadTech(labels, channelTech, keys) {
+export function threadTech(labels) {
   const best = new Map();
   const add = (id, p) => {
     if (!(best.get(id) >= p)) {
       best.set(id, p);
     }
   };
-  const stored = (labels || []).filter((l) => l.tech != null);
-  for (const l of stored) {
+  for (const l of (labels || []).filter((x) => x.tech != null)) {
     let parsed = null;
     try {
       parsed = JSON.parse(l.tech);
@@ -709,14 +796,6 @@ export function threadTech(labels, channelTech, keys) {
     for (const [id, p] of Object.entries(parsed && typeof parsed === 'object' ? parsed : {})) {
       if (typeof p === 'number') {
         add(id, p);
-      }
-    }
-  }
-  if (!stored.length) {
-    const own = new Set(keys);
-    for (const t of channelTech || []) {
-      if (own.has(t.thread)) {
-        add(t.tech, t.p);
       }
     }
   }
@@ -745,7 +824,10 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   // Every team whose inbox has it: the one it is filed under, and those its channel is shared
   // with. Read state is the team's the viewer looks at it from (`wanted`, if it is one).
   const teams = row ? await teamsOf(env, row) : [];
-  if (!row || !(isAdmin(me) || await mayWork(env, me)(teams, row))) {
+  // Who may work it may see it, and so may admins and whoever talked in its sidebar (maySee),
+  // who only read it and talk to its agent.
+  const work = Boolean(row) && await mayWork(env, me)(teams, row);
+  if (!row || !(work || await maySee(env, me)(teams, row))) {
     return null;
   }
   const readers = viewTeam(me, teams, wanted);
@@ -762,9 +844,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   // (opening a thread waited for some fifteen round trips in a row).
   const [
     link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
-    reviewed, facts, anchorLabel, { results: tech }, { results: found }, drafts, rowOrgs,
+    reviewed, facts, anchorLabel, { results: found }, drafts, rowOrgs,
     { results: appPosts }, agentOn, { results: memberTech }, { results: rootLinks }, place,
-    bashRequests, sidebar,
+    bashRequests, sidebar, toolRequests, agentLabels,
   ] = await Promise.all([
     // The first thread's root, else its first message, else (all of it deleted) the group's.
     env.DB.prepare(`SELECT permalink FROM messages
@@ -774,7 +856,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     Promise.all(read.map((m) => folderFiles(env.CHANNELS, m.path, { waitUntil })))
       .then((lists) => lists.flat()),
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
-        || ':' || m.channel_id || ':' || m.id AS mkey, i.avatar, m.author_key, m.person = ? AS mine
+        || ':' || m.channel_id || ':' || m.id AS mkey, COALESCE(i.display_avatar, i.avatar) AS avatar,
+        m.author_key, m.person = ? AS mine, i.kind AS account_kind, i.ours, i.display_name,
+        i.staff AS account_staff, i.email AS account_email
       FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
       .bind(me.id, readKeys).all(),
     env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
@@ -795,9 +879,6 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     reviewsFor(env.DB, [labelKey]),
     resolutionFacts(env, group.map((m) => m.thread)),
     env.DB.prepare('SELECT title FROM labels WHERE thread = ?').bind(key).first(),
-    env.DB.prepare(`SELECT tech, p, thread FROM channel_tech
-      WHERE source = ? AND tenant = ? AND channel_id = ? ORDER BY p DESC`)
-      .bind(row.source, row.tenant, row.channel_id).all(),
     env.DB.prepare(`SELECT DISTINCT source, field, value, confidence
       FROM facts WHERE thread IN (SELECT value FROM json_each(?)) ORDER BY field, value`)
       .bind(keys).all(),
@@ -830,6 +911,10 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // What the team said to the agent in the inbox's sidebar, and its answers (src/sidebar.js):
     // shown between the messages, folded; never on the platform.
     sidebarFor(env, entryKeys),
+    // The tools the agent asked for in the sidebar, and how each stands (src/toolrequests.js).
+    toolRequestsFor(env, entryKeys),
+    // What the agent said of the thread (src/agentlabels.js), in place of Clef's answers.
+    agentLabelsFor(env.DB, [labelKey]),
   ]);
   const rootLink = new Map((rootLinks || []).map((r) => [r.thread, r.permalink]));
   const asApp = new Set((appPosts || []).map((p) => `${p.thread}|${p.id}`));
@@ -857,6 +942,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       const m = byId.get(`${meta.thread}|${meta.id}`) || {};
       return {
         ...meta,
+        author: botAuthor(env, meta.author, m),
         body,
         avatar: m.avatar || null,
         authorKey: m.author_key || null,
@@ -868,20 +954,23 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       };
     })
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
-  const label = effectiveLabel(model, model ? reviewed : []);
+  const label = effectiveLabel(model, model ? reviewed : [], agentLabels);
   const bodies = messages.filter((m) => !m.deletedAt).map((m) => m.body);
   // Slack permalinks the messages name, in this thread's workspace. Profiles wait for the
   // authors those links add; the mention and channel lookups run alongside the link lookup.
   const linksP = slackMessageLinks(env, me, bodies, row.tenant);
-  const [cards, mentioned, channels, links, channelLinked] = await Promise.all([
-    linksP.then((linked) => profiles(env, [
+  // Who the people the messages mention are: Adobe, a partner or the customer, and their
+  // accounts, whose cards the mentions show.
+  const mentionedP = mentionedPeople(env, {
+    source: row.source, tenant: row.tenant, threads: group.map((m) => m.thread),
+  }, bodies);
+  const [cards, named, channels, links, channelLinked] = await Promise.all([
+    Promise.all([linksP, mentionedP]).then(([linked, { keys: mentionKeys }]) => profiles(env, [
       ...messages.map((m) => m.authorKey),
       ...linked.map((l) => l.authorKey),
+      ...Object.values(mentionKeys),
     ])),
-    // Who the people the messages mention are: Adobe, a partner or the customer.
-    mentionKinds(env, {
-      source: row.source, tenant: row.tenant, threads: group.map((m) => m.thread),
-    }, bodies),
+    mentionedP,
     // The channels the messages name (`#name`, `#C…`): their names, and where they are.
     channelRefs(env, row, [...bodies, row.title, anchorLabel && anchorLabel.title,
       label && label.title], me),
@@ -898,8 +987,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       channel_group: (place && place.group_name) || null,
       label_thread: labelKey,
     },
-    tech: (tech || []).map((t) => ({ tech: t.tech, p: t.p })),
-    thread_tech: threadTech(memberTech, tech, entryKeys),
+    // The channel's, from before the customer's stack came from its drawing: none now.
+    tech: [],
+    thread_tech: threadTech(memberTech),
     topics: topicList(model && model.topics),
     vocab: await vocab(env, row.team),
     members: group.map((m) => ({
@@ -917,7 +1007,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // How many members are `left_out`: the least recent posts.
     earlier_posts: group.length - read.length,
     profiles: cards,
-    mentioned,
+    mentioned: named.kinds,
+    mention_keys: named.keys,
     channels,
     channel_links: channelLinked,
     links,
@@ -931,7 +1022,11 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     agent_turn: (agentOn && agentOn.turn) || null,
     // Whether the thread has an agent, which the sidebar talks to.
     agent: Boolean(agentOn && agentOn.on),
+    // Whether the viewer may work it (`mayWork`): reply, draft, and decide on the commands and
+    // tools its agent asks for. Not so, they only see it, and talk to its agent (`maySee`).
+    can_work: work,
     sidebar,
+    tool_requests: toolRequests,
     bash_requests: bashRequests,
   };
 }
@@ -958,6 +1053,15 @@ export async function media(env, target, threadKey = null) {
     u = new URL(target);
   } catch {
     return json({ error: 'bad url' }, 400);
+  }
+  // A file of the customer portal, of the thread's channel: through the portal's Worker.
+  if (threadKey && portalFileOf(threadKey, u.href)) {
+    const got = await openPortalFile(env, threadKey, u.href, { max: MEDIA_MAX });
+    if (got.error || !/^image\/(png|jpeg|gif|webp)$/.test(got.type)) {
+      await got.body?.cancel();
+      return json({ error: got.error || 'cannot show this attachment (not an image)' }, 502);
+    }
+    return new Response(got.body, { headers: mediaHeaders(got.type) });
   }
   // Teams files opspile copied into pile 1 (src/teamsfiles.js) come from there. SharePoint
   // files only ever do: the app could read any of them, the inbox shows those of messages.
@@ -1003,6 +1107,14 @@ function room(env, team) {
 
 /** `/api/*` with the viewer known; see `api`. */
 async function route(request, env, url, { viewer: injected, waitUntil } = {}, timing = null) {
+  // A customer's favicon (src/favicons.js), which the inbox shows on many rows at once. It is
+  // Google's, no one's secret: someone Access signed in is enough, without looking them up.
+  if (url.pathname === '/api/favicon' && (request.method === 'GET' || request.method === 'HEAD')) {
+    if (!injected && !await accessEmail(request, env)) {
+      return json({ error: 'not signed in' }, 403);
+    }
+    return faviconProxy(url.searchParams.get('domain'), { request, waitUntil });
+  }
   // `viewer` can be injected by tests; in the Worker it always comes from Access.
   const me = injected || await viewer(request, env);
   timing?.mark('auth');
@@ -1010,10 +1122,10 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     return json({ error: 'not signed in, or not a member of any team' }, 403);
   }
   const team = url.searchParams.get('team');
-  // Who may work a thread (src/shares.js): reply, react, resolve, draft; and who may see it,
-  // admins too.
+  // Who may work a thread (src/shares.js): reply, react, resolve, draft; and who may see it and
+  // talk to its agent in its sidebar: admins too, and whoever talked in its sidebar before.
   const working = mayWork(env, me);
-  const seeing = async (teams, place) => isAdmin(me) || working(teams, place);
+  const seeing = maySee(env, me);
 
   if (url.pathname === '/api/me') {
     // The header's Stats link (src/klickhaus.js), only where it is theirs.
@@ -1022,7 +1134,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       ...me,
       ...(stats ? { stats } : {}),
       // Their face in the header.
-      avatar: await avatarOf(env, me),
+      avatar: await personAvatar(env, me),
       connected: me.readonly ? {} : await connections(env, me.id),
       react: me.readonly ? {} : await reactable(env, me.id),
       // Whose tokens may edit their own messages (src/edit.js).
@@ -1031,15 +1143,17 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       // the opspile app, by platform.
       attach: me.readonly ? {} : {
         ...await attachable(env, me.id),
-        app: Object.fromEntries(['slack', 'teams', 'discord'].map((p) => [p, appRule(p)])),
+        app: Object.fromEntries(['slack', 'teams', 'discord', 'portal'].map((p) => [p, appRule(p)])),
       },
       // Accounts that can be connected besides Slack and Microsoft (Discord needs its app).
       connectable: { discord: Boolean(env.DISCORD_CLIENT_ID && env.DISCORD_CLIENT_SECRET) },
       // Notifications (src/settings.js); someone else's are not shown to whoever views as them.
       settings: me.readonly ? DEFAULTS : await readSettings(env, me),
       // The rooms the inbox listens to (GET /api/live): the person's teams, and the teams of
-      // the channels in their personal view.
+      // the threads in their personal view.
       rooms: await roomsOf(env, me),
+      // The technologies they follow, and those their teams follow (src/follows.js).
+      follows: await followsOf(env, me),
     });
   }
   // Looking as someone else is read-only: no reads, replies, reviews or connections.
@@ -1053,6 +1167,50 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     if (request.method === 'PUT') {
       return saveSettings(env, me, await request.json().catch(() => null));
+    }
+    return json({ error: 'GET or PUT' }, 405);
+  }
+  // The Topics page, for every member of an ops team (src/topicsapi.js).
+  if (url.pathname === '/api/topics') {
+    // Every team's threads, customers and people: for the members of an ops team, not someone
+    // signed in from SIGNIN_DOMAINS on none, whose inbox is their personal view only.
+    if (!(me.teams || []).length) {
+      return json({ error: 'the topic map is for the members of the ops teams' }, 403);
+    }
+    if (request.method === 'GET') {
+      return topicsPage(env, me, await followsOf(env, me));
+    }
+    if (request.method === 'POST') {
+      return me.readonly ? json({ error: 'read-only while viewing as someone else' }, 403)
+        : rebuildTopics(env, me);
+    }
+    return json({ error: 'GET or POST' }, 405);
+  }
+  if (url.pathname === '/api/areas') {
+    if (me.readonly) {
+      return json({ error: 'read-only while viewing as someone else' }, 403);
+    }
+    return changeArea(env, me, request.method, await request.json().catch(() => ({})));
+  }
+  if (url.pathname === '/api/follows') {
+    // The technologies the person follows, for their personal view (src/follows.js).
+    if (request.method === 'GET') {
+      return json({ ...await followsOf(env, me), tech: await followable(env) });
+    }
+    if (request.method === 'PUT') {
+      const body = await request.json().catch(() => ({}));
+      // `{ tech }`, or `{ kind: org | person | area, target }` (src/follows.js).
+      const res = body.kind && body.kind !== 'tech'
+        ? await setPersonFollowBy(env, {
+          person: me.id, kind: body.kind, target: body.target, follow: body.follow !== false,
+        })
+        : await setPersonFollow(env, {
+          person: me.id, tech: body.tech ?? body.target, follow: body.follow !== false,
+        });
+      if (res.error) {
+        return json({ error: res.error }, res.status || 400);
+      }
+      return json({ ...await followsOf(env, me), changed: res.changed });
     }
     return json({ error: 'GET or PUT' }, 405);
   }
@@ -1108,9 +1266,18 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     if (res.ok && typeof body.draft === 'string') {
       const sent = { how: url.pathname === '/api/post' ? 'me' : 'app', text: body.text };
       const used = { thread: body.thread, base: body.draft };
-      await discardDraft(env, me, used, inMine, { sent }).catch((e) => {
-        console.log(JSON.stringify({ route: 'post', action: 'draft', error: e.message }));
-      });
+      const done = await discardDraft(env, me, used, inMine, { sent })
+        .then((r) => r.json())
+        .catch((e) => {
+          console.log(JSON.stringify({ route: 'post', action: 'draft', error: e.message }));
+          return null;
+        });
+      // The third of the agent's drafts sent in a channel: ask to let it post there itself.
+      const offer = done && done.discarded
+        && await postingOffer(env, me, body.thread, done.draft);
+      if (offer) {
+        return json({ ...await res.json(), postingOffer: offer }, res.status);
+      }
     }
     return res;
   }
@@ -1152,13 +1319,28 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   // The sidebar: a person talks to the thread's agent, never to the channel (src/sidebar.js).
   if (url.pathname === '/api/agent/sidebar' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return talkToAgent(env, me, body, working);
+    return talkToAgent(env, me, body, seeing);
+  }
+  if (url.pathname === '/api/agent/sidebar/seen' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return sawSidebar(env, me, body, seeing);
+  }
+  // A tool the thread's agent asked for in its sidebar (src/agent/toolrequest.js).
+  const tool = /^\/api\/agent\/tools\/(grant|deny|revoke)$/.exec(url.pathname);
+  if (tool && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return decideTool(env, me, body, working, tool[1], { seeing });
   }
   // A command the thread's agent asked a person to run (src/agent/bashrequest.js).
   const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);
   if (bash && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return decideBash(env, me, body, working, { run: bash[1] === 'run' });
+    return decideBash(env, me, body, working, { run: bash[1] === 'run', seeing });
+  }
+  // Someone is writing a reply: the customer portal shows its customers (src/post.js).
+  if (url.pathname === '/api/typing' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    return typing(env, me, body, working);
   }
   if (url.pathname === '/api/edit' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
@@ -1179,6 +1361,14 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/channels') {
     return postableChannels(env, me);
+  }
+  // Who someone on the thread is in its knowledge bases, for their profile card.
+  if (url.pathname === '/api/person') {
+    return personInKb(env, me, {
+      thread: url.searchParams.get('thread'),
+      key: url.searchParams.get('p'),
+      name: url.searchParams.get('name'),
+    }, seeing);
   }
   if (url.pathname === '/api/experts') {
     return experts(env, url.searchParams.get('thread'), seeing, {
@@ -1201,6 +1391,13 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       res.headers.set('cache-control', 'private, max-age=600');
     }
     return res;
+  }
+  // A diagram drawn on the server (src/diagrams.js), for the members of a team.
+  if (url.pathname === '/api/diagram' && request.method === 'POST') {
+    if (!isAdmin(me) && !(me.teams || []).length) {
+      return json({ error: 'for the members of a team' }, 403);
+    }
+    return drawDiagram(env, await request.json().catch(() => ({})));
   }
   if (url.pathname === '/api/emoji/closest') {
     const names = (url.searchParams.get('names') || '').split(',');
@@ -1255,7 +1452,26 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     return media(env, url.searchParams.get('u'), t);
   }
-  if (['/api/file', '/api/file/stream', '/api/file/poster'].includes(url.pathname)) {
+  // A Teams app's icon, its bot's picture (src/bots.js): for anyone signed in to the inbox.
+  if (url.pathname === '/api/bots/icon' && request.method === 'GET') {
+    return teamsBotIcon(env, url).catch((e) => {
+      console.warn(JSON.stringify({ route: 'bots', icon: 'failed', error: e.message }));
+      return json({ error: 'no icon' }, 404);
+    });
+  }
+  // What the customer portal keeps and the inbox shows: a picture someone uploaded there, a
+  // customer's logo (src/portalsource.js). For anyone signed in to the inbox.
+  const kept = /^\/api\/portal\/(avatar|logo)\/([a-z0-9.-]{1,120})$/.exec(url.pathname);
+  if (kept && request.method === 'GET') {
+    const res = await portalFetch(env, kept[1], kept[1] === 'avatar' ? { user: kept[2] } : { domain: kept[2] });
+    const type = res && res.ok ? (res.headers.get('content-type') || '') : '';
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(type)) {
+      await res?.body?.cancel();
+      return json({ error: 'no picture' }, 404);
+    }
+    return new Response(res.body, { headers: mediaHeaders(type) });
+  }
+  if (['/api/file', '/api/file/stream', '/api/file/poster', '/api/file/open'].includes(url.pathname)) {
     // A file of a message (the inbox's CSV and text previews, its video and audio player):
     // for those who may see its thread, and only a file a message of the thread links to
     // (src/fileview.js).
@@ -1267,12 +1483,16 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     if (url.pathname === '/api/file/stream') {
       return streamFile(env, t, u, request);
     }
+    if (url.pathname === '/api/file/open') {
+      return openThreadFile(env, t, u);
+    }
     return url.pathname === '/api/file/poster' ? filePoster(env, t, u) : threadFile(env, t, u);
   }
-  // The admin pages and the editor: the admin team, and team managers for their teams (the
-  // routes check which).
+  // The admin pages: the admin team, and team managers for their teams (the
+  // routes check which); a few routes for every member of an ops team (STAFF_ROUTES).
   if (url.pathname.startsWith('/api/admin/')) {
-    if (!isManager(me)) {
+    const adminRoute = `${request.method} ${url.pathname.slice('/api/admin/'.length)}`;
+    if (!isManager(me) && !(STAFF_ROUTES.includes(adminRoute) && (me.teams || []).length)) {
       return json({ error: 'for the admin team and team managers' }, 403);
     }
     return (await admin(request, env, url, me)) || json({ error: 'not found' }, 404);
@@ -1323,7 +1543,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/read' && request.method === 'POST') {
     const { thread: key, at, team: from } = await request.json().catch(() => ({}));
-    const row = key && await env.DB.prepare('SELECT team, source, channel_id FROM threads WHERE thread = ?')
+    const row = key && await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
       .bind(key).first();
     const teams = await teamsOf(env, row);
     if (!row || typeof at !== 'string' || !await working(teams, row)) {
@@ -1355,12 +1575,15 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
 
 /**
  * Routes `/api/*`. Returns null for paths it does not own. Every answer says where its time
- * went (`Server-Timing`: who is asking, D1, R2, total; durations and counts only).
+ * went (`Server-Timing`: who is asking, D1, R2, total; durations and counts only). The reads it
+ * asks D1 for at once go as one batch (src/d1batch.js), each batch one D1 call there.
  */
 export async function api(request, env, url, options = {}) {
   if (!url.pathname.startsWith('/api/')) {
     return null;
   }
   const timing = new Timing();
-  return withTiming(await route(request, timing.wrap(env), url, options, timing), timing);
+  const timed = timing.wrap(env);
+  const batched = timed && timed.DB ? { ...timed, DB: batchedDatabase(timed.DB) } : timed;
+  return withTiming(await route(request, batched, url, options, timing), timing);
 }

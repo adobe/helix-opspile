@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  # The merge queue (a ruleset on main) tests each group before it merges.
+  merge_group:
   push:
     branches: [main]
 
@@ -25,6 +27,8 @@ jobs:
       - run: npm test
       # Builds the Worker without credentials (default mode, no vars needed).
       - run: npx cf deploy --dry-run
+      # And the customer portal's (portal/cloudflare.config.ts), the same way.
+      - run: npm run portal:build
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -58,16 +62,23 @@ jobs:
       SIGNIN_DOMAINS: ${{ secrets.SIGNIN_DOMAINS }}
       AGENT_GATEWAY: ${{ secrets.AGENT_GATEWAY }}
       AGENT_REGION: ${{ secrets.AGENT_REGION }}
+      # The agents' web_search (optional; Web IQ where WEBIQ_API_KEY is set, else ceramic).
+      WEB_SEARCH_PROVIDER: ${{ secrets.WEB_SEARCH_PROVIDER }}
+      WEB_SEARCH_GATEWAY: ${{ secrets.WEB_SEARCH_GATEWAY }}
       # The opspile Teams app (catalog id): turns on agents' post_message in Teams.
       TEAMS_APP_ID: ${{ secrets.TEAMS_APP_ID }}
       # The agents' request_membership (src/agent/membership.js): the admins' bot Workers, bound
-      # where named, and the Slack channel and bot user the requests are posted to.
+      # where named, and the Slack channel and bot user the requests are posted to. The relay's
+      # SlackMcp entrypoint is bound with it too (SLACK_MCP, src/agent/slackmcp.js).
       TEAMS_ADMIN_WORKER: ${{ secrets.TEAMS_ADMIN_WORKER }}
       SLACK_AUTOMATION_WORKER: ${{ secrets.SLACK_AUTOMATION_WORKER }}
       MEMBERSHIP_SLACK_CHANNEL: ${{ secrets.MEMBERSHIP_SLACK_CHANNEL }}
       MEMBERSHIP_SLACK_BOT: ${{ secrets.MEMBERSHIP_SLACK_BOT }}
       AI_GATEWAY_TOKEN_REQUIRED: ${{ secrets.AI_GATEWAY_TOKEN_REQUIRED }}
       SLACK_ADMIN_TOKEN_REQUIRED: ${{ secrets.SLACK_ADMIN_TOKEN_REQUIRED }}
+      # The customer portal's Worker (src/portalsource.js), bound where named: the inbox posts
+      # and opens channels there (optional; off while empty).
+      PORTAL_WORKER: ${{ secrets.PORTAL_WORKER }}
       # Discord (optional; off while DISCORD_GUILDS is empty).
       DISCORD_GUILDS: ${{ secrets.DISCORD_GUILDS }}
       DISCORD_STAFF_ROLES: ${{ secrets.DISCORD_STAFF_ROLES }}
@@ -81,6 +92,12 @@ jobs:
       # The header's Stats link to klickhaus (optional; off while either is empty; src/klickhaus.js).
       KLICKHAUS_URL: ${{ secrets.KLICKHAUS_URL }}
       KLICKHAUS_TEAMS: ${{ secrets.KLICKHAUS_TEAMS }}
+      # The global fluffyjaws MCP server (optional; off while FLUFFYJAWS_ISSUER is empty;
+      # src/agent/fluffyjaws.js): its Okta, opspile's client there, or a service app, whose
+      # secret FLUFFYJAWS_SERVICE_SECRET is a Worker secret.
+      FLUFFYJAWS_ISSUER: ${{ secrets.FLUFFYJAWS_ISSUER }}
+      FLUFFYJAWS_CLIENT_ID: ${{ secrets.FLUFFYJAWS_CLIENT_ID }}
+      FLUFFYJAWS_SERVICE_CLIENT_ID: ${{ secrets.FLUFFYJAWS_SERVICE_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -98,8 +115,24 @@ jobs:
             if (!db) { console.error("database helix-opspile not found"); process.exit(1); }
             console.log(db.uuid);')
           npx cf d1 migrations apply "$id"
+      # The renderer Worker first (graphviz/cloudflare.config.ts): the inbox Worker binds it.
+      - name: Deploy the renderer
+        run: npm run deploy:graphviz:prod -- --message "ci ${GITHUB_SHA::7}"
+      # Worker secrets kept as repository secrets go up with the version (`--secrets-file`);
+      # the others the Worker has stay as they are.
       - name: Deploy
-        run: npx cf deploy --mode prod --message "ci ${GITHUB_SHA::7}"
+        env:
+          # The agents' web_search on Microsoft Web IQ (optional).
+          WEBIQ_API_KEY: ${{ secrets.WEBIQ_API_KEY }}
+        run: |
+          secrets="$RUNNER_TEMP/worker-secrets.json"
+          node -e '
+            const out = {};
+            for (const name of ["WEBIQ_API_KEY"]) if (process.env[name]) out[name] = process.env[name];
+            require("fs").writeFileSync(process.argv[1], JSON.stringify(out), { mode: 0o600 });
+          ' "$secrets"
+          npx cf deploy --mode prod --message "ci ${GITHUB_SHA::7}" --secrets-file "$secrets"
+          rm -f "$secrets"
       # The images of the agents' computers on the SLICC kernel (scripts/computer-images.mjs),
       # into the bucket the deploy made: only what changed since the last upload.
       - name: Upload computer images

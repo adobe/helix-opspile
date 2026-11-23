@@ -43,6 +43,13 @@ export async function sha256(value) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** Gravatar URL for an email; Gravatar answers 404 when there is no picture. */
+export async function gravatar(email) {
+  return email
+    ? `https://gravatar.com/avatar/${await sha256(String(email).trim().toLowerCase())}?s=96&d=404`
+    : '';
+}
+
 function stringMetadata(meta) {
   return Object.fromEntries(
     Object.entries(meta)
@@ -51,15 +58,20 @@ function stringMetadata(meta) {
   );
 }
 
+/** Writes one raw object, without enqueueing it (`putRaw` does both): R2's promise. */
+export function writeRaw(env, key, body, meta = {}) {
+  return env.RAW.put(key, body, {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: stringMetadata({ receivedAt: new Date().toISOString(), ...meta }),
+  });
+}
+
 /**
  * Writes one raw object and enqueues its key for normalization. Throws if either step
  * fails, so the caller can let the platform retry; a retry rewrites the same key.
  */
 export async function putRaw(env, key, body, meta = {}) {
-  await env.RAW.put(key, body, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: stringMetadata({ receivedAt: new Date().toISOString(), ...meta }),
-  });
+  await writeRaw(env, key, body, meta);
   await env.NORMALIZE.send({ key });
   return key;
 }

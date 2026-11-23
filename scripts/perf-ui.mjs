@@ -24,14 +24,25 @@
  * Only for fake data: never point it at the production inbox.
  *
  * INP of a step is its slowest interaction (event timing; under 16 ms is not reported, so
- * it shows as <16). "ready" is the time from the input until what it shows is on screen.
- * "block" is the main thread's blocking time in long animation frames during the step.
+ * it shows as <16). "ready" is the time from the input until what it shows is on screen: the
+ * pane shows the thread's messages, the list's rows changed (for another view: after its
+ * inbox came in). "block" is the main thread's blocking time in long animation frames during
+ * the step.
+ *
+ * What it clicks, points at and waits for is in perf-ui-hooks.mjs: ids, data-* attributes,
+ * roles and ARIA states the page keeps for itself, which test/perf-ui.test.js checks. A step
+ * whose target is covered (the filter rail slid out over the list) fails instead of measuring
+ * a click on something else.
  */
 
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  AUTHOR, BANNER, BUBBLE, CARD, FACET, FACET_CLEAR, HEADER, LIST, MESSAGE, OTHER_TEAM, REPLY, ROW,
+  SHOWN, TEAM, UNREAD, VIEW, VIEW_URL,
+} from './perf-ui-hooks.mjs';
 
 const arg = (name, fallback) => {
   const a = process.argv.find((x) => x.startsWith(`--${name}=`));
@@ -121,7 +132,13 @@ async function launch() {
 // ---- what the page records ----------------------------------------------------------------
 
 const OBSERVE = `(() => {
-  const p = window.__perf = { events: [], shifts: [], loaf: [], long: [], lcp: [], marks: {} };
+  const p = window.__perf = { events: [], shifts: [], loaf: [], long: [], lcp: [], marks: {}, fetched: [] };
+  // When each answer came in (its headers): what a step waits for is drawn after it.
+  const f = window.fetch;
+  window.fetch = function fetch(...a) {
+    const url = String(a[0] instanceof Request ? a[0].url : a[0]);
+    return f.apply(this, a).then((r) => { p.fetched.push({ url, t: performance.now() }); return r; });
+  };
   const po = (type, opts, fn) => {
     try { new PerformanceObserver((l) => l.getEntries().forEach(fn)).observe({ type, buffered: true, ...opts }); } catch {}
   };
@@ -133,7 +150,7 @@ const OBSERVE = `(() => {
   po('longtask', {}, (e) => p.long.push({ t: e.startTime, d: e.duration }));
   po('largest-contentful-paint', {}, (e) => p.lcp.push({ t: e.startTime, size: e.size, el: e.element ? e.element.tagName + '.' + e.element.className : '' }));
   new MutationObserver(() => {
-    if (!p.marks.list && document.querySelector('#threads .rows .t')) p.marks.list = performance.now();
+    if (!p.marks.list && document.querySelector('${ROW}')) p.marks.list = performance.now();
   }).observe(document, { subtree: true, childList: true });
 })();`;
 
@@ -169,21 +186,59 @@ async function session(browser) {
   });
   await send('Emulation.setCPUThrottlingRate', { rate: CPU });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: OBSERVE });
-  const center = async (selector) => {
+  // Where to point at `selector` (scrolled to the middle first), and what is drawn there: `on`
+  // is false when something else covers it (the filter rail slid out over the list, a popover).
+  // Without `scroll`, one out of view counts as not covered: scrolling to it would fetch it.
+  const center = async (selector, { scroll = true } = {}) => {
     const r = await evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)});
-      if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect();
-      return { x: r.left + Math.min(r.width / 2, 40), y: r.top + r.height / 2 }; })()`);
+      if (!el) return null; if (${scroll}) el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect();
+      const x = r.left + Math.min(r.width / 2, 40); const y = r.top + r.height / 2;
+      // Out of view: outside the window or a scrolled box it is in.
+      for (let a = el.parentElement; a; a = a.parentElement) {
+        const b = a === document.documentElement ? { top: 0, bottom: innerHeight } : a.getBoundingClientRect();
+        if (getComputedStyle(a).overflowY !== 'visible' && (y < b.top || y > b.bottom)) return { x, y, on: true };
+      }
+      if (y < 0 || y > innerHeight) return { x, y, on: true };
+      const hit = document.elementFromPoint(x, y);
+      return { x, y, on: el.contains(hit), hit: hit ? hit.outerHTML.slice(0, 120) : null }; })()`);
     if (!r) {
       throw new Error(`no ${selector}`);
     }
     return r;
   };
-  const move = async (selector) => {
-    const { x, y } = await center(selector);
-    if (process.env.PERF_DEBUG) {
-      console.error(selector, x, y, await evaluate(`document.elementFromPoint(${x}, ${y})?.outerHTML.slice(0, 120)`));
+  const pointAt = async (x, y) => send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  /**
+   * Before a step: `selector` can be pointed at. If something covers it, the pointer leaves for
+   * the header (the rail folds when it is not under the pointer) until it shows.
+   */
+  const reach = async (selector) => {
+    let r = await center(selector, { scroll: false });
+    if (!r.on) {
+      await pointAt(...await evaluate(`[innerWidth / 2, document.querySelector('${HEADER}').offsetHeight / 2]`));
+      const end = Date.now() + 3000;
+      while (!r.on && Date.now() < end) {
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(100);
+        // eslint-disable-next-line no-await-in-loop
+        r = await center(selector, { scroll: false });
+      }
     }
-    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    if (!r.on) {
+      throw new Error(`${selector} is covered by ${r.hit}`);
+    }
+  };
+  const move = async (selector) => {
+    const {
+      x, y, on, hit,
+    } = await center(selector);
+    if (process.env.PERF_DEBUG) {
+      console.error(selector, x, y, hit);
+    }
+    // Never a step that points at something else than it says.
+    if (!on) {
+      throw new Error(`${selector} is covered by ${hit}`);
+    }
+    await pointAt(x, y);
     return { x, y };
   };
   const click = async (selector) => {
@@ -278,7 +333,7 @@ async function session(browser) {
     },
   };
   return {
-    send, evaluate, click, move, key, now, until, trace, errors,
+    send, evaluate, click, move, reach, key, now, until, trace, errors,
   };
 }
 
@@ -302,9 +357,27 @@ async function window(page, t0) {
   })()`);
 }
 
-const BIG_ROW = `[...document.querySelectorAll('#threads .t')].map((el) => ({ el,
-  n: Number((/(\\d+) repl/.exec(el.querySelector('.replies')?.textContent || '') || [])[1] || 0) }))
-  .sort((a, b) => b.n - a.n)`;
+// ---- what the steps wait for -------------------------------------------------------------
+// The hooks they find on the page are in perf-ui-hooks.mjs.
+
+const SHOWS = (key) => `${SHOWN} === ${key}`;
+/**
+ * Arms window.__perfList: true once the list adds, moves or removes a row; with `fetched`, only
+ * once an answer from a URL that contains it has come in too (a view shows its own threads).
+ */
+const ARM_LIST = (fetched = '') => `(() => { window.__perfList = false; const t0 = performance.now();
+  const rowish = (n) => n.nodeType === 1 && n.matches('[data-thread]');
+  const came = () => !${JSON.stringify(fetched)}
+    || window.__perf.fetched.some((e) => e.t >= t0 && e.url.includes(${JSON.stringify(fetched)}));
+  new MutationObserver((records, o) => {
+    if (came() && records.some((r) => [...r.addedNodes, ...r.removedNodes].some(rowish))) { window.__perfList = true; o.disconnect(); }
+  }).observe(document.querySelector('${LIST}'), { subtree: true, childList: true }); })()`;
+/** The rows, longest thread first (by the "N replies" it shows); byIndex in list order. */
+const BIG_ROW = `(() => { const els = [...document.querySelectorAll('${ROW}')];
+  const rows = els.map((el) => ({ el,
+    n: Number((/(\\d+) repl/.exec(el.textContent) || [])[1] || 0) })).sort((a, b) => b.n - a.n);
+  rows.byIndex = els.map((el) => ({ el }));
+  return rows; })()`;
 
 async function scenario(browser) {
   const page = await session(browser);
@@ -347,10 +420,10 @@ async function scenario(browser) {
 
   // Load.
   const navStart = Date.now();
-  await page.send('Page.navigate', { url: `${ORIGIN}/inbox?team=platform` });
-  await page.until("document.querySelector('#threads .rows .t')", 30000);
+  await page.send('Page.navigate', { url: `${ORIGIN}/inbox?team=${TEAM}` });
+  await page.until(`document.querySelector('${ROW}')`, 30000);
   await sleep(3000); // the visible rows prefetch their threads
-  await page.evaluate("document.querySelector('#dev-banner')?.remove()");
+  await page.evaluate(`document.querySelector('${BANNER}')?.remove()`);
   const load = await page.evaluate(`(() => {
     const p = window.__perf;
     const nav = performance.getEntriesByType('navigation')[0];
@@ -368,7 +441,7 @@ async function scenario(browser) {
       longest: Math.round(Math.max(0, ...long.map((e) => e.d))),
       cls: Number(p.shifts.filter((e) => !e.input).reduce((n, e) => n + e.v, 0).toFixed(4)),
       shifts: [...new Set(p.shifts.filter((e) => !e.input).flatMap((e) => e.src))].slice(0, 6).join(' '),
-      rows: document.querySelectorAll('#threads .t').length,
+      rows: document.querySelectorAll('${ROW}').length,
     };
   })()`);
   load.wall = Date.now() - navStart;
@@ -383,36 +456,51 @@ async function scenario(browser) {
   // Rows are marked by key: the list rewrites their class names as it renders.
   const mark = (name, pickRow) => page.evaluate(`(() => { const rows = ${BIG_ROW};
     const r = (${pickRow})(rows); window.__perfKeys = { ...window.__perfKeys, ${name}: r.el.dataset.thread }; })()`);
-  const rowOf = async (name) => page.evaluate(`'#threads .t[data-thread="' + CSS.escape(window.__perfKeys.${name}) + '"]'`);
-  const opened = (name) => `document.querySelector('#threads .t.sel')?.dataset.thread === window.__perfKeys.${name} && document.querySelector('#pane .feed') && !document.querySelector('#pane > .empty')`;
+  const rowOf = async (name) => page.evaluate(`'${ROW}[data-thread="' + CSS.escape(window.__perfKeys.${name}) + '"]'`);
+  const opened = (name) => SHOWS(`window.__perfKeys.${name}`);
   const open = async (label, name, pickRow, settle = 600) => {
     await mark(name, pickRow);
     const selector = await rowOf(name);
+    await page.reach(selector);
     await step(label, () => page.click(selector), { ready: opened(name), settle });
   };
-  await open('open thread (cached)', 'first', '(rows) => ({ el: document.querySelector("#threads .t:nth-child(2)") })');
+  // j and k are ready when the pane shows another thread's messages than before.
+  const moved = async (k) => {
+    const was = await page.evaluate(SHOWN);
+    await step(`${k} (${k === 'j' ? 'next' : 'previous'} thread)`, () => page.key(k), {
+      ready: `(${SHOWN}) && (${SHOWN}) !== ${JSON.stringify(was)}`, settle: 400,
+    });
+  };
+  // A filter, a view or unread only is ready when the list's rows change.
+  const relist = async (label, selector, { settle = 600, fetched = '' } = {}) => {
+    await page.reach(selector);
+    await page.evaluate(ARM_LIST(fetched));
+    await step(label, () => page.click(selector), { ready: 'window.__perfList', settle });
+  };
+  await open('open thread (cached)', 'first', '(rows) => rows.byIndex[1]');
   for (let i = 0; i < 4; i += 1) {
     // eslint-disable-next-line no-await-in-loop
-    await step('j (next thread)', () => page.key('j'), { ready: "document.querySelector('#pane .feed')", settle: 400 });
+    await moved('j');
   }
-  await step('k (previous thread)', () => page.key('k'), { ready: "document.querySelector('#pane .feed')", settle: 400 });
+  await moved('k');
   // The longest thread in view (prefetched), then a long one far down the list (not yet).
   await open('open long thread (cached)', 'big', '(rows) => rows.find((r) => r.el.offsetTop < 700) || rows[0]');
   await open('open long thread (uncached)', 'far', '(rows) => rows.find((r) => r.el.offsetTop > 6000 && r.n > 40) || rows[3]', 1200);
-  await page.evaluate("document.querySelector('#threads').scrollTop = 0");
-  await open('open thread (cached)', 'back', '(rows) => ({ el: document.querySelector("#threads .t:nth-child(3)") })');
-  await step('facet: pick a customer', () => page.click('[data-f="customer"] .fr[data-v]'));
-  await step('facet: unpick it', () => page.click('[data-f="customer"] .fr.on'));
-  await step('facet: kind', () => page.click('[data-f="kind"] .fr[data-v]'));
-  await step('facet: clear kind', () => page.click('[data-f="kind"] .clear'));
-  await step('Team → Personal', () => page.click('#threads [data-sort]'));
-  await step('Personal → Team', () => page.click('#threads [data-sort]'));
-  await step('unread only on', () => page.click('#threads [data-unread]'));
-  await step('unread only off', () => page.click('#threads [data-unread]'));
-  await page.evaluate("[...document.querySelectorAll('#pane .msg')].at(-3).classList.add('perf-msg')");
-  await step('hover a message', () => page.move('.perf-msg .bubble'), { settle: 500 });
-  await step('profile card', () => page.move('#pane .msg:not(.cont) .who b[data-p]'), { ready: "!document.querySelector('#pcard')?.hidden", settle: 300 });
-  await page.click('#reply');
+  await page.evaluate(`document.querySelector('${LIST}').scrollTop = 0`);
+  await open('open thread (cached)', 'back', '(rows) => rows.byIndex[2]');
+  // A facet's value is the same row before and after it is picked: [data-f][data-v].
+  const customer = await page.evaluate(`document.querySelector('${FACET('customer')}').dataset.v`);
+  const value = `${FACET('customer')}[data-v=${JSON.stringify(customer)}]`;
+  await relist('facet: pick a customer', value);
+  await relist('facet: unpick it', value);
+  await relist('facet: kind', FACET('kind'));
+  await relist('facet: clear kind', FACET_CLEAR('kind'));
+  await relist('unread only on', UNREAD);
+  await relist('unread only off', UNREAD);
+  const msg = await page.evaluate(`[...document.querySelectorAll('${MESSAGE}')].at(-3).dataset.id`);
+  await step('hover a message', () => page.move(BUBBLE(msg)), { settle: 500 });
+  await step('profile card', () => page.move(AUTHOR), { ready: `document.querySelector('${CARD}')?.hidden === false`, settle: 300 });
+  await page.click(REPLY);
   await sleep(300);
   {
     const t0 = await page.now();
@@ -431,21 +519,25 @@ async function scenario(browser) {
     await page.key(' ');
     await page.key('@');
     await page.key('p');
-  }, { ready: "!document.querySelector('#mention-list')?.hidden", settle: 400 });
+  }, { ready: `document.querySelector('${REPLY}').getAttribute('aria-expanded') === 'true'`, settle: 400 });
   await page.key('Escape');
-  const openKey = await page.evaluate("document.querySelector('#threads .t.sel').dataset.thread");
-  const count = await page.evaluate("document.querySelectorAll('#pane .msg').length");
+  const openKey = await page.evaluate(SHOWN);
+  const count = await page.evaluate(`document.querySelectorAll('${MESSAGE}').length`);
   await step('live update (thread open)', () => fetch(`${ORIGIN}/__dev/simulate?thread=${encodeURIComponent(openKey)}`, { method: 'POST' }), {
-    ready: `document.querySelectorAll('#pane .msg').length > ${count}`, settle: 1500,
+    ready: `document.querySelectorAll('${MESSAGE}').length > ${count}`, settle: 1500,
   });
-  const other = await page.evaluate("document.querySelector('#threads .t:not(.sel):nth-child(5)').dataset.thread");
+  const other = await page.evaluate(`[...document.querySelectorAll('${ROW}')].map((el) => el.dataset.thread)
+    .filter((k) => k !== ${JSON.stringify(openKey)})[4]`);
   await step('live update (another thread)', () => fetch(`${ORIGIN}/__dev/simulate?thread=${encodeURIComponent(other)}`, { method: 'POST' }), { settle: 2000 });
-  await step('switch team', () => page.evaluate("document.querySelector('[data-team=edge]').click()"), {
-    ready: "document.querySelectorAll('#threads .t').length < 100", settle: 1000,
+  // Another view closes the open thread: these come last. Each is ready when the list shows
+  // the view's own threads, not the last view's.
+  const view = (label, slug, settle) => relist(label, VIEW(slug), {
+    fetched: VIEW_URL(slug), settle,
   });
-  await step('switch team back', () => page.evaluate("document.querySelector('[data-team=platform]').click()"), {
-    ready: "document.querySelectorAll('#threads .t').length > 100", settle: 1500,
-  });
+  await view('Team → Personal', '', 1000);
+  await view('Personal → Team', TEAM, 1500);
+  await view('switch team', OTHER_TEAM, 1000);
+  await view('switch team back', TEAM, 1500);
   if (PROFILE && !PROFILE_STEP) {
     profiles.push((await page.send('Profiler.stop')).profile);
   }

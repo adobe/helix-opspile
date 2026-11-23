@@ -129,6 +129,23 @@ header .note { white-space: nowrap; }
 .menu .keys dd { margin: 0; text-align: right; }
 .menu kbd { font: var(--spectrum-font-size-50) ui-monospace, monospace; border: var(--spectrum-border-width-100) solid var(--line); padding: 0 var(--spectrum-spacing-75);
  }
+/* A menu in columns (the inbox's: you and your view; notifications and the agent; the look, the
+   keyboard and logging out): one under the other, a single column as on a phone, until the
+   screen is wide enough for them side by side, under who you are, each as tall as the menu and
+   a line between them. A column with nothing shown in it (viewing as someone) is not there. Tab
+   goes down a column, then on to the next, as they are read. */
+@media (min-width: 1000px) {
+  .menu:has(> .cols) { width: max-content; }
+  .menu .cols { display: grid; grid-auto-flow: column; grid-auto-columns: calc(var(--spectrum-spacing-100) * 36);
+    border-top: var(--spectrum-border-width-100) solid var(--line); }
+  .menu .col { padding: 0 var(--spectrum-spacing-200); }
+  .menu .col:first-child { padding-left: 0; }
+  .menu .col:last-child { padding-right: 0; }
+  .menu .col:not(:has(> section:not([hidden]))) { display: none; }
+  .menu .col:has(> section:not([hidden])) ~ .col:has(> section:not([hidden])) { border-left: var(--spectrum-border-width-100) solid var(--line); }
+  .menu .col > section { border-top-width: 0; }
+  .menu .col > section:not([hidden]) ~ section { border-top-width: var(--spectrum-border-width-100); }
+}
 
 /* A touch screen: the same controls, taller, on every page. */
 @media (hover: none) and (pointer: coarse) {
@@ -216,6 +233,8 @@ header .note { white-space: nowrap; }
   --s2-pop-in: var(--spectrum-animation-duration-300) var(--spectrum-animation-ease-out);
   --s2-dialog-in: var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out);
   --s2-out: var(--spectrum-animation-duration-100) var(--spectrum-animation-ease-in);
+  /* Another subject's content (another thread, file, team) fades in: Swap in ui/app.js. */
+  --s2-swap-in: var(--spectrum-animation-duration-200) var(--spectrum-animation-ease-out);
   /* Workflow icons (@react-spectrum/s2, S2_Icon_*_20_N), as masks: they take currentColor. */
   --s2-icon-chevron: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTMuNzU0ODgsNy4yNDMxNmMuMjg3MTEtLjI5ODgzLjc2MTcyLS4zMDg2LDEuMDU5NTctLjAyMDUxbDUuMTgzNTksNC45ODYzMyw1LjE5NzI3LTQuOTk5MDJjLjI5Nzg1LS4yODgwOC43NzI0Ni0uMjc4MzIsMS4wNTk1Ny4wMjA1MS4yODcxMS4yOTY4Ny4yNzgzMi43NzI0Ni0uMDIwNTEsMS4wNTk1N2wtNS43MTY4LDUuNWMtLjI5MDA0LjI4MDI3LS43NDkwMi4yODAyNy0xLjAzOTA2LDBsLTUuNzAzMTItNS40ODczYy0uMTUzMzItLjE0NjQ5LS4yMzA0Ny0uMzQzNzUtLjIzMDQ3LS41NDAwNCwwLS4xODc1MS4wNjkzNC0uMzc1MDEuMjA5OTYtLjUxOTU0WiIvPjwvc3ZnPg==");
   --s2-icon-checkmark: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTcuODY0MjYsMTUuNzM0MzhjLS4yMjI2NiwwLS40MzM1OS0uMDk4NjMtLjU3NjE3LS4yNjk1M2wtMy43NDcwNy00LjQ5ODA1Yy0uMjY1NjItLjMxODM2LS4yMjE2OC0uNzkxOTkuMDk1Ny0xLjA1NjY0LjMxNzM4LS4yNjU2Mi43OTAwNC0uMjIzNjMsMS4wNTY2NC4wOTU3bDMuMTUzMzIsMy43ODYxMyw3LjQzOTQ1LTkuNDY4NzVjLjI1NTg2LS4zMjYxNy43Mjg1Mi0uMzgxODQsMS4wNTI3My0uMTI2OTUuMzI2MTcuMjU1ODYuMzgyODEuNzI3NTQuMTI2OTUsMS4wNTI3M2wtOC4wMTE3MiwxMC4xOTgyNGMtLjEzOTY1LjE3ODcxLS4zNTI1NC4yODQxOC0uNTc5MS4yODcxMWgtLjAxMDc0WiIvPjwvc3ZnPg==");
@@ -487,6 +506,31 @@ header .note { white-space: nowrap; }
 @starting-style {
   .spectrum [popover]:popover-open { opacity: 0; translate: 0px calc(-1 * var(--spectrum-spacing-75)); }
 }
+/* The floating panels that are not in the top layer (`.s2-float`: a person's card, a list of
+   suggestions, a dropdown, the emoji picker) come and go as a Popover does. One shown with
+   `hidden` turned off, or put on the page, fades in as it settles 4px away from what it belongs
+   to, down when it is below it, up (`.s2-up`) when above; `hidden` fades it out faster, and it is
+   displayed until it has. It takes no pointer as it leaves, so a click goes through it. */
+.spectrum .s2-float {
+  --s2-settle: calc(-1 * var(--spectrum-spacing-75));
+  transition: opacity var(--s2-pop-in), translate var(--s2-pop-in), display var(--s2-pop-in) allow-discrete;
+}
+.spectrum .s2-float.s2-up { --s2-settle: var(--spectrum-spacing-75); }
+.spectrum .s2-float[hidden] {
+  display: none;
+  opacity: 0;
+  translate: 0px var(--s2-settle);
+  pointer-events: none;
+  transition: opacity var(--s2-out), translate var(--s2-out), display var(--s2-out) allow-discrete;
+}
+@starting-style {
+  .spectrum .s2-float { opacity: 0; translate: 0px var(--s2-settle); }
+}
+/* Drawn again while open (ui/inbox.js, `stayShown`): it is where it was, it does not arrive. */
+.spectrum .s2-float.s2-still { transition: none; }
+/* Laid out unseen to be measured (ui/inbox.js, `measureFloat`): a card that has to know its
+   height before it knows which way it opens. */
+.spectrum .s2-float.s2-measure[hidden] { display: block; visibility: hidden; transition: none; }
 .spectrum dialog:not(.lightbox) {
   opacity: 0;
   translate: 0px calc(var(--spectrum-spacing-300) + var(--spectrum-spacing-75));
@@ -520,6 +564,7 @@ header .note { white-space: nowrap; }
 }
 .spectrum .menu { font-size: var(--spectrum-font-size-100); }
 .spectrum .menu section { border-top-color: var(--spectrum-gray-200); }
+.spectrum .menu :is(.cols, .col) { border-color: var(--spectrum-gray-200); }
 .spectrum .menu h4 {
   color: var(--spectrum-neutral-subdued-content-color-default);
   font-size: var(--spectrum-font-size-75);
@@ -731,6 +776,35 @@ header .note { white-space: nowrap; }
 .spectrum .s2-chevron.right { rotate: -90deg; }
 .spectrum .s2-chevron.right:dir(rtl) { rotate: 90deg; }
 
+/* Folds (<details>) open as S2's Disclosure does: the panel grows from nothing and fades in
+   (ease-out), and folds away faster (ease-in). This is ::details-content, so a browser without
+   it snaps, as before; one without interpolate-size only fades. A fold rendered open (the pages
+   re-render, and the knowledge base keeps its open folds) has no style to start from, so it
+   does not replay the opening. The clip keeps the growing panel inside the fold, but not the
+   focus rings of what is in it. */
+.spectrum details { interpolate-size: allow-keywords; }
+.spectrum details::details-content {
+  block-size: 0;
+  opacity: 0;
+  overflow: clip;
+  /* As far as a focus ring reaches, its gap and its thickness: Chrome takes no calc() here. */
+  overflow-clip-margin: var(--spectrum-spacing-75);
+  transition: block-size var(--s2-out), opacity var(--s2-out),
+    content-visibility var(--s2-out) allow-discrete;
+}
+.spectrum details[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+  transition: block-size var(--s2-pop-in), opacity var(--s2-pop-in),
+    content-visibility var(--s2-pop-in) allow-discrete;
+}
+/* Reduced motion snaps them, as ever (the rule at the end does not reach a pseudo-element). */
+@media (prefers-reduced-motion: reduce) {
+  .spectrum details::details-content, .spectrum details[open]::details-content {
+    transition-duration: var(--spectrum-animation-duration-0);
+  }
+}
+
 /* Windows High Contrast: the focus ring and the drawn controls in the system's colors. */
 @media (forced-colors: active) {
   .spectrum :focus-visible { outline-color: Highlight; }
@@ -741,7 +815,36 @@ header .note { white-space: nowrap; }
   .spectrum input[type="checkbox"]:disabled { border-color: GrayText; }
 }
 
-/* Motion: none for those who ask the browser for less. */
+/* Motion: none for those who ask the browser for less, a dialog's underlay included (`*` does
+   not match it; popovers draw no underlay). */
 @media (prefers-reduced-motion: reduce) {
-  .spectrum *, .spectrum *::before, .spectrum *::after { transition-duration: var(--spectrum-animation-duration-0) !important; }
+  .spectrum *, .spectrum *::before, .spectrum *::after, .spectrum dialog::backdrop { transition-duration: var(--spectrum-animation-duration-0) !important; }
 }
+
+/* FMC block diagrams (src/fmc.js): a customer's stack drawing in the inbox, a knowledge base's
+   diagrams in the editor. Agents, storages and channels on the card, edges half as thick as nodes,
+   groups in shades of grey; the colors are Spectrum 2's, so they follow the color scheme. */
+.fmc { display: block; max-width: 100%; height: auto; margin: 0px auto; overflow: visible; }
+.fmc text { font-family: var(--s2-font); fill: var(--ink); }
+.fmc .fmc-label, .fmc .fmc-flabel { font-size: var(--spectrum-font-size-75); }
+.fmc .fmc-flabel { fill: var(--mute); }
+.fmc .fmc-note, .fmc .fmc-clabel, .fmc .fmc-rlabel { font-size: var(--spectrum-font-size-50); }
+.fmc .fmc-note, .fmc .fmc-clabel { fill: var(--mute); }
+.fmc .fmc-code { font-family: var(--s2-code); }
+.fmc .fmc-node .fmc-shape { fill: var(--card); stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-200); }
+.fmc .fmc-figure { fill: none; stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-100); }
+.fmc .fmc-dot, .fmc .fmc-arrow, .fmc .fmc-rarrow { fill: var(--spectrum-gray-800); }
+.fmc .fmc-edge { fill: none; stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-100); }
+.fmc .fmc-frame .fmc-shape { fill: var(--spectrum-gray-100); stroke: none; }
+.fmc .fmc-frame.fmc-depth-1 .fmc-shape { fill: var(--spectrum-gray-200); }
+.fmc .fmc-frame.fmc-depth-2 .fmc-shape, .fmc .fmc-frame.fmc-depth-3 .fmc-shape { fill: var(--spectrum-gray-300); }
+.fmc .fmc-frame.fmc-white .fmc-shape { fill: var(--card); }
+.fmc .fmc-frame-agent .fmc-shape, .fmc .fmc-frame-storage .fmc-shape, .fmc .fmc-frame-ushape .fmc-shape,
+.fmc .fmc-frame.fmc-frame-agent .fmc-shape, .fmc .fmc-frame.fmc-frame-storage .fmc-shape, .fmc .fmc-frame.fmc-frame-ushape .fmc-shape { fill: var(--card); stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-200); }
+.fmc .fmc-frame.fmc-frame-set .fmc-shape, .fmc .fmc-frame-set .fmc-inner { fill: var(--card); stroke: var(--spectrum-gray-800); stroke-width: var(--spectrum-border-width-100); }
+.fmc .fmc-frame-set .fmc-inner { fill: none; }
+.fmc .fmc-frame.fmc-grey .fmc-shape { fill: var(--spectrum-gray-100); }
+.fmc .fmc-dashed .fmc-shape { stroke-dasharray: var(--spectrum-spacing-100) var(--spectrum-spacing-75); }
+.fmc [data-part] { cursor: default; outline: none; }
+.fmc [data-part]:focus-visible .fmc-shape { stroke: var(--accent); }
+.fmc .fmc-node, .fmc .fmc-edge, .fmc .fmc-arrow { transition: opacity var(--s2-ease); }

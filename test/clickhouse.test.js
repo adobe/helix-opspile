@@ -541,6 +541,33 @@ describe('klickhaus export', () => {
     assert.equal(rowsOf(posts[1])[0].team, 'sites');
   });
 
+  it('re-files an imported thread without making its vectors', async () => {
+    const env = setup();
+    env.CONTENT = {};
+    env.DB.sqlite.prepare(`INSERT INTO rules (id, target, priority, source, field, pattern, value)
+      VALUES (1, 'team', 100, NULL, 'name', '^aem-', 'sites'),
+        (2, 'org', 100, NULL, 'name', '^aem-(.+)$', '$1')`).run();
+    env.DB.sqlite.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
+      VALUES ('slack', 'E1', 'C1', 'aem-acme', ?)`).run(iso(0));
+    thread(env);
+    message(env, '1.1', 0);
+    // From the history import (src/history.js): its vectors wait until someone asks for them.
+    env.DB.sqlite.prepare('UPDATE threads SET imported = 1').run();
+    await refile(env, {
+      source: 'slack', tenant: 'E1', channelId: 'C1', threads: [[KEY, PATH]],
+    });
+    assert.deepEqual(env.DB.rows('SELECT team FROM threads'), [{ team: 'sites' }]);
+    assert.deepEqual(env.queued.map((q) => q.body), [{ export: [KEY] }]);
+    // One that has vectors (replay.mjs made them) has them moved, under the new team.
+    env.queued.length = 0;
+    env.DB.sqlite.prepare(`UPDATE threads SET team = 'other', embedded = 'h',
+      vectorized_through = any_at`).run();
+    await refile(env, {
+      source: 'slack', tenant: 'E1', channelId: 'C1', threads: [[KEY, PATH]],
+    });
+    assert.deepEqual(env.queued.map((q) => q.body), [{ vectorize: KEY }, { export: [KEY] }]);
+  });
+
   it('keeps a re-filed thread behind for the sweep when the jobs cannot be queued', async () => {
     const env = setup();
     env.CONTENT = {};

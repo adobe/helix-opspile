@@ -15,19 +15,24 @@ import { DatabaseSync } from 'node:sqlite';
 
 const MIGRATIONS = new URL('../migrations/', import.meta.url);
 
+/** The customer portal's own database (portal/migrations): `d1({ migrations: PORTAL })`. */
+export const PORTAL = new URL('../portal/migrations/', import.meta.url);
+
 /**
  * A D1-shaped wrapper around an in-memory SQLite database with the real migrations
  * applied, so tests run the same SQL as production.
  */
-export function d1({ rules = [], people = [], teams = [] } = {}) {
+export function d1({
+  rules = [], people = [], teams = [], migrations = MIGRATIONS,
+} = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   // D1's limit, where this Node can set it: a longer LIKE pattern fails there, "too complex".
   if (db.limits) {
     db.limits.likePatternLength = 50;
   }
-  for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) {
-    db.exec(readFileSync(new URL(file, MIGRATIONS), 'utf8'));
+  for (const file of readdirSync(migrations).filter((f) => f.endsWith('.sql')).sort()) {
+    db.exec(readFileSync(new URL(file, migrations), 'utf8'));
   }
   const insert = (table, row) => {
     const cols = Object.keys(row);
@@ -43,16 +48,32 @@ export function d1({ rules = [], people = [], teams = [] } = {}) {
 
   const stmt = (sql, args = []) => ({
     bind: (...a) => stmt(sql, a.map((v) => (v === undefined ? null : v))),
-    async first() {
+    async first(column) {
       const row = db.prepare(sql).get(...args);
-      return row ? { ...row } : null;
+      if (!row) {
+        return null;
+      }
+      // As D1's: one column's value, when asked for one, and an error for one it does not have.
+      if (column === undefined) {
+        return { ...row };
+      }
+      if (!(column in row)) {
+        throw new Error(`D1_COLUMN_NOTFOUND: Column not found (${column})`);
+      }
+      return row[column];
     },
     async all() {
       return { results: db.prepare(sql).all(...args).map((r) => ({ ...r })) };
     },
     async run() {
-      const { changes } = db.prepare(sql).run(...args);
-      return { success: true, meta: { changes: Number(changes) } };
+      const prepared = db.prepare(sql);
+      // As D1's, a read's rows come along too (`batch` gives each statement's that way).
+      if (prepared.columns().length) {
+        const results = prepared.all(...args).map((r) => ({ ...r }));
+        return { results, success: true, meta: { changes: 0, rows_read: results.length } };
+      }
+      const { changes } = prepared.run(...args);
+      return { results: [], success: true, meta: { changes: Number(changes) } };
     },
   });
   return {

@@ -13,7 +13,6 @@
 import { json } from './http.js';
 import { linkedMessage, messageRef } from './messagelinks.js';
 import { notifyRoom } from './notify.js';
-import { teamsOf } from './shares.js';
 import { cleanSources, lookAt, sourcesOf } from './sources.js';
 import {
   AGENT_EMAIL, changeOf, keepForUndo, recordDraftEvent, textHash, undoneDiscard,
@@ -39,25 +38,55 @@ const PREVIEW = 140;
  * The entry a thread key belongs to: its key, the team it is filed under, every team whose
  * inbox has it (a shared channel's too), and every member thread.
  */
-export async function entryOf(env, key) {
-  const row = key && await env.DB.prepare(`SELECT thread, org, team, logical_thread, source, tenant,
-    channel_id FROM threads WHERE thread = ?`).bind(String(key)).first();
-  if (!row) {
-    return null;
-  }
-  const k = row.logical_thread || row.thread;
-  const { results } = await env.DB.prepare('SELECT thread FROM threads WHERE thread = ? OR logical_thread = ?')
-    .bind(k, k).all();
+/**
+ * SQL, `?1` the thread: `WITH t AS (the thread, `k` its entry's key) SELECT t.*, shares, follows`
+ * (the teams its channel is shared with, as JSON, in `sharesOf`'s order, and the teams that
+ * follow a technology the entry shows, in `followingTeams`'), for `entryFields`; more columns
+ * may follow, then `FROM t`.
+ */
+export const ENTRY_ROW = `WITH t AS (SELECT thread, org, team, logical_thread, source, tenant,
+      channel_id, COALESCE(logical_thread, thread) AS k FROM threads WHERE thread = ?1)
+  SELECT t.*, (SELECT json_group_array(c.team ORDER BY c.added_at, c.team) FROM channel_teams c
+      WHERE c.source = t.source AND c.channel_id = t.channel_id) AS shares,
+    (SELECT json_group_array(team) FROM (SELECT DISTINCT f.team FROM threads x
+      JOIN thread_tech g ON g.thread = x.thread JOIN team_follows f ON f.tech = g.tech
+      WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel' ORDER BY f.team))
+      AS follows`;
+
+/** An entry from an `ENTRY_ROW` row, without its members' keys. */
+export function entryFields(row) {
   return {
-    key: k,
+    key: row.k,
     org: row.org,
     team: row.team,
-    // The channel, for who may work it (src/shares.js, `mayWork`).
+    // The channel and the thread, for who may work it (src/shares.js, `mayWork`).
     source: row.source,
     tenant: row.tenant,
     channel_id: row.channel_id,
-    teams: await teamsOf(env, row),
-    keys: [...new Set([k, row.thread, ...(results || []).map((r) => r.thread)])],
+    thread: row.thread,
+    // Every team whose inbox has it (`teamsOf`): the one it is filed under, then the shares,
+    // then the teams that follow a technology it shows.
+    teams: [...new Set([row.team, ...JSON.parse(row.shares || '[]'),
+      ...JSON.parse(row.follows || '[]')].filter(Boolean))],
+    // The teams that follow a technology it shows (src/follows.js): its agent has their
+    // knowledge bases as a shared channel's.
+    follows: JSON.parse(row.follows || '[]'),
+  };
+}
+
+export async function entryOf(env, key) {
+  // In one round trip: the thread, its group's members and the teams its channel is shared
+  // with (as `teamsOf` has them), which were three in a row.
+  const row = key && await env.DB.prepare(`${ENTRY_ROW},
+      (SELECT json_group_array(m.thread) FROM threads m
+        WHERE m.thread = t.k OR m.logical_thread = t.k) AS members
+    FROM t`).bind(String(key)).first();
+  if (!row) {
+    return null;
+  }
+  return {
+    ...entryFields(row),
+    keys: [...new Set([row.k, row.thread, ...JSON.parse(row.members || '[]')])],
   };
 }
 

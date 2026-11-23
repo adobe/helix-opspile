@@ -18,9 +18,9 @@ import { seal, unseal } from './post.js';
  *
  * The app is public, so that it can be installed on any account's repositories (customers'
  * organizations too); anyone can install it, so agents only read an installation the admin
- * team allowed in the editor (`github_installations`).
+ * team allowed in a team's tools and MCP servers (`github_installations`).
  *
- * The admin team creates it from the knowledge-base editor with GitHub's manifest flow: the
+ * The admin team creates it from a team's tools and MCP servers with GitHub's manifest flow: the
  * page posts `appManifest()` to GitHub, GitHub asks the admin to confirm and sends them back
  * with a code, and `createApp()` trades the code for the app's id and private key, which is
  * kept in D1 (`github_apps`), sealed with TOKEN_KEY. Nobody copies a key anywhere.

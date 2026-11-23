@@ -30,9 +30,12 @@
  *   only what is new;
  * - `layers/<sha256>.json`: a layer (`v` 1): its `name` and its `files`, each a `path` in the
  *   image, a `mode` (read-only: 0444, or 0555 for a program), a `size`, and its `sha256` (a
- *   blob) or, for a small file, its bytes
- *   themselves (`data`, base64). An Emscripten program's JavaScript glue is there as an empty
- *   file: in a Worker the kernel runs the program without it, but finds the command by it;
+ *   blob) or, for a small file, its bytes themselves (`data`, base64). A blob over a piece
+ *   (PIECE_BYTES) has its `pieces` too: `{ size, sha256 }`, the hash of each piece of `size`
+ *   bytes, in order, so a read of a part of it is checked (a reader that does not know them
+ *   reads the whole blob, by its `sha256`). An Emscripten program's JavaScript glue is there
+ *   as an empty file: in a Worker the kernel runs the program without it, but finds the
+ *   command by it;
  * - `images/<name>.json`: an image's manifest (`v` 2): its `layers` from the bottom up (`name`,
  *   `digest`, `bytes`), its `commands`, what the agent is told it has (`tools`), and `digest`,
  *   which names exactly this stack;
@@ -71,6 +74,7 @@ export const LAYERS = {
   ],
   text: [
     { name: '@ai-ecoverse/wasm-grep' },
+    { name: '@ai-ecoverse/wasi-ripgrep' },
     { name: '@ai-ecoverse/wasm-sed' },
     { name: '@ai-ecoverse/wasm-gawk' },
     { name: '@ai-ecoverse/wasm-jq' },
@@ -89,11 +93,16 @@ export const LAYERS = {
     { name: '@ai-ecoverse/wasm-xz' },
     { name: '@ai-ecoverse/wasm-bzip2' },
   ],
-  // dig asks DNS over HTTPS (cloudflare-dns.com) through the kernel's proxy: the kernel has no
-  // UDP, and a Worker no route to a name server. BIND's (wasix-bind) needs threads.
+  // BIND's dig, host and nslookup ask the kernel's DNS (127.0.0.53), which forwards what it
+  // does not know over DNS over HTTPS (src/agent/agent.js, `network.doh`).
   net: [
     { name: '@ai-ecoverse/wasm-curl' },
-    { name: '@ai-ecoverse/wasi-dig' },
+    { name: '@ai-ecoverse/wasix-bind' },
+  ],
+  // openssl, with its configuration and Mozilla's roots. It has no TCP of its own out of the
+  // computer, so s_client reaches only the kernel's loopback.
+  tls: [
+    { name: '@ai-ecoverse/wasix-openssl-cli', files: ['etc/ssl'] },
   ],
   // git runs its transports (git-remote-https) from libexec/git-core, by their paths.
   git: [
@@ -108,14 +117,23 @@ export const LAYERS = {
   js: [
     { name: '@ai-ecoverse/wasi-quickjs' },
   ],
+  // gh, with its imports module (host/gh-host.mjs), which the kernel runs beside it.
+  github: [
+    { name: '@ai-ecoverse/wasi-gh' },
+  ],
+  // Graphviz's dot, its layouts and its core renderers (svg, json, xdot): for the diagrams of the
+  // knowledge bases (src/dot.js), in the agents' computers and in the renderer Worker
+  // (src/graphviz/worker.js), whose image it is alone.
+  diagrams: [
+    { name: '@ai-ecoverse/wasm-graphviz' },
+  ],
   data: [
-    { name: '@ai-ecoverse/wasi-ripgrep' },
     { name: '@ai-ecoverse/wasm-sqlite3' },
     { name: '@ai-ecoverse/wasm-binutils', commands: ['strings'] },
   ],
 };
 
-const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, git, qjs';
+const BASE_TOOLS = 'coreutils (cat, sort, uniq, head, tail, cut, tr, wc, base64, sha256sum, date and the rest), grep, rg, sed, awk (gawk), jq, yq, find, xargs, diff, cmp, patch, tar, gzip, zip, unzip, xz, bzip2, tree, column, rev, hexdump, xxd, file, html2markdown, curl, dig, host, nslookup, openssl, git, qjs, dot (Graphviz)';
 
 /**
  * The images: `name` is what a team's choice stores, `title` and `description` are for the
@@ -127,30 +145,70 @@ export const IMAGES = [
   {
     name: 'base',
     title: 'Base',
-    description: 'GNU bash, coreutils, grep, sed, gawk, jq, yq, find, diff, tar, gzip, zip,'
-      + ' html2markdown, curl, dig, git and qjs (JavaScript): for reading logs, text, JSON and'
-      + ' YAML, asking APIs and DNS, cloning repositories, and small scripts.',
+    description: 'GNU bash, coreutils, grep, ripgrep, sed, gawk, jq, yq, find, diff, tar, gzip,'
+      + ' zip, html2markdown, curl, dig, openssl, git, qjs (JavaScript) and dot (Graphviz): for'
+      + ' reading logs, text, JSON and YAML, searching many files, asking APIs and DNS, reading'
+      + ' certificates, cloning repositories, small scripts, and laying out diagrams.',
     tools: BASE_TOOLS,
-    layers: ['shell', 'text', 'archive', 'net', 'js', 'git', 'formats'],
+    layers: ['shell', 'text', 'archive', 'net', 'tls', 'js', 'git', 'formats', 'diagrams'],
   },
   {
     name: 'data',
     from: 'base',
     title: 'Data',
-    description: 'Base, with ripgrep, sqlite3 and strings: for searching many files and'
-      + ' querying CSV or JSON as tables.',
-    tools: `${BASE_TOOLS}, rg, sqlite3, strings`,
+    description: 'Base, with sqlite3 and strings: for querying CSV or JSON as tables, and'
+      + ' reading the text in binary files.',
+    tools: `${BASE_TOOLS}, sqlite3, strings`,
     layers: ['data'],
+  },
+  // Not in Base: gh.wasm is 50 MB, which the agent's object reads whole each time a Dynamic
+  // Worker of gh starts cold (src/agent/image.js), and each gh has a Dynamic Worker to itself.
+  {
+    name: 'github',
+    from: 'base',
+    title: 'GitHub',
+    description: 'Base, with gh (GitHub CLI): for reading repositories, issues, pull requests and'
+      + ' workflow runs. Give the team a GH_TOKEN secret for github.com.',
+    tools: `${BASE_TOOLS}, gh`,
+    layers: ['github'],
+  },
+  // The renderer Worker's (src/graphviz/worker.js): dot alone, no shell. Not offered to teams
+  // (`internal`: not in the index the knowledge-base editor lists).
+  {
+    name: 'graphviz',
+    title: 'Graphviz',
+    description: 'dot alone, for the renderer Worker.',
+    tools: 'dot',
+    layers: ['diagrams'],
+    internal: true,
   },
 ];
 
 /** Files up to this size are in their layer itself, not in a blob of their own. */
 const INLINE_BYTES = 16 * 1024;
 
+/**
+ * A blob larger than this is read in pieces of this size too (src/agent/image.js): its file
+ * in the layer names the sha256 of each (`pieces`), so a piece is checked by itself.
+ */
+export const PIECE_BYTES = 1024 * 1024;
+
+/** The pieces of a blob (`data`), when it has more than one: `{ size, sha256 }`, or none. */
+export function piecesOf(data) {
+  if (data.length <= PIECE_BYTES) {
+    return undefined;
+  }
+  const sha256 = [];
+  for (let at = 0; at < data.length; at += PIECE_BYTES) {
+    sha256.push(createHash('sha256').update(data.subarray(at, at + PIECE_BYTES)).digest('hex'));
+  }
+  return { size: PIECE_BYTES, sha256 };
+}
+
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
 
 /** The files of a command entry (`slicc.commands.<name>`), relative to its package. */
-const filesOf = (entry) => [entry.glue, entry.wasm, entry.script, entry.module,
+const filesOf = (entry) => [entry.glue, entry.wasm, entry.script, entry.module, entry.imports,
   ...(entry.variants || []).map((v) => v.wasm)].filter((f) => typeof f === 'string');
 
 /**
@@ -189,7 +247,7 @@ export function imagePackage(manifest, { commands, files } = {}, present = []) {
 }
 
 /** The programs `tools` names: its words, without what stands in brackets as a gloss. */
-export const toolNames = (tools) => tools.replace(/\((gawk)\)/g, '')
+export const toolNames = (tools) => tools.replace(/\((gawk|Graphviz)\)/g, '')
   .replace(/ and the rest/g, '')
   .split(/[\s,()]+/)
   .filter((w) => w && w !== 'and');
@@ -230,11 +288,13 @@ export async function buildLayer(name, packages, modules) {
     if (!inline) {
       blobs.set(hash, data);
     }
+    const pieces = inline ? undefined : piecesOf(data);
     files.push({
       path,
       mode,
       size: data.length,
       ...(inline ? { data: data.toString('base64') } : { sha256: hash }),
+      ...(pieces ? { pieces } : {}),
     });
   };
   for (const spec of packages) {
@@ -295,6 +355,7 @@ export async function build({
       title: image.title,
       description: image.description,
       tools: image.tools,
+      ...(image.internal ? { internal: true } : {}),
       commands,
       digest: sha256(stack.map((l) => l.digest).join('\n')),
       bytes: [...merged.values()].reduce((n, f) => n + f.size, 0),
@@ -312,7 +373,7 @@ export async function build({
 /** The index of `images` (their manifests): what the knowledge-base editor lists. */
 export const indexOf = (images) => ({
   v: 2,
-  images: images.map(({
+  images: images.filter((i) => !i.internal).map(({
     name, title, description, digest, bytes, layers,
   }) => ({
     name, title, description, digest, bytes, layers: layers.map((l) => l.name),

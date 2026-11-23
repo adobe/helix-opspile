@@ -17,8 +17,79 @@
  * always complete and never contradict the files.
  */
 
+import { checkDot, dotInfo, isDiagram } from '../dot.js';
+import { checkStack, STACK_PATH } from '../stack.js';
+
 export const OKF_VERSION = '0.2';
 export const RESERVED = new Set(['index.md', 'log.md']);
+
+/**
+ * Where the concepts of each type go, the same in every knowledge base, so that agents, people
+ * and the inbox (src/kbpeople.js) find a concept by its type (docs/ARCHITECTURE.md, "Layout").
+ * `org`: about one customer, so never in a team's; `team`: the team's catalog of products
+ * (src/catalog.js), never in a customer's. The agents' prompt lists them
+ * (src/agent/tools.js), and their writes are held to them (`checkLayout`); other types go
+ * anywhere, people's edits too.
+ */
+export const LAYOUT = [
+  {
+    type: 'Customer', dir: 'customer', org: true, what: 'who the customer is: business, brands and business units, contract, how they work with Adobe',
+  },
+  { type: 'Contact', dir: 'contacts', what: 'one person (below)' },
+  {
+    type: 'Site', dir: 'sites', org: true, what: 'one site or app: domains, repositories, CDN, environments',
+  },
+  { type: 'Tech Stack', dir: 'tech-stack', what: 'a platform, integration or tool in use, and how it is set up' },
+  {
+    type: 'Project', dir: 'projects', org: true, what: 'a migration, launch or other piece of work with a goal and dates',
+  },
+  { type: 'Known Issue', dir: 'issues', what: 'a problem that recurs: symptoms, cause, fix or workaround' },
+  { type: 'Incident', dir: 'incidents', what: 'one outage or escalation: timeline, impact, resolution' },
+  { type: 'Decision', dir: 'decisions', what: 'something agreed: what, who agreed, when and why' },
+  { type: 'Playbook', dir: 'playbooks', what: 'the steps of a recurring task' },
+  { type: 'Product Area', dir: 'product-areas', what: 'a part of an Adobe product: how it works, its limits, who owns it' },
+  { type: 'Reference', dir: 'reference', what: 'anything else worth looking up: links, terms, facts' },
+  // The team's catalog (src/catalog.js): what Clef asks about, in every channel.
+  {
+    type: 'Vendor', dir: 'products', team: true, what: 'a company whose products the team supports, at products/<vendor>.md (products/adobe.md): its name',
+  },
+  {
+    type: 'Product', dir: 'products', team: true, what: 'one product of a vendor, at products/<vendor>/<product>.md (products/fastly/cdn.md): Clef is asked whether a thread shows that the customer uses it, unless it only groups features',
+  },
+  {
+    type: 'Feature', dir: 'products', team: true, what: 'one feature of a product, at products/<vendor>/<product>/<feature>.md (products/adobe/aem-sites/edge-delivery.md): asked about on its own',
+  },
+  {
+    type: 'Category', dir: 'products', team: true, what: 'a kind of product any vendor makes, at products/categories/<category>.md (a consent manager): asked, for the vendors no file lists',
+  },
+];
+
+/** The directory of the people, one Contact concept per person. */
+export const CONTACTS = 'contacts';
+
+/**
+ * The file name a person's Contact has, from their name: `Dana Ops` and `Ops, Dana` are
+ * `dana-ops`, accents and what is in parentheses left out. Empty when nothing is left.
+ */
+export function personSlug(name) {
+  let s = String(name || '').replace(/\([^)]*\)|<[^>]*>/g, ' ').trim();
+  // Teams' `Last, First` (one comma, no more words after it than a first name has).
+  const flip = /^([^,]+),\s*([^,]+)$/.exec(s);
+  if (flip && flip[2].trim().split(/\s+/).length <= 2) {
+    s = `${flip[2]} ${flip[1]}`;
+  }
+  return s.normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/ß/g, 'ss')
+    .replace(/[łŀ]/g, 'l')
+    .replace(/ø/g, 'o')
+    .replace(/æ/g, 'ae')
+    .replace(/đ/g, 'd')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
 
 /** The frontmatter block and the body, or null when there is none. */
 export function splitFrontmatter(text) {
@@ -77,13 +148,85 @@ export function scalar(yaml, key) {
 }
 
 /**
- * Why a concept file is not acceptable, or null. Paths are bundle-relative, markdown only,
- * and never the reserved files, which code writes.
+ * A top-level list of strings of the frontmatter, `key: [a, "b"]` or a block of `- a` lines
+ * (or one scalar, as a list of one); empty when it has none.
+ */
+export function strings(yaml, key) {
+  const lines = String(yaml).split(/\r?\n/);
+  const at = lines.findIndex((l) => new RegExp(`^${key}:`).test(l));
+  if (at < 0) {
+    return [];
+  }
+  const rest = lines[at].slice(key.length + 1).replace(/\s+#.*$/, '').trim();
+  if (rest.startsWith('[')) {
+    return rest.replace(/^\[|\]$/g, '').split(',').map(unquote).filter(Boolean);
+  }
+  if (rest) {
+    return [unquote(rest)].filter(Boolean);
+  }
+  const out = [];
+  for (let i = at + 1; i < lines.length && /^[ \t]+-[ \t]/.test(lines[i]); i += 1) {
+    out.push(unquote(lines[i].replace(/^[ \t]+-[ \t]+/, '').replace(/\s+#.*$/, '')));
+  }
+  return out.filter(Boolean);
+}
+
+const ROSTERS = new Set(['people', 'contacts', 'team', 'teams', 'staff', 'roster', 'stakeholders', 'who-is-who', 'adobe', 'customer']);
+
+/**
+ * Why an agent's concept is not where its type goes (`LAYOUT`), or null. `kind`: the
+ * knowledge base's, `org` or `team`. A Contact is one person, at `contacts/<personSlug>.md`.
+ */
+export function checkLayout(path, content, kind) {
+  const fm = splitFrontmatter(content);
+  const type = fm && scalar(fm.yaml, 'type');
+  const row = type && LAYOUT.find((r) => r.type.toLowerCase() === type.trim().toLowerCase());
+  if (!row) {
+    return null;
+  }
+  if (row.type !== type) {
+    return `the type is spelled "${row.type}"`;
+  }
+  if (row.org && kind === 'team') {
+    return `a ${row.type} is about one customer: it goes to kb-org, not to a team's knowledge base`;
+  }
+  if (row.team && kind === 'org') {
+    return `a ${row.type} is part of a team's catalog of products: it goes to kb-team, not to a customer's knowledge base`;
+  }
+  const p = String(path);
+  if (!p.startsWith(`${row.dir}/`)) {
+    return `${/^[AEIOU]/.test(row.type) ? 'an' : 'a'} ${row.type} goes in ${row.dir}/ (${p.split('/').pop()} there); move it, and fix the links to it you know of`;
+  }
+  if (row.type === 'Contact') {
+    const name = p.slice(row.dir.length + 1).replace(/\.md$/, '');
+    const slug = personSlug(scalar(fm.yaml, 'title'));
+    // A list of people, whatever its file is called: "Customer contacts", "ACME people".
+    const title = scalar(fm.yaml, 'title') || '';
+    const many = /\b(contacts|people|roster|stakeholders|team)\b/i.exec(title.replace(/\([^)]*\)/g, ''));
+    if (ROSTERS.has(name) || !slug || many) {
+      const why = many ? ` (its title says "${many[1]}": a role or company goes in the description, or in parentheses after the name)` : '';
+      return `a Contact is one person, with their full name as its title: one file per person (${CONTACTS}/dana-ops.md for "Dana Ops"), never a list of people in one file${why}`;
+    }
+    if (name !== slug) {
+      return `a Contact's file is named after its title: ${CONTACTS}/${slug}.md`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Why a file of a knowledge base is not acceptable, or null: a concept (`.md`, with
+ * frontmatter) or a diagram (`.dot`, src/dot.js). Paths are bundle-relative and never the
+ * reserved files, which code writes.
  */
 export function checkConcept(path, content) {
   const p = String(path || '');
-  if (!/^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*\.md$/.test(p)) {
-    return 'paths are lowercase, relative, end in .md, and use only a-z, 0-9, ".", "_" and "-"';
+  if (!/^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*\.(md|dot)$/.test(p)) {
+    return 'paths are lowercase, relative, end in .md (a concept) or .dot (a diagram), and use only a-z, 0-9, ".", "_" and "-"';
+  }
+  if (isDiagram(p)) {
+    const why = checkDot(content);
+    return why ? `not a diagram the inbox can draw: ${why}` : null;
   }
   if (RESERVED.has(p.split('/').pop())) {
     return `${p.split('/').pop()} is maintained automatically; write concept files only`;
@@ -97,6 +240,13 @@ export function checkConcept(path, content) {
   }
   if (!scalar(fm.yaml, 'type')) {
     return 'the frontmatter needs a non-empty `type`';
+  }
+  // The stack drawing (src/stack.js) is one the inbox can always draw.
+  if (p === STACK_PATH) {
+    const why = checkStack(fm.body);
+    if (why) {
+      return `not a stack drawing: ${why}`;
+    }
   }
   return null;
 }
@@ -128,7 +278,8 @@ const titleOf = (path, yaml) => scalar(yaml, 'title')
 
 /**
  * `index.md` for one directory (OKF §8): its concepts and subdirectories, with the concepts'
- * titles and descriptions. `entries` are `{ name, dir?, yaml? }`.
+ * titles and descriptions, and its diagrams. `entries` are `{ name, dir?, yaml?, dot? }`, `dot`
+ * a diagram's `{ title, description }` (src/dot.js `dotInfo`).
  */
 export function renderIndex(dirPath, entries, { root = false } = {}) {
   const concepts = entries.filter((e) => !e.dir).sort((a, b) => a.name.localeCompare(b.name));
@@ -142,7 +293,11 @@ export function renderIndex(dirPath, entries, { root = false } = {}) {
     const yaml = c.yaml || '';
     const desc = scalar(yaml, 'description');
     const type = scalar(yaml, 'type');
-    lines.push(`* [${titleOf(c.name, yaml)}](${c.name})${type ? ` (${type})` : ''}${desc ? ` - ${desc}` : ''}`);
+    if (c.dot) {
+      lines.push(`* [${c.dot.title}](${c.name}) (Diagram)${c.dot.description ? ` - ${c.dot.description}` : ''}`);
+    } else {
+      lines.push(`* [${titleOf(c.name, yaml)}](${c.name})${type ? ` (${type})` : ''}${desc ? ` - ${desc}` : ''}`);
+    }
   }
   if (dirs.length) {
     if (concepts.length) {
@@ -181,3 +336,5 @@ export function addLogEntry(existing, date, entry) {
   }
   return `${lines.join('\n').replace(/\n+$/, '')}\n`;
 }
+
+export { dotInfo, isDiagram };

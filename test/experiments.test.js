@@ -13,13 +13,18 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  armOf, armTag, CACHE, cacheRetention, running, tagOf, untagged,
+  armModel, armOf, armTags, assignedArm, CACHE, cacheRetention, MODEL, running, tagOf, tagsOf,
+  untagged,
 } from '../src/experiments.js';
-import { retainingApi } from '../src/agent/model.js';
+import { ARM_KEY, pinnedArm } from '../src/agent/arms.js';
+import { d1 } from './d1.js';
+import { armApi, fallbackStream, resetUnusable } from '../src/agent/model.js';
 
 // Made-up thread keys only.
 const names = Array.from({ length: 2000 }, (_, i) => `slack:T0000:C${1000 + i}:${1700000000 + i * 37}.000100`);
 const DURING = Date.parse('2026-11-10T12:00:00Z');
+const MODEL_DURING = Date.parse('2026-11-20T12:00:00Z');
+const ENV = { AGENT_MODEL: 'us.anthropic.claude-opus-5-5' };
 
 describe('experiments', () => {
   it('runs the cache experiment for a week from midnight UTC', () => {
@@ -45,21 +50,58 @@ describe('experiments', () => {
   it('asks for the one-hour cache outside the window and for knowledge bases', () => {
     const short = names.find((n) => armOf(CACHE, n, DURING).id === 'short');
     assert.equal(cacheRetention(short, DURING), 'short');
-    assert.equal(armTag(short, DURING), '#cache=short');
+    assert.equal(armTags(short, DURING), '#cache=short');
     for (const at of [Date.parse(CACHE.from) - 1, Date.parse(CACHE.until)]) {
       assert.equal(cacheRetention(short, at), 'long');
-      assert.equal(armTag(short, at), '');
+      assert.equal(armTags(short, at), '');
     }
     assert.equal(armOf(CACHE, 'kb:helix:acme', DURING), null);
     assert.equal(cacheRetention('kb:helix:acme', DURING), 'long');
   });
 
-  it('reads the arm in a metric\'s detail', () => {
+  it('reads the arms in a metric\'s detail', () => {
     assert.deepEqual(tagOf('us.anthropic.claude-opus-5-5#cache=short'), {
       experiment: 'cache', arm: 'short', detail: 'us.anthropic.claude-opus-5-5',
     });
     assert.equal(tagOf('us.anthropic.claude-opus-5-5'), null);
     assert.equal(untagged('us.anthropic.claude-opus-5-5#cache=long'), 'us.anthropic.claude-opus-5-5');
+    assert.deepEqual(tagsOf('m#cache=long#model=sonnet').map((t) => [t.experiment, t.arm, t.detail]), [
+      ['cache', 'long', 'm'], ['model', 'sonnet', 'm'],
+    ]);
+  });
+
+  it('runs the model experiment for two weeks from midnight UTC, after the cache experiment', () => {
+    assert.equal(Date.parse(MODEL.until) - Date.parse(MODEL.from), 14 * 86400000);
+    assert.match(MODEL.from, /T00:00:00Z$/);
+    assert.ok(MODEL.from >= CACHE.until);
+    const counts = {};
+    for (const n of names) {
+      const a = armOf(MODEL, n, MODEL_DURING, ENV);
+      counts[a.id] = (counts[a.id] || 0) + 1;
+      assert.equal(assignedArm(MODEL, n).id, a.id);
+    }
+    assert.ok(Math.abs(counts.opus - counts.sonnet) < 200, JSON.stringify(counts));
+  });
+
+  it('runs Sonnet at the deployed model\'s inference profile, global or geo, only instead of Opus', () => {
+    assert.equal(armModel(ENV, 'sonnet'), 'us.anthropic.claude-sonnet-5-5');
+    assert.equal(armModel({ AGENT_MODEL: 'global.anthropic.claude-opus-5-5' }, 'sonnet'), 'global.anthropic.claude-sonnet-5-5');
+    assert.equal(armModel({ AGENT_MODEL: 'eu.anthropic.claude-opus-5-5' }, 'sonnet'), 'eu.anthropic.claude-sonnet-5-5');
+    assert.equal(armModel(ENV, 'opus'), null);
+    assert.equal(armModel(ENV, null), null);
+    assert.equal(armModel({ AGENT_MODEL: 'us.anthropic.claude-haiku-5-5' }, 'sonnet'), null);
+  });
+
+  it('tags a pinned thread\'s model use by its pin, whenever it is', () => {
+    const after = Date.parse(MODEL.until) + 86400000;
+    // The model experiment's tags only: the compaction experiment runs beside it.
+    const modelTags = (...args) => tagsOf(armTags(...args)).filter((t) => t.experiment === 'model')
+      .map((t) => `#${t.experiment}=${t.arm}`).join('');
+    assert.equal(modelTags('t', MODEL_DURING, ENV, { model: 'sonnet' }), '#model=sonnet');
+    assert.equal(modelTags('t', after, ENV, { model: 'sonnet' }), '#model=sonnet');
+    assert.equal(modelTags('t', MODEL_DURING, ENV, { model: null }), '');
+    assert.equal(modelTags('t', MODEL_DURING, ENV), '');
+    assert.equal(modelTags('t', MODEL_DURING, { AGENT_MODEL: 'us.anthropic.claude-haiku-5-5' }, { model: 'sonnet' }), '');
   });
 
   it('asks for the retention the agent is in at each request, but none where none was asked', () => {
@@ -70,7 +112,7 @@ describe('experiments', () => {
       streamSimple: (model, context, options) => seen.push(['simple', options]),
     };
     let arm = 'long';
-    const wrapped = retainingApi(api, () => arm);
+    const wrapped = armApi(api, { retention: () => arm });
     wrapped.stream({}, {}, { cacheRetention: 'long', maxTokens: 5 });
     arm = 'short';
     wrapped.streamSimple({}, {}, { cacheRetention: 'long' });
@@ -83,6 +125,164 @@ describe('experiments', () => {
       ['stream', { cacheRetention: 'short' }],
     ]);
     assert.equal(wrapped.id, 'x');
-    assert.equal(retainingApi(api), api);
+    assert.equal(armApi(api), api);
+  });
+
+  /** A stream of `events`, as pi-ai's are. */
+  const streamOf = (events) => ({
+    async* [Symbol.asyncIterator]() {
+      yield* events;
+    },
+  });
+  const failed = (errorMessage) => ({ type: 'error', reason: 'error', error: { stopReason: 'error', errorMessage } });
+  const collect = async (s) => {
+    const out = [];
+    for await (const e of s) {
+      out.push(e);
+    }
+    return out;
+  };
+
+  it('asks the arm\'s model as itself, and the session\'s when it cannot be used', async () => {
+    resetUnusable();
+    const asked = [];
+    let refuse = true;
+    const api = {
+      stream: (model) => {
+        asked.push(model.id);
+        if (model.id.includes('sonnet')) {
+          // As itself: its prices and limits, at the session model's address.
+          assert.equal(model.cost.input, 2);
+          assert.equal(model.baseUrl, 'https://gateway.example');
+        }
+        if (refuse && model.id.includes('sonnet')) {
+          return streamOf([failed('403 AccessDeniedException: You don\'t have access to the model with the specified model ID.')]);
+        }
+        return streamOf([{ type: 'start' }, { type: 'done', message: { model: model.id } }]);
+      },
+    };
+    const env = { ...ENV, AI_GATEWAY_ACCOUNT: 'a', AGENT_GATEWAY: 'g' };
+    const base = { id: ENV.AGENT_MODEL, baseUrl: 'https://gateway.example' };
+    const logs = [];
+    const { log } = console;
+    console.log = (line) => logs.push(line);
+    try {
+      const wrapped = armApi(api, { env, model: () => 'us.anthropic.claude-sonnet-5-5' });
+      const events = await collect(wrapped.stream(base, {}, {}));
+      assert.deepEqual(events.map((e) => e.type), ['start', 'done']);
+      assert.equal(events[1].message.model, ENV.AGENT_MODEL);
+      assert.deepEqual(asked, ['us.anthropic.claude-sonnet-5-5', ENV.AGENT_MODEL]);
+      assert.match(logs[0], /model unusable/);
+      // Not asked again for a while.
+      refuse = false;
+      await collect(wrapped.stream(base, {}, {}));
+      assert.deepEqual(asked.slice(2), [ENV.AGENT_MODEL]);
+      resetUnusable();
+      const again = await collect(wrapped.stream(base, {}, {}));
+      assert.equal(again[1].message.model, 'us.anthropic.claude-sonnet-5-5');
+    } finally {
+      console.log = log;
+    }
+  });
+
+  it('passes other failures of the arm\'s model as they are', async () => {
+    const overloaded = failed('529 overloaded');
+    let fell = false;
+    const events = await collect(fallbackStream(
+      () => streamOf([overloaded]),
+      () => streamOf([{ type: 'done', message: {} }]),
+      () => { fell = true; },
+    ));
+    assert.deepEqual(events, [overloaded]);
+    assert.equal(fell, false);
+    // Nor once the answer has started.
+    const late = await collect(fallbackStream(
+      () => streamOf([{ type: 'start' }, failed('403 access denied')]),
+      () => streamOf([{ type: 'done', message: {} }]),
+    ));
+    assert.deepEqual(late.map((e) => e.type), ['start', 'error']);
+  });
+
+  /** A Durable Object's storage, as the agent has it. */
+  const storageOf = (init = {}) => {
+    const m = new Map(Object.entries(init));
+    return {
+      m, get: async (k) => m.get(k), put: async (k, v) => { m.set(k, v); },
+    };
+  };
+
+  it('pins a thread that first starts in the window to its arm, for good', async () => {
+    const DB = d1();
+    const env = { ...ENV, DB };
+    const sonnet = names.find((n) => assignedArm(MODEL, n).id === 'sonnet');
+    const storage = storageOf();
+    assert.equal(await pinnedArm({
+      storage, env, name: sonnet, now: MODEL_DURING,
+    }), 'sonnet');
+    assert.equal(storage.m.get(ARM_KEY).recorded, true);
+    assert.deepEqual(DB.sqlite.prepare('SELECT name, experiment, arm FROM agent_arms').all()
+      .map((r) => ({ ...r })), [{ name: sonnet, experiment: 'model', arm: 'sonnet' }]);
+    // After the window, it stays: no thread changes model.
+    assert.equal(await pinnedArm({
+      storage, env, name: sonnet, now: Date.parse(MODEL.until) + 86400000,
+    }), 'sonnet');
+  });
+
+  it('keeps a thread that started before the window, or after it, on the deployed model', async () => {
+    const DB = d1();
+    const env = { ...ENV, DB };
+    const sonnet = names.find((n) => assignedArm(MODEL, n).id === 'sonnet');
+    // Started before: delivered or metered already. Then the window opens: still none.
+    for (const init of [{ mark: '1700000000.000100' }, { 'cogs:usage': {} }]) {
+      const storage = storageOf(init);
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal(await pinnedArm({
+        storage, env, name: sonnet, now: MODEL_DURING,
+      }), null);
+    }
+    // First started before the window: pinned to none, then kept so.
+    const early = storageOf();
+    assert.equal(await pinnedArm({
+      storage: early, env, name: sonnet, now: Date.parse(MODEL.from) - 1,
+    }), null);
+    assert.equal(await pinnedArm({
+      storage: early, env, name: sonnet, now: MODEL_DURING,
+    }), null);
+    // After the window, and knowledge bases: none.
+    assert.equal(await pinnedArm({
+      storage: storageOf(), env, name: sonnet, now: Date.parse(MODEL.until),
+    }), null);
+    assert.equal(await pinnedArm({
+      storage: storageOf(), env, name: 'kb:helix:acme', now: MODEL_DURING,
+    }), null);
+    assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM agent_arms').get().n, 0);
+  });
+
+  it('records a pin it could not write to D1 the next time, without deciding it again', async () => {
+    const sonnet = names.find((n) => assignedArm(MODEL, n).id === 'sonnet');
+    const storage = storageOf();
+    const broken = {
+      prepare: () => {
+        throw new Error('D1 down');
+      },
+    };
+    const { log } = console;
+    console.log = () => {};
+    try {
+      assert.equal(await pinnedArm({
+        storage, env: { ...ENV, DB: broken }, name: sonnet, now: MODEL_DURING,
+      }), 'sonnet');
+    } finally {
+      console.log = log;
+    }
+    assert.equal(storage.m.get(ARM_KEY).recorded, false);
+    // Delivered since, and later than the window: the pin stands, and is recorded now.
+    storage.m.set('mark', '1700000000.000100');
+    const DB = d1();
+    assert.equal(await pinnedArm({
+      storage, env: { ...ENV, DB }, name: sonnet, now: Date.parse(MODEL.until) + 1,
+    }), 'sonnet');
+    assert.equal(storage.m.get(ARM_KEY).recorded, true);
+    assert.equal(DB.sqlite.prepare('SELECT arm FROM agent_arms').get().arm, 'sonnet');
   });
 });

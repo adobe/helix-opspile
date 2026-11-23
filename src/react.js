@@ -10,16 +10,20 @@
  * governing permissions and limitations under the License.
  */
 
+import { clearAgentLabel } from './agentlabels.js';
+import { queueExport } from './clickhouse.js';
 import { json } from './http.js';
 import { isStaffDomain } from './lookup.js';
-import { processReaction } from './normalizer.js';
+import { notifyRoom, processReaction } from './normalizer.js';
+import { portalAccount, portalAuthor, portalCall } from './portalsource.js';
 import { personalToken } from './post.js';
 import { isResolvedEmoji, RESOLVED_EMOJI } from './resolve.js';
 import { teamsOf } from './shares.js';
 
 /**
- * Reacting from the inbox, as the person (their own Slack or Microsoft token, see post.js),
- * and resolving a thread with ✅ on its root message.
+ * Reacting from the inbox, as the person (their own Slack or Microsoft token, see post.js; in
+ * the customer portal by their mail address, src/portalsource.js), and resolving a thread with
+ * ✅ on its root message.
  *
  * The platform call is followed by the same bookkeeping a reaction event does (D1, the
  * reactor's watermark, a live update), so the inbox shows the reaction at once; the
@@ -69,7 +73,13 @@ export function nativeEmoji(source, emoji) {
 const SLACK_RECONNECT = ['invalid_auth', 'token_revoked', 'not_authed', 'account_inactive'];
 
 /** One reaction added or removed on the platform. `{ ok }` or `{ error, status, connect? }`. */
-async function platformReact(t, groupId, tok, messageId, emoji, removed) {
+async function platformReact(env, t, groupId, tok, messageId, emoji, removed) {
+  if (t.source === 'portal') {
+    const res = await portalCall(env, 'react', {
+      domain: t.tenant, channel: t.channel_id, id: messageId, emoji, removed, author: tok.portal,
+    });
+    return res.ok ? { ok: true } : { error: `Portal: ${res.error}`, status: res.status === 409 ? 409 : 502 };
+  }
   if (t.source === 'slack') {
     const res = await fetch(`https://slack.com/api/reactions.${removed ? 'remove' : 'add'}`, {
       method: 'POST',
@@ -125,6 +135,12 @@ async function tokenFor(env, me, t) {
     // Discord lets only bots react through its API, and opspile acts as the person or not at all.
     return { response: json({ error: 'react in Discord: the inbox cannot react there as you' }, 409) };
   }
+  if (t.source === 'portal') {
+    // No account to connect: the portal takes the inbox's word for who reacts.
+    return {
+      tok: { portal: await portalAuthor(env, me), userId: await portalAccount(me.email) },
+    };
+  }
   const tok = await personalToken(env, me.id, t.source);
   if (!tok) {
     const name = t.source === 'slack' ? 'Slack' : 'Microsoft';
@@ -146,7 +162,7 @@ async function tokenFor(env, me, t) {
  * than a removal just before it; a removal made here always removes.
  */
 async function reactAs(env, t, tok, messageId, emoji, removed) {
-  const done = await platformReact(t, t.group_id, tok, messageId, emoji, removed);
+  const done = await platformReact(env, t, t.group_id, tok, messageId, emoji, removed);
   if (!done.ok) {
     return done;
   }
@@ -223,10 +239,28 @@ export async function react(env, me, request, inTeam) {
 }
 
 /**
+ * Takes the resolution of the entry's agent (src/agentlabels.js) back, for someone on the
+ * team: true if there was one. The open inboxes hear of it, and the export.
+ */
+async function unresolveAgent(env, me, members) {
+  if (!isStaffDomain(env, me.email)) {
+    return false;
+  }
+  const cleared = await clearAgentLabel(env.DB, members.map((t) => t.thread), 'resolved');
+  if (!cleared) {
+    return false;
+  }
+  await notifyRoom(env, await teamsOf(env, members[0]), { type: 'thread', thread: members[0].thread });
+  await queueExport(env, members[0].thread);
+  return true;
+}
+
+/**
  * POST /api/resolve `{ thread, undo? }`: ✅ on the root message of the entry's latest
  * platform thread, as the signed-in person; `undo` takes the person's ✅ off every root of
- * the entry again. Resolving a reopened thread the person had resolved before moves their
- * ✅ (off and on again), so it is newer than the customer's message.
+ * the entry again, and its agent's resolution (which is in the inbox only). Resolving a
+ * reopened thread the person had resolved before moves their ✅ (off and on again), so it is
+ * newer than the customer's message.
  */
 export async function resolve(env, me, request, inTeam) {
   const { thread: key, undo } = request || {};
@@ -237,9 +271,11 @@ export async function resolve(env, me, request, inTeam) {
   if (!members.length || !await inTeam(await teamsOf(env, members[0]), members[0])) {
     return json({ error: 'not found' }, 404);
   }
+  // The agent's needs no account on the platform.
+  const agent = undo && await unresolveAgent(env, me, members);
   const { tok, response } = await tokenFor(env, me, members[0]);
   if (response) {
-    return response;
+    return agent ? json({ ok: true, resolved: false, agent: true }) : response;
   }
   const mineOn = (t) => mineResolvedOn(env, t, tok);
   if (undo) {
@@ -254,6 +290,9 @@ export async function resolve(env, me, request, inTeam) {
         }
         removed += 1;
       }
+    }
+    if (agent) {
+      return json({ ok: true, resolved: false, agent: true });
     }
     return removed ? json({ ok: true, resolved: false })
       : json({ error: 'you have not resolved this thread; only whoever did can undo it' }, 409);

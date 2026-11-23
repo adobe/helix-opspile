@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { alertBots, alertRoot, kindOf } from './alertbots.js';
 import { exportEnabled, SWEEP_JOB } from './clickhouse.js';
 import { snapshotKey } from './filecache.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
@@ -49,6 +50,19 @@ export function movedFolder(folder, org, team) {
   return parts.join('/');
 }
 
+/** Where a channel's threads are filed (`{ org, team, kind, threads }`), alert bots' or not. */
+function filedAs(rows) {
+  const by = new Map();
+  for (const f of rows) {
+    const k = `${f.org}\u0000${f.team}\u0000${f.kind}`;
+    const was = by.get(k);
+    by.set(k, {
+      org: f.org, team: f.team, kind: f.kind, threads: (was ? was.threads : 0) + f.threads,
+    });
+  }
+  return [...by.values()];
+}
+
 /**
  * What changes for each channel under `rules`: `{ channel, from: [{ org, team, kind,
  * threads }], to: { org, team, kind } }` for every channel whose threads are filed
@@ -57,13 +71,19 @@ export function movedFolder(folder, org, team) {
  * `channel` (as `toChannel` gives it) when given, not as its row says.
  */
 export async function plan(env, rules, only = null) {
-  const where = only ? ' WHERE source = ? AND tenant = ? AND channel_id = ?' : '';
+  const where = only ? ' WHERE source = ?1 AND tenant = ?2 AND channel_id = ?3' : '';
   const args = only ? [only.source, only.tenant, String(only.channelId)] : [];
   const { results: channels } = await env.DB.prepare(`SELECT * FROM channels${where}`)
     .bind(...args).all();
+  // A thread an alert bot started is an alert where the channel is a conversation
+  // (src/alertbots.js): it is filed as the rules say when its kind is that.
+  const bots = [...await alertBots(env)];
+  const alert = bots.length ? alertRoot('t', `?${args.length + 1}`) : '0';
   const { results: filed } = await env.DB.prepare(`SELECT source, tenant, channel_id, org, team,
-      kind, COUNT(*) AS threads, MAX(channel_name) AS channel_name
-    FROM threads${where} GROUP BY source, tenant, channel_id, org, team, kind`).bind(...args).all();
+      kind, ${alert} AS alert, COUNT(*) AS threads, MAX(channel_name) AS channel_name
+    FROM threads t${where}
+    GROUP BY source, tenant, channel_id, org, team, kind, alert`)
+    .bind(...args, ...(bots.length ? [JSON.stringify(bots)] : [])).all();
   const byChannel = new Map();
   for (const f of filed || []) {
     const list = byChannel.get(channelKey(f)) || [];
@@ -75,7 +95,8 @@ export async function plan(env, rules, only = null) {
     const now = byChannel.get(channelKey(c));
     if (now) {
       const to = classify(rules, (only && only.channel) || toChannel(c, c.source, c.channel_id));
-      const differs = now.some((f) => f.org !== to.org || f.team !== to.team || f.kind !== to.kind);
+      const differs = now.some((f) => f.org !== to.org || f.team !== to.team
+        || f.kind !== kindOf(to.kind, f.alert));
       if (differs) {
         moves.push({
           channel: {
@@ -85,9 +106,7 @@ export async function plan(env, rules, only = null) {
             name: c.name || now[0].channel_name,
             groupName: c.group_name || null,
           },
-          from: now.map((f) => ({
-            org: f.org, team: f.team, kind: f.kind, threads: f.threads,
-          })),
+          from: filedAs(now),
           to: { org: to.org, team: to.team, kind: to.kind },
         });
       }
@@ -273,9 +292,15 @@ export async function refile(env, job) {
   }
   const cls = classify(await loadRules(env), toChannel(row, job.source, job.channelId));
   await ensureChannelKnowledgeBases(env, cls);
-  const { results: current } = await env.DB.prepare(`SELECT thread, path, org, team, kind FROM threads
-    WHERE source = ? AND tenant = ? AND channel_id = ?`)
-    .bind(job.source, job.tenant, job.channelId).all();
+  // Each thread's kind: the channel's, or an alert where an alert bot started it.
+  const bots = [...await alertBots(env)];
+  const { results: current } = await env.DB.prepare(`SELECT thread, path, org, team, kind, imported,
+      (embedded IS NOT NULL OR vectorized_through IS NOT NULL OR indexed_through IS NOT NULL)
+        AS derived,
+      ${bots.length ? alertRoot('t', '?4') : '0'} AS alert FROM threads t
+    WHERE source = ?1 AND tenant = ?2 AND channel_id = ?3`)
+    .bind(job.source, job.tenant, job.channelId, ...(bots.length ? [JSON.stringify(bots)] : []))
+    .all();
   const rowOf = new Map((current || []).map((r) => [r.thread, r]));
   const pathOf = new Map((current || []).map((r) => [r.thread, r.path]));
   const refiled = [];
@@ -321,15 +346,17 @@ export async function refile(env, job) {
     }
     if (done) {
       const was = rowOf.get(thread);
-      const differs = (w) => w.team !== cls.team || w.org !== cls.org || w.kind !== cls.kind;
-      const moved = was && (filedElsewhere || differs(was) || (job.was && differs(job.was)));
+      const kind = kindOf(cls.kind, was && was.alert);
+      const differs = (w, k = w.kind) => w.team !== cls.team || w.org !== cls.org || k !== kind;
+      const moved = was && (filedElsewhere || differs(was)
+        || (job.was && differs(job.was, kindOf(job.was.kind, was.alert))));
       if (moved) {
         // eslint-disable-next-line no-await-in-loop
-        await clearDerived(env, thread, cls.kind);
+        await clearDerived(env, thread, kind);
       }
       // eslint-disable-next-line no-await-in-loop
       await env.DB.prepare('UPDATE threads SET org = ?, team = ?, kind = ?, path = ? WHERE thread = ?')
-        .bind(cls.org, cls.team, cls.kind, to || folder, thread).run();
+        .bind(cls.org, cls.team, kind, to || folder, thread).run();
       threads += 1;
       if (moved) {
         refiled.push(thread);
@@ -342,7 +369,13 @@ export async function refile(env, job) {
       left.push([thread, stuck]);
     }
   }
-  await revectorize(env, refiled);
+  // Not the history import's threads (src/history.js), which get vectors once someone asks, unless
+  // they had some (asked for, by replay.mjs): those are moved, or taken away, as any thread's. The
+  // row was read before `clearDerived`, and the cron's sweep leaves imported threads out.
+  await revectorize(env, refiled.filter((t) => {
+    const was = rowOf.get(t);
+    return !was || !Number(was.imported) || Number(was.derived);
+  }));
   await reexport(env, refiled);
   // Open inboxes of the teams it left and the teams it is in now show it where it is now: an
   // inbox loaded before the move keeps the old org (or team) otherwise, until something else

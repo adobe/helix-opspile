@@ -143,7 +143,7 @@ function page({ readonly = false } = {}) {
     timeTag: (iso, dated) => `<time datetime="${iso}" title="whole">${dated ? 'day and time' : 'time'}</time>`,
     profileKey: (key, { name }) => key || `local:${name}`,
     avatar: (name) => `<span class="av">${esc(name[0])}</span>`,
-    favicon: (d) => `/favicon/${d}`,
+    favImg: piece('const FAV_RETRY_MS', '// A favicon that failed', 'favImg', { esc, favicon: (d) => `/favicon/${d}` }).favImg,
     canReact: (m) => !readonly && !m.pending && m.author?.kind !== 'system',
     canEdit: (m) => !readonly && Boolean(m.editable),
     emojiChip: emoji,
@@ -188,12 +188,17 @@ describe('message header', () => {
     assert.doesNotMatch(html.match(/<div class="bubble">(.*?)<\/div>/)[1], /quick|data-pick/);
   });
 
-  it('has the pen with them on your own message, and no bar where there is nothing to do', () => {
+  it('has the pen with them on your own message, and only the menu where one may not react', () => {
     const own = page().message(msg({ mine: true, editable: 'user', author: { kind: 'person', name: 'Dana Ops', staff: true } }), null, false);
     assert.match(own, /<div class="quick-at"><div class="quick" role="toolbar" aria-label="React, as you"><button class="edit" data-edit="1"/);
+    // Viewing as someone: no reactions, no pen, the message's menu (its links) still.
     const looking = page({ readonly: true }).message(msg(), null, false);
-    assert.doesNotMatch(looking, /quick/);
-    assert.match(looking, /<div class="col"><div class="head"><div class="who">.*?<\/div><\/div>\s*<div class="bubble">/);
+    assert.match(looking, /<div class="quick" role="toolbar" aria-label="Message actions"><button class="acts" data-acts="1"[^>]*>.*?<\/button><\/div>/);
+    assert.doesNotMatch(looking, /data-pick|data-edit/);
+    // A reply on its way has nothing yet: no bar.
+    const sending = page().message(msg({ pending: true, id: undefined }), null, false);
+    assert.doesNotMatch(sending, /quick/);
+    assert.match(sending, /<div class="col"><div class="head"><div class="who">.*?<\/div><\/div>\s*<div class="bubble">/);
   });
 
   it('keeps the header line of a message that goes on from the one before, for its reactions', () => {
@@ -236,14 +241,17 @@ describe('message header styles', () => {
 
   it('keeps them while the pointer is on them, focus is in them, or their picker is open', () => {
     for (const selector of ['.msg .quick:hover', '.msg .quick:focus-within', '.msg .quick:has([aria-expanded="true"])']) {
-      assert.match(rule(selector), /visibility: visible; transition-delay: var\(--spectrum-animation-duration-0\);/, selector);
+      // At once: a fade with no delay.
+      assert.match(rule(selector), /visibility: visible; opacity: 1; translate: none;\s+transition: var\(--s2-pop-in\); transition-property: opacity, translate, visibility;/, selector);
     }
   });
 
   it('shows them after a rest on the bubble, and gives the pointer time to reach them', () => {
     // Hiding waits (the transition's delay), longer than showing does.
-    assert.match(rule('.msg .quick'), /transition: visibility var\(--spectrum-animation-duration-0\) linear var\(--spectrum-animation-duration-1000\);/);
-    assert.match(rule('.msg:has(.bubble:hover) .quick'), /transition-delay: var\(--spectrum-animation-duration-600\);/);
+    // They fade (in as a Popover does, out faster), and the visibility goes with the fade, so
+    // with less motion (no durations, the same delays) it is a step at the same moments.
+    assert.match(rule('.msg .quick'), /visibility: hidden; opacity: 0; translate: 0 var\(--spectrum-spacing-50\);\s+transition: var\(--s2-out\) var\(--spectrum-animation-duration-1000\); transition-property: opacity, translate, visibility;/);
+    assert.match(rule('.msg:has(.bubble:hover) .quick'), /visibility: visible; opacity: 1; translate: none;\s+transition: var\(--s2-pop-in\) var\(--spectrum-animation-duration-600\); transition-property: opacity, translate, visibility;/);
   });
 
   it('lays them out in the header line, where they wrap above the header for lack of room', () => {

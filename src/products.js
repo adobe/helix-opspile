@@ -11,10 +11,10 @@
  */
 
 /*
- * Product names, as Clairic finds them in a thread (src/label.js productFacts), and the tech stack
- * that covers them (tech_stack: its names and descriptions). The label job keeps a name the tech
- * stack covers, and one that looks like the name of a product; the Topics page
- * (src/topicmap.js) shows those it does not cover as gaps.
+ * Names of products, and the technology of the tech stack that covers one (tech_stack: its names,
+ * aliases and descriptions): a stack drawing's parts (src/stacktech.js), the gaps of topic maps
+ * built before Clef said what threads are about (src/topicmap.js productsOf), the ground truth's
+ * scoring (scripts/truth.mjs).
  */
 
 /**
@@ -122,41 +122,4 @@ export function coveredBy(name, index) {
   const part = written && index.find((t) => [...t.names]
     .some((n) => n.length > 3 && !GENERIC.has(n) && within(key, n)));
   return part ? part.tech : null;
-}
-
-/**
- * Whether a name Clairic found looks like the name of a product, for one the tech stack does not
- * cover: a proper name (a capital letter, or a dotted name such as json2html.io is not), of at
- * most four words, not an id or a variable (digits and letters run together, snake_case,
- * camelCase without a space), a host name, a short acronym nobody can tell apart from any
- * other, a possessive, or about people ("Adobe team").
- */
-export function productLike(name) {
-  const s = String(name || '').trim();
-  const key = productKey(s);
-  const words = s.split(/\s+/);
-  const last = words[words.length - 1];
-  return Boolean(key) && !GENERIC.has(key) && !GENERIC.has(s.toLowerCase())
-    && /\p{Lu}/u.test(s) && words.length <= 4 && s.length >= 4 && s.length <= 40
-    // Not an id, a variable or a value: digits run into letters, snake_case, a long token.
-    && !/[_$@=<>{}\\|]|\d{3,}|[a-z]\d[a-z]|^\d/i.test(s)
-    && !words.some((w) => w.length >= 20 || (w.length >= 12 && /\d/.test(w) && /\p{Lu}/u.test(w)))
-    && !(/[a-z]\p{Lu}/u.test(s) && words.length === 1 && s.length > 14)
-    // Not a header (Cache-Control, X-Forwarded-For), a compound adjective (AI-powered), a word
-    // in capitals (BLOCKER), or with arrows and symbols.
-    && !/^(?:X-|\p{Lu}\p{Ll}+(?:-\p{Lu}\p{Ll}+)+$)/u.test(s)
-    && !/-(?:powered|managed|based|only|side|driven|ready)$/i.test(s)
-    && !/^\p{Lu}{6,}$/u.test(s)
-    && !/[^\p{L}\p{N}\s.&+#/'’()-]/u.test(s)
-    // Not a thing of a product: its URL, link, page, id or key ("EDS URL").
-    && !(words.length > 1 && /^(?:urls?|links?|pages?|files?|ids?|keys?|domains?|tickets?|docs?|documentation|settings|config|setup|instance|environment)$/i.test(last))
-    // Not a host name, a short acronym, a possessive.
-    && !/\.(?:com|net|org|io|live|page|dev|cloud|app|ai|co|uk|de|fr|biz|info)$/i.test(s)
-    && !/^\p{Lu}{1,5}s?$/u.test(s)
-    && !/[’']s?$|[’']s\b/u.test(s)
-    // Not a phrase: one that ends in a small word or a fragment, or in a lower-case noun after a
-    // name ("vCPU limit"), nor about people ("Adobe team").
-    && !(words.length > 1 && (/^\p{Ll}+$/u.test(last)
-      || /^(?:to|of|and|or|for|the|in|on|with|a|an)$/i.test(last)))
-    && !/\b(?:team|teams|staff|support|people|issues?|pages?|tab|site|sales|engineering|project|program)$/i.test(s);
 }

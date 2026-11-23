@@ -10,12 +10,18 @@
  * governing permissions and limitations under the License.
  */
 
-/** The platforms opspile reads, by the `source` of their threads. */
-export const PLATFORMS = ['slack', 'teams', 'discord'];
+/**
+ * The platforms opspile reads, by the `source` of their threads. `portal` is the customer
+ * portal, a Worker of this repository (src/portal/), read as a platform all the same
+ * (src/portalsource.js).
+ */
+export const PLATFORMS = ['slack', 'teams', 'discord', 'portal'];
 
-const NAMES = { slack: 'Slack', teams: 'Microsoft Teams', discord: 'Discord' };
+const NAMES = {
+  slack: 'Slack', teams: 'Microsoft Teams', discord: 'Discord', portal: 'Customer Portal',
+};
 
-/** A platform's name in prose: "Slack", "Microsoft Teams", "Discord". */
+/** A platform's name in prose: "Slack", "Microsoft Teams", "Discord", "Customer Portal". */
 export const platformName = (source) => NAMES[source] || String(source || 'unknown');
 
 /** The account people connect for a platform: "Slack", "Microsoft", "Discord". */

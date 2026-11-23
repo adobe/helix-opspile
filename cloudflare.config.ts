@@ -24,11 +24,12 @@ import {
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 
-// The inbox's markdown renderer, the knowledge-base editor and the code highlighter, bundled
-// for the browser (src/ui-markdown.bundle.js, src/ui-editor.bundle.js and
-// src/ui-highlight.bundle.js, not committed), and Spectrum 2's tokens for the pages
-// (src/ui-spectrum.bundle.js): built on every cf deploy and cf dev, so the pages match
-// src/ui-*.js and the pinned micromark, CodeMirror, @pierre/highlights and tokens.
+// The inbox's markdown renderer, the knowledge-base editor, the code highlighter and the stack
+// renderer, bundled for the browser (src/ui-markdown.bundle.js, src/ui-editor.bundle.js,
+// src/ui-highlight.bundle.js and src/ui-fmc.bundle.js, not committed), and Spectrum 2's tokens
+// for the pages (src/ui-spectrum.bundle.js): built on every cf deploy and cf dev, so the pages
+// match src/ui-*.js and the pinned micromark, CodeMirror, @pierre/highlights, Graphviz
+// (@viz-js/viz) and tokens.
 execFileSync(process.execPath, ['scripts/ui-markdown.mjs'], { stdio: ['ignore', 'ignore', 'inherit'] });
 
 const NAMES: Record<string, string> = {
@@ -89,9 +90,13 @@ const CLICKHOUSE_VARS = ['CLICKHOUSE_URL', 'CLICKHOUSE_DATABASE', 'CLICKHOUSE_US
 // TEAMS_APP_ID: the opspile Teams app's id in the org catalog, which turns the Teams bot on
 // (agents' post_message in Teams threads; src/teamsbot.js). TEAMS_BOT_SERVICE_URL: the Bot
 // Connector to post through, default the public cloud's.
+// WEB_SEARCH_PROVIDER (webiq, ceramic, linkup or exa; default webiq where the secret
+// WEBIQ_API_KEY is set, else ceramic) and WEB_SEARCH_GATEWAY (default AGENT_GATEWAY, for all but
+// webiq): the agents' web_search (src/agent/websearch.js).
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL', 'TEAMS_APP_ID', 'TEAMS_BOT_SERVICE_URL',
+  'WEB_SEARCH_PROVIDER', 'WEB_SEARCH_GATEWAY',
 ] as const;
 
 // Membership requests, optional (the agents' request_membership tool, src/agent/membership.js):
@@ -102,14 +107,35 @@ const AGENT_VARS = [
 // MEMBERSHIP_SLACK_BOT (the relay's bot user id, which the post mentions).
 const MEMBERSHIP_VARS = ['MEMBERSHIP_SLACK_CHANNEL', 'MEMBERSHIP_SLACK_BOT'] as const;
 
+// The global fluffyjaws MCP server, optional (src/agent/fluffyjaws.js): FLUFFYJAWS_ISSUER, its
+// Okta authorization server; FLUFFYJAWS_CLIENT_ID, opspile's public Okta client there, which a
+// member of the admin team signs in with; or FLUFFYJAWS_SERVICE_CLIENT_ID and the secret
+// FLUFFYJAWS_SERVICE_SECRET, a FluffyJaws service app, which wins.
+const FLUFFYJAWS_VARS = [
+  'FLUFFYJAWS_ISSUER', 'FLUFFYJAWS_CLIENT_ID', 'FLUFFYJAWS_SERVICE_CLIENT_ID',
+] as const;
+
+// The membership bindings, and SLACK_MCP: the `SlackMcp` entrypoint of the slack-automation
+// relay (SLACK_AUTOMATION_WORKER), the global slack_channels MCP server (src/agent/slackmcp.js),
+// off for every team and channel until the admin team turns it on.
 function membershipBindings() {
-  const bound = (binding: string, worker: string | undefined) => (worker
-    ? { [binding]: bindings.worker({ worker, exportName: 'MembershipRequests' }) }
-    : {});
+  const bound = (binding: string, worker: string | undefined, exportName = 'MembershipRequests') => (
+    worker ? { [binding]: bindings.worker({ worker, exportName }) } : {});
   return {
     ...bound('TEAMS_ADMIN', process.env.TEAMS_ADMIN_WORKER),
     ...bound('SLACK_AUTOMATION', process.env.SLACK_AUTOMATION_WORKER),
+    ...bound('SLACK_MCP', process.env.SLACK_AUTOMATION_WORKER, 'SlackMcp'),
   };
+}
+
+// The customer portal, optional (src/portalsource.js): a service binding to its Worker
+// (portal/cloudflare.config.ts, src/portal/worker.js), of the same account, named by
+// PORTAL_WORKER (helix-opspile-portal, its `PortalPlatform` entrypoint).
+// With it, the inbox posts, reacts and opens channels in the portal; the portal's events reach
+// the inbox through the `PortalSource` entrypoint of src/index.js, bound or not.
+function portalBinding() {
+  const worker = process.env.PORTAL_WORKER;
+  return worker ? { PORTAL: bindings.worker({ worker, exportName: 'PortalPlatform' }) } : {};
 }
 
 const SECRETS = [
@@ -127,6 +153,11 @@ const SECRETS = [
   // when they are not in it (src/invite.js). Optional; SLACK_ADMIN_TOKEN_REQUIRED=1 at deploy
   // has `cf` check it exists.
   ...(process.env.SLACK_ADMIN_TOKEN_REQUIRED ? ['SLACK_ADMIN_TOKEN'] : []),
+  // The agents' web_search on Microsoft Web IQ (src/agent/websearch.js). Optional: a repository
+  // secret, which the deploy uploads with the version (.github/workflows/ci.yml); declared
+  // where it is set at deploy, or WEB_SEARCH_PROVIDER=webiq has `cf` check it exists.
+  ...(process.env.WEBIQ_API_KEY || process.env.WEB_SEARCH_PROVIDER === 'webiq'
+    ? ['WEBIQ_API_KEY'] : []),
   // Access sync: required only where it is configured.
   ...(process.env.ACCESS_APP_ID ? ['ACCESS_API_TOKEN'] : []),
   // Discord: the bot's token where the poller is on, the app's secret where people connect.
@@ -134,6 +165,8 @@ const SECRETS = [
   ...(process.env.DISCORD_CLIENT_ID ? ['DISCORD_CLIENT_SECRET'] : []),
   // The klickhaus export's ClickHouse password, where it is on.
   ...(process.env.CLICKHOUSE_URL ? ['CLICKHOUSE_PASSWORD'] : []),
+  // The FluffyJaws service app's client secret, where one is configured.
+  ...(process.env.FLUFFYJAWS_SERVICE_CLIENT_ID ? ['FLUFFYJAWS_SERVICE_SECRET'] : []),
 ];
 
 /** Per-environment resource names; `cf deploy` creates them if they are missing. */
@@ -150,7 +183,8 @@ function resources(mode: string | undefined) {
     IMAGES: bindings.r2({ name: `helix-opspile-images${suffix}` }),
     NORMALIZE: bindings.queue({ name: `helix-opspile-normalize${suffix}` }),
     DB: bindings.d1({ name: `helix-opspile${suffix}` }),
-    // Workers AI: Clef (thread labels) and Clairic (facts).
+    // Workers AI: Clef (thread labels) and Clairic (facts), and the agents' web_search (Web
+    // Search API, through AI Gateway).
     AI: bindings.ai(),
     // Root messages, for re-threading. Created by hand (768 dimensions, cosine, metadata
     // indexes on `channel` and `at`); see README.
@@ -213,7 +247,7 @@ function vars(deployed: boolean) {
   };
   return Object.fromEntries(
     [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...SIGNIN_VARS, ...MOVE_VARS, ...SLACK_VARS,
-      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS]
+      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS, ...FLUFFYJAWS_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );
@@ -256,6 +290,7 @@ export default defineConfig(({ mode }) => {
         ...vars(deployed),
         ...resources(mode),
         ...membershipBindings(),
+        ...portalBinding(),
         COGS_RESOURCES: bindings.text(cogsResources(mode, name)),
         // One Durable Object per ops team: live read state (#7).
         ROOMS: bindings.durableObject({ worker: name, exportName: 'TeamRoom' }),
@@ -265,6 +300,12 @@ export default defineConfig(({ mode }) => {
         DISCORD: bindings.durableObject({ worker: name, exportName: 'DiscordPoller' }),
         // Dynamic Workers: the shells of the agents' computers (the `computer` tool).
         LOADER: bindings.workerLoader(),
+        // The renderer Worker (graphviz/cloudflare.config.ts, src/graphviz/worker.js): Graphviz
+        // on the server, for the diagrams of the knowledge bases (src/diagrams.js). Deployed
+        // first; without it (cf dev), those do without.
+        ...(deployed ? {
+          GRAPHVIZ: bindings.worker({ worker: `helix-opspile-graphviz${mode === 'prod' ? '' : `-${mode}`}`, exportName: 'Graphviz' }),
+        } : {}),
         ...Object.fromEntries(SECRETS.map((name) => [name, bindings.secret()])),
       },
     },

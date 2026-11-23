@@ -13,8 +13,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  askClef, clairicFacts, FIELDS, MAX_GAPS, MAX_QUESTIONS, productFacts, TOPIC_MIN, TOPICS,
-  isTitle, namedIn, QUESTIONS, stateOf, topicList, topicsOf, writeTitle,
+  askClef, clairicFacts, FIELDS, MAX_QUESTIONS, TOPIC_MIN, TOPICS,
+  garbled, isTitle, mangled, namedIn, QUESTIONS, stateOf, topicList, topicsOf, writeTitle,
 } from '../src/label.js';
 
 // Made-up thread and people only.
@@ -110,104 +110,14 @@ describe('thread titles', () => {
 });
 
 describe('Clairic facts', () => {
-  const STATE = [
-    'Channel: acme-eds on Slack', 'Customer: acme-corp', '',
-    '[2026-10-01T10:00:00Z] Dana Ops (Adobe staff):',
-    'Is Akamai purging? Check Universal Editor and the Sidekick.', '',
-    '[2026-10-01T11:00:00Z] Kim Lee (customer, acme-corp):',
-    'Kim here: our GTM tag, ACME-Corp sl and Akamai again.',
-  ].join('\n');
-  const at = (word, from = STATE.indexOf('\n\n')) => {
-    const i = STATE.indexOf(word, from);
-    return [i, i + word.length];
-  };
-
-  const TECH = [
-    { tech: 'akamai', name: 'Akamai', description: 'Akamai as CDN' },
-    {
-      tech: 'tagmanager', name: 'Tag manager', description: 'a tag manager', aliases: 'GTM, Google Tag Manager',
-    },
-  ];
-
-  it('takes the products from the messages, not the header, the authors or the customer', () => {
-    const spans = [at('Slack', 0), at('acme-corp', 0), at('Dana Ops'), at('Akamai'),
-      at('Universal Editor'), at('Sidekick.'), at('Kim', STATE.indexOf('Kim here')), at('GTM'),
-      at('ACME-Corp'), at('sl '), at('Akamai', STATE.indexOf('again') - 8)];
-    const facts = productFacts({
-      type: 'list', confidence: 1e-7, spans, value: [],
-    }, STATE, { org: 'acme-corp' }, TECH);
-    // The tech stack's first, once each (GTM is the tag manager's alias), then the others.
-    assert.deepEqual(facts.map((f) => f.value), ['Akamai', 'GTM', 'Universal Editor', 'Sidekick']);
-    assert.ok(facts.every((f) => f.field === 'product' && f.confidence === null));
-    // Without spans, the values; at most a few the tech stack does not have.
-    const many = productFacts({ value: Array.from({ length: 30 }, (_, i) => `Toolbox ${String.fromCharCode(65 + i)}`) }, STATE);
-    assert.equal(many.length, MAX_GAPS);
-    assert.deepEqual(productFacts(undefined, STATE), []);
-  });
-
-  it('keeps Adobe products whose names are generic words without "Adobe" or "AEM"', () => {
-    const tech = [
-      {
-        tech: 'analytics', name: 'Analytics', description: 'Adobe Analytics', aliases: 'Adobe Analytics, CJA',
-      },
-      {
-        tech: 'assets', name: 'Assets', description: 'AEM Assets', aliases: 'AEM Assets, DAM',
-      },
-      {
-        tech: 'forms', name: 'Forms', description: 'AEM Forms', aliases: 'AEM Forms',
-      },
-      {
-        tech: 'aemcs', name: 'AEM Cloud Service', description: 'AEM as a Cloud Service', aliases: 'AEM Author, AEM Publish',
-      },
-    ];
-    const names = ['Adobe Analytics', 'AEM Assets', 'AEM Forms', 'AEM Author', 'analytics', 'assets', 'forms'];
-    const text = `Channel: c on Slack\nCustomer: acme\n\n[t] Dana Ops (Adobe staff):\n${names.join(', ')}`;
-    const spans = names.map((n) => {
-      const i = text.lastIndexOf(n);
-      return [i, i + n.length];
-    });
-    assert.deepEqual(
-      productFacts({ spans }, text, { org: 'acme' }, tech).map((f) => f.value),
-      ['Adobe Analytics', 'AEM Assets', 'AEM Forms', 'AEM Author'],
-    );
-  });
-
-  it('counts spans in code points, as Clairic does, and drops pieces of words', () => {
-    const state = 'Channel: c on Slack\nCustomer: acme\n\n[t] Dana Ops (Adobe staff):\n🚀 🎉 Akamai and Bazaarvoice, and Azure Storage';
-    const cp = (word, from = 0) => {
-      const i = Array.from(state).join('').indexOf(word, from);
-      const before = Array.from(state.slice(0, i)).length;
-      return [before, before + Array.from(word).length];
-    };
-    const [z0, z1] = cp('zure Storage');
-    const facts = productFacts({ spans: [cp('Akamai'), cp('Bazaarvoice'), [z0, z1]] }, state, { org: 'acme' }, TECH);
-    assert.deepEqual(facts.map((f) => f.value), ['Akamai', 'Bazaarvoice']);
-  });
-
-  it('keeps names that look like products, not words, ids, headers or people', () => {
-    const state = 'Channel: c on Slack\nCustomer: acme\n\n[t] Dana Ops (Adobe staff):\n';
-    const names = ['Release', 'compute_execution_time', 'YwcCRmwU5Lk6WjXlqbJ0Jp', 'Cache-Control',
-      'AI-powered', 'Adobe Team', 'Deploy Optimizations to', 'vCPU limit', 'EDS URL', 'BLOCKER',
-      'PDP', 'experience', 'Edge', 'Feroot', 'Datawrapper', 'Experience Context'];
-    const text = `${state}${names.join(', ')}; then release it.`;
-    const spans = names.map((n) => {
-      const i = text.indexOf(n, text.indexOf('\n\n'));
-      return [i, i + n.length];
-    });
-    assert.deepEqual(
-      productFacts({ spans }, text, { org: 'acme' }, TECH).map((f) => f.value),
-      ['Feroot', 'Datawrapper', 'Experience Context'],
-    );
-  });
-
-  it('keeps the other fields above their confidence, and not the products list', () => {
+  it('keeps the fields above their confidence, one value each, and asks for no products', () => {
     assert.deepEqual(clairicFacts({
       products: { type: 'list', confidence: 0.99, value: ['Akamai'] },
       problem: { value: 'Purge fails', confidence: 0.7 },
       error: { value: null, confidence: 1 },
       deadline: { value: '2026-11-01', confidence: 0.5 },
     }), [{ field: 'problem', value: 'Purge fails', confidence: 0.7 }]);
-    assert.deepEqual([FIELDS.products.type, FIELDS.products.items], ['list', 'text']);
+    assert.equal(FIELDS.products, undefined);
   });
 });
 
@@ -250,9 +160,9 @@ describe('kinds and topics', () => {
   });
 
   it('reads the topics of a label from before as they are now', () => {
-    // go-live is part of the project; commerce and integrations are products, the tech stack's.
-    assert.deepEqual(topicList('{"golive":0.9,"cdn":0.85,"commerce":0.95}'), ['project', 'cdn']);
-    assert.deepEqual(topicList('{"project":0.95,"golive":0.9,"integrations":0.8}'), ['project']);
+    // go-live is part of the project; commerce and integrations are areas again (authored).
+    assert.deepEqual(topicList('{"golive":0.9,"cdn":0.85,"commerce":0.95}'), ['commerce', 'project', 'cdn']);
+    assert.deepEqual(topicList('{"project":0.95,"golive":0.9,"integrations":0.8}'), ['project', 'integrations']);
   });
 
   it('asks only about concerns, in the order they were measured in, at one cut', () => {
@@ -274,5 +184,61 @@ describe('titles that are not titles', () => {
     assert.equal(isTitle('No-cache header missing on PDF assets'), true);
     const env = { AI: { run: async () => ({ response: 'None' }) } };
     assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), null);
+  });
+
+  // What production's title model wrote once, for a thread it titles well every other time.
+  const GARBLED = 'partic\u00E1\u010D Kaufpeater\uFFFDadierstash partic404 Kauf Rear Kauf Kauf\uFF5C'
+    + ' particATOalenaad Babeems(em';
+
+  it('knows an answer that is no language', () => {
+    assert.equal(isTitle(GARBLED), false);
+    for (const t of [GARBLED, 'Sidekick login\uFFFD fails', 'Cache purge\uFF5Cbegin', 'Kauf Rear Kauf stash Kauf',
+      '<|eot_id|> Sidekick login', 'Purge \u2581of \u2581cache', 'Sidekick \uE000 login', 'Sidekick \u0007 login']) {
+      assert.equal(garbled(t), true, t);
+    }
+    // Titles as they are: names, numbers, punctuation, other languages, a word twice.
+    for (const t of ['Sidekick login fails after SSO change', 'Non-www and HTTP requests return Fastly error',
+      'DA site mapping to site with different org', 'Missing resource-published and resource-unpublished events',
+      'LLMO-8784 and LLMO-8785 tickets', '404 on /fr/ pages after go-live (CDN)', 'Zugriff auf Pr\u00FCfumgebung f\u00FCr Autoren',
+      '\u30B5\u30A4\u30C9\u30AD\u30C3\u30AF\u306E\u30ED\u30B0\u30A4\u30F3\u5931\u6557\uFF08SSO\uFF09', 'Caf\u00E9 menu block \u2013 layout']) {
+      assert.equal(garbled(t), false, t);
+      assert.equal(isTitle(t), true, t);
+    }
+    // A sentence may say a word three times; a mangled one is still told.
+    const theme = 'Customers need their pages, their blocks and their forms to publish.';
+    assert.equal(mangled(theme), false);
+    assert.equal(mangled(`${theme}\uFFFD`), true);
+  });
+
+  it('asks once more for a garbled or cut-off answer, and has no title when that is no better', async () => {
+    const run = (answers) => {
+      const env = { asked: 0 };
+      env.AI = {
+        run: async () => {
+          env.asked += 1;
+          return answers.shift();
+        },
+      };
+      return env;
+    };
+    const good = { response: 'Missing order after payment approval' };
+    // The inference went wrong once: the second answer is the title.
+    let env = run([{ response: GARBLED }, good]);
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), 'Missing order after payment approval');
+    assert.equal(env.asked, 2);
+    // Twice: no title (the label keeps the one it had), and no third call.
+    env = run([{ response: GARBLED }, { response: GARBLED }, good]);
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), null);
+    assert.equal(env.asked, 2);
+    // An answer that did not end within a title's tokens is not one, whatever it says.
+    env = run([{ response: 'Babeems stash Rear', usage: { completion_tokens: 40 } }, good]);
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), 'Missing order after payment approval');
+    env = run([{ choices: [{ message: { content: 'Babeems stash Rear' }, finish_reason: 'length' }] },
+      { choices: [{ message: { content: 'Missing order after payment approval' }, finish_reason: 'stop' }], usage: { completion_tokens: 10 } }]);
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), 'Missing order after payment approval');
+    // A good first answer is asked for once.
+    env = run([good, good]);
+    assert.equal(await writeTitle(env, 'state', false, { org: 'acme' }), 'Missing order after payment approval');
+    assert.equal(env.asked, 1);
   });
 });

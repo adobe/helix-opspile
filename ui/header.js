@@ -14,15 +14,16 @@
  * The header of every page (its styles in ui/spectrum.css), as the global `Header`. It runs right after the
  * page's <header>, before the page's own script.
  *
- * The switch between the pages: Inbox and Agents for every member of a team (Agents read-only),
- * Teams too for team managers, and Orgs, Requests and COGS (what the inbox costs) too for the
- * admin team (with the number of open requests on Requests), and Topics (the topic map); and Stats, klickhaus' statistics of all threads in a new tab,
+ * The switch between the pages: Inbox, Teams, Customers (each with its agents, read-only but
+ * where you manage them) and Topics (the topic map) for every member of a team, and
+ * Requests (the bots too) and COGS (what the inbox costs) too for the admin team (with the
+ * number of open requests on Requests); and Stats, klickhaus' statistics of all threads in a new tab,
  * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
- * as", the editor with its knowledge base and file, and each admin section with what was
- * picked in it. A page may send another elsewhere: the inbox sends Agents and Orgs to the
- * customer on screen, Teams to the team picked, and Stats to either (`stats`). The page you
+ * as", and Teams and Customers with what was picked in them, at its section and the file open
+ * there. A page may send another elsewhere: the inbox sends Customers to the customer on screen,
+ * Teams to the team picked, and Stats to either (`stats`). The page you
  * are on does nothing when clicked; on a phone it opens the menu of the others.
  *
  * The color scheme, in your menu's Appearance: the system's (as the browser prefers), light or
@@ -34,11 +35,10 @@
 window.Header = (() => {
   const PAGES = [
     { id: 'inbox', label: 'Inbox', href: '/inbox', title: 'Threads with customers, partners and vendors', member: true },
-    { id: 'agents', label: 'Agents', href: '/inbox/kb', title: 'Thread agents: their knowledge bases, channels, MCP servers and instructions', member: true },
-    { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their members, channels and rules' },
-    { id: 'orgs', label: 'Orgs', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors', admin: true },
-    { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for: confirm or decline', admin: true },
-    { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their topics, found from what was said, with the Adobe people, customers and Clef topics on each', admin: true },
+    { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their members, channels and rules, and their agents: thread agents, tools, instructions and knowledge base', member: true },
+    { id: 'orgs', label: 'Customers', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors, and their agents: thread agents, tools, instructions and knowledge base', member: true },
+    { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for, customers waiting in the portal and the bots in the threads: confirm, open or decline, and say whose each bot is', admin: true },
+    { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their areas and topics, with the people, customers and products on each', member: true },
     { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs at list prices: per service, message, thread, customer and month', admin: true },
     // On klickhaus, in a new tab: its address comes from /api/me (`stats.url`).
     { id: 'stats', label: 'Stats', href: null, title: 'Statistics of all threads, every team\'s, in klickhaus (opens in a new tab)', external: true },
@@ -80,16 +80,20 @@ window.Header = (() => {
       b.setAttribute('aria-checked', String(b.dataset.scheme === s));
     }
   }
-  /** Appearance in your menu, before the keyboard's shortcuts and logging out. */
+  /**
+   * Appearance in your menu, before the keyboard's shortcuts and logging out: in the column
+   * they are in, where the menu has columns (the inbox's, on a wide screen).
+   */
   function schemeMenu() {
     const menu = $('menu');
     if (!menu || $('schemes')) return;
     const box = document.createElement('section');
     box.innerHTML = `<h4 id="schemesLabel">Appearance</h4><div id="schemes" role="radiogroup" aria-labelledby="schemesLabel">${
       SCHEMES.map((o) => `<button class="item" role="radio" aria-checked="false" data-scheme="${o.id}"${o.title ? ` title="${o.title}"` : ''}><span class="ck s2-check" aria-hidden="true"></span>${o.label}</button>`).join('')}</div>`;
-    const sections = [...menu.querySelectorAll(':scope > section')];
+    const sections = [...menu.querySelectorAll('section')];
     const before = sections.find((s) => s.querySelector('.keys')) || sections.at(-1);
-    menu.insertBefore(box, before || null);
+    if (before) before.before(box);
+    else menu.append(box);
     box.addEventListener('click', (e) => {
       const b = e.target.closest('[data-scheme]');
       if (!b) return;
@@ -109,7 +113,6 @@ window.Header = (() => {
     try { u = new URL(url, location.origin); } catch { return null; }
     if (u.origin !== location.origin) return null;
     if (u.pathname === '/inbox') return 'inbox';
-    if (u.pathname === '/inbox/kb') return 'agents';
     if (u.pathname === '/inbox/cogs') return 'cogs';
     if (u.pathname === '/inbox/topics') return 'topics';
     if (u.pathname !== '/inbox/admin') return null;
@@ -125,8 +128,8 @@ window.Header = (() => {
   }
   const kept = (id) => { try { return sessionStorage.getItem(KEY + id); } catch { return null; } };
   /**
-   * Where a page opens: where the page on screen sends it (`prefer`: the inbox sends Agents and
-   * Orgs to the customer on screen, Teams to its team), else as it was left, else where the
+   * Where a page opens: where the page on screen sends it (`prefer`: the inbox sends Customers
+   * to the customer on screen, Teams to its team), else as it was left, else where the
    * page on screen suggests (`fallback`), else its start.
    */
   function href(id) {

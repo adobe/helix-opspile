@@ -90,7 +90,7 @@ function load() {
     FACETS, state, pass: null, keptUnread: (t) => t.unread, viewerId: () => ME,
   });
   const activityOf = (t) => String(t.last_at || t.any_at || '');
-  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, row, grouped, groupPlan, groupHtml, youCount, youBadge', {
+  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, forgetColumn, row, grouped, groupPlan, groupHtml, youCount, youBadge, stackLine, mergeStacks', {
     state,
     esc,
     notButton: views.notButton,
@@ -102,7 +102,7 @@ function load() {
     customerName: (v) => NAMES[v] || v,
     orgName: (t) => t.org_name || t.org,
     orgIcon: (t) => t.customerDomain,
-    favicon: (d) => `https://icons.test/${d}`,
+    favImg: piece('const FAV_RETRY_MS', '// A favicon that failed', 'favImg', { esc, favicon: (d) => `https://icons.test/${d}` }).favImg,
     tile: (name) => `<span class="ico av">${esc(name[0])}</span>`,
     preview: () => null,
     ago: () => '1h',
@@ -120,7 +120,7 @@ function load() {
     kindOf: () => 'question',
     KIND_ICON: { question: 'help', other: 'comment' },
     URGENCY_ICON: { critical: 'alert-diamond', high: 'alert-triangle' },
-    wf: (name) => `<span class="wf wf-${name}" aria-hidden="true"></span>`,
+    wf: (name, ringed) => `<span class="wf wf-${name}${ringed ? ' ringed' : ''}" aria-hidden="true"></span>`,
     cap: (v) => v[0].toUpperCase() + v.slice(1),
     avatar: (name) => `<span class="av">${esc(name)}</span>`,
     profileKey: () => '',
@@ -171,7 +171,7 @@ const rowOf = (key) => page.row(state.data.threads.find((t) => t.thread === key)
 /** Reading a thread, as `markRead` leaves it. */
 function read(key) {
   Object.assign(state.data.threads.find((t) => t.thread === key), {
-    unread: false, unseen: false, mentionedMe: false, unreadMentions: 0,
+    unread: false, unseen: false, mentionedMe: false, unreadMentions: 0, unreadForYou: 0,
   });
 }
 /** A click on a customer's heading (or its row in the column): it picks it, or lets it go. */
@@ -219,12 +219,12 @@ describe('the simple personal view', () => {
       t.participants = [{ name: 'Sam Reyes' }];
       let r = page.row(t);
       assert.match(r, /^<div class="t unread[^"]* mention simple"/);
-      assert.doesNotMatch(r, /class="faces"|class="dot|class="cust"|mentions<\/b>/);
+      assert.doesNotMatch(r, /class="faces"|class="mks"|class="cust"|mentions<\/b>/);
       assert.equal(badge(r), '2');
       state.settings.expert = true;
       r = page.row(t);
       assert.doesNotMatch(r, / simple"/);
-      assert.match(r, /class="dot/);
+      assert.match(r, /class="mks"/);
       assert.match(r, /<span class="faces"><span class="av">Sam Reyes<\/span><\/span>/);
       assert.match(r, /<span class="cust">[\s\S]*ACME<\/span>/);
       assert.match(r, /<b class="men" title="Unread mentions of you">2 mentions<\/b>/);
@@ -253,37 +253,43 @@ describe('the simple personal view', () => {
       });
       return t;
     }
-    const mark = (r) => (/<span class="(pen|ok|dot)[^"]*"[^>]*>/.exec(r) || [])[0] || '';
+    /** The status mark's chips: the front's classes, then each behind it, with its tooltip. */
+    const chips = (r) => [...r.matchAll(/<span class="mi ([^"]*)" title="([^"]*)">/g)].map((m) => `${m[1]}: ${m[2]}`);
 
-    it('shows a pencil in the status dot\'s place, over the resolved ✓, in the status\'s color', () => {
+    it('puts the kind in front, in the status\'s color, and the draft and resolved behind it', () => {
       state.settings.expert = true;
       const t = drafted(false);
       let r = page.row(t);
-      assert.equal(mark(r), '<span class="pen s-team" title="Draft by you, 1h: Try the purge · Team on it">');
-      assert.doesNotMatch(r, /class="ok"|class="dot|class="drafted"|✎ Draft/);
-      // Without the draft, the resolved thread has its ✓ back.
+      assert.deepEqual(chips(r), [
+        'k s-team: Question · Team on it',
+        'draft: Draft by you, 1h: Try the purge',
+        'ok: Resolved',
+      ]);
+      assert.match(r, /<span class="mk" role="img" aria-label="Question · Team on it · Draft · Resolved">/);
+      assert.doesNotMatch(r, /class="drafted"|✎ Draft|<svg/);
+      // Without the draft, only resolved is behind the kind.
       delete t.draft;
       r = page.row(t);
-      assert.match(mark(r), /^<span class="ok" title="Resolved · Team on it">$/);
+      assert.deepEqual(chips(r).slice(1), ['ok: Resolved']);
     });
 
-    it('outlines the pencil in its own shape while the team has not read the thread', () => {
+    it('outlines the kind in its own shape while the team has not read the thread', () => {
       state.settings.expert = true;
       const t = drafted(true);
       let r = page.row(t);
-      assert.match(mark(r), /^<span class="pen s-team ring" title="Draft by you, 1h: Try the purge · Team on it">$/);
-      assert.match(r, /<path d="[^"]*" fill="none" stroke="currentColor"/);
+      assert.match(chips(r)[0], /^k s-team ring: Question, unread · /);
+      assert.match(r, /<span class="wf wf-help ringed" aria-hidden="true">/);
       read('a3');
       r = page.row(t);
-      assert.match(mark(r), /^<span class="pen s-team" /);
-      assert.doesNotMatch(r, /fill="none"/);
+      assert.match(chips(r)[0], /^k s-team: Question · /);
+      assert.doesNotMatch(r, /ringed/);
     });
 
     it('shows no draft mark at all in the personal view', () => {
       for (const unread of [true, false]) {
         const r = page.row(drafted(unread));
         assert.match(r, / simple"/);
-        assert.doesNotMatch(r, /class="pen|class="drafted"|Draft|<svg/);
+        assert.doesNotMatch(r, /class="mks"|class="drafted"|Draft|<svg/);
       }
     });
   });
@@ -298,11 +304,38 @@ describe('the simple personal view', () => {
       assert.ok(!outline().includes('x1'));
       assert.doesNotMatch(rowOf('a2'), /class="cust"/);
       const head = page.groupHtml(list()[0]);
-      assert.match(head, /^<button type="button" class="grp new sticky" data-group="acme" title="Only ACME">/);
-      assert.match(head, /<span class="logo"><span class="ico av">A<\/span><img src="https:\/\/icons.test\/acme.example" alt="" loading="lazy"><\/span>/);
+      assert.match(head, /^<div class="grp new sticky" data-group="acme"><button type="button" class="gn" data-group="acme" title="Only ACME">/);
+      assert.match(head, /<span class="logo"><span class="ico av">A<\/span><img src="https:\/\/icons.test\/acme.example" alt="" data-fav><\/span>/);
       assert.match(head, /<span class="nm">ACME<\/span>/);
       // A customer without an icon has its initial.
       assert.match(page.groupHtml(list().find((x) => x.head === 'initech')), /<span class="logo"><span class="ico av">I<\/span><\/span>/);
+    });
+
+    it('names the key parts of the customer\'s stack beside it: its drawing\'s first of each layer', () => {
+      state.data.vocab = {
+        stack: [{ id: 'edge', name: 'Edge' }, { id: 'site', name: 'Site' }, { id: 'content', name: 'Content' }, { id: 'code', name: 'Code' }, { id: 'other', name: 'Other' }],
+      };
+      // The parts of its stack drawing (src/orgstacks.js), as the drawing has them.
+      state.data.stacks = {
+        acme: [
+          { name: 'Fastly', tech: 'fastly/cdn', layer: 'edge' }, { name: 'Akamai', tech: 'akamai/cdn', layer: 'edge' },
+          { name: 'Edge Delivery', tech: 'adobe/aem-sites/edge-delivery', layer: 'site' },
+          { name: 'Enterprise Support inbox', tech: null, layer: 'other' },
+          { name: 'Document Authoring', tech: 'adobe/aem-sites/document-authoring', layer: 'content' },
+        ],
+      };
+      // Top to bottom, one per layer, the first; Other's is not.
+      assert.deepEqual(page.stackLine('acme'), ['Fastly', 'Edge Delivery', 'Document Authoring']);
+      const head = page.groupHtml(list()[0]);
+      assert.match(head, /<\/button><button type="button" class="stk-line" data-stack="acme" aria-haspopup="dialog" title="ACME&#39;s tech stack: Fastly, Edge Delivery, Document Authoring. Show the drawing"><span>Fastly<\/span><span>Edge Delivery<\/span><span>Document Authoring<\/span><\/button><\/div>$/);
+      assert.match(head, /class="grp new sticky stacked"/);
+      // A customer without a drawing has none.
+      assert.doesNotMatch(page.groupHtml(list().find((x) => x.head === 'initech')), /stk-line/);
+      // Pages merge: a customer's drawing is the same on each.
+      const merged = page.mergeStacks(state.data.stacks, { initech: [{ name: 'GitHub', tech: 'github/github', layer: 'code' }] });
+      assert.deepEqual(Object.keys(merged).sort(), ['acme', 'initech']);
+      state.data.stacks = merged;
+      assert.deepEqual(page.stackLine('initech'), ['GitHub']);
     });
 
     it('sets apart the customers with unread threads, and carries no badge on the heading', () => {
@@ -340,7 +373,7 @@ describe('the simple personal view', () => {
       assert.deepEqual(outline(), ['# globex', 'g1', 'g2']);
       const head = page.groupHtml(list()[0]);
       assert.match(head, /title="Back to all customers"/);
-      assert.match(head, /<span class="back">All customers<\/span><\/button>$/);
+      assert.match(head, /<button type="button" class="back" data-group="globex" title="Back to all customers">All customers<\/button><\/div>$/);
       assert.match(columnRow('globex'), /^<div class="fr on"/);
       assert.match(columnRow(''), /^<div class="fr all"/);
     });
@@ -376,15 +409,19 @@ describe('the simple personal view', () => {
 
     it('puts the customers with unread mentions first, then the unread ones, then the rest', () => {
       assert.deepEqual(column(), ['acme', 'globex', 'initech']);
-      // ACME has unread threads still, Globex a mention.
+      // ACME has unread threads still, Globex a mention (once the column lets go: see below).
       read('a1');
+      page.forgetColumn();
       assert.deepEqual(column(), ['globex', 'acme', 'initech']);
       // Both unread, no mentions: by name.
       read('g2');
+      page.forgetColumn();
       assert.deepEqual(column(), ['acme', 'globex', 'initech']);
       read('a2');
+      page.forgetColumn();
       assert.deepEqual(column(), ['globex', 'acme', 'initech']);
       read('g1');
+      page.forgetColumn();
       assert.deepEqual(column(), ['acme', 'globex', 'initech']);
     });
 
@@ -393,10 +430,73 @@ describe('the simple personal view', () => {
       Object.assign(i1, { unread: true, unreadMentions: 5, mentionedMe: true });
       assert.deepEqual(column(), ['initech', 'acme', 'globex']);
       i1.unreadMentions = 2;
+      page.forgetColumn();
       // ACME and Initech have two each: by name.
       assert.deepEqual(column(), ['acme', 'initech', 'globex']);
       state.data.threads.find((t) => t.thread === 'g1').last_at = '2026-11-06T10:00Z';
       assert.deepEqual(column(), ['acme', 'initech', 'globex']);
+    });
+
+    it('keeps a customer where it is while you read it, and moves it down only after a while away', () => {
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      // You read ACME's last unread threads: its badge and bold go, its place does not.
+      read('a1');
+      read('a2');
+      read('x1');
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      assert.equal(badge(columnRow('acme')), null);
+      assert.doesNotMatch(columnRow('acme'), /class="lab new"/);
+      // Each render asks again: still where it was.
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      // Back after a while away (forgetSoon): ACME goes down, as it is read.
+      assert.equal(page.forgetColumn(), true);
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
+      assert.equal(page.forgetColumn(), true);
+    });
+
+    it('moves a customer up at once when something comes in', () => {
+      column();
+      read('a1');
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      // Initech had nothing unread: a mention of you moves it to the top, past the held places.
+      Object.assign(state.data.threads.find((t) => t.thread === 'i1'), { unread: true, unreadMentions: 3, mentionedMe: true });
+      assert.deepEqual(column(), ['initech', 'acme', 'globex']);
+      // Read, it stays there.
+      read('i1');
+      assert.deepEqual(column(), ['initech', 'acme', 'globex']);
+    });
+
+    it('keeps the open thread\'s customer where it is when it lets go of the others', () => {
+      state.open = 'a1';
+      column();
+      ['a1', 'a2', 'x1', 'g2'].forEach(read);
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      assert.equal(page.forgetColumn(), true);
+      // Globex is unread still, so before Initech; ACME stays on top while its thread is open.
+      // Only the open thread's customer held: nothing to let go of.
+      assert.equal(page.forgetColumn(), false);
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      state.open = 'g1';
+      assert.equal(page.forgetColumn(), true);
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
+    });
+
+    it('moves an excluded customer to the end at once, and starts afresh when it is let back in', () => {
+      exclude('acme');
+      assert.deepEqual(column(), ['globex', 'initech', 'acme']);
+      read('a1');
+      read('a2');
+      read('x1');
+      exclude('acme');
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
+    });
+
+    it('starts afresh for someone you view as', () => {
+      column();
+      read('a1');
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      state.data.as = 9;
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
     });
   });
 
@@ -502,8 +602,33 @@ describe('the simple personal view', () => {
       assert.equal(badge(rowOf('a1')), '2');
       assert.equal(badge(rowOf('g2')), '1');
       assert.equal(badge(rowOf('a2')), null);
-      assert.match(columnRow('acme'), /title="2 unread messages mention you"/);
-      assert.match(rowOf('g2'), /title="1 unread message mentions you"/);
+      assert.match(columnRow('acme'), /title="2 unread messages for you: mentions, and replies in threads you are in"/);
+      assert.match(rowOf('g2'), /title="1 unread message for you: mentions, and replies in threads you are in"/);
+    });
+
+    it('counts what is new in the threads you are in too, as Slack does, each message once', () => {
+      // g1: you posted in it, and three replies came since (src/threads.js unreadInYours).
+      const g1 = state.data.threads.find((t) => t.thread === 'g1');
+      g1.unreadForYou = 3;
+      assert.equal(badge(rowOf('g1')), '3');
+      assert.match(rowOf('g1'), /^<div class="t unread[^"]* mention simple"/);
+      assert.equal(badge(columnRow('globex')), '4');
+      assert.equal(badge(columnRow('')), '6');
+      // a1: two mentions and one more reply since you were first mentioned.
+      state.data.threads.find((t) => t.thread === 'a1').unreadForYou = 3;
+      assert.equal(badge(rowOf('a1')), '3');
+      assert.equal(badge(columnRow('')), '7');
+      // The expert view's row says how many are new; with mentions only, how many mentions.
+      state.settings.expert = true;
+      assert.match(rowOf('g1'), /<b class="men" title="3 unread messages for you[^"]*">3 new<\/b>/);
+      assert.match(rowOf('g2'), /<b class="men" title="Unread mentions of you">1 mention<\/b>/);
+      state.settings.expert = false;
+      read('g1');
+      assert.equal(badge(rowOf('g1')), null);
+      assert.equal(badge(columnRow('globex')), '1');
+      // Not unread: nothing counts, whatever the inbox says.
+      Object.assign(g1, { unreadForYou: 2 });
+      assert.equal(badge(rowOf('g1')), null);
     });
 
     it('goes from the row and its customer once the thread is read, and the row stays', () => {

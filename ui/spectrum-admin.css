@@ -1,5 +1,5 @@
 /*
- * Teams, Orgs and Requests (ui/admin.html), in Spectrum 2's look:
+ * Teams, Customers, Bots and Requests (ui/admin.html), in Spectrum 2's look:
  * after the page's own styles and ui/spectrum.css, which this adds to. Only Spectrum 2 tokens
  * (see ui/spectrum.css).
  *
@@ -16,6 +16,7 @@
  * - the pickers (a channel, a member): ComboBox, their list a Popover with Menu items.
  * - the status line: StatusLight, small; an error's text in the negative color, as HelpText.
  * - an org's type: SegmentedControl (ui/spectrum.css); its icon suggestions selectable Cards.
+ * - the sections of a team's or a customer's page: Tabs, quiet and compact, with Badges.
  * - "Pick a team." and the like: IllustratedMessage, without the illustration.
  */
 
@@ -48,6 +49,10 @@ main > section { overflow: auto; min-height: 0; }
 .row:hover { background: var(--hover); }
 
 .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A team: two lines, every row alike. The name has the first to itself; what it has under it,
+   the slug last, as what gives way when the line is too short. */
+.row.two { flex-direction: column; align-items: stretch; }
+.row.two > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .ico { flex: none; }
 
@@ -94,6 +99,17 @@ td input { width: 100%; }
 .picks .pickrow .name { white-space: normal; display: flex; flex-direction: column; gap: var(--spectrum-border-width-100); }
 .picks .pickrow .ch { font-weight: 600; }
 .picks .pickrow .where { flex: none; text-align: right; font-size: var(--spectrum-font-size-100); padding-top: var(--spectrum-border-width-100); }
+/* The teams a channel moves to (ui/admin.js, `moveMenu`): a Popover under the channel's name,
+   in the top layer, since the table it is in scrolls sideways and would cut it off. The script
+   places it; its filter stays, the teams scroll under it. */
+.movepop { position: fixed; inset: auto; margin: 0; flex-direction: column; overflow: hidden;
+  width: calc(var(--spectrum-spacing-100) * 36); max-width: calc(100vw - var(--spectrum-spacing-200));
+  max-height: min(calc(var(--spectrum-spacing-100) * 50), calc(100vh - var(--spectrum-spacing-200))); }
+.movepop:popover-open { display: flex; }
+.movepop .opts { flex: 1; min-height: 0; overflow: auto; }
+.movepop .row { gap: var(--spectrum-spacing-100); }
+.movepop .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td button.chan { text-align: start; white-space: normal; }
 mark { padding: 0 var(--spectrum-border-width-100); }
 
 td.nw { white-space: nowrap; }
@@ -121,6 +137,29 @@ tr.left td { opacity: .55; }
  * picked team or org has a back button, and tables scroll sideways in their card.
  */
 .title .back { display: none; }
+/* Back from a customer's portal request to the team it was opened from: on every screen. */
+.title .back.shown { display: grid; place-items: center; padding: 0; border: 0; background: none; }
+/* Opening a portal channel: the welcome message, and the teams it is shared with. */
+.portalopen textarea { width: 100%; resize: vertical; }
+.portalopen fieldset { display: flex; flex-wrap: wrap; min-width: 0; margin: 0; padding: 0; border: 0; }
+.portalopen input[type="checkbox"] { min-width: 0; }
+/* Two orgs that may be one (Customers): side by side, one under the other on a phone; in the
+   list, both icons, then both names. The less likely pairs fold away. */
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spectrum-spacing-300); }
+.pair .side { min-width: 0; }
+.pair .chans, .asks, .dups { margin: var(--spectrum-spacing-100) 0 0; padding-left: var(--spectrum-spacing-300); }
+.row.dup .name { display: flex; align-items: center; gap: var(--spectrum-spacing-75); }
+.row.dup .name > span { overflow: hidden; text-overflow: ellipsis; }
+.sub.pad { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+details.dismissed > summary { cursor: pointer; padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+@media (max-width: 699px) { .pair { grid-template-columns: 1fr; } }
+/* An unassigned channel's orgs: the suggested ones, then the popover; a new org's type in it. */
+td.picks-cell { white-space: normal; }
+.movepop .newtype { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
+.movepop .newtype[hidden] { display: none; }
+/* A conflict between technologies: each team's definition, what differs marked, its actions. */
+.conflict .acts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-300); }
+.spectrum .conflict .field > .differs { background: var(--spectrum-notice-subtle-background-color-default); font-weight: var(--spectrum-bold-font-weight); }
 /* A text field under 16px makes iOS zoom in on it when it is focused: the large scale's body
    size (17px), on a touch screen. */
 @media (hover: none) and (pointer: coarse) {
@@ -131,8 +170,17 @@ tr.left td { opacity: .55; }
 
 }
 @media (max-width: 699px) {
-  main { grid-template-columns: 100%; }
-  body.picked #list, body:not(.picked) #detail { display: none; }
+  /* The list and what is picked in it, in one place: what is picked slides in over the list from
+     the right, and back out (as the inbox's list and thread do). The one out of view is hidden
+     once it is, for screen readers and the keyboard too. Clipped, not hidden: nothing may scroll
+     the page sideways to what is off its edge. */
+  main { grid-template-columns: 100%; overflow: hidden; overflow: clip; }
+  #list, #detail { grid-area: 1 / 1; transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out), visibility var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-500); }
+  #detail { transform: translateX(100%); visibility: hidden; }
+  body.picked #list { transform: translateX(-25%); visibility: hidden; }
+  /* The one coming into view is visible as it starts to; the other hidden once it is out. */
+  body.picked #detail { transform: none; visibility: visible; }
+  body.picked #detail, body:not(.picked) #list { transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out); }
 
 
   .title { flex-wrap: wrap; }
@@ -148,15 +196,31 @@ tr.left td { opacity: .55; }
 
   .seg { flex-wrap: wrap; }
 }
+/* No slide for those who ask the browser for less motion, on the first load (a link to a team
+   lands on it), or between the pages (`main.instant`, ui/admin.js). */
+@media (max-width: 699px) and (prefers-reduced-motion: reduce) {
+  #list, #detail, body.picked #detail, body:not(.picked) #list { transition: none; }
+}
+body main.instant :is(#list, #detail) { transition: none; }
 /* The parts the script writes: the title's heading, a row of a field and its button, a hint
    leading a card, a list's empty note, the new team's slug and a rule's priority. */
 .title h1 { margin: 0; }
+/* The sections of a team's or a customer's page (ui/admin.js, "sections"): tabs under its title,
+   in one line that scrolls sideways where it is too long. */
+.sections { display: flex; align-items: stretch; overflow-x: auto; scrollbar-width: none; }
+.sections a { display: inline-flex; flex: none; align-items: center; text-decoration: none; white-space: nowrap; }
 .fill { flex: 1; }
 .inline { display: flex; gap: var(--spectrum-spacing-100); align-items: center; }
 .hint.lead { margin: 0 0 var(--spectrum-spacing-100); }
 .empty.pad { padding: var(--spectrum-spacing-100); }
 #ntSlug { width: calc(var(--spectrum-spacing-100) * 13 + var(--spectrum-spacing-75) + var(--spectrum-spacing-50)); }
 #rPriority { width: var(--spectrum-spacing-900); }
+/* The team wizard (ui/admin.js, `showGroup`): a checkbox per person, and the two ways to make
+   the team, one under the other. */
+#gPeople td:first-child { width: var(--spectrum-spacing-400); }
+#gPeople td input[type="checkbox"] { width: auto; }
+.wizteam .inline { margin: var(--spectrum-spacing-200) 0 var(--spectrum-spacing-100); }
+.wizteam .form { margin-left: var(--spectrum-spacing-400); }
 
 /* ==== Its look ================================================================================= */
 
@@ -245,6 +309,7 @@ tr.left td { opacity: .55; }
 /* The one picked: ListView's highlight, the accent faintly, darker under the pointer. */
 .spectrum .row.on { background: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity)); }
 .spectrum .row.on:hover { background: rgb(var(--spectrum-blue-900-rgb), var(--spectrum-table-selected-row-background-opacity-hover)); }
+.spectrum .row.two { gap: var(--spectrum-spacing-50); }
 .spectrum .row .name i { color: var(--spectrum-neutral-subdued-content-color-default); }
 /* An org's icon: a thumbnail, rounded as a nested object is. */
 .spectrum .ico { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); border-radius: var(--spectrum-corner-radius-75); }
@@ -261,7 +326,7 @@ tr.left td { opacity: .55; }
 
 /* ---- the detail: title, cards ------------------------------------------------------------ */
 
-.spectrum .title { gap: var(--spectrum-spacing-200); margin-bottom: var(--spectrum-spacing-400); }
+.spectrum .title { gap: var(--spectrum-spacing-200); min-height: var(--spectrum-component-height-200); margin-bottom: var(--spectrum-spacing-400); }
 .spectrum .title h1 {
   color: var(--spectrum-heading-color);
   font-size: var(--spectrum-heading-size-m);
@@ -286,6 +351,32 @@ tr.left td { opacity: .55; }
 .spectrum .title a { font-weight: var(--spectrum-medium-font-weight); text-decoration: none; border-radius: var(--spectrum-corner-radius-75); }
 .spectrum .title a:hover { text-decoration: underline; }
 .spectrum .title .ico { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+
+/* Tabs, quiet, compact, size M: the sections of a team's or a customer's page. A divider under
+   them all; the open one's label in the content color with the selection indicator under it,
+   the others subdued, the content color under the pointer; the agent's counts beside the
+   labels as Badges, size S (positive where something is on, outlined where nothing is). */
+.spectrum .sections {
+  gap: var(--spectrum-tab-item-to-tab-item-horizontal-medium);
+  margin: calc(-1 * var(--spectrum-spacing-200)) 0 var(--spectrum-spacing-400);
+  box-shadow: inset 0 calc(-1 * var(--spectrum-border-width-200)) 0 var(--spectrum-gray-200);
+}
+.spectrum .sections a {
+  gap: var(--spectrum-text-to-visual-100);
+  min-height: var(--spectrum-tab-item-compact-height-medium);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-100);
+  font-weight: var(--spectrum-medium-font-weight);
+  border-bottom: var(--spectrum-border-width-200) solid transparent;
+  transition: color var(--s2-ease), border-color var(--s2-ease);
+}
+.spectrum .sections a:hover { color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .sections a[aria-current] { color: var(--spectrum-neutral-content-color-default); border-bottom-color: var(--spectrum-neutral-content-color-default); }
+.spectrum .sections a:focus-visible { outline: var(--s2-focus); outline-offset: calc(-1 * var(--spectrum-focus-indicator-gap)); border-radius: var(--s2-radius); }
+.spectrum .sections .tag { font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .sections .tag + .tag { margin-inline-start: calc(-1 * var(--spectrum-spacing-50)); }
+.spectrum .sections .tag.agent { background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .sections .tag.missing { background: transparent; box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-neutral-visual-color); }
 
 /* A section of the content area: its title, then what it holds, set apart from the next by
    space alone (the widest gap on the page), with no card around it. */
@@ -380,9 +471,16 @@ tr.left td { opacity: .55; }
 .spectrum .tag.manual { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-indigo-subtle-background-color-default); }
 .spectrum .tag.partner { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-purple-subtle-background-color-default); }
 .spectrum .tag.vendor { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-yellow-subtle-background-color-default); }
+.spectrum .recent { list-style: none; margin: 0; padding: 0; }
+.spectrum .recent li { padding: var(--spectrum-spacing-200) 0; border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .recent li:first-child { border-top: 0; padding-top: 0; }
+.spectrum .recent .said { overflow-wrap: anywhere; margin-bottom: var(--spectrum-spacing-75); }
+.spectrum .tag.ours { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-informative-subtle-background-color-default); }
+/* A bot that only posts alerts: the threads it starts are alerts. */
+.spectrum .tag.alerts { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-orange-subtle-background-color-default); }
 /* A request's status, and Clef's verdict when it is this team's. */
 .spectrum .tag.open { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); }
-.spectrum .tag.confirmed, .spectrum .tag.clef.yes { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .tag.confirmed, .spectrum .tag.merged, .spectrum .tag.clef.yes { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }
 .spectrum .tag.declined { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); }
 .spectrum .tag.clef { color: var(--spectrum-neutral-content-color-default); }
 
@@ -439,6 +537,32 @@ tr.left td { opacity: .55; }
 .spectrum .picks .pickrow .where { font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-200); }
 .spectrum .picks .empty { color: var(--spectrum-neutral-subdued-content-color-default); }
 
+/* The teams a channel moves to: the same Popover, with a SearchField over its Menu items. */
+.spectrum .movepop {
+  gap: var(--spectrum-spacing-100);
+  padding: var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.spectrum .movepop .what { margin: 0; padding: 0 var(--spectrum-component-edge-to-text-100); font-size: var(--spectrum-font-size-75); }
+.spectrum .movepop .hint { margin: 0; padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum .movepop .row {
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-100);
+}
+.spectrum .movepop .row:hover, .spectrum .movepop .row.on { background: var(--s2-down); }
+.spectrum .movepop .empty { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* A channel's name that opens it: its text, a Link when the pointer is on it. */
+.spectrum td button.link.chan {
+  min-height: 0; margin: 0; padding: 0;
+  color: inherit; font: inherit; background: none;
+  border-radius: var(--spectrum-corner-radius-75);
+}
+.spectrum td button.link.chan:hover:not(:disabled) { color: var(--spectrum-accent-content-color-hover); background: none; text-decoration: underline; }
+
 /* ---- an org: icon suggestions ------------------------------------------------------------ */
 
 /* Selectable Cards: gray at rest, an accent outline and a faint accent fill when picked. */
@@ -480,6 +604,15 @@ tr.left td { opacity: .55; }
 }
 .spectrum #detail > .empty.pick { padding: var(--spectrum-spacing-400); }
 
+.spectrum .title .back.shown { width: var(--s2-ctl); height: var(--s2-ctl); }
+.spectrum .title .back.shown svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+.spectrum .title h1 .sub { font-weight: var(--spectrum-regular-font-weight); }
+.spectrum .tag.opened { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }
+.spectrum .portalopen textarea { padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100); line-height: var(--spectrum-line-height-200); }
+.spectrum .portalopen fieldset { gap: var(--spectrum-spacing-75) var(--spectrum-spacing-200); }
+.spectrum .portalopen legend { margin-bottom: var(--spectrum-spacing-75); padding: 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .portalopen label.only { margin: 0; }
+
 /* The phone's back button: a quiet icon-only ActionButton. */
 .spectrum .title .back { color: var(--spectrum-neutral-content-color-default); border-radius: var(--s2-radius); }
 .spectrum .title .back:hover { background: var(--spectrum-gray-100); }
@@ -516,3 +649,13 @@ tr.left td { opacity: .55; }
 .spectrum dialog.confirm .apply { display: flex; justify-content: flex-end; gap: var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-500); }
 .spectrum dialog.confirm .apply button:not(.danger) { min-height: var(--s2-ctl); padding: 0 calc(var(--spectrum-component-pill-edge-to-text-100) - var(--spectrum-border-width-200)); border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300); border-radius: var(--s2-pill); background: transparent; font-weight: var(--spectrum-bold-font-weight); }
 .spectrum dialog.confirm .apply button:not(.danger):hover { background: var(--spectrum-gray-100); border-color: var(--spectrum-gray-400); }
+
+/* Two orgs that may be one: each a quiet panel, the one a merge keeps in the accent's tint. */
+.spectrum .pair .side { padding: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-large-default); }
+.spectrum .pair .side.kept { background: var(--spectrum-accent-subtle-background-color-default); }
+.spectrum .pair .field { margin-top: var(--spectrum-spacing-200); }
+.spectrum .pair .side a { color: inherit; }
+.spectrum .row.dup .ico + .ico { margin-inline-start: calc(-1 * var(--spectrum-spacing-100)); }
+.spectrum .asks li + li, .spectrum .dups li + li { margin-top: var(--spectrum-spacing-100); }
+.spectrum .movepop .newtype { padding: 0 var(--spectrum-component-edge-to-text-100); }
+.spectrum td.picks-cell .link + .link { margin-inline-start: var(--spectrum-spacing-100); }

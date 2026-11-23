@@ -18,12 +18,15 @@ import { parse } from '../src/channels.js';
 import {
   requestOf, runBackfill, slackBackfillKey, sweepBackfills,
 } from '../src/backfill.js';
-import { labelThread, MAX_QUESTIONS, QUESTIONS } from '../src/label.js';
+import {
+  labelThread, MAX_QUESTIONS, QUESTIONS, queueRelabel,
+} from '../src/label.js';
 import { getChannel, resetSlackDomains } from '../src/lookup.js';
 import {
   consume, processKey, recordBots, teamsEventMarkdown,
 } from '../src/normalizer.js';
 import { d1 } from './d1.js';
+import { questionKeys } from '../src/techid.js';
 import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
 
 // Made-up ids, names and domains only.
@@ -52,6 +55,9 @@ const USERS = {
     profile: { email: 'cy@customer.example', title: 'CTO' },
     team_id: 'T9',
     is_restricted: true,
+  },
+  UB: {
+    id: 'UB', real_name: 'Helper Bot', is_bot: true, profile: {}, team_id: 'T1',
   },
 };
 
@@ -177,6 +183,150 @@ describe('processKey', () => {
     assert.deepEqual(meta.raw, [key]);
     const [who] = e.DB.rows("SELECT title, guest FROM identities WHERE user_id = 'U2'");
     assert.deepEqual([who.title, who.guest], ['CTO', 1]);
+  });
+
+  it('counts a bot an admin said is Adobe\'s as staff, from its next message on', async () => {
+    const at = (n) => `1792584000.00030${n}`;
+    const key = (n) => `slack/E1/C1/2026/10/21/${at(n)}-Ev${n}.json`;
+    const bot = (n) => event({
+      type: 'message', subtype: 'bot_message', channel: 'C1', bot_id: 'B1', bot_profile: { name: 'Helper' }, ts: at(n), text: 'Done.',
+    });
+    const e = env({ [key(1)]: bot(1), [key(2)]: bot(2) });
+    const author = (n) => parse(e.CHANNELS.objects.get(`channels/acme/helix/slack-C1/${at(n)}/${at(n)}.md`).body).meta.author;
+    await processKey(e, key(1));
+    assert.deepEqual(author(1), {
+      kind: 'bot', name: 'Helper', org: null, staff: false,
+    });
+    // Its first message wrote its account, so the admin page lists it.
+    assert.deepEqual(e.DB.rows("SELECT kind, name, ours FROM identities WHERE user_id = 'B1'"), [
+      { kind: 'bot', name: 'Helper', ours: null },
+    ]);
+    e.DB.sqlite.exec("UPDATE identities SET ours = 1 WHERE user_id = 'B1'");
+    await processKey(e, key(2));
+    assert.equal(author(2).staff, true);
+    assert.deepEqual(e.DB.rows('SELECT id, staff, counted FROM messages ORDER BY id'), [
+      { id: at(1), staff: 0, counted: 0 },
+      { id: at(2), staff: 1, counted: 0 },
+    ]);
+  });
+
+  it('files the threads a bot that only posts alerts starts as alerts, in a conversation channel', async () => {
+    const at = (n) => `1792584000.00040${n}`;
+    const key = (n) => `slack/E1/C1/2026/10/21/${at(n)}-Ev${n}.json`;
+    const bot = (n, thread) => event({
+      type: 'message', subtype: 'bot_message', channel: 'C1', bot_id: 'B1', bot_profile: { name: 'Monitor' }, ts: at(n), text: 'CPU high.', ...(thread ? { thread_ts: at(thread) } : {}),
+    });
+    const person = (n, thread) => event({
+      type: 'message', channel: 'C1', user: 'U2', ts: at(n), text: 'Looking.', ...(thread ? { thread_ts: at(thread) } : {}),
+    });
+    // An alert, a person's reply to it, a person's question and the bot's reply to that.
+    const e = env({
+      [key(1)]: bot(1), [key(2)]: person(2, 1), [key(3)]: person(3), [key(4)]: bot(4, 3),
+    }, { AI: {} });
+    await processKey(e, key(1));
+    const [{ author_key: bot1 }] = e.DB.rows(`SELECT author_key FROM messages WHERE id = '${at(1)}'`);
+    // Not yet: its first alert is a conversation's, as the channel's are.
+    assert.deepEqual(e.DB.rows('SELECT kind FROM threads'), [{ kind: 'channel' }]);
+    e.DB.sqlite.prepare("UPDATE identities SET alerts = 1 WHERE source || ':' || tenant || ':' || user_id = ?").run(bot1);
+    e.queued.length = 0;
+    for (const n of [1, 2, 3, 4]) {
+      // eslint-disable-next-line no-await-in-loop
+      await processKey(e, key(n));
+    }
+    assert.deepEqual(e.DB.rows('SELECT root_id, kind FROM threads ORDER BY root_id'), [
+      { root_id: at(1), kind: 'alert' },
+      { root_id: at(3), kind: 'channel' },
+    ]);
+    // Clef labels only the person's conversation; the alert gets its title when it is re-threaded.
+    const labels = e.queued.filter((q) => q.body.label).map((q) => q.body.label);
+    assert.ok(labels.length > 0);
+    assert.ok(labels.every((t) => t.endsWith(at(3))), labels.join(' '));
+  });
+
+  it('keeps a Slack bot\'s picture, and writes the name an admin gave it', async () => {
+    const at = (n) => `1792584000.00050${n}`;
+    const key = (n) => `slack/E1/C1/2026/10/21/${at(n)}-Ev${n}.json`;
+    const icon = (n) => `https://pictures.example/helper-${n}.png`;
+    const bot = (n) => event({
+      type: 'message',
+      subtype: 'bot_message',
+      channel: 'C1',
+      bot_id: 'B3',
+      bot_profile: { name: 'Helper', icons: { image_36: icon(36), image_72: icon(72) } },
+      ts: at(n),
+      text: 'Done.',
+    });
+    const e = env({ [key(1)]: bot(1), [key(2)]: bot(2), [key(3)]: bot(3) });
+    const author = (n) => parse(e.CHANNELS.objects.get(`channels/acme/helix/slack-C1/${at(n)}/${at(n)}.md`).body).meta.author;
+    // Written before by a bot's account without a picture: its next message gives it one.
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at)
+      VALUES ('slack', 'E1', 'B3', 'bot', 'Helper', '2026-10-01T00:00:00Z')`);
+    await processKey(e, key(1));
+    assert.deepEqual(e.DB.rows("SELECT avatar FROM identities WHERE user_id = 'B3'"), [{ avatar: icon(72) }]);
+    // A picture it has is kept.
+    e.DB.sqlite.exec("UPDATE identities SET avatar = 'https://pictures.example/kept.png' WHERE user_id = 'B3'");
+    await processKey(e, key(2));
+    assert.deepEqual(e.DB.rows("SELECT avatar FROM identities WHERE user_id = 'B3'"), [
+      { avatar: 'https://pictures.example/kept.png' },
+    ]);
+    assert.equal(author(2).name, 'Helper');
+    e.DB.sqlite.exec("UPDATE identities SET display_name = 'Helper Agent' WHERE user_id = 'B3'");
+    await processKey(e, key(3));
+    assert.equal(author(3).name, 'Helper Agent');
+  });
+
+  it('keeps an admin\'s say on a bot user when the account is looked up again', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000400-Ev4.json';
+    const e = env({
+      [key]: event({
+        type: 'message', channel: 'C1', user: 'UB', bot_id: 'B2', ts: '1792584000.000400', text: 'Done.',
+      }),
+    });
+    // Looked up long ago: the platform is asked again, and the flag stays.
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at, avatar, ours)
+      VALUES ('slack', 'E1', 'UB', 'bot', 'Helper Bot', '2020-01-01T00:00:00Z', '', 1)`);
+    await processKey(e, key);
+    const path = 'channels/acme/helix/slack-C1/1792584000.000400/1792584000.000400.md';
+    assert.deepEqual(parse(e.CHANNELS.objects.get(path).body).meta.author, {
+      kind: 'bot', name: 'Helper Bot', org: null, staff: true,
+    });
+    const [row] = e.DB.rows("SELECT ours, fetched_at FROM identities WHERE user_id = 'UB'");
+    assert.equal(row.ours, 1);
+    assert.notEqual(row.fetched_at, '2020-01-01T00:00:00Z');
+  });
+
+  it('writes a Slack message from its blocks, which say what Slack shows', async () => {
+    const key = 'slack/E1/C1/2026/10/21/1792584000.000200-Ev2.json';
+    const e = env({
+      [key]: event({
+        type: 'message',
+        channel: 'C1',
+        user: 'U2',
+        ts: '1792584000.000200',
+        text: '*Status:* down <@U1>\n• one',
+        blocks: [{
+          type: 'rich_text',
+          elements: [
+            {
+              type: 'rich_text_section',
+              elements: [
+                { type: 'text', text: 'Status: ', style: { bold: true } },
+                { type: 'text', text: 'down ' },
+                { type: 'user', user_id: 'U1' },
+              ],
+            },
+            {
+              type: 'rich_text_list',
+              style: 'bullet',
+              elements: [{ type: 'rich_text_section', elements: [{ type: 'text', text: 'one' }] }],
+            },
+          ],
+        }, { type: 'divider' }],
+      }),
+    });
+    await processKey(e, key);
+    const path = 'channels/acme/helix/slack-C1/1792584000.000200/1792584000.000200.md';
+    assert.equal(parse(e.CHANNELS.objects.get(path).body).body, '**Status:** down @Ada Staff\n\n- one\n\n---');
   });
 
   it('puts a message the Slack message quotes below its text, as a quote of its author', async () => {
@@ -1004,13 +1154,26 @@ describe('backfill, mentions and labels', () => {
     assert.ok(sizes.length > 1 && sizes.every((n) => n <= MAX_QUESTIONS));
     const asked = clef.flatMap((c) => Object.keys(c.input.questions));
     assert.deepEqual(asked.slice(0, 4), Object.keys(QUESTIONS));
-    assert.ok(asked.includes('tech.eds'));
+    // Each technology by the hash of its id (src/techid.js), mapped back in the call.
+    assert.ok(asked.includes(`tech.${questionKeys(['eds']).eds}`));
+    assert.ok(!asked.includes('tech.eds'));
+    // What it shows (Edge Delivery, by the rules), and only that, is asked "about" in a call after.
+    const about = clef.filter((c) => Object.keys(c.input.questions).some((k) => k.startsWith('about.')));
+    assert.deepEqual(about.map((c) => Object.keys(c.input.questions)), [[`about.${questionKeys(['eds']).eds}`]]);
+    assert.match(Object.values(about[0].input.questions)[0].instructions, /^Is this thread about /);
     assert.ok(asked.includes('topic.cdn'));
     // The rules detected Edge Delivery, as sure as can be; Clef said nothing about it.
-    assert.deepEqual(e.DB.rows('SELECT tech, p FROM channel_tech'), [{ tech: 'eds', p: 1 }]);
     // And the thread's own (labels.tech), for its header.
     assert.deepEqual(e.DB.rows('SELECT tech FROM labels'), [{ tech: '{"eds":1}' }]);
+    // By index too, for the teams and people who follow it (src/follows.js), and what changed.
+    assert.deepEqual(e.DB.rows('SELECT thread, tech, p FROM thread_tech'), [
+      { thread: 'slack:E1:C1:1.1', tech: 'eds', p: 1 },
+    ]);
+    assert.deepEqual(r.tech, { gained: ['eds'], lost: [] });
     assert.deepEqual(r.topics, ['cdn']);
+    // The areas it is in, by index, and that it joined one, for those who follow it.
+    assert.deepEqual(e.DB.rows('SELECT area, p FROM thread_areas'), [{ area: 'cdn', p: 0.9 }]);
+    assert.deepEqual(r.areas, { gained: ['cdn'], lost: [] });
     assert.deepEqual(e.DB.rows('SELECT topics FROM labels'), [{ topics: '{"cdn":0.9}' }]);
     assert.match(calls[0].input.state, /Cy \(customer, customer\.example\):\nsite down/);
     assert.equal(calls.find((c) => c.model.endsWith('/clairic')).input.reference_date, '2026-10-21');
@@ -1027,6 +1190,80 @@ describe('backfill, mentions and labels', () => {
     );
     assert.equal((await labelThread(e, 'slack:E1:C1:1.1')).result, 'unchanged');
     assert.equal(calls.length, clef.length + 2); // Clef, Clairic and the title, once
+    // Asked to (`POST /api/admin/relabel`), an unchanged thread is labeled again; queued, as a
+    // forced job.
+    const forced = await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO), { force: true });
+    assert.equal(forced.result, 'labeled');
+    e.queued.length = 0;
+    const first = await queueRelabel(e, { limit: 5, minMessages: 1 });
+    assert.deepEqual(first, { queued: 1, next: null });
+    assert.deepEqual(e.queued.map((q) => q.body), [{ label: 'slack:E1:C1:1.1', force: true }]);
+    const rest = await queueRelabel(e, { after: 'slack:E1:C1:1.1', minMessages: 1 });
+    assert.deepEqual(rest, { queued: 0, next: null });
+    const none = await queueRelabel(e, { threads: ['slack:E1:C1:9.9'], minMessages: 1 });
+    assert.deepEqual(none, { queued: 0, next: null });
+    const named = await queueRelabel(e, { threads: ['slack:E1:C1:1.1'], minMessages: 1 });
+    assert.deepEqual(named, { queued: 1, next: null });
+
+    // Labeled live, what it now shows is news for those who follow it; imported (the history
+    // import's, src/history.js), it tells nobody.
+    const told = [];
+    e.ROOMS = {
+      idFromName: (n) => n,
+      get: (team) => ({
+        fetch: async (u, init) => {
+          told.push({ team, ...JSON.parse(init.body) });
+          return new Response(null, { status: 204 });
+        },
+      }),
+    };
+    const relabel = async () => {
+      e.DB.sqlite.exec('DELETE FROM thread_tech; DELETE FROM thread_areas');
+      await quiet(() => consume({
+        messages: [{
+          body: { label: 'slack:E1:C1:1.1', force: true }, attempts: 1, ack() {}, retry() {},
+        }],
+      }, e));
+    };
+    await relabel();
+    assert.ok(told.some((t) => t.type === 'thread' && t.tech && t.tech.includes('eds')));
+    told.length = 0;
+    e.DB.sqlite.exec('UPDATE threads SET imported = 1');
+    await relabel();
+    assert.deepEqual(told, []);
+    assert.deepEqual(e.DB.rows('SELECT tech FROM thread_tech'), [{ tech: 'eds' }]);
+  });
+
+  it('keeps "about" unasked, not empty, when its call fails', async () => {
+    const AI = {
+      async run(model, input) {
+        if (model.endsWith('/clef')) {
+          if (Object.keys(input.questions).some((k) => k.startsWith('about.'))) {
+            throw new Error('3040: capacity');
+          }
+          return { model: 'clef', answers: {} };
+        }
+        return { model: 'clairic', answers: {} };
+      },
+    };
+    const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const e = env({
+      [root]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'see https://main--web--acme.aem.live',
+      }),
+    }, { AI });
+    await processKey(e, root);
+    const logged = [];
+    const { error } = console;
+    console.error = (line) => logged.push(line);
+    try {
+      assert.equal((await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO))).result, 'labeled');
+    } finally {
+      console.error = error;
+    }
+    assert.deepEqual(e.DB.rows('SELECT tech, about FROM labels'), [{ tech: '{"eds":1}', about: null }]);
+    assert.deepEqual(e.DB.rows('SELECT tech, about FROM thread_tech'), [{ tech: 'eds', about: null }]);
+    assert.ok(logged.some((l) => /"about":"failed"/.test(l)));
   });
 });
 

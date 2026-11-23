@@ -17,6 +17,7 @@
  * - `{ op: 'delete', message }`: a tombstone (`deletedAt`, no body)
  * - `{ op: 'channel', channel }`: channel metadata changed (rename, creation)
  * - `{ op: 'reaction', reaction }`: someone reacted to a message (read state only)
+ * - `{ op: 'lobby', lobby }`: how a lobby of the customer portal is now (src/portalrequests.js)
  * - `{ op: 'skip', reason }`: nothing for pile 2
  *
  * A message carries an `authorRef` that the caller resolves to an author, and its body
@@ -78,8 +79,6 @@ function slackFiles(files) {
   return [images.join('\n'), [...links, ...unseen].join('\n')].filter(Boolean).join('\n\n');
 }
 
-const blockText = (t) => (t && typeof t.text === 'string' ? t.text : '');
-
 /**
  * The messages a Slack message quotes: one forwarded with it (`is_share`), or the preview Slack
  * adds under a link to a message (`is_msg_unfurl`). Each is `{ authorId, author, at, url, text }`,
@@ -99,39 +98,6 @@ export function slackQuotes(attachments) {
     }));
 }
 
-/**
- * Block Kit to mrkdwn, for messages whose blocks say more than their `text` (bots and
- * apps). `rich_text` blocks are what Slack's own composer sends; for those, `text` already
- * holds the same content, so they are not rendered.
- */
-export function slackBlocks(blocks) {
-  if (!Array.isArray(blocks) || blocks.every((b) => b.type === 'rich_text')) {
-    return null;
-  }
-  const out = [];
-  for (const b of blocks) {
-    if (b.type === 'header') {
-      out.push(`*${blockText(b.text)}*`);
-    } else if (b.type === 'section') {
-      if (b.text) {
-        out.push(blockText(b.text));
-      }
-      if (Array.isArray(b.fields) && b.fields.length) {
-        // "*Label:*\nvalue" fields become one "*Label:* value" line each.
-        out.push(b.fields.map((f) => blockText(f).replace(/^(\*[^*\n]+\*)\n/, '$1 ')).join('\n'));
-      }
-    } else if (b.type === 'context') {
-      out.push((b.elements || []).map(blockText).filter(Boolean).join(' · '));
-    } else if (b.type === 'divider') {
-      out.push('---');
-    } else if (b.type === 'image' && b.image_url) {
-      out.push(`<${b.image_url}|${b.alt_text || 'image'}>`);
-    }
-  }
-  const text = out.filter(Boolean).join('\n\n');
-  return text || null;
-}
-
 /** Slack's reactions on a message (present on backfilled messages), one row per user. */
 function slackReactions(msg) {
   if (!Array.isArray(msg.reactions)) {
@@ -147,9 +113,12 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
   if (msg.subtype && !SLACK_CONTENT.has(msg.subtype)) {
     authorRef = { kind: 'system', name: 'Slack' };
   } else if (msg.bot_id && !msg.user) {
+    const icons = (msg.bot_profile && msg.bot_profile.icons) || {};
     authorRef = {
       kind: 'bot',
       name: (msg.bot_profile && msg.bot_profile.name) || msg.username || null,
+      // The bot's picture, for its identity when it has none (src/lookup.js, botIdentity).
+      ...(icons.image_72 || icons.image_48 ? { avatar: icons.image_72 || icons.image_48 } : {}),
       botId: msg.bot_id,
       tenant,
       // Org-wide tokens need the workspace for bots.info.
@@ -176,7 +145,9 @@ function slackMessage(payload, key, msg, channel, extra = {}) {
     subtype: msg.subtype,
     format: 'mrkdwn',
     // The text, the messages it quotes, then its files (markdown already): src/normalizer.js.
-    text: slackBlocks(msg.blocks) || msg.text || '',
+    // The blocks are read before the text (src/slackmd.js), which is mrkdwn.
+    text: msg.text || '',
+    blocks: Array.isArray(msg.blocks) && msg.blocks.length ? msg.blocks : undefined,
     quotes: quotes.length ? quotes : undefined,
     files: files ? `Attachments:\n${files}` : undefined,
     reactions: slackReactions(msg),
@@ -393,7 +364,9 @@ export function normalizeDiscord(key, envelope) {
       authorRef,
       subject: subject || undefined,
       format: 'discord',
-      text: [d.content || '', embeds, files && `Attachments:\n\n${files}`].filter(Boolean).join('\n\n'),
+      // What was written (Discord's markdown), then its embeds and files, markdown already.
+      text: d.content || '',
+      after: [embeds, files && `Attachments:\n\n${files}`].filter(Boolean).join('\n\n') || undefined,
       reactions,
       // Whoever reacted has read the thread up to here.
       reactors: reactions ? [...new Set(reactions.map((r) => r.userId))] : undefined,
@@ -542,12 +515,25 @@ export function teamsEventText(detail, name = (u) => u.displayName) {
   }
 }
 
+/** Slack's notices that a channel was archived or restored (message subtypes). */
+const SLACK_ARCHIVE_NOTICES = new Set([
+  'channel_archive', 'channel_unarchive', 'group_archive', 'group_unarchive',
+]);
+
 /**
- * Whether a message is a Teams system notice that its channel or its Teams team got a new name:
- * the normalizer looks the channel up again then (the rules read both names).
+ * Whether a message is a system notice that its channel changed in a way its row keeps: on
+ * Teams, that the channel or its Teams team got a new name (the rules read both names), or was
+ * archived or restored; on Slack, that the channel was archived or restored. The normalizer
+ * looks the channel up again then.
  */
-export const isRenameNotice = (message) => /^#?microsoft\.graph\.(channel|team)RenamedEventMessageDetail$/
-  .test(String((message && message.event && message.event['@odata.type']) || ''));
+export const isChannelNotice = (message) => /^#?microsoft\.graph\.(channel|team)(Renamed|Archived|Unarchived)EventMessageDetail$/
+  .test(String((message && message.event && message.event['@odata.type']) || ''))
+  || Boolean(message && message.source === 'slack' && SLACK_ARCHIVE_NOTICES.has(message.subtype));
+
+/** Text as an HTML attribute value (or element text). */
+const attr = (s) => String(s).replace(/[&"<>]/g, (c) => ({
+  '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;',
+})[c]);
 
 export function normalizeTeams(key, msg) {
   const [, tenant] = key.split('/');
@@ -592,9 +578,6 @@ export function normalizeTeams(key, msg) {
     const url = canonicalUrl(a.contentUrl);
     const { width: w, height: h } = a.opspile;
     if (html) {
-      const attr = (s) => String(s).replace(/[&"<>]/g, (c) => ({
-        '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;',
-      })[c]);
       const img = `<img src="${attr(url)}" alt="${attr(a.name || 'image')}"${sizeTitle(w, h) ? ` width="${Math.round(w)}" height="${Math.round(h)}"` : ''}>`;
       const id = String(a.id || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const tag = new RegExp(`<attachment\\s+id="${id}"\\s*>\\s*</attachment>`, 'i');
@@ -607,9 +590,10 @@ export function normalizeTeams(key, msg) {
       after.push(mdLink(a.name || 'image', url, true, sizeTitle(w, h)));
     }
   }
-  const attachments = refs.filter((a) => !inline.has(a))
-    .map((a) => `- ${mdLink(a.name || 'file', a.contentUrl)}`)
-    .join('\n');
+  const files = refs.filter((a) => !inline.has(a));
+  const attachments = files.map((a) => `- ${mdLink(a.name || 'file', a.contentUrl)}`).join('\n');
+  // In an HTML body, the list is HTML too: htmlToMarkdown keeps markdown in HTML as text.
+  const htmlList = `<ul>${files.map((a) => `<li><a href="${attr(a.contentUrl || '')}">${attr(a.name || 'file')}</a></li>`).join('')}</ul>`;
   const message = {
     source: 'teams',
     tenant,
@@ -632,7 +616,7 @@ export function normalizeTeams(key, msg) {
       format: html ? 'html' : 'text',
       // The same list as for Slack files; a plain-text body gets no HTML around it.
       text: [body, ...after, attachments
-        && (html ? `<p>Attachments:</p>\n${attachments}` : `\nAttachments:\n\n${attachments}`)]
+        && (html ? `<p>Attachments:</p>${htmlList}` : `\nAttachments:\n\n${attachments}`)]
         .filter(Boolean).join('\n'),
     }),
     permalink: msg.webUrl,
@@ -663,6 +647,122 @@ export function normalizeTeams(key, msg) {
   return { op: 'upsert', message };
 }
 
+/**
+ * A customer portal event (src/portal/events.js, stored by src/portalsource.js) to a pile-2
+ * operation. The portal is this repository's own, so its events say what the normalizer needs
+ * in the normalizer's terms: a message as it is now (posted, edited or deleted; `rev` counts
+ * its changes, and is its version), with its channel's name and its author's name and mail address,
+ * which the lookups take from here (`channelHint`, `authorRef`) instead of asking the portal;
+ * its files as links to the portal, which the inbox opens through it, and whom it mentions.
+ * The tenant is the lobby, the customer's mail domain.
+ */
+/** A portal message's files as the list every platform's files are (see `slackFiles`). */
+function portalFiles(files) {
+  const ok = (Array.isArray(files) ? files : []).filter((f) => f && f.url && f.name);
+  const shown = (f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type || '');
+  const images = ok.filter(shown)
+    .map((f) => mdLink(f.name, f.url, true, sizeTitle(f.width, f.height)));
+  const links = ok.filter((f) => !shown(f)).map((f) => `- ${mdLink(f.name, f.url)}`);
+  return [images.join('\n'), links.join('\n')].filter(Boolean).join('\n\n');
+}
+
+/**
+ * Where the inbox shows the picture of a portal account: one the person uploaded there comes
+ * through the inbox (`GET /api/portal/avatar/…`, src/portalsource.js), one the inbox gave for
+ * its own people is where it was; '' when the event names neither.
+ */
+const portalAvatar = (a) => (a.picture
+  ? `/api/portal/avatar/${encodeURIComponent(a.id)}?v=${encodeURIComponent(a.picture)}`
+  : (/^https:\/\//.test(a.avatar || '') && a.avatar) || '');
+
+export function normalizePortal(key, event) {
+  const e = event || {};
+  const tenant = e.domain;
+  if (e.type === 'lobby') {
+    return {
+      op: 'lobby',
+      lobby: {
+        ...(e.lobby || {}), domain: tenant, portal: e.portal || 'portal', seq: e.seq, at: e.at,
+      },
+    };
+  }
+  const ch = e.channel || {};
+  const channelHint = { name: ch.name, topic: ch.topic || null, company: ch.company || null };
+  if (e.type === 'channel') {
+    return {
+      op: 'channel',
+      channel: {
+        source: 'portal', tenant, channelId: ch.id, name: ch.name, at: e.at,
+      },
+    };
+  }
+  const a = e.author || {};
+  const authorRef = a.kind === 'bot'
+    ? {
+      kind: 'bot', name: a.name || 'Enterprise Support', source: 'portal', tenant, botId: a.id,
+    }
+    : {
+      source: 'portal',
+      tenant,
+      userId: a.id,
+      name: a.name || null,
+      email: a.email || null,
+      avatar: portalAvatar(a),
+    };
+  if (e.type === 'reaction') {
+    const r = e.reaction || {};
+    return {
+      op: 'reaction',
+      reaction: {
+        removed: Boolean(r.removed),
+        emoji: r.emoji,
+        source: 'portal',
+        tenant,
+        channelId: ch.id,
+        id: r.message,
+        userId: a.id,
+        at: r.at || e.at,
+        // Who reacted, for the lookup: the event names them.
+        userRef: a.kind === 'bot' ? undefined : authorRef,
+      },
+    };
+  }
+  if (e.type !== 'message' || !e.message) {
+    return { op: 'skip', reason: e.type || 'unknown' };
+  }
+  const m = e.message;
+  const files = m.deletedAt ? '' : portalFiles(m.files);
+  // Who it mentions: the portal names them, so their accounts are known before they are asked for.
+  const mentioned = (Array.isArray(m.mentions) ? m.mentions : []).filter((x) => x && x.id);
+  const message = {
+    source: 'portal',
+    tenant,
+    channelId: ch.id,
+    channelHint,
+    rootId: m.root || m.id,
+    id: m.id,
+    thread: `portal:${tenant}:${ch.id}:${m.root || m.id}`,
+    at: m.at,
+    editedAt: m.editedAt || undefined,
+    // The message as it is now: the portal counts its changes (an edit, its deletion).
+    version: String(Number(m.rev) || 0).padStart(9, '0'),
+    authorRef,
+    format: 'portal',
+    text: m.text || '',
+    files: files ? `Attachments:\n${files}` : undefined,
+    // No link to it: the portal is its customers', and nobody of the inbox can open it there.
+    raw: key,
+    mentionIds: mentioned.map((x) => x.id),
+    mentionRefs: mentioned.filter((x) => x.kind !== 'bot' && (x.name || x.email)).map((x) => ({
+      source: 'portal', tenant, userId: x.id, name: x.name || null, email: x.email || null,
+    })),
+  };
+  if (m.deletedAt) {
+    return { op: 'delete', message: { ...message, deletedAt: m.deletedAt, text: '' } };
+  }
+  return { op: 'upsert', message };
+}
+
 /** Dispatches on the pile-1 key's source. */
 export function normalize(key, json) {
   const source = key.split('/')[0];
@@ -678,6 +778,9 @@ export function normalize(key, json) {
   }
   if (source === 'discord') {
     return normalizeDiscord(key, json);
+  }
+  if (source === 'portal') {
+    return normalizePortal(key, json);
   }
   return { op: 'skip', reason: `unknown source ${source}` };
 }

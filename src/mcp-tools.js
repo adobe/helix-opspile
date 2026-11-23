@@ -27,7 +27,9 @@ import {
   config, deleteRule, deleteTech, saveRule, saveTech, testRule,
 } from './extract.js';
 import { inTeam, isAdmin, managesTeam } from './review.js';
+import { resolveConflict, techConflicts } from './techconflicts.js';
 import { mayWork, memberOf, teamless } from './shares.js';
+import { LAYERS } from './stack.js';
 
 /**
  * The tools of the MCP server (src/mcp.js). Each one runs as the signed-in person, through
@@ -137,6 +139,10 @@ function summary(t, me) {
   }
   if (t.unseenByAdobe) {
     out.unseen_by_adobe = true;
+  }
+  if (Number(t.imported)) {
+    // From the history import: over before the inbox began, so read and waiting on nobody.
+    out.imported = true;
   }
   if ((t.posters || []).includes(me.id)) {
     out.posted_in = true;
@@ -611,6 +617,16 @@ async function saveTechTool(env, me, args) {
   return error ? { error } : fromExtract(await saveTech(env, team, args, byName(me)), 'tech');
 }
 
+async function listConflictsTool(env) {
+  const conflicts = await techConflicts(env);
+  return { data: { open: conflicts.filter((c) => !c.kept).length, conflicts } };
+}
+
+async function resolveConflictTool(env, me, args) {
+  const r = await resolveConflict(env, me, args);
+  return r.error ? { error: `${r.error}.` } : { data: { ok: true, done: r.done, changes: r.changes } };
+}
+
 async function deleteTechTool(env, me, args) {
   const { team, error } = ruleTeam(me, args, { write: true });
   return error ? { error } : fromExtract({ ...await deleteTech(env, team, args.tech), deleted: args.tech }, 'deleted');
@@ -777,7 +793,7 @@ export const TOOLS = [
         waiting_on: { ...TEXT_ITEMS(WAITING), description: 'Who has the next move: us (Adobe), the customer, a vendor, or nobody' },
         urgency: TEXT_ITEMS(URGENCY),
         kind: TEXT_ITEMS(KINDS),
-        topic: { ...TEXT_ITEMS(Object.keys(topicNames())), description: 'What the thread is about; any of them' },
+        topic: { type: 'array', items: { type: 'string' }, description: `Areas the thread is about, by id (the teams author them on the Topics page; ${Object.keys(topicNames()).slice(0, 6).join(', ')}, …); any of them` },
         tech: { type: 'array', items: { type: 'string' }, description: 'Tech stack of the thread\'s channel, by id (akamai, sharepoint, …: list_extraction_rules lists them); any of them' },
         resolved: { type: 'boolean', description: 'true: only resolved threads; false: only open ones' },
         type: { ...TEXT_ITEMS(['conversation', 'alert']), description: 'Conversations with customers, or automated alerts' },
@@ -789,7 +805,7 @@ export const TOOLS = [
             waiting_on: TEXT_ITEMS(WAITING),
             urgency: TEXT_ITEMS(URGENCY),
             kind: TEXT_ITEMS(KINDS),
-            topic: TEXT_ITEMS(Object.keys(topicNames())),
+            topic: { type: 'array', items: { type: 'string' } },
             tech: { type: 'array', items: { type: 'string' } },
             type: TEXT_ITEMS(['conversation', 'alert']),
             platform: TEXT_ITEMS(PLATFORMS),
@@ -1053,7 +1069,7 @@ export const TOOLS = [
   {
     name: 'save_tech',
     title: 'Save a technology',
-    description: 'Adds a technology to an ops team\'s tech stack, or changes it (only the fields given): Clef asks "Does this thread show that the customer uses <description>?" about every thread of the team\'s channels (every channel, for the admin team), and the team\'s inbox shows `name`. Given another team, the id of one of the admin team\'s (list_extraction_rules: `inherited.tech`) changes it for that team\'s channels only, starting from the admin team\'s: `{ team, tech, enabled: false }` turns it off there, `{ team, tech, name }` renames it there. For the admin team and the team\'s managers.',
+    description: 'Adds a technology to an ops team\'s tech stack, or changes it (only the fields given): Clef asks "Does this thread show that the customer uses <description>?" about every thread of every channel (the team\'s own of an id replaces the others\' in its channels), and the team\'s inbox shows `name`. Given another team, the id of one of the admin team\'s (list_extraction_rules: `inherited.tech`) changes it for that team\'s channels only, starting from the admin team\'s: `{ team, tech, enabled: false }` turns it off there, `{ team, tech, name }` renames it there. A technology of a team\'s catalog (its id a path such as fastly/cdn, under products/ of the team\'s knowledge base) is changed in its file instead. For the admin team and the team\'s managers.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1063,6 +1079,7 @@ export const TOOLS = [
         description: { type: 'string', description: 'What Clef is asked about, e.g. "Akamai as CDN"' },
         product: { type: 'string', description: 'The product it is part of: an Adobe product by its name on business.adobe.com/products (e.g. "Experience Manager Sites"), or a category for other companies\' (e.g. "CDN")' },
         aliases: { type: 'string', description: 'Other names it goes by in threads, comma-separated (e.g. "EdgeWorkers, Property Manager"): for matching the products the threads name, not asked of Clef' },
+        layer: { type: 'string', enum: LAYERS.map((l) => l.id), description: `Where in a customer's stack it is (the list by customer names the likeliest of each layer): ${LAYERS.map((l) => `${l.id}, ${l.hint}`).join('; ')}` },
         enabled: { type: 'boolean' },
       },
       required: ['team', 'tech'],
@@ -1087,6 +1104,39 @@ export const TOOLS = [
       readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false,
     },
     run: deleteTechTool,
+  },
+  {
+    name: 'list_tech_conflicts',
+    title: 'List conflicts between the teams\' technologies',
+    admin: true,
+    description: 'Admin team only. The conflicts between the teams\' technologies (their catalogs under products/ of their knowledge bases, and the rows saved in D1), as the admin team\'s Requests lists them: `diverging`, one id two teams define otherwise (`fields` says which; each team\'s is asked in its channels), and `name`, a name or alias two ids share (`uses` says which team has it on which id, as name or alias). Each has a `key` for resolve_tech_conflict, and `kept` when an admin kept it as it is.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    run: listConflictsTool,
+  },
+  {
+    name: 'resolve_tech_conflict',
+    title: 'Settle a conflict between the teams\' technologies',
+    admin: true,
+    description: 'Admin team only. Settles a conflict list_tech_conflicts lists, by its `key`, as you, writing the teams\' catalog files (or the D1 rows): `keep` (with a `note`) leaves it as it is, hidden until a definition changes; `use` (`team`) makes a diverging id that team\'s everywhere, deleting the other teams\' files of it; `delete` (`team`, `tech`) deletes one definition; `unalias` (`team`, `tech`) takes a shared name off that technology\'s aliases; `merge` (`from`, `into`) makes two technologies of a shared name one: every file of `from` goes, and `into`\'s file lists `from` in moved_from, which rewrites the labels, follows, rules and lobbies D1 keeps under `from` for good.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'The conflict\'s key, as list_tech_conflicts gives it' },
+        action: { type: 'string', enum: ['keep', 'use', 'delete', 'unalias', 'merge'] },
+        team: { type: 'string', description: 'use, delete, unalias: the team whose definition it is' },
+        tech: { type: 'string', description: 'delete, unalias: the technology' },
+        from: { type: 'string', description: 'merge: the technology that goes' },
+        into: { type: 'string', description: 'merge: the technology that stays (one in a team\'s catalog)' },
+        note: { type: 'string', description: 'keep: why it is meant' },
+      },
+      required: ['key', 'action'],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false,
+    },
+    run: resolveConflictTool,
   },
   {
     name: 'get_thread_trace',

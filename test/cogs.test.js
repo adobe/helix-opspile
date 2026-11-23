@@ -26,6 +26,7 @@ import {
   accountRows, meterRows, replaceDay, replaceHours, resources, rollupCogs, seatRows, volumeRows,
 } from '../src/cogs/rollup.js';
 import { AGENT_EMAIL } from '../src/drafts.js';
+import { assignedArm, MODEL } from '../src/experiments.js';
 import { jobSubject } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 
@@ -126,6 +127,7 @@ describe('cogs: prices', () => {
     assert.equal(bedrockModel('anthropic.claude-opus-5-5-v1:0'), 'claude-opus-5-5');
     // An experiment's arm after the model is not part of it.
     assert.equal(bedrockModel('us.anthropic.claude-opus-5-5#cache=short'), 'claude-opus-5-5');
+    assert.equal(bedrockModel('global.anthropic.claude-sonnet-5-5#model=sonnet'), 'claude-sonnet-5-5');
     close(costOf('bedrock', 'cache_write_tokens', 'us.anthropic.claude-opus-5-5#cache=short', 1e6), 5);
     close(costOf('bedrock', 'input_tokens', 'us.anthropic.claude-opus-5-5', 1e6), 4);
     close(costOf('bedrock', 'cache_write_1h_tokens', 'us.anthropic.claude-opus-5-5', 1e6), 8);
@@ -145,6 +147,27 @@ describe('cogs: meter', () => {
     const m = new Meter(env);
     assert.equal(m.env({ thread: 't' }), env);
     assert.deepEqual(await m.flush(), { points: 0 });
+  });
+
+  it('reaches AI Search over RPC, where every property is a method of the other side', async () => {
+    // A Workers RPC stub: any property is a callable stub, `bind` and `apply` too, which the other
+    // side does not have.
+    const remote = { search: async () => ({ chunks: [] }), upload: async (n) => ({ id: `item-${n}` }), delete: async () => {} };
+    const stub = (path = []) => new Proxy(() => {}, {
+      get: (_, prop) => (typeof prop === 'symbol' ? undefined : stub([...path, prop])),
+      apply: (_, __, args) => {
+        const fn = remote[path[path.length - 1]];
+        if (!fn || path.some((p) => ['bind', 'apply', 'call'].includes(p))) {
+          throw new Error(`The RPC receiver does not implement the method "${path[path.length - 1]}".`);
+        }
+        return fn(...args);
+      },
+    });
+    const m = new Meter({ USAGE: usage(), SEARCH: stub() }, { via: 'queue' });
+    const env = m.env({ org: 'acme', team: 'helix' });
+    assert.deepEqual(await env.SEARCH.items.upload('n', 'text', {}), { id: 'item-n' });
+    await env.SEARCH.items.delete('i1');
+    assert.deepEqual(await env.SEARCH.search({ query: 'q' }), { chunks: [] });
   });
 
   it('counts D1 rows, R2 operations, queue operations, Workers AI, Vectorize and AI Search', async () => {
@@ -614,6 +637,21 @@ describe('cogs: rollup', () => {
     assert.equal(await meterRows({ COGS_RESOURCES: '{}' }, '2026-11-02'), null);
   });
 
+  it('backfills the latest days without rows of the source, a few a run', async () => {
+    const DB = d1();
+    // The d1 source has 10-31 and 10-29; another source's row does not fill 10-30.
+    for (const [day, source] of [['2026-10-31', 'd1'], ['2026-10-29', 'd1'], ['2026-10-30', 'meter']]) {
+      usageRow(DB, {
+        day, source, service: 'volume', metric: 'messages', quantity: 1,
+      });
+    }
+    const out = await rollupCogs({ DB }, { now: Date.parse('2026-11-02T12:00:00Z') });
+    assert.deepEqual(Object.keys(out).filter((k) => k.startsWith('volume ')).sort(), [
+      'volume 2026-10-27', 'volume 2026-10-28', 'volume 2026-10-30',
+      'volume 2026-11-01', 'volume 2026-11-02',
+    ]);
+  });
+
   it('replaces a day: changed rows written, gone ones deleted, other services left alone', async () => {
     const DB = d1();
     const env = { DB };
@@ -792,6 +830,83 @@ describe('cogs: report', () => {
     // Of what is selected: another customer has none.
     r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02&org=globex'), { now: NOW });
     assert.deepEqual(r.experiments, []);
+  });
+
+  it('sets the model experiment\'s arms side by side, per accepted draft', async () => {
+    const env = seeded();
+    const LATER = Date.parse('2026-11-20T12:00:00Z');
+    const keys = Array.from({ length: 40 }, (_, i) => `slack:T0:C0:17000000${i}.000100`);
+    const opus = keys.filter((k) => assignedArm(MODEL, k).id === 'opus').slice(0, 2);
+    const sonnet = keys.filter((k) => assignedArm(MODEL, k).id === 'sonnet').slice(0, 2);
+    const AGENT = 91;
+    env.DB.sqlite.prepare("INSERT INTO people (id, email, name, staff) VALUES (?, ?, 'opspile agent', 0)")
+      .run(AGENT, AGENT_EMAIL);
+    const ev = (key, draft, action, {
+      by = 2, changed = null, version = draft, org = 'acme', at = draft,
+    } = {}) => env.DB.sqlite.prepare(`INSERT INTO draft_events (thread, draft, version, action,
+        person, by_agent, origin, origin_agent, changed, org, team, at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 'helix', ?)`)
+      .run(key, draft, version, action, by, Number(by === AGENT), AGENT, changed, org, at);
+    const early = '2026-11-18T10:00:00.000Z';
+    // The threads' pins (src/agent/arms.js); one Sonnet thread of the arm's hash was not pinned
+    // (it started before the window), so its drafts are no arm's.
+    const pin = env.DB.sqlite.prepare("INSERT INTO agent_arms (name, experiment, arm, at) VALUES (?, 'model', ?, ?)");
+    [...opus, ...sonnet].forEach((k) => pin.run(k, assignedArm(MODEL, k).id, '2026-11-17T01:00:00.000Z'));
+    const unpinned = keys.filter((k) => assignedArm(MODEL, k).id === 'sonnet')[2];
+    const d2 = '2026-11-18T11:00:00.000Z';
+    // Opus: two drafts, both accepted (one edited, sent after the period's end too).
+    ev(opus[0], early, 'saved', { by: AGENT });
+    ev(opus[0], early, 'sent', { changed: 0 });
+    ev(opus[1], d2, 'saved', { by: AGENT });
+    ev(opus[1], d2, 'sent', { changed: 0.2, at: '2026-11-19T09:00:00.000Z' });
+    // Sonnet: three drafts, one accepted, one discarded, one withdrawn, and a post.
+    ev(sonnet[0], early, 'saved', { by: AGENT });
+    ev(sonnet[0], early, 'sent', { changed: 0 });
+    ev(sonnet[1], early, 'saved', { by: AGENT });
+    ev(sonnet[1], early, 'discarded');
+    ev(sonnet[1], d2, 'saved', { by: AGENT });
+    ev(sonnet[1], d2, 'discarded', { by: AGENT });
+    ev(sonnet[0], '', 'posted', { by: AGENT, version: null, at: d2 });
+    // Not pinned: no arm's. Before the period: not counted.
+    ev(unpinned, early, 'saved', { by: AGENT });
+    ev(unpinned, early, 'sent', { changed: 0 });
+    ev(sonnet[0], '2026-11-16T10:00:00.000Z', 'saved', { by: AGENT });
+    ev(sonnet[0], '2026-11-16T10:00:00.000Z', 'sent', { changed: 0, at: early });
+    // Opus: $4 (1M input). Sonnet: $1 (0.5M input at $2), and what fell back to Opus, $0.40.
+    const row = (detail, quantity) => usageRow(env.DB, {
+      day: '2026-11-18', service: 'bedrock', metric: 'input_tokens', detail, org: 'acme', team: 'helix', quantity,
+    });
+    row('us.anthropic.claude-opus-5-5#model=opus', 1e6);
+    row('us.anthropic.claude-sonnet-5-5#model=sonnet', 5e5);
+    row('us.anthropic.claude-opus-5-5#model=sonnet', 1e5);
+    let r = await cogsReport(env, url('from=2026-11-17&to=2026-11-18'), { now: LATER });
+    const x = r.experiments.find((e) => e.id === 'model');
+    assert.equal(x.measure, 'drafts');
+    const [o, s] = x.arms;
+    assert.deepEqual([o.id, s.id], ['opus', 'sonnet']);
+    assert.deepEqual(o.drafts, {
+      started: 2, sent: 1, edited: 1, discarded: 0, withdrawn: 0, posts: 0,
+    });
+    assert.deepEqual(s.drafts, {
+      started: 3, sent: 1, edited: 0, discarded: 1, withdrawn: 1, posts: 1,
+    });
+    assert.equal(o.accepted, 2);
+    assert.equal(o.acceptance, 1);
+    close(o.perAccepted, 2);
+    close(s.acceptance, 1 / 3);
+    close(s.usd, 1.4);
+    close(s.perAccepted, 1.4);
+    close(s.vs, 1.4 / 2 - 1);
+    assert.equal(o.vs, null);
+    close(s.margin, 1.96);
+    assert.deepEqual(Object.keys(s.models).sort(), ['us.anthropic.claude-opus-5-5', 'us.anthropic.claude-sonnet-5-5']);
+    assert.deepEqual(r.unpriced, []);
+    // Of what is selected: another customer's, none.
+    r = await cogsReport(env, url('from=2026-11-17&to=2026-11-18&org=globex'), { now: LATER });
+    assert.equal(r.experiments.find((e) => e.id === 'model'), undefined);
+    // A period before the window has none of its drafts.
+    r = await cogsReport(env, url('from=2026-11-01&to=2026-11-02'), { now: NOW });
+    assert.equal(r.experiments.find((e) => e.id === 'model'), undefined);
   });
 
   it('filters by customer, team and service, after sharing out', async () => {

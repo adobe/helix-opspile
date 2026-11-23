@@ -42,7 +42,7 @@ describe('icons', () => {
     const svg = readFileSync(new URL('../scripts/adobe-icon.svg', import.meta.url));
     assert.deepEqual(bytes('/icon.svg'), svg);
     assert.equal(ICONS['/icon.svg'].type, 'image/svg+xml');
-    for (const page of ['inbox', 'kb', 'admin']) {
+    for (const page of ['inbox', 'admin', 'cogs', 'topics']) {
       const html = readFileSync(new URL(`../ui/${page}.html`, import.meta.url), 'utf8');
       assert.match(html, /<title>Enterprise Support/);
       assert.match(html, /<h1><a [^>]*><img src="\/icon\.svg" alt="Adobe"><span>Enterprise Support<\/span><\/a><\/h1>/);

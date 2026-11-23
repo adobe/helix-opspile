@@ -11,8 +11,11 @@
  */
 
 import { discordEnabled } from '../discord.js';
+import { portalBound } from '../portalsource.js';
 import { teamsBotEnabled } from '../teamsbot.js';
+import { grantsOf } from '../toolrequests.js';
 import { membershipOn } from './membership.js';
+import { searchProblem } from './websearch.js';
 
 /**
  * Tools of the thread agents that are off until someone turns them on: for an ops team, or
@@ -24,29 +27,42 @@ import { membershipOn } from './membership.js';
  *   Slack bot, the Teams bot, the Discord bot), next to `update_draft`, and reacts to messages
  *   with an emoji (`add_reaction`; not on Teams, where no bot can). A platform whose bot is not
  *   set up in this deployment does not get it.
- * - `computer`: pi's `bash` tool, run on Cloudflare Computer (src/agent/computer.js): a
- *   just-bash shell in a Dynamic Worker over a filesystem in the agent's own Durable Object,
- *   so each thread keeps its files from one turn to the next, with network access and curl,
- *   and the team's and the customer's secrets, which only the Worker's gateway puts into the
- *   shell's requests (src/agent/secrets.js). With it comes `request_bash`: a command the agent
- *   asks a person on the team to run there, with values the person fills in
- *   (src/agent/bashrequest.js). The admin team can give a team's agents another shell on the
- *   same files, its `runtime`: GNU bash and real programs on the SLICC kernel
- *   (src/agent/kernel.js), which is experimental.
+ * - `computer`: pi's `bash` tool, run on Cloudflare Computer (src/agent/computer.js): GNU bash
+ *   and real programs on the SLICC kernel (src/agent/kernel.js), over a filesystem in the
+ *   agent's own Durable Object, so each thread keeps its files from one turn to the next, with
+ *   network access and curl, and the team's and the customer's secrets, which only the
+ *   Worker's gateway puts into the shell's requests (src/agent/secrets.js). With it comes
+ *   `request_bash`: a command the agent asks a person on the team to run there, with values
+ *   the person fills in (src/agent/bashrequest.js). The admin team chooses the programs of a
+ *   team's computers, its `image` (src/agent/image.js).
  * - `extraction_rules`: the agent reads, tests and changes its team's extraction rules and
  *   tech stack (src/extract.js), which apply to every channel of the team from the next
  *   labeling of a thread. It cannot change the admin team's, which apply to every channel.
  * - `any_thread`: the agent reads any thread of the inbox, whatever its channel, team or
- *   customer (src/agent/history.js).
+ *   customer (src/agent/history.js), finds a customer's channels and lists their threads
+ *   (src/agent/channelfind.js).
  * - `membership`: the agent asks the platform's admin bot to add people to the thread's channel,
  *   or remove them, where someone asked for it in the thread (src/agent/membership.js): on Teams
  *   admin-bot (teams-admin-agent), on Slack AEM Ops Automation (the slack-automation relay), each
  *   through a service binding. The admins approve, as when a person asks the bot.
+ * - `web_search`: the agent searches the public web, through Microsoft Web IQ, or Cloudflare's
+ *   Web Search API and AI Gateway (src/agent/websearch.js), for pages it has no address for;
+ *   it reads them with the global browser MCP server or its computer. On for every team
+ *   (migration 0077) and every new one; its managers turn it off.
+ * - `resolve`: the agent marks its thread resolved, or takes that back (src/agentlabels.js), in
+ *   the inbox only: it counts as a staff ✅ on the root (src/resolve.js). On for every team
+ *   (migration 0091) and every new one.
+ * - `label`: the agent corrects Clef's kind, urgency and next actor of its thread, in the inbox
+ *   only (src/agentlabels.js). On for every team (migration 0091) and every new one.
  *
  * Those marked `newTeams` are turned on for a team when it is created (src/admin.js).
  *
  * A tool marked `internal` has no team switch, only the admin team switches it, and it works
  * only in an internal channel (`internalChannel`), however it got switched on.
+ *
+ * A thread's agent also has the tools a person granted it in the sidebar, for a day
+ * (src/toolrequests.js), on top of the switches: all but the `internal` ones, which are the
+ * admin team's to give.
  */
 
 export const AGENT_TOOLS = [
@@ -59,18 +75,19 @@ export const AGENT_TOOLS = [
     note: 'As the bot of each platform: the Slack app (bot scopes chat:write and'
       + ' reactions:write), the Teams bot (installed in a team on its first post there; it'
       + ' cannot react, Teams lets no bot), the Discord bot (Send Messages, Send Messages in'
-      + ' Threads, Add Reactions).',
-    platforms: ['slack', 'teams', 'discord'],
+      + ' Threads, Add Reactions), and in the customer portal as Enterprise Support.',
+    platforms: ['slack', 'teams', 'discord', 'portal'],
   },
   {
     tool: 'computer',
     title: 'Computer',
     names: ['bash', 'request_bash'],
-    description: 'A bash shell for the agent on Cloudflare Computer, in Dynamic Workers, over a'
-      + ' working directory of its own per thread that keeps its files. cat, grep, sed, awk,'
-      + ' sort, find, curl and the like; no npm, node or python. The files attached to the'
-      + ' thread are in it, read-only, for 30 days. It can also ask a person to run a command'
-      + ' there (request_bash), with values only they have',
+    description: 'A computer for the agent: GNU bash and real programs on the SLICC kernel, in'
+      + ' Dynamic Workers, over a working directory of its own per thread that keeps its files.'
+      + ' The programs are its image\'s, below (grep, sed, awk, jq, curl, git and the like); no'
+      + ' npm, node or python. The files attached to the thread are in it, read-only, for 30'
+      + ' days. It can also ask a person to run a command there (request_bash), with values only'
+      + ' they have',
     note: 'The shell reaches the internet (curl), without a filter: what the agent read can'
       + ' leave the inbox through it, the files attached to the thread included. Secrets kept'
       + ' here are put into its requests on the way out, only to their hosts: the agent never'
@@ -97,9 +114,10 @@ export const AGENT_TOOLS = [
   {
     tool: 'any_thread',
     title: 'Read any thread',
-    names: ['read_any_thread'],
+    names: ['read_any_thread', 'find_channels', 'list_any_channel_threads'],
     description: 'The agent reads any thread of the inbox, of any channel, team or customer, by'
-      + ' its key or a link to one of its messages',
+      + ' its key or a link to one of its messages, finds a customer\'s channels by its name or'
+      + ' the sites their threads are about, and lists a channel\'s conversations',
     note: 'One channel at a time, by the admin team, in internal channels only: not a customer\'s,'
       + ' partner\'s or vendor\'s, and none shared outside Adobe. What the agent read can reach'
       + ' its drafts, notes, knowledge bases and the other tools it has here. Every thread it'
@@ -120,6 +138,47 @@ export const AGENT_TOOLS = [
     platforms: ['slack', 'teams'],
     needs: membershipOn,
   },
+  {
+    tool: 'web_search',
+    title: 'Web search',
+    names: ['web_search'],
+    description: 'The agent searches the public web for what the knowledge bases, the channel\'s'
+      + ' threads and the repositories do not have (documentation, error messages, release notes),'
+      + ' through Microsoft Web IQ or Cloudflare\'s Web Search API, and reads the pages it finds'
+      + ' with its other tools',
+    note: 'Each query goes to the deployment\'s search provider, outside Adobe: Microsoft Web IQ'
+      + ' where its key (WEBIQ_API_KEY) is set, billed to its Azure subscription, else through'
+      + ' AI Gateway to Ceramic.ai, Linkup or Exa (WEB_SEARCH_PROVIDER), billed to the account\'s'
+      + ' AI Gateway credits or a provider key stored on the gateway. The agents are told to write'
+      + ' general queries, never with the customer\'s name, people, hosts or the thread\'s text.',
+    platforms: null,
+    newTeams: true,
+  },
+  {
+    tool: 'resolve',
+    title: 'Resolve threads',
+    names: ['resolve_thread'],
+    description: 'The agent marks its thread resolved in the inbox once its issue or request is'
+      + ' settled (the customer confirmed a fix, or said nothing more is needed), or when someone'
+      + ' asks it to in the sidebar, and takes that back',
+    note: 'In the inbox only, as a person\'s ✅ on the first message counts: nothing is'
+      + ' posted or reacted in the channel. A customer\'s next message opens the thread again,'
+      + ' and anyone on the team does with the ✅ button.',
+    platforms: null,
+    newTeams: true,
+  },
+  {
+    tool: 'label',
+    title: 'Label threads',
+    names: ['label_thread'],
+    description: 'The agent corrects what Clef says of its thread: its kind, its urgency, and'
+      + ' whom it waits on',
+    note: 'In the inbox only. The kind holds until the agent changes it; the urgency and whom it'
+      + ' waits on until a person posts again, when Clef reads the thread anew. A label review'
+      + ' by the admin team wins over the agent\'s.',
+    platforms: null,
+    newTeams: true,
+  },
 ];
 
 const BY_NAME = new Map(AGENT_TOOLS.map((t) => [t.tool, t]));
@@ -129,6 +188,8 @@ const BOTS = {
   slack: (env) => Boolean(env.SLACK_BOT_TOKEN),
   teams: teamsBotEnabled,
   discord: discordEnabled,
+  // The customer portal: the inbox posts there as its app once the portal's Worker is bound.
+  portal: portalBound,
 };
 export const isAgentTool = (tool) => BY_NAME.has(String(tool));
 export const agentTool = (tool) => BY_NAME.get(String(tool)) || null;
@@ -159,6 +220,9 @@ export function toolProblem(env, tool) {
   }
   if (tool === 'computer' && !env.LOADER) {
     return 'The Worker Loader binding (LOADER) is missing in this deployment.';
+  }
+  if (tool === 'web_search') {
+    return searchProblem(env);
   }
   return null;
 }
@@ -200,16 +264,21 @@ export async function internalChannel(env, channelId) {
 
 /**
  * The switchable tools an agent's target (its team, channel and platform) has, as a sorted
- * list of their keys: on, working in this deployment and on the thread's platform.
+ * list of their keys: on, or granted to its thread (src/toolrequests.js), working in this
+ * deployment and on the thread's platform.
  */
 export async function toolsFor(env, target) {
   if (!target || !target.key || !env.DB) {
     return [];
   }
-  const switches = await toolSwitches(env, target);
+  const [switches, granted] = await Promise.all([
+    toolSwitches(env, target),
+    grantsOf(env, target.key, 'tool'),
+  ]);
   const on = AGENT_TOOLS.filter((t) => {
     const { team, channel } = switches.get(t.tool);
-    return switchedOn(t.internal ? { channel } : { team, channel })
+    return (switchedOn(t.internal ? { channel } : { team, channel })
+      || (!t.internal && granted.has(t.tool)))
       && !toolProblem(env, t.tool) && onPlatform(env, t.tool, target.source);
   });
   const internal = on.some((t) => t.internal) && await internalChannel(env, target.channelId);

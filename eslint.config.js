@@ -14,7 +14,7 @@ import { recommended } from '@adobe/eslint-config-helix';
 
 export default [
   {
-    ignores: ['node_modules/**', '.wrangler/**', '.cloudflare/**', 'coverage/**', 'dist/**'],
+    ignores: ['node_modules/**', '**/.wrangler/**', '**/.cloudflare/**', 'coverage/**', 'dist/**', 'graphviz/node_modules', 'portal/node_modules'],
   },
   {
     ...recommended,
@@ -68,12 +68,29 @@ export default [
         Editor: 'readonly',
         // Every page's header, ui/header.js.
         Header: 'readonly',
+        // Closed dialogs leaving the page, ui/app.js (every page's).
+        Dialog: 'readonly',
         // The team order's model, ui/rank.js (the inbox).
         Rank: 'readonly',
         // The preview of attached files, ui/table.js (the inbox).
         Table: 'readonly',
+        // Markdown formatting in a text box, ui/writing.js (the inbox, the customer portal).
+        Writing: 'readonly',
+        // A rich text box, ui/richtext.js (the customer portal).
+        RichText: 'readonly',
+        // A customer's stack drawing, ui/stack.js (the inbox).
+        Stack: 'readonly',
+        // The notification troubleshooter's steps, ui/notifyhelp.js (the inbox).
+        NotifyHelp: 'readonly',
+        Tour: 'readonly',
         // The Topics page's graph, ui/topicgraph.js.
         TopicGraph: 'readonly',
+        // A team's or a customer's agent, ui/agent.js (in Teams and Customers, ui/admin.js).
+        Agent: 'readonly',
+        // Content swaps that fade in, ui/app.js.
+        Swap: 'readonly',
+        // Links to the app opened in it, installed, ui/app.js.
+        Launch: 'readonly',
       },
     },
     rules: {

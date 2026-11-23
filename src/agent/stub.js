@@ -10,13 +10,22 @@
  * governing permissions and limitations under the License.
  */
 
-import { AGENT_EMAIL, entryOf } from '../drafts.js';
+import {
+  AGENT_EMAIL, ENTRY_ROW, entryFields, entryOf,
+} from '../drafts.js';
 import { requestOf } from '../bashrequests.js';
 import { json } from '../http.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
 import { notifyRoom } from '../notify.js';
-import { addSidebarMessage, MAX_SIDEBAR, sidebarId } from '../sidebar.js';
-import { agentEnabled } from './enabled.js';
+import {
+  addSidebarMessage, MAX_SIDEBAR, seeSidebar, sidebarId,
+} from '../sidebar.js';
+import {
+  denyToolRequest, grantToolRequest, revokeToolRequest, toolRequestOf,
+} from '../toolrequests.js';
+import { denyText, grantText } from './toolrequest.js';
+import { switchedOn } from './enabled.js';
+import { liveTurn } from './kept.js';
 
 /**
  * Reaching thread agents from the Worker: the queue pokes them, the inbox API seeds them and
@@ -53,20 +62,51 @@ export async function pokeAgent(env, thread, { retry = false } = {}) {
   return { agent: entry.key, ...await agent.deliver({ retry }) };
 }
 
+/**
+ * Thread `key`'s entry (`entryOf`, without its members' keys), whose knowledge bases its agent
+ * has, whether it has one, and what its agent last kept as doing (`live`, its `agent_live` row,
+ * or null), in one round trip: the inbox asks for this whenever a thread opens (GET /api/agent),
+ * and it took five in a row.
+ */
 async function threadTarget(env, key) {
-  const entry = await entryOf(env, key);
-  if (!entry) {
+  if (!key) {
     return null;
   }
-  const row = await env.DB.prepare('SELECT channel_id, team, org, kind FROM threads WHERE thread = ?')
-    .bind(entry.key).first();
+  const row = await env.DB.prepare(`${ENTRY_ROW}, a.team AS a_team, a.org AS a_org,
+      a.kind AS a_kind, a.channel_id AS a_channel,
+      (SELECT enabled FROM agent_channels WHERE channel_id = a.channel_id) AS channel,
+      (SELECT enabled FROM agent_teams WHERE team = a.team) AS on_team,
+      l.turn AS live_turn, l.at AS live_at
+    FROM t LEFT JOIN threads a ON a.thread = t.k LEFT JOIN agent_live l ON l.thread = t.k`)
+    .bind(String(key)).first();
+  if (!row) {
+    return null;
+  }
+  const anchor = row.a_kind != null;
   return {
-    entry,
+    entry: entryFields(row),
     // Whose knowledge bases its agent has: as ThreadAgent.target reads them.
-    team: row ? row.team : null,
-    org: row ? row.org : null,
-    enabled: Boolean(row && row.kind === 'channel' && await agentEnabled(env, row.channel_id, row.team)),
+    team: anchor ? row.a_team : null,
+    org: anchor ? row.a_org : null,
+    enabled: anchor && row.a_kind === 'channel'
+      && switchedOn(env, row.a_channel, { channel: row.channel, team: row.on_team }),
+    live: row.live_at ? { turn: row.live_turn, at: row.live_at } : null,
   };
+}
+
+/**
+ * The answer to someone who sees thread entry `entry` but may not work it, and asked to `what`
+ * (a 403, which names the team the thread is filed under): a thread that moved to another team
+ * is not "not found" to them, as they still see it.
+ */
+async function notTheirs(env, entry, what) {
+  const row = entry.team
+    ? await env.DB.prepare('SELECT name FROM teams WHERE slug = ?').bind(entry.team).first() : null;
+  const owner = (row && row.name) || entry.team;
+  return json({
+    error: owner ? `the thread is filed under ${owner}, and only its team may ${what}`
+      : `only the thread's team may ${what}`,
+  }, 403);
 }
 
 /**
@@ -142,10 +182,11 @@ export async function seedAgent(env, me, body, inTeam) {
  * POST /api/agent/sidebar `{ thread, text }`: a person on the team talks to the thread's agent in
  * the inbox's sidebar (src/sidebar.js). The message goes into the thread's sidebar and into the
  * agent's conversation, and nowhere else: never to the platform. The agent answers it when it is
- * done with what it is doing; the inboxes of the thread's teams hear of both. Only who may work
- * the thread. Answers 202 with the message.
+ * done with what it is doing; the inboxes of the thread's teams hear of both. Only who may see
+ * the thread (`maySee`, src/shares.js: who may work it, admins, and who talked in its sidebar
+ * before), `canSee`. Answers 202 with the message.
  */
-export async function talkToAgent(env, me, body, inTeam) {
+export async function talkToAgent(env, me, body, canSee) {
   const text = String((body && body.text) || '').trim();
   if (!text || text.length > MAX_SIDEBAR) {
     return json({ error: `write what to ask the agent (up to ${MAX_SIDEBAR} characters)` }, 400);
@@ -157,7 +198,7 @@ export async function talkToAgent(env, me, body, inTeam) {
     return json({ error: 'agents are not configured' }, 503);
   }
   const t = await threadTarget(env, body.thread);
-  if (!t || !await inTeam(t.entry.teams, t.entry)) {
+  if (!t || !await canSee(t.entry.teams, t.entry)) {
     return json({ error: 'not found' }, 404);
   }
   if (!t.enabled) {
@@ -177,6 +218,27 @@ export async function talkToAgent(env, me, body, inTeam) {
   }
   await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
   return json({ message }, 202);
+}
+
+/**
+ * POST /api/agent/sidebar/seen `{ thread, ids }`: the person was shown the agent's answers `ids`
+ * to them in the sidebar of thread `thread` (src/sidebar.js, seeSidebar), so the inbox marks it
+ * no more. Their other inboxes hear of it (`sidebar-seen`, with the person), and only they act on
+ * it. Only who may talk in it (`canSee`, as talkToAgent). Answers 204.
+ */
+export async function sawSidebar(env, me, body, canSee) {
+  const ids = body && body.ids;
+  if (!Array.isArray(ids) || !ids.length) {
+    return json({ error: 'name the answers seen' }, 400);
+  }
+  const t = await threadTarget(env, body.thread);
+  if (!t || !await canSee(t.entry.teams, t.entry)) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (await seeSidebar(env, me.id, ids)) {
+    await notifyRoom(env, t.entry.teams, { type: 'sidebar-seen', thread: t.entry.key, person: me.id });
+  }
+  return new Response(null, { status: 204 });
 }
 
 /**
@@ -212,15 +274,18 @@ export async function tellDiscarded(env, me, key, result) {
  * thread. The agent that asked decides the rest, in its own object: whether the request can
  * still be run, and the run itself, on its computer; `run` answers 202 once the command has
  * started, and the inbox hears how it ended through the team's room. The values go to the
- * agent's object and from there to the shell, and are neither kept nor logged.
+ * agent's object and from there to the shell, and are neither kept nor logged. Who only sees
+ * the thread (`seeing`, `maySee`) is told whose it is, with a 403.
  */
-export async function decideBash(env, me, body, inTeam, { run }) {
+export async function decideBash(env, me, body, inTeam, { run, seeing = null }) {
   if (!env.AGENTS) {
     return json({ error: 'agents are not configured' }, 503);
   }
   const entry = await entryOf(env, body && body.thread);
   if (!entry || !await inTeam(entry.teams, entry)) {
-    return json({ error: 'not found' }, 404);
+    return entry && seeing && await seeing(entry.teams, entry)
+      ? notTheirs(env, entry, 'run the commands its agent asks for')
+      : json({ error: 'not found' }, 404);
   }
   const request = await requestOf(env, body.id);
   // Of this entry: one of its member threads asked (a thread folded into a group since).
@@ -236,8 +301,92 @@ export async function decideBash(env, me, body, inTeam, { run }) {
   return json(rest, status || (run ? 202 : 200));
 }
 
-/** GET /api/agent?thread=…: whether the thread has an agent, and what it is doing. */
-export async function agentStatus(env, key, canSee) {
+/** Why tool request `r` can no longer be decided as asked. */
+function toolDecided(r) {
+  const by = (p) => (p && p.name) || 'Someone';
+  return {
+    granted: `${by(r.by)} granted it already`,
+    denied: `${by(r.by)} denied it already`,
+    revoked: `${by(r.revoked_by)} ended it already`,
+    expired: 'Nobody decided before its deadline: the agent can ask again',
+    ended: 'Its day is over: the agent can ask again',
+    pending: 'It was not granted yet',
+  }[r.status] || 'It was decided already';
+}
+
+/**
+ * POST /api/agent/tools/grant, …/deny and …/revoke `{ thread, id }`: a person decides on a tool
+ * the thread's agent asked for in its sidebar (src/agent/toolrequest.js), or ends a grant. Only
+ * who may work the thread. A grant or a denial is said to the agent in the sidebar, as the
+ * person's sidebar message (`grantText`, `denyText`), and the agent answers it there; it has a
+ * granted tool from that message on, as its tools are read before each one. Ended early, the
+ * agent goes without it from its next message. Answers with the request, and the sidebar
+ * message when there is one. Who only sees the thread (`seeing`, `maySee`) is told whose it is,
+ * with a 403.
+ */
+export async function decideTool(env, me, body, inTeam, action, { seeing = null } = {}) {
+  if (me.readonly) {
+    return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  const t = await threadTarget(env, body && body.thread);
+  if (!t || !await inTeam(t.entry.teams, t.entry)) {
+    return t && seeing && await seeing(t.entry.teams, t.entry)
+      ? notTheirs(env, t.entry, 'decide on the tools its agent asks for')
+      : json({ error: 'not found' }, 404);
+  }
+  const request = await toolRequestOf(env, body.id);
+  // The agent that asked is the one that gets it: the entry's.
+  if (!request || request.thread !== t.entry.key) {
+    return json({ error: 'not found' }, 404);
+  }
+  if (action !== 'revoke' && !t.enabled) {
+    return json({ error: 'this thread has no agent', request }, 409);
+  }
+  const by = me.name || me.email || 'staff';
+  const change = {
+    grant: grantToolRequest, deny: denyToolRequest, revoke: revokeToolRequest,
+  }[action];
+  if (!await change(env, request.id, me.id)) {
+    const now = await toolRequestOf(env, request.id);
+    return json({ error: toolDecided(now), request: now }, 409);
+  }
+  const decided = await toolRequestOf(env, request.id);
+  console.log(JSON.stringify({
+    route: 'agent', action: `tool_${action}`, id: request.id, kind: request.kind, name: request.name,
+  }));
+  const agent = await agentStub(env, t.entry.key);
+  if (action === 'revoke') {
+    // At once where the agent is at work; else at its next message, which reads them anyway.
+    await Promise.all([agent.syncTools(), agent.syncMcp()]).catch(() => {});
+    await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+    return json({ request: decided });
+  }
+  const text = action === 'grant' ? grantText(decided) : denyText(decided);
+  const message = await addSidebarMessage(env, t.entry.key, {
+    id: sidebarId(), person: me.id, name: by, text,
+  });
+  const res = await agent.sidebar({ id: message.id, by, text })
+    .catch((e) => ({ error: e.message }));
+  if (res.error) {
+    // Decided all the same: the agent has a granted tool at its next message.
+    await env.DB.prepare('DELETE FROM sidebar_messages WHERE id = ?').bind(message.id).run();
+    await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+    return json({ request: decided, error: `the agent was not told: ${res.error}` });
+  }
+  await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
+  return json({ request: decided, message }, 202);
+}
+
+/**
+ * GET /api/agent?thread=…: whether the thread has an agent, and what it is doing (`turn`), as the
+ * agent last kept it in D1 (`agent_live`, src/agent/kept.js): the agent's object is not started
+ * for it. Only an agent that has kept none, or one whose turn has worked for longer than a run
+ * takes without a word (its object stopped half way), is asked itself, which keeps it again.
+ */
+export async function agentStatus(env, key, canSee, { now = Date.now() } = {}) {
   const t = await threadTarget(env, key);
   if (!t || !await canSee(t.entry.teams, t.entry)) {
     return json({ error: 'not found' }, 404);
@@ -245,8 +394,15 @@ export async function agentStatus(env, key, canSee) {
   if (!t.enabled || !env.AGENTS) {
     return json({ enabled: false });
   }
-  const agent = await agentStub(env, t.entry.key);
-  return json({ enabled: true, ...await agent.status() });
+  const turn = liveTurn(t.live, now);
+  if (turn !== undefined) {
+    return json({ enabled: true, turn });
+  }
+  // One call to the agent's object, not two: `status` waits for the agent's startup itself
+  // (agentStub's first call). In `Server-Timing` as `agent`.
+  const agent = env.AGENTS.get(env.AGENTS.idFromName(t.entry.key));
+  const ask = () => agent.status();
+  return json({ enabled: true, ...await (env.timing ? env.timing.time('agent', ask) : ask()) });
 }
 
 /**

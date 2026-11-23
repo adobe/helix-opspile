@@ -24,6 +24,8 @@
  * - `suggestMentions` (src/mention-match.js): the composer's `@` suggestions from a thread's
  *   pool, ranked as the Worker ranks them
  * - code blocks highlighted by what the page gives `render` (`highlight`, src/ui-highlight.js)
+ * - `pick`: the Markdown of a part of a message as the page shows it (src/mdpick.js), the part
+ *   of a draft someone selected
  *
  * The page does not load this file: scripts/ui-markdown.mjs bundles it, with micromark,
  * into src/ui-markdown.bundle.js, which src/page.js puts into the page as `Markdown`. The
@@ -38,9 +40,10 @@ import { gfmStrikethrough, gfmStrikethroughHtml } from 'micromark-extension-gfm-
 import { gfmTable, gfmTableHtml } from 'micromark-extension-gfm-table';
 import { gfmTaskListItem, gfmTaskListItemHtml } from 'micromark-extension-gfm-task-list-item';
 
-import { CHANNEL_REF, QUOTE_TITLE } from './markdown.js';
+import { CHANNEL_REF, QUOTE_TITLE, unlazy } from './markdown.js';
 import { slackMessageKey } from './slackurl.js';
 import { channelUrlKey } from './channelurl.js';
+import { pickSource } from './mdpick.js';
 
 export { emojiLookup, matchEmoji } from './emojinames.js';
 export { CHANNEL_REF, withoutQuotes } from './markdown.js';
@@ -158,28 +161,6 @@ const repair = (src) => src.replace(
   /\]\((https?:\/\/[^()"\n]*?\s[^()"\n]*?)\)/g,
   (_, url) => `](${url.trim().replace(/\s/g, '%20')})`,
 );
-
-/**
- * A quote ends where its `>` lines do, as in Slack and Teams: a line without one after them is
- * the reply, not CommonMark's lazy continuation of the quote. Code fences stay as they are.
- */
-const unlazy = (src) => {
-  let fence = null;
-  let quoted = false;
-  return src.split('\n').flatMap((line) => {
-    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) {
-        fence = null;
-      }
-      return [line];
-    }
-    const out = quoted && line.trim() && !/^ {0,3}>/.test(line) ? ['', line] : [line];
-    quoted = /^ {0,3}>/.test(line);
-    fence = f && !quoted ? f[1] : null;
-    return out;
-  }).join('\n');
-};
 
 /** Markdown to HTML, before anything of the page's: `br` for each line break. */
 const toHtml = (src, br) => micromark(unlazy(repair(src)), OPTIONS)
@@ -572,17 +553,22 @@ const highlighted = (html, highlight) => (typeof highlight !== 'function' ? html
  * @param {(code: string, lang: string) => string|null} [options.highlight] a code block's text
  *   as HTML, highlighted (src/ui-highlight.js), for its text and the fence's language ('' when
  *   it names none); null leaves it plain text
+ * @param {(name: string) => string|undefined} [options.person] the profile card a mentioned
+ *   name shows (its key, as `data-p`); without one the mention is text
  */
 export function render(src, {
   mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
   channel = () => undefined, fileUrl = () => undefined, slack = null, highlight = null,
-  channelUrl = null,
+  channelUrl = null, person = () => undefined,
 } = {}) {
   const mark = (_, before, at) => {
-    const kind = MENTION_KINDS[kindOf(decode(at.slice(1)))];
-    return kind
-      ? `${before}<span class="mention ${kind.cls}" title="${kind.title}">${at}</span>`
-      : `${before}<span class="mention">${at}</span>`;
+    const name = decode(at.slice(1));
+    const kind = MENTION_KINDS[kindOf(name)];
+    const key = person(name);
+    // With a card, the card says who they are: no title.
+    const card = key ? ` data-p="${encode(key)}" role="button" tabindex="0"` : '';
+    const hint = kind && !key ? ` title="${kind.title}"` : '';
+    return `${before}<span class="mention${kind ? ` ${kind.cls}` : ''}"${hint}${card}>${at}</span>`;
   };
   // The files listed at the end: images as images (one paragraph each, so two or more are a
   // gallery), the others as cards, without the "Attachments:" line.
@@ -641,3 +627,20 @@ export function render(src, {
   }).join('')).trim();
   return embedSlack(built, lookup, quoted) + (files ? fileCards(files, fileUrl) : '');
 }
+
+/**
+ * The Markdown of `text.slice(start, end)`, a part of message `src` as the page shows it (its
+ * text, without tags): see src/mdpick.js. Null when nothing is selected.
+ *
+ * @param {string} src
+ * @param {string} text
+ * @param {number} start
+ * @param {number} end
+ */
+export const pick = (src, text, start, end) => pickSource(
+  src,
+  text,
+  start,
+  end,
+  (md) => decode(render(md).replace(/<[^>]*>/g, '')),
+);

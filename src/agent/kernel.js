@@ -13,47 +13,46 @@
 import { DEFAULT_IMAGE, isImageName } from './image.js';
 
 /**
- * The second shell of the agents' computers (the `computer` tool, src/agent/computer.js): GNU
- * bash and real programs on the SLICC kernel (@ai-ecoverse/slicc-kernel/cloudflare), where a
- * team chose it over just-bash (`shellFor`, the knowledge-base editor's Computer tool).
+ * The shell of the agents' computers (the `computer` tool, src/agent/computer.js): GNU bash and
+ * real programs on the SLICC kernel (@ai-ecoverse/slicc-kernel/cloudflare).
  *
  * The kernel runs in the ThreadAgent object, its processes in Dynamic Workers (env.LOADER)
- * that have no network of their own. It is a backend of the same Workspace as just-bash
- * (`sliccBackend`), so the thread's files are the same ones, mounted at /workspace, the
- * uploads among them, read-only, in a mount of their own (`overWorkspace`). The kernel's own
- * root (/root, /tmp, /etc, and its programs under /node_modules) is in the object's SQLite
- * too, in tables of its own (`slicc_*`).
+ * that have no network of their own. It is the backend of the computer's Workspace
+ * (`sliccBackend`), so the thread's files are mounted at /workspace, the read-only uploads
+ * among them. The kernel's own root (/root, /tmp, /etc, and its programs under /node_modules)
+ * is in the object's SQLite too, in tables of its own (`slicc_*`).
  *
  * Its programs are an image (src/agent/image.js): the team's choice among those in the
- * `IMAGES` bucket, a stack of layers the kernel mounts read-only when it boots (`imageSpec`).
- * The agent's object keeps no copy of it.
+ * `IMAGES` bucket (`imageFor`, the knowledge-base editor's Computer tool), a stack of layers
+ * the kernel mounts read-only when it boots (`imageSpec`). The agent's object keeps no copy.
  *
  * Its programs reach the network through the kernel's proxy, which hands every request to a
- * transport: here `gatewayFetch`, the same `forward` as just-bash's SecretGateway
- * (src/agent/secrets.js), so the team's secrets go in where a request names them, and nowhere
- * else. Redirects are the program's to follow (curl -L), each hop through the gateway again.
+ * transport: here `gatewayFetch`, over the gateway's `forward` (src/agent/secrets.js), so the
+ * team's secrets go in where a request names them, and nowhere else. Redirects are the
+ * program's to follow (curl -L), each hop through the gateway again.
  *
  * This file has what needs no Workers runtime, so that it is tested in Node; the kernel
  * itself is made in src/agent/agent.js.
  */
 
-export const RUNTIMES = [
-  {
-    runtime: 'just-bash',
-    title: 'just-bash',
-    description: 'A bash interpreter in JavaScript, with its own cat, grep, sed, awk, jq, rg and'
-      + ' curl. It has no real programs: what is not built in does not run.',
-  },
-  {
-    runtime: 'slicc-kernel',
-    title: 'SLICC kernel (experimental)',
-    description: 'GNU bash with real programs (WebAssembly), with processes, pipes and signals,'
-      + ' on the same files, with curl and the secrets as in just-bash. Which programs is the'
-      + ' image\'s choice, below. A command takes about a tenth of a second longer.',
-  },
-];
-export const DEFAULT_RUNTIME = 'just-bash';
-export const isRuntime = (runtime) => RUNTIMES.some((r) => r.runtime === runtime);
+/**
+ * Where curl finds its configuration in the kernel (`CURL_HOME`), and what it says: the
+ * proxy's answer to curl's CONNECT (`HTTP/1.1 200 Connection Established`) is not shown with
+ * the site's headers (curl -i, -I, -D), which then start with the site's own status line, as
+ * they do anywhere else.
+ */
+export const CURL_HOME = '/etc/opspile/curl';
+export const CURLRC = 'suppress-connect-headers\n';
+
+/**
+ * What every process of the kernel has in its environment, besides the kernel's own: curl's
+ * configuration (CURLRC), and tar that does not try to give the files it unpacks the owners
+ * the archive names, which the kernel refuses even root (a warning for each file).
+ */
+export const KERNEL_ENV = {
+  CURL_HOME,
+  TAR_OPTIONS: '--no-same-owner',
+};
 
 /** An option of a team's Computer tool (`agent_tool_options`): its row, or null. */
 const option = async (env, team, name) => (team && env.DB ? env.DB.prepare(`SELECT value,
@@ -70,27 +69,6 @@ async function setOption(env, {
       changed_by = excluded.changed_by, changed_at = excluded.changed_at`)
     .bind(team, name, value, by, at).run();
   return { by, at };
-}
-
-/**
- * The shell of a team's computers: `{ runtime, by, at }`, `by` and `at` only once someone
- * chose. A value this deployment does not know (an older one, after a rollback) is the default.
- */
-export async function teamRuntime(env, team) {
-  const row = await option(env, team, 'runtime');
-  return row && isRuntime(row.value)
-    ? { runtime: row.value, by: row.changed_by, at: row.changed_at }
-    : { runtime: DEFAULT_RUNTIME };
-}
-
-/** Sets the shell of a team's computers, as `by` (a name), now: `{ runtime, by, at }`. */
-export async function setTeamRuntime(env, { team, runtime, by }) {
-  return {
-    runtime,
-    ...await setOption(env, {
-      team, name: 'runtime', value: runtime, by,
-    }),
-  };
 }
 
 /**
@@ -114,20 +92,9 @@ export async function setTeamImage(env, { team, image, by }) {
   };
 }
 
-/**
- * The shell of an agent's computer, by its target's team (src/agent/agent.js `target`):
- * `{ runtime, image }`, `image` only with the kernel.
- */
-export async function shellFor(env, target) {
-  const team = target && target.team;
-  const { runtime } = await teamRuntime(env, team);
-  return runtime === 'slicc-kernel'
-    ? { runtime, image: (await teamImage(env, team)).image } : { runtime };
-}
-
-/** `shellFor`'s runtime alone. */
-export async function runtimeFor(env, target) {
-  return (await shellFor(env, target)).runtime;
+/** The image of an agent's computer, by its target's team (src/agent/agent.js `target`). */
+export async function imageFor(env, target) {
+  return (await teamImage(env, target && target.team)).image;
 }
 
 /**
@@ -158,171 +125,14 @@ export function imageSpec(image, target) {
   };
 }
 
-/**
- * Where and as what a kernel mounts one of the Workspace's read-only mounts, at `root` (the
- * uploads): read-only, the Workspace's own files there. `overWorkspace` mounts it.
- */
-export function readOnlySpec(root) {
-  return {
-    type: 'workspace',
-    source: `workspace:${root}`,
-    target: root,
-    options: { ro: '' },
-  };
-}
-
-/** The roots of a Workspace's `mounts` (its option) that are read-only. */
-export function readOnlyRoots(mounts = {}) {
-  return Object.entries(mounts)
-    .filter(([, mount]) => mount && mount.mode === 'read-only')
-    .map(([root]) => root);
-}
-
-/**
- * `fs` (a Workspace's) whose `mkdir -p` of a directory that is there does nothing. The
- * kernel's driver makes its mount point that way with every connection, and a Workspace
- * refuses any change to a directory a read-only mount is in, even that one (EROFS): the
- * uploads are such a mount in /workspace (see `ensureCwd`, src/agent/computer.js).
- */
-export function patientFs(fs) {
-  const mkdir = async (path, options) => {
-    if (options && options.recursive) {
-      try {
-        if ((await fs.stat(path)).isDirectory) {
-          return undefined;
-        }
-      } catch (e) {
-        if (e.code !== 'ENOENT') {
-          throw e;
-        }
-      }
-    }
-    return fs.mkdir(path, options);
-  };
-  return new Proxy(fs, {
-    get(target, prop) {
-      if (prop === 'mkdir') {
-        return mkdir;
-      }
-      const value = Reflect.get(target, prop);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
-}
-
-/** The read-only mounts `overWorkspace` made in a kernel: `{ owner, targets }`. */
-const readOnlyMounts = new WeakMap();
-
-/**
- * Takes the read-only mounts of `kernel` away, those of the connection `owner` only when it
- * is given: the targets that are still mounted (one in use stays).
- */
-async function unmountReadOnly(kernel, owner) {
-  const held = readOnlyMounts.get(kernel);
-  if (!held || (owner && held.owner !== owner)) {
-    return [];
-  }
-  readOnlyMounts.delete(kernel);
-  const left = [];
-  for (const target of held.targets) {
-    // eslint-disable-next-line no-await-in-loop
-    await kernel.umount(target).catch(() => left.push(target));
-  }
-  return left;
-}
-
-async function isDirectory(fs, path) {
-  try {
-    return Boolean((await fs.stat(path)).isDirectory);
-  } catch (e) {
-    if (e.code === 'ENOENT') {
-      return false;
-    }
-    throw e;
-  }
-}
-
-/**
- * `backend` (the kernel's `sliccBackend`), connected to a Workspace through `patientFs`.
- *
- * The Workspace's read-only mounts (`readOnly`, their roots: the uploads) are mounts of their
- * own in the kernel, read-only (`readOnlySpec`), over the same files: `workspaceDriver` and
- * `inProcessMount` are the kernel's (@ai-ecoverse/slicc-kernel/cloudflare), and `kernel` the
- * backend's. The backend's own mount would open a file there for writing and fail only when it
- * is closed, which is too late: bash does not look at what `close` answers, so
- * `echo x > uploads/a.log` exited 0 and said nothing. The kernel refuses a read-only mount's
- * changes where they start, as Linux does (EROFS: "Read-only file system"). Each connection
- * mounts them anew, after the backend closed the one before it, and takes them away when it
- * is closed.
- */
-export function overWorkspace(backend, {
-  readOnly = [], kernel, workspaceDriver, inProcessMount,
-} = {}) {
-  const mountReadOnly = async (k, fs, owner) => {
-    const left = await unmountReadOnly(k);
-    const held = { owner, targets: [] };
-    readOnlyMounts.set(k, held);
-    for (const root of readOnly) {
-      // A mount still in use is still read-only, over the same files.
-      // eslint-disable-next-line no-await-in-loop
-      if (!left.includes(root) && await isDirectory(fs, root)) {
-        const driver = workspaceDriver(fs, { root });
-        // eslint-disable-next-line no-await-in-loop
-        await k.mount(inProcessMount(readOnlySpec(root), {
-          handlers: driver, capabilities: driver.capabilities, served: driver.served,
-        }));
-        held.targets.push(root);
-      }
-    }
-    held.targets.push(...left);
-  };
-  return {
-    id: backend.id,
-    type: backend.type,
-    callable: backend.callable,
-    description: backend.description,
-    async connect(host) {
-      const fs = patientFs(host.fs);
-      const handle = await backend.connect(new Proxy(host, {
-        get: (target, prop) => (prop === 'fs' ? fs : Reflect.get(target, prop)),
-      }));
-      if (readOnly.length === 0) {
-        return handle;
-      }
-      const owner = {};
-      let k;
-      try {
-        k = await kernel();
-        await mountReadOnly(k, fs, owner);
-      } catch (e) {
-        if (k) {
-          await unmountReadOnly(k, owner);
-        }
-        await handle.close().catch(() => {});
-        throw e;
-      }
-      return {
-        ...handle,
-        close: async () => {
-          await unmountReadOnly(k, owner);
-          return handle.close();
-        },
-      };
-    },
-  };
-}
-
 /** How the kernel ends a run whose time is up: bash, by SIGTERM, and by SIGKILL after it. */
 const KILLED = [143, 137];
 
 /**
- * Whether the shell stopped a run at `timeout` (seconds), which took `seconds`. just-bash
- * answers 124 and its word is taken (a person's run also asks whether the time was up,
- * src/agent/bashrequest.js). The kernel only ends bash with a signal, as a command can end by
- * itself: its exit code says so, and its time was up.
+ * Whether the shell stopped a run at `timeout` (seconds), which took `seconds`. The kernel only
+ * ends bash with a signal, as a command can end by itself: its exit code says so, and its time
+ * was up (a person's run asks the same, src/agent/bashrequest.js).
  */
-export function timedOut(runtime, exitCode, seconds, timeout) {
-  return runtime === 'slicc-kernel'
-    ? KILLED.includes(exitCode) && seconds >= timeout
-    : exitCode === 124;
+export function timedOut(exitCode, seconds, timeout) {
+  return KILLED.includes(exitCode) && seconds >= timeout;
 }

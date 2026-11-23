@@ -310,7 +310,8 @@ export async function vectorizeThread(env, key) {
  * Cron: enqueues the channel threads whose vectors (or full-text items) are older than their
  * latest message, the most recently active first, once they have been quiet for a few
  * minutes, and the threads re-filed as an alert or ignored that still have vectors. The first
- * runs after a deploy vectorize and index what was there before.
+ * runs after a deploy vectorize and index what was there before. Not the imported threads
+ * (src/history.js): they get vectors once someone asks for them (`scripts/replay.mjs --vectorize`).
  */
 export async function sweepVectors(env, now = new Date()) {
   const vectors = Boolean(env.CONTENT && env.AI);
@@ -318,7 +319,7 @@ export async function sweepVectors(env, now = new Date()) {
     return { skipped: 'no CONTENT index' };
   }
   const { results } = await env.DB.prepare(`SELECT thread FROM threads
-    WHERE (kind = 'channel' AND last_at IS NOT NULL AND any_at < ?1
+    WHERE (kind = 'channel' AND last_at IS NOT NULL AND any_at < ?1 AND imported = 0
       AND ((?3 AND (vectorized_through IS NULL OR vectorized_through != any_at))
         OR (?4 AND (indexed_through IS NULL OR indexed_through != any_at))))
       OR (?3 AND kind != 'channel' AND embedded IS NOT NULL)

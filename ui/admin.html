@@ -17,6 +17,8 @@
 <link rel="stylesheet" href="spectrum-tokens.css">
 <link rel="stylesheet" href="spectrum.css">
 <link rel="stylesheet" href="spectrum-admin.css">
+<!-- A team's or a customer's agent, a section of its page (ui/agent.js). -->
+<link rel="stylesheet" href="spectrum-agent.css">
 </head>
 <body>
 <header>
@@ -30,6 +32,7 @@
   </button>
   <div id="menu" class="menu" popover>
     <div class="id"><span class="av" id="menuAv"></span><div><div class="nm" id="menuName"></div><div class="sub" id="menuEmail"></div></div></div>
+    <section><h4>Keyboard</h4><dl class="keys"><dt>Save a file of a knowledge base right away (it also saves as you type)</dt><dd><kbd>⌘S</kbd></dd></dl></section>
     <section><a class="item" href="/cdn-cgi/access/logout"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Log out</a></section>
   </div>
 </header>
@@ -38,6 +41,8 @@
   <section id="list"><div class="empty">Loading…</div></section>
   <section id="detail"></section>
 </main>
+<script src="editor.js"></script>
+<script type="module" src="agent.js"></script>
 <script type="module" src="admin.js"></script>
 <script src="app.js"></script>
 </body>

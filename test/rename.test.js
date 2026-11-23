@@ -15,7 +15,7 @@ import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
 import { getChannel, resetSlackDomains, updateChannelName } from '../src/lookup.js';
-import { isRenameNotice } from '../src/normalize.js';
+import { isChannelNotice } from '../src/normalize.js';
 import { consume } from '../src/normalizer.js';
 import { followChange, refile } from '../src/refile.js';
 import { d1 } from './d1.js';
@@ -292,10 +292,10 @@ describe('a renamed channel', () => {
     assert.equal(changes.length, 1);
 
     const notice = (type) => ({ event: { '@odata.type': `#microsoft.graph.${type}EventMessageDetail` } });
-    assert.equal(isRenameNotice(notice('channelRenamed')), true);
-    assert.equal(isRenameNotice(notice('teamRenamed')), true);
-    assert.equal(isRenameNotice(notice('membersAdded')), false);
-    assert.equal(isRenameNotice({}), false);
+    assert.equal(isChannelNotice(notice('channelRenamed')), true);
+    assert.equal(isChannelNotice(notice('teamRenamed')), true);
+    assert.equal(isChannelNotice(notice('membersAdded')), false);
+    assert.equal(isChannelNotice({}), false);
   });
 
   it('keeps the old name when the moves cannot be queued, so a retry queues them', async () => {
