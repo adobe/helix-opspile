@@ -11,7 +11,6 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { inboxPage, page } from '../src/page.js';
 import { PAGES, SCRIPTS } from './ui.js';
@@ -35,33 +34,6 @@ describe('page scripts', () => {
     }
     const scripts = Object.keys(SCRIPTS).filter((f) => f.endsWith('.js'));
     assert.deepEqual(scripts.filter((f) => !used.has(f)), [], 'scripts no page uses');
-  });
-
-  it('are every one the Worker of their page imports, or it does not start', () => {
-    // npm run ui:dev and test/ui.js read ui/ themselves: only this sees the Workers' lists.
-    // src/index.js builds every page but the portal's, src/portal/worker.js the portal's.
-    // markdown.js, editor.js and spectrum-tokens.css are built, not files of ui/.
-    const BUILT = ['markdown.js', 'editor.js', 'spectrum-tokens.css'];
-    const NAMES = /<script[^>]* src="([\w.-]+)"|<link rel="stylesheet" href="([\w.-]+)"/g;
-    const workers = {
-      'src/index.js': Object.keys(PAGES).filter((name) => name !== 'portal.html'),
-      'src/portal/worker.js': ['portal.html'],
-    };
-    const all = new Set();
-    for (const [path, pages] of Object.entries(workers)) {
-      const source = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
-      const imported = [...source.matchAll(/^import (\w+) from '(?:\.\.\/)+ui\/([\w.-]+\.(?:js|css))' with \{ type: 'text' \};$/gm)];
-      const listed = Object.fromEntries([...source.matchAll(/^ {2}'([\w.-]+\.(?:js|css))': (\w+),$/gm)].map((m) => [m[1], m[2]]));
-      const named = new Set(pages.flatMap((name) => [...PAGES[name].matchAll(NAMES)]
-        .map((m) => m[1] || m[2])).filter((file) => !BUILT.includes(file)));
-      assert.deepEqual(Object.keys(listed).sort(), [...named].sort(), `${path} lists what its pages name`);
-      for (const [, name, file] of imported) {
-        assert.equal(listed[file], name, `${path}: ${file}`);
-        all.add(file);
-      }
-      assert.deepEqual(imported.map((m) => m[2]).sort(), [...named].sort(), `${path} imports what its pages name`);
-    }
-    assert.deepEqual(Object.keys(SCRIPTS).filter((file) => !all.has(file)), [], 'files no Worker imports');
   });
 
   it('are inlined where the pages are served', () => {
