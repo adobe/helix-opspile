@@ -357,16 +357,20 @@ export async function trendsData(env, { now = new Date() } = {}) {
   };
 }
 
-/** GET /api/topics/trends/threads?ids=: those threads, as the page lists them. */
-export async function trendThreads(env, ids) {
+/**
+ * GET /api/topics/trends/threads?ids=: those threads, as the page lists them; only those it
+ * counts (COUNTED), whatever ids it is asked for.
+ */
+export async function trendThreads(env, ids, { now = new Date() } = {}) {
   const want = [...new Set(ids.map(Number).filter(Number.isInteger))].slice(0, 100);
   if (!want.length) {
     return [];
   }
   const { results } = await env.DB.prepare(`SELECT t.rowid AS id, t.thread, t.team, t.org,
       t.source, t.root_at, t.messages, COALESCE(l.title, t.title) AS title
-    FROM threads t LEFT JOIN labels l ON l.thread = t.thread
-    WHERE t.rowid IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(want)).all();
+    FROM threads t JOIN labels l ON l.thread = t.thread LEFT JOIN orgs o ON o.slug = t.org
+    WHERE t.rowid IN (SELECT value FROM json_each(?)) AND ${COUNTED}`)
+    .bind(JSON.stringify(want), since(now)).all();
   return (results || []).map((r) => ({
     id: r.id,
     key: r.thread,
@@ -382,14 +386,15 @@ export async function trendThreads(env, ids) {
 const WORD = /^[\p{L}\p{N}][\p{L}\p{N} .+#/-]{0,38}[\p{L}\p{N}+#]?$/u;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** The rowids of the counted threads (a group's first) whose `keys` these are. */
+/** The rowids of the counted threads (COUNTED, a group's first) whose `keys` these are. */
 async function firstsOf(env, keys, now) {
   if (!keys.length) {
     return [];
   }
-  const { results } = await env.DB.prepare(`SELECT DISTINCT f.rowid AS id
-    FROM threads m JOIN threads f ON f.thread = COALESCE(m.logical_thread, m.thread)
-    WHERE m.thread IN (SELECT value FROM json_each(?)) AND f.root_at >= ?`)
+  const { results } = await env.DB.prepare(`SELECT DISTINCT t.rowid AS id
+    FROM threads m JOIN threads t ON t.thread = COALESCE(m.logical_thread, m.thread)
+      JOIN labels l ON l.thread = t.thread LEFT JOIN orgs o ON o.slug = t.org
+    WHERE m.thread IN (SELECT value FROM json_each(?)) AND ${COUNTED}`)
     .bind(JSON.stringify(keys), since(now)).all();
   return (results || []).map((r) => r.id);
 }
@@ -426,13 +431,18 @@ export async function matchTerm(env, term, { now = new Date() } = {}) {
     })));
     const near = found.map((f) => (f.matches || []).filter((m) => m.score >= floor));
     const vids = near.flat().map((m) => m.id);
-    const ids = [];
+    const keys = [];
     for (let i = 0; i < vids.length; i += 500) {
       // eslint-disable-next-line no-await-in-loop
-      const { results } = await env.DB.prepare(`SELECT DISTINCT t.rowid AS id FROM trend_threads g
-        JOIN threads t ON t.thread = g.thread WHERE g.vid IN (SELECT value FROM json_each(?))`)
+      const { results } = await env.DB.prepare(`SELECT thread FROM trend_threads
+        WHERE vid IN (SELECT value FROM json_each(?))`)
         .bind(JSON.stringify(vids.slice(i, i + 500))).all();
-      ids.push(...(results || []).map((r) => r.id));
+      keys.push(...(results || []).map((r) => r.thread));
+    }
+    const ids = [];
+    for (let i = 0; i < keys.length; i += 500) {
+      // eslint-disable-next-line no-await-in-loop
+      ids.push(...await firstsOf(env, keys.slice(i, i + 500), now));
     }
     return {
       ids: [...new Set(ids)],

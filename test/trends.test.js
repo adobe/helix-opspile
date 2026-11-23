@@ -267,7 +267,7 @@ describe('trends: the topics, the threads and the matches (src/trends.js)', () =
   });
 
   it('is for the members of an ops team', async () => {
-    const { env } = await world(threads.slice(0, 30), { orgs: ORGS });
+    const { env } = await world([...threads.slice(0, 30), threads.find((t) => t.org === 'us')], { orgs: ORGS });
     const call = async (me, method, path) => {
       const url = new URL(`https://opspile.example${path}`);
       const res = await api(new Request(url, { method }), env, url, { viewer: me });
@@ -281,6 +281,31 @@ describe('trends: the topics, the threads and the matches (src/trends.js)', () =
     assert.equal(r.status, 200);
     assert.equal(r.body.map, null);
     assert.equal(r.body.threads.length, 30);
+    // Kept a few minutes, though every request wraps the database anew (src/d1batch.js).
+    let asked = 0;
+    const raw = env.DB;
+    env.DB = new Proxy(raw, {
+      get(target, prop) {
+        if (prop === 'prepare') {
+          return (sql) => {
+            asked += 1;
+            return target.prepare(sql);
+          };
+        }
+        const v = Reflect.get(target, prop);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    await call(member, 'GET', '/api/topics/trends');
+    const once = asked;
+    assert.ok(once > 0);
+    assert.equal((await call(member, 'GET', '/api/topics/trends')).body.threads.length, 30);
+    assert.equal(asked, once);
+    env.DB = raw;
+    // Only the threads it counts are listed, whatever ids are asked for: not an internal org's.
+    const ids = env.DB.rows('SELECT rowid AS id, org FROM threads');
+    const listed = (await call(member, 'GET', `/api/topics/trends/threads?ids=${ids.map((x) => x.id).join(',')}`)).body.threads;
+    assert.ok(listed.length > 0 && listed.every((x) => x.org !== 'us'));
     assert.equal((await call(member, 'POST', '/api/topics/trends')).status, 405);
     assert.equal((await call(member, 'GET', '/api/topics/trends/match?term=~')).status, 503);
   });

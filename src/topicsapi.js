@@ -32,6 +32,7 @@ import { writeKnowledge } from './agent/kbwrite.js';
 import { areaFile, AREAS } from './areas.js';
 import { scalar, splitFrontmatter } from './agent/okf.js';
 import { json } from './http.js';
+import { underlying } from './d1batch.js';
 import { ADMIN_TEAM, isAdmin, managedTeams } from './review.js';
 import { buildTopicMap, latestTopicMap } from './topicmap.js';
 import {
@@ -40,7 +41,10 @@ import {
 
 const ID = /^[a-z][a-z0-9-]{0,39}$/;
 
-/** How long GET /api/topics/trends is kept, per database: it reads every thread of a year. */
+/**
+ * How long GET /api/topics/trends is kept, per database (the binding, not the wrappers each
+ * request puts it in, src/d1batch.js `underlying`): it reads every thread of a year.
+ */
 export const TRENDS_TTL_MS = 5 * 60000;
 const trendsCache = new WeakMap();
 
@@ -104,7 +108,7 @@ export async function rebuildTopics(env, me) {
     return json({ error: built.error }, env.CONTENT && env.AI ? 400 : 503);
   }
   await assignPending(env);
-  trendsCache.delete(env.DB);
+  trendsCache.delete(underlying(env.DB));
   return json({ latest: await latestTopicMap(env), available: true });
 }
 
@@ -112,12 +116,12 @@ export async function rebuildTopics(env, me) {
 export async function trendsApi(env, me, request, url) {
   const { pathname } = url;
   if (pathname === '/api/topics/trends' && request.method === 'GET') {
-    const hit = trendsCache.get(env.DB);
+    const hit = trendsCache.get(underlying(env.DB));
     if (hit && Date.now() - hit.at < TRENDS_TTL_MS && url.searchParams.get('fresh') !== '1') {
       return json(hit.body);
     }
     const body = await trendsData(env);
-    trendsCache.set(env.DB, { at: Date.now(), body });
+    trendsCache.set(underlying(env.DB), { at: Date.now(), body });
     return json(body);
   }
   if (request.method !== 'GET') {
