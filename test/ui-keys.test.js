@@ -130,3 +130,145 @@ describe('the shortcut sheet', () => {
     assert.match(PAGES['inbox.html'], /id="keysAll"/);
   });
 });
+
+// A few elements, enough for `closest()` with the simple selectors OWN_SPACE is written in: a
+// tag, `#id`, `.class`, `[attr]`, `[attr="v"]`, `[attr^="v"]` and `:not(…)` of those.
+function matches(node, compound) {
+  let rest = compound.trim();
+  const tag = /^[a-z][a-z0-9]*/i.exec(rest)?.[0];
+  if (tag && node.tagName !== tag.toUpperCase()) {
+    return false;
+  }
+  rest = rest.slice(tag?.length || 0);
+  while (rest) {
+    const not = /^:not\(([^()]+)\)/.exec(rest);
+    const id = /^#([\w-]+)/.exec(rest);
+    const cls = /^\.([\w-]+)/.exec(rest);
+    const attr = /^\[([\w-]+)(?:(\^?=)"([^"]*)")?\]/.exec(rest);
+    const [m] = not || id || cls || attr || [];
+    assert.ok(m, `selector not understood: ${rest}`);
+    const has = (k) => Object.hasOwn(node.attrs, k);
+    const ok = (not && !matches(node, not[1]))
+      || (id && node.attrs.id === id[1])
+      || (cls && String(node.attrs.class || '').split(' ').includes(cls[1]))
+      || (attr && has(attr[1]) && (!attr[2]
+        || (attr[2] === '=' ? node.attrs[attr[1]] === attr[3] : node.attrs[attr[1]].startsWith(attr[3]))));
+    if (!ok) {
+      return false;
+    }
+    rest = rest.slice(m.length);
+  }
+  return true;
+}
+function el(tag, attrs = {}, parent = null) {
+  return {
+    tagName: tag.toUpperCase(),
+    attrs,
+    parent,
+    get id() { return attrs.id || ''; },
+    closest(sel) {
+      for (let n = this; n; n = n.parent) {
+        if (sel.split(',').some((c) => matches(n, c))) {
+          return n;
+        }
+      }
+      return null;
+    },
+  };
+}
+
+describe('Space and Esc in the thread', () => {
+  const body = el('body');
+  const main = el('main', {}, body);
+  const pane = el('section', { id: 'pane' }, main);
+  const scrolls = [];
+  const scroller = {
+    clientHeight: 800,
+    rects: [1],
+    getClientRects() {
+      return this.rects;
+    },
+    scrollBy: (o) => scrolls.push(o),
+  };
+  pane.querySelector = (sel) => (sel === ':scope > .scroller' ? scroller : null);
+  const state = { open: 'thread-1' };
+  const globals = {
+    state, $: (id) => (id === 'pane' ? pane : null), REDUCED_MOTION: { matches: false }, document: { body },
+  };
+  const { pageKey, leaveReply } = piece('// What Space presses', 'function reactLast', 'pageKey, leaveReply', globals);
+  const press = (target, init = {}) => {
+    const e = {
+      key: ' ', target, defaultPrevented: false, ...init, preventDefault() { this.defaultPrevented = true; },
+    };
+    scrolls.length = 0;
+    return { took: pageKey(e), prevented: e.defaultPrevented, scrolls: [...scrolls] };
+  };
+
+  it('pages down and up through the open thread, a page less a little', () => {
+    const msg = el('div', { class: 'msg', tabindex: '-1' }, el('div', { class: 'scroller' }, pane));
+    for (const target of [body, msg, el('div', { class: 't' }, el('section', { id: 'threads' }, main))]) {
+      assert.deepEqual(press(target), { took: true, prevented: true, scrolls: [{ top: 760, behavior: 'smooth' }] });
+      assert.deepEqual(press(target, { shiftKey: true }).scrolls, [{ top: -760, behavior: 'smooth' }]);
+    }
+    assert.deepEqual(press(body, { repeat: true }).scrolls, [{ top: 760, behavior: 'auto' }]);
+  });
+
+  it('leaves Space to what presses, scrolls or types in it', () => {
+    const side = el('section', { id: 'side' }, main);
+    const targets = [
+      el('input'), el('textarea'), el('select'), el('button'), el('a', { href: '/x' }), el('summary'),
+      el('img', { class: 'att' }), el('div', { contenteditable: 'true' }), el('span', { role: 'button' }),
+      el('a', { role: 'menuitem' }), el('li', { role: 'option' }), el('button', { role: 'radio' }),
+      el('b', { tabindex: '0' }), el('div', { popover: '' }), el('ul', { class: 's2-float' }),
+      el('p', {}, side), el('span', {}, el('div', { role: 'menuitemradio' }, pane)),
+    ];
+    for (const target of targets) {
+      const none = { took: false, prevented: false, scrolls: [] };
+      assert.deepEqual(press(target), none, JSON.stringify(target.attrs));
+    }
+    // Not on a link without an address, nor on something in focus only as the messages are.
+    assert.equal(press(el('a', {}, pane)).took, true);
+    assert.equal(press(el('div', { contenteditable: 'false' }, pane)).took, true);
+  });
+
+  it('is the browser\'s with a modifier, while composing, taken, or without a thread', () => {
+    for (const init of [{ metaKey: true }, { ctrlKey: true }, { altKey: true }, { isComposing: true }, { defaultPrevented: true }, { key: 'x' }]) {
+      assert.equal(press(body, init).took, false, JSON.stringify(init));
+    }
+    state.open = null;
+    assert.equal(press(body).took, false);
+    state.open = 'thread-1';
+    scroller.rects = [];
+    assert.equal(press(body).took, false);
+    scroller.rects = [1];
+  });
+
+  it('leaves the reply box with Esc, what was typed kept, and keeps the Escape from the browser', () => {
+    const reply = {
+      id: 'reply', value: 'half a reply', focused: true, blur() { this.focused = false; },
+    };
+    const escape = (init = {}) => {
+      const e = {
+        key: 'Escape', target: reply, defaultPrevented: false, ...init, preventDefault() { this.defaultPrevented = true; },
+      };
+      return { took: leaveReply(e), prevented: e.defaultPrevented };
+    };
+    assert.deepEqual(escape(), { took: true, prevented: true });
+    assert.equal(reply.focused, false);
+    assert.equal(reply.value, 'half a reply');
+    reply.focused = true;
+    // The suggestions, a new thread's box and one being started took it first; an IME has it.
+    assert.deepEqual(escape({ defaultPrevented: true }), { took: false, prevented: true });
+    assert.equal(escape({ isComposing: true }).took, false);
+    assert.equal(escape({ key: 'Enter' }).took, false);
+    const side = { id: 'side-reply', blur: () => assert.fail('blurred') };
+    assert.equal(escape({ target: side }).took, false);
+    assert.equal(reply.focused, true);
+  });
+
+  it('lists both in the sheet', () => {
+    const html = sheetHtml();
+    assert.ok(html.includes(`<kbd>Space</kbd> <kbd>${esc(keyLabel('⇧Space'))}</kbd>`));
+    assert.match(html, /Leave the reply box/);
+  });
+});

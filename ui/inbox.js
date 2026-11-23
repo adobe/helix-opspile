@@ -9910,6 +9910,18 @@ function pageKey(e) {
   return true;
 }
 
+/**
+ * Esc leaves the thread's reply box, what was typed in it kept: j, k and Space are the thread's
+ * again. Not when something took the Escape before (the suggestions, a new thread's box and that
+ * of one being started, which close it). Whether `e` was one.
+ */
+function leaveReply(e) {
+  if (e.key !== 'Escape' || e.target?.id !== 'reply' || e.defaultPrevented || e.isComposing) return false;
+  e.preventDefault();
+  e.target.blur();
+  return true;
+}
+
 /** Slack's ⌘⇧\: the emoji picker of the message in focus, else of the last one may react to. */
 function reactLast() {
   const buttons = $('pane').querySelectorAll('.msg [data-picker]');
@@ -10220,13 +10232,7 @@ async function start() {
       if (button && document.activeElement !== button) focusMessage(button.closest('.msg'), false);
       return;
     }
-    // Esc leaves the thread's reply box, what was typed in it kept: j, k and Space are the
-    // thread's again. (A new thread's box, and that of one being started, close it.)
-    if (e.key === 'Escape' && e.target.id === 'reply' && !e.defaultPrevented && !e.isComposing) {
-      e.preventDefault();
-      e.target.blur();
-      return;
-    }
+    if (leaveReply(e)) return;
     if (messageKey(e)) return;
     if (globalKey(e)) return;
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
