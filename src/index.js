@@ -79,6 +79,7 @@ import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
+import { sweepMentionModel } from './mentionmodels.js';
 import { sweepTopicMap } from './topicmap.js';
 import { sweepTrends } from './trends.js';
 import { sweepPreviews } from './previews.js';
@@ -311,7 +312,8 @@ const handlers = {
  * in the latest message's text of threads indexed before it was kept, delete the thread list's
  * picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals kept for an Undo of a
  * discarded draft past its time (src/draftevents.js), and enqueue the threads whose klickhaus rows
- * are behind; build the Topics page's map once a week; and roll up what the days used, for COGS.
+ * are behind; fit the expert finder's mention model once a day and build the Topics page's map
+ * once a week; and roll up what the days used, for COGS.
  */
   async scheduled(controller, env, ctx) {
     // What the days cost so far, for the COGS dashboard (src/cogs/rollup.js).
@@ -390,6 +392,10 @@ const handlers = {
     ctx.waitUntil(sweepVectors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', vectors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', vectors: 'error', error: e.message }))));
+    // The expert finder's mention model (src/mentionmodels.js), once it is a day old.
+    ctx.waitUntil(sweepMentionModel(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', mentionModel: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', mentionModel: 'error', error: e.message }))));
     // The Topics page's map (src/topicmap.js), once it is a week old.
     ctx.waitUntil(sweepTopicMap(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', topicMap: r })))

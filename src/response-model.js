@@ -153,7 +153,7 @@ export function wallMinutes(clock, from, minutes) {
  * inside groups over the spread between them. Infinite when groups do not differ beyond chance,
  * which turns the level off.
  */
-function weightOf(groups) {
+export function weightOf(groups) {
   const enough = groups.filter((g) => g.length >= 2);
   if (enough.length < 3) {
     return Infinity;

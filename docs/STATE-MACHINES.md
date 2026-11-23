@@ -561,6 +561,14 @@ between: the cron or Rebuild builds one in a single request, a row when it is do
 five are kept. A build that fails (too few threads, no index) writes nothing and leaves the last map
 on the page; two at once both write a row, and the newer is shown.
 
+**Mention model.** none → fit → a day old → fit again (`mention_models`, `src/mentionmodels.js`).
+The cron fits one in a single run and writes a row when it is done; the newest three are kept. A
+fit that finds no mention whose week is over writes an empty model (`model` is `null`), so the
+next runs wait a day too, and the finder says nothing of how people answer while it is the newest.
+An isolate keeps the newest it read for an hour, so a new fit reaches the finder within an hour of
+it; two cron runs at once both write a row, and the newer is
+used.
+
 **Trend topics.** none → assigned → stale → assigned again (`trend_threads`, `src/trends.js`).
 A topic map writes its own threads' rows when it is built, along with its space
 (`topic_maps.vectors`, which only the newest keeps). A row is stale when its `map` is not the
