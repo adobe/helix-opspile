@@ -34,6 +34,7 @@ import writingJs from '../ui/writing.js' with { type: 'text' };
 import stackJs from '../ui/stack.js' with { type: 'text' };
 import notifyHelpJs from '../ui/notifyhelp.js' with { type: 'text' };
 import tourJs from '../ui/tour.js' with { type: 'text' };
+import followSuggestJs from '../ui/followsuggest.js' with { type: 'text' };
 import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
 import topicSpaceJs from '../ui/topicspace.js' with { type: 'text' };
 import topicViewJs from '../ui/topicview.js' with { type: 'text' };
@@ -64,6 +65,7 @@ export const SCRIPTS = {
   'stack.js': stackJs,
   'notifyhelp.js': notifyHelpJs,
   'tour.js': tourJs,
+  'followsuggest.js': followSuggestJs,
   'topicgraph.js': topicGraphJs,
   'topicspace.js': topicSpaceJs,
   'topicview.js': topicViewJs,
