@@ -2827,7 +2827,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .nh-pic .nh-ring { fill: none; stroke: var(--spectrum-negative-visual-color); }
 
 /* Toasts: S2's neutral Toast (white text on neutral-subdued, the large radius, elevated), its
-   action an outline Button for static white. */
+   action an outline Button for static white. The text wraps, a button's label never does. */
 .spectrum .toast {
   display: flex;
   align-items: center;
@@ -2857,11 +2857,13 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   transition: opacity var(--s2-out), translate var(--s2-out);
 }
 .spectrum .toast :is(button, a) {
+  flex: none;
   margin-left: 0;
   min-height: var(--s2-ctl);
   padding: 0 var(--spectrum-component-pill-edge-to-text-100);
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
   font-size: var(--spectrum-font-size-100);
   font-weight: var(--spectrum-bold-font-weight);
   color: var(--spectrum-white);
