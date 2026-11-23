@@ -21,8 +21,9 @@
  * in it inside, a group opened a faint, wide shell around its members (an area's topics) or,
  * when they are far apart (a team's people), a hub with a spoke to each. A product no tech
  * stack entry names is glass too, empty. What is trending glows. Each kind takes as much room
- * as each other (TopicSpace.scales); within one, a bubble's volume is its threads'. What is far
- * from where the camera looks, nearer or farther, is blurred (a depth of field).
+ * as each other (TopicSpace.scales); within one, a bubble's volume is its threads'. What is
+ * behind the nearest bubble that another one hides is blurred, the more the farther (a depth of
+ * field): what is in front is sharp.
  *
  * - A click picks a bubble (the panel says what it is), and draws a line to each bubble it shares
  *   threads with; the rest fade. A click on nothing unpicks.
@@ -164,7 +165,12 @@ globalThis.TopicView = (() => {
     // The depth of field: in focus where the camera looks.
     v.composer = new T.EffectComposer(v.renderer);
     v.composer.addPass(new T.RenderPass(v.scene, v.camera));
-    v.bokeh = new T.BokehPass(v.scene, v.camera, { focus: 190, aperture: 0.000015, maxblur: 0.004 });
+    v.bokeh = new T.BokehPass(v.scene, v.camera, { focus: 190, aperture: 0.00001, maxblur: 0.0025 });
+    // Only what is farther than the focus is blurred: nothing in front of it.
+    const shader = v.bokeh.materialBokeh;
+    shader.fragmentShader = shader.fragmentShader.replace('float factor = ( focus + viewZ );', 'float factor = min( focus + viewZ, 0.0 );');
+    shader.needsUpdate = true;
+    v.focus = 190;
     // Its depth is of the solid bubbles only: through glass, and names, it is what is behind.
     const blur = v.bokeh.render.bind(v.bokeh);
     v.bokeh.render = (...args) => {
@@ -679,6 +685,31 @@ globalThis.TopicView = (() => {
     }
   }
 
+  /**
+   * Where the blur starts: at the front of the nearest bubble that is not inside an opened one
+   * and that another bubble hides (in front of its middle); all of it is sharp when none is.
+   */
+  function focusDepth() {
+    const forward = v.camera.getWorldDirection(new T.Vector3());
+    const depth = (o) => o.pos.clone().sub(v.camera.position).dot(forward);
+    const inside = (o) => o.n.parent && v.objs.get(`shell:${o.n.parent}`);
+    const tops = [...v.objs.values()].filter((o) => !o.leaving && !o.shell && o.s > 0.5 && !inside(o))
+      .sort((a, b) => depth(a) - depth(b));
+    caster = caster || new T.Raycaster();
+    for (const o of tops) {
+      const dir = o.pos.clone().sub(v.camera.position);
+      const far = dir.length() - o.s;
+      caster.set(v.camera.position, dir.normalize());
+      caster.far = far;
+      const hidden = caster.intersectObjects(v.pickable, false).some((h) => {
+        const x = v.objs.get(h.object.userData.key);
+        return x && x !== o && !x.shell && !x.leaving && h.distance < far;
+      });
+      if (hidden) return Math.max(depth(o) - o.s, 1);
+    }
+    return 1e4;
+  }
+
   /** The glows of what is trending: around their bubbles, breathing. */
   function breathe(now) {
     const breath = 0.75 + 0.25 * Math.sin(now / 700);
@@ -742,7 +773,9 @@ globalThis.TopicView = (() => {
     v.controls.update();
     labels(v.tick % 6 === 0);
     breathe(now);
-    v.bokeh.uniforms.focus.value = v.camera.position.distanceTo(v.controls.target);
+    if (v.tick % 10 === 0) v.focusTo = focusDepth();
+    v.focus += ((v.focusTo ?? v.focus) - v.focus) * kp;
+    v.bokeh.uniforms.focus.value = v.focus;
     v.composer.render();
     v.renderer.autoClear = false;
     v.renderer.render(v.names, v.camera);
