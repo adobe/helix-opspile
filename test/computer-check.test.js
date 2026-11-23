@@ -265,7 +265,8 @@ describe('the checks of the stage computer', () => {
       if (pathname === '/drop') {
         return Response.json({ dropped: true });
       }
-      gets += 2;
+      // A cache of its own resets the isolate's counters (forgetImages), as the Worker does.
+      gets = (body.cache ? 0 : gets) + 2;
       // The kernel booted again is too much for the object.
       return asked.filter(([p]) => p === '/').length === 3
         ? Response.json({ error: 'Durable Object\'s isolate exceeded its memory limit and was reset.' }, { status: 500 })
@@ -289,6 +290,38 @@ describe('the checks of the stage computer', () => {
     assert.match(table, /\| 48\/24 \| ✅ command 1 \| \d+ ms \| 2 \(2 MB\) \| 5 MB \|/);
     assert.match(table, /\| 48\/24 \| ❌ command 1, its kernel booted again \| .* exceeded its memory limit/);
     assert.doesNotMatch(table, /https?:/);
+  });
+
+  it('measure the first command by what it answers, its counters reset by its cache', async () => {
+    // The isolate read 100 files for agents before; the first command's cache resets that.
+    const images = { gets: 100, fetched: 100e6, bytes: 50e6 };
+    const asked = [];
+    globalThis.fetch = async (url, init) => {
+      const { pathname } = new URL(url);
+      const body = JSON.parse(init.body);
+      asked.push(pathname);
+      if (pathname === '/reads') {
+        return Response.json({ images });
+      }
+      if (pathname === '/drop') {
+        return Response.json({ dropped: true, images });
+      }
+      if (body.cache) {
+        Object.assign(images, { gets: 0, fetched: 0, bytes: 0 });
+      }
+      Object.assign(images, {
+        gets: images.gets + 2, fetched: images.fetched + 2e6, bytes: images.bytes + 2e6,
+      });
+      return Response.json({ exitCode: 0, images });
+    };
+    const [r] = await measure('https://computer.example', cachesOf('default'), {
+      run: 'r1', log: () => {},
+    });
+    assert.deepEqual(r.steps.map((s) => [s.name, s.gets, s.fetchedMB, s.keptMB]), [
+      ['command 1', 2, 2, 2], ['command 2', 2, 2, 4],
+      ['command 1, its kernel booted again', 2, 2, 6],
+    ]);
+    assert.deepEqual(asked, ['/', '/', '/drop', '/']);
   });
 
   it('read files of the image whole and in parts, in a piece of their own and over the limit', async () => {
