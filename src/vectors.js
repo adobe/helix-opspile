@@ -108,7 +108,7 @@ export function mean(vectors) {
 }
 
 /** One vector per list of pieces: the pieces are embedded in batches, then averaged. */
-async function embed(env, pieceLists) {
+export async function embed(env, pieceLists) {
   const flat = pieceLists.flat();
   const vectors = [];
   for (let i = 0; i < flat.length; i += BATCH) {

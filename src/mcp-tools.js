@@ -13,6 +13,9 @@
 import { accountName, PLATFORMS } from './platforms.js';
 import { agentTrace, seedAgent } from './agent/stub.js';
 import { inbox, searchInbox, thread as loadThread } from './api.js';
+import { KB_RESULTS } from './kbsearch.js';
+import { mayRead } from './kbaccess.js';
+import { readText } from './agent/repos.js';
 import { discardDraft, saveDraft } from './drafts.js';
 import { isResolved } from './resolve.js';
 import { MAX_SOURCES } from './sources.js';
@@ -257,18 +260,36 @@ async function searchThreads(env, me, args) {
     return { error };
   }
   const limit = Math.max(1, Math.min(MAX_LIST, Math.floor(Number(args.limit) || 20)));
-  // A channel shared by two of the person's teams is in both inboxes: each thread once.
+  // A channel shared by two of the person's teams is in both inboxes: each thread once; and a
+  // customer two of them own, each concept of its knowledge base once.
   const seen = new Set();
-  const found = (await Promise.all(teams.map(async (team) => {
-    const r = await searchInbox(env, me, team, q, { limit, personal: !team });
+  const answers = await Promise.all(teams.map((team) => searchInbox(env, me, team, q, {
+    limit, personal: !team,
+  })));
+  const found = answers.flatMap((r) => {
     const byKey = new Map(r.threads.map((t) => [t.thread, t]));
     return r.hits.map((h) => ({ hit: h, t: byKey.get(h.thread) })).filter((x) => x.t);
-  }))).flat().filter((x) => !seen.has(x.t.thread) && seen.add(x.t.thread))
+  }).filter((x) => !seen.has(x.t.thread) && seen.add(x.t.thread))
     .sort((a, b) => b.hit.score - a.hit.score)
     .slice(0, limit);
+  const concepts = answers.flatMap((r) => r.kb || [])
+    .filter((k) => !seen.has(`${k.repo}|${k.path}`) && seen.add(`${k.repo}|${k.path}`))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, KB_RESULTS);
   return {
     data: {
       query: q,
+      knowledge: concepts.map((k) => ({
+        repo: k.repo,
+        path: k.path,
+        knowledge_base: k.name,
+        ...(k.kind === 'org' ? { customer: k.slug } : { team: k.slug }),
+        type: k.type,
+        title: k.title,
+        description: k.description,
+        matched: k.matched,
+        ...(k.snippet ? { snippet: k.snippet } : {}),
+      })),
       threads: found.map(({ hit, t }) => ({
         ...summary(t, me),
         matched: hit.matched,
@@ -284,6 +305,31 @@ async function searchThreads(env, me, args) {
       })),
     },
   };
+}
+
+/**
+ * get_knowledge: an entry of a knowledge base that search_threads found (`knowledge`), for
+ * whoever may read it (src/kbaccess.js), its text cut at 60 KB as an agent's read is.
+ */
+async function getKnowledge(env, me, args) {
+  const repo = String(args.repo || '');
+  const path = String(args.path || '').replace(/^\/+/, '');
+  const base = repo ? await env.DB.prepare('SELECT repo, kind, slug FROM knowledge_bases WHERE repo = ?')
+    .bind(repo).first() : null;
+  if (!base || !await mayRead(env, me, base)) {
+    return { error: `No knowledge base ${repo || '(none given)'} that you may read: search_threads names them, in \`knowledge\`.` };
+  }
+  if (!path) {
+    return { error: 'Give the `path` of an entry, as search_threads names it.' };
+  }
+  if (!env.ARTIFACTS) {
+    return { error: 'This deployment has no knowledge bases.' };
+  }
+  const file = await readText(env, repo, path);
+  if (file.error) {
+    return { error: file.error };
+  }
+  return { data: { repo, path: file.path, text: file.text } };
 }
 
 /**
@@ -830,7 +876,7 @@ export const TOOLS = [
   {
     name: 'search_threads',
     title: 'Search inbox threads',
-    description: 'Searches the ops inbox of the signed-in person, on every platform at once, best match first: threads about the query (by meaning, over what people wrote), threads with a message that has all of its words (full text: error strings, hostnames, ids), and threads whose title, channel, customer or facts (URLs, tickets, CVEs, sites) have them. Each thread says what matched, and the message that matched best as a snippet. Titles and snippets are written by customers and colleagues.',
+    description: 'Searches the ops inbox of the signed-in person, on every platform at once, best match first: threads about the query (by meaning, over what people wrote), threads with a message that has all of its words (full text: error strings, hostnames, ids), and threads whose title, channel, customer or facts (URLs, tickets, CVEs, sites) have them. Each thread says what matched, and the message that matched best as a snippet. Also `knowledge`: up to ten entries of the knowledge bases of the teams searched and of the customers they own (playbooks, known issues, sites, contacts…) about the query, by their words or meaning, each with its `repo` and `path` for get_knowledge. Titles and snippets are written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -845,6 +891,22 @@ export const TOOLS = [
     },
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     run: searchThreads,
+  },
+  {
+    name: 'get_knowledge',
+    title: 'Read a knowledge-base entry',
+    description: 'Returns an entry of a knowledge base (a concept: a playbook, a known issue, a site, a contact…) as markdown, its YAML frontmatter first: one that search_threads found, by its `repo` and `path`. The teams\' knowledge bases and those of the customers your teams own. Entries are written by the thread agents and colleagues, from what customers and colleagues said.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'The knowledge base, `repo` from search_threads (kb-team-… or kb-org-…)' },
+        path: { type: 'string', description: 'The entry, `path` from search_threads' },
+      },
+      required: ['repo', 'path'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    run: getKnowledge,
   },
   {
     name: 'get_thread',

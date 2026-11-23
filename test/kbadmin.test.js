@@ -311,6 +311,10 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       // Each write counts the entries: not the index, the log or the system prompt.
       const entries = () => DB.rows("SELECT entries FROM knowledge_bases WHERE repo = 'kb-team-helix'")[0].entries;
       assert.equal(entries(), 1);
+      // The search's row of it, kept by the write (src/kbindex.js); none of the system prompt.
+      assert.deepEqual(DB.rows('SELECT repo, path, hash, type, title, body, embedded FROM kb_concepts'), [{
+        repo: 'kb-team-helix', path: 'notes/x.md', hash: concept.hash, type: 'Reference', title: 'X', body: 'Body', embedded: null,
+      }]);
       DB.sqlite.exec('UPDATE knowledge_bases SET entries = NULL');
       assert.deepEqual(await countEntries(env), { counted: 2, failed: 0 });
       assert.deepEqual(DB.rows('SELECT repo, entries FROM knowledge_bases ORDER BY repo'), [
@@ -320,6 +324,7 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       assert.equal(res.status, 200);
       assert.deepEqual(srv.files('kb-team-helix'), ['index.md', 'log.md', 'systemprompt.md']);
       assert.equal(entries(), 0);
+      assert.deepEqual(DB.rows('SELECT path FROM kb_concepts'), []);
 
       const { commits } = await (await call(env, ADMIN, 'GET', '/api/kb/log?repo=kb-team-helix')).json();
       assert.deepEqual(commits.map((c) => c.message), ['Delete notes/x.md', 'Update notes/x.md', 'Update systemprompt.md', 'Add agent instructions']);

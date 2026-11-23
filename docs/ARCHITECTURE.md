@@ -577,7 +577,9 @@ messages are embedded again, and a deleted one loses its vector. The cron enqueu
 threads whose vectors are older than their latest message (`threads.vectorized_through`),
 which also fills the index the first time. Alert threads (a bot's posts) get no vectors here.
 A re-filed thread's vectors are made again (its hashes cleared, a vectorize job queued), so
-that they carry its new team and org; re-filed as an alert or ignored, it loses them.
+that they carry its new team and org; re-filed as an alert or ignored, it loses them. The
+knowledge bases' concepts have theirs here too (`type: kb`, see "Search" under
+[Knowledge bases](#3-knowledge-bases)), so every query of a thread's vectors names its `type`.
 
 A third index, `SEARCH` ([src/fulltext.js](../src/fulltext.js)), is for full-text search: an
 [AI Search](https://developers.cloudflare.com/ai-search/) instance with built-in storage, one
@@ -845,6 +847,31 @@ your view; notifications and the Thread Agent; Appearance, the keyboard and logg
 side on a screen 1000px wide or more, one under the other below that, so a phone has the single
 column it always had.
 
+**Search.** The inbox's search finds concepts too (`GET /api/search`'s `kb`,
+src/kbsearch.js): those of the knowledge bases of the view's teams (a team's view: the team; the
+personal view: the viewer's own teams, not those of the channels it shows) and of the customers
+those teams own, as far as the viewer may read them (src/kbaccess.js), so nobody on a team
+finds any, and a merged customer's is the one it was merged into. Artifacts has no search, so D1
+keeps what is searched (`kb_concepts`, migration 0094, src/kbindex.js): a row per markdown entry
+(not `index.md`, `log.md` or `systemprompt.md`), its blob hash, its frontmatter's `type`, `title`
+(else its first heading, else its file name), `description`, `tags` and `aliases`, and the first
+8 KB of its body. Every write updates the rows of the files it changed from the work tree it
+pushed; the cron reads the knowledge bases not read yet in full (`knowledge_bases.search_commit`
+NULL: never, or a write's update failed; a new knowledge base has nothing to read), 30 a run,
+the teams' first, reading only the blobs whose hash is not the row's. Each concept also has a
+vector in `CONTENT` (`type: kb`, the knowledge base's `team` or `org` slug, `repo`, `path`), the
+mean of the embeddings of its names, type, tags, description and body in up to four pieces,
+made by the cron, 100 a run, for the rows whose blob changed since (`embedded` NULL); the
+threads' queries ask only for `type` `message` and `thread`. A query is embedded once for the
+threads and the concepts. A concept matches by its words (every word of the query in its title,
+aliases, type, tags, description or body: 0.4, plus up to 0.8 for the words in its title or
+aliases and 0.3 for those in its tags, type or description) and by meaning (its vector, by the
+threads' thresholds: a similarity of 0.6 and within 0.12 of the best), the scores added; only
+what `kb_concepts` has counts, so a vector left behind by a deleted file finds nothing. The ten
+best come with their knowledge base, type, title, description and, where the words are in the
+body (or it has no description), the part of the body around them. The MCP server's
+`search_threads` returns them as `knowledge`, and `get_knowledge` reads one.
+
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is
 known: when the normalizer discovers a channel, it makes sure the repositories for the
@@ -907,6 +934,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   take the list's place, best match first, each with the message that matched (its words
   marked); opening one scrolls the thread to that message. The filter cards count and filter
   the results, j and k step through them, and Esc or **Clear** brings the inbox back.
+  Above the threads, under **Knowledge base**, are the entries of the knowledge bases about the
+  query (`kb`, [src/kbsearch.js](../src/kbsearch.js), see "Search" under
+  [Knowledge bases](#3-knowledge-bases)), the first three and then **N more**, each a link to it in
+  the editor of its team's or customer's page; the filters are the threads' and leave them be.
 - A click on a facet value picks it; Shift-click, or the ≠ beside it, excludes it (negative
   filters, as in klickhaus): picked values of a card are OR'd, excluded ones AND'd, and the
   cards AND'd with each other. The URL keeps both, `f.<facet>=a|b` and `not.<facet>=c`; a

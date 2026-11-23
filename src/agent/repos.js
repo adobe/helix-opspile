@@ -229,6 +229,33 @@ export async function listFiles(env, artifact, path, { recursive = false } = {})
 }
 
 /**
+ * Calls `visit(path, entry)` for every file of the tree `root`, walking every directory,
+ * `COUNT_READS` at a time, so that nothing is cut short as a listing is.
+ */
+async function everyFile(repo, root, visit) {
+  const queue = [{ hash: root, prefix: '' }];
+  while (queue.length) {
+    const batch = queue.splice(0, COUNT_READS);
+    // eslint-disable-next-line no-await-in-loop
+    const trees = await Promise.all(batch.map((d) => repo.readTree(d.hash)));
+    for (let i = 0; i < batch.length; i += 1) {
+      const { hash, prefix } = batch[i];
+      if (!trees[i]) {
+        throw new Error(`missing tree ${hash}`);
+      }
+      for (const c of trees[i]) {
+        const path = prefix ? `${prefix}/${c.name}` : c.name;
+        if (c.type === 'tree') {
+          queue.push({ hash: c.hash, prefix: path });
+        } else {
+          visit(path, c);
+        }
+      }
+    }
+  }
+}
+
+/**
  * How many files of the whole tree `keep(path)` accepts. Unlike `listFiles` this walks every
  * directory, `COUNT_READS` at a time, and keeps no listing, so the count is never cut short.
  */
@@ -239,27 +266,32 @@ export async function countFiles(env, artifact, keep = () => true) {
       return { count: 0, empty: true };
     }
     let count = 0;
-    const queue = [{ hash: head.treeHash, prefix: '' }];
-    while (queue.length) {
-      const batch = queue.splice(0, COUNT_READS);
-      // eslint-disable-next-line no-await-in-loop
-      const trees = await Promise.all(batch.map((d) => repo.readTree(d.hash)));
-      for (let i = 0; i < batch.length; i += 1) {
-        const { hash, prefix } = batch[i];
-        if (!trees[i]) {
-          throw new Error(`missing tree ${hash}`);
-        }
-        for (const c of trees[i]) {
-          const path = prefix ? `${prefix}/${c.name}` : c.name;
-          if (c.type === 'tree') {
-            queue.push({ hash: c.hash, prefix: path });
-          } else if (keep(path)) {
-            count += 1;
-          }
-        }
+    await everyFile(repo, head.treeHash, (path) => {
+      if (keep(path)) {
+        count += 1;
       }
-    }
+    });
     return { commit: head.hash, count };
+  });
+}
+
+/**
+ * The files of the whole tree that `keep(path)` accepts, `{ commit, files: [{ path, hash }] }`,
+ * never cut short (as `countFiles` walks it); `{ files: [], empty: true }` with no commit yet.
+ */
+export async function treeFiles(env, artifact, keep = () => true) {
+  return withRepo(env, artifact, async (repo) => {
+    const head = await headOf(repo);
+    if (!head) {
+      return { files: [], empty: true };
+    }
+    const files = [];
+    await everyFile(repo, head.treeHash, (path, c) => {
+      if (keep(path)) {
+        files.push({ path, hash: c.hash });
+      }
+    });
+    return { commit: head.hash, files };
   });
 }
 
