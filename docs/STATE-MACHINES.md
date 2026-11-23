@@ -561,6 +561,13 @@ between: the cron or Rebuild builds one in a single request, a row when it is do
 five are kept. A build that fails (too few threads, no index) writes nothing and leaves the last map
 on the page; two at once both write a row, and the newer is shown.
 
+**Mention model.** none → fit → a day old → fit again (`mention_models`, `src/mentionmodels.js`).
+The cron fits one in a single run and writes a row when it is done; the newest three are kept. A
+fit that finds no mention whose week is over writes nothing, and the finder says nothing of how
+people answer until one is written. An isolate keeps the newest it read for an hour, so a new fit
+reaches the finder within an hour of it; two cron runs at once both write a row, and the newer is
+used.
+
 **Catalog compile.** files → compiled → behind → compiled again (src/catalog.js, src/catalogsync.js).
 A team's `products/` is the source; its `tech_stack` rows (`path` set) and `tech_moves` are replaced
 together in one batch, with `knowledge_bases.catalog_commit` the watermark, written in the same batch.

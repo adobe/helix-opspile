@@ -22,7 +22,8 @@ import { notifyRoom } from './notify.js';
 import {
   ACCOUNTS, learnMembers, NAME, target,
 } from './post.js';
-import { fitResponses, predict } from './response-model.js';
+import { ACTIVITY_DAYS, activityOf, predictMention } from './mention-model.js';
+import { clearMentionModel, mentionModel } from './mentionmodels.js';
 import { findTopic, topicIndex, topicsOfThreads } from './topicindex.js';
 
 /**
@@ -64,12 +65,12 @@ const OUTSIDE = 0.7;
 /** People a list has at most, and people whose response times are worked out. */
 export const MAX_EXPERTS = 8;
 const MAX_MEASURED = 20;
-/** Answers a "typically responds" needs, and how many mentions must be answered. */
-export const MIN_ANSWERS = 3;
-const MIN_RATE = 0.5;
-/** The response model is kept this long per isolate: it learns slowly and reads every message. */
-const MODEL_MS = 60 * 60 * 1000;
-let model = null;
+/** Mentions of someone the mention model must have learnt from before anything is said. */
+export const MIN_MENTIONS = 3;
+/** Under these odds of an answer, no time is said; at these, "most" and "nearly all". */
+const FEW = 0.2;
+const MOST = 0.6;
+const NEARLY_ALL = 0.8;
 const WORD_RESULTS = 50;
 const MAX_TITLE = 120;
 /** Suggestions by agents an entry keeps, and the length of a reason. */
@@ -82,7 +83,6 @@ const cache = new Map();
 
 const day = 24 * 60 * 60 * 1000;
 const iso = (ms) => new Date(ms).toISOString();
-const ENTRY = 'COALESCE(t.logical_thread, t.thread) AS entry';
 
 /** Words that say nothing of what a title is about: no pair of a title has one of them. */
 const COMMON = new Set(`a an and are as at be but by can do does for from has have how i in is it
@@ -217,58 +217,69 @@ const quietly = (signal, promise) => promise.catch((e) => {
   return new Map();
 });
 
-/** The response model of everyone's answers lately, or null without any. */
-async function responseModel(env, now) {
-  if (model && now - model.at < MODEL_MS) {
-    return model.fit;
-  }
-  const { results } = await env.DB.prepare(`SELECT ${ENTRY},
-      x.source || ':' || x.tenant || ':' || x.channel_id AS channel, x.at, x.staff, x.person
-    FROM messages x JOIN threads t ON t.thread = x.thread
-    WHERE x.at >= ? AND x.counted = 1 AND x.deleted = 0`).bind(iso(now - WINDOW_DAYS * day)).all();
-  const rows = (results || []).map((r) => ({ ...r, at: Date.parse(r.at) }));
-  model = { at: now, fit: fitResponses(rows) };
-  return model.fit;
-}
-
 /**
- * What to say of how `people` respond, in `channel` at `now`, a re-threaded group as one thread:
- * person id to `{ minutes, joins, answered, mentions }`. `minutes` and `joins` are the response
- * model's (src/response-model.js); `answered` of `mentions` is how often they posted in a thread
- * after being mentioned in it, which the model cannot see: it only knows who did answer.
+ * What the mention model (src/mention-model.js) says of mentioning each of `people` in the
+ * entry of `threads`, thread `t`'s, at `now`: person id to `{ odds, minutes, mentions, answered
+ * }`, the odds of an answer in it within a week, the typical minutes until it, and the mentions
+ * of them the model learnt from, answered or not. Their posts are counted as the model counts
+ * them (`activityOf`); nothing without a model yet.
  */
-export async function responseTimes(env, people, { channel, now = Date.now() } = {}) {
+export async function responseTimes(env, people, { t, threads, now = Date.now() } = {}) {
   if (!people.length) {
     return new Map();
   }
   const list = JSON.stringify(people);
-  const since = iso(now - WINDOW_DAYS * day);
-  const [{ results: asked }, { results: posts }, fit] = await Promise.all([
-    env.DB.prepare(`SELECT m.person, m.at, ${ENTRY} FROM mentions m
-      JOIN threads t ON t.thread = m.thread
-      WHERE m.person IN (SELECT value FROM json_each(?)) AND m.at >= ?`).bind(list, since).all(),
-    env.DB.prepare(`SELECT x.person, x.at, ${ENTRY} FROM messages x
-      JOIN threads t ON t.thread = x.thread
-      WHERE x.person IN (SELECT value FROM json_each(?)) AND x.at >= ? AND x.deleted = 0`)
-      .bind(list, since).all(),
-    responseModel(env, now),
+  const channel = `${t.source}:${t.tenant}:${t.channel_id}`;
+  const [model, { results: posts }, thread, { results: team }] = await Promise.all([
+    mentionModel(env, now),
+    env.DB.prepare(`SELECT person, MAX(at) AS last, COUNT(*) AS count,
+        SUM(at >= ?3) AS day, SUM(at >= ?4) AS week,
+        SUM(source = ?5 AND tenant = ?6 AND channel_id = ?7) AS here
+      FROM messages WHERE person IN (SELECT value FROM json_each(?1)) AND at >= ?2
+        AND staff = 1 AND counted = 1 AND deleted = 0
+      GROUP BY person`)
+      .bind(
+        list,
+        iso(now - ACTIVITY_DAYS * day),
+        iso(now - day),
+        iso(now - 7 * day),
+        t.source,
+        t.tenant,
+        t.channel_id,
+      ).all(),
+    env.DB.prepare(`SELECT MIN(at) AS first, COUNT(DISTINCT CASE WHEN staff = 1 THEN person END)
+        AS staff
+      FROM messages WHERE thread IN (SELECT value FROM json_each(?)) AND counted = 1
+        AND deleted = 0`).bind(JSON.stringify(threads)).first(),
+    t.team ? env.DB.prepare(`SELECT person FROM team_members
+      WHERE team = ? AND person IN (SELECT value FROM json_each(?))`).bind(t.team, list).all()
+      : { results: [] },
   ]);
-  const seen = new Map();
-  for (const m of asked || []) {
-    const so = seen.get(m.person) || { mentions: 0, answered: 0 };
-    so.mentions += 1;
-    if ((posts || []).some((x) => x.person === m.person && x.entry === m.entry && x.at > m.at)) {
-      so.answered += 1;
-    }
-    seen.set(m.person, so);
+  if (!model) {
+    return new Map();
   }
-  return new Map(people.map((person) => [person, {
-    minutes: fit ? Math.round(predict(fit, { person, channel, at: now })) : null,
-    joins: fit ? fit.people.get(person) || 0 : 0,
-    answered: 0,
-    mentions: 0,
-    ...seen.get(person),
-  }]));
+  const of = new Map((posts || []).map((r) => [r.person, r]));
+  const members = new Set((team || []).map((r) => r.person));
+  return new Map(people.map((person) => {
+    const p = of.get(person);
+    const activity = p ? {
+      since: (now - Date.parse(p.last)) / (60 * 60 * 1000),
+      day: p.day,
+      week: p.week,
+      all: p.count,
+      inChannel: p.here,
+    } : activityOf([], now, channel);
+    const r = predictMention(model, {
+      person,
+      channel,
+      at: now,
+      activity,
+      staff: (thread && thread.staff) || 0,
+      opening: Boolean(thread && thread.first) && now - Date.parse(thread.first) < 6 * 60 * 1000,
+      member: members.has(person),
+    });
+    return [person, { ...r, minutes: r.minutes === null ? null : Math.round(r.minutes) }];
+  }));
 }
 
 /** A time in words: "within minutes", "about 35 minutes", "about 4 hours", "about 2 days". */
@@ -286,9 +297,29 @@ export function roughly(minutes) {
   return `about ${Math.round(hours / 24)} days`;
 }
 
-/** Whether a response time says something: enough answers, and most mentions answered. */
-const reliable = (r) => Boolean(r) && r.joins >= MIN_ANSWERS
-  && (!r.mentions || r.answered / r.mentions >= MIN_RATE);
+/** Whether the mention model knows enough of someone to say something. */
+const reliable = (r) => Boolean(r) && r.mentions >= MIN_MENTIONS;
+
+/** How many mentions someone answers, in words. */
+function share(odds) {
+  if (odds >= NEARLY_ALL) {
+    return 'nearly all';
+  }
+  if (odds >= MOST) {
+    return 'most';
+  }
+  if (odds >= 0.4) {
+    return 'about half of';
+  }
+  return odds >= FEW ? 'about a third of' : 'few';
+}
+
+/** What to say of how someone answers mentions: "answers most mentions, in about 2 hours". */
+function answersOf({ odds, minutes }) {
+  const time = odds < FEW || minutes === null ? ''
+    : `, ${minutes < 5 ? '' : 'in '}${roughly(minutes)}`;
+  return `answers ${share(odds)} mentions${time}`;
+}
 
 /** What to say about someone: `reasons`, the strongest first. */
 export function reasonsOf(e) {
@@ -301,8 +332,7 @@ export function reasonsOf(e) {
     reasons.push(`worked on ${similar} similar ${similar === 1 ? 'thread' : 'threads'}`);
   }
   if (reliable(e.response)) {
-    const { minutes } = e.response;
-    reasons.push(`typically responds ${minutes < 5 ? '' : 'in '}${roughly(minutes)}`);
+    reasons.push(answersOf(e.response));
   }
   if (e.channel) {
     reasons.push('is active in this channel');
@@ -497,9 +527,9 @@ async function rank(env, t, rows, now, { about = null } = {}) {
       },
     };
   }).sort((a, b) => b.score - a.score).slice(0, MAX_MEASURED);
-  const times = await responseTimes(env, ranked.map((e) => e.person), {
-    channel: `${t.source}:${t.tenant}:${t.channel_id}`, now,
-  });
+  const times = await quietly('response', responseTimes(env, ranked.map((e) => e.person), {
+    t, threads, now,
+  }));
   return { list: ranked.map((e) => ({ ...e, response: times.get(e.person) || null })), topics };
 }
 
@@ -591,7 +621,7 @@ function candidate(e) {
       member: e.member === null || e.member === undefined ? -1 : Number(e.member),
       suggested: Number(Boolean(e.reason)),
       rejected: Number(Boolean(e.rejected)),
-      ...(r ? { mentioned: r.mentions, answered: r.answered } : {}),
+      ...(r ? { mentioned: r.mentions, answered: r.answered, answerOdds: r.odds } : {}),
       ...(r && r.minutes !== null ? { responseMinutes: r.minutes } : {}),
     },
   };
@@ -841,8 +871,8 @@ export async function topicExperts(env, key, name, { me = null, now = Date.now()
   };
 }
 
-/** Forgets the kept lists and the response model (tests). */
+/** Forgets the kept lists and the mention model (tests). */
 export function clearExpertLists() {
   cache.clear();
-  model = null;
+  clearMentionModel();
 }
