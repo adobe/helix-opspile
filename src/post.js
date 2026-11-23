@@ -901,7 +901,7 @@ export async function mentionedOutside(env, t, mentions, learn = {}) {
  * keeps the name it was written with.
  */
 export async function mentionsByName(env, t, names) {
-  const wanted = [...new Set(names.filter(Boolean))].slice(0, 200);
+  const wanted = [...new Set(names.filter(Boolean))].slice(0, 400);
   if (!wanted.length) {
     return [];
   }

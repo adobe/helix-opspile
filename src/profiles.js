@@ -112,14 +112,31 @@ export async function profiles(env, keys) {
   }));
 }
 
-const MAX_MENTION_NAMES = 200;
-// `@` and up to four words after it (a word may end in `,`, for Teams' `@Last, First`).
-const AT_NAME = /(?:^|[^\p{L}\p{N}_@])@([\p{L}][\p{L}\p{N}.'-]*,?(?: [\p{L}][\p{L}\p{N}.'-]*,?){0,3})/gu;
+// Up to 400 names: each `@` may stand for a dozen (see mentionCandidates).
+const MAX_MENTION_NAMES = 400;
+// `@` and up to six words after it. The first starts with a letter; the rest may be anything
+// but an `@` or markdown's `[]<>*` and backtick, for names such as "Ada Lovelace - Acme",
+// "Ada (she/her)", "O’Brien" or "Lovelace, Ada" (Teams' `@Last, First`).
+const AT_NAME = /(?:^|[^\p{L}\p{N}_@])@(\p{L}[^\s@[\]<>*`]*(?: [^\s@[\]<>*`]+){0,5})/gu;
+// What follows a name in a sentence: "@Ada Lovelace, …", "@Ada Lovelace - Acme: …".
+const AFTER = /[\s.,:;!?'"‘’“”_~–—-]+$/u;
+// Everything that is not a letter or a digit at the end.
+const AFTER_ALL = /[\s\p{P}\p{S}]+$/u;
+
+/** `said` without what follows the name, nor a `)` it does not open: "(@Ada (she/her))." */
+function nameIn(said) {
+  let name = said.replace(AFTER, '');
+  while (name.endsWith(')') && name.split('(').length < name.split(')').length) {
+    name = name.slice(0, -1).replace(AFTER, '');
+  }
+  return name;
+}
 
 /**
- * The names `@` mentions in these texts may stand for: one to four words after each `@`,
- * without trailing punctuation, and `Last, First` turned round. Markdown code is not told
- * apart: a name that matches nobody costs nothing.
+ * The names `@` mentions in these texts may stand for: one to six words after each `@`,
+ * without the punctuation that follows them (once with the brackets they close kept, once
+ * without any), and `Last, First` turned round. Markdown code is not told apart: a name that
+ * matches nobody costs nothing.
  */
 export function mentionCandidates(texts) {
   const out = new Set();
@@ -127,16 +144,18 @@ export function mentionCandidates(texts) {
     for (const [, run] of String(text || '').matchAll(AT_NAME)) {
       const words = run.split(' ');
       for (let n = 1; n <= words.length; n += 1) {
-        const name = words.slice(0, n).join(' ').replace(/[.,'-]+$/, '');
-        if (name) {
-          out.add(name);
-          const swapped = /^([^,]+), (\S+)$/.exec(name);
-          if (swapped) {
-            out.add(`${swapped[2]} ${swapped[1]}`);
+        const said = words.slice(0, n).join(' ');
+        for (const name of new Set([nameIn(said), said.replace(AFTER_ALL, '')])) {
+          if (name) {
+            out.add(name);
+            const swapped = /^([^,]+), (\S+)$/.exec(name);
+            if (swapped) {
+              out.add(`${swapped[2]} ${swapped[1]}`);
+            }
           }
         }
         if (out.size >= MAX_MENTION_NAMES) {
-          return [...out];
+          return [...out].slice(0, MAX_MENTION_NAMES);
         }
       }
     }

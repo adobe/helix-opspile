@@ -144,4 +144,18 @@ describe('profiles', () => {
       'Ada', 'Ada Lovelace', 'Ada Lovelace, see', 'see Ada Lovelace', 'Young', 'Young, Cy', 'Cy Young',
     ]);
   });
+
+  it('takes names that are not all letters, without what follows them', () => {
+    // A company after a dash, pronouns in brackets, a curly apostrophe, accents as combining marks.
+    const names = mentionCandidates([
+      '@Cy Young - Acme one small fix', 'hi (@Di Duck (she/her)).', '**@Ed O\u2019Hare**',
+      '[@Fe\u0301lix Nu\u0301n\u0303ez](https://x.example) @Gil @Hal Ho',
+    ]);
+    for (const name of ['Cy Young - Acme', 'Di Duck (she/her)', 'Ed O\u2019Hare',
+      'Fe\u0301lix Nu\u0301n\u0303ez', 'Gil', 'Hal Ho']) {
+      assert.ok(names.includes(name), name);
+    }
+    // Neither an email nor markdown around a name is part of it.
+    assert.ok(!names.some((n) => /[*[\]]|\)\)|@/.test(n)), names.join(' | '));
+  });
 });
