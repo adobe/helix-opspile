@@ -149,6 +149,36 @@ describe('teamsNotify', () => {
     assert.equal(env.objects.size, 2);
   });
 
+  it('logs a step that hangs while it hangs, and every step\'s time at the end', async () => {
+    const env = fakeEnv(VARS);
+    const put = env.RAW.put.bind(env.RAW);
+    env.RAW.put = async (...args) => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 40);
+      });
+      return put(...args);
+    };
+    const lines = [];
+    const { log, warn } = console;
+    console.log = (line) => lines.push(JSON.parse(line));
+    console.warn = (line) => lines.push(JSON.parse(line));
+    try {
+      const { request, url } = notifyRequest([item()]);
+      const res = await teamsNotify(request, url, env, fakeCtx(), { slowMs: 10 });
+      assert.equal(res.status, 202);
+    } finally {
+      Object.assign(console, { log, warn });
+    }
+    const slow = lines.find((l) => l.slow);
+    assert.equal(slow.slow, 'r2');
+    assert.equal(slow.changeType, 'created');
+    assert.equal(slow.resource, resource(REPLY));
+    const done = lines.find((l) => l.steps);
+    assert.deepEqual(Object.keys(done.steps), ['body', 'hash', 'r2', 'queue']);
+    assert.ok(done.steps.r2 >= 30);
+    assert.ok(done.ms >= done.steps.r2);
+  });
+
   it('drops notifications with a wrong or missing clientState', async () => {
     const env = fakeEnv(VARS);
     const ctx = fakeCtx();

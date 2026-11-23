@@ -18,7 +18,9 @@ import { render } from '../src/channels.js';
 import { headerValue, mcp, PROTOCOL } from '../src/mcp.js';
 import { TOOLS } from '../src/mcp-tools.js';
 import { seal } from '../src/post.js';
+import { storeConcepts } from '../src/kbindex.js';
 import { d1 } from './d1.js';
+import { fakeRepo } from './fakes.js';
 
 // Made-up keys, ids and people only.
 const KEY = Buffer.alloc(32, 7).toString('base64url');
@@ -295,6 +297,29 @@ describe('mcp tools', () => {
     assert.equal(empty.body.result.isError, true);
     const team = await callTool(e, 'search_threads', { query: 'x', team: 'other' });
     assert.match(team.body.result.content[0].text, /Your teams: helix/);
+  });
+
+  it('search_threads finds knowledge-base entries too, and get_knowledge reads them', async () => {
+    const e = env();
+    const text = '---\ntype: Playbook\ntitle: Site down checklist\n---\n\nCheck the origin first.\n';
+    e.DB.sqlite.exec(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at) VALUES
+      ('kb-team-helix', 'team', 'helix', 'r', '2026-10-21T00:00:00Z'),
+      ('kb-org-acme', 'org', 'acme', 'r', '2026-10-21T00:00:00Z')`);
+    await storeConcepts(e, 'kb-team-helix', [{ path: 'playbooks/site-down.md', hash: 'h1', text }]);
+    await storeConcepts(e, 'kb-org-acme', [{ path: 'sites/www.md', hash: 'h2', text: '---\ntype: Site\ntitle: www\n---\n\nDown on Mondays.\n' }]);
+    e.ARTIFACTS = { get: async () => fakeRepo({ 'playbooks/site-down.md': text }) };
+    const r = structured(await callTool(e, 'search_threads', { query: 'down' }));
+    const where = (k) => [k.repo, k.path, k.knowledge_base, k.team || k.customer, k.matched];
+    assert.deepEqual(r.knowledge.map(where), [
+      ['kb-team-helix', 'playbooks/site-down.md', 'Helix', 'helix', ['title']],
+      ['kb-org-acme', 'sites/www.md', 'acme', 'acme', ['text']],
+    ]);
+    const read = structured(await callTool(e, 'get_knowledge', { repo: 'kb-team-helix', path: 'playbooks/site-down.md' }));
+    assert.deepEqual(read, { repo: 'kb-team-helix', path: 'playbooks/site-down.md', text });
+    const missing = await callTool(e, 'get_knowledge', { repo: 'kb-team-helix', path: 'nope.md' });
+    assert.match(missing.body.result.content[0].text, /no such file/);
+    const other = await callTool(e, 'get_knowledge', { repo: 'kb-org-umbrella', path: 'a.md' });
+    assert.equal(other.body.result.isError, true);
   });
 
   it('list_threads leaves out what `exclude` names, and explains bad values there too', async () => {

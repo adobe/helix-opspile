@@ -81,6 +81,9 @@ describe('trends (ui/trends.js)', () => {
     assert.ok(up.stats.lift > 2 && up.stats.z > 2 && up.stats.accel > 0, JSON.stringify(up.stats));
     assert.equal(d.weeks[m.peaked[0].stats.peak.week], weeks[12]);
     assert.equal(up.orgs > 10, true);
+    // Its share of the active channels (40 a week, all of them): the last six weeks against before.
+    assert.ok(Math.abs(up.stats.share - up.stats.recent / (40 * 6)) < 1e-9);
+    assert.ok(Math.abs(up.stats.baseShare - 3 / 40) < 1e-9);
   });
 
   it('counts what is mostly one customer\'s half', () => {
@@ -110,5 +113,49 @@ describe('trends (ui/trends.js)', () => {
     const mid = Date.parse(`${weeks.at(-1)}T00:00:00Z`) + 2 * 864e5;
     assert.equal(Trends.lastFull(d, mid).last, WEEKS - 2);
     assert.ok(Math.abs(Trends.lastFull(d, mid).partial - 2 / 7) < 1e-9);
+  });
+});
+
+describe('the trends chart (ui/trendview.js)', () => {
+  // As the page runs it, with its globals: no DOM is needed before it has data.
+  const load = (search = '') => {
+    const globals = {
+      Trends,
+      TopicGraph: {},
+      location: { search },
+      document: { getElementById: () => null, activeElement: null },
+    };
+    // eslint-disable-next-line no-new-func
+    return new Function(
+      'globalThis',
+      'location',
+      'document',
+      'Trends',
+      'TopicGraph',
+      `${SCRIPTS['trendview.js']}\nreturn globalThis.TrendView;`,
+    )(
+      globals,
+      globals.location,
+      globals.document,
+      Trends,
+      globals.TopicGraph,
+    );
+  };
+
+  it('takes every line off on Clear, the pick\'s too', () => {
+    const view = load('?tq=topic%3A1%2C+topic%3A2');
+    view.fromUrl();
+    assert.deepEqual(view.params(), [['tq', 'topic:1, topic:2']]);
+    const calls = [];
+    view.clear({ sel: 'topic:2', pick: (id) => calls.push(['pick', id]), toUrl: () => calls.push(['toUrl']) });
+    // Unpicked, which draws the chart again: with no terms, its defaults.
+    assert.deepEqual(calls, [['pick', '']]);
+    assert.deepEqual(view.params(), []);
+    const quiet = load('?tq=topic%3A1');
+    quiet.fromUrl();
+    const more = [];
+    quiet.clear({ sel: '', pick: (id) => more.push(['pick', id]), toUrl: () => more.push(['toUrl']) });
+    assert.deepEqual(more, [['toUrl']]);
+    assert.deepEqual(quiet.params(), []);
   });
 });

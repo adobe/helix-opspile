@@ -86,6 +86,8 @@ import { resolution } from '../src/resolve.js';
 import { statsFor } from '../src/klickhaus.js';
 import { vocab } from '../src/label.js';
 import { snippet, terms } from '../src/search.js';
+import { conceptOf } from '../src/kbindex.js';
+import { bestHits, conceptHit } from '../src/kbsearch.js';
 import { mergeSettings, withDefaults } from '../src/settings.js';
 import { slackMessageRefs } from '../src/slackurl.js';
 import { previewOf, readState, waitingOn } from '../src/threads.js';
@@ -841,6 +843,32 @@ function search(team, q, personal = false) {
   };
 }
 
+/**
+ * GET /api/search's `kb`, made up: the concepts of the fake knowledge bases of `teams` and of
+ * the customers of their threads with every word somewhere, as src/kbsearch.js finds them by
+ * their words (the preview has no vectors).
+ */
+async function searchKb(teams, q) {
+  const words = terms(String(q || '').replace(/\s+/g, ' ').trim());
+  const orgs = new Set([...store.threads.values()].map((e) => e.row)
+    .filter((r) => teams.includes(r.team)).map((r) => r.org));
+  const bases = words.length ? kb.list()
+    .filter((b) => (b.kind === 'team' ? teams.includes(b.slug) : orgs.has(b.slug))) : [];
+  const hits = [];
+  for (const b of bases) {
+    // eslint-disable-next-line no-await-in-loop
+    for (const f of await kb.files(b.repo)) {
+      // eslint-disable-next-line no-await-in-loop
+      const c = conceptOf(f.path, (await kb.read(b.repo, f.path)).text);
+      const hay = c && `${c.title} ${c.aliases || ''} ${c.type || ''} ${c.tags || ''} ${c.description || ''} ${c.body}`.toLowerCase();
+      if (hay && words.every((w) => hay.includes(w))) {
+        hits.push(conceptHit({ ...c, repo: b.repo, path: f.path }, b, words, { all: true }));
+      }
+    }
+  }
+  return bestHits(hits);
+}
+
 function editableOf(meta, source) {
   if (meta.deletedAt || meta.author.kind === 'system') {
     return null;
@@ -1559,13 +1587,18 @@ async function api(req, res, url) {
     return json(res, inbox(team, url.searchParams.get('before')));
   }
   if (url.pathname === '/api/search' && url.searchParams.get('view') === 'personal') {
-    return json(res, search(null, url.searchParams.get('q'), true));
+    const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
+    return json(res, {
+      ...search(null, url.searchParams.get('q'), true), kb: await searchKb(mine, url.searchParams.get('q')),
+    });
   }
   if (url.pathname === '/api/search') {
     if (!inTeam(team)) {
       return json(res, { error: 'not a member of this team' }, 403);
     }
-    return json(res, search(team, url.searchParams.get('q')));
+    return json(res, {
+      ...search(team, url.searchParams.get('q')), kb: await searchKb([team], url.searchParams.get('q')),
+    });
   }
   if (url.pathname === '/api/thread') {
     const result = thread(url.searchParams.get('thread'));
@@ -2375,7 +2408,7 @@ function banner() {
 
 /**
  * The pages' scripts and shared stylesheets, ui/*.js and ui/*.css, read again on every page
- * load (src/index.js imports them).
+ * load (src/pages.js imports them).
  */
 async function scripts() {
   const names = (await readdir(uiDir)).filter((f) => /\.(js|css)$/.test(f));

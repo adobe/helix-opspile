@@ -17,6 +17,7 @@ import {
   CHANNEL_PEOPLE, kept, keptAccounts, placeArgs,
 } from './accounts.js';
 import { json } from './http.js';
+import { messageKey, putRaw } from './raw.js';
 import { inviteAuthor, invitedFields, inviteMentioned } from './invite.js';
 import { getIdentity, isStaffDomain } from './lookup.js';
 import { threadExperts } from './expertise.js';
@@ -1043,6 +1044,36 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
 const SLACK_RECONNECT = ['invalid_auth', 'token_revoked', 'not_authed', 'missing_scope'];
 
 /**
+ * Keeps the Teams message a post made in pile 1, as Graph answered it, for the normalizer: the
+ * reply is in the inbox at once, not only once its change notification is in (which Graph may
+ * be slow to deliver, or retry for minutes). The notification's fetch comes later and keeps the
+ * same version under the same key (`messageKey`), so the two merge. Quietly: the post went out
+ * whatever happens here, and the notification still brings it.
+ */
+export async function keepTeamsPost(env, t, message) {
+  if (!env.RAW || !env.NORMALIZE || !message || !message.id || !message.createdDateTime) {
+    return null;
+  }
+  try {
+    const stored = {
+      ...message,
+      channelIdentity: message.channelIdentity
+        || { teamId: t.group_id, channelId: t.channel_id },
+    };
+    const key = messageKey(t.tenant, {
+      teamId: t.group_id, channelId: t.channel_id, messageId: message.id,
+    }, stored);
+    await putRaw(env, key, JSON.stringify(stored), {
+      source: 'teams', via: 'post', changeType: 'created',
+    });
+    return key;
+  } catch (e) {
+    console.warn(JSON.stringify({ route: 'post', action: 'keep', error: e.message }));
+    return null;
+  }
+}
+
+/**
  * POST /api/post `{ thread, text, mentions? }`, and `files` (src/attach.js): replies in the
  * thread as the signed-in person. `mentions` are account ids from /api/mentionable; each
  * `@Name` of one of them in the text becomes a real platform mention, so the person is
@@ -1053,14 +1084,16 @@ const SLACK_RECONNECT = ['invalid_auth', 'token_revoked', 'not_authed', 'missing
  * to the channel's workspace too).
  * Emoji `:names:` go as the platform knows them (src/shortcodes.js); `text` in the answer is
  * the reply as sent. Files go with the text, in the same message. The reply then
- * arrives like any other message, through the platform's events.
+ * arrives like any other message, through the platform's events; on Teams it is also kept as
+ * Graph answered the post (`keepTeamsPost`, after the answer with `waitUntil`), so it does not
+ * wait for its change notification.
  *
  * With `channel` (as `channelPlace` reads it) instead of `thread`, the message starts a thread
  * there, and the answer's `thread` is its inbox entry, where the platform names the message.
  * With `channel` and `root`, the id the platform gave such a message, it is a reply in that
  * thread, which the inbox may not have yet: it comes back through the platform's events.
  */
-export async function post(env, me, request, inTeam, files = []) {
+export async function post(env, me, request, inTeam, files = [], { waitUntil = null } = {}) {
   const {
     thread: key, channel, text, mentions: ids, root,
   } = request || {};
@@ -1238,6 +1271,13 @@ export async function post(env, me, request, inTeam, files = []) {
       // Graph failing on its side: nobody can say whether it took the post.
       unknown: res.status >= 500 || undefined,
     }, res.status === 413 ? 413 : 502);
+  }
+  // The message as Graph made it, kept now: it shows without waiting for its notification.
+  const keeping = keepTeamsPost(env, t, data);
+  if (waitUntil) {
+    waitUntil(keeping);
+  } else {
+    await keeping;
   }
   return json({
     ok: true, platform: 'teams', id: data.id, text: sent, ...started(data.id),

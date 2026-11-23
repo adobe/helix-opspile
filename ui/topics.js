@@ -338,7 +338,7 @@ function trees() {
     const few = n.type === 'topic' && n.threads.length && tagged(n.threads) / n.threads.length < 0.25;
     return `<li class="tr d${depth}">${shows(n) ? `<button class="chev" data-fold="${esc(n.id)}" aria-expanded="${Boolean(n.open)}" aria-label="${n.open ? 'Fold' : 'Open'} ${esc(n.label)}"></button>` : '<span class="chev"></span>'}
       <button class="pickr" data-sel="${esc(n.id)}"><span class="dot" data-type="${dotType(n)}"${n.gap ? ' data-gap' : ''}></span><span class="nm">${esc(n.label)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ''}${few ? ' <span class="untagged" title="Clef tags few of its threads">·</span>' : ''}</span>
-      ${TrendView.badge(it)}${TrendView.spark(it)}<span class="n" title="Channels a week, the last ${Trends.RECENT} weeks">${it ? it.stats.perWeek.toFixed(1) : '–'}</span></button></li>`;
+      ${TrendView.badge(it)}${TrendView.spark(it)}<span class="n" title="Its share of the active channels, the last ${Trends.RECENT} weeks${it ? ` (${it.stats.perWeek.toFixed(1)} channels a week)` : ''}">${it ? TrendView.pct(100 * it.stats.share) : '–'}</span></button></li>`;
   };
   const tree = (roots) => roots.sort((a, b) => recent(b) - recent(a) || a.label.localeCompare(b.label))
     .map((n) => row(n, 0) + (shows(n) && n.open ? n.children.map((id) => g.all.get(id)).filter(Boolean)
@@ -352,15 +352,21 @@ function trees() {
   const made = rootsOf('product', 'product');
   let body;
   if (state.q.tl) {
-    const listed = moving[state.q.tl].map((x) => g.all.get(x.key)).filter((n) => n && ['tag', 'topic', 'product'].includes(n.type));
-    const parentOf = (n) => (n.parent ? g.all.get(n.parent)?.label || '' : '');
+    // A group of one is its one, listed once (ui/topicgraph.js `distinct`).
+    const listed = TopicGraph.distinct(g, moving[state.q.tl].map((x) => x.key))
+      .filter((n) => ['tag', 'topic', 'product'].includes(n.type));
+    // What it is in, or what is in it: two of the same name (the product Commerce, its feature
+    // Commerce) are told apart.
+    const what = { tag: 'topics', product: 'features' };
+    const parentOf = (n) => (n.parent ? `in ${g.all.get(n.parent)?.label || ''}`
+      : (n.children?.length ? `${n.children.length} ${what[n.type] || ''}` : ''));
     body = `<ul class="tree">${listed.map((n) => row(n, 0, parentOf(n))).join('') || `<li class="sub">Nothing ${esc(state.q.tl)} now.</li>`}</ul>`;
   } else {
     body = `<h3>Areas and topics</h3><ul class="tree">${tree(areas)}</ul>
       <h3>Products and features</h3><ul class="tree">${tree(made) || '<li class="sub">No products yet.</li>'}</ul>`;
   }
   return `<div class="seg" role="group" aria-label="Show">${LISTS.map((l) => `<button data-tl="${l.id}" aria-pressed="${state.q.tl === l.id}" title="${esc(l.title)}">${l.label}</button>`).join('')}</div>
-    <p class="hint">Each line is the share of the channels with messages that talk about it, week by week; trending, declining and peaked are said of the last ${Trends.RECENT} full weeks, to ${esc(TrendView.data.weeks[moving.last])}, against the ${Trends.BASE} before. A click picks it on the map and the chart.</p>
+    <p class="hint">Each line is the share of the active channels (those with a message that week) that talk about it, week by week; trending, declining and peaked are said of the last ${Trends.RECENT} full weeks, to ${esc(TrendView.data.weeks[moving.last])}, against the ${Trends.BASE} before. A click picks it on the map and adds its line to the chart, which keeps it until × takes it off.</p>
     ${body}`;
 }
 
@@ -576,7 +582,7 @@ function details(n) {
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
     <p class="sub facts">${facts.map(esc).join(' · ')}</p>
     ${TrendView.summary(TrendView.moving(trendCtx())?.items.get(n.id))}
-    ${TrendView.data ? `<div class="acts"><button data-compare="${esc(n.id)}" title="Keep its line on the chart when you pick another">Keep on the chart</button></div>` : ''}
+
     ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">Clef gave none of these threads a tag: a topic its questions miss.</p>' : ''}
     ${childList(n)}
     ${others.map((t) => relatedList(n, t)).join('')}
@@ -610,6 +616,8 @@ function pick(id) {
   const opened = parent && !parent.open;
   if (opened) state.q.open = [...state.q.open, parent.id];
   state.week = null;
+  // Its line joins the chart's, and stays when another is picked (ui/trendview.js).
+  if (id && TrendView.data) TrendView.add(id, trendCtx());
   toUrl();
   if (opened) drawGraph();
   renderPanel();
@@ -651,8 +659,12 @@ function clickNode(id) {
 
 /** A bubble held: a group opens (and is picked), or an opened one folds (TopicView). */
 function holdNode(id, act) {
-  if (act === 'pop') state.q.sel = id;
+  if (act === 'pop') {
+    state.q.sel = id;
+    if (TrendView.data) TrendView.add(id, trendCtx());
+  }
   fold(id);
+  if (act === 'pop') TrendView.chart(trendCtx());
 }
 
 /**
@@ -843,8 +855,7 @@ function wire() {
       toUrl();
       renderPanel();
     }
-    const cmp = ev.target.closest('button[data-compare]');
-    if (cmp) TrendView.compareWith(cmp.dataset.compare, trendCtx());
+
     if (ev.target.closest('#moreThreads')) {
       state.more = true;
       renderPanel();

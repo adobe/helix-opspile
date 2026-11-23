@@ -18,7 +18,7 @@
  *
  * A week counts in one of three units:
  * - `channels` (the default): the channels with a message in a matching thread that week, each
- *   once, of the channels with any. A chatty channel counts no more than a quiet one, as a person
+ *   once, of the active channels (those with a message in any thread counted that week). A chatty channel counts no more than a quiet one, as a person
  *   searching ten times counts once in Google Trends, and the history import (more, shorter
  *   threads, never re-threaded) counts as the live inbox does.
  * - `messages`: the messages of the matching threads, by the week each was written.
@@ -161,6 +161,9 @@
       recent: cR,
       base: cB,
       perWeek: cR / RECENT,
+      // Its share of the active channels: in the last RECENT weeks, and in the BASE before.
+      share: nR ? cR / nR : 0,
+      baseShare: nB ? cB / nB : 0,
       lift,
       z,
       slope: rising,

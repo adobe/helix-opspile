@@ -366,6 +366,7 @@ p.trend { display: flex; align-items: center; }
 .spectrum .tlegend li.off .swatch { opacity: .3; }
 .spectrum .tlegend li.off button.term { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .tlegend button.x { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .tlegend button.clear { color: var(--spectrum-accent-content-color-default); }
 .spectrum .tip .row { gap: var(--spectrum-spacing-75); }
 .spectrum .panel .seg { display: inline-flex; margin-top: var(--spectrum-spacing-200); }
 .spectrum .panel section h3 .swatch { margin-right: var(--spectrum-spacing-75); }

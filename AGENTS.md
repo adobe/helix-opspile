@@ -21,12 +21,18 @@ code and docs, is the decision model that labels threads and channels.
   a browser-origin request fails with AADSTS9002326.
 - Code style is `@adobe/eslint-config-helix` (`npm run lint`), ES modules, 2-space indent,
   max line length 100.
+- **A change ends in a pull request:** once it is done and tested, commit it to a branch, push,
+  and open a PR (`gh pr create`), unless you were told not to. A change to the pages gets
+  screenshots in it ("Debugging", below).
 
 ## Non-obvious code
 
 - `ui/*.html` name their scripts (`<script type="module" src="inbox.js"></script>`), and
   `src/page.js` inlines them where the page is served. Never write a script into a page
-  (`test/ui-scripts.test.js` fails on one). `ui/app.js` is every page's script. It
+  (`test/ui-scripts.test.js` fails on one). A file a page names goes into its Worker's map
+  too, `SCRIPTS` in `src/pages.js` (`PORTAL_SCRIPTS` in `src/portal/pages.js`), which build
+  the pages as the Worker loads: without it the Worker does not start
+  (`test/ui-pages.test.js` builds them from those maps). `ui/app.js` is every page's script. It
   fetches `/api/*` without following redirects: a redirect is Cloudflare Access's sign-in, so
   the page shows "Sign in again" instead of "Failed to fetch" (`POST /__dev/signout` in
   `npm run ui:dev` shows it).
@@ -121,6 +127,12 @@ code and docs, is the decision model that labels threads and channels.
   `src/discordmd.js` build mdast, and `src/mdast.js` writes it. A platform's quirk goes into its
   module's tree; what every platform needs (spacing around bold, link form) into `src/mdast.js`.
 
+- **The search finds knowledge-base entries in D1, not in Artifacts:** `kb_concepts`
+  (src/kbindex.js) has a row per concept and `CONTENT` a vector (`type: kb`), kept by every
+  write (src/agent/kbwrite.js) and the cron; src/kbsearch.js answers `/api/search`'s `kb` from
+  them. A query of the threads' vectors names its `type` (`message`, `thread`), or it gets
+  the concepts' too.
+
 - **A merged org is a rule:** `loadRules` (src/lookup.js) adds every row of `org_merges` as a
   rule of target `merge`, and `classify` files what the other rules give a merged slug under the
   org it went into (`mergedOrg` in src/rules.js). Get the rules from `loadRules`, never from
@@ -143,9 +155,11 @@ code and docs, is the decision model that labels threads and channels.
   the same browser; `npm run ui:session -- <inbox origin> --cdp http://127.0.0.1:<port>`
   points it at production's API, read-only.
 - **Screenshots for pull requests** come from `npm run ui:dev`, never from production. To
-  attach one, `drop` the files onto the PR's comment box. GitHub writes their
-  `user-attachments` URLs into the box: read them with `eval`, clear the box, and put them in
-  the PR body.
+  attach them, pass the files to `gh`: `gh pr create`, `gh pr edit` and `gh pr comment` take
+  `--attach '<file>#<alt text>'`, once per file. A body that names a file
+  (`![alt](./shot.png)`) gets its `user-attachments` URL there; one it does not name is added at
+  the end. A motion is caught half-way by making its duration long in the page first
+  (`--side-motion` on `main`, for one).
 - **The Worker: `cf`**, the Cloudflare CLI (reads `cloudflare.config.ts`; `--mode prod` or
   `--mode stage`). Find a command with `cf cli search "<task>"`, then `<command> --help`, and
   keep the search anonymous. `cf o11y telemetry query` searches the Worker's logs,

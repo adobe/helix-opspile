@@ -171,6 +171,21 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .t .l3 .tag { margin-right: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)); }
 .t .l3.dim { color: var(--faint); }
 #threads .rows.stale { opacity: .55; transition: opacity var(--spectrum-animation-duration-200); }
+/* The knowledge bases' entries a search found, above its threads (ui/inbox.js kbSection). */
+#threads .kbhits { display: flex; flex-direction: column; padding: var(--spectrum-spacing-100) 0; border-bottom: var(--spectrum-border-width-100) solid var(--line); }
+#threads .kbhits h3 { display: flex; align-items: baseline; gap: var(--spectrum-spacing-75); margin: 0; padding: var(--spectrum-spacing-75) var(--spectrum-spacing-300); }
+#threads .kbhit { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 0; margin: 0 var(--spectrum-spacing-100); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); text-decoration: none; }
+#threads .kbhit > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#threads .kbhit .l1 { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
+#threads .kbhit .l1 .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#threads .kbhit .l1 .tag { flex: none; }
+/* The excerpt, rendered markdown (kbMd): four lines at most, its blocks close together. */
+#threads .kbhit .l3 { max-height: calc(4em * var(--spectrum-line-height-100)); overflow: hidden; overflow-wrap: anywhere; line-height: var(--spectrum-line-height-100); }
+#threads .kbhit .l3 :is(p, ul, ol, pre, blockquote, table) { margin: 0; }
+#threads .kbhit .l3 :is(ul, ol) { padding-left: var(--spectrum-spacing-300); }
+#threads .kbhit .l3 blockquote { padding-left: var(--spectrum-spacing-100); border-left: var(--spectrum-border-width-200) solid var(--line); }
+#threads .kbhit .l3 pre { white-space: pre-wrap; }
+#threads .kbmore { align-self: flex-start; margin: var(--spectrum-spacing-50) var(--spectrum-spacing-300) 0; padding: 0; background: none; border: 0; cursor: pointer; }
 .linkish { padding: 0; border: 0; background: none; color: var(--link); cursor: pointer; text-decoration: underline; }
 /* The message a search result opened the thread at. */
 .msg .bubble { transition: box-shadow var(--spectrum-animation-duration-1000) ease-out; }
@@ -578,6 +593,9 @@ main.siding #pane { margin-right: calc(var(--side-w) * var(--side-open, 1)); }
    the panel, right to left, and the inner corners round off (joinLine). Coming out, the line is
    drawn by `#side-join` under its content (`.emerging`, clipped to where it is out). */
 main { --side-motion: var(--spectrum-animation-duration-1000); }
+/* As another thread opens (or the thread closes), the panel slides out quicker, in --side-leave:
+   the thread it was about is gone, and the next one should not wait for it. */
+main { --side-leave: var(--spectrum-animation-duration-300); }
 #side > * { opacity: var(--side-in, 1); }
 main.side-veiled #side { opacity: 0; pointer-events: none; }
 main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 100%)); clip-path: inset(0px calc((1 - var(--side-open)) * 100%) 0px 0px); }
@@ -585,6 +603,8 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 #side-join[hidden] { display: none; }
 .sidechat.emerging { position: relative; z-index: 3; clip-path: inset(0px 0px 0px 100%); }
 #side-join svg { display: block; width: 100%; height: 100%; }
+/* The bridge is part of the line it joins to the panel: picked, the panel goes back into it. */
+#side-join path { pointer-events: visiblePainted; cursor: pointer; }
 /* The sidebar's tab (wireSideTab in ui/inbox.js): on the thread's right edge, halfway down, where
    the panel comes from; open, on the panel's edge, which it goes back into. Pulled, the panel
    comes or goes with it (--side-open). Only where the panel has room beside the thread. */
@@ -1012,6 +1032,9 @@ body:has(dialog.lightbox[open]) .scroller { overflow: hidden; }
   border-radius: 50%; background: var(--red); color: var(--spectrum-white); font-weight: 700; font-size: var(--spectrum-font-size-50); vertical-align: var(--spectrum-border-width-100); }
 .msg .unsent button { border: 0; background: none; padding: 0; color: var(--link); font: inherit; font-weight: 600; cursor: pointer; }
 .msg .unsent button:hover { text-decoration: underline; }
+/* A reply the platform took, not back in the inbox yet: nothing went wrong, so no warning. */
+.msg .unsent.late .why { color: var(--faint); }
+.msg .unsent.late .why::before { content: none; }
 /* A workspace's own emoji, in a line of text; one Clef picked for a name without an image. */
 img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .emoji-near { border-bottom: var(--spectrum-border-width-100) dotted currentColor; cursor: help; }
@@ -1676,6 +1699,22 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .t .when, .spectrum .t .l2, .spectrum .t .l3 { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .t .l3 b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .l3.dim { color: var(--spectrum-disabled-content-color); }
+.spectrum #threads .kbhits { background: var(--spectrum-background-layer-1-color); }
+.spectrum #threads .kbhits h3 { font-family: var(--s2-font); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum #threads .kbhits h3 .n { font-weight: var(--spectrum-regular-font-weight); }
+.spectrum #threads .kbhit { color: var(--spectrum-neutral-content-color-default); border-radius: var(--spectrum-corner-radius-100); transition: background-color var(--s2-ease); }
+.spectrum #threads .kbhit:hover { background: var(--spectrum-gray-200); }
+.spectrum #threads .kbhit:focus-visible { outline: var(--s2-focus); outline-offset: calc(-1 * var(--spectrum-focus-indicator-thickness)); }
+.spectrum #threads .kbhit .title { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum #threads .kbhit :is(.l2, .l3) { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum #threads .kbhit .path { color: var(--spectrum-disabled-content-color); }
+.spectrum #threads .kbhit .l3 :is(code, pre) { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); }
+.spectrum #threads .kbhit .l3 code { padding: 0 var(--spectrum-spacing-75); background: var(--spectrum-gray-100); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum #threads .kbhit .l3 pre code { padding: 0; background: none; }
+.spectrum #threads .kbhit .l3 strong { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum #threads .kbhit .l3 .ln { color: var(--spectrum-neutral-content-color-default); text-decoration: underline; text-underline-offset: var(--spectrum-spacing-50); }
+.spectrum #threads .kbmore { font-family: var(--s2-font); font-size: var(--spectrum-font-size-75); color: var(--spectrum-accent-content-color-default); }
+.spectrum #threads .kbmore:hover { text-decoration: underline; }
 .spectrum .t.unread .when { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t.unread .replies.re { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .replies .men { color: var(--spectrum-red-900); font-weight: var(--spectrum-bold-font-weight); }
@@ -2203,6 +2242,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 }
 .spectrum .msg .unsent button { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); background: none; }
 .spectrum .msg .unsent button:hover { color: var(--spectrum-accent-content-color-hover); background: none; }
+.spectrum .msg .unsent.late .why { color: var(--spectrum-neutral-subdued-content-color-default); }
 
 /* Reactions on a message: small ActionButtons on the layer above the bubble, ringed in the
    page's background so they stand off its edge; yours selected in the accent's subtle fill. */
@@ -2827,7 +2867,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .nh-pic .nh-ring { fill: none; stroke: var(--spectrum-negative-visual-color); }
 
 /* Toasts: S2's neutral Toast (white text on neutral-subdued, the large radius, elevated), its
-   action an outline Button for static white. */
+   action an outline Button for static white. The text wraps, a button's label never does. */
 .spectrum .toast {
   display: flex;
   align-items: center;
@@ -2857,11 +2897,13 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   transition: opacity var(--s2-out), translate var(--s2-out);
 }
 .spectrum .toast :is(button, a) {
+  flex: none;
   margin-left: 0;
   min-height: var(--s2-ctl);
   padding: 0 var(--spectrum-component-pill-edge-to-text-100);
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
   font-size: var(--spectrum-font-size-100);
   font-weight: var(--spectrum-bold-font-weight);
   color: var(--spectrum-white);

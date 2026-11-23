@@ -76,10 +76,13 @@ export async function ensureKnowledgeBase(env, kind, slug, now = new Date()) {
     result = 'exists';
     remote = await remoteOf(env.ARTIFACTS, repo);
   }
-  // A repo just created has no entries; one that existed is counted by the cron.
-  await env.DB.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at, entries)
-    VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (repo) DO NOTHING`)
-    .bind(repo, kind, slug, remote || null, now.toISOString(), result === 'created' ? 0 : null).run();
+  // A repo just created has no entries, and nothing for the search to read (src/kbindex.js);
+  // one that existed is counted and read by the cron.
+  const created = result === 'created';
+  await env.DB.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at, entries,
+      search_commit) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (repo) DO NOTHING`)
+    .bind(repo, kind, slug, remote || null, now.toISOString(), created ? 0 : null, created ? '' : null)
+    .run();
   return { repo, result };
 }
 

@@ -657,10 +657,10 @@ const round = (x, digits = 3) => Math.round(x * 10 ** digits) / 10 ** digits;
  * - `threads`: `{ key, title, team, org, at, last, messages, kind, tags, topic, sim, staff }`, by
  *   topic, the most typical first; `tags` are Clef's topics (labels.topics), `staff` the Adobe
  *   people who posted, by id, with their messages.
- * - `people` (id → name: a person of D1 by their id, anyone else as `a:<author_key>`), `orgs`
- *   (slug → `{ name, type }`), `tags` (Clef's topic ids → the names the inbox shows), `products`
- *   (id → `{ name, tech, product }`: the technologies Clef says the threads are about, `tech`
- *   the entry, `product` the product that entry is part of; a thread's `products` are their ids).
+ * - `people` (id → name; `a:<author_key>` for whoever is no person of D1), `orgs` (slug →
+ *   `{ name, type }`), `tags` (Clef's topic ids → the names the inbox shows), `products` (id →
+ *   `{ name, tech, product }`: the technologies Clef says the threads are about, `tech` the entry,
+ *   `product` the product that entry is part of; a thread's `products` are their ids).
  */
 export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed = 1 } = {}) {
   if (!env.CONTENT || !env.AI) {

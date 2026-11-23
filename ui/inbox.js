@@ -26,7 +26,7 @@ const state = {
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
   // Search (GET /api/search): the query, its words, the answer, and which request is current.
-  search: { q: '', words: [], data: null, loading: false, error: null, seq: 0 },
+  search: { q: '', words: [], data: null, loading: false, error: null, seq: 0, kbAll: false },
   // The message a search hit opens the thread at: { key, id }.
   jump: null,
   // The message being edited in place: { id: '<thread>|<message id>', key, text, as }.
@@ -474,7 +474,7 @@ function wireCards() {
     if (card.target && e.target === card.target && !card.el.contains(e.relatedTarget)) hideCard();
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && card.target) { hideCard(); return; }
+    if (e.key === 'Escape' && card.target) { e.preventDefault(); hideCard(); return; }
     const t = e.target.closest?.('[data-p]');
     if (t && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
@@ -1719,7 +1719,7 @@ function stackPopEl() {
   el.className = 'stkpop s2-float';
   el.hidden = true;
   el.setAttribute('role', 'dialog');
-  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); hideStack(true); } });
+  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideStack(true); } });
   el.addEventListener('click', (e) => { if (e.target.closest('[data-stack-close]')) hideStack(true); });
   document.addEventListener('pointerdown', (e) => {
     if (!el.hidden && !el.contains(e.target) && !e.target.closest('[data-stack]')) hideStack();
@@ -1874,6 +1874,51 @@ function hitLine(hit) {
   return `<div class="l3 dim">${esc(hit.matched.map((m) => MATCHED[m] || m).join(' · '))} matches</div>`;
 }
 
+/** How many knowledge-base entries a search shows before "N more". */
+const KB_SHOWN = 3;
+/** `html`'s text, not its tags or entities, with the query's words marked. */
+function markHtml(html, words) {
+  const ws = (words || []).filter(Boolean).map(reEscape);
+  if (!ws.length) return html;
+  const re = new RegExp(`(${ws.join('|')})`, 'gi');
+  return html.split(/(<[^>]*>|&[#\w]+;)/).map((part, i) => (i % 2 ? part : part.replace(re, '<mark>$1</mark>'))).join('');
+}
+const kbRendered = new Map();
+/**
+ * An entry's excerpt or description, markdown as the messages' renderer makes it, inside the
+ * entry's link: its links are text (a link in a link is none), and it has no images.
+ */
+function kbMd(src) {
+  let html = kbRendered.get(src);
+  if (html === undefined) {
+    html = Markdown.render(src, { emoji: (name, alone) => emojiHtml(name, { alone }) })
+      .replace(/<a\b[^>]*>/g, '<span class="ln">').replace(/<\/a>/g, '</span>')
+      .replace(/<img\b[^>]*>/g, '');
+    if (kbRendered.size >= 200) kbRendered.delete(kbRendered.keys().next().value);
+    kbRendered.set(src, html);
+  }
+  return html;
+}
+/**
+ * The knowledge bases' part of a search (`kb` of GET /api/search): the entries about it, above
+ * the threads, each a link to it in the editor of its team's or customer's page, with the
+ * markdown around the words (`snippet`), else its description, rendered. The filters are the
+ * threads': they leave these be.
+ */
+function kbSection(kb, words) {
+  if (!kb.length) return '';
+  const all = state.search.kbAll || kb.length <= KB_SHOWN + 1;
+  const rows = (all ? kb : kb.slice(0, KB_SHOWN)).map((k) => {
+    const line = k.snippet || k.description || '';
+    return `<a class="kbhit" href="${esc(kbFileHref(k.repo, k.path))}">
+      <span class="l1"><span class="title">${marked(k.title, words)}</span>${k.type ? `<span class="tag">${esc(k.type)}</span>` : ''}</span>
+      <span class="l2">${esc(k.name)} <span class="path">${esc(k.path)}</span></span>
+      ${line ? `<div class="l3 md">${markHtml(kbMd(line), words)}</div>` : ''}</a>`;
+  }).join('');
+  const more = all ? '' : `<button type="button" class="kbmore" data-kbmore>${kb.length - KB_SHOWN} more in the knowledge bases</button>`;
+  return `<section class="kbhits" aria-label="Knowledge base"><h3>Knowledge base <span class="n">${kb.length}</span></h3>${rows}${more}</section>`;
+}
+
 /** Asks for `q` (after a pause in typing, or at once), and shows the answer when it is the latest. */
 let searchTimer = null;
 function searchSoon(q, wait = 250) {
@@ -1886,6 +1931,7 @@ async function runSearch(q) {
   // The same question as the one on screen, or on its way, is not asked again.
   if (query === state.search.q && (state.search.loading || (state.search.data?.scope === scopeKey() && !state.search.error))) return;
   const seq = ++state.search.seq;
+  if (query !== state.search.q) state.search.kbAll = false;
   state.search.q = query;
   if ($('q') && $('q').value.trim() !== query) $('q').value = query;
   toUrl(false);
@@ -1921,6 +1967,9 @@ function searchRows(box) {
   let said = 'Searching…';
   if (!loading && error) said = 'Search failed';
   else if (!loading && data) said = `${hits.length}${hits.length < all.length ? ` of ${all.length}` : ''} ${all.length === 1 ? 'result' : 'results'}`;
+  const kb = data?.kb || [];
+  // And the knowledge bases' entries (kbSection), above them.
+  if (!loading && kb.length) said += ` · ${kb.length} ${kb.length === 1 ? 'entry' : 'entries'}`;
   // The view switch stays: a search is of the view on screen, a team's or the personal one.
   const ctl = `<span class="lead">${filt}<span class="found" aria-live="polite">${esc(said)}</span><button class="clearq" data-clearq title="Back to the inbox (Esc in the search box)">Clear</button></span><span class="sort">${viewSwitch()}</span>`;
   const head = box.querySelector('.ctl');
@@ -1942,11 +1991,19 @@ function searchRows(box) {
     return node;
   });
   for (const c of list.children) if (!nodes.includes(c)) preload.unobserve(c);
-  if (nodes.length) list.replaceChildren(...nodes);
-  else if (loading && !data) list.innerHTML = '<div class="empty">Searching…</div>';
-  else if (error) list.innerHTML = `<div class="empty">${esc(error)}</div>`;
-  else if (all.length) list.innerHTML = `<div class="empty">${all.length} ${all.length === 1 ? 'result is' : 'results are'} hidden by the filters. <button class="linkish" data-unfilter>Show all</button></div>`;
-  else if (data) list.innerHTML = `<div class="empty">Nothing found for “${esc(q)}”.</div>`;
+  const emptyHtml = () => {
+    if (loading && !data) return '<div class="empty">Searching…</div>';
+    if (error) return `<div class="empty">${esc(error)}</div>`;
+    if (all.length) return `<div class="empty">${all.length} ${all.length === 1 ? 'result is' : 'results are'} hidden by the filters. <button class="linkish" data-unfilter>Show all</button></div>`;
+    return data ? `<div class="empty">${kb.length ? 'No threads' : 'Nothing'} found for “${esc(q)}”.</div>` : '';
+  };
+  const empty = nodes.length ? '' : emptyHtml();
+  // The knowledge bases' entries head the list, the same node while they stay the same.
+  const kbHtml = kbSection(kb, state.search.words);
+  if (!kbHtml) state.kbNode = null;
+  else if (state.kbNode?.__html !== kbHtml) state.kbNode = Object.assign(toNode(kbHtml), { __html: kbHtml });
+  if (nodes.length || state.kbNode) list.replaceChildren(...(state.kbNode ? [state.kbNode] : []), ...nodes, ...(empty ? [toNode(empty)] : []));
+  else list.innerHTML = empty;
   list.classList.toggle('stale', Boolean(loading && data));
   list.__list = null;
   const keep = new Set(hits.map((h) => h.thread));
@@ -3574,13 +3631,27 @@ function sidePanelBox(key) {
 }
 
 /** The panel goes, with what it showed. Into the line it is joined to, or out to the edge, as
- * you leave the sidebar (`side.motion`) and the thread stays open; at once otherwise. */
+ * you leave the sidebar (`side.motion`) and the thread stays open; out to the edge, quicker
+ * (--side-leave), as another thread opens or the thread closes; at once otherwise. */
 function hideSidePanel() {
   const panel = $('side');
   if (!panel || panel.hidden) return;
-  if (panel.__key === state.open && (side.motion || (sideMotion.raf && sideMotion.to === 0))) {
-    // Going already, it goes on: the thread is shown again as it does.
-    if (sideMotion.to !== 0 || !sideMotion.raf) moveSide(0, { animate: true });
+  const away = panel.__key !== state.open;
+  // Going already, it goes on: the thread is shown again as it does. Left for another thread
+  // while it went back into its line, it slides out from where it is, quicker.
+  if (sideMotion.raf && sideMotion.to === 0 && !(away && !sideMotion.leaving)) return;
+  if (away && !REDUCED_MOTION.matches) {
+    // The line it was joined to is the thread's that goes: the panel slides, joined to none.
+    side.joined = null;
+    bridgeStill();
+    // Nothing in it is for the thread that opens: its box is not that thread's (wireSide).
+    panel.inert = true;
+    sideMotion.mode = 'slide';
+    moveSide(0, { animate: true, leave: true });
+    return;
+  }
+  if (!away && side.motion) {
+    moveSide(0, { animate: true });
     return;
   }
   goneSidePanel();
@@ -3591,8 +3662,11 @@ function goneSidePanel() {
   const panel = $('side');
   const main = panel.parentElement;
   cancelAnimationFrame(sideMotion.raf);
-  Object.assign(sideMotion, { p: 0, to: 0, raf: 0 });
+  Object.assign(sideMotion, {
+    p: 0, to: 0, raf: 0, leaving: false,
+  });
   panel.hidden = true;
+  panel.inert = false;
   panel.replaceChildren();
   panel.__key = null;
   panel.style.removeProperty('--side-in');
@@ -3609,9 +3683,10 @@ function goneSidePanel() {
 // the panel grows from it up and down to the column's height, and what is in it fades in.
 // Without that line in sight it slides in from the edge instead. Open, the line stays joined to
 // it. `p` goes from 0 (gone) to 1 (open) in --side-motion; `mode` is 'join' or 'slide', picked
-// as it sets out from either end. In spectrum-inbox.css, "How it comes and goes".
+// as it sets out from either end. In spectrum-inbox.css, "How it comes and goes". `leaving`:
+// it slides out quicker (--side-leave) now, as another thread opens.
 const sideMotion = {
-  p: 0, to: 0, raf: 0, mode: 'slide',
+  p: 0, to: 0, raf: 0, mode: 'slide', leaving: false,
 };
 // A line joined to the panel while it is open (joinLine): once it is in sight, it comes out of the
 // panel, right to left, then the inner corners round off. `p` from 0 to 1, 1 when it is not moving;
@@ -3652,17 +3727,22 @@ function sideLineInSight(run) {
   return l.height > 0 && l.top >= s.top && l.bottom <= s.bottom;
 }
 
-/** The panel's motion towards `to` (0 or 1): over --side-motion if `animate`, else at once. */
-function moveSide(to, { animate }) {
+/**
+ * The panel's motion towards `to` (0 or 1): over --side-motion if `animate`, else at once; over
+ * --side-leave, sliding, if `leave` (another thread opens).
+ */
+function moveSide(to, { animate, leave = false }) {
   const m = sideMotion;
   cancelAnimationFrame(m.raf);
   m.raf = 0;
   m.to = to;
+  m.leaving = leave;
   const main = document.querySelector('main');
   // Setting out from either end: from the joined line where it is in sight.
-  if (m.p === 0 || m.p === 1) m.mode = sideLineInSight(side.joined) ? 'join' : 'slide';
+  if (leave) m.mode = 'slide';
+  else if (m.p === 0 || m.p === 1) m.mode = sideLineInSight(side.joined) ? 'join' : 'slide';
   else if (m.mode === 'join' && !sideLine(side.joined)) m.mode = 'slide';
-  const ms = parseFloat(getComputedStyle(main).getPropertyValue('--side-motion')) || 0;
+  const ms = parseFloat(getComputedStyle(main).getPropertyValue(leave ? '--side-leave' : '--side-motion')) || 0;
   const dur = animate && !REDUCED_MOTION.matches ? ms * Math.abs(to - m.p) : 0;
   if (!dur) {
     m.p = to;
@@ -3874,6 +3954,7 @@ function placeSidePanel(key, thread, runs) {
     panel.parentElement.classList.add('side-veiled');
   }
   panel.hidden = false;
+  panel.inert = false;
   panel.parentElement.classList.add('siding');
   const scroller = panel.querySelector(':scope > .scroller');
   const atEnd = !scroller.firstElementChild.childElementCount || nearBottom(scroller);
@@ -3951,7 +4032,8 @@ function exitSide({ focus = true } = {}) {
 /** Wires the sidebar's box: Enter asks, Shift+Enter is a new line, Esc exits. */
 function wireSide(key) {
   const box = $('side-reply');
-  if (!box) return;
+  // The panel going as another thread opens has its thread's box, not this one's.
+  if (!box || box.closest('[inert]')) return;
   box.value = side.typed.get(key) || '';
   growReply(box);
   box.oninput = () => { side.typed.set(key, box.value); growReply(box); };
@@ -4107,7 +4189,7 @@ function wireExperts(key) {
   };
   el.onkeydown = (e) => {
     if (state.expertsOpen !== key) return;
-    if (e.key === 'Escape') { e.stopPropagation(); closeExperts(key, true); return; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeExperts(key, true); return; }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
     const rows = [...el.querySelectorAll('.expertlist:not([hidden]) [data-expert]')];
@@ -4329,13 +4411,15 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // Replies I sent that have not arrived yet: a reply has arrived once a message has the id
   // the platform gave it, or (no id) my text, compared loosely, because the platform rewrites
   // it (emoji as :shortcodes:, Slack's *bold* and _italics_, mentions). One still on its way,
-  // or that failed, stays; one the platform took, for a minute at most. One nobody knows about
-  // stays until it arrives, which settles it, or the person decides. A reply as the bot, which
-  // comes back more slowly (a minute or more), stays for up to `SEND_APP_ARRIVE_MS`.
+  // or that failed, stays; one the platform took and named stays until its message is here (it
+  // says it is not back yet after `sendLate`; a day at most), and one it did not name (Slack's
+  // uploads), which cannot be told from another, for `sendLate`. One nobody knows about stays
+  // until it arrives, which settles it, or the person decides. They are kept in localStorage
+  // meanwhile (`saveSending`), so a reload does not lose them.
   const settled = new Set();
   state.sending = state.sending.filter((p) => {
     if (p.status === 'sending' || p.status === 'failed') return true;
-    if (p.status !== 'unknown' && Date.now() - p.sentAt >= (p.app ? SEND_APP_ARRIVE_MS : 60000)) return false;
+    if (p.status !== 'unknown' && sendLate(p) && (!p.postedId || Date.now() - p.sentAt >= SEND_KEEP_MS)) return false;
     if (p.thread !== key) return true;
     // An earlier message with the same words ("Thanks") is not this one.
     const since = p.status === 'unknown' ? Date.parse(p.at) - SEND_CLOCK_MS : 0;
@@ -4345,6 +4429,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     if (m) settled.add(`${m.thread}|${m.id}`);
     return !m;
   });
+  saveSending();
   // Arrivals come up into view, but not a reply taking the place of its bubble, which looks
   // the same, nor that bubble again when it changes (its bar is through, or it failed).
   const fresh = (m) => (m.pending ? m.fresh : live && state.shownIds
@@ -4825,7 +4910,7 @@ function sourcePopEl() {
   el.addEventListener('pointerenter', () => clearTimeout(sourcePop.timer));
   el.addEventListener('pointerleave', leaveSource);
   el.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') hideSource();
+    if (e.key === 'Escape') { e.preventDefault(); hideSource(); }
   });
   // A cited message's time: the message, here (another thread opens at it).
   el.addEventListener('click', (e) => {
@@ -5805,6 +5890,12 @@ const SEND_KEY_MS = 23 * 60 * 60 * 1000;
 // How long a reply as the bot, which the platform took, waits to come back (its events take
 // longer than a person's, now and then over a minute).
 const SEND_APP_ARRIVE_MS = 3 * 60 * 1000;
+// How long a reply as you, which the platform took, waits to come back before it says it is not
+// back yet; and how long one it named is kept at most, waiting for its message.
+const SEND_ARRIVE_MS = 60 * 1000;
+const SEND_KEEP_MS = 24 * 60 * 60 * 1000;
+/** Whether reply `p`, which the platform took, is late to come back. */
+const sendLate = (p, now = Date.now()) => Boolean(p.sentAt) && now - p.sentAt >= (p.app ? SEND_APP_ARRIVE_MS : SEND_ARRIVE_MS);
 
 /**
  * The bar of reply `p` at `now`: how full it is (0 to 1), how visible, and whether it is
@@ -5840,14 +5931,21 @@ const sendDecides = (p, now) => Boolean(p.asked) || now - Date.parse(p.at) >= SE
  * feed keeps its node while the bar fills), why it failed, or nothing once it is through.
  */
 function sendState(p, now = Date.now()) {
+  // Restored after the page was left: its files stayed with that page, so it cannot go again.
+  const gone = p.filesLost ? '. Its files stayed with the page you left: copy the text and send it again with them' : '';
   if (p.status === 'unknown') {
     const decide = sendDecides(p, now);
-    return `<div class="unsent" role="alert"><span class="why">${decide ? 'May have been sent' : 'Not sure it was sent'}: ${esc(p.error)}</span>
-      <button data-retry="${esc(p.id)}"${decide ? ' title="It may go out twice: check the thread on the platform first"' : ''}>${decide ? 'Send again' : 'Retry'}</button><button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+    return `<div class="unsent" role="alert"><span class="why">${decide ? 'May have been sent' : 'Not sure it was sent'}: ${esc(p.error)}${gone}</span>
+      ${gone ? '' : `<button data-retry="${esc(p.id)}"${decide ? ' title="It may go out twice: check the thread on the platform first"' : ''}>${decide ? 'Send again' : 'Retry'}</button>`}<button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
   }
   if (p.status === 'failed') {
-    return `<div class="unsent" role="alert"><span class="why">Not sent: ${esc(p.error)}</span>
-      <button data-retry="${esc(p.id)}">Retry</button><button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+    return `<div class="unsent" role="alert"><span class="why">Not sent: ${esc(p.error)}${gone}</span>
+      ${gone ? '' : `<button data-retry="${esc(p.id)}">Retry</button>`}<button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+  }
+  if (p.postedId && sendLate(p, now)) {
+    // The platform took it and named it: it is there, only not back in the inbox yet.
+    return `<div class="unsent late" role="status"><span class="why">Sent, not back from ${esc(PLATFORM[p.source] || 'the platform')} yet: it shows here once it is</span>
+      <button data-unsend="${esc(p.id)}" title="Stop showing this: the message shows once it arrives">Hide</button></div>`;
   }
   if (p.status !== 'sending' && p.status !== 'sent') return '';
   return `<div class="sendbar" data-send="${esc(p.id)}" role="progressbar" aria-label="Sending" aria-valuemin="0" aria-valuemax="100"><i></i></div>`;
@@ -5899,6 +5997,7 @@ function appLook(key) {
 
 /** Shows the thread's replies being sent as they are now, if it is open. */
 function showSending(key) {
+  saveSending();
   if (state.open === key && state.cache.get(key)) openThread(key, { live: true, cached: true });
   else if (startedShown() && (key === STARTED || key === started.key)) renderStarted();
 }
@@ -5945,6 +6044,7 @@ async function deliver(p) {
   Object.assign(p, {
     status: 'sending', startedAt: Date.now(), doneAt: null, error: null,
   });
+  saveSending();
   animateSending();
   let res = null;
   let data = {};
@@ -5980,6 +6080,9 @@ async function deliver(p) {
   Object.assign(p, {
     body: reworded ? data.text : p.body, postedId: data.id || null, sentAt: now, doneAt: now, status: REDUCED_MOTION.matches ? 'delivered' : 'sent',
   });
+  saveSending();
+  // Not back by then: its bubble says so (or goes, if the platform did not name it).
+  setTimeout(() => showSending(p.thread), SEND_ARRIVE_MS + 500);
   if (p.base && state.cache.get(p.thread)?.data?.draft?.updated_at === p.base) setCachedDraft(p.thread, null);
   const invited = invitedSaying(data);
   if (invited) toast(invited, null, { stay: missedMention(data) });
@@ -6035,7 +6138,7 @@ async function send(key, thread, draft = null) {
 /** Sends a reply that failed again. */
 function retrySend(id) {
   const p = state.sending.find((x) => x.id === id);
-  if (!p || (p.status !== 'failed' && p.status !== 'unknown')) return;
+  if (!p || p.filesLost || (p.status !== 'failed' && p.status !== 'unknown')) return;
   // The same key, so a post that did go out is not posted again, unless the person decided to.
   Object.assign(p, {
     status: 'sending', startedAt: null, error: null, key: sendDecides(p, Date.now()) ? crypto.randomUUID() : p.key, asked: false,
@@ -6045,20 +6148,143 @@ function retrySend(id) {
   postPending(p);
 }
 
-/** Throws a reply that failed away, with a moment to take that back. */
+/**
+ * Throws a reply that failed away, with a moment to take that back; or stops showing one that
+ * was sent and is late to come back (it shows once it arrives).
+ */
 function discardSend(id) {
   const i = state.sending.findIndex((x) => x.id === id);
-  if (i < 0 || (state.sending[i].status !== 'failed' && state.sending[i].status !== 'unknown')) return;
+  if (i < 0) return;
+  const late = state.sending[i].postedId && sendLate(state.sending[i]);
+  if (!late && state.sending[i].status !== 'failed' && state.sending[i].status !== 'unknown') return;
   const [p] = state.sending.splice(i, 1);
   showSending(p.thread);
-  toast('Reply discarded.', { label: 'Undo', run: () => { state.sending.push(p); showSending(p.thread); } });
+  toast(late ? 'Hidden: the reply was sent, and shows once it arrives.' : 'Reply discarded.', { label: 'Undo', run: () => { state.sending.push(p); showSending(p.thread); } });
 }
 
+// ---------------------------------------------------------------- replies kept until they arrive
+// Replies being sent are kept in localStorage (per person, by id) until their message is back
+// from the platform, they are discarded, or they expire, so that leaving the page (a reload,
+// closing the tab, a crash) does not lose one: the next page shows it again. One that was on its
+// way then says nobody knows whether it went out, with Retry under the same key (the Worker's
+// `post_keys` answers a retry of a post that went out, src/postkeys.js); one the platform took
+// waits for its message, as here. Files cannot be kept: a reply that had some and did not go out
+// cannot be sent again, and says so. New threads (`started`, the composer) are not kept. Other
+// tabs hear of changes (the `storage` event): what is gone there goes here, and a reply's new
+// state is taken over.
+const SENDING_STORE = 'opspile.sending';
+const SENDING_FIELDS = ['thread', 'body', 'mentions', 'kinds', 'base', 'at', 'id', 'key', 'source', 'status', 'postedId', 'sentAt', 'error', 'asked', 'app', 'author', 'avatar', 'authorKey', 'unnamed', 'filesLost'];
+// The longest a reply that did not go out is kept: after that, nobody is going to send it.
+const SENDING_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+// The ids of replies this page has had: one of them no longer here is gone from the store too.
+const sendingKnown = new Set();
+
+/** Whether reply `p` is kept: a reply in a thread the inbox has. */
+const sendingKept = (p) => !p.started && p.thread !== STARTED && p.thread !== NEW;
+
+/** Reply `p` as it is kept: what it shows and how it went, without its files' bytes. */
+function keptReply(p) {
+  const o = Object.fromEntries(SENDING_FIELDS.filter((k) => p[k] !== undefined && p[k] !== null).map((k) => [k, p[k]]));
+  o.files = (p.files || []).map((f) => ({ name: f.name, type: f.type }));
+  return o;
+}
+
+/**
+ * A kept reply `o` as a page that did not send it shows it, at `now`, or null when it is too old.
+ * One that was on its way: nobody knows whether it went out. One the platform took waits for its
+ * message. One that had files and did not go out cannot go again (`filesLost`).
+ */
+function restoredReply(o, now = Date.now()) {
+  if (!o || !o.id || !o.thread || typeof o.body !== 'string') return null;
+  const taken = o.status === 'sent' || o.status === 'delivered';
+  if (taken ? now - (o.sentAt || 0) >= SEND_KEEP_MS : now - Date.parse(o.at) >= SENDING_MAX_MS) return null;
+  const p = {
+    ...o, files: o.files || [], uploads: [], startedAt: null, doneAt: taken ? o.sentAt : null, shown: true,
+  };
+  if (taken) p.status = 'delivered';
+  else if (p.status === 'sending') Object.assign(p, { status: 'unknown', error: 'the page was left while it was being sent', asked: false });
+  if (!taken && p.files.length) p.filesLost = true;
+  return p;
+}
+
+const sendingStoreKey = () => (state.me && !state.as ? `${SENDING_STORE}.${state.me.id}` : null);
+function storedSending() {
+  try { return JSON.parse(localStorage.getItem(sendingStoreKey()) || '{}') || {}; } catch { return {}; }
+}
+
+/** Writes this page's replies being sent to the store, leaving other tabs' alone. */
+function saveSending() {
+  const name = sendingStoreKey();
+  if (!name) return;
+  const stored = storedSending();
+  const here = new Set();
+  for (const p of state.sending) {
+    if (!sendingKept(p)) continue;
+    here.add(p.id);
+    sendingKnown.add(p.id);
+    stored[p.id] = keptReply(p);
+  }
+  for (const id of [...sendingKnown]) {
+    if (here.has(id)) continue;
+    delete stored[id];
+    sendingKnown.delete(id);
+  }
+  const now = Date.now();
+  for (const [id, o] of Object.entries(stored)) if (!restoredReply(o, now)) delete stored[id];
+  try {
+    if (Object.keys(stored).length) localStorage.setItem(name, JSON.stringify(stored));
+    else localStorage.removeItem(name);
+  } catch { /* storage is off, or full: the replies live in this page only */ }
+}
+
+/** Shows the replies a page left behind (the page itself, before a reload), once signed in. */
+function restoreSending() {
+  if (!sendingStoreKey()) return;
+  const now = Date.now();
+  for (const o of Object.values(storedSending())) {
+    if (state.sending.some((p) => p.id === o.id)) continue;
+    const p = restoredReply(o, now);
+    if (!p) continue;
+    state.sending.push(p);
+    sendingKnown.add(p.id);
+    // Not late yet: its bubble says so when it is.
+    const left = p.sentAt && (p.app ? SEND_APP_ARRIVE_MS : SEND_ARRIVE_MS) - (now - p.sentAt);
+    if (left > 0) setTimeout(() => showSending(p.thread), left + 500);
+  }
+  saveSending();
+}
+
+// Another tab changed the store: a reply gone there (it arrived, or was discarded) goes here
+// too, and one that went on there (it was retried and went out) shows so here.
+window.addEventListener('storage', (e) => {
+  if (!e.key || e.key !== sendingStoreKey()) return;
+  let stored = {};
+  try { stored = JSON.parse(e.newValue || '{}') || {}; } catch { return; }
+  const changed = new Set();
+  state.sending = state.sending.filter((p) => {
+    if (!sendingKept(p) || !sendingKnown.has(p.id) || stored[p.id] || p.status === 'sending') return true;
+    sendingKnown.delete(p.id);
+    changed.add(p.thread);
+    return false;
+  });
+  for (const p of state.sending) {
+    const o = stored[p.id];
+    if (!o || p.status === 'sending' || o.status === 'sending' || (o.status === p.status && o.postedId === p.postedId)) continue;
+    const r = restoredReply(o);
+    if (!r) continue;
+    for (const k of ['status', 'postedId', 'sentAt', 'doneAt', 'error', 'asked', 'key', 'body']) p[k] = r[k];
+    changed.add(p.thread);
+  }
+  for (const key of changed) if (state.open === key && state.cache.get(key)) openThread(key, { live: true, cached: true });
+});
+
 // Leaving the page (a reload, closing the tab, the browser's Back out of the inbox) while a
-// reply is still on its way would lose it: the box is already empty, the bubble lives in this
-// page only, and the post may be cut off. The browser asks first, then and only then.
+// reply is still on its way cuts the post off. A reply kept in localStorage comes back on the
+// next page, unsure whether it went out; one with files (whose bytes are not kept), or a new
+// thread, would be lost. The browser asks first, then and only then.
 window.addEventListener('beforeunload', (e) => {
-  if (!state.sending.some((p) => p.status === 'sending') && !state.compose?.posting) return;
+  const losing = state.sending.some((p) => p.status === 'sending' && (!sendingKept(p) || p.uploads?.length));
+  if (!losing && !state.compose?.posting) return;
   e.preventDefault();
   e.returnValue = '';
 });
@@ -6106,6 +6332,8 @@ async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), fi
   Object.assign(p, {
     body: reworded ? res.data.text : p.body, postedId: res.data.id || null, sentAt: now, doneAt: now, status: REDUCED_MOTION.matches ? 'delivered' : 'sent',
   });
+  saveSending();
+  setTimeout(() => showSending(key), SEND_APP_ARRIVE_MS + 500);
   if (p.status !== 'delivered') animateSending();
   const c = state.composers.get(key);
   if (c && c.text.trim() === text.trim()) {
@@ -9113,8 +9341,14 @@ function wireSideRoom() {
     if (tool) { decideToolRequest(panel.__key, tool.closest('[data-tool-request]').dataset.toolRequest, tool.dataset.toolAct); return; }
     followLink(e);
   };
+  // The bridge from the joined line to the panel closes it, as the line does: the panel goes
+  // back into the line. Not while it moves, when it is a shape on its way.
+  $('side-join').onclick = (e) => {
+    if (e.clientX >= panel.getBoundingClientRect().left) return;
+    if (sideMotion.p === 1 && !sideMotion.raf && sidePaneled(state.open)) exitSide();
+  };
   // Esc closes it from anywhere in it, as from its box (wireSide).
-  panel.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); exitSide(); } };
+  panel.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); exitSide(); } };
 }
 
 // ---------------------------------------------------------------- the sidebar's tab
@@ -9497,6 +9731,8 @@ const SHORTCUTS = [
     ['Next / previous unread thread', '⌥⇧↓ ⌥⇧↑'],
     ['Back / forward', MAC ? '⌘[ ⌘]' : '⌥← ⌥→'],
     ['Next / previous part of the page', 'F6 ⇧F6', '⌘F6 ⌘⇧F6', ...(MAC ? ['⌃⌘→ ⌃⌘←'] : [])],
+    ['Page down / up in the open thread', 'Space ⇧Space'],
+    ['Leave the reply box (what you typed stays)', 'Esc'],
     ['These shortcuts', '⌘/', '?'],
   ]],
   ['Views', [
@@ -9685,6 +9921,38 @@ function messageKey(e) {
   return false;
 }
 
+// What Space presses, scrolls or types in itself: there it is not the thread's (see pageKey).
+const OWN_SPACE = 'input, textarea, select, button, a[href], summary, img.att, [contenteditable]:not([contenteditable="false"]), [role="button"], [role^="menuitem"], [role="option"], [role="radio"], [role="checkbox"], [role="switch"], [role="tab"], [tabindex]:not([tabindex="-1"]), [popover], .s2-float, #side';
+
+/**
+ * Space and ⇧Space page down and up through the open thread, as they would a page, wherever the
+ * focus is not on something Space is its own for: not the thread list's, whose scroller the
+ * browser would pick after a click on a thread, and which j and k move through. Whether `e` was one.
+ */
+function pageKey(e) {
+  if (e.key !== ' ' || e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (e.target !== document.body && e.target.closest?.(OWN_SPACE)) return false;
+  const scroller = state.open && $('pane').querySelector(':scope > .scroller');
+  if (!scroller?.getClientRects().length) return false;
+  e.preventDefault();
+  // A page less a little, as the browser's own Space: the last lines stay in sight.
+  const step = Math.max(scroller.clientHeight * 0.875, scroller.clientHeight - 40);
+  scroller.scrollBy({ top: e.shiftKey ? -step : step, behavior: e.repeat || REDUCED_MOTION.matches ? 'auto' : 'smooth' });
+  return true;
+}
+
+/**
+ * Esc leaves the thread's reply box, what was typed in it kept: j, k and Space are the thread's
+ * again. Not when something took the Escape before (the suggestions, a new thread's box and that
+ * of one being started, which close it). Whether `e` was one.
+ */
+function leaveReply(e) {
+  if (e.key !== 'Escape' || e.target?.id !== 'reply' || e.defaultPrevented || e.isComposing) return false;
+  e.preventDefault();
+  e.target.blur();
+  return true;
+}
+
 /** Slack's ⌘⇧\: the emoji picker of the message in focus, else of the last one may react to. */
 function reactLast() {
   const buttons = $('pane').querySelectorAll('.msg [data-picker]');
@@ -9810,6 +10078,8 @@ async function start() {
   // A message's link (messageHref): the thread opens at it.
   if (initial.open && initial.msg) state.jump = { key: initial.open, id: `${initial.open}|${initial.msg}`, linked: true };
   syncReading();
+  // Replies a page left behind, still on their way or not back yet (saveSending).
+  restoreSending();
   await loadWho();
   toUrl(false);
   $('filters').onclick = (e) => {
@@ -9859,6 +10129,7 @@ async function start() {
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
     if (e.target.closest('[data-compose]')) { if (state.compose) closeThread(); else openCompose(); return; }
     if (e.target.closest('[data-clearq]')) { clearSearch(); $('q')?.focus(); return; }
+    if (e.target.closest('[data-kbmore]')) { state.search.kbAll = true; render(); return; }
     if (e.target.closest('[data-unfilter]')) { state.sel = {}; state.not = {}; setUnread(false); state.mentions = false; render(); toUrl(); return; }
     if (e.target.closest('a, .find')) return;
     const el = e.target.closest('.t');
@@ -9894,6 +10165,8 @@ async function start() {
     const fold = e.target.closest('[data-side-toggle]');
     if (fold && fold.getAttribute('aria-disabled') !== 'true') {
       const id = fold.dataset.sideToggle;
+      // The line joined to the open panel is part of it: picked, the panel goes back into it.
+      if (side.wide && sidePaneled(state.open) && side.joined === id) { exitSide(); return; }
       // Beside the thread where there is room; else unfolded where it is.
       if (side.wide) { enterSide(state.open, { at: id }); return; }
       if (side.open.has(id)) side.open.delete(id); else side.open.add(id);
@@ -9978,11 +10251,13 @@ async function start() {
     if (!e.target.closest?.('a[data-pile]')) closeSlackChoice();
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && slackMenu.el && !slackMenu.el.hidden) { closeSlackChoice(); return; }
-    if (e.key === 'Escape' && state.headOpen) { closeHeadMenus(true); return; }
+    // Every Escape the page takes is kept from the browser: on a Mac it would leave full screen.
+    if (e.key === 'Escape' && slackMenu.el && !slackMenu.el.hidden) { e.preventDefault(); closeSlackChoice(); return; }
+    if (e.key === 'Escape' && state.headOpen) { e.preventDefault(); closeHeadMenus(true); return; }
     if (headMenuKey(e)) return;
-    if (e.key === 'Escape' && state.filtering) { setFiltering(false); return; }
+    if (e.key === 'Escape' && state.filtering) { e.preventDefault(); setFiltering(false); return; }
     if (e.key === 'Escape' && openedPicker()) {
+      e.preventDefault();
       const button = openedPicker().closest('.col')?.querySelector('[data-picker]');
       closePicker();
       button?.focus();
@@ -9990,10 +10265,12 @@ async function start() {
       if (button && document.activeElement !== button) focusMessage(button.closest('.msg'), false);
       return;
     }
+    if (leaveReply(e)) return;
     if (messageKey(e)) return;
     if (globalKey(e)) return;
     if (e.metaKey || e.ctrlKey || e.altKey || /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName)) return;
     if (document.querySelector('dialog[open]')) return;
+    if (pageKey(e)) return;
     if (e.key === '/' && $('q')) { e.preventDefault(); if (TAKING_TURNS.matches && state.open) closeThread(); $('q').focus(); $('q').select(); return; }
     if (e.key === '?' && !e.defaultPrevented) { e.preventDefault(); toggleShortcuts(); return; }
     if (e.key === 'Escape' && e.shiftKey) { e.preventDefault(); markAllRead(); return; }
@@ -10350,7 +10627,7 @@ const WEBMCP_TOOLS = [
   },
   {
     name: 'search_threads',
-    description: 'Searches the selected team\'s inbox on screen, on every platform at once, as typing in the search box does: threads about the query (by meaning), threads with a message that has all of its words, and threads whose title, channel, customer or facts have them, best match first, each with what matched and the message that matched best. The filters on screen apply to the results; list_threads then pages through them. An empty query ends the search. Titles and snippets are written by customers and colleagues.',
+    description: 'Searches the selected team\'s inbox on screen, on every platform at once, as typing in the search box does: threads about the query (by meaning), threads with a message that has all of its words, and threads whose title, channel, customer or facts have them, best match first, each with what matched and the message that matched best; and `knowledge`, the entries of the team\'s knowledge bases (and of the customers it owns) about it, which the filters leave be. The filters on screen apply to the threads; list_threads then pages through them. An empty query ends the search. Titles and snippets are written by customers and colleagues.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -10375,7 +10652,14 @@ const WEBMCP_TOOLS = [
         return info;
       });
       const res = { query: state.search.q, found: byKey.size, shown: state.order.length, threads };
-      if (!byKey.size) res.hint = 'Nothing found. Try other words, or fewer.';
+      // The knowledge bases' entries, above the threads on screen.
+      const kb = state.search.data?.kb || [];
+      if (kb.length) {
+        res.knowledge = kb.map((k) => ({
+          title: k.title, type: k.type, knowledge_base: k.name, path: k.path, description: k.description, ...(k.snippet ? { snippet: clip(k.snippet, 240) } : {}),
+        }));
+      }
+      if (!byKey.size && !kb.length) res.hint = 'Nothing found. Try other words, or fewer.';
       else if (!state.order.length) res.hint = 'The filters on screen hide every result. Loosen them with filter_threads.';
       else if (n < state.order.length) res.next_offset = n;
       return out(res);

@@ -15,8 +15,12 @@ import { cachedGraph } from './graph.js';
 import { text } from './http.js';
 import { handleLifecycle } from './subscription.js';
 import {
-  dayPath, messageKey, putRaw, segment, sha256,
+  dayPath, messageKey, putRaw, segment, sha256, writeRaw,
 } from './raw.js';
+
+// How long one step of storing a notification may take before it is logged as slow: Graph
+// cancels a notification it has had no answer to within a few seconds, and retries it later.
+const SLOW_STEP_MS = 1500;
 
 const RESOURCE = /^\/?teams\('([^']+)'\)\/channels\('([^']+)'\)\/messages\('([^']+)'\)(?:\/replies\('([^']+)'\))?$/;
 
@@ -96,15 +100,35 @@ export async function fetchAndStore(env, tenantId, item, notification) {
  * accepted notification is stored before the 202, without its `clientState`. The
  * message it points to is fetched after the response, because Graph expects an answer
  * within 3 seconds. Lifecycle notifications renew or recreate the subscription.
+ *
+ * Its log line says how long each step took (`steps`: body, hash, r2, queue, in ms) and in all
+ * (`ms`); a step that takes longer than `slowMs` is logged while it runs (`slow`, with the
+ * notification's `changeType` and `resource`), since Graph may cancel the request first.
  */
-export async function teamsNotify(request, url, env, ctx) {
+export async function teamsNotify(request, url, env, ctx, { slowMs = SLOW_STEP_MS } = {}) {
   const token = url.searchParams.get('validationToken');
   if (token) {
     return text(token);
   }
   const lifecycle = url.pathname === '/teams/lifecycle';
   const route = lifecycle ? 'teams-lifecycle' : 'teams';
-  const body = await request.json().catch(() => null);
+  const started = Date.now();
+  const steps = {};
+  // Graph gives up after a few seconds; a step that hangs is logged while it hangs, since the
+  // request may be cancelled before the line at the end.
+  const step = async (name, fn, info = {}) => {
+    const at = Date.now();
+    const watch = setTimeout(() => console.warn(JSON.stringify({
+      route, slow: name, ms: Date.now() - started, ...info,
+    })), slowMs);
+    try {
+      return await fn();
+    } finally {
+      clearTimeout(watch);
+      steps[name] = (steps[name] || 0) + Date.now() - at;
+    }
+  };
+  const body = await step('body', () => request.json().catch(() => null));
   const items = (body && Array.isArray(body.value)) ? body.value : [];
   const secret = env.GRAPH_CLIENT_STATE;
   const accepted = secret ? items.filter((n) => n && n.clientState === secret) : [];
@@ -121,12 +145,16 @@ export async function teamsNotify(request, url, env, ctx) {
     for (const item of accepted) {
       const json = JSON.stringify({ ...item, clientState: undefined });
       const tenantId = item.tenantId || env.MS_TENANT_ID;
+      const info = { changeType: item.changeType, resource: item.resource };
       // eslint-disable-next-line no-await-in-loop
-      const key = await notificationKey(tenantId, item, json, received, lifecycle);
+      const key = await step('hash', () => notificationKey(tenantId, item, json, received, lifecycle), info);
+      // As putRaw, a step at a time: which of the two hangs, when one does.
       // eslint-disable-next-line no-await-in-loop
-      await putRaw(env, key, json, {
+      await step('r2', () => writeRaw(env, key, json, {
         source: 'teams', via: lifecycle ? 'lifecycle' : 'notification', resource: item.resource,
-      });
+      }), info);
+      // eslint-disable-next-line no-await-in-loop
+      await step('queue', () => env.NORMALIZE.send({ key }), info);
       if (!lifecycle) {
         ctx.waitUntil(fetchAndStore(env, tenantId, item, key).catch((e) => {
           console.error(JSON.stringify({ route, error: e.message }));
@@ -134,9 +162,12 @@ export async function teamsNotify(request, url, env, ctx) {
       }
     }
   } catch (e) {
-    console.error(JSON.stringify({ ...log, error: e.message }));
+    console.error(JSON.stringify({
+      ...log, error: e.message, steps, ms: Date.now() - started,
+    }));
     return text('storage error\n', 500);
   }
+  Object.assign(log, { steps, ms: Date.now() - started });
   console.log(JSON.stringify(log));
   if (lifecycle) {
     // One renewal or re-creation answers every lifecycle event in the batch.

@@ -233,6 +233,15 @@ claim with no answer means nobody knows, and then only the person can decide to 
 lasts a day, so after that Retry turns into Send again. A reply as the bot (`sendAsApp`) shows the same
 way, looking like the bot's replies, from sending to sent; one that did not go out leaves the thread
 and the draft line says why. Once sent it waits up to three minutes to come back, not one.
+A reply the platform took and named (`postedId`) settles only when a message with that id is in the
+thread: after a minute (three as the bot) it says it is sent and not back yet, with Hide, and it goes
+after a day. One the platform did not name (Slack's uploads) still goes after the minute. Every
+reply in a thread the inbox has is kept in localStorage meanwhile (`opspile.sending.<person>`, by id;
+`saveSending`): the next page restores it, a reply that was sending as unknown under the same key,
+one that was sent as delivered and waiting. A reply with files keeps their names only: restored
+unsent, it cannot be retried (`filesLost`), only discarded. Not-sent replies expire after a week.
+Tabs share the store: one gone in another tab (arrived, discarded) goes, one that moved on there
+takes its state.
 
 **Reaction made here.** asked → taken → settled, or refused (`state.reacting`, `ui/inbox.js`). It
 shows on the message at once. It goes once the thread's reactions agree after the platform took it,
@@ -442,8 +451,12 @@ The panel's motion is not a state either: as you enter or leave the sidebar (`si
 while that render runs) it moves from gone (`sideMotion.p` 0) to open (1) or back, out of the
 line that was picked (`side.joined`, kept until the panel is gone) where that line is in sight,
 else sliding in from the edge; otherwise, and with reduced motion, it is there or gone at once.
-Gone is only when the motion back ends (`goneSidePanel`): a render while it goes does not cut it
-short, and entering again turns it around.
+Another thread opened (or the thread closed) while it is open, it is leaving (`sideMotion.leaving`):
+it slides out to the edge in the shorter `--side-leave`, joined to no line, `inert` so that its box
+is not wired to the thread that opens (`wireSide`); going back into its line already, it slides
+out from where it is. Gone is only when the motion back ends (`goneSidePanel`, which clears
+`leaving` and `inert`): a render while it goes does not cut it short, and entering again turns it
+around. Open, the line it is joined to and the bridge to it (`#side-join`) close it, as ✕ does.
 
 **Seed session.** none → pinned to a knowledge base (`seed-pin:*`, `src/agent/seed.js`). The pin is
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned
@@ -561,6 +574,14 @@ between: the cron or Rebuild builds one in a single request, a row when it is do
 five are kept. A build that fails (too few threads, no index) writes nothing and leaves the last map
 on the page; two at once both write a row, and the newer is shown.
 
+**Mention model.** none → fit → a day old → fit again (`mention_models`, `src/mentionmodels.js`).
+The cron fits one in a single run and writes a row when it is done; the newest three are kept. A
+fit that finds no mention whose week is over writes an empty model (`model` is `null`), so the
+next runs wait a day too, and the finder says nothing of how people answer while it is the newest.
+An isolate keeps the newest it read for an hour, so a new fit reaches the finder within an hour of
+it; two cron runs at once both write a row, and the newer is
+used.
+
 **Trend topics.** none → assigned → stale → assigned again (`trend_threads`, `src/trends.js`).
 A topic map writes its own threads' rows when it is built, along with its space
 (`topic_maps.vectors`, which only the newest keeps). A row is stale when its `map` is not the
@@ -583,6 +604,20 @@ its own. Kept is the only stored state: a row in `tech_conflict_keeps` with the 
 definitions it was kept with; once one of them changes, the fingerprint no longer matches and it is
 open again. A merge deletes the files of the technology that goes before the other lists it in
 `moved_from`, so the compile sees a new move (src/catalog.js) and rewrites D1.
+
+**Knowledge search rows.** unread → read → behind → read again, per knowledge base
+(`knowledge_bases.search_commit`, `kb_concepts`, src/kbindex.js); per concept, unembedded →
+embedded (`kb_concepts.embedded`). The watermark is the commit the rows were last read from in
+full, `''` for a knowledge base that had no commit then (a new one starts there: nothing to read),
+and NULL for unread, which the cron takes, 30 a run. A full read writes the rows of the changed
+blobs, deletes those of files that are gone and records the watermark in the same batches, the
+watermark last, so a read cut short leaves it NULL; a blob that cannot be read fails the read. A
+write updates the rows of the files it changed after its push and leaves the watermark be; if
+that fails it sets the watermark NULL, so the cron reads the whole tree again. A row whose blob
+changes loses `embedded`; the cron embeds the rows without it, 100 a run, and marks a row only
+`WHERE hash` is still the blob it embedded, so a write in between is embedded again. A deleted
+concept's vector is deleted too, and one left behind is harmless: the search keeps only what
+`kb_concepts` has.
 
 **Lazy fill-ins.** NULL means "not done yet" (`threads.last_text`, `messages.author_kind`,
 `knowledge_bases.entries`). Each has a batch on the cron. NULL must not also mean "nothing there", or

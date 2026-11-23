@@ -588,9 +588,10 @@ export async function measure(origin, caches, { token, run, log = console.log } 
   for (const cache of caches) {
     const thread = `measure-${run}-${cache.label.replace(/\//g, '-')}`;
     const steps = [];
-    // What the isolate asked of the bucket before (another agent's, in the same isolate).
-    // eslint-disable-next-line no-await-in-loop
-    let before = (await post(thread, '/reads', {}).catch(() => ({}))).images || null;
+    // What the isolate asked of the bucket at the step before: none at the first command, whose
+    // `cache` empties what the isolate keeps and resets its counters (forgetImages in
+    // src/agent/image.js), so what it answers is its own already.
+    let before = null;
     const exec = async (name, command, first) => {
       const started = Date.now();
       const body = await post(thread, '/', {
@@ -600,12 +601,13 @@ export async function measure(origin, caches, { token, run, log = console.log } 
         ...(first ? { cache: cache.mib ? { mib: cache.mib, fileMib: cache.fileMib } : {} } : {}),
       }).catch((e) => ({ error: reasonOf(e) }));
       const now = body.images;
+      const since = first ? null : before;
       const result = {
         name,
         ms: Date.now() - started,
         ok: !body.error && body.exitCode === 0,
-        gets: now && before ? now.gets - before.gets : now?.gets,
-        fetchedMB: MB(now && before ? now.fetched - before.fetched : now?.fetched),
+        gets: now && since ? now.gets - since.gets : now?.gets,
+        fetchedMB: MB(now && since ? now.fetched - since.fetched : now?.fetched),
         keptMB: MB(now?.bytes),
         ...(body.error ? { error: `${body.error}${body.message ? `: ${body.message}` : ''}`.slice(0, 160) } : {}),
       };

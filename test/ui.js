@@ -10,7 +10,10 @@
  * governing permissions and limitations under the License.
  */
 
-/** The pages of ui/ and their scripts, read as src/index.js imports them. */
+/**
+ * The pages of ui/ and their scripts, read as src/pages.js and src/portal/pages.js import them
+ * (test/ui-pages.test.js builds the pages from those modules' own maps).
+ */
 
 import { readdirSync, readFileSync } from 'node:fs';
 

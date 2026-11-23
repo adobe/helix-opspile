@@ -10,37 +10,6 @@
  * governing permissions and limitations under the License.
  */
 
-import inboxHtml from '../ui/inbox.html';
-import adminHtml from '../ui/admin.html';
-import cogsHtml from '../ui/cogs.html';
-import topicsHtml from '../ui/topics.html';
-// The pages' scripts, as text (src/page.js inlines them).
-import inboxJs from '../ui/inbox.js' with { type: 'text' };
-import adminJs from '../ui/admin.js' with { type: 'text' };
-import agentJs from '../ui/agent.js' with { type: 'text' };
-import cogsJs from '../ui/cogs.js' with { type: 'text' };
-import topicsJs from '../ui/topics.js' with { type: 'text' };
-import appJs from '../ui/app.js' with { type: 'text' };
-import headerJs from '../ui/header.js' with { type: 'text' };
-import rankJs from '../ui/rank.js' with { type: 'text' };
-import tableJs from '../ui/table.js' with { type: 'text' };
-import writingJs from '../ui/writing.js' with { type: 'text' };
-import stackJs from '../ui/stack.js' with { type: 'text' };
-import notifyHelpJs from '../ui/notifyhelp.js' with { type: 'text' };
-import tourJs from '../ui/tour.js' with { type: 'text' };
-import topicGraphJs from '../ui/topicgraph.js' with { type: 'text' };
-import topicSpaceJs from '../ui/topicspace.js' with { type: 'text' };
-import topicViewJs from '../ui/topicview.js' with { type: 'text' };
-import trendsJs from '../ui/trends.js' with { type: 'text' };
-import trendViewJs from '../ui/trendview.js' with { type: 'text' };
-// Spectrum 2's look of every page (README, "Spectrum 2").
-import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
-import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
-import spectrumInboxCss from '../ui/spectrum-inbox.css' with { type: 'text' };
-import spectrumAdminCss from '../ui/spectrum-admin.css' with { type: 'text' };
-import spectrumAgentCss from '../ui/spectrum-agent.css' with { type: 'text' };
-import spectrumCogsCss from '../ui/spectrum-cogs.css' with { type: 'text' };
-import spectrumTopicsCss from '../ui/spectrum-topics.css' with { type: 'text' };
 import { accessEmail } from './access.js';
 import { followed, Meter } from './cogs/meter.js';
 import { rollupCogs } from './cogs/rollup.js';
@@ -62,6 +31,7 @@ import { SOUNDS } from './sound.js';
 import { pwa } from './pwa.js';
 import { ensureTeamKnowledgeBases } from './kb.js';
 import { countEntries } from './kbadmin.js';
+import { syncConcepts } from './kbindex.js';
 import { syncCatalogs } from './catalogsync.js';
 import { syncOrgStacks } from './orgstacks.js';
 import { mcp } from './mcp.js';
@@ -69,8 +39,11 @@ import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
 import {
-  fmcScript, fromPreview, highlightScript, inboxPage, page, threeScript,
+  fmcScript, fromPreview, highlightScript, threeScript,
 } from './page.js';
+import {
+  ADMIN_PAGE, COGS_PAGE, INBOX_PAGE, TOPICS_PAGE,
+} from './pages.js';
 import { slackEvents } from './slack.js';
 import { joinPublicChannels } from './autojoin.js';
 import { sweepChannels } from './channelsweep.js';
@@ -81,6 +54,7 @@ import { classifyChannels } from './suggest.js';
 import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
+import { sweepMentionModel } from './mentionmodels.js';
 import { sweepTopicMap } from './topicmap.js';
 import { sweepTrends } from './trends.js';
 import { sweepPreviews } from './previews.js';
@@ -90,38 +64,6 @@ import { pruneDraftUndo } from './draftevents.js';
 import { sweepBackfills } from './backfill.js';
 import { pruneExpertEvents } from './expertevents.js';
 import { prunePostKeys } from './postkeys.js';
-
-const SCRIPTS = {
-  'inbox.js': inboxJs,
-  'admin.js': adminJs,
-  'agent.js': agentJs,
-  'cogs.js': cogsJs,
-  'topics.js': topicsJs,
-  'app.js': appJs,
-  'header.js': headerJs,
-  'rank.js': rankJs,
-  'table.js': tableJs,
-  'writing.js': writingJs,
-  'stack.js': stackJs,
-  'notifyhelp.js': notifyHelpJs,
-  'tour.js': tourJs,
-  'topicgraph.js': topicGraphJs,
-  'topicspace.js': topicSpaceJs,
-  'topicview.js': topicViewJs,
-  'trends.js': trendsJs,
-  'trendview.js': trendViewJs,
-  'spectrum-fonts.css': spectrumFontsCss,
-  'spectrum.css': spectrumCss,
-  'spectrum-inbox.css': spectrumInboxCss,
-  'spectrum-admin.css': spectrumAdminCss,
-  'spectrum-agent.css': spectrumAgentCss,
-  'spectrum-cogs.css': spectrumCogsCss,
-  'spectrum-topics.css': spectrumTopicsCss,
-};
-const INBOX_PAGE = inboxPage(inboxHtml, SCRIPTS);
-const ADMIN_PAGE = page(adminHtml, SCRIPTS);
-const COGS_PAGE = page(cogsHtml, SCRIPTS);
-const TOPICS_PAGE = page(topicsHtml, SCRIPTS);
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
@@ -311,7 +253,8 @@ const handlers = {
 
   /**
  * Cron: keep the Graph subscription alive (#5), give every team a knowledge base, count the
- * entries of the knowledge bases not counted yet, keep the agents' GitHub mirrors fresh, learn the
+ * entries of the knowledge bases not counted yet, read the concepts the search has not read yet
+ * (src/kbindex.js), keep the agents' GitHub mirrors fresh, learn the
  * bots installed in each Teams team, check the global MCP servers' tools once a day, keep the
  * agents' MCP OAuth grants alive, classify a batch of the admin team's channels for the channel
  * suggestions, write the follow rules' shares (src/followrules.js), join the public Slack channels
@@ -320,7 +263,8 @@ const handlers = {
  * in the latest message's text of threads indexed before it was kept, delete the thread list's
  * picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals kept for an Undo of a
  * discarded draft past its time (src/draftevents.js), and enqueue the threads whose klickhaus rows
- * are behind; build the Topics page's map once a week; and roll up what the days used, for COGS.
+ * are behind; fit the expert finder's mention model once a day and build the Topics page's map
+ * once a week; and roll up what the days used, for COGS.
  */
   async scheduled(controller, env, ctx) {
     // What the days cost so far, for the COGS dashboard (src/cogs/rollup.js).
@@ -336,6 +280,10 @@ const handlers = {
     ctx.waitUntil(countEntries(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'entries', ...r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'entries', error: e.message }))));
+    // The knowledge bases' concepts the inbox's search has not read yet, and their vectors.
+    ctx.waitUntil(syncConcepts(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'search', ...r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', kb: 'search', error: e.message }))));
     // The customers' stack drawings the inbox's list by customer has not read yet.
     ctx.waitUntil(syncOrgStacks(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', kb: 'stacks', ...r })))
@@ -399,6 +347,10 @@ const handlers = {
     ctx.waitUntil(sweepVectors(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', vectors: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', vectors: 'error', error: e.message }))));
+    // The expert finder's mention model (src/mentionmodels.js), once it is a day old.
+    ctx.waitUntil(sweepMentionModel(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', mentionModel: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', mentionModel: 'error', error: e.message }))));
     // The Topics page's map (src/topicmap.js), once it is a week old.
     ctx.waitUntil(sweepTopicMap(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', topicMap: r })))

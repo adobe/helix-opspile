@@ -328,6 +328,38 @@ describe('inbox page', () => {
     ]).map((t) => t.slug), ['amy', 'zed', 'admin']);
   });
 
+  it('shows a search\'s knowledge-base entries, each a link to it in the editor, a few until asked', () => {
+    const state = { search: { kbAll: false } };
+    const { kbSection } = piece('const KB_SHOWN', '/** Asks for `q`', 'kbSection', {
+      state,
+      esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'),
+      marked: (s) => s,
+      reEscape: (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      emojiHtml: () => '',
+      Markdown: { render: (src) => `<p>${src.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')}</p>` },
+      kbFileHref: (repo, path) => `/inbox/admin?${new URLSearchParams({ repo, view: 'kb', path })}`,
+    });
+    const hit = (i) => ({
+      repo: 'kb-team-helix', path: `playbooks/p${i}.md`, name: 'Helix', type: 'Playbook', title: `P${i}`, description: 'What to do', snippet: null,
+    });
+    assert.equal(kbSection([], []), '');
+    // Four: all of them, rather than "1 more".
+    let out = kbSection([1, 2, 3, 4].map(hit), ['p']);
+    assert.equal(out.match(/class="kbhit"/g).length, 4);
+    assert.match(out, /href="\/inbox\/admin\?repo=kb-team-helix&amp;view=kb&amp;path=playbooks%2Fp1\.md"/);
+    assert.match(out, /<span class="tag">Playbook<\/span>/);
+    assert.match(out, /<div class="l3 md"><p>What to do<\/p><\/div>/);
+    // The excerpt is markdown, rendered; a link in it is text (the entry is the link), and the
+    // words are marked in its text, not in its tags or entities.
+    out = kbSection([{ ...hit(1), snippet: 'Check **the purge**, see [the site](../sites/www.md) &amp; more' }], ['purge', 'amp']);
+    assert.match(out, /<p>Check <strong>the <mark>purge<\/mark><\/strong>, see <span class="ln">the site<\/span> &amp; more<\/p>/);
+    out = kbSection([1, 2, 3, 4, 5].map(hit), ['p']);
+    assert.equal(out.match(/class="kbhit"/g).length, 3);
+    assert.match(out, /data-kbmore>2 more in the knowledge bases</);
+    state.search.kbAll = true;
+    assert.equal(kbSection([1, 2, 3, 4, 5].map(hit), ['p']).match(/class="kbhit"/g).length, 5);
+  });
+
   it('forgets the empty list when a search paints it, and a team name there drops the type filter', () => {
     const state = {
       search: {
@@ -359,6 +391,7 @@ describe('inbox page', () => {
       viewSwitch: () => '',
       toNode: () => ({}),
       row: () => '',
+      kbSection: () => '',
       preload: { observe() {}, unobserve() {} },
       cardGone: () => {},
     });
@@ -1086,6 +1119,14 @@ describe('inbox page', () => {
       assert.match(css, /#side-join \{ position: absolute; z-index: 2; overflow: hidden; pointer-events: none; \}/);
       assert.match(css, /main\.side-veiled #side \{ opacity: 0; pointer-events: none; \}/);
       assert.match(css, /main \{ --side-motion: var\(--spectrum-animation-duration-1000\); \}/);
+      // Another thread opens: the panel slides out, quicker, inert, its box not wired to that one.
+      assert.match(css, /main \{ --side-leave: var\(--spectrum-animation-duration-300\); \}/);
+      assert.match(html, /if \(away && !REDUCED_MOTION\.matches\) \{[^}]*panel\.inert = true;[^}]*moveSide\(0, \{ animate: true, leave: true \}\);/);
+      assert.match(html, /getPropertyValue\(leave \? '--side-leave' : '--side-motion'\)/);
+      assert.match(html, /if \(!box \|\| box\.closest\('\[inert\]'\)\) return;/);
+      // The bridge from the joined line closes the panel: only its path takes the pointer.
+      assert.match(css, /#side-join path \{ pointer-events: visiblePainted; cursor: pointer; \}/);
+      assert.match(html, /\$\('side-join'\)\.onclick = \(e\) => \{\s*if \(e\.clientX >= panel\.getBoundingClientRect\(\)\.left\) return;\s*if \(sideMotion\.p === 1 && !sideMotion\.raf && sidePaneled\(state\.open\)\) exitSide\(\);/);
       assert.match(css, /\.spectrum #side \{[^}]*background: var\(--spectrum-purple-subtle-background-color-default\);/);
       assert.match(css, /main\.siding #pane \{ margin-right: calc\(var\(--side-w\) \* var\(--side-open, 1\)\); \}/);
       // The thread's reply box is the sidebar's only in the thread itself.
@@ -1095,6 +1136,8 @@ describe('inbox page', () => {
       assert.match(html, /if \(!sidePaneled\(key\)\) \{ hideSidePanel\(\); return; \}/);
       // A line in the thread opens the panel at its conversation, for anyone who sees it.
       assert.match(html, /if \(side\.wide\) \{ enterSide\(state\.open, \{ at: id \}\); return; \}/);
+      // The line joined to the open panel is part of it: picked, it closes the panel.
+      assert.match(html, /if \(side\.wide && sidePaneled\(state\.open\) && side\.joined === id\) \{ exitSide\(\); return; \}/);
       assert.match(html, /if \(!key \|\| !\(canSide\(key\) \|\| \(side\.wide && sideList\(key\)\.length\)\)\) return;/);
       // The icon beside the reply box, still there while the panel is open, closes it again.
       assert.match(html, /if \(enter\.matches\('\.sidebtn'\) && side\.key === state\.open\) exitSide\(\); else enterSide\(\);/);

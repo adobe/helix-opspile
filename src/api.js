@@ -69,12 +69,15 @@ import {
   setPersonFollowBy,
 } from './follows.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
-import { claimPost, settlePost } from './postkeys.js';
+import { claimPost, logPost, settlePost } from './postkeys.js';
 import { postingOffer } from './postoffer.js';
 import {
   ATTENTION, latestMember, readState, unreadInYours, waitingOn,
 } from './threads.js';
-import { find, MAX_RESULTS, withSnippets } from './search.js';
+import {
+  cleanQuery, find, MAX_RESULTS, queryVector, terms, withSnippets,
+} from './search.js';
+import { findKnowledge } from './kbsearch.js';
 import { Timing, withTiming } from './timing.js';
 import { batchedDatabase } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
@@ -704,22 +707,37 @@ export async function inbox(env, me, team, {
 /**
  * Search over team `team`'s inbox, or with `personal` (and no team) the viewer's personal view
  * (src/search.js): the entries about `q` the viewer sees, as the inbox shapes them, and `hits`,
- * best first, saying why each matched and which message did.
+ * best first, saying why each matched and which message did; and `kb`, the concepts about it
+ * in the knowledge bases of the team (the personal view: of the viewer's teams) and of the
+ * customers it owns, that the viewer may read (src/kbsearch.js). Nobody on a team sees none.
  */
 export async function searchInbox(env, me, team, q, { limit, personal = false } = {}) {
   const n = Math.max(1, Math.min(MAX_RESULTS, Number(limit) || 30));
-  // The personal view's channels are filed under the teams of its rooms.
+  // One vector of the query for the threads and the knowledge bases.
+  const query = cleanQuery(q);
+  const vector = terms(query).length ? queryVector(env, query) : Promise.resolve(null);
+  // The personal view's channels are filed under the teams of its rooms; its knowledge bases
+  // are those of the viewer's own teams.
+  const kbTeams = personal ? (me.teams || []).map((t) => t.slug) : [team];
+  const kbP = findKnowledge(env, me, kbTeams, query, { vector }).catch((e) => {
+    console.log(JSON.stringify({ route: 'search', error: `knowledge search failed: ${e.message}` }));
+    return [];
+  });
   const teams = personal ? await roomsOf(env, me) : [team];
-  const found = teams.length ? await find(env, teams, q, { limit: n })
-    : { q: String(q || '').trim(), words: [], hits: [] };
+  const [found, kb] = await Promise.all([
+    teams.length ? find(env, teams, query, { limit: n, vector })
+      : { q: query, words: [], hits: [] },
+    kbP,
+  ]);
   if (!found.hits.length) {
     return {
       team: personal ? null : team,
       personal,
       q: found.q,
-      words: found.words,
+      words: terms(query),
       hits: [],
       threads: [],
+      kb,
       page: { next: null },
     };
   }
@@ -735,6 +753,7 @@ export async function searchInbox(env, me, team, q, { limit, personal = false } 
     words: found.words,
     threads: data.threads.filter((t) => kept.has(t.thread)),
     hits: await withSnippets(env, hits, found.words),
+    kb,
   };
 }
 
@@ -1254,26 +1273,26 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     const { body, files } = read;
     const inMine = mayWork(env, me);
     // A retry of a reply that may have gone out does not post it again (src/postkeys.js).
+    const how = url.pathname === '/api/post' ? 'me' : 'app';
+    const started = Date.now();
     const again = await claimPost(env, me, body.key);
     if (again && !again.ok) {
+      await logPost(me, body, files, again, { how, ms: Date.now() - started, again: true });
       return again;
     }
     // As the person, or as the opspile app (where it may post in the channel).
     let res = again;
     if (!res) {
-      res = url.pathname === '/api/post'
-        ? await post(env, me, body, inMine, files) : await postApp(env, me, body, inMine, files);
+      res = how === 'me'
+        ? await post(env, me, body, inMine, files, { waitUntil })
+        : await postApp(env, me, body, inMine, files);
       await settlePost(env, me, body.key, res);
     }
-    if (files.length) {
-      console.log(JSON.stringify({
-        route: 'post', action: 'files', count: files.length, ok: res.ok, status: res.status,
-      }));
-    }
+    await logPost(me, body, files, res, { how, ms: Date.now() - started, again: Boolean(again) });
     // A reply sent from the shared draft uses it up (unless a colleague changed it since).
     // The post went out: whatever happens here, the answer says so.
     if (res.ok && typeof body.draft === 'string') {
-      const sent = { how: url.pathname === '/api/post' ? 'me' : 'app', text: body.text };
+      const sent = { how, text: body.text };
       const used = { thread: body.thread, base: body.draft };
       const done = await discardDraft(env, me, used, inMine, { sent })
         .then((r) => r.json())

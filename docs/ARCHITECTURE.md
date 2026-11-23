@@ -577,7 +577,9 @@ messages are embedded again, and a deleted one loses its vector. The cron enqueu
 threads whose vectors are older than their latest message (`threads.vectorized_through`),
 which also fills the index the first time. Alert threads (a bot's posts) get no vectors here.
 A re-filed thread's vectors are made again (its hashes cleared, a vectorize job queued), so
-that they carry its new team and org; re-filed as an alert or ignored, it loses them.
+that they carry its new team and org; re-filed as an alert or ignored, it loses them. The
+knowledge bases' concepts have theirs here too (`type: kb`, see "Search" under
+[Knowledge bases](#3-knowledge-bases)), so every query of a thread's vectors names its `type`.
 
 A third index, `SEARCH` ([src/fulltext.js](../src/fulltext.js)), is for full-text search: an
 [AI Search](https://developers.cloudflare.com/ai-search/) instance with built-in storage, one
@@ -845,6 +847,34 @@ your view; notifications and the Thread Agent; Appearance, the keyboard and logg
 side on a screen 1000px wide or more, one under the other below that, so a phone has the single
 column it always had.
 
+**Search.** The inbox's search finds concepts too (`GET /api/search`'s `kb`,
+src/kbsearch.js): those of the knowledge bases of the view's teams (a team's view: the team; the
+personal view: the viewer's own teams, not those of the channels it shows) and of the customers
+those teams own, as far as the viewer may read them (src/kbaccess.js), so nobody on a team
+finds any, and a merged customer's is the one it was merged into. Artifacts has no search, so D1
+keeps what is searched (`kb_concepts`, migration 0094, src/kbindex.js): a row per markdown entry
+(not `index.md`, `log.md` or `systemprompt.md`), its blob hash, its frontmatter's `type`, `title`
+(else its first heading, else its file name), `description`, `tags` and `aliases`, and the first
+8 KB of its body. Every write updates the rows of the files it changed from the work tree it
+pushed; the cron reads the knowledge bases not read yet in full (`knowledge_bases.search_commit`
+NULL: never, or a write's update failed; a new knowledge base has nothing to read), 30 a run,
+the teams' first, reading only the blobs whose hash is not the row's. Each concept also has a
+vector in `CONTENT` (`type: kb`, the knowledge base's `team` or `org` slug, `repo`, `path`), the
+mean of the embeddings of its names, type, tags, description and body in up to four pieces,
+made by the cron, 100 a run, for the rows whose blob changed since (`embedded` NULL); the
+threads' queries ask only for `type` `message` and `thread`. A query is embedded once for the
+threads and the concepts. A concept matches by its words (every word of the query in its title,
+aliases, type, tags, description or body: 0.4, plus up to 0.8 for the words in its title or
+aliases and 0.3 for those in its tags, type or description) and by meaning (its vector, by the
+threads' thresholds: a similarity of 0.6 and within 0.12 of the best), the scores added; only
+what `kb_concepts` has counts, so a vector left behind by a deleted file finds nothing. The ten
+best come with their knowledge base, type, title, description and, where the words are in the
+body (or it has no description), the part of the body around them as markdown: whole lines from
+the first with a word (a long one from shortly before it, a code block from its fence), about
+280 characters, a heading as bold text and images by their text, which the inbox renders as it
+renders messages (its links as text: the entry is the link). The MCP server's
+`search_threads` returns them as `knowledge`, and `get_knowledge` reads one.
+
 The repositories are created through the Worker's Artifacts binding (one namespace per
 environment, `helix-opspile` and `helix-opspile-stage`) as soon as their org or team is
 known: when the normalizer discovers a channel, it makes sure the repositories for the
@@ -907,6 +937,11 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   take the list's place, best match first, each with the message that matched (its words
   marked); opening one scrolls the thread to that message. The filter cards count and filter
   the results, j and k step through them, and Esc or **Clear** brings the inbox back.
+  Above the threads, under **Knowledge base**, are the entries of the knowledge bases about the
+  query (`kb`, [src/kbsearch.js](../src/kbsearch.js), see "Search" under
+  [Knowledge bases](#3-knowledge-bases)), the first three and then **N more**, each a link to it in
+  the editor of its team's or customer's page, with the markdown around the words (else its
+  description) rendered by the messages' renderer, four lines at most; the filters are the threads' and leave them be.
 - A click on a facet value picks it; Shift-click, or the ≠ beside it, excludes it (negative
   filters, as in klickhaus): picked values of a card are OR'd, excluded ones AND'd, and the
   cards AND'd with each other. The URL keeps both, `f.<facet>=a|b` and `not.<facet>=c`; a
@@ -1024,7 +1059,11 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   the browser's), ⌃1…9 (Ctrl+Shift+1…9 off a Mac) picks a view, ↑ or ⌘↑ in an empty reply box
   edits your last message (without one, puts the last message in focus) and ⌘⇧\ reacts to the
   last one. On a message in focus ↑/↓ move, `e` edits it, `r` reacts, `m` (or the menu key, ⇧F10)
-  opens its menu and Esc goes back to the reply box. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
+  opens its menu and Esc goes back to the reply box. Esc in the reply box leaves it (what was typed
+  stays), and Space and ⇧Space page through the open thread wherever the focus is not on
+  something Space presses or types in, not the list the browser would scroll after a click on a
+  thread. Every Escape the page takes is kept from the browser, which would leave full screen on
+  a Mac. In the text boxes ⌘B, ⌘I, ⌘⇧X, ⌘⇧C, ⌘⌥⇧C, ⌘⇧U and
   ⌘⇧7/8/9 write (or take off) markdown, and a link pasted over words becomes theirs. The inbox's
   own keys stay: `/`, `j`/`k`, `e` (resolve), `a` (the Thread Agent).
 
@@ -1397,7 +1436,8 @@ twice its share of all the map's threads). The lift keeps what is
 - With them, per thread: the Adobe people who posted (staff, by `people.id`, with their
   messages), the customers', partners' and vendors' people who posted (`customers`: by
   `people.id` where they are a person of D1, else, as every customer's person in production, by
-  their platform account, `a:<author_key>`, named as `identities` has it; bots are nobody), who each
+  their platform account, `a:<author_key>`, named as `identities` has it, and not followed from
+  the page; bots are nobody), who each
   person is to group them by (`peopleOf`: Adobe's by the team they are on whose threads they
   posted in most, or none when they are on no team, the others by the customer of most of their threads), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
   and the **products**: the technologies Clef says the thread is about (`thread_tech.about`), or,
@@ -1469,7 +1509,11 @@ topics Clef rarely tags are what its topic questions miss.
 
 The Topics page also shows how much the channels talk about each part of the map week by week, as
 Google Trends shows a search term, and what is **trending**, **declining** or **peaked**. It is one
-page: the chart under the graph, and the panel beside both.
+page: the chart over the bottom of the map (the camera keeps the bubbles' middle above it), and
+the panel beside both. The bar's one search finds on the map as you type, and Enter puts what it
+names on the chart (a topic, an area or a product, words, or `~a phrase`, separated by commas);
+the bubble pointed at adds its line while pointed at, a pick or a bubble popped keeps its line
+there.
 
 - **One map.** The trends' topics are the topic map's. Because the map clusters every thread with
   three messages or more, of every month, an old topic is a topic too. The map keeps the space it
@@ -1485,8 +1529,8 @@ page: the chart under the graph, and the panel beside both.
   them in compact form (kept for five minutes per isolate). Each one has its channel, customer,
   team, platform, kind, topic, technologies, and messages by the week they were written. The page
   does the counting (`ui/trends.js`).
-- **A week counts channels:** of the channels with messages that week, the share that had a
-  matching thread with one, on a three-week mean. A chatty channel counts once, as a person
+- **A week counts channels:** of the active channels that week (those with a message in a
+  counted thread), the share that had a matching thread with one, on a three-week mean. A chatty channel counts once, as a person
   searching ten times counts once in Google Trends. The history import (more, shorter threads,
   never re-threaded) then counts the same as the live inbox. The map's team filter applies.
 - **The map's hierarchy.** The series are the graph's nodes, under the graph's ids: a topic
@@ -1495,9 +1539,10 @@ page: the chart under the graph, and the panel beside both.
   pick, the areas with their topics and the products with their features are **trees**. A group
   opens and folds there the way its bubble bursts and folds on the graph, and both use the same
   `open`. Each row has its sparkline, its badge (↑ trending, ↓ declining, peaked and when) and
-  its channels a week. Filtered to trending, declining or peaked, the trees become one list, the
-  strongest first. A click on a row picks the node, on the graph and on the chart, which shows the
-  pick and the terms compared.
+  its share of the active channels in the last six weeks. Filtered to trending, declining or peaked, the trees become one list, the
+  strongest first. A click on a row, or on a bubble, picks the node on the graph and adds its
+  line to the chart's (with none yet, to the most trending topics the chart starts with), where
+  it stays until × takes it off; Clear goes back to those.
 - **Terms**, separated by commas (`tq`), are anything the map has, by its name, or words and
   phrases (`GET /api/topics/trends/match`):
   - **Words** are whole words, in a title or a message preview (`LIKE`, then a word-boundary test).
@@ -1546,7 +1591,12 @@ iMessage. The platform takes a reply in about a second (`POST /api/post`); there
 progress to report, so the bar eases towards 90% and completes and fades once the post
 returns. The bubble then stays until the message comes back through ingestion (some ten
 seconds later: the Slack event, the normalize queue's batch, the live update), and the message
-takes its place unchanged. Replies to a thread go out one after the other, in the order they
+takes its place unchanged. On Teams it does not wait for Graph's change notification, which
+Graph may deliver minutes late or retry for long: the message Graph answered the post with is
+kept in pile 1 at once (`keepTeamsPost`, after the answer), under the key the notification's
+fetch of the same version will use, and normalized like any. Every post logs one line, how it
+ended (`route: 'post'`, `action: 'sent'`: who, where, its key, the status, the platform's id or
+error, the time it took; never the text: `logPost` in `src/postkeys.js`). Replies to a thread go out one after the other, in the order they
 were written. One that failed says why, with **Retry** and **Discard**; it stays until then.
 A page that lost the answer cannot know whether the post went out, and a platform would take the
 same post twice, so a reply carries a key, the same on every retry (`post_keys`, migration 0049,
@@ -1554,9 +1604,14 @@ same post twice, so a reply carries a key, the same on every retry (`post_keys`,
 it, without posting. One that finds the first try unfinished says the reply may have been sent,
 and offers **Send again**, under a new key, so that sending it twice is the person's decision. A
 reply the platform refused is not kept, so its Retry posts. The MCP tools send no key.
-Leaving the page while a reply is still on its way (a reload, closing the tab) asks first,
-with the browser's "Leave page?": the bubble lives in the page only, and the post may be cut
-off.
+A reply the platform took and named waits for its message, however long ingestion takes: after a
+minute it says "Sent, not back from Teams yet" (with Hide), and it goes once the message is in
+the thread, or after a day. Replies being sent are kept in localStorage until then
+(`saveSending`, per person): leaving the page (a reload, closing the tab, a crash) loses none. The
+next page shows each again, one that was still on its way as "Not sure it was sent", with Retry
+under the same key, which the Worker answers without posting again if the post went out. Files are
+not kept: one with files that did not go out says so and can only be discarded, and leaving the
+page while it is on its way asks first, with the browser's "Leave page?", as for a new thread.
 
 **Emoji names.** A `:name:` in a reply goes out as the platform knows it (`src/shortcodes.js`):
 Slack gets Slack's name, Teams and Discord the character. Another platform's name or spelling is
@@ -1749,7 +1804,7 @@ the dropdowns comes whom a thread agent suggests pulling in ("Agent suggests Len
 when one did; the expert finder's own ranking is not shown.
 
 **Expert finder.** Adobe colleagues worth pulling into a thread who are not in it yet, each
-with why: "knows about this topic", "typically responds in about 4 hours" (`GET /api/experts`,
+with why: "knows about this topic", "answers most mentions, in about 4 hours" (`GET /api/experts`,
 `src/experts.js`). The inbox does not show its ranking: line 2 of a thread's header named the
 top one ("Lena Berg knows about this topic"), with a ▾ list of up to eight, each with ✕ for "not
 the right person", and that was taken out, because its picks were mostly wrong and made the
@@ -1814,9 +1869,33 @@ without an account on the thread's platform, who could not be mentioned. Someone
 accounts there is listed once, by their account for the thread ("One account a person"), with
 the signals of all of them.
 
-A response time is the median between a mention and the person's next post in that thread (a
-re-threaded group as one), over the last 180 days, in calendar time, nights and weekends
-included. It is only said with at least three answered mentions, most of those made. "Not in this
+How someone answers comes from the **mention model** (`src/mention-model.js`): of every
+mention of the last year of someone not in the thread yet (a re-threaded group as one; only
+their first mention in it, and none once they posted there), the odds that they post in the
+thread within a week, and how long they take when they do. Both start from what the person's
+posts said at the moment of the mention, counted over the 90 days before it: how long since
+their last post anywhere, how many in the day, the week, the 90 days and the channel, whether
+they are of the thread's team, how many were mentioned with them, how many Adobe people were in
+the thread, and how busy that hour usually is for them. The odds are a logistic regression on
+those, then what the channel and the person add, each pulled towards nothing while its mentions
+are few. The time runs on the person's own clock (`src/response-model.js`: each UTC hour of the
+day, weekdays and weekends apart, counts for as much as they usually post in it, pooled with
+everyone's while they have few posts), so their hours stand for their timezone and a question
+asked as they log off has not waited all night; its log is a regression on how recently they
+posted, then what the channel and the person add, each counting for as much as its data can
+carry, and left out when its groups do not differ beyond chance. Asked about now, it runs the
+person's clock forward and says the minutes on the wall.
+
+The cron fits it once the newest is a day old (`src/mentionmodels.js`, `mention_models`, the
+newest three kept; about 90 ms and 250 KB of numbers by person and channel id), and the finder
+reads the newest once an hour per isolate. Only a person's numbers are read for a list: their
+posts as counts, the thread's Adobe people and its team. Before the first fit nothing is said.
+It is said with at least three mentions of the person in the model: "answers nearly all",
+"most", "about half of", "about a third of" or "few mentions", with the typical time unless
+it is few. `npm run response:backtest` says whether it beats the person's own share of answered
+mentions for the odds, and the response model, which the finder used before, for the time.
+(Gradient-boosted trees, a longer window, the customer, who mentioned them, and weighting a
+person's recent mentions more did no better.) "Not in this
 channel" is only said with a complete list of the channel's members, as for `find_member`: most
 channels have none, and then nothing is claimed. Such a person ranks lower, as their mention may not reach them; `GET
 /api/experts` lists the members in the background when that is a week old, as the mention
@@ -3321,8 +3400,8 @@ nothing before it knows that.
 
 **The wait model** (`src/wait-model.js`) estimates the customer's **wait**: from their first
 message since Adobe's last post to Adobe's next post in the conversation. That is not the time
-an expert takes to join (`src/response-model.js`, the same model, measures that one for the
-expert list): a customer does not care who answers. Two things say most about a wait:
+an expert takes to answer a mention (`src/mention-model.js` measures that one for the expert
+list, on the same clocks): a customer does not care who answers. Two things say most about a wait:
 
 - its **phase**, how the conversation stood when the customer wrote: `new` (Adobe has not
   written yet), `live` (Adobe wrote in the last 30 minutes), `day` (in the last day) or `old`.
