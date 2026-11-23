@@ -17,6 +17,7 @@ import { EMBEDDING_MODEL } from './rethread.js';
 import { authHeaders, gatewayBaseUrl, modelProblem } from './agent/model.js';
 import { threadVectorId } from './vectors.js';
 import { packVectors, saveAssignments, SAMPLE_VECTORS } from './trends.js';
+import { topicPlaces } from './topicspace.js';
 import {
   coveredBy, GENERIC, nameKey, productKey, techIndex,
 } from './products.js';
@@ -341,12 +342,24 @@ async function threadsOf(env) {
     FROM threads t LEFT JOIN labels l ON l.thread = t.thread WHERE ${WHERE}`)
     .bind(MIN_MESSAGES).all();
   // Everyone who posted: Adobe's people (`staff`) and the customers', partners' and vendors'.
-  const { results: posts } = await env.DB.prepare(`SELECT m.thread, m.person, p.name,
+  // A person of D1 by their id; anyone else (the customers' people are no person of D1: their
+  // messages have no `person`) by their platform account, `a:<author_key>`, named as it is.
+  const { results: posts } = await env.DB.prepare(`SELECT m.thread,
+      COALESCE(CAST(m.person AS TEXT), 'a:' || m.author_key) AS person, p.name,
       MAX(m.staff) AS staff, COUNT(*) AS n
     FROM messages m JOIN threads t ON t.thread = m.thread LEFT JOIN labels l ON l.thread = t.thread
-    JOIN people p ON p.id = m.person
+    LEFT JOIN people p ON p.id = m.person
     WHERE ${WHERE} AND m.counted = 1 AND m.deleted = 0
-    GROUP BY m.thread, m.person`).bind(MIN_MESSAGES).all();
+      AND (m.person IS NOT NULL OR (m.author_kind = 'person' AND m.author_key IS NOT NULL))
+    GROUP BY m.thread, 2`).bind(MIN_MESSAGES).all();
+  const { results: accounts } = await env.DB.prepare(`SELECT source || ':' || tenant || ':' ||
+      user_id AS author, name FROM identities WHERE kind = 'person' AND person IS NULL`).all();
+  const named = new Map((accounts || []).map((a) => [`a:${a.author}`, a.name]));
+  for (const p of posts || []) {
+    if (!p.name && named.get(p.person)) {
+      p.name = named.get(p.person);
+    }
+  }
   // The teams Adobe's people are on, to group them by.
   const { results: memberships } = await env.DB.prepare(`SELECT person, team FROM team_members
     ORDER BY person, team`).all();
@@ -638,15 +651,16 @@ const round = (x, digits = 3) => Math.round(x * 10 ** digits) / 10 ** digits;
  * Builds a topic map of the channel threads and keeps it (`topic_maps`): `{ id, built_at,
  * threads, k, map }`, or `{ error }` when there is nothing to build it from. The map:
  *
- * - `topics`: `{ id, label, theme, size, cohesion }`, the biggest first (`cohesion`: the mean
- *   cosine of its threads to its centre, in the centred space).
+ * - `topics`: `{ id, label, theme, size, cohesion, at }`, the biggest first (`cohesion`: the mean
+ *   cosine of its threads to its centre, in the centred space; `at` its place on the page,
+ *   `[x, y, z]`, src/topicspace.js).
  * - `threads`: `{ key, title, team, org, at, last, messages, kind, tags, topic, sim, staff }`, by
  *   topic, the most typical first; `tags` are Clef's topics (labels.topics), `staff` the Adobe
  *   people who posted, by id, with their messages.
- * - `people` (id → name, Adobe staff only), `orgs` (slug → `{ name, type }`), `tags` (Clef's
- *   topic ids → the names the inbox shows), `products` (id → `{ name, tech, product }`: the
- *   technologies Clef says the threads are about, `tech` the entry, `product` the product that
- *   entry is part of; a thread's `products` are their ids).
+ * - `people` (id → name: a person of D1 by their id, anyone else as `a:<author_key>`), `orgs`
+ *   (slug → `{ name, type }`), `tags` (Clef's topic ids → the names the inbox shows), `products`
+ *   (id → `{ name, tech, product }`: the technologies Clef says the threads are about, `tech`
+ *   the entry, `product` the product that entry is part of; a thread's `products` are their ids).
  */
 export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed = 1 } = {}) {
   if (!env.CONTENT || !env.AI) {
@@ -731,7 +745,7 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
   for (const p of posts) {
     const into = p.staff ? staff : others;
     into.set(p.thread, { ...into.get(p.thread), [p.person]: p.n });
-    people[p.person] = p.name || `#${p.person}`;
+    people[p.person] = p.name || (String(p.person).startsWith('a:') ? 'Someone' : `#${p.person}`);
   }
   // Who each person is, to group them by: Adobe's by the team they are on whose threads they
   // posted in most (else their first; none when they are on no team: the channels they post in
@@ -762,6 +776,16 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
       ? { staff: true, team: teams.length ? best('team:', teams) || teams[0] : null }
       : { staff: false, org: best('org:') };
   }
+  // Each topic's place on the page (src/topicspace.js): from what its threads say once their
+  // people's, products' and customer's parts are taken out.
+  const topicOf = new Array(rows.length).fill(null);
+  clusters.forEach((m, topic) => m.forEach((i) => topicOf.splice(i, 1, topic)));
+  const places = topicPlaces(X, topicOf, {
+    people: rows.map((t) => Object.keys({ ...staff.get(t.thread), ...others.get(t.thread) })),
+    products: rows.map((t) => products.of.get(t.thread) || []),
+    orgs: rows.map((t) => (t.org ? [t.org] : [])),
+  });
+  topics.forEach((t, i) => Object.assign(t, { at: places[i] }));
   // The space the topics were found in, for the threads the map does not have (src/trends.js):
   // the mean (as `centered` took it away), each topic's centre, and a sample of raw vectors.
   const mean = new Float32Array(raw[0].length);
@@ -822,10 +846,8 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
       packVectors([mean, ...centres, ...sample]),
     ).first();
   // Its threads' topics are its own; the others' the cron finds (src/trends.js assignPending).
-  const topicOf = new Map();
-  clusters.forEach((m, topic) => m.forEach((i) => topicOf.set(i, topic)));
   await saveAssignments(env, built.id, rows.map((t, i) => ({
-    thread: t.thread, embedded: t.embedded, topic: topicOf.get(i) ?? null, sim: sims[i],
+    thread: t.thread, embedded: t.embedded, topic: topicOf[i], sim: sims[i],
   })));
   await env.DB.prepare(`DELETE FROM topic_maps WHERE id NOT IN
     (SELECT id FROM topic_maps ORDER BY built_at DESC, id DESC LIMIT ?)`).bind(KEEP).run();
