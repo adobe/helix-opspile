@@ -31,7 +31,9 @@ import {
 } from './extract.js';
 import { inTeam, isAdmin, managesTeam } from './review.js';
 import { resolveConflict, techConflicts } from './techconflicts.js';
-import { mayWork, memberOf, teamless } from './shares.js';
+import {
+  mayPost, mayReply, mayWork, memberOf, teamless,
+} from './shares.js';
 import { LAYERS } from './stack.js';
 
 /**
@@ -188,7 +190,7 @@ const checkFacets = (f, prefix = '') => Object.keys(FACET_VALUES)
  */
 function inboxesOf(me, args) {
   if (teamless(me)) {
-    return args.team ? { error: 'You are on no ops team: leave out `team` for the threads of the channels you posted or were mentioned in.' }
+    return args.team ? { error: 'You are on no ops team: leave out `team` for your personal view: the channels you posted or were mentioned in, and what you follow.' }
       : { teams: [null] };
   }
   const teams = args.team ? [String(args.team)] : me.teams.map((t) => t.slug);
@@ -539,7 +541,7 @@ async function postAsUser(env, me, args) {
     return m;
   }
   const body = { thread: w.key, text: w.text, mentions: m.mentions };
-  const res = await fromResponse(await post(env, me, body, mayWork(env, me)));
+  const res = await fromResponse(await post(env, me, body, mayReply(env, me)));
   if (res.error) {
     return res;
   }
@@ -566,7 +568,7 @@ async function postAsBot(env, me, args) {
     return m;
   }
   const request = { thread: w.key, text: w.text, mentions: m.mentions };
-  const res = await fromResponse(await postApp(env, me, request, mayWork(env, me)));
+  const res = await fromResponse(await postApp(env, me, request, mayPost(env, me)));
   if (res.error) {
     return res;
   }

@@ -25,21 +25,31 @@ import { MAX_TECH_ID } from './techid.js';
 export const MAX_FOLLOWS = 50;
 
 /**
- * SQL: the rows of `person_follows` that count. A person's follows open threads in any team's
- * channels to them, as a team's shares do, so they count only while the person is on an ops team:
- * someone who signed in from SIGNIN_DOMAINS and is on none (src/shares.js `teamless`) cannot
- * follow, and someone who leaves every team stops seeing what they followed, without their rows
- * being deleted.
+ * SQL: the rows of `person_follows` that count: all of them. Anyone who may sign in follows, on
+ * an ops team or not (someone who signed in from SIGNIN_DOMAINS), and the threads that show what
+ * they follow are in their personal view, to work as the channels' own. What a follow opens is
+ * only ever asked for someone signed in (their inbox, their thread, their socket), who may sign in
+ * by then; `entryFollowers`, which counts others, leaves out those who may not any more.
  */
-const COUNTED_PERSON_FOLLOWS = `SELECT person, tech FROM person_follows f
-  WHERE EXISTS (SELECT 1 FROM team_members m WHERE m.person = f.person)`;
+const COUNTED_PERSON_FOLLOWS = 'SELECT person, tech FROM person_follows';
 
 /**
  * SQL: the rows of `person_follows_by` that count (customers, people and areas), as
  * COUNTED_PERSON_FOLLOWS does for technologies.
  */
-const COUNTED_FOLLOWS_BY = `SELECT person, kind, target FROM person_follows_by f
-  WHERE EXISTS (SELECT 1 FROM team_members m WHERE m.person = f.person)`;
+const COUNTED_FOLLOWS_BY = 'SELECT person, kind, target FROM person_follows_by';
+
+/** SIGNIN_DOMAINS, as src/lookup.js `domainList` reads it. */
+const signInDomains = (env) => String(env.SIGNIN_DOMAINS || '').toLowerCase().split(',')
+  .map((d) => d.trim())
+  .filter(Boolean);
+
+/**
+ * SQL, `?2` the mail domains of SIGNIN_DOMAINS (a JSON list): person `p` may sign in, on an ops
+ * team or from one of those domains (src/api.js `admitted`).
+ */
+const ADMITTED = `(EXISTS (SELECT 1 FROM team_members m WHERE m.person = p.id)
+    OR lower(substr(p.email, instr(p.email, '@') + 1)) IN (SELECT value FROM json_each(?2)))`;
 
 /** What a person follows besides technologies. */
 export const FOLLOW_KINDS = ['org', 'person', 'area'];
@@ -135,14 +145,19 @@ export async function entryFollows(env, thread) {
   return results || [];
 }
 
-/** The people who follow a technology inbox entry `thread` shows, as it counts: their ids. */
+/**
+ * The people who follow a technology inbox entry `thread` shows, and may sign in (on an ops team,
+ * or from SIGNIN_DOMAINS): their ids.
+ */
 export async function entryFollowers(env, thread) {
   if (!env.DB || !thread) {
     return [];
   }
   const { results } = await env.DB.prepare(`${ENTRY_TECH}
       JOIN (SELECT person AS who, tech FROM (${COUNTED_PERSON_FOLLOWS})) f ON f.tech = g.tech
-    WHERE x.kind = 'channel' ORDER BY f.who`).bind(String(thread)).all();
+      JOIN people p ON p.id = f.who
+    WHERE x.kind = 'channel' AND ${ADMITTED} ORDER BY f.who`)
+    .bind(String(thread), JSON.stringify(signInDomains(env))).all();
   return (results || []).map((r) => r.who);
 }
 
@@ -284,7 +299,7 @@ async function knownTarget(env, kind, target) {
 
 /**
  * Person `person` follows `target` of `kind` (a customer's slug, a person's id, an area's id), or
- * (`follow` false) no more. As setPersonFollow: only someone on an ops team follows; anyone stops.
+ * (`follow` false) no more. As setPersonFollow: anyone signed in follows, on a team or not.
  */
 export async function setPersonFollowBy(env, {
   person, kind, target, follow,
@@ -296,11 +311,6 @@ export async function setPersonFollowBy(env, {
     const { meta } = await env.DB.prepare(`DELETE FROM person_follows_by
       WHERE person = ? AND kind = ? AND target = ?`).bind(person, kind, targetOf(kind, target) ?? '').run();
     return { ok: true, changed: Boolean(meta.changes) };
-  }
-  const member = await env.DB.prepare('SELECT 1 FROM team_members WHERE person = ? LIMIT 1')
-    .bind(person).first();
-  if (!member) {
-    return { error: 'only members of an ops team follow', status: 403 };
   }
   const id = await knownTarget(env, kind, target);
   if (!id) {
@@ -407,17 +417,10 @@ export async function setTeamFollow(env, {
 }
 
 /**
- * Person `person` follows `tech`, or (`follow` false) no more. As `setTeamFollow`; only someone
- * on an ops team follows (see COUNTED_PERSON_FOLLOWS), and anyone may stop.
+ * Person `person` follows `tech`, or (`follow` false) no more. As `setTeamFollow`; anyone signed
+ * in follows, on an ops team or not (see COUNTED_PERSON_FOLLOWS).
  */
 export async function setPersonFollow(env, { person, tech, follow }) {
-  if (follow) {
-    const member = await env.DB.prepare('SELECT 1 FROM team_members WHERE person = ? LIMIT 1')
-      .bind(person).first();
-    if (!member) {
-      return { error: 'only members of an ops team follow technologies', status: 403 };
-    }
-  }
   if (!follow) {
     const { meta } = await env.DB.prepare('DELETE FROM person_follows WHERE person = ? AND tech = ?')
       .bind(person, String(tech || '')).run();

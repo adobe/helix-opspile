@@ -372,8 +372,8 @@ dialog.confirm .send { border-radius: var(--spectrum-corner-radius-100); padding
    scrolling under its title where they do not. */
 dialog.keysheet { width: min(calc(var(--spectrum-spacing-100) * 110), 94vw); max-height: 86vh; padding: 0; overflow: hidden; }
 dialog.keysheet form { display: flex; flex-direction: column; max-height: 86vh; }
-dialog:is(.keysheet, .notifyhelp) .top { display: flex; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); }
-dialog:is(.keysheet, .notifyhelp) .close { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
+dialog:is(.keysheet, .notifyhelp, .followsheet) .top { display: flex; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); }
+dialog:is(.keysheet, .notifyhelp, .followsheet) .close { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
 dialog.keysheet .groups { overflow: auto; columns: 2 calc(var(--spectrum-spacing-100) * 40); }
 dialog.keysheet section { break-inside: avoid; }
 dialog.keysheet .keys { display: grid; grid-template-columns: 1fr auto; margin: 0; }
@@ -384,6 +384,18 @@ dialog.notifyhelp { width: min(calc(var(--spectrum-spacing-100) * 70), 94vw); ma
 dialog.notifyhelp form { display: flex; flex-direction: column; max-height: 88vh; }
 dialog.notifyhelp .nh-body { overflow: auto; }
 dialog.notifyhelp .apply { flex-wrap: wrap; }
+/* What to follow (ui/followsuggest.js): in your menu's dialog, and in an empty personal view. */
+dialog.followsheet { width: min(calc(var(--spectrum-spacing-100) * 70), 94vw); max-height: 86vh; padding: 0; overflow: hidden; }
+dialog.followsheet form { display: flex; flex-direction: column; max-height: 86vh; }
+dialog.followsheet .fs-body { overflow: auto; }
+.getstarted { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); max-width: calc(var(--spectrum-spacing-100) * 75); margin: 0 auto; }
+.getstarted .gs-done { align-self: flex-start; }
+.fs { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); }
+.fs-list { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); }
+.fs-kind ul { margin: 0; padding: 0; list-style: none; }
+.fs-row { display: flex; align-items: center; gap: var(--spectrum-spacing-200); }
+.fs-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.fs-follow { flex: none; }
 .nh-steps { margin: 0; padding-left: var(--spectrum-spacing-400); }
 .nh-fig { margin: var(--spectrum-spacing-200) 0px var(--spectrum-spacing-300); }
 .nh-pic { display: block; width: 100%; height: auto; }
@@ -2841,6 +2853,40 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum dialog.notifyhelp h3 { margin: var(--spectrum-spacing-300) 0px var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum dialog.notifyhelp a { color: var(--link); }
 .spectrum dialog.notifyhelp .apply { margin-top: var(--spectrum-spacing-300); }
+.spectrum dialog.followsheet { color: var(--ink); background: var(--spectrum-background-layer-2-color); border: 0; border-radius: var(--spectrum-corner-radius-extra-large-default); box-shadow: var(--s2-elevated); }
+.spectrum dialog.followsheet::backdrop { background: var(--spectrum-overlay-color); }
+.spectrum dialog.followsheet .top { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-400) var(--spectrum-spacing-200); }
+.spectrum dialog.followsheet h2 { margin: 0; font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum dialog.followsheet .close { width: var(--spectrum-spacing-600); height: var(--spectrum-spacing-600); border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
+.spectrum dialog.followsheet .close:hover { background: var(--spectrum-gray-200); }
+.spectrum dialog.followsheet .fs-body { padding: 0 var(--spectrum-spacing-400) var(--spectrum-spacing-400); }
+.spectrum .getstarted { padding: var(--spectrum-spacing-500) var(--spectrum-spacing-400); }
+.spectrum .getstarted h2 { margin: 0; font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .getstarted > p, .spectrum .fs-lead { margin: 0; font-size: var(--spectrum-font-size-100); line-height: var(--spectrum-line-height-200); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fs-kind h3 { margin: 0 0 var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fs-row { min-height: var(--s2-ctl); padding: var(--spectrum-spacing-75) 0; border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .fs-row:last-child { border-bottom: 0; }
+.spectrum .fs-nm { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .fs-of, .spectrum .fs-why { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fs-note { margin: 0; font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fs-follow {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  background: transparent;
+  font: inherit;
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-content-color-default);
+  cursor: pointer;
+  transition: background-color var(--s2-ease), color var(--s2-ease);
+}
+.spectrum .fs-follow:hover { background: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .fs-follow:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .fs-follow[aria-pressed="true"] { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); border-color: transparent; }
+.spectrum .fs-follow[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
+.spectrum .fs-follow:disabled { cursor: progress; }
 .spectrum .nh-note, .spectrum .nh-fig figcaption { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .nh-fig figcaption { margin-top: var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); }
 .spectrum .nh-pic text { fill: var(--spectrum-neutral-content-color-default); }
