@@ -75,6 +75,7 @@ import {
   AGENT_ANSWERS, agentLabelsFor, clearAgentLabel, holds, labelThreadOf, setAgentLabels, URGENCY,
 } from '../agentlabels.js';
 import { notifyRoom } from '../notify.js';
+import { addSidebarFollowup } from '../sidebar.js';
 import { teamsOf } from '../shares.js';
 import { queueExport } from '../clickhouse.js';
 
@@ -232,6 +233,7 @@ What you do:
 - Keep the customer's stack drawing current (draw_stack, \`stack.md\` in kb-org): it is the architecture of the customer's site the team opens from the inbox to see at a glance how it is put together, from the CDN in front to what serves the pages, where authors write, the code, and the systems behind it, and what flows between them, drawn as an FMC block diagram (people at the top, then the layers; the agents that do something, the storages that keep it, requests and reads). Its parts and what Clef saw in this channel are under stack-drawing below. Check it every turn against what the thread says: when it has none and you know at least what serves their pages, draw it; when the thread or the knowledge base shows a part, a flow or a change it lacks or has wrong (a new CDN, a migration done, a system retired, an integration added), draw it again in the same turn, from its current version; leave it alone when nothing about the stack changed. Draw only what someone said or showed, never what is usual. It is the one drawing of the customer's stack: the setup of one platform goes into tech-stack/, and the part's Note may link to it.
 - Look things up: the knowledge bases first (the other teams' too, when the thread touches their work), then the earlier conversations of your channel (list_channel_threads, and read_thread with a \`thread\` key or a link someone pasted), then the listed GitHub repositories (git_ls, git_grep, git_read). You can read only the threads of your own channel. Files people attached are listed under "Attachments:" in their messages; read them with read_file before you answer about them.
 - Know who is in. find_member says whether someone is a member of your channel (on Microsoft Teams, of its Teams team); never guess. When a message mentions someone who is not, you are told so below it: say so in your note, with who it is, so that a person can add them. They may not see the thread until then.
+- Close what you were asked in the sidebar. Your note reaches nobody who asked you there: when a later turn settles what someone asked in the sidebar (the request they waited on went through, a colleague answered it, or what you told them turned out wrong or out of date), tell them with sidebar_followup, once, briefly. Not for news that changes nothing for them.
 - End every turn with a short note for the team, 1 to 3 sentences of plain Markdown, no greeting: what you found, and what you changed (the draft, the knowledge bases), or that nothing needed changing. The team sees it under the thread; the customer never does.
 - Languages: only the draft is in the customer's language. Write your note to the team in English, whatever language the thread is in, even when your earlier notes in this conversation were not. Answer a sidebar message in the language it was written in.
 - When a lookup takes many calls or a lot of filtering, write a codemode script: it calls your tools as \`await tools.<name>(args)\`, and only what it outputs reaches you. MCP servers, if your team or customer has any, are listed under mcp-servers and are reachable only from scripts.
@@ -939,6 +941,30 @@ export function opspileExtension(ctx) {
           }
           const lines = res.matches.map((m) => `- ${m.name}${m.email ? ` <${m.email}>` : ''}`);
           return text(`Members of this ${res.place} that match (${listed}):\n${lines.join('\n')}`);
+        },
+      }),
+      defineTool({
+        name: 'sidebar_followup',
+        description: 'Tell the person who asked you something in the sidebar what has happened since you answered them, in a later turn (one on the thread\'s messages): the inbox shows it to them in the sidebar, under their question, as a new answer. Your note does not reach them. Nothing is posted to the channel. Up to 3 times a sidebar message, for a week.',
+        parameters: Type.Object({
+          message: Type.String({ description: 'The sidebar message you answered, by its id as its input named it (sb_…)' }),
+          text: Type.String({ description: 'What to tell them, in Markdown, in the language they wrote in: what changed, and what it means for them' }),
+        }),
+        executionMode: 'sequential',
+        async execute(args) {
+          if (await inSidebar(ctx)) {
+            return fail('Not while you answer a sidebar message: your answer at the end of this turn is what they see. Nothing was written.');
+          }
+          const t = await ctx.target();
+          const res = await addSidebarFollowup(env, t.key, { to: args.message, text: args.text });
+          if (res.error) {
+            return fail(`Nothing was written: ${res.error}.`);
+          }
+          const entry = await entryOf(env, t.key).catch(() => null);
+          if (entry) {
+            await notifyRoom(env, entry.teams, { type: 'sidebar', thread: entry.key });
+          }
+          return text(`Written to ${res.to} in the sidebar (${res.message.id}). Mention it in your note.`);
         },
       }),
       defineTool({

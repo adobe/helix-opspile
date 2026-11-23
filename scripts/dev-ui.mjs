@@ -585,6 +585,22 @@ function invitedFor(entry, mentions) {
   };
 }
 
+/**
+ * As src/post.js `mentionedOutside` answers a Teams post: the people it mentions who are not in
+ * the Teams team, where its members are listed (`CHANNELS[…].members`).
+ */
+function outsideFor(entry, mentions) {
+  if (!entry || entry.row.source !== 'teams' || !entry.ch.members) {
+    return {};
+  }
+  const inChannel = channelMember(entry);
+  const ids = new Set((mentions || []).map((m) => String(m.id || m)));
+  const outside = [...store.people.values(), ...store.members]
+    .filter((p) => ids.has(`teams-${p.key}`) && !inChannel(p))
+    .map((p) => ({ name: p.name, ...(p.email ? { email: p.email } : {}) }));
+  return outside.length ? { outside } : {};
+}
+
 function myChannels() {
   const { name } = store.people.get(ME);
   const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
@@ -1741,6 +1757,7 @@ async function api(req, res, url) {
         aliases: [p.login, String(p.email || '').split('@')[0]].filter(Boolean),
         here: here.has(p.name),
         member: inChannel(p),
+        outside: entry.row.source === 'teams' && Boolean(entry.ch.members) && !inChannel(p),
         staff: p.staff,
         affinity: p.staff ? affinity.get(p.name) || 0 : 0,
       })),
@@ -2125,6 +2142,7 @@ async function api(req, res, url) {
       id,
       text: sent,
       ...invitedFor(entry, mentions),
+      ...outsideFor(entry, mentions),
       ...(agentDraft ? postingOfferFor(entry) : {}),
     });
   }

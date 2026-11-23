@@ -28,7 +28,7 @@ import { mentionCandidates } from './profiles.js';
 import {
   inPersonalView, personalChannels, sharesByChannel, teamsOf,
 } from './shares.js';
-import { refreshMembers } from './suggest.js';
+import { MAX_MEMBERS_LISTED, refreshMembers } from './suggest.js';
 import { MESSAGE_ID } from './portal/ids.js';
 import {
   portalAuthor, portalBound, portalCall, portalUpload,
@@ -825,6 +825,70 @@ async function inChannelOf(env, t, ids) {
 }
 
 /**
+ * Whether the members of a Teams thread's team are listed in full, so that someone not among
+ * them (`CHANNEL_PEOPLE`) is known to be out of it: a list that came back, of a team that is no
+ * shared channel's (whose people come from other teams too) and not cut at `MAX_MEMBERS_LISTED`.
+ * Teams completes an @mention from the whole tenant, so a name that fills in says nothing of it.
+ */
+async function teamListed(env, t) {
+  if (t.source !== 'teams') {
+    return false;
+  }
+  const r = await env.DB.prepare(`SELECT c.members_at, c.members_error, c.shared,
+      (SELECT COUNT(*) FROM channel_members m WHERE m.source = c.source AND m.tenant = c.tenant
+        AND m.channel_id = c.channel_id) AS listed
+    FROM channels c WHERE c.source = 'teams' AND c.tenant = ? AND c.channel_id = ?`)
+    .bind(t.tenant, t.channel_id).first();
+  return Boolean(r && r.members_at && !r.members_error && !r.shared
+    && r.listed > 0 && r.listed < MAX_MEMBERS_LISTED);
+}
+
+/**
+ * Of the people `mentions` (from `knownMentions`) of a Teams post, those not in the thread's
+ * Teams team, as `{ name, email? }`: they get no notice of the mention and may not see the
+ * thread until someone adds them (admin-bot). A list that says someone is out is listed again
+ * first when it is over `MEMBERS_MISS_AGE_MS` old, so someone just added is not called out.
+ * Empty where nobody can tell, and whatever fails: the post went out.
+ */
+export async function mentionedOutside(env, t, mentions, learn = {}) {
+  const people = (mentions || []).filter((m) => m.kind === 'person');
+  if (t.source !== 'teams' || !people.length) {
+    return [];
+  }
+  try {
+    const out = async () => {
+      if (!await teamListed(env, t)) {
+        return [];
+      }
+      const inside = await inChannelOf(env, t, people.map((p) => p.id));
+      return people.filter((p) => !inside.has(p.id));
+    };
+    let outside = await out();
+    if (outside.length) {
+      const learned = await learnMembers(env, t, { ...learn, maxAge: MEMBERS_MISS_AGE_MS });
+      if (learned.members !== undefined) {
+        outside = await out();
+      }
+    }
+    if (!outside.length) {
+      return [];
+    }
+    const { results } = await env.DB.prepare(`SELECT i.user_id AS id,
+        COALESCE(i.email, p.email) AS email
+      FROM identities i LEFT JOIN people p ON p.id = i.person
+      WHERE i.source = ? AND i.tenant = ? AND i.user_id IN (SELECT value FROM json_each(?))`)
+      .bind(t.source, t.tenant, JSON.stringify(outside.map((p) => p.id))).all();
+    const mail = new Map((results || []).map((r) => [r.id, r.email]));
+    return outside.map((p) => ({
+      name: p.name, ...(mail.get(p.id) ? { email: mail.get(p.id) } : {}),
+    }));
+  } catch (e) {
+    console.warn(JSON.stringify({ route: 'post', action: 'outside', error: e.message }));
+    return [];
+  }
+}
+
+/**
  * Accounts by the names an earlier version of a message mentioned them by (`@Name` in its
  * markdown), so that editing it keeps them mentioned: a name that stands for exactly one
  * account of the thread's workspace or tenant (or one bot of its Teams team), else none.
@@ -912,6 +976,7 @@ const poolAccount = (r) => ({
   ...(r.staff ? { staff: true } : {}),
   ...(r.here ? { here: true } : {}),
   ...(r.member ? { member: true } : {}),
+  ...(r.outside ? { outside: true } : {}),
   ...(r.affinity > 0 ? { affinity: r.affinity } : {}),
 });
 
@@ -926,7 +991,9 @@ const poolAccount = (r) => ({
  * else; within each, by that affinity, then by how well `q` matches (src/mention-match.js: the
  * start of any word of the name, the Slack login or display name, or the mail address, in any
  * case), staff first, by name. On Teams, the bots seen in the thread's Teams team are offered
- * as well.
+ * as well, and a person is `outside` when the team's members are listed in full and they are not
+ * among them (Teams completes a mention from the whole tenant, so the name filling in there says
+ * nothing of whether the mention reaches them).
  *
  * With `pool`, the answer has everything these suggestions are picked from as well (`pool`:
  * `{ accounts, bots }`, src/mention-match.js `suggestMentions`), so the page suggests from it
@@ -967,6 +1034,7 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
     env.DB.prepare(CHANNEL_PEOPLE).bind(...placeArgs(t)).all(),
     me && key ? threadExperts(env, key, { me: me.id }) : null,
     keptAccounts(env, t),
+    teamListed(env, t),
   ]);
   // Awaited below once the viewer may see it; not an unhandled rejection before that.
   found.catch(() => {});
@@ -980,7 +1048,7 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
   }
   const [
     { results: botRows }, { results: accounts }, { results: posters }, { results: members },
-    experts, reached,
+    experts, reached, listed,
   ] = await found;
   const prefix = `${t.source}:${t.tenant}:`;
   const here = new Set((posters || []).map((r) => String(r.author_key || ''))
@@ -1012,6 +1080,8 @@ export async function mentionable(env, key, q, inTeam, opts = {}) {
         staff: list.some((a) => a.staff),
         here: list.some((a) => here.has(a.id)),
         member: list.some((a) => inChannel.has(a.id)),
+        // On Teams, known not to be in its team: a mention would not reach them.
+        outside: listed && !list.some((a) => inChannel.has(a.id)),
         affinity: affinity(r, list),
       });
     }),
@@ -1081,7 +1151,9 @@ export async function keepTeamsPost(env, t, message) {
  * first (src/invite.js): `invited` in the answer, and `uninvited` whom Slack would not add.
  * When Slack refuses the post because the person is not in the channel, the opspile app adds
  * them and it goes again, once: `joined` in the answer (`joinedWorkspace` when they were added
- * to the channel's workspace too).
+ * to the channel's workspace too). On Teams, `outside` names the people mentioned who are not
+ * in its Teams team (`mentionedOutside`), with their mail address where known, for an
+ * `@admin-bot add`: the mention does not reach them.
  * Emoji `:names:` go as the platform knows them (src/shortcodes.js); `text` in the answer is
  * the reply as sent. Files go with the text, in the same message. The reply then
  * arrives like any other message, through the platform's events; on Teams it is also kept as
@@ -1093,7 +1165,9 @@ export async function keepTeamsPost(env, t, message) {
  * With `channel` and `root`, the id the platform gave such a message, it is a reply in that
  * thread, which the inbox may not have yet: it comes back through the platform's events.
  */
-export async function post(env, me, request, inTeam, files = [], { waitUntil = null } = {}) {
+export async function post(env, me, request, inTeam, files = [], {
+  waitUntil = null, learn = {},
+} = {}) {
   const {
     thread: key, channel, text, mentions: ids, root,
   } = request || {};
@@ -1279,8 +1353,15 @@ export async function post(env, me, request, inTeam, files = [], { waitUntil = n
   } else {
     await keeping;
   }
+  // Whom the mentions do not reach: Teams completes them from the whole tenant.
+  const outside = await mentionedOutside(env, t, mentions, learn);
   return json({
-    ok: true, platform: 'teams', id: data.id, text: sent, ...started(data.id),
+    ok: true,
+    platform: 'teams',
+    id: data.id,
+    text: sent,
+    ...started(data.id),
+    ...(outside.length ? { outside } : {}),
   });
 }
 

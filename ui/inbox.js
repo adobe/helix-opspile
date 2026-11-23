@@ -3409,6 +3409,14 @@ function sidePeople(run) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/** "you", "Lena Berg": whom the agent's messages `run` answer, by the sidebar's earlier messages. */
+function sideTo(key, run) {
+  const ids = [...new Set(run.map((m) => m.to))];
+  const names = ids.map((id) => (id === state.me?.id ? 'you'
+    : sideList(key).find((m) => m.role === 'person' && m.by?.id === id)?.by?.name || 'someone'));
+  return names.join(' and ');
+}
+
 /** One message of a sidebar conversation: yours and colleagues' on the right, the agent's left. */
 function sideMessage(key, m) {
   if (m.role === 'agent') {
@@ -3538,8 +3546,11 @@ function sideGroup(key, run, { last, trailing }) {
   const who = sidePeople(run);
   const people = [...new Map(run.filter((m) => m.role === 'person').map((m) => [m.by?.name, m.by])).values()].slice(0, 2);
   const faces = `${people.map((p) => avatar(p?.name || '?', faceOf(p?.name))).join('')}${avatar(AGENT_NAME, '/icon-192.png')}`;
-  const what = working ? `${esc(who)} ${who === 'You' ? 'are' : 'is'} in a sidebar conversation with <b>${AGENT_NAME}</b>`
+  // Only the agent's follow-ups (src/sidebar.js addSidebarFollowup), after the thread moved on.
+  const followup = !working && run.every((m) => m.role === 'agent');
+  let what = working ? `${esc(who)} ${who === 'You' ? 'are' : 'is'} in a sidebar conversation with <b>${AGENT_NAME}</b>`
     : `${esc(who)} had a sidebar conversation with <b>${AGENT_NAME}</b>`;
+  if (followup) what = `<b>${AGENT_NAME}</b> followed up with ${esc(sideTo(key, run))} in the sidebar`;
   const meta = `${n} ${n === 1 ? 'message' : 'messages'} · ${clock(run.at(-1).at)} · not posted`;
   // Folded, with an answer to you in it that you have not seen: the list's purple badge here too.
   const fresh = open || paneled ? 0 : run.filter(unseenByMe).length;
@@ -7407,7 +7418,7 @@ function renderMentions(key) {
   if (!mention.list.length) { closeMentions(); return; }
   ul.setAttribute('aria-label', mention.kind === 'emoji' ? 'Emoji' : 'People to mention');
   ul.innerHTML = mention.list.map((p, i) => `<li role="option" id="mention-${i}" class="${i === mention.i ? 'on' : ''}" aria-selected="${i === mention.i}" data-i="${i}">
-    ${p.emoji ? emojiOption(p) : `${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.member ? '<span class="hint">in channel</span>' : p.expert ? '<span class="hint" title="Has written about what this thread is about">Adobe · related</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}`}</li>`).join('');
+    ${p.emoji ? emojiOption(p) : `${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.member ? '<span class="hint">in channel</span>' : p.outside ? '<span class="hint" title="Not a member of this Teams team: the mention will not reach them until someone adds them">not in team</span>' : p.expert ? '<span class="hint" title="Has written about what this thread is about">Adobe · related</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}`}</li>`).join('');
   ul.hidden = false;
   box.setAttribute('aria-expanded', 'true');
   box.setAttribute('aria-activedescendant', `mention-${mention.i}`);
@@ -7517,11 +7528,27 @@ function invitedSaying(data) {
     added.length ? `Added ${names(added)} to the channel, so they see the mention.` : '',
     joined.length ? `Added ${names(joined)} to the Slack workspace and the channel, so they see the mention.` : '',
     ...refused,
+    outsideSaying(data?.outside),
   ].filter(Boolean).join(' ');
 }
 
+/**
+ * What a Teams post's answer says about the people it mentioned who are not in the Teams team
+ * (`outside`, src/post.js `mentionedOutside`), with what to ask admin-bot, or ''.
+ */
+function outsideSaying(outside) {
+  if (!outside?.length) return '';
+  const names = outside.map((p) => p.name || 'someone').join(', ');
+  const are = outside.length > 1 ? 'are' : 'is';
+  const mails = outside.map((p) => p.email).filter(Boolean);
+  const ask = mails.length === outside.length
+    ? `@admin-bot add ${mails.join(' ')}`
+    : '@admin-bot add with their email address';
+  return `${names} ${are} not in this Teams team, so the mention does not reach them. To add them, ask ${ask}.`;
+}
+
 /** Whether a post's answer says someone mentioned will not see it: worth more than a moment. */
-const missedMention = (data) => Boolean(data?.uninvited?.length);
+const missedMention = (data) => Boolean(data?.uninvited?.length || data?.outside?.length);
 
 /**
  * A short note at the bottom; `action` adds a link (`href`) or a button (`run`). With `stay`, it
