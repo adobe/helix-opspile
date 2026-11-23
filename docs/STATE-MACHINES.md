@@ -451,8 +451,12 @@ The panel's motion is not a state either: as you enter or leave the sidebar (`si
 while that render runs) it moves from gone (`sideMotion.p` 0) to open (1) or back, out of the
 line that was picked (`side.joined`, kept until the panel is gone) where that line is in sight,
 else sliding in from the edge; otherwise, and with reduced motion, it is there or gone at once.
-Gone is only when the motion back ends (`goneSidePanel`): a render while it goes does not cut it
-short, and entering again turns it around.
+Another thread opened (or the thread closed) while it is open, it is leaving (`sideMotion.leaving`):
+it slides out to the edge in the shorter `--side-leave`, joined to no line, `inert` so that its box
+is not wired to the thread that opens (`wireSide`); going back into its line already, it slides
+out from where it is. Gone is only when the motion back ends (`goneSidePanel`, which clears
+`leaving` and `inert`): a render while it goes does not cut it short, and entering again turns it
+around. Open, the line it is joined to and the bridge to it (`#side-join`) close it, as ✕ does.
 
 **Seed session.** none → pinned to a knowledge base (`seed-pin:*`, `src/agent/seed.js`). The pin is
 written before the pointer, and before anything is submitted, so two seeds at once make two pinned

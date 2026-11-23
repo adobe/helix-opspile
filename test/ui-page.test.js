@@ -1119,6 +1119,14 @@ describe('inbox page', () => {
       assert.match(css, /#side-join \{ position: absolute; z-index: 2; overflow: hidden; pointer-events: none; \}/);
       assert.match(css, /main\.side-veiled #side \{ opacity: 0; pointer-events: none; \}/);
       assert.match(css, /main \{ --side-motion: var\(--spectrum-animation-duration-1000\); \}/);
+      // Another thread opens: the panel slides out, quicker, inert, its box not wired to that one.
+      assert.match(css, /main \{ --side-leave: var\(--spectrum-animation-duration-300\); \}/);
+      assert.match(html, /if \(away && !REDUCED_MOTION\.matches\) \{[^}]*panel\.inert = true;[^}]*moveSide\(0, \{ animate: true, leave: true \}\);/);
+      assert.match(html, /getPropertyValue\(leave \? '--side-leave' : '--side-motion'\)/);
+      assert.match(html, /if \(!box \|\| box\.closest\('\[inert\]'\)\) return;/);
+      // The bridge from the joined line closes the panel: only its path takes the pointer.
+      assert.match(css, /#side-join path \{ pointer-events: visiblePainted; cursor: pointer; \}/);
+      assert.match(html, /\$\('side-join'\)\.onclick = \(e\) => \{\s*if \(e\.clientX >= panel\.getBoundingClientRect\(\)\.left\) return;\s*if \(sideMotion\.p === 1 && !sideMotion\.raf && sidePaneled\(state\.open\)\) exitSide\(\);/);
       assert.match(css, /\.spectrum #side \{[^}]*background: var\(--spectrum-purple-subtle-background-color-default\);/);
       assert.match(css, /main\.siding #pane \{ margin-right: calc\(var\(--side-w\) \* var\(--side-open, 1\)\); \}/);
       // The thread's reply box is the sidebar's only in the thread itself.
@@ -1128,6 +1136,8 @@ describe('inbox page', () => {
       assert.match(html, /if \(!sidePaneled\(key\)\) \{ hideSidePanel\(\); return; \}/);
       // A line in the thread opens the panel at its conversation, for anyone who sees it.
       assert.match(html, /if \(side\.wide\) \{ enterSide\(state\.open, \{ at: id \}\); return; \}/);
+      // The line joined to the open panel is part of it: picked, it closes the panel.
+      assert.match(html, /if \(side\.wide && sidePaneled\(state\.open\) && side\.joined === id\) \{ exitSide\(\); return; \}/);
       assert.match(html, /if \(!key \|\| !\(canSide\(key\) \|\| \(side\.wide && sideList\(key\)\.length\)\)\) return;/);
       // The icon beside the reply box, still there while the panel is open, closes it again.
       assert.match(html, /if \(enter\.matches\('\.sidebtn'\) && side\.key === state\.open\) exitSide\(\); else enterSide\(\);/);
