@@ -3631,13 +3631,27 @@ function sidePanelBox(key) {
 }
 
 /** The panel goes, with what it showed. Into the line it is joined to, or out to the edge, as
- * you leave the sidebar (`side.motion`) and the thread stays open; at once otherwise. */
+ * you leave the sidebar (`side.motion`) and the thread stays open; out to the edge, quicker
+ * (--side-leave), as another thread opens or the thread closes; at once otherwise. */
 function hideSidePanel() {
   const panel = $('side');
   if (!panel || panel.hidden) return;
-  if (panel.__key === state.open && (side.motion || (sideMotion.raf && sideMotion.to === 0))) {
-    // Going already, it goes on: the thread is shown again as it does.
-    if (sideMotion.to !== 0 || !sideMotion.raf) moveSide(0, { animate: true });
+  const away = panel.__key !== state.open;
+  // Going already, it goes on: the thread is shown again as it does. Left for another thread
+  // while it went back into its line, it slides out from where it is, quicker.
+  if (sideMotion.raf && sideMotion.to === 0 && !(away && !sideMotion.leaving)) return;
+  if (away && !REDUCED_MOTION.matches) {
+    // The line it was joined to is the thread's that goes: the panel slides, joined to none.
+    side.joined = null;
+    bridgeStill();
+    // Nothing in it is for the thread that opens: its box is not that thread's (wireSide).
+    panel.inert = true;
+    sideMotion.mode = 'slide';
+    moveSide(0, { animate: true, leave: true });
+    return;
+  }
+  if (!away && side.motion) {
+    moveSide(0, { animate: true });
     return;
   }
   goneSidePanel();
@@ -3648,8 +3662,11 @@ function goneSidePanel() {
   const panel = $('side');
   const main = panel.parentElement;
   cancelAnimationFrame(sideMotion.raf);
-  Object.assign(sideMotion, { p: 0, to: 0, raf: 0 });
+  Object.assign(sideMotion, {
+    p: 0, to: 0, raf: 0, leaving: false,
+  });
   panel.hidden = true;
+  panel.inert = false;
   panel.replaceChildren();
   panel.__key = null;
   panel.style.removeProperty('--side-in');
@@ -3666,9 +3683,10 @@ function goneSidePanel() {
 // the panel grows from it up and down to the column's height, and what is in it fades in.
 // Without that line in sight it slides in from the edge instead. Open, the line stays joined to
 // it. `p` goes from 0 (gone) to 1 (open) in --side-motion; `mode` is 'join' or 'slide', picked
-// as it sets out from either end. In spectrum-inbox.css, "How it comes and goes".
+// as it sets out from either end. In spectrum-inbox.css, "How it comes and goes". `leaving`:
+// it slides out quicker (--side-leave) now, as another thread opens.
 const sideMotion = {
-  p: 0, to: 0, raf: 0, mode: 'slide',
+  p: 0, to: 0, raf: 0, mode: 'slide', leaving: false,
 };
 // A line joined to the panel while it is open (joinLine): once it is in sight, it comes out of the
 // panel, right to left, then the inner corners round off. `p` from 0 to 1, 1 when it is not moving;
@@ -3709,17 +3727,22 @@ function sideLineInSight(run) {
   return l.height > 0 && l.top >= s.top && l.bottom <= s.bottom;
 }
 
-/** The panel's motion towards `to` (0 or 1): over --side-motion if `animate`, else at once. */
-function moveSide(to, { animate }) {
+/**
+ * The panel's motion towards `to` (0 or 1): over --side-motion if `animate`, else at once; over
+ * --side-leave, sliding, if `leave` (another thread opens).
+ */
+function moveSide(to, { animate, leave = false }) {
   const m = sideMotion;
   cancelAnimationFrame(m.raf);
   m.raf = 0;
   m.to = to;
+  m.leaving = leave;
   const main = document.querySelector('main');
   // Setting out from either end: from the joined line where it is in sight.
-  if (m.p === 0 || m.p === 1) m.mode = sideLineInSight(side.joined) ? 'join' : 'slide';
+  if (leave) m.mode = 'slide';
+  else if (m.p === 0 || m.p === 1) m.mode = sideLineInSight(side.joined) ? 'join' : 'slide';
   else if (m.mode === 'join' && !sideLine(side.joined)) m.mode = 'slide';
-  const ms = parseFloat(getComputedStyle(main).getPropertyValue('--side-motion')) || 0;
+  const ms = parseFloat(getComputedStyle(main).getPropertyValue(leave ? '--side-leave' : '--side-motion')) || 0;
   const dur = animate && !REDUCED_MOTION.matches ? ms * Math.abs(to - m.p) : 0;
   if (!dur) {
     m.p = to;
@@ -3931,6 +3954,7 @@ function placeSidePanel(key, thread, runs) {
     panel.parentElement.classList.add('side-veiled');
   }
   panel.hidden = false;
+  panel.inert = false;
   panel.parentElement.classList.add('siding');
   const scroller = panel.querySelector(':scope > .scroller');
   const atEnd = !scroller.firstElementChild.childElementCount || nearBottom(scroller);
@@ -4008,7 +4032,8 @@ function exitSide({ focus = true } = {}) {
 /** Wires the sidebar's box: Enter asks, Shift+Enter is a new line, Esc exits. */
 function wireSide(key) {
   const box = $('side-reply');
-  if (!box) return;
+  // The panel going as another thread opens has its thread's box, not this one's.
+  if (!box || box.closest('[inert]')) return;
   box.value = side.typed.get(key) || '';
   growReply(box);
   box.oninput = () => { side.typed.set(key, box.value); growReply(box); };
@@ -9316,6 +9341,12 @@ function wireSideRoom() {
     if (tool) { decideToolRequest(panel.__key, tool.closest('[data-tool-request]').dataset.toolRequest, tool.dataset.toolAct); return; }
     followLink(e);
   };
+  // The bridge from the joined line to the panel closes it, as the line does: the panel goes
+  // back into the line. Not while it moves, when it is a shape on its way.
+  $('side-join').onclick = (e) => {
+    if (e.clientX >= panel.getBoundingClientRect().left) return;
+    if (sideMotion.p === 1 && !sideMotion.raf && sidePaneled(state.open)) exitSide();
+  };
   // Esc closes it from anywhere in it, as from its box (wireSide).
   panel.onkeydown = (e) => { if (e.key === 'Escape') { e.stopPropagation(); exitSide(); } };
 }
@@ -10100,6 +10131,8 @@ async function start() {
     const fold = e.target.closest('[data-side-toggle]');
     if (fold && fold.getAttribute('aria-disabled') !== 'true') {
       const id = fold.dataset.sideToggle;
+      // The line joined to the open panel is part of it: picked, the panel goes back into it.
+      if (side.wide && sidePaneled(state.open) && side.joined === id) { exitSide(); return; }
       // Beside the thread where there is room; else unfolded where it is.
       if (side.wide) { enterSide(state.open, { at: id }); return; }
       if (side.open.has(id)) side.open.delete(id); else side.open.add(id);
