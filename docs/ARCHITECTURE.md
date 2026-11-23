@@ -135,10 +135,15 @@ reply, react, resolve, draft, search, live updates, notifications, the MCP serve
 shows is its own label's (`labels.tech`: what Clef is sure of, and what the rules detected), not its
 channel's or its customer's, so a team that follows Experience Workspace gets the threads about it,
 not every thread of a customer that uses it; and an inbox entry shows what any of its members does.
-Conversations only: an alert channel's threads are followed by none. A person's follows count
-only while they are on an ops team: someone who signed in from `SIGNIN_DOMAINS` on no team cannot
-follow, and someone who leaves every team stops seeing what they followed, as a team's member
-stops seeing its shares. Nothing is filed anew: the
+Conversations only: an alert channel's threads are followed by none. Anyone who may sign in
+follows, on an ops team or not: someone who signed in from `SIGNIN_DOMAINS` on no team follows as a
+team's member does, and their follows are how threads come into their personal view. What a follow
+opens is only ever worked out for someone signed in; the portal's "how many listen"
+(`entryFollowers`) leaves out those who may no longer sign in. A follow lets one reply where the
+platform decides who posts, as themselves on Slack and Teams (the platform refuses one who is not in
+the channel); not in the customer portal, nor as the app, which take the inbox's word: there a
+person's follow alone is not enough (`mayPost`, `mayReply` in `src/shares.js`; `can_post` on
+`GET /api/thread`). Nothing is filed anew: the
 channel stays under its team, with its shares, and a following team cannot start a thread in it.
 `src/follows.js` has the SQL; `thread_tech` has what each thread shows by index, so that `team = ?
 OR <shared channel> OR <followed>` stays a search by index (`teamsOf`, `mayWork`, `roomsOf`, the

@@ -62,7 +62,8 @@ import {
   ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
 } from './review.js';
 import {
-  inPersonalInbox, maySee, mayWork, memberOf, roomsOf, sharedWith, teamsOf, viewTeam,
+  inPersonalInbox, mayPost, mayReply, maySee, mayWork, memberOf, roomsOf, sharedWith, teamsOf,
+  viewTeam,
 } from './shares.js';
 import {
   followable, followedByTeam, followsOfTeams, personFollows, personFollowsBy, setPersonFollow,
@@ -851,6 +852,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   if (!row || !(work || await maySee(env, me)(teams, row))) {
     return null;
   }
+  // In the customer portal, a person's own follow lets them see and work it, not post in it.
+  const posts = work && (row.source !== 'portal' || await mayPost(env, me)(teams, row));
   const readers = viewTeam(me, teams, wanted);
   const group = anchor ? rows : [own];
   const keys = JSON.stringify(group.map((m) => m.thread));
@@ -1046,6 +1049,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // Whether the viewer may work it (`mayWork`): reply, draft, and decide on the commands and
     // tools its agent asks for. Not so, they only see it, and talk to its agent (`maySee`).
     can_work: work,
+    // Whether they may reply in it as themselves (`mayReply`): not in the portal by a follow.
+    can_post: posts,
     sidebar,
     tool_requests: toolRequests,
     bash_requests: bashRequests,
@@ -1271,7 +1276,10 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return json({ error: read.error }, read.status);
     }
     const { body, files } = read;
-    const inMine = mayWork(env, me);
+    // A person's follow lets them reply where the platform decides who posts (Slack, Teams),
+    // not in the customer portal or as the app (src/shares.js `mayPost`).
+    const inMine = mayReply(env, me);
+    const asApp = mayPost(env, me);
     // A retry of a reply that may have gone out does not post it again (src/postkeys.js).
     const how = url.pathname === '/api/post' ? 'me' : 'app';
     const started = Date.now();
@@ -1285,7 +1293,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     if (!res) {
       res = how === 'me'
         ? await post(env, me, body, inMine, files, { waitUntil })
-        : await postApp(env, me, body, inMine, files);
+        : await postApp(env, me, body, asApp, files);
       await settlePost(env, me, body.key, res);
     }
     await logPost(me, body, files, res, { how, ms: Date.now() - started, again: Boolean(again) });
@@ -1469,7 +1477,7 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return json({ error: 'not found' }, 404);
     }
     result.can_post_as_bot = Boolean(app && !app.problem
-      && await working(result.thread.teams, result.thread));
+      && await mayPost(env, me)(result.thread.teams, result.thread));
     return json(result);
   }
   if (url.pathname === '/api/media') {
