@@ -3221,6 +3221,9 @@ function renderOrgFollows() {
       <li><span class="name">You</span>${button('data-me="1"', me, 'you', `orgfollow:me:${slug}`)}</li>${rows}</ul>
     ${others.length ? `<form class="form" id="ofAdd"><label class="fld"><span>Follow it with a team</span><select id="ofTeam"><option value="">Pick one…</option>
       ${others.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('')}</select></label><button>Follow</button></form>` : ''}`;
+  // The card is drawn again once the change is done and its button no longer busy (`off`): drawn
+  // while it is, the new button would be disabled for good.
+  const redraw = () => { if (v === state.view) renderOrgFollows(); };
   const team = (t, follow, b) => hold(b, `orgfollow:${t}:${slug}`, async () => {
     const res = await call('/api/admin/org-follows', 'PUT', { team: t, org: slug, follow });
     if (!res.ok) { failed(follow ? `${teamLabel(t)}: follow ${name}` : `${teamLabel(t)}: unfollow ${name}`, res); return; }
@@ -3228,12 +3231,9 @@ function renderOrgFollows() {
     // The shares are the rule's: its channels as they are now.
     const now = await call(`/api/admin/org?slug=${encodeURIComponent(slug)}`);
     if (now.ok && now.body.channels) v.channels = now.body.channels;
-    if (v === state.view) {
-      renderOrgFollows();
-      renderChannels();
-    }
+    if (v === state.view) renderChannels();
     status('ok', follow ? `${teamLabel(t)} follows ${name}: its channels are in ${teamLabel(t)}'s inbox, shared.` : `${teamLabel(t)} no longer follows ${name}.`);
-  });
+  }).then(redraw);
   for (const b of $('orgFollows').querySelectorAll('[data-team]')) {
     b.onclick = () => team(b.dataset.team, b.getAttribute('aria-pressed') !== 'true', b);
   }
@@ -3244,8 +3244,7 @@ function renderOrgFollows() {
     state.myOrgs = new Set(res.body.by?.org || []);
     status('ok', follow ? `You follow ${name}: its conversations are in your personal view.` : `You no longer follow ${name}.`);
     renderList();
-    if (v === state.view) renderOrgFollows();
-  });
+  }).then(redraw);
   if ($('ofAdd')) {
     $('ofAdd').onsubmit = (e) => {
       e.preventDefault();
