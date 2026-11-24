@@ -1093,6 +1093,8 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   below the rows you have seen; in the personal view, threads with activity since that you
   have not seen in it come to the top. Another filter or view, unread only, or a click on the
   view already shown sorts it afresh; the thread open then stays, if it passes the filters.
+  With unread only, the filter cards' counts are of what is unread now, so they go down as you
+  read, while their rows keep their order as the list's do.
 - **Notifications** are shown by the browser while an inbox is open (a tab, or the installed
   app, also in the background), through the service worker, so that a click opens the thread
   in the inbox already open, or in a new one. The inbox stays on the view on screen (Personal,
