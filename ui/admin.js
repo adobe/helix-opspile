@@ -47,6 +47,8 @@ const state = {
   requests: [], openRequests: 0, names: {}, noIcon: false,
   // The bots the inbox knows (GET /api/admin/bots), under Requests.
   bots: [],
+  // The host tenant's admin accounts, and whose each is (GET /api/admin/accounts), under Requests.
+  accounts: [],
   // The customers waiting in the customer portal, and whether it is connected to this inbox.
   portal: [], portalBound: false,
   // The team wizard's groups of the admin team's channels (GET /api/admin/team-groups): the
@@ -372,11 +374,12 @@ async function load() {
   // Team managers see their teams only, and no orgs; the other members of a team only the
   // knowledge bases (their agents), as everyone does.
   const none = Promise.resolve({ ok: true, body: {} });
-  const [teams, orgs, requests, bots, bases] = await Promise.all([
+  const [teams, orgs, requests, bots, accounts, bases] = await Promise.all([
     state.me.admin || state.me.manages?.length ? call('/api/admin/teams') : none,
     state.me.admin ? call('/api/admin/orgs') : none,
     state.me.admin ? call('/api/admin/requests') : none,
     state.me.admin ? call('/api/admin/bots') : none,
+    state.me.admin ? call('/api/admin/accounts') : none,
     call('/api/kb')]);
   if (!teams.ok) { $('list').innerHTML = `<div class="empty">${esc(teams.body.error || 'Could not load.')}</div>`; return false; }
   // In place: the agent (ui/agent.js) counts on the same list.
@@ -396,6 +399,7 @@ async function load() {
   state.orgsUnassigned = orgs.body.unassigned || null;
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
   state.bots = bots.body.bots || [];
+  state.accounts = accounts.body.accounts || [];
   if (state.me.admin) loadGroups();
   loadDups();
   return true;
@@ -549,17 +553,23 @@ function drawList() {
     // The bots (src/ourbots.js): those nobody said whose they are wait for it, the others follow.
     const bots = state.bots.filter((b) => botMatch(b, f));
     const review = bots.filter(unreviewed);
+    // The host tenant's admin accounts (src/accountlinks.js): those nobody said whose they are
+    // first, the others with the bots.
+    const accounts = state.accounts.filter((a) => accountMatch(a, f));
+    const unlinked = accounts.filter((a) => !a.person);
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter requests" value="${esc(state.filter)}"></label>
       ${waiting.length ? `<h2>Customers waiting in the portal</h2>${waiting.map(portalRow).join('')}` : ''}
       <h2>Waiting for a decision</h2>${open.map(row).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No request is waiting.'}</div>`}
       ${review.length ? `<h2>Bots to review</h2>${review.map(botRow).join('')}` : ''}
+      ${unlinked.length ? `<h2>Admin accounts to link</h2>${unlinked.map(accountRow).join('')}` : ''}
       ${unsettled.length ? `<h2>Conflicts between technologies</h2>${unsettled.map(conflictRow).join('')}` : ''}
       ${ruleOpen.length ? `<h2>Conflicts between team rules</h2>${ruleOpen.map(ruleConflictRow).join('')}` : ''}
       ${ruleOther.length ? `<h2>Other rule conflicts</h2>${ruleOther.map(ruleConflictRow).join('')}` : ''}
       ${mergesOpen.length ? `<h2>Customers to merge</h2>${mergesOpen.map(mergeRow).join('')}` : ''}
       ${decided.length || answered.length || kept.length || mergesDone.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${mergesDone.map(mergeRow).join('')}${kept.join('')}` : ''}
       ${bots.length > review.length ? `<h2>Bots</h2>${bots.filter((b) => !unreviewed(b)).map(botRow).join('')}` : ''}
-      <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team. A bot that posted waits here until you say whether it is Adobe's or external.</p>`;
+      ${accounts.length > unlinked.length ? `<h2>Admin accounts</h2>${accounts.filter((a) => a.person).map(accountRow).join('')}` : ''}
+      <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team. A bot that posted waits here until you say whether it is Adobe's or external, and an admin account of the Teams tenant until you say whose it is.</p>`;
   } else if (!state.me.admin) {
     // The customers your teams own: their agents, which their managers change.
     const rows = state.bases.filter((b) => b.kind === 'org' && matches(b))
@@ -635,6 +645,7 @@ function select(sel, {
   else if (state.tab === 'requests' && String(sel).startsWith(CONFLICT)) showConflict(String(sel).slice(CONFLICT.length));
   else if (state.tab === 'requests' && String(sel).startsWith(RULE_CONFLICT)) showRuleConflict(String(sel).slice(RULE_CONFLICT.length));
   else if (state.tab === 'requests' && String(sel).startsWith(BOT)) showBot(String(sel).slice(BOT.length));
+  else if (state.tab === 'requests' && String(sel).startsWith(ACCOUNT)) showAccount(String(sel).slice(ACCOUNT.length));
   else if (state.tab === 'requests') showRequest(sel);
 }
 
@@ -3635,6 +3646,107 @@ function showBot(key) {
     v.recent = r.ok ? r.body.recent : { error: r.body.error || `Could not load its messages (${r.status}).` };
     if (v === state.view) draw();
   });
+}
+
+// ---- admin accounts ---------------------------------------------------------------------
+//
+// The Teams tenant that hosts the teams has admin accounts of its own (src/accountlinks.js):
+// `owner_` and the initials of the Adobe person who uses one. They are Adobe's by themselves,
+// but nothing says whose: an admin gives each the mail address of its person, and the inbox
+// shows it as them, the messages it wrote before too.
+
+/** What marks an account among the requests picked (`?request=account:teams:…`). */
+const ACCOUNT = 'account:';
+const accountName = (a) => a.name || a.email || a.id;
+const accountPosts = (a) => (a.messages ? `${a.messages} ${a.messages === 1 ? 'message' : 'messages'}` : 'no messages');
+const accountMatch = (a, f) => !f || `${a.name || ''} ${a.email || ''} ${a.person?.name || ''} ${a.person?.email || ''} admin account`.toLowerCase().includes(f);
+const accountRow = (a) => `
+      <div class="row${state.sel === `${ACCOUNT}${a.key}` ? ' on' : ''}" data-sel="${esc(`${ACCOUNT}${a.key}`)}" title="${esc(accountName(a))} (${esc(platform(a))} admin account, ${esc(accountPosts(a))})">
+        <span class="ico none"></span><span class="name">${esc(accountName(a))}${a.person ? ` <span class="sub">${esc(a.person.name || a.person.email)}</span>` : ''}</span>
+        <span class="tag ours" title="Adobe's: on Adobe's side in the inbox">Adobe</span><span class="sub">${esc(accountPosts(a))}</span></div>`;
+
+function showAccount(key) {
+  const a = state.accounts.find((x) => x.key === key);
+  if (!a) { $('detail').innerHTML = `<div class="empty">${backButton()} No such account.</div>`; return; }
+  note = { kind: '', text: '' };
+  state.view = { target: 'account', value: key, account: a };
+  const v = state.view;
+  const draw = () => {
+    const whose = a.person ? `${a.person.name ? `${esc(a.person.name)} <span class="sub mono">${esc(a.person.email || '')}</span>` : `<span class="mono">${esc(a.person.email || '')}</span>`}` : '<span class="sub">Nobody said yet</span>';
+    $('detail').innerHTML = `
+      <div class="title">${backButton()}<span class="ico none"></span><h1 class="fill">${esc(accountName(a))}</h1><span class="sub">${esc(platform(a))} admin account</span></div>
+      <div class="status" id="status"></div>
+      <div class="card"><div class="field">
+        <label>Whose</label><span>${whose}</span>
+        <label>Posted</label><span>${a.messages ? `${esc(accountPosts(a))}${a.latest ? `, latest ${esc(ago(a.latest))}` : ''}` : 'Nothing yet'}</span>
+        <label>Account</label><span class="mono">${esc(a.email || a.id)}</span>
+        ${a.linkedBy ? `<label>Said by</label><span class="sub">${esc(a.linkedBy)}, ${esc(ago(a.linkedAt))}</span>` : ''}
+      </div>
+      <div class="form picker"><label class="fld grow"><span>${a.person ? 'Someone else\'s: their name or mail address' : 'Whose it is: their name or mail address'}</span><input id="aFind" autocomplete="off"></label><div class="picks s2-float" id="aPicks" hidden></div>
+        ${a.person ? `<button type="button" id="aUnlink"${off(`account:${key}`)}>Nobody's</button>` : ''}</div>
+      <p class="hint">An admin account of the Teams tenant that hosts the teams: Adobe's, so its messages show on Adobe's side, but it is named by initials, and nothing in Teams says whose it is. Give the colleague who uses it: the inbox then shows it as them, with their name and picture, the messages it wrote before too, and counts it as one of their accounts, after their own.</p></div>`;
+    showStatus();
+    const save = (email) => once(`account:${key}`, async () => {
+      const res = await call('/api/admin/accounts', 'PUT', { key, email });
+      if (!res.ok) { failed('Save', res); return; }
+      Object.assign(a, res.body.account);
+      status('ok', a.person ? `${accountName(a)} is ${a.person.name || a.person.email}'s now.` : `${accountName(a)} is nobody's now.`);
+      renderList();
+    }).then(() => { if (v === state.view) draw(); });
+    if ($('aUnlink')) $('aUnlink').onclick = () => save(null);
+    wirePersonPicker($('aFind'), $('aPicks'), (p) => save(p.email));
+  };
+  draw();
+}
+
+/**
+ * A field that finds a colleague (GET /api/admin/people), or takes a full mail address, and
+ * gives the one picked to `pick`: only staff are offered.
+ */
+function wirePersonPicker(input, picks, pick) {
+  let timer;
+  let list = [];
+  let at = 0;
+  const choose = (p) => { picks.hidden = true; input.value = ''; list = []; pick(p); };
+  const render = () => {
+    picks.innerHTML = list.map((p, i) => `<div class="row${i === at ? ' on' : ''}" data-i="${i}">
+      <span class="name">${p.name ? esc(p.name) : `<i>${esc(p.email)}</i>`} ${p.name ? `<span class="sub mono">${esc(p.email)}</span>` : ''}</span></div>`).join('')
+      || '<div class="empty pad">No colleague matches. Type their full mail address.</div>';
+    placePicks(input, picks);
+    picks.hidden = false;
+    for (const el of picks.querySelectorAll('[data-i]')) {
+      // eslint-disable-next-line no-loop-func
+      el.onmousedown = (e) => { e.preventDefault(); choose(list[Number(el.dataset.i)]); };
+    }
+  };
+  input.oninput = () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 2) { picks.hidden = true; list = []; return; }
+    timer = setTimeout(async () => {
+      const r = await call(`/api/admin/people?q=${encodeURIComponent(q)}`);
+      if (input.value.trim() !== q) return;
+      list = (r.body.people || []).filter((p) => p.staff);
+      const email = q.toLowerCase();
+      if (EMAIL.test(email) && !list.some((p) => p.email === email)) list.push({ email, name: null });
+      at = 0;
+      render();
+    }, 150);
+  };
+  input.onkeydown = (e) => {
+    if (picks.hidden || !list.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      at = (at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length;
+      render();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      choose(list[at]);
+    } else if (e.key === 'Escape') {
+      picks.hidden = true;
+    }
+  };
+  input.onblur = () => setTimeout(() => { picks.hidden = true; }, 150);
 }
 
 // ---- start ------------------------------------------------------------------------------

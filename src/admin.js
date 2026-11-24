@@ -50,6 +50,7 @@ import {
 import {
   getBot, listBots, setBot, unreviewedCount,
 } from './ourbots.js';
+import { linkAccount, listAccounts } from './accountlinks.js';
 import { followable, setTeamFollow, teamFollows } from './follows.js';
 import { portalAuthor, portalBound, portalCall } from './portalsource.js';
 import { openConflictCount, resolveConflict, techConflicts } from './techconflicts.js';
@@ -1700,6 +1701,8 @@ export async function admin(request, env, url, me) {
     case 'GET bots': return listBots(env);
     case 'GET bot': return getBot(env, url.searchParams.get('key'));
     case 'PUT bots': return setBot(env, me, body);
+    case 'GET accounts': return listAccounts(env);
+    case 'PUT accounts': return linkAccount(env, me, body);
     case 'GET cogs': return json(await cogsReport(env, url));
     case 'POST cogs/rollup': return json(await rollupCogs(env));
     case 'GET topics': return json({

@@ -185,7 +185,7 @@ One open request per pair, either way round (checked before the insert). Every c
 While undecided, a bot that posted is a request under Requests (`unreviewedCount`); the answer
 closes it. Only the admin page writes it, never back to NULL, and the identity's refresh (`getIdentity`) leaves
 it out of its upsert. The bot's messages are not rewritten: a message's frontmatter keeps the side it
-was written with, and the thread view follows the flag over it once it is decided (`botAuthor` in
+was written with, and the thread view follows the flag over it once it is decided (`accountAuthor` in
 `src/api.js`); `messages.staff` is set to match on every change.
 
 **Alert bot.** conversations ⇄ alerts only (`identities.alerts`: NULL or 0, 1; `src/alertbots.js`),
@@ -199,8 +199,20 @@ lists those channels as moving.
 `display_avatar`: NULL or set; `src/ourbots.js`). Only the admin page writes them, and the
 identity's refresh leaves them out of its upsert. Setting or clearing the name rewrites
 `messages.author` of the bot's messages (and `threads.last_author` where it was the bot's old
-name); their frontmatter keeps the name they were written with, which `botAuthor` replaces in
+name); their frontmatter keeps the name they were written with, which `accountAuthor` replaces in
 the thread view.
+
+**A host tenant's admin account.** a customer's (before migration 0096) → staff → linked ⇄
+unlinked (`identities.staff`, `person`, `linked_by`, `linked_at`; `src/lookup.js`,
+`src/accountlinks.js`). The Teams lookup says it is staff (`isHostAdmin`: a member, not a guest,
+of the host tenant, its user name `owner_…`) on every refresh; the migration said so of the ones
+seen before. Linking is the admin team's, under Requests, and only of an account that is staff
+by itself and that no mail address links, to a staff person; the refresh keeps a link
+(`linked_at` set: `person` is not looked up by mail address) and only the admin page takes it
+back (all three NULL). A change of side or person rewrites `messages.person`, `staff` and, from
+the admin page, `author` of its messages, and `last_staff` and `last_author` of the threads they
+are in (`relabelAccount`); their frontmatter keeps what they were written with, which
+`accountAuthor` replaces in the thread view, until a replay writes them again.
 
 ## Drafts and replies
 
