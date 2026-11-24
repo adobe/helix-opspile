@@ -50,11 +50,16 @@ const VECTOR_K = 50;
 const KEYWORD_ROWS = 200;
 /** The filter of a Vectorize query has at most 2 KB: shared channels go in parts. */
 const FILTER_BYTES = 1800;
+/** And an `$in` of at most 100 values, however short they are. */
+export const VECTOR_IN = 100;
 /** The vectors of threads and their messages; the knowledge bases' (`kb`) share the index. */
 const THREAD_TYPES = { $in: ['message', 'thread'] };
 const SNIPPET = 240;
-/** Full-text queries ask for the team's items, then the shared channels', so many at a time. */
-const TAGS_PER_QUERY = 50;
+/**
+ * Full-text queries ask for the team's items, then the shared channels', so many at a time:
+ * an AI Search metadata filter's `$in` has at most 40 values.
+ */
+export const TEXT_IN = 40;
 const TEXT_RESULTS = 50;
 const SNIPPETS = 30;
 
@@ -110,13 +115,14 @@ const ofTeams = (alias) => `(${alias}.team IN (SELECT value FROM json_each(?1))
 
 /**
  * Filters `make(part)` for `values` in parts, each under FILTER_BYTES as JSON (a Vectorize
- * filter has at most 2 KB); none for no values.
+ * filter has at most 2 KB) and of at most VECTOR_IN values; none for no values.
  */
 export function inParts(values, make) {
   const out = [];
   let part = [];
   for (const v of values) {
-    if (part.length && JSON.stringify(make([...part, v])).length > FILTER_BYTES) {
+    if (part.length && (part.length >= VECTOR_IN
+      || JSON.stringify(make([...part, v])).length > FILTER_BYTES)) {
       out.push(make(part));
       part = [];
     }
@@ -133,9 +139,10 @@ export function inParts(values, make) {
  * the threads' and their messages'.
  */
 export function vectorFilters(teams, channels) {
-  const list = [].concat(teams);
   return [
-    { type: THREAD_TYPES, team: list.length === 1 ? list[0] : { $in: list } },
+    ...inParts([].concat(teams), (part) => ({
+      type: THREAD_TYPES, team: part.length === 1 ? part[0] : { $in: part },
+    })),
     ...inParts(channels, (part) => ({ type: THREAD_TYPES, channel: { $in: part } })),
   ];
 }
@@ -222,6 +229,21 @@ async function liveMessages(env, refs) {
 }
 
 /**
+ * Filters for the full-text items the teams see: their own, then the shared channels' (`tags`,
+ * src/fulltext.js), in parts of at most TEXT_IN values.
+ */
+export function textFilters(teams, tags) {
+  const parts = (values) => Array.from(
+    { length: Math.ceil(values.length / TEXT_IN) },
+    (_, i) => values.slice(i * TEXT_IN, (i + 1) * TEXT_IN),
+  );
+  return [
+    ...parts([].concat(teams)).map((p) => ({ team: p.length === 1 ? p[0] : { $in: p } })),
+    ...parts(tags).map((p) => ({ channel: { $in: p } })),
+  ];
+}
+
+/**
  * Messages with every word of `q` (BM25, porter stemming: "purged" finds "purge"), the recent
  * boosted: `[{ thread, id, score, text }]`, best first, `score` relative to the best (1).
  */
@@ -231,10 +253,7 @@ async function inText(env, teams, q, sharedP) {
   }
   try {
     const tags = await Promise.all((await sharedP).map(channelTag));
-    const filters = [teams.length === 1 ? { team: teams[0] } : { team: { $in: teams } }];
-    for (let i = 0; i < tags.length; i += TAGS_PER_QUERY) {
-      filters.push({ channel: { $in: tags.slice(i, i + TAGS_PER_QUERY) } });
-    }
+    const filters = textFilters(teams, tags);
     const found = await Promise.all(filters.map((f) => env.SEARCH.search({
       query: q,
       ai_search_options: {

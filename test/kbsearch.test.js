@@ -319,6 +319,14 @@ describe('knowledge search: the inbox', () => {
     assert.deepEqual(filters.slice(1).flatMap((f) => f.org.$in), orgs.map((o) => o.slug));
     filters.forEach((f) => assert.ok(JSON.stringify(f).length <= 2048));
   });
+
+  it('asks the vectors for at most 100 customers at a time, however short their slugs', () => {
+    // 250 short slugs fit into 2 KB, but Vectorize takes at most 100 values in an $in.
+    const orgs = Array.from({ length: 250 }, (_, i) => ({ kind: 'org', slug: `o${i}` }));
+    const filters = kbFilters(orgs);
+    assert.deepEqual(filters.map((f) => f.org.$in.length), [100, 100, 50]);
+    assert.deepEqual(filters.flatMap((f) => f.org.$in), orgs.map((o) => o.slug));
+  });
 });
 
 describe('knowledge search: a write during a full read', () => {
