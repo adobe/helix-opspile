@@ -90,6 +90,7 @@ import {
   changeArea, rebuildTopics, topicsPage, trendsApi,
 } from './topicsapi.js';
 import { drawDiagram } from './diagrams.js';
+import { targetOf, translateMessages } from './translate.js';
 
 /**
  * The inbox API behind Cloudflare Access. Every request is tied to a person in D1 by the
@@ -106,15 +107,36 @@ const identityJoin = "LEFT JOIN identities i ON i.source || ':' || i.tenant || '
 const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
 
 /**
- * A bot's message author as its account says now (`account`: the message's row, with its
- * identity's `account_kind`, `ours`, `account_staff`, `account_email` and `display_name`): an
- * admin who says a bot is Adobe's, or takes it back (under Requests on the admin page), moves
- * the messages it wrote before to that side too, whose frontmatter says what was so when they
- * were written, and the name an admin gives it goes on them too. A bot nobody decided on
- * (`ours` NULL) keeps its frontmatter's side.
+ * A message's author as its account says now (`account`: the message's row, with its
+ * identity's `account_kind`, `ours`, `account_staff`, `account_email`, `display_name` and
+ * `linked_at`, and its person's `account_person_staff` and `account_person_name`), since the
+ * frontmatter says what was so when it was written:
+ *
+ * - a bot an admin says is Adobe's, or takes it back (under Requests on the admin page), moves
+ *   to that side, and the name an admin gives it goes on its messages too. A bot nobody decided
+ *   on (`ours` NULL) keeps its frontmatter's side.
+ * - a person's account that is staff now and was not then (one of the host tenant's admin
+ *   accounts, src/lookup.js `isHostAdmin`) is Adobe's, and one the admin team linked to the
+ *   Adobe person who uses it (src/accountlinks.js) goes by that person's name.
  */
-export function botAuthor(env, author, account) {
-  if (!author || author.kind !== 'bot' || !account || account.account_kind !== 'bot') {
+export function accountAuthor(env, author, account) {
+  if (!author || !account) {
+    return author;
+  }
+  if (author.kind === 'person' && account.account_kind === 'person') {
+    const now = toAuthor(env, {
+      kind: 'person',
+      staff: account.account_staff,
+      person_staff: account.account_person_staff,
+      email: account.account_email,
+    });
+    const name = account.linked_at && account.account_person_name;
+    if (!(now.staff && !author.staff) && !(name && name !== author.name)) {
+      return author;
+    }
+    return { ...author, ...(now.staff ? { staff: true } : {}), ...(name ? { name } : {}) };
+  }
+  if (author.kind !== 'bot' || account.account_kind !== 'bot') {
     return author;
   }
   const named = account.display_name && account.display_name !== author.name
@@ -173,8 +195,8 @@ async function participants(env, keys) {
  * first), or null.
  */
 async function personWhere(env, column, value) {
-  const { results } = await env.DB.prepare(`SELECT p.id, p.name, p.email, t.slug, t.name AS team,
-      m.role
+  const { results } = await env.DB.prepare(`SELECT p.id, p.name, p.email, p.staff, t.slug,
+      t.name AS team, m.role
     FROM people p LEFT JOIN team_members m ON m.person = p.id LEFT JOIN teams t ON t.slug = m.team
     WHERE p.${column === 'id' ? 'id' : 'email'} = ? ORDER BY t.slug`).bind(value).all();
   if (!results || !results.length) {
@@ -187,6 +209,8 @@ async function personWhere(env, column, value) {
     id,
     name,
     email,
+    // Adobe's (marked staff in D1, or a mail domain of STAFF_DOMAINS), on a team or not.
+    staff: Boolean(results[0].staff) || isStaffDomain(env, email),
     teams,
     admin: teams.some((t) => t.slug === 'admin'),
     // Teams whose members and knowledge base this person manages (see migration 0018).
@@ -279,6 +303,13 @@ async function followsOf(env, me) {
   // `me` the technologies, as before; `by` the customers, people and areas.
   return { me: mine, teams, by };
 }
+
+/**
+ * Whether the viewer is internal: a member of an ops team, or staff signed in on none (from
+ * SIGNIN_DOMAINS). Not someone signed in from a SIGNIN_DOMAINS domain that is not Adobe's.
+ */
+const internal = (env, me) => (me.teams || []).length > 0
+  || Boolean(me.staff) || isStaffDomain(env, me.email);
 
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
 const inTeam = (me, teams) => memberOf(me)(teams);
@@ -884,8 +915,10 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
         || ':' || m.channel_id || ':' || m.id AS mkey, COALESCE(i.display_avatar, i.avatar) AS avatar,
         m.author_key, m.person = ? AS mine, i.kind AS account_kind, i.ours, i.display_name,
-        i.staff AS account_staff, i.email AS account_email
-      FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
+        i.staff AS account_staff, i.email AS account_email, i.linked_at,
+        ap.staff AS account_person_staff, ap.name AS account_person_name
+      FROM messages m ${identityJoin} LEFT JOIN people ap ON ap.id = i.person
+      WHERE m.thread IN (SELECT value FROM json_each(?))`)
       .bind(me.id, readKeys).all(),
     env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
         COALESCE(p.name, i.name) AS name, i.person = ? AS mine
@@ -968,7 +1001,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       const m = byId.get(`${meta.thread}|${meta.id}`) || {};
       return {
         ...meta,
-        author: botAuthor(env, meta.author, m),
+        author: accountAuthor(env, meta.author, m),
         body,
         avatar: m.avatar || null,
         authorKey: m.author_key || null,
@@ -1057,6 +1090,45 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     tool_requests: toolRequests,
     bash_requests: bashRequests,
   };
+}
+
+/**
+ * GET /api/translate: the messages of thread `asked`'s inbox entry (every member's that the
+ * thread view reads, not deleted, not the platform's notices) in language `to`
+ * (src/translate.js), each by `<thread>|<id>` as `{ text, for }`: `text` null where it is in that
+ * language already, `for` the version it is of (its edit, else its time), so the page shows no
+ * translation of a text that changed since. The viewer may see the thread (the caller checks).
+ */
+export async function translation(env, asked, to, { waitUntil = null } = {}) {
+  const target = targetOf(to);
+  if (!target) {
+    return json({ error: '`to` is a language, as en or de-CH' }, 400);
+  }
+  const { results } = await env.DB.prepare(`SELECT thread, logical_thread, path, root_at, any_at
+    FROM threads
+    WHERE thread = (SELECT COALESCE(logical_thread, thread) FROM threads WHERE thread = ?1)
+      OR logical_thread = (SELECT COALESCE(logical_thread, thread) FROM threads WHERE thread = ?1)
+    ORDER BY root_at`).bind(asked).all();
+  const group = results || [];
+  const own = group.find((m) => m.thread === asked);
+  if (!own) {
+    return json({ error: 'not found' }, 404);
+  }
+  const read = readMembers(group, [own.logical_thread || asked, asked]);
+  const files = (await Promise.all(read.map((m) => folderFiles(env.CHANNELS, m.path, {
+    waitUntil,
+  })))).flat().filter((f) => f && f.meta && !f.meta.deletedAt && f.meta.author?.kind !== 'system')
+    .sort((a, b) => String(a.meta.at).localeCompare(String(b.meta.at)));
+  const version = new Map(files.map(({ meta }) => [`${meta.thread}|${meta.id}`,
+    meta.editedAt || meta.at || null]));
+  const done = await translateMessages(env, files.map(({ meta, body }) => ({
+    key: `${meta.thread}|${meta.id}`, body, from: meta.author?.name || null,
+  })), target);
+  return json({
+    ...done,
+    messages: Object.fromEntries(Object.entries(done.messages)
+      .map(([k, said]) => [k, { text: said, for: version.get(k) }])),
+  });
 }
 
 const MEDIA_MAX = 10 * 1024 * 1024;
@@ -1198,19 +1270,20 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     return json({ error: 'GET or PUT' }, 405);
   }
-  // The Topics page's trends (src/trends.js), for every member of an ops team, as the map.
+  // The Topics page's trends (src/trends.js), for every internal user, as the map.
   if (url.pathname.startsWith('/api/topics/trends')) {
-    if (!(me.teams || []).length) {
-      return json({ error: 'trends are for the members of the ops teams' }, 403);
+    if (!internal(env, me)) {
+      return json({ error: 'trends are for Adobe\'s people' }, 403);
     }
     return trendsApi(env, me, request, url);
   }
-  // The Topics page, for every member of an ops team (src/topicsapi.js).
+  // The Topics page, for every internal user (src/topicsapi.js).
   if (url.pathname === '/api/topics') {
-    // Every team's threads, customers and people: for the members of an ops team, not someone
-    // signed in from SIGNIN_DOMAINS on none, whose inbox is their personal view only.
-    if (!(me.teams || []).length) {
-      return json({ error: 'the topic map is for the members of the ops teams' }, 403);
+    // Every team's topics, customers and people: for every internal user, on an ops team or
+    // not, to find what to follow; not for someone signed in from SIGNIN_DOMAINS who is not
+    // Adobe's. Changing areas and rebuilding the map stay the admin team's and managers'.
+    if (!internal(env, me)) {
+      return json({ error: 'the topic map is for Adobe\'s people' }, 403);
     }
     if (request.method === 'GET') {
       return topicsPage(env, me, await followsOf(env, me));
@@ -1499,6 +1572,15 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     result.can_post_as_bot = Boolean(app && !app.problem
       && await mayPost(env, me)(result.thread.teams, result.thread));
     return json(result);
+  }
+  // The open thread in the reader's language, where Clef read another (src/translate.js). A GET,
+  // as reading the thread: also while viewing as someone else.
+  if (url.pathname === '/api/translate' && request.method === 'GET') {
+    const key = url.searchParams.get('thread');
+    if (!key || !await canSee(env, me, key)) {
+      return json({ error: 'not found' }, 404);
+    }
+    return translation(env, key, url.searchParams.get('to'), { waitUntil });
   }
   if (url.pathname === '/api/media') {
     // A thread's files (the copies of Teams files) only for those who may see the thread.

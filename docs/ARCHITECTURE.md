@@ -154,7 +154,7 @@ A person also follows a **customer**, a **person** or an **area** (`person_follo
 posted in, and those Clef puts in the area (`thread_areas`, by index, written with the label, as
 `thread_tech` is) are in their personal view the same way, and in `followersOf` for live updates
 and notifications. A team follows a customer too (on the customer's page in Customers, its managers
-and the admin team; `PUT /api/admin/org-follows`): a follow rule of field `org` (migration 0097),
+and the admin team; `PUT /api/admin/org-follows`): a follow rule of field `org` (migration 0098),
 which matches the org the other rules file a channel under, and the org's that were merged into it,
 so every channel of the customer is shared with the team, now and later, as any follow rule's
 channels are. On the customer's page everyone on a team follows it themselves, a manager gives a
@@ -255,10 +255,23 @@ there, under "Bots to review", and counts on Requests in the header until an adm
 (`unreviewedCount`); the others are listed below the requests, with the bots only mentioned
 (`/inbox/admin?tab=requests&request=bot:<key>`); there is no page of bots. An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
 messages in D1 follow at once (`messages.staff`), and so do the ones written before in the thread
-view (`botAuthor` in `src/api.js`, since their frontmatter says what was so then). Looking the
+view (`accountAuthor` in `src/api.js`, since their frontmatter says what was so then). Looking the
 account up again keeps the say. Its messages stay a bot's: they are not counted (a bot does not
 answer the customer, `last_staff`), and the agents fence them as every bot's
 (`untrusted` in `src/agent/deliver.js`, which trusts staff people only).
+
+**Adobe's admin accounts.** The Teams tenant that hosts the teams has admin accounts of its own
+(`owner_` and initials, "People", below), staff by themselves, but nothing in Graph says who uses
+one: their name is the initials. Under Requests, after the bots, the admin page lists them
+(`GET /api/admin/accounts`, `src/accountlinks.js`), and the admin team gives each the mail address
+of the Adobe person whose it is (`PUT /api/admin/accounts`): the account is linked to that person
+(`identities.person`, with `linked_by` and `linked_at`, migration 0097), and so shows with their
+name and picture, on their profile card, and counts as one of their accounts ("One account a
+person"). Its messages in D1 follow at once (`relabelAccount`: `messages.person`, `staff`,
+`author`, and the threads' `last_staff` and `last_author`), and so do the ones written before in
+the thread view (`accountAuthor`). Only an account that is staff by itself and that no mail
+address links is linked, and only to a staff person, so no customer's account becomes Adobe's.
+Looking the account up again keeps the link; giving no address takes it back.
 
 **Alert bots.** A bot may also only post alerts (`identities.alerts`, migration 0090, set on its
 page under Requests, whatever its side): a thread it starts is an alert (`threads.kind =
@@ -283,7 +296,7 @@ Teams team's installed apps (`syncInstalledBots` in `src/bots.js`) points `ident
 at `/api/bots/icon` for the app definition installed (a new version is a new URL), which
 fetches the definition's `colorIcon` from Graph beta (`AppCatalog.Read.All`) when an image asks,
 and caches it a day; without the permission the inbox shows the initials. The name goes on its messages in D1 at once (`messages.author`, and a thread's
-`last_author` that was the bot's), on those written before in the thread view (`botAuthor`),
+`last_author` that was the bot's), on those written before in the thread view (`accountAuthor`),
 and in the frontmatter of the ones it writes from then on (`toAuthor`, `resolveAuthor`); the
 picture is read from the account (the thread view, profile cards, the bots a reply can
 mention). A Slack bot's own picture is the one its messages come with (`bot_profile.icons`),
@@ -1434,6 +1447,10 @@ and an unchanged thread is never labeled twice):
   Adobe's analytics another), where nobody had changed them since migration 0043. They are what
   Clef's topics about commerce, assets, Sites Optimizer, integrations and the inbox would have
   been.
+- In a call of its own (so that it moves none of the answers above), Clef reads the **language**
+  the thread is written in, for the most part (`labels.language`, an ISO 639-1 code of
+  src/translate.js `LANGUAGES` or `other`, and `labels.language_p`; migration 0097), which the
+  inbox [translates](#translation) from. A label from before has none until it is labeled again.
 - The inbox filters by kind, topic and tech stack (the channel's, at 0.8 or above), and so do
   the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
@@ -1456,9 +1473,11 @@ and is labeled again, the model answers again and the old review only counts as 
 
 Clef's topics are asked: each is a question someone wrote, and a thread about something nobody
 asked about gets none. A **topic map** (`src/topicmap.js`, the **Topics** page) finds what the
-threads are about from what was said in them instead, for every member of an ops team (the
-admin team and team managers rebuild it and change the areas on it), to see the common
-themes, who works on which and for whom, and where Clef's topics miss: what to ask Clef next.
+threads are about from what was said in them instead, for every internal user: the members of
+the ops teams, and Adobe's people on none (staff, or a mail domain of `STAFF_DOMAINS`), who
+find topics, customers and people to follow there (the admin team and team managers rebuild it
+and change the areas on it). It shows the common themes, who works on which and for whom, and
+where Clef's topics miss: what to ask Clef next.
 
 - The threads: channel threads with a `CONTENT` thread vector, at least three messages, and not
   a `meeting` or `people` thread (whose vectors say "let's meet" more than what about). Their
@@ -1624,6 +1643,47 @@ there.
   listed as declining. What never came up before (an area Clef was only just given) is not
   trending. Anything mostly one customer's (more than 60% of its channel-weeks) counts half and
   is marked as such.
+
+### Translation
+
+A thread written in another language than the reader's shows translated (src/translate.js,
+`translationOf` in ui/inbox.js). The reader's language is the browser's (`navigator.language`, its
+primary subtag), and a thread's is Clef's (above): where Clef is sure of it (0.8 or more) and it is
+not the reader's, the page asks `GET /api/translate` for the thread's messages in the reader's
+language, and shows them in place of what was written, each marked "translated", under a bar that
+says from which language, shows the thread as written again (for that thread, while the page is
+open), or stops translating the language. A mixed thread is Clef's to call: one written mostly in
+English with a Japanese greeting is English, and is not translated.
+
+- **Settings.** Each person's (`person_settings`): `translate`, on unless turned off, and
+  `noTranslate`, the languages they read as written. The bar's "Don't translate Japanese" adds one;
+  the user menu's **Translation** section has the switch and the list, where ✕ translates a language
+  again.
+- **The model.** Workers AI's GLM-5.3 (`TRANSLATOR`), told the target language by name, gets up
+  to twelve messages (6,000 characters) a call, as a JSON object by number, each with its author's
+  name, and answers with one: each message's translation, or null for one in that language
+  already (in a mixed thread, the English replies). It writes set phrases of politeness as the
+  target language says them, names as their people write them (the authors' names tell it that
+  `龍` is Long), and keeps markdown, mentions, URLs, code, file names, product names and `:emoji:`
+  codes as they are. It thinks little first (`reasoning: low`, temperature 0.2): a call takes one
+  to six seconds. Of twelve models tried on a Japanese thread, Llama 3.3 (the titles' model)
+  translated set phrases word for word ("Please take care of me"), Llama 4 Scout and Mistral Small
+  called Japanese English, and the reasoning models (gpt-oss, DeepSeek, Gemma 4, Qwen) took ten
+  seconds to a minute; GLM-5.3 wrote the most natural English, the fastest, and stayed so on
+  German threads with links, images and mentions. It costs some three times what Llama 3.3 does,
+  about a tenth of a cent for a short thread, once. A message with nothing to translate
+  (links, code, mentions and emoji only) and one over 6,000 characters are not asked. One request
+  translates at most 40 messages, at the same time, and says how many are left (`more`), which the
+  page asks for next; what the model did not answer for (`failed`: no JSON, or the call failed) is
+  not kept, and the page asks again a minute later.
+- **The cache.** D1 keeps every translation (`translations`, migration 0097), by message and
+  language, with a hash of the body it is of: a thread is translated once per language, and an
+  edited message again. It holds the text of messages, as pile 2 does, and the cron deletes rows
+  after 90 days; a page that asks again has them made again. Each answer names the version of each
+  message (`for`: its edit, else its time), so the page never shows the translation of an earlier
+  text. The log says how many were kept, made and failed (`route: 'translate'`), never the text.
+- The platform's notices and deleted messages are not translated, and nothing is translated before
+  it is sent: replies go out as written.
 
 ## Replying
 
@@ -3238,7 +3298,11 @@ Authors are normalized to `{ kind: person | bot | system, org, staff }`.
   which links it to their person: their posts move their watermark and count as theirs.
 - On **Teams**, the support tenant invites everyone as a guest, staff included, so
   `userType` and `tenantId` do not distinguish staff from customers. The organization is
-  derived from the person's **mail domain** instead. Bot posts carry `from.application`; a
+  derived from the person's **mail domain** instead. The one exception is the tenant's own
+  admin accounts: members, not guests, whose user name begins `owner_` (`owner_` and the
+  initials of the Adobe person who uses one, mailed at the tenant's own domain). They are
+  staff by themselves (`isHostAdmin` in `src/lookup.js`, `identities.staff`), and the admin
+  team says whose each is ("Adobe's admin accounts", below), so it shows as that person. Bot posts carry `from.application`; a
   bot (`applicationIdentityType: bot`) keeps its id as its identity, webhooks and connectors
   stay anonymous.
 
@@ -3261,7 +3325,9 @@ person's, the first by:
 2. in its channel at all, then of its own workspace at all: a mention reaches someone in the
    channel, and the inbox can add a colleague of its own workspace to it (an account of another
    workspace it cannot);
-3. a full member before a guest (`identities.guest`, migration 0061: Slack's `is_restricted` or
+3. their own account before one the admin team linked to them (`identities.linked_at`: a host
+   tenant's admin account, which they use only to run the tenant), then a full member before a
+   guest (`identities.guest`, migration 0061: Slack's `is_restricted` or
    `is_ultra_restricted`, Graph's `userType`; NULL until the account is looked up again);
 4. the one that posted in the last 90 days, then the one with the most messages in the last 180,
    in the most channels, that posted last, and by id.

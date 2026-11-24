@@ -749,6 +749,56 @@ function seedBots(DB, store) {
   }
 }
 
+/**
+ * The Teams tenant's own admin accounts under the admin page's Requests (src/accountlinks.js):
+ * two that nobody said whose they are yet, one with messages in a Teams thread, and one an admin
+ * linked to a colleague. Made up, as their tenant's domain.
+ */
+function seedAccounts(DB, store) {
+  const db = DB.sqlite;
+  const staff = [...store.people.values()].filter((p) => p.staff);
+  const teams = [...store.threads.values()].find(({ row }) => row.source === 'teams');
+  const tenant = teams ? teams.row.tenant : 'T-FAKE';
+  const ACCOUNTS = [
+    { id: 'U-OWNER-AB', name: 'AB', posts: 2 },
+    { id: 'U-OWNER-CD', name: 'CD' },
+    {
+      id: 'U-OWNER-EF', name: 'EF', person: staff[1] || staff[0], posts: 1,
+    },
+  ];
+  for (const a of ACCOUNTS) {
+    const linked = a.person ? new Date(Date.now() - 2 * 86400000).toISOString() : null;
+    db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email,
+        fetched_at, company, staff, guest, person, linked_by, linked_at)
+        VALUES ('teams', ?, ?, 'person', ?, ?, ?, 'Adobe', 1, 0, ?, ?, ?)`)
+      .run(
+        tenant,
+        a.id,
+        a.name,
+        `owner_${a.name.toLowerCase()}@support-tenant.example`,
+        new Date().toISOString(),
+        a.person ? a.person.id : null,
+        linked && staff[0].email,
+        linked,
+      );
+    for (let i = 0; teams && i < (a.posts || 0); i += 1) {
+      db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at, staff,
+          counted, deleted, author_key, author_kind, author, person)
+        VALUES ('teams', ?, ?, ?, ?, ?, 1, 1, 0, ?, 'person', ?, ?)`)
+        .run(
+          tenant,
+          teams.row.channel_id,
+          `${a.id}-${i}`,
+          teams.key,
+          new Date(Date.now() - (i + 1) * 3600000).toISOString(),
+          `teams:${tenant}:${a.id}`,
+          a.person ? a.person.name : a.name,
+          a.person ? a.person.id : null,
+        );
+    }
+  }
+}
+
 export function createAdmin(store, { manager = false, member = false, bases = [] } = {}) {
   const teamRows = store.teams.some((t) => t.slug === 'admin')
     ? store.teams.map(({ slug, name }) => ({ slug, name }))
@@ -818,6 +868,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   seedAdminChannels(DB);
   seedRuleConflicts(DB);
   seedBots(DB, store);
+  seedAccounts(DB, store);
   // What the preview costs: the COGS dashboard's made-up usage (dev-ui-cogs.mjs).
   seedCogs(DB);
   // The Topics page's map (dev-ui-topics.mjs).

@@ -107,7 +107,8 @@ import { weeksTo } from '../src/trends.js';
 import { latestTopicMap } from '../src/topicmap.js';
 import { trendsFixture } from './dev-ui-topics.mjs';
 import { findPerson } from '../src/kbpeople.js';
-import { AGENT, createStore } from './dev-ui-fixtures.mjs';
+import { AGENT, createStore, TRANSLATIONS } from './dev-ui-fixtures.mjs';
+import { targetOf } from '../src/translate.js';
 import { OFFER_AFTER } from '../src/postoffer.js';
 import { followable, followsOfTeams } from '../src/follows.js';
 import { cleanQuery, suggestionsOf, TREND_DAYS } from '../src/followsuggest.js';
@@ -242,7 +243,7 @@ const parseArea = (text) => {
 function topicsViewer() {
   // As /api/me on the admin pages: the admin team's, unless --manager or --member.
   const teams = store.me.teams.map((t) => ({ slug: t.slug, role: MANAGER ? 'manager' : 'member' }));
-  if (!MANAGER && !MEMBER) {
+  if (!MANAGER && !MEMBER && !NO_TEAM) {
     teams.push({ slug: 'admin', role: 'member' });
   }
   return { ...store.me, teams };
@@ -1591,17 +1592,19 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/me') {
     const {
-      id, name, email, teams,
+      id, name, email, teams, staff,
     } = store.me;
     // Dana is not in the admin team (unless --admin), except on the admin pages (and COGS), so
-    // they can be tried.
-    const admin = !MANAGER && !MEMBER
+    // they can be tried; with --no-team, never, as staff on no team see them (Inbox and Topics).
+    const admin = !MANAGER && !MEMBER && !NO_TEAM
       && (ADMIN || store.me.admin || /\/inbox\/(kb|admin|cogs|topics)\b/.test(req.headers.referer || ''));
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
       name,
       email,
+      // Adobe's, on a team or not (src/api.js `personWhere`).
+      staff: Boolean(staff),
       teams: MANAGER || MEMBER ? teams.map((t) => ({ ...t, role: MANAGER && t.slug === 'edge' ? 'manager' : 'member' })) : teams,
       admin,
       manages: MANAGER ? ['edge'] : [],
@@ -1751,6 +1754,33 @@ async function api(req, res, url) {
     // As src/api.js: where "Post messages" is on (the fixtures' `appPosting` channels).
     const entry = result && store.threads.get(result.thread.thread);
     return result ? json(res, { ...result, can_post_as_bot: Boolean(entry?.ch.appPosting) }) : json(res, { error: 'not found' }, 404);
+  }
+  if (url.pathname === '/api/translate') {
+    // As src/api.js `translation`, with a made-up model (the fixtures' TRANSLATIONS): a message
+    // without Japanese is in the browser's language already. A moment's wait, so the bar's
+    // "Translating…" shows.
+    const result = thread(url.searchParams.get('thread'));
+    if (!result) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const to = targetOf(url.searchParams.get('to'));
+    if (!to) {
+      return json(res, { error: '`to` is a language, as en or de-CH' }, 400);
+    }
+    await new Promise((r) => {
+      setTimeout(r, 700);
+    });
+    const messages = {};
+    for (const m of result.messages.filter((x) => !x.deletedAt && x.author?.kind !== 'system')) {
+      const ja = /[\u3040-\u30ff\u4e00-\u9fff]/.test(m.body);
+      messages[`${m.thread}|${m.id}`] = {
+        text: ja ? (TRANSLATIONS[m.body] || `(${to.name}) ${m.body}`) : null,
+        for: m.editedAt || m.at,
+      };
+    }
+    return json(res, {
+      to: to.lang, messages, more: 0, failed: 0,
+    });
   }
   if (url.pathname === '/api/media') {
     // Images of messages (src/api.js `media`), made up: a placeholder of the size the link

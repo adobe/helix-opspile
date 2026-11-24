@@ -1121,6 +1121,9 @@ describe('backfill, mentions and labels', () => {
               resolved: { type: 'noul', noul: 0.05 },
               'topic.cdn': { type: 'noul', noul: 0.9 },
               'topic.seo': { type: 'noul', noul: 0.2 },
+              language: {
+                type: 'choice', choice: 'de', probabilities: { de: 0.96, en: 0.03 }, confidence: 0.9,
+              },
             },
           };
         }
@@ -1162,6 +1165,10 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual(about.map((c) => Object.keys(c.input.questions)), [[`about.${questionKeys(['eds']).eds}`]]);
     assert.match(Object.values(about[0].input.questions)[0].instructions, /^Is this thread about /);
     assert.ok(asked.includes('topic.cdn'));
+    // The language in a call of its own (src/translate.js), so that it moves no other answer.
+    assert.equal(clef.filter((c) => Object.keys(c.input.questions).join() === 'language').length, 1);
+    assert.equal(asked.filter((q) => q === 'language').length, 1);
+    assert.deepEqual(e.DB.rows('SELECT language, language_p FROM labels'), [{ language: 'de', language_p: 0.96 }]);
     // The rules detected Edge Delivery, as sure as can be; Clef said nothing about it.
     // And the thread's own (labels.tech), for its header.
     assert.deepEqual(e.DB.rows('SELECT tech FROM labels'), [{ tech: '{"eds":1}' }]);

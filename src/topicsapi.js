@@ -11,7 +11,8 @@
  */
 
 /**
- * The Topics page's API, for every member of an ops team (docs/ARCHITECTURE.md, "Topic maps"):
+ * The Topics page's API, for every internal user: the members of the ops teams, and Adobe's
+ * people on none (docs/ARCHITECTURE.md, "Topic maps"):
  *
  * - `GET /api/topics`: the newest topic map, every team's areas (src/areas.js), what the viewer
  *   follows, every team's name, and what they may change: the areas of which teams
@@ -112,7 +113,7 @@ export async function rebuildTopics(env, me) {
   return json({ latest: await latestTopicMap(env), available: true });
 }
 
-/** /api/topics/trends…, for the members of an ops team (src/api.js checks). */
+/** /api/topics/trends…, for every internal user (src/api.js checks). */
 export async function trendsApi(env, me, request, url) {
   const { pathname } = url;
   if (pathname === '/api/topics/trends' && request.method === 'GET') {

@@ -2804,7 +2804,8 @@ function message(m, prev, fresh, followed = false, dated = false) {
     ? `<div class="bubble editing"><ul class="mentions s2-float s2-up" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
       <div class="edithint">Enter to save · Esc to cancel${m.editable === 'app' ? ' · as the bot' : ''} <button data-edit-save="1">Save</button> <button data-edit-cancel="1">Cancel</button></div></div>`
     : `<div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body, m.thread)}${m.pending && m.files?.length ? pendingFiles(m.files) : ''}</div>`;
-  const notes = [m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : ''].filter(Boolean).join(' ');
+  const notes = [m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : '',
+    m.translatedFrom ? `<span class="trnote" title="Translated from ${esc(languageName(m.translatedFrom))} by a language model">translated</span>` : ''].filter(Boolean).join(' ');
   return `<div class="msg ${adobe ? 'adobe' : ''} ${own ? 'mine' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${editing ? 'editing' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
     <div class="col"><div class="head"><div class="who">${who}</div>${quick}</div>
@@ -2812,6 +2813,137 @@ function message(m, prev, fresh, followed = false, dated = false) {
       ${rx ? `<div class="rx">${rx}</div>` : ''}
       ${notes ? `<div class="meta"${m.editedAt ? ` title="Edited ${esc(new Date(m.editedAt).toLocaleString())}"` : ''}>${notes}</div>` : ''}${m.pending ? sendState(m) : ''}
     </div></div>`;
+}
+
+// ---------------------------------------------------------------- translation
+// A thread Clef reads in another language than this browser's (`model.language`, as sure as
+// TRANSLATE_MIN) shows translated into the browser's (GET /api/translate, src/translate.js), unless
+// you turned translation off, or off for that language (your settings: `translate`, `noTranslate`;
+// the user menu lists them). A bar above the messages says so, shows them as written again (for
+// this thread, while the page is open), or stops translating that language. A translation is of
+// a message's version (`for`): an edit shows as written until it is translated too.
+const TRANSLATE_MIN = 0.8;
+// How often a thread asks for the rest when one answer left some (`more`), and after a failure.
+const TRANSLATE_ROUNDS = 10;
+const TRANSLATE_RETRY_MS = 60 * 1000;
+const LANGUAGE_NAMES = new Intl.DisplayNames(['en'], { type: 'language' });
+const translations = new Map();
+
+/** This browser's language, its primary subtag: what threads are translated into. */
+const readerLanguage = () => String(navigator.language || 'en').toLowerCase().split(/[-_]/)[0];
+
+/** A language's name, as the inbox says it ("Japanese"); `other` is "another language". */
+function languageName(code) {
+  if (code === 'other') return 'another language';
+  try { return LANGUAGE_NAMES.of(code) || code; } catch { return code; }
+}
+
+/** The language thread data `data` is to be translated from, or null: where you read it as written. */
+function translateFrom(data) {
+  const m = data?.model;
+  const lang = m?.language && Number(m.language_p) >= TRANSLATE_MIN ? m.language : null;
+  const s = state.settings;
+  if (!lang || !s || s.translate === false || lang === readerLanguage()) return null;
+  return (s.noTranslate || []).includes(lang) ? null : lang;
+}
+
+/**
+ * Thread `key`'s translation, as far as it is here (`{ from, to, items, loading, failedAt,
+ * original }`), or null where it is not translated; asks for what it lacks of `messages`.
+ */
+function translationOf(key, data) {
+  const from = translateFrom(data);
+  if (!from) return null;
+  const to = readerLanguage();
+  let tr = translations.get(key);
+  if (!tr || tr.to !== to) {
+    tr = { from, to, items: new Map(), loading: false, failedAt: 0, original: false };
+    translations.set(key, tr);
+  }
+  tr.from = from;
+  const wanted = (data.messages || []).some((m) => !m.deletedAt && m.author?.kind !== 'system'
+    && tr.items.get(`${m.thread}|${m.id}`)?.for !== (m.editedAt || m.at));
+  if (wanted && !tr.loading && !tr.original && Date.now() - tr.failedAt > TRANSLATE_RETRY_MS) loadTranslation(key, tr);
+  return tr;
+}
+
+async function loadTranslation(key, tr) {
+  tr.loading = true;
+  try {
+    for (let i = 0; i < TRANSLATE_ROUNDS; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await get(`/api/translate?thread=${encodeURIComponent(key)}&to=${encodeURIComponent(tr.to)}`);
+      for (const [id, item] of Object.entries(r.messages || {})) tr.items.set(id, item);
+      if (r.failed) tr.failedAt = Date.now();
+      repaint(key);
+      if (!r.more || r.failed) break;
+    }
+  } catch {
+    tr.failedAt = Date.now();
+  } finally {
+    tr.loading = false;
+  }
+  repaint(key);
+}
+
+/** Message `m` as it shows: translated, where thread translation `tr` has it for its version. */
+function translated(m, tr) {
+  if (!tr || tr.original || m.pending || m.deletedAt) return m;
+  const item = tr.items.get(`${m.thread}|${m.id}`);
+  if (!item || typeof item.text !== 'string' || item.for !== (m.editedAt || m.at)) return m;
+  return { ...m, body: item.text, translatedFrom: tr.from };
+}
+
+/** The bar above the messages of a translated thread, or ''. */
+function translationBar(tr, shown) {
+  if (!tr) return '';
+  const from = languageName(tr.from);
+  const to = languageName(tr.to);
+  const never = `<button class="linkish" data-tr="never" title="Your settings: threads in ${esc(from)} show as written, everywhere">Don't translate ${esc(from)}</button>`;
+  if (tr.original) {
+    return `<div class="sys translated">Shown as written, in ${esc(from)} · <button class="linkish" data-tr="translate">Translate into ${esc(to)}</button></div>`;
+  }
+  const count = shown.filter((m) => m.translatedFrom).length;
+  if (!count) {
+    if (tr.loading) return `<div class="sys translated" aria-live="polite">Translating from ${esc(from)} into ${esc(to)}…</div>`;
+    if (tr.failedAt) return `<div class="sys translated">Could not translate this thread from ${esc(from)} · <button class="linkish" data-tr="retry">Try again</button></div>`;
+    return '';
+  }
+  return `<div class="sys translated" title="By a language model: the wording may be off">Translated from ${esc(from)} into ${esc(to)}${tr.loading ? '…' : ''} · <button class="linkish" data-tr="original">Show as written</button> · ${never}</div>`;
+}
+
+/** A click on the bar's buttons. */
+function translationAct(key, act) {
+  const tr = translations.get(key);
+  if (!tr) return;
+  if (act === 'original' || act === 'translate') { tr.original = act === 'original'; repaint(key); return; }
+  if (act === 'retry') { tr.failedAt = 0; repaint(key); return; }
+  if (act === 'never') {
+    const from = tr.from;
+    saveSettings({ noTranslate: [...new Set([...(state.settings.noTranslate || []), from])] })
+      .then((ok) => { if (ok) toast(`Threads in ${languageName(from)} show as written. Your menu has the languages you read.`); });
+  }
+}
+
+/** The user menu's translation section: the switch, and the languages you read as written. */
+function renderTranslate() {
+  const box = $('translateBox');
+  box.hidden = Boolean(state.as) || !state.settings;
+  if (box.hidden) return;
+  const s = state.settings;
+  $('translateOn').setAttribute('aria-checked', String(s.translate !== false));
+  $('translateLabel').textContent = `Translate threads into ${languageName(readerLanguage())}`;
+  $('translateList').innerHTML = (s.noTranslate || []).map((l) => `<div class="bell"><span>${esc(`As written: ${languageName(l)}`)}</span><button type="button" data-retranslate="${esc(l)}" title="Translate threads in ${esc(languageName(l))} again" aria-label="Translate threads in ${esc(languageName(l))} again">✕</button></div>`).join('');
+  $('translateHint').textContent = s.translate === false ? 'Every thread shows as it was written.'
+    : `Where Clef reads another language than this browser's. A language model translates; ${s.noTranslate?.length ? 'the languages above show as written.' : 'the bar above a thread can keep its language as written.'}`;
+}
+function wireTranslate() {
+  $('translateOn').onclick = () => saveSettings({ translate: state.settings.translate === false });
+  $('translateList').onclick = (e) => {
+    const x = e.target.closest('[data-retranslate]');
+    if (x) saveSettings({ noTranslate: (state.settings.noTranslate || []).filter((l) => l !== x.dataset.retranslate) });
+  };
+  renderTranslate();
 }
 
 // ---------------------------------------------------------------- the thread agent
@@ -4588,7 +4720,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
     return e ? { ...n, body: e.body, editedAt: new Date(e.sentAt).toISOString(), saving: e.saving } : n;
   };
   const sending = state.sending.filter((p) => p.thread === key);
-  const shown = [...messages.map(withEdit), ...sending.map((p) => ({ ...p, pending: true, fresh: !p.shown }))];
+  const tr = translationOf(key, data);
+  const shown = [...messages.map((m) => translated(withEdit(m), tr)), ...sending.map((p) => ({ ...p, pending: true, fresh: !p.shown }))];
   for (const p of sending) p.shown = true;
   // Who they are: the server's answer for the names the messages mention, then what the
   // thread's authors, the inbox's people, the picked mentions and the replies being sent say.
@@ -4619,6 +4752,8 @@ async function openThread(key, { live = false, cached = false } = {}) {
   ], kinds, keys);
   // The feed, one element per item; `enter` marks the messages that just arrived.
   const items = thread.root_at ? [] : [{ html: '<div class="sys">Earlier messages were posted before the inbox started listening.</div>' }];
+  const trBar = translationBar(tr, shown);
+  if (trBar) items.unshift({ html: trBar });
   // A very large group shows some of its posts only (the server's MAX_READ_MEMBERS): where
   // posts are left out, and how many, is said before the next post that is shown.
   const gaps = new Map();
@@ -8594,7 +8729,9 @@ async function saveSettings(patch) {
   }
   if (patch.postingDeclined) next.postingDeclined = [...new Set([...(before.postingDeclined || []), ...patch.postingDeclined])];
   state.settings = next;
-  const shown = () => { renderNotify(); renderTraces(); renderExpert(); render(); };
+  // The open thread translated, or as written, as they say now.
+  const retranslate = 'translate' in patch || 'noTranslate' in patch;
+  const shown = () => { renderNotify(); renderTraces(); renderExpert(); renderTranslate(); render(); if (retranslate && state.open) repaint(state.open); };
   shown(); syncSockets(); tracesChanged(before);
   const res = await request('PUT', '/api/settings', patch).catch((e) => ({ ok: false, data: { error: e.message } }));
   if (res.ok) { state.settings = res.data; shown(); return true; }
@@ -10356,6 +10493,8 @@ async function start() {
   Swap.watch($('pane'), () => (state.compose ? 'compose' : state.open), { skip: () => TAKING_TURNS.matches });
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
+    const tra = e.target.closest('[data-tr]');
+    if (tra) { translationAct(state.open, tra.dataset.tr); return; }
     // The sidebar: entered by the agent's icon, left by ✕ Exit; its conversations unfold. The
     // icon beside the reply box stays while the panel is open beside the thread: it closes it.
     const enter = e.target.closest('[data-side-enter]');
@@ -10570,6 +10709,7 @@ async function start() {
   wireNotify();
   wireTraces();
   wireExpert();
+  wireTranslate();
   wireFollowMenu();
   // A search in the address is asked for alongside the inbox.
   if (initial.q) runSearch(initial.q);

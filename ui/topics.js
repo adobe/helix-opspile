@@ -11,7 +11,8 @@
  */
 
 /*
- * Topics: the topic map (src/topicmap.js) for every member of an ops team, over GET /api/topics
+ * Topics: the topic map (src/topicmap.js) for every internal user (on an ops team, or `staff`
+ * on none, who find what to follow here), over GET /api/topics
  * (src/topicsapi.js), with the areas (src/areas.js) the teams author and what the viewer follows:
  * a Follow on a person, customer, area or product puts its threads in their personal view, and
  * the admin team and team managers add, rename, describe and delete areas in the panel. What
@@ -469,7 +470,7 @@ function follows(f) {
   return (state.follows.by?.[f.kind] || []).map(String).includes(String(f.target));
 }
 
-const followButton = (f, label, { strong = false } = {}) => (f && state.me.teams?.length
+const followButton = (f, label, { strong = false } = {}) => (f && (state.me.teams?.length || state.me.staff)
   ? `<button class="follow${strong && !follows(f) ? ' primary' : ''}" data-follow="${esc(f.kind)}" data-target="${esc(f.target)}" aria-pressed="${follows(f)}"
       title="${follows(f) ? `Stop following ${esc(label)}: its threads leave your personal view` : `Follow ${esc(label)}: its threads are in your personal view`}">${follows(f) ? 'Unfollow' : 'Follow'}</button>`
   : '');
@@ -505,10 +506,9 @@ function areaForm() {
   if (!e) return '';
   const def = e.new ? {} : state.areas.find((a) => a.team === e.team && a.id === e.id) || {};
   const teams = state.may.areas || [];
-  const teamName = (slug) => state.me.teams?.find((t) => t.slug === slug)?.name || slug;
   return `<form class="areaform" id="areaForm" autocomplete="off">
     <h3>${e.new ? 'New area' : `Change ${esc(def.name || e.id)}`}</h3>
-    ${e.new ? `<label class="fld"><span>In the knowledge base of</span><select id="afTeam">${teams.map((t) => `<option value="${esc(t)}">${esc(teamName(t))}</option>`).join('')}</select></label>
+    ${e.new ? `<label class="fld"><span>In the knowledge base of</span><select id="afTeam">${teams.map((t) => `<option value="${esc(t)}">${esc(teamLabel(t))}</option>`).join('')}</select></label>
       <label class="fld"><span>Id (lower case, digits and -; it stays when the area is renamed)</span><input id="afId" required pattern="[a-z][a-z0-9-]*" maxlength="40"></label>` : ''}
     <label class="fld"><span>Name</span><input id="afTitle" required maxlength="80" value="${esc(def.name || '')}"></label>
     <label class="fld"><span>Clef is asked: “Is this thread about …?”</span><textarea id="afWhat" rows="3" required maxlength="500">${esc(def.what || '')}</textarea></label>
@@ -686,9 +686,15 @@ function only(id) {
 function renderBar() {
   const m = map();
   $('bar').hidden = !m && !state.available;
-  const teams = m ? [...new Set(m.threads.map((t) => t.team))].sort() : [];
-  const teamName = (slug) => state.me.teams?.find((t) => t.slug === slug)?.name || slug;
-  $('team').innerHTML = `<option value="">All teams</option>${teams.map((t) => `<option value="${esc(t)}"${t === state.q.team ? ' selected' : ''}>${esc(teamName(t))}</option>`).join('')}`;
+  // Every team (GET /api/topics), by name; one with no thread in the map (none with
+  // MIN_MESSAGES, or none since it was built) is there, but not to be picked.
+  const inMap = new Set(m ? m.threads.map((t) => t.team) : []);
+  const teams = [...new Set([...Object.keys(state.teams), ...inMap])]
+    .sort((a, b) => teamLabel(a).localeCompare(teamLabel(b), undefined, { sensitivity: 'base' }));
+  $('team').innerHTML = `<option value="">All teams</option>${teams.map((t) => {
+    const none = !inMap.has(t) && t !== state.q.team;
+    return `<option value="${esc(t)}"${t === state.q.team ? ' selected' : ''}${none ? ' disabled' : ''}>${esc(teamLabel(t))}${none ? ' (no threads in this map)' : ''}</option>`;
+  }).join('')}`;
   $('team').disabled = !m;
   $('types').innerHTML = TYPES.map((t) => `<button data-type="${t.id}" aria-pressed="${!state.q.hide.includes(t.id)}" title="${esc(t.title)}"${m ? '' : ' disabled'}>
     <span class="dot" data-type="${t.id}"></span>${esc(t.label)}</button>`).join('');
@@ -928,8 +934,8 @@ function wire() {
   state.me = me;
   Header.user(me, Header.role(me));
   Header.init(me);
-  if (!me.teams?.length) {
-    $('body').innerHTML = `<div class="empty">The topic map is for the members of the ops teams. <a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;
+  if (!me.teams?.length && !me.staff) {
+    $('body').innerHTML = `<div class="empty">The topic map is for Adobe's people. <a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;
     return;
   }
   TrendView.setEsc(esc);

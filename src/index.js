@@ -64,6 +64,7 @@ import { pruneDraftUndo } from './draftevents.js';
 import { sweepBackfills } from './backfill.js';
 import { pruneExpertEvents } from './expertevents.js';
 import { prunePostKeys } from './postkeys.js';
+import { pruneTranslations } from './translate.js';
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
@@ -198,7 +199,7 @@ const handlers = {
       });
     }
     if (pathname === '/inbox/topics') {
-      // The topic map (admin team; the API checks), under /inbox like the others.
+      // The topic map (every internal user; the API checks), under /inbox like the others.
       return new Response(TOPICS_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });
@@ -375,6 +376,9 @@ const handlers = {
     ctx.waitUntil(prunePostKeys(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', postKeys: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', postKeys: 'error', error: e.message }))));
+    ctx.waitUntil(pruneTranslations(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', translations: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', translations: 'error', error: e.message }))));
     ctx.waitUntil(pruneExpertEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', expertEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', expertEvents: 'error', error: e.message }))));

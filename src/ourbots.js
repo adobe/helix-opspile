@@ -227,7 +227,7 @@ async function refileStarted(env, key) {
  * `ours`: whether it is Adobe's (true) or external (false); a bot nobody said either of is a
  * request under Requests. Its messages in D1 follow at once (`messages.staff`, the thread
  * list's participants); the thread view reads the account for those written before
- * (src/api.js, botAuthor), and the ones it writes from now on say so themselves.
+ * (src/api.js, accountAuthor), and the ones it writes from now on say so themselves.
  *
  * `alerts`: whether it only posts alerts. The threads it started are re-filed as alerts (or as
  * conversations again, where their channel is one), and so are the ones it starts from now on
