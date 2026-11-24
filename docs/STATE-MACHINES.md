@@ -134,6 +134,12 @@ was queued with and the row's. A rename event older than the channel's row (`fet
 order, or a replay of pile 1) changes nothing, and the write says so again, so of two handled at
 once the later wins. A job from `followChange` carries the classification it moved from (`was`):
 a thread a newer message already re-filed in its row still gets its derived data redone.
+One job at a time moves a channel: a lease on its row (`channels.refile_by`, `refile_until`, 15
+minutes at most), taken before the job reads the rules and given back when it is done, before it
+queues the threads it did not get to. A job that finds it taken goes back to the queue for 30
+seconds and reads the rules then, so the last rule change files the channel; one that dies keeps
+it until it runs out. Two at once, each with the rules as they were when it started, once left
+rows pointing at folders whose files the other had moved elsewhere.
 
 **A follow rule's share.** wanted → shared → gone (`channel_teams` rows with `added_by`
 `rule:<id>`; `src/followrules.js`). Not stored as a state: `syncFollowRules` works out what the

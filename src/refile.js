@@ -36,6 +36,10 @@ const MAX_OBJECTS = 300;
 const MAX_THREADS_PER_JOB = 400;
 /** How long the jobs of a renamed channel wait: its row is written after they are queued. */
 const CHANGE_DELAY_SECONDS = 30;
+/** How long a job holds a channel's lease at most: as long as a queue consumer can run. */
+const LEASE_MS = 15 * 60 * 1000;
+/** How long a job waits for another one's lease before it tries again. */
+const LEASE_WAIT_SECONDS = 30;
 
 const channelKey = (c) => `${c.source}:${c.tenant}:${c.channel_id}`;
 
@@ -271,20 +275,8 @@ async function reexport(env, threads) {
   }
 }
 
-/**
- * Queue job `{ refile: { source, tenant, channelId, threads: [[thread, folder]], was? } }`:
- * files the channel's threads where the rules say now. `was` (`{ org, team, kind }`, from
- * `followChange`) is how the channel was classified before it changed: a thread whose row a
- * newer message already filed anew (src/threads.js) is still re-filed from there, with its
- * vectors, search items and export, which carry the old team, org or kind. Runs again for the
- * threads it did not get to, so a large channel moves in several jobs.
- *
- * Each thread's folder is read from D1: several rule changes in a row queue several jobs for a
- * channel, and an earlier one may have moved the folder since this job was queued. The folder
- * in the job is moved too: a message filed since then, at the new place, moved the row but not
- * the files before it. For a thread D1 no longer has, it is the only one.
- */
-export async function refile(env, job) {
+/** `refile`, holding the channel's lease; `left` are the threads it did not get to. */
+async function refileLeased(env, job) {
   const row = await env.DB.prepare('SELECT * FROM channels WHERE source = ? AND tenant = ? AND channel_id = ?')
     .bind(job.source, job.tenant, job.channelId).first();
   if (!row) {
@@ -388,10 +380,57 @@ export async function refile(env, job) {
       type: 'thread', thread: refiled[0], moved: refiled,
     });
   }
+  return {
+    result: 'refiled', org: cls.org, team: cls.team, kind: cls.kind, threads, objects, left,
+  };
+}
+
+/**
+ * Queue job `{ refile: { source, tenant, channelId, threads: [[thread, folder]], was? } }`:
+ * files the channel's threads where the rules say now. `was` (`{ org, team, kind }`, from
+ * `followChange`) is how the channel was classified before it changed: a thread whose row a
+ * newer message already filed anew (src/threads.js) is still re-filed from there, with its
+ * vectors, search items and export, which carry the old team, org or kind. Runs again for the
+ * threads it did not get to, so a large channel moves in several jobs.
+ *
+ * Each thread's folder is read from D1: several rule changes in a row queue several jobs for a
+ * channel, and an earlier one may have moved the folder since this job was queued. The folder
+ * in the job is moved too: a message filed since then, at the new place, moved the row but not
+ * the files before it. For a thread D1 no longer has, it is the only one.
+ *
+ * One job at a time moves a channel (`channels.refile_by`, `refile_until`): two at once, each
+ * with the rules as they were when it started, wrote their own team into the rows while the other
+ * moved the files, and left rows pointing at folders whose files were elsewhere. A job that finds
+ * the lease taken goes back to the queue and runs later, with the rules as they are then, so the
+ * last rule change is the one that files the channel.
+ */
+export async function refile(env, job) {
+  const where = 'source = ? AND tenant = ? AND channel_id = ?';
+  const at = [job.source, job.tenant, job.channelId];
+  const token = crypto.randomUUID();
+  const now = Date.now();
+  const took = await env.DB.prepare(`UPDATE channels SET refile_by = ?, refile_until = ?
+    WHERE ${where} AND (refile_until IS NULL OR refile_until < ?)`)
+    .bind(token, new Date(now + LEASE_MS).toISOString(), ...at, new Date(now).toISOString()).run();
+  if (!took.meta || !took.meta.changes) {
+    const known = await env.DB.prepare(`SELECT 1 FROM channels WHERE ${where}`).bind(...at).first();
+    if (!known) {
+      return { result: 'skip', reason: 'unknown channel' };
+    }
+    await env.NORMALIZE.send({ refile: job }, { delaySeconds: LEASE_WAIT_SECONDS });
+    return { result: 'waiting', reason: 'another job is moving the channel' };
+  }
+  let r;
+  try {
+    r = await refileLeased(env, job);
+  } finally {
+    await env.DB.prepare(`UPDATE channels SET refile_by = NULL, refile_until = NULL
+      WHERE ${where} AND refile_by = ?`).bind(...at, token).run();
+  }
+  // The rest after the lease is given back: it may start at once.
+  const { left = [], ...result } = r;
   if (left.length) {
     await env.NORMALIZE.send({ refile: { ...job, threads: left } });
   }
-  return {
-    result: 'refiled', org: cls.org, team: cls.team, kind: cls.kind, threads, objects, left: left.length,
-  };
+  return { ...result, left: left.length };
 }
