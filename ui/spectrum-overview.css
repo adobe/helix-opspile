@@ -38,6 +38,29 @@
 .ov .tv-legend span { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
 .ov .tv-legend span::before { content: ""; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-small-size-medium); }
 
+/* A customer's top (ui/customer.js): its numbers in a column of tiles at the left, the chart of
+   its weeks at the right, with the focus it is broken down by above it. */
+.ov .cv-hero { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 5fr); gap: var(--spectrum-spacing-600); align-items: start; }
+.ov .cv-hero .tv-stats { grid-template-columns: minmax(0, 1fr); align-content: start; gap: 0; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-300); }
+/* A number and what it counts on one line, the rest under them. */
+.ov .cv-hero .tv-stat { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 0 var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) 0; }
+.ov .cv-hero .tv-stat small { grid-column: 2; }
+.ov .tv-bars .tv-axis, .ov .tv-bars .tv-plot svg { height: calc(var(--spectrum-spacing-1000) * 2 + var(--spectrum-spacing-500)); }
+.ov .cv-activity { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); min-width: 0; }
+.ov .cv-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); }
+.ov .cv-head h2 { margin: 0; }
+.ov .cv-head .tv-tabs { margin: 0; }
+.ov .tv-bars { margin-top: 0; }
+.ov .tv-parts { grid-column: 2; display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin: 0; padding: 0; list-style: none; }
+.ov .tv-parts li { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; max-width: 100%; }
+.ov .tv-parts .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov .tv-bars .dot, .ov .tv-tip .dot { flex: none; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-small-size-medium); }
+.ov .tv-tip .tv-tr { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--spectrum-spacing-100); }
+@media (max-width: 999px) {
+  .ov .cv-hero { grid-template-columns: minmax(0, 1fr); }
+  .ov .cv-hero .tv-stats { grid-template-columns: repeat(auto-fit, minmax(14em, 1fr)); gap: 0 var(--spectrum-spacing-400); }
+}
+
 /* The people: a grid of cards, the quiet ones in a row after them. */
 .ov .tv-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 21em), 1fr)); gap: var(--spectrum-spacing-300); }
 .ov .tv-person { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); min-width: 0; }
@@ -131,9 +154,43 @@
 .spectrum .ov .tv-plot svg .guide { stroke: var(--spectrum-gray-500); stroke-width: var(--spectrum-border-width-100); vector-effect: non-scaling-stroke; }
 .spectrum .ov .tv-legend .staff::before { background: var(--spectrum-indigo-visual-color); }
 .spectrum .ov .tv-legend .all::before { background: var(--spectrum-seafoam-visual-color); }
-.spectrum .ov .tv-tip { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); background: var(--spectrum-neutral-background-color-default); color: var(--spectrum-white);
+.spectrum .ov .tv-tip { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); background: var(--spectrum-neutral-background-color-default); color: var(--spectrum-gray-25);
   border-radius: var(--s2-radius); font-size: var(--spectrum-font-size-75); box-shadow: var(--s2-elevated); }
 .spectrum .ov .tv-tip b { font-weight: var(--spectrum-bold-font-weight); }
+
+/* A customer's numbers: one card on layer 2, a row each, divided. */
+.spectrum .ov .cv-hero .tv-stats { background: var(--card); border-radius: var(--spectrum-corner-radius-large-default); box-shadow: var(--content-shadow); }
+.spectrum .ov .cv-hero .tv-stat + .tv-stat { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .ov .cv-hero .tv-stat b { font-size: var(--spectrum-font-size-600); }
+
+/* The stacked bars: each part its color (`data-series`), the week and the part under the pointer
+   lit, the others subdued; the legend's part under the pointer bold. Who said it has a color per
+   side: their people in seafoam, partners in fuchsia, Adobe in indigo, as the rest of the page. */
+.spectrum .ov .tv-bars .seg { fill: var(--s2-series); transition: opacity var(--s2-ease); }
+.spectrum .ov .tv-bars .tv-plot:hover .col:not(.on) .seg { opacity: 0.7; }
+.spectrum .ov .tv-bars.lit .seg:not(.on) { opacity: 0.3; }
+.spectrum .ov .tv-bars .grid { stroke: var(--spectrum-gray-200); stroke-width: var(--spectrum-border-width-100); vector-effect: non-scaling-stroke; }
+.spectrum .ov .tv-bars .dot, .spectrum .ov .tv-tip .dot { background: var(--s2-series); }
+.spectrum .ov .tv-parts { color: var(--spectrum-neutral-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .ov .tv-parts li { cursor: default; border-radius: var(--s2-radius); transition: opacity var(--s2-ease); }
+.spectrum .ov .tv-parts li:focus-visible { outline: var(--s2-focus); }
+.spectrum .ov .tv-bars.lit .tv-parts li:not(.on) { opacity: 0.45; }
+.spectrum .ov .tv-parts li.on .nm { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .ov .tv-parts .sub { font-variant-numeric: tabular-nums; }
+.spectrum .ov .tv-tip .tv-tr span:last-child { font-variant-numeric: tabular-nums; }
+.spectrum .ov .tv-tip .tv-tr.on { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .ov [data-series="s0"] { --s2-series: var(--spectrum-seafoam-visual-color); }
+.spectrum .ov [data-series="s1"] { --s2-series: var(--spectrum-indigo-visual-color); }
+.spectrum .ov [data-series="s2"] { --s2-series: var(--spectrum-orange-visual-color); }
+.spectrum .ov [data-series="s3"] { --s2-series: var(--spectrum-magenta-visual-color); }
+.spectrum .ov [data-series="s4"] { --s2-series: var(--spectrum-yellow-visual-color); }
+.spectrum .ov [data-series="s5"] { --s2-series: var(--spectrum-cyan-visual-color); }
+.spectrum .ov [data-series="s6"] { --s2-series: var(--spectrum-purple-visual-color); }
+.spectrum .ov [data-series="s7"] { --s2-series: var(--spectrum-celery-visual-color); }
+.spectrum .ov [data-series="other"] { --s2-series: var(--spectrum-gray-visual-color); }
+.spectrum .ov [data-series="theirs"] { --s2-series: var(--spectrum-seafoam-visual-color); }
+.spectrum .ov [data-series="partners"] { --s2-series: var(--spectrum-fuchsia-visual-color); }
+.spectrum .ov [data-series="adobe"] { --s2-series: var(--spectrum-indigo-visual-color); }
 
 /* A person's card, on layer 2. */
 .spectrum .ov .tv-person { padding: var(--spectrum-spacing-300); background: var(--card); border-radius: var(--spectrum-corner-radius-large-default); box-shadow: var(--content-shadow); }

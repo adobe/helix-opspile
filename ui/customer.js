@@ -16,8 +16,10 @@
  * (src/orgprofile.js) of the customer's last half year, for everyone at Adobe, drawn with
  * ui/overview.js (`Overview`) as a team's is (ui/team.js).
  *
- * - Its threads, week by week: a chart of what its people and Adobe's said, with how many people
- *   it has, and how soon Adobe answers what they start.
+ * - Its threads, week by week: a stacked bar chart of what was said, broken down by the focus
+ *   picked above it (who said it, which of its people, the team a thread is filed under, its
+ *   area, its product or its channel), beside its numbers: how many people it has, and how soon
+ *   Adobe answers what they start.
  * - Its people: a card each, with their picture and title, a partner's marked, how often they
  *   post, what they ask about (Clef's areas and technologies of their threads) and their Contact
  *   in its knowledge base.
@@ -42,6 +44,39 @@ globalThis.CustomerView = (() => {
 
   // ---- the parts ----------------------------------------------------------------------------
 
+  /**
+   * The chart's breakdowns (`p.breakdowns`, src/orgprofile.js), which the tabs above it pick; the
+   * one picked stays picked from one customer to the next. `who` has a color of its own per part.
+   */
+  const FOCUS = [
+    { id: 'who', label: 'Who', hint: 'Who said it: their people, partners\' people in their threads, or Adobe\'s.' },
+    { id: 'people', label: 'Their people', hint: 'What each of their people (and the partners\') said; Adobe\'s is left out.' },
+    { id: 'teams', label: 'Teams', hint: 'Each thread under the team it is filed under.' },
+    { id: 'areas', label: 'Topics', hint: 'Each thread under the likeliest of Clef\'s areas of it.' },
+    { id: 'tech', label: 'Products', hint: 'Each thread under the technology Clef is surest it shows.' },
+    { id: 'channels', label: 'Channels', hint: 'Each thread under its channel.' },
+  ];
+  let focus = 'who';
+  const focusOf = (p) => FOCUS.filter((f) => f.id === 'who' || (p.breakdowns?.[f.id] || []).length > 1);
+  const partsOf = (p, id) => (p.breakdowns && p.breakdowns[id]) || [];
+  const barsOf = (p, id) => {
+    const f = FOCUS.find((x) => x.id === id) || FOCUS[0];
+    return `${Overview.bars(p.weeks, partsOf(p, id), {
+      label: `Messages in ${nameOf(p)}'s threads, by ${f.label.toLowerCase()}`,
+      key: id === 'who' ? (x) => x.id : undefined,
+    })}<p class="hint">Messages a week. ${esc(f.hint)}</p>`;
+  };
+
+  function activity(p) {
+    const shown = focusOf(p);
+    const on = shown.some((f) => f.id === focus) ? focus : 'who';
+    return `<div class="cv-activity">
+      <div class="cv-head"><h2 id="cvActivity">What was said, week by week</h2>
+        ${Overview.tabs(shown, on, { label: 'Broken down by', attr: 'data-focus' })}</div>
+      <div id="cvBars">${barsOf(p, on)}</div>
+    </div>`;
+  }
+
   /** `p`'s name, as the page shows it: the one the admin team gave it, else its slug. */
   const nameOf = (p) => p.org.name || p.org.slug;
 
@@ -52,7 +87,7 @@ globalThis.CustomerView = (() => {
     const a = p.answers;
     const answered = a.asked ? `${a.answered} of the ${plural(a.asked, 'thread')} they started` : 'no thread of theirs started in these weeks';
     return Overview.stats([
-      [p.peopleCount, p.peopleCount === 1 ? 'person' : 'people', p.partnerCount ? `posted, ${p.partnerCount} of them partners'` : `posted in the last ${p.weeks.length} weeks`],
+      [p.peopleCount, p.peopleCount === 1 ? 'person' : 'people', p.partnerCount ? `posted, ${p.partnerCount} of them from ${p.partnerCount === 1 ? 'a partner' : 'partners'}` : `posted in the last ${p.weeks.length} weeks`],
       [total, total === 1 ? 'message' : 'messages', total ? `${Math.round((100 * ours) / total)}% by Adobe` : ''],
       [p.threadCount, p.threadCount === 1 ? 'thread' : 'threads', `${Math.round(threads / p.weeks.length)} active in a week`],
       [Overview.wait(a.median), 'first answer', a.answered ? `typically; ${answered}` : answered,
@@ -194,9 +229,8 @@ globalThis.CustomerView = (() => {
       ...p,
       channels: p.channels.map((c) => ({ ...c, teamName: ctx.teamName(c.team), sharedNames: c.shared.map(ctx.teamName) })),
     };
-    const others = p.org.type === 'customer' ? `${nameOf(p)} and partners` : nameOf(p);
     return `<div class="tv">
-      <section class="tv-sec tv-hero" aria-label="Activity">${stats(p)}${Overview.chart(p, { label: `Messages in ${nameOf(p)}'s threads`, others })}</section>
+      <section class="tv-sec tv-hero cv-hero" aria-labelledby="cvActivity">${stats(p)}${activity(p)}</section>
       ${people(p, ctx)}
       <div class="tv-two">${staff(p, ctx)}${teams(p, ctx)}</div>
       <div class="tv-two">${areas(p)}${channels(shown)}</div>
@@ -212,6 +246,16 @@ globalThis.CustomerView = (() => {
   /** What the overview does in `el`: the chart's weeks under the pointer, the tabs of the technologies. */
   function wire(el, p, ctx) {
     Overview.wire(el, p, { onTab: (b) => { el.querySelector('#tvTechRows').innerHTML = techRows(p, ctx, b.dataset.tab); } });
+    const on = focusOf(p).some((f) => f.id === focus) ? focus : 'who';
+    Overview.wireBars(el.querySelector('#cvBars'), p.weeks, partsOf(p, on));
+    const pick = (b) => {
+      focus = b.dataset.focus;
+      for (const x of el.querySelectorAll('[data-focus]')) x.setAttribute('aria-selected', String(x === b));
+      const slot = el.querySelector('#cvBars');
+      slot.innerHTML = barsOf(p, b.dataset.focus);
+      Overview.wireBars(slot, p.weeks, partsOf(p, b.dataset.focus));
+    };
+    for (const b of el.querySelectorAll('[data-focus]')) b.onclick = () => pick(b);
   }
 
   return { html, wire };

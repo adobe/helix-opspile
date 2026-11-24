@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { api } from '../src/api.js';
 import {
-  contactOf, median, orgNumbers, orgProfile, resetOrgProfiles, WEEKS,
+  contactOf, median, orgNumbers, orgProfile, resetOrgProfiles, stacked, WEEKS,
 } from '../src/orgprofile.js';
 import { d1 } from './d1.js';
 
@@ -264,5 +264,39 @@ describe('the helpers of a customer\'s overview', () => {
     assert.equal(contactOf(contacts, 'Sammy'), 'contacts/sam-reyes.md');
     assert.equal(contactOf(contacts, 'Reyes, Sam'), 'contacts/sam-reyes.md');
     assert.equal(contactOf(contacts, 'Someone Else'), null);
+  });
+});
+
+describe('the chart of a customer\'s overview', () => {
+  it('breaks its weeks down, a thread in one part of each breakdown', async () => {
+    const p = await orgNumbers(seed(), 'acme', { now: NOW });
+    const of = (id) => p.breakdowns[id].map((x) => [x.id, x.name, x.n]);
+    // Who said it: their people (Sam, Kim), the partner's, Adobe's; no workflow.
+    assert.deepEqual(of('who'), [['theirs', 'Their people', 5], ['partners', 'Partners', 1],
+      ['adobe', 'Adobe', 5]]);
+    assert.deepEqual(of('people'), [['p:5', 'Sam Reyes', 3], ['p:6', 'Kim Lee', 2],
+      ['p:7', 'Pat Partner', 1]]);
+    assert.deepEqual(of('teams'), [['edge', 'Edge ops', 8], ['forms', 'Forms ops', 4]]);
+    assert.deepEqual(of('areas'), [['cdn', 'Caching and delivery', 8],
+      ['authoring', 'Authoring and content', 4]]);
+    assert.deepEqual(of('tech').map(([id, , n]) => [id, n]), [['fastly', 8], ['forms', 4]]);
+    assert.deepEqual(of('channels').map(([, name, n]) => [name, n]), [['#aem-acme', 8],
+      ['#forms-acme', 4]]);
+    const total = (id) => p.breakdowns[id].reduce((s, x) => s + x.n, 0);
+    assert.equal(total('teams'), 12);
+    assert.equal(p.breakdowns.teams[0].weekly.length, WEEKS);
+  });
+
+  it('keeps the biggest parts, and the rest as one', () => {
+    const weeks = ['2026-11-16', '2026-11-23'];
+    const rows = ['a', 'b', 'c', 'd', null].map((part, i) => ({ week: weeks[i % 2], n: 10 - i, part }));
+    const out = stacked(rows, weeks, (k) => k.toUpperCase(), { most: 2, rest: 'Others' });
+    assert.deepEqual(out.map((x) => [x.id, x.name, x.n, x.weekly]), [
+      ['a', 'A', 10, [10, 0]], ['b', 'B', 9, [0, 9]], [null, 'Others', 21, [14, 7]],
+    ]);
+    // One more part than it keeps is shown as it is; fixed parts in their order.
+    assert.equal(stacked(rows.slice(0, 3), weeks, (k) => k, { most: 2 }).length, 3);
+    assert.deepEqual(stacked(rows.slice(0, 2), weeks, (k) => k, { fixed: ['b', 'a', 'z'] })
+      .map((x) => x.id), ['b', 'a']);
   });
 });

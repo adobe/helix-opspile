@@ -17,7 +17,8 @@
  *
  * - `face`, `spark` and `bar`: a person's picture over their initials, a line of weeks, a meter.
  * - `stats` and `chart`: the big numbers at the top, and the weeks as an area chart of what
- *   Adobe's people said under what the others did; a week under the pointer says its numbers.
+ *   Adobe's people said under what the others did (a team's); a week under the pointer says its
+ *   numbers. `bars` and `wireBars`: the weeks as stacked bars of any breakdown (a customer's).
  * - `ranked`: a ranking, each row with its rank, a face or an icon, a meter and a line.
  * - `tabs` and `layers`: tabs over a list, and a list of technologies by the layer of a stack.
  * - `knowledge`: a knowledge base's entries by type, a tile each.
@@ -131,6 +132,97 @@ globalThis.Overview = (() => {
     </div>`;
   }
 
+  /**
+   * A stacked bar chart of the weeks: `parts` (`[{ id, name, weekly, n }]`, biggest first, the
+   * rest last with id null) a bar each week, one on the other, the first at the bottom; the most
+   * in a week beside it, the months under it, and a legend of the parts with their totals. `key`
+   * names a part's color (`data-series`), `unit` what a bar counts. A week under the pointer says
+   * its numbers (`wireBars`).
+   */
+  function bars(weeks, parts, { label, unit = 'message', key = (x, i) => `s${i}` }) {
+    const W = 600;
+    const H = 140;
+    const n = weeks.length;
+    const totals = weeks.map((w, i) => parts.reduce((s, x) => s + x.weekly[i], 0));
+    const m = Math.max(...totals, 1);
+    const slot = W / Math.max(1, n);
+    const gap = Math.min(4, slot * 0.25);
+    const y = (v) => (H * v) / m;
+    const series = parts.map((x, i) => (x.id === null ? 'other' : key(x, i)));
+    const cols = weeks.map((w, i) => {
+      let at = H;
+      const segs = parts.map((x, j) => {
+        const h = y(x.weekly[i]);
+        if (!h) return '';
+        at -= h;
+        return `<rect class="seg" data-series="${esc(series[j])}" data-part="${j}" x="${(i * slot + gap / 2).toFixed(1)}" y="${at.toFixed(1)}" width="${(slot - gap).toFixed(1)}" height="${h.toFixed(1)}"></rect>`;
+      }).join('');
+      return `<g class="col" data-week="${i}">${segs}</g>`;
+    }).join('');
+    const months = weeks.map((w, i) => [w, i]).filter(([w], i) => i === 0 || w.slice(5, 7) !== weeks[i - 1].slice(5, 7));
+    const grid = [0.5, 1].map((f) => `<line class="grid" x1="0" x2="${W}" y1="${(H - y(m * f)).toFixed(1)}" y2="${(H - y(m * f)).toFixed(1)}"></line>`).join('');
+    const all = parts.reduce((s, x) => s + x.n, 0);
+    const legend = parts.map((x, j) => `<li data-part="${j}" tabindex="0" title="${esc(`${x.name}: ${plural(x.n, unit)}${all ? `, ${Math.round((100 * x.n) / all)}%` : ''}`)}"><span class="dot" data-series="${esc(series[j])}"></span><span class="nm">${esc(x.name)}</span><span class="sub">${esc(x.n.toLocaleString('en'))}</span></li>`).join('');
+    return `<div class="tv-chart tv-bars" data-bars data-unit="${esc(unit)}">
+      <div class="tv-axis"><span>${m.toLocaleString('en')}</span><span>${Math.round(m / 2).toLocaleString('en')}</span><span>0</span></div>
+      <div class="tv-plot">
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(`${label}, week by week, the last ${n} weeks`)}">${grid}${cols}</svg>
+        <div class="tv-months">${months.map(([w, i]) => `<span data-at="${((i + 0.5) / Math.max(1, n)).toFixed(3)}">${esc(monthOf(w))}</span>`).join('')}</div>
+        <div class="tv-tip" hidden></div>
+      </div>
+      <ul class="tv-parts">${legend || '<li class="sub">Nothing said in these weeks.</li>'}</ul>
+    </div>`;
+  }
+
+  /**
+   * What a bar chart (`bars`) in `el` does: the week under the pointer says its parts' numbers,
+   * and a part under the pointer in the chart or its legend lights its bars.
+   */
+  function wireBars(el, weeks, parts) {
+    const box = el.querySelector('[data-bars]');
+    if (!box) return;
+    const plot = box.querySelector('.tv-plot');
+    const svg = plot.querySelector('svg');
+    const tip = plot.querySelector('.tv-tip');
+    const { unit } = box.dataset;
+    const n = weeks.length;
+    const seriesOf = (j) => box.querySelector(`.tv-parts [data-part="${j}"] .dot`)?.dataset.series || 'other';
+    const light = (part) => {
+      box.classList.toggle('lit', part !== null);
+      for (const r of box.querySelectorAll('[data-part]')) r.classList.toggle('on', part !== null && r.dataset.part === String(part));
+    };
+    const week = (i, part) => {
+      for (const g of svg.querySelectorAll('.col')) g.classList.toggle('on', g.dataset.week === String(i));
+      const total = parts.reduce((s, x) => s + x.weekly[i], 0);
+      const rows = parts.map((x, j) => [x, j]).filter(([x]) => x.weekly[i]).reverse();
+      tip.innerHTML = `<b>Week of ${esc(dayOf(weeks[i]))} \u00b7 ${esc(plural(total, unit))}</b>${rows.map(([x, j]) => `<span class="tv-tr${String(j) === String(part) ? ' on' : ''}"><span class="dot" data-series="${esc(seriesOf(j))}"></span><span>${esc(x.name)}</span><span>${esc(x.weekly[i].toLocaleString('en'))}</span></span>`).join('')}`;
+      tip.hidden = false;
+      const f = (i + 0.5) / n;
+      tip.classList.toggle('left', f > 0.6);
+      tip.style.setProperty('--at', f.toFixed(3));
+    };
+    plot.addEventListener('pointermove', (e) => {
+      const r = plot.getBoundingClientRect();
+      const i = Math.min(n - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * n)));
+      const seg = e.target.closest && e.target.closest('.seg');
+      const part = seg ? seg.dataset.part : null;
+      light(part);
+      week(i, part);
+    });
+    plot.addEventListener('pointerleave', () => {
+      tip.hidden = true;
+      light(null);
+      for (const g of svg.querySelectorAll('.col.on')) g.classList.remove('on');
+    });
+    for (const li of box.querySelectorAll('.tv-parts [data-part]')) {
+      li.onpointerenter = () => light(li.dataset.part);
+      li.onfocus = li.onpointerenter;
+      li.onpointerleave = () => light(null);
+      li.onblur = li.onpointerleave;
+    }
+    for (const s of box.querySelectorAll('.tv-months [data-at]')) s.style.setProperty('--at', s.dataset.at);
+  }
+
   /** The big numbers: `tiles` of `[n, what, sub]` (n a number, or words). */
   function stats(tiles) {
     const tile = ([n, what, sub, title]) => `<div class="tv-stat"${title ? ` title="${esc(title)}"` : ''}><b>${typeof n === 'number' ? n.toLocaleString('en') : esc(n)}</b><span>${esc(what)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
@@ -164,9 +256,9 @@ globalThis.Overview = (() => {
       <span class="tv-tail">${r.tail || ''}</span></li>`).join('')}</ol>`;
   }
 
-  /** Tabs (quiet buttons) over a list: `[{ id, label, hint, n }]`, `on` the picked one. */
+  /** Tabs (quiet buttons) over a list: `[{ id, label, hint, n }]` (`n` optional), `on` the picked one. */
   function tabs(list, on, { label, attr = 'data-tab' } = {}) {
-    return `<div class="tv-tabs" role="tablist" aria-label="${esc(label)}">${list.map((t) => `<button type="button" role="tab" ${attr}="${t.id}" aria-selected="${t.id === on}"${t.hint ? ` title="${esc(t.hint)}"` : ''}>${esc(t.label)} <span class="sub">${t.n}</span></button>`).join('')}</div>`;
+    return `<div class="tv-tabs" role="tablist" aria-label="${esc(label)}">${list.map((t) => `<button type="button" role="tab" ${attr}="${t.id}" aria-selected="${t.id === on}"${t.hint ? ` title="${esc(t.hint)}"` : ''}>${esc(t.label)}${t.n === undefined ? '' : ` <span class="sub">${t.n}</span>`}</button>`).join('')}</div>`;
   }
 
   /**
@@ -239,7 +331,7 @@ globalThis.Overview = (() => {
   }
 
   return {
-    esc, face, plural, ago, often, wait, link, spark, bar, chart, stats, chip, teamChips, ranked, tabs,
+    esc, face, plural, ago, often, wait, link, spark, bar, chart, bars, wireBars, stats, chip, teamChips, ranked, tabs,
     layers, knowledge, wire,
   };
 })();

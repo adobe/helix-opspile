@@ -104,7 +104,7 @@ export function seedCustomerProfile(DB, now = Date.now()) {
     VALUES (?, ?, ?, ?, ?, 'acme', ?, 'channel', ?, ?, ?, ?, ?, ?, ?)`);
   const message = db.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, person,
       staff, counted, deleted, author_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)`);
-  const area = db.prepare('INSERT OR IGNORE INTO thread_areas (thread, area, p) VALUES (?, ?, 0.8)');
+  const area = db.prepare('INSERT OR IGNORE INTO thread_areas (thread, area, p) VALUES (?, ?, ?)');
   const tech = db.prepare('INSERT OR IGNORE INTO thread_tech (thread, tech, p) VALUES (?, ?, 0.9)');
   // More of them lately: the launch is coming.
   const COUNT = 90;
@@ -161,9 +161,10 @@ export function seedCustomerProfile(DB, now = Date.now()) {
       posts.forEach(([id, staff, after], i) => {
         message.run(c.source, c.tenant, c.channel_id, `${root}-${i}`, key, at(start + after), id, staff, `slack:T-FAKE:TP-${id}`);
       });
-      area.run(key, pick(asker.areas));
+      // How sure Clef is: the asker's own area most of all, which the chart files the thread under.
+      area.run(key, pick(asker.areas), 0.7 + rnd() * 0.3);
       if (rnd() < 0.4) {
-        area.run(key, pick(THEIRS[Math.floor(rnd() * THEIRS.length)].areas));
+        area.run(key, pick(THEIRS[Math.floor(rnd() * THEIRS.length)].areas), 0.5 + rnd() * 0.3);
       }
       tech.run(key, pick(asker.tech));
     }

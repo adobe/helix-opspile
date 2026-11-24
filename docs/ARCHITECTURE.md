@@ -3429,8 +3429,12 @@ Its title has a Follow of your own (its conversations in your personal view) and
 threads in an inbox of yours, where one has them. The overview is the customer's last 26 weeks of
 channel threads filed under it, from D1:
 
-- its **threads**, week by week: what its people (and the partners' in them) said and what
-  Adobe's people said, as a chart; and how soon Adobe **answers** a thread its people start: the
+- its **threads**, week by week, as a stacked bar chart (where a team's has an area chart), broken
+  down by the focus picked above it: who said it (its people, the partners', Adobe's), which of
+  its people, the team a thread is filed under, its likeliest area (Clef's surest), technology,
+  or its channel (`breakdowns`; a thread is in one part of each, the biggest seven parts shown and
+  the rest as one); beside it its numbers, and how soon Adobe **answers** a thread its people
+  start: the
   median wait from their first message to Adobe's first post, over the threads started in the
   window (with how many of those have an answer);
 - its **people**, a card each: their picture and title, a partner's marked (its mail domain in

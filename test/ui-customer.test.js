@@ -46,6 +46,24 @@ const profile = {
   weeks,
   layers: [{ id: 'edge', name: 'Edge' }],
   activity: { messages: [3, 4], staff: [2, 2], threads: [1, 2] },
+  breakdowns: {
+    who: [{
+      id: 'theirs', name: 'Their people', weekly: [1, 2], n: 3,
+    }, {
+      id: 'adobe', name: 'Adobe', weekly: [2, 2], n: 4,
+    }],
+    people: [{
+      id: 'p:5', name: 'Sam <Reyes>', weekly: [1, 2], n: 3,
+    }],
+    teams: [{
+      id: 'edge', name: 'Edge ops', weekly: [2, 0], n: 2,
+    }, {
+      id: null, name: 'Other', weekly: [1, 4], n: 5,
+    }],
+    areas: [],
+    tech: [],
+    channels: [],
+  },
   threadCount: 2,
   answers: { asked: 2, answered: 2, median: 75 },
   people: [person(), person({
@@ -97,5 +115,16 @@ describe('a customer\'s overview, drawn', () => {
     assert.match(html, /<a href="\/inbox\/topics\?sel=product%3Atech%3Afastly"[^>]*>Fastly<\/a>/);
     assert.match(html, /<span class="tv-line">Their ERP<\/span><span class="sub">in their stack<\/span>/);
     assert.match(html, /data-tab="stack" aria-selected="false"/);
+  });
+
+  it('stacks its weeks by who said it, and offers the breakdowns that have more than one part', () => {
+    const html = CustomerView.html(profile, ctx);
+    const tabs = [...html.matchAll(/data-focus="(\w+)"/g)].map((m) => m[1]);
+    assert.deepEqual(tabs, ['who', 'teams']);
+    assert.match(html, /data-focus="who" aria-selected="true"/);
+    // A bar a week, their people at the bottom, Adobe on them.
+    const week = html.slice(html.indexOf('data-week="1"'), html.indexOf('</g>', html.indexOf('data-week="1"')));
+    assert.deepEqual([...week.matchAll(/data-series="(\w+)"/g)].map((m) => m[1]), ['theirs', 'adobe']);
+    assert.match(html, /<li data-part="1"[^>]*><span class="dot" data-series="adobe"><\/span><span class="nm">Adobe<\/span><span class="sub">4<\/span><\/li>/);
   });
 });

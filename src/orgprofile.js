@@ -58,6 +58,8 @@ export const MAX_TEAMS = 10;
 export const MAX_CHANNELS = 12;
 export const MAX_AREAS = 12;
 export const MAX_SEEN = 15;
+/** The parts a breakdown of the chart has at most, the rest as one. */
+export const MAX_PARTS = 7;
 
 let cache = new WeakMap();
 
@@ -98,6 +100,50 @@ export function contactOf(contacts, name) {
   return hit ? hit.path : null;
 }
 
+/**
+ * A stacked breakdown of `rows` (`{ week, n, part }`, `part` null for none) by week: its biggest
+ * parts (`fixed` ones in that order instead, every one of them), each `{ id, name, weekly, n }`
+ * with `nameOf(id)` its name, and the rest as one part `rest` (id null), where there is any.
+ */
+export function stacked(rows, weeks, nameOf, { fixed = null, rest = 'Other', most = MAX_PARTS } = {}) {
+  const at = new Map(weeks.map((w, i) => [w, i]));
+  const by = new Map();
+  for (const r of rows) {
+    const i = at.get(r.week);
+    if (i !== undefined) {
+      const k = r.part ?? null;
+      if (!by.has(k)) {
+        by.set(k, { weekly: zeros(weeks.length), n: 0 });
+      }
+      by.get(k).weekly[i] += r.n;
+      by.get(k).n += r.n;
+    }
+  }
+  const ranked = fixed ? fixed.filter((k) => by.has(k))
+    : [...by.keys()].filter((k) => k !== null).sort((a, b) => by.get(b).n - by.get(a).n
+      || String(a).localeCompare(String(b)));
+  // One more part than `most` is shown as it is, not as the rest.
+  const shown = fixed || ranked.length <= most + 1 ? ranked : ranked.slice(0, most);
+  const parts = shown.map((k) => ({
+    id: k, name: nameOf(k) || String(k), weekly: by.get(k).weekly, n: by.get(k).n,
+  }));
+  const left = [...by.keys()].filter((k) => !shown.includes(k));
+  if (left.length) {
+    const weekly = zeros(weeks.length);
+    let n = 0;
+    for (const k of left) {
+      by.get(k).weekly.forEach((v, i) => {
+        weekly[i] += v;
+      });
+      n += by.get(k).n;
+    }
+    parts.push({
+      id: null, name: rest, weekly, n,
+    });
+  }
+  return parts;
+}
+
 /** The overview of org `slug`, as everyone sees it (`viewer` adds the rest): null for none. */
 export async function orgNumbers(env, slug, { now = new Date() } = {}) {
   const weeks = weeksTo(now, WEEKS);
@@ -127,10 +173,10 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
       FROM scope JOIN threads h ON h.thread = scope.thread
         JOIN messages g ON g.thread = scope.thread AND g.at >= ?2
       WHERE g.deleted = 0 AND g.counted = 1 GROUP BY 1, 4`),
-    q(`WITH ${SCOPE} SELECT h.rowid AS id, x.tech FROM scope JOIN threads h ON h.thread = scope.thread
-        JOIN thread_tech x ON x.thread = scope.thread`),
-    q(`WITH ${SCOPE} SELECT h.rowid AS id, a.area FROM scope JOIN threads h ON h.thread = scope.thread
-        JOIN thread_areas a ON a.thread = scope.thread`),
+    q(`WITH ${SCOPE} SELECT h.rowid AS id, x.tech, x.p FROM scope
+        JOIN threads h ON h.thread = scope.thread JOIN thread_tech x ON x.thread = scope.thread`),
+    q(`WITH ${SCOPE} SELECT h.rowid AS id, a.area, a.p FROM scope
+        JOIN threads h ON h.thread = scope.thread JOIN thread_areas a ON a.thread = scope.thread`),
     // Everyone who posted, by account: the mail domain only to tell a partner's people (it stays
     // here), the person to count someone's accounts as one.
     q(`WITH ${SCOPE}, ${AUTHORS}
@@ -270,6 +316,20 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
   const areasOf = distinctive(merge('area'), totals);
   const techOf = distinctive(merge('tech'), totals);
 
+  // Each thread's likeliest area and technology, which the chart's breakdowns file it under.
+  const firstOf = (rows, key) => {
+    const out = new Map();
+    for (const r of rows) {
+      const was = out.get(r.id);
+      if (!was || r.p > was.p || (r.p === was.p && String(r[key]) < String(was[key]))) {
+        out.set(r.id, r);
+      }
+    }
+    return new Map([...out].map(([id, r]) => [id, r[key]]));
+  };
+  const areaFirst = firstOf(threadAreas, 'area');
+  const techFirst = firstOf(threadTech, 'tech');
+
   // The areas of its threads, and of its people's: their names, the admin team's words first.
   const areaThreads = new Map();
   for (const { id, area } of threadAreas) {
@@ -277,7 +337,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
   }
   const topAreas = [...areaThreads].sort((a, b) => b[1].length - a[1].length
     || a[0].localeCompare(b[0])).slice(0, MAX_AREAS);
-  const areaIds = [...new Set([...topAreas.map(([id]) => id),
+  const areaIds = [...new Set([...topAreas.map(([id]) => id), ...areaFirst.values(),
     ...[...areasOf.values()].flat().map((a) => a.id)])];
   const areaRows = areaIds.length ? await all(`SELECT id, name FROM areas
       WHERE id IN (SELECT value FROM json_each(?)) ORDER BY team = ? DESC`, JSON.stringify(areaIds), ADMIN_TEAM) : [];
@@ -304,7 +364,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
   const seenTop = [...techThreads].filter(([id]) => !drawn.has(id))
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .slice(0, MAX_SEEN).map(([id]) => id);
-  const wantedTech = [...new Set([...drawn.keys(), ...seenTop,
+  const wantedTech = [...new Set([...drawn.keys(), ...seenTop, ...techFirst.values(),
     ...[...techOf.values()].flat().map((t) => t.id)])];
   const nameRows = wantedTech.length ? await all(`SELECT team, tech, name, vendor, product, kind, layer,
       path FROM tech_stack WHERE tech IN (SELECT value FROM json_each(?))`, JSON.stringify(wantedTech)) : [];
@@ -462,6 +522,48 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     };
   };
 
+  // The chart's breakdowns: what was said in its threads week by week, by who said it, by whom
+  // of its people, by the team a thread is filed under, by its likeliest area, technology, and
+  // by its channel. A thread is in one part of each.
+  const breakdown = (rows, partOf, nameOf, { fixed = null, rest = 'Other' } = {}) => stacked(
+    rows.map((r) => ({ week: r.week, n: r.n, part: partOf(r) })),
+    weeks,
+    nameOf,
+    { fixed, rest },
+  );
+  const partnerKey = (r) => (partnerOf(r.domain, partners) ? 'partners' : 'theirs');
+  const posters = authors.filter((r) => (r.kind || 'person') === 'person');
+  const nameOfPerson = new Map(theirs.map(([w, e]) => [w, (e.person && who.get(e.person)?.name)
+    || e.name || 'Someone']));
+  const breakdowns = {
+    who: breakdown(posters, (r) => (r.staff ? 'adobe' : partnerKey(r)), (k) => ({
+      adobe: 'Adobe', theirs: 'Their people', partners: 'Partners',
+    }[k]), { fixed: ['theirs', 'partners', 'adobe'] }),
+    people: breakdown(
+      posters.filter((r) => !r.staff),
+      whoOf,
+      (k) => nameOfPerson.get(k),
+      { rest: 'Everyone else' },
+    ),
+    teams: breakdown(threadWeeks, (r) => r.team, (k) => teamName.get(k) || k),
+    areas: breakdown(
+      threadWeeks,
+      (r) => areaFirst.get(r.id) ?? null,
+      (k) => areaName.get(k) || k,
+      { rest: 'Other or none' },
+    ),
+    tech: breakdown(
+      threadWeeks,
+      (r) => techFirst.get(r.id) ?? null,
+      (k) => names.get(k)?.name || k,
+      { rest: 'Other or none' },
+    ),
+    channels: breakdown(threadWeeks, (r) => r.channel, (k) => {
+      const c = channelsBy.get(k);
+      return c && c.name ? `#${c.name}` : 'A channel';
+    }),
+  };
+
   // How soon Adobe answers what its people start: the wait for Adobe's first post, in minutes.
   const waits = firsts.filter((f) => f.answered)
     .map((f) => (Date.parse(f.answered) - Date.parse(f.first)) / 60000);
@@ -488,6 +590,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     weeks,
     layers: LAYERS.map(({ id, name }) => ({ id, name })),
     activity,
+    breakdowns,
     threadCount: weeksOf.size,
     answers: {
       asked: firsts.length,
