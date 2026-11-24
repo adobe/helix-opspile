@@ -38,7 +38,7 @@
 .team .tv-legend span::before { content: ""; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-small-size-medium); }
 
 /* The people: a grid of cards, the quiet ones in a row after them. */
-.team .tv-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19em), 1fr)); gap: var(--spectrum-spacing-300); }
+.team .tv-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 21em), 1fr)); gap: var(--spectrum-spacing-300); }
 .team .tv-person { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); min-width: 0; }
 .team .tv-person > header { display: flex; align-items: center; gap: var(--spectrum-spacing-200); min-width: 0; height: auto; padding: 0; }
 .team .tv-person .who { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-50) var(--spectrum-spacing-100); min-width: 0; }
@@ -46,8 +46,12 @@
 .team .tv-person .who .sub { flex-basis: 100%; }
 .team .tv-freq { display: flex; align-items: center; gap: var(--spectrum-spacing-200); }
 .team .tv-freq > div { display: flex; flex-direction: column; min-width: 0; }
-.team .tv-person dl { display: grid; grid-template-columns: auto 1fr; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); margin: 0; }
-.team .tv-person dd { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0; }
+/* What they know: each label over its tags, which wrap across the card's whole width; their key
+   customers at the card's foot, so they are level across a row of cards. */
+.team .tv-person dl { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); margin: 0; }
+.team .tv-person dl.tv-keys { margin-top: auto; padding-top: var(--spectrum-spacing-200); }
+.team .tv-person dd { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0 0 var(--spectrum-spacing-100); }
+.team .tv-person dd:last-child { margin-bottom: 0; }
 .team .tv-quiet { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin-top: var(--spectrum-spacing-300); }
 .team .tv-q { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-100); }
 
@@ -77,16 +81,22 @@
 
 /* The technologies: tabs, then one list per layer, its name at the left. */
 .team .tv-tabs { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100); margin-bottom: var(--spectrum-spacing-300); }
-.team .tv-stack { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); }
-.team .tv-layer { display: grid; grid-template-columns: 7em 1fr; gap: var(--spectrum-spacing-200); align-items: start; }
-.team .tv-layer h3 { margin: 0; padding-top: var(--spectrum-spacing-100); }
+/* The technologies: the layers in columns, as many as fit, each layer whole, its name over its list;
+   a row is the name (and Followed) over what it is, then its threads and their weeks. */
+.team .tv-stack { columns: 32em; column-gap: var(--spectrum-spacing-600); }
+.team .tv-stack > .empty { column-span: all; }
+.team .tv-layer { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); min-width: 0; margin-bottom: var(--spectrum-spacing-400); break-inside: avoid; }
+.team .tv-layer h3 { margin: 0 0 0 var(--spectrum-spacing-100); }
 .team .tv-layer ul { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
-.team .tv-layer li { display: grid; grid-template-columns: minmax(0, 1fr) auto 6em auto; align-items: center; gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+.team .tv-layer li { display: grid; grid-template-columns: minmax(0, 1fr) 5.5em auto; align-items: center; gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
 .team .tv-layer .tv-name { display: flex; flex-direction: column; min-width: 0; }
-.team .tv-tags { display: flex; gap: var(--spectrum-spacing-50); }
+.team .tv-layer .tv-line { display: flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; }
+.team .tv-layer .tv-line > a, .team .tv-layer .tv-line > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team .tv-layer .tv-line .tag { flex: none; }
+.team .tv-layer .tv-name > .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The knowledge base: a tile per type of entry. */
-.team .tv-kb { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15em), 1fr)); gap: var(--spectrum-spacing-300); }
+/* The knowledge base, under the technologies: a tile per type of entry, as many across as fit. */
+.team .tv-kb { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 18em), 1fr)); gap: var(--spectrum-spacing-300); }
 .team .tv-kbtype { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); min-width: 0; }
 .team .tv-kbtype h3 { display: flex; align-items: baseline; gap: var(--spectrum-spacing-100); margin: 0; }
 .team .tv-kbtype ul { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); margin: 0; padding: 0; list-style: none; }
@@ -96,8 +106,7 @@
 @media (max-width: 699px) {
   .team .tv-rank li { grid-template-columns: 1.5em auto minmax(0, 1fr) 5em; grid-template-areas: "i lead name meter" ". . tail tail"; }
   .team .tv-rank .tv-spark { display: none; }
-  .team .tv-layer { grid-template-columns: 1fr; gap: var(--spectrum-spacing-75); }
-  .team .tv-layer li { grid-template-columns: minmax(0, 1fr) auto 5em; }
+  .team .tv-layer li { grid-template-columns: minmax(0, 1fr) 5em; }
   .team .tv-layer li .tv-spark { display: none; }
 }
 
@@ -127,6 +136,9 @@
 
 /* A person's card, on layer 2. */
 .spectrum .team .tv-person { padding: var(--spectrum-spacing-300); background: var(--card); border-radius: var(--spectrum-corner-radius-large-default); box-shadow: var(--content-shadow); }
+.spectrum .team .tv-person dl.tv-keys { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .team .tv-person .who a { color: inherit; text-decoration: none; }
+.spectrum .team .tv-person .who a:hover { color: var(--link); text-decoration: underline; }
 .spectrum .team .tv-person .who b { color: var(--spectrum-heading-color); font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .team .tv-person dt { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); padding-top: var(--spectrum-spacing-50); }
 .spectrum .team .tv-freq b { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
@@ -144,8 +156,10 @@
 .spectrum .team .tv-chip { display: inline-flex; align-items: center; max-width: 100%; padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-100); border-radius: var(--spectrum-corner-radius-small-size-medium); font-size: var(--spectrum-font-size-75); }
 .spectrum .team .tv-chip.tech { background: var(--spectrum-informative-subtle-background-color-default); }
-.spectrum .team a.tv-chip.team { text-decoration: none; }
-.spectrum .team a.tv-chip.team:hover { background: var(--spectrum-gray-200); }
+.spectrum .team a.tv-chip { text-decoration: none; }
+.spectrum .team a.tv-chip:hover { box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-gray-500); }
+.spectrum .team a.tv-chip.tech:hover { box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-informative-visual-color); }
+.spectrum .team a.tv-chip:focus-visible { outline: var(--s2-focus); }
 .spectrum .team .tv-org { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); max-width: 100%; font-size: var(--spectrum-font-size-75); }
 .spectrum .team .tv-org span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spectrum .team a.tv-org { color: var(--link); text-decoration: none; }
@@ -183,7 +197,8 @@
 .spectrum .team .tv-layer h3 { text-transform: uppercase; letter-spacing: 0.04em; }
 .spectrum .team .tv-layer li { border-radius: var(--s2-radius); }
 .spectrum .team .tv-layer li:hover { background: var(--spectrum-gray-100); }
-.spectrum .team .tv-layer .tv-name > :first-child { font-weight: var(--spectrum-medium-font-weight); }
+.spectrum .team .tv-layer .tv-line { font-weight: var(--spectrum-medium-font-weight); }
+.spectrum .team .tv-layer h3 { padding-bottom: var(--spectrum-spacing-75); border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
 .spectrum .team .tv-layer .tv-name a { color: var(--link); text-decoration: none; }
 .spectrum .team .tv-layer .tv-name a:hover { text-decoration: underline; }
 

@@ -1951,6 +1951,8 @@ async function showOverview(slug) {
     },
     teamHref: (team) => address({ tab: 'teams', sel: team, section: 'overview' }),
     kbHref: (path) => (base && p.kb?.readable ? address({ section: 'kb', path }) : null),
+    // A node of the Topics page, picked (ui/topics.js opens its group, and adds its line to the chart).
+    topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
   };
   const facts = [
     p.team.self_managed ? '<span title="Every member is a team manager">Self-managed</span>' : '',
