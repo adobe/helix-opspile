@@ -1355,6 +1355,24 @@ describe('seeds with a chosen knowledge base', () => {
     assert.deepEqual(seeds, [['kb:helix:', { by: 'Ada Staff', text: 'Purge by tag.', kb: 'team' }]]);
   });
 
+  it('reach any team\'s own knowledge base for the admin team and the team\'s managers', async () => {
+    const { e, seeds } = seeding();
+    e.DB.sqlite.exec("INSERT INTO teams (slug, name) VALUES ('cdn', 'CDN')");
+    const nobody = () => false;
+    const admin = { ...me, teams: [{ slug: 'admin', role: 'member' }] };
+    const lead = { ...me, teams: [{ slug: 'cdn', role: 'manager' }] };
+    assert.equal((await seedAgent(e, admin, { team: 'cdn', kb: 'team', text: 'x' }, nobody)).status, 202);
+    assert.equal((await seedAgent(e, lead, { team: 'cdn', kb: 'team', text: 'y' }, nobody)).status, 202);
+    assert.deepEqual(seeds.map((s) => s[0]), ['kb:cdn:', 'kb:cdn:']);
+    // Not a customer's, not a team that is not there, and not for a member who manages nothing.
+    assert.equal((await seedAgent(e, admin, {
+      team: 'cdn', org: 'acme', kb: 'team', text: 'x',
+    }, nobody)).status, 400);
+    assert.equal((await seedAgent(e, admin, { team: 'nope', kb: 'team', text: 'x' }, nobody)).status, 400);
+    const member = { ...me, teams: [{ slug: 'cdn', role: 'member' }] };
+    assert.equal((await seedAgent(e, member, { team: 'cdn', kb: 'team', text: 'x' }, nobody)).status, 400);
+  });
+
   it('are honoured on the team and customer form, creating only the chosen one', async () => {
     const { e, seeds } = seeding();
     const body = { team: 'helix', org: 'acme', text: 'x' };
