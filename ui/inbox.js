@@ -1497,7 +1497,7 @@ function simpleCustomers() {
     <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
 }
 
-function renderFilters() { inPass(filterCards); }
+function renderFilters() { inPass(filterCards); keepFiltersAt(); }
 function filterCards() {
   syncList();
   offViewSoon();
@@ -3499,7 +3499,9 @@ async function toggleFollowOf(kind, id, name) {
  * undoes it: `unstar` takes a regular out of your regulars, its messages so far no longer counted
  * toward them; `mute` takes the customer out of your inbox, until you post or are mentioned in one
  * of its channels again (that channel comes back), or a thread of it you follow has activity. Its
- * threads leave the list at once, and the inbox loads again without the older pages it had.
+ * threads leave the list at once, and the inbox loads again: after a mute with the older pages it
+ * had (the view lists fewer channels, so what they hold of the others is still so), after its undo
+ * without them (they lack the customer's threads), the filter column kept where it was scrolled.
  */
 async function markCustomer(org, kind, at) {
   if (state.as || !personal()) return;
@@ -3525,7 +3527,7 @@ async function markCustomer(org, kind, at) {
       : `${name} is no longer one of your regulars.`;
     toast(said, { label: 'Undo', run: () => markCustomer(org, kind, res.data.was) });
   }
-  if (kind === 'mute') loadInbox(null, { fresh: true }).catch(() => {});
+  if (kind === 'mute') loadInbox(null, { fresh: undo }).catch(() => {});
 }
 
 /**
@@ -8673,8 +8675,37 @@ function splitFrom(group, keys) {
   if (entry?.members) entry.members = entry.members.filter((m) => !keys.includes(m.thread));
 }
 /**
+ * Where the filter column was scrolled, while a fresh inbox (loadInbox) has only its first page:
+ * the column is shorter until the older pages are back, and the browser takes it to the top (a
+ * customer unmuted from the middle of it). Each render takes it back there (keepFiltersAt), until
+ * the pages are back or you scroll it yourself.
+ */
+let filtersAt = null;
+let filtersLet = null;
+function releaseFilters() {
+  filtersAt = null;
+  filtersLet?.abort();
+  filtersLet = null;
+}
+function holdFilters() {
+  releaseFilters();
+  const box = $('filters');
+  if (!box?.scrollTop) return null;
+  filtersAt = box.scrollTop;
+  filtersLet = new AbortController();
+  for (const e of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+    box.addEventListener(e, releaseFilters, { passive: true, signal: filtersLet.signal });
+  }
+  return filtersLet;
+}
+function keepFiltersAt() {
+  const box = filtersAt !== null && $('filters');
+  if (box && box.scrollTop !== filtersAt) box.scrollTop = filtersAt;
+}
+/**
  * Loads the inbox's first page, and keeps the older pages loaded but what it has folded since.
- * `fresh` keeps none of them: the view lists other channels now (a customer was muted).
+ * `fresh` keeps none of them: the view lists more channels now (a customer was unmuted), which
+ * they lack; the filter column stays where it was scrolled while they load again (holdFilters).
  */
 async function loadInbox(early = null, { fresh = false } = {}) {
   const ahead = early && await early;
@@ -8710,8 +8741,16 @@ async function loadInbox(early = null, { fresh = false } = {}) {
   renderFollowMenu();
   state.coPeople = coParticipants();
   state.scores = inPass(() => new Map(state.data.threads.map((t) => [t.thread, smartScore(t)])));
+  const held = fresh && holdFilters();
   render();
-  backfill();
+  const more = backfill();
+  if (held) {
+    Promise.resolve(more).finally(() => {
+      if (filtersLet !== held) return;
+      keepFiltersAt();
+      releaseFilters();
+    });
+  }
 }
 
 /** Adds an older page to the inbox: new entries only, with their scores and profiles. */
