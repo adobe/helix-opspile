@@ -105,7 +105,10 @@ code and docs, is the decision model that labels threads and channels.
 - `/api/*` and `/mcp` hold D1 reads (`all()`, `first()` of a `SELECT`) for a 0 ms timer and send
   those asked for together as one `db.batch` (`src/d1batch.js`): one D1 request instead of one
   each. Writes, `run()` and `raw()` go at once. A query that fails in a batch is asked again on
-  its own, so only it fails; `Server-Timing` counts a batch as one call.
+  its own, so only it fails; `Server-Timing` counts a batch as one call. When D1 is overloaded
+  ("D1 DB is overloaded", a few seconds at a time), a read is instead asked again once, in its
+  batch, 0.5–1.5 s later, and `/api/*` answers what still fails with 503 and `Retry-After`,
+  which `ui/app.js` waits out once for a `GET`.
 - `src/agent/stub.js` reaches the `ThreadAgent` Durable Objects without importing the Agents
   SDK, so the paths that use it stay testable in Node. Keep SDK imports out of everything but
   `src/agent/agent.js`, and `agents/websearch` (it imports no `cloudflare:workers`) out of all

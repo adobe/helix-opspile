@@ -113,9 +113,24 @@ if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').m
     if (bar && !(popup && !popup.closed) && await signedIn()) back();
   });
 
+  // D1 turning queries away for a few seconds (src/api.js): 503 with Retry-After. A read is
+  // asked once more after it (and a moment at random, so the pages it turned away together do
+  // not come back together); what writes is not, its caller says it failed.
+  const reads = (input, init) => String(init.method || (input instanceof Request ? input.method : 'GET'))
+    .toUpperCase() === 'GET';
+  const busy = (res) => res.status === 503 && res.headers.has('retry-after');
+  const later = (res) => new Promise((resolve) => {
+    const s = Math.min(Number(res.headers.get('retry-after')) || 1, 10);
+    setTimeout(resolve, s * 1000 + Math.random() * 1000);
+  });
+
   window.fetch = async (input, init = {}) => {
     if (!api(input) || init.redirect) return native(input, init);
-    const res = await native(input, { ...init, redirect: 'manual' });
+    let res = await native(input, { ...init, redirect: 'manual' });
+    if (busy(res) && reads(input, init)) {
+      await later(res);
+      res = await native(input, { ...init, redirect: 'manual' });
+    }
     if (res.type !== 'opaqueredirect') return res;
     signedOut();
     throw new Error('Signed out: sign in again');

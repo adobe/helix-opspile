@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { api } from '../src/api.js';
-import { batchable, batchedDatabase } from '../src/d1batch.js';
+import { batchable, batchedDatabase, overloaded } from '../src/d1batch.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
 
@@ -132,6 +132,104 @@ describe('d1 batch', () => {
     const plain = { prepare: () => null };
     assert.equal(batchedDatabase(plain), plain);
     assert.equal(batchedDatabase(undefined), undefined);
+  });
+
+  describe('when D1 is overloaded', () => {
+    const BUSY = 'D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window.';
+    /** `counting()`, whose first `n` calls (batch or one) D1 turns away as overloaded. */
+    function busy(n) {
+      const { DB, calls } = counting();
+      let left = n;
+      const turnAway = (fn) => (...a) => {
+        if (left > 0) {
+          left -= 1;
+          return Promise.reject(new Error(BUSY));
+        }
+        return fn(...a);
+      };
+      DB.batch = turnAway(DB.batch);
+      const { prepare } = DB;
+      DB.prepare = (sql) => {
+        const wrap = (stmt) => ({
+          ...stmt,
+          bind: (...a) => wrap(stmt.bind(...a)),
+          all: turnAway(stmt.all),
+          first: turnAway(stmt.first),
+          run: turnAway(stmt.run),
+        });
+        return wrap(prepare(sql));
+      };
+      const waits = [];
+      const db = batchedDatabase(DB, { pause: async (ms) => waits.push(ms) });
+      return { db, calls, waits };
+    }
+    const reads = (db) => Promise.allSettled([
+      db.prepare('SELECT name FROM people WHERE id = 1').first('name'),
+      db.prepare('SELECT COUNT(*) AS n FROM people').first('n'),
+    ]);
+
+    it('knows the error, in each of its forms', () => {
+      assert.ok(overloaded(new Error(BUSY)));
+      assert.ok(overloaded(new Error('D1_ERROR: D1 DB is overloaded. Too many requests queued.')));
+      assert.ok(overloaded(new Error('D1_ERROR', { cause: new Error('D1 DB is overloaded.') })));
+      assert.ok(!overloaded(new Error('D1_ERROR: no such column: nope')));
+      assert.ok(!overloaded(undefined));
+    });
+
+    it('asks the batch again once, after a moment, not each query on its own', async () => {
+      const { db, calls, waits } = busy(1);
+      const [name, n] = await reads(db);
+      assert.equal(name.value, 'Ada');
+      assert.equal(n.value, 2);
+      assert.equal(calls.batch.length, 1); // the one that ran
+      assert.deepEqual(calls.one, []);
+      assert.equal(waits.length, 1);
+      assert.ok(waits[0] >= 500 && waits[0] <= 1500, `waited ${waits[0]} ms`);
+    });
+
+    it('fails each read with it when D1 is still overloaded', async () => {
+      const { db, calls, waits } = busy(2);
+      const results = await reads(db);
+      assert.deepEqual(results.map((r) => r.status), ['rejected', 'rejected']);
+      assert.ok(results.every((r) => overloaded(r.reason)));
+      assert.deepEqual(calls.batch, []);
+      assert.deepEqual(calls.one, []);
+      assert.equal(waits.length, 1);
+    });
+
+    it('asks a read alone again once, and never a write', async () => {
+      const alone = busy(1);
+      assert.equal(await alone.db.prepare('SELECT name FROM people WHERE id = 2').first('name'), 'Bo');
+      assert.equal(alone.waits.length, 1);
+      const write = busy(1);
+      await assert.rejects(write.db.prepare("UPDATE people SET name = 'X' WHERE id = 1").run(), /overloaded/);
+      assert.deepEqual(write.waits, []);
+      assert.deepEqual(write.calls.one, []);
+    });
+
+    it('answers /api with 503 and Retry-After, not an exception', async () => {
+      const DB = {
+        prepare: () => {
+          const stmt = {
+            bind: () => stmt,
+            all: () => Promise.reject(new Error(BUSY)),
+            first: () => Promise.reject(new Error(BUSY)),
+            run: () => Promise.reject(new Error(BUSY)),
+          };
+          return stmt;
+        },
+        batch: () => Promise.reject(new Error(BUSY)),
+      };
+      const me = {
+        id: 1, name: 'Ada', email: 'ada@staff.example', teams: [{ slug: 'helix', name: 'Helix' }],
+      };
+      const url = new URL('https://opspile.example/api/inbox?team=helix');
+      const res = await api(new Request(url), { DB, CHANNELS: fakeBucket() }, url, { viewer: me });
+      assert.equal(res.status, 503);
+      assert.equal(res.headers.get('retry-after'), '2');
+      assert.ok(res.headers.get('server-timing'));
+      assert.equal((await res.json()).busy, true);
+    });
   });
 
   it('loads the inbox and opens a thread in a few D1 calls', async () => {

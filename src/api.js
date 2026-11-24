@@ -82,7 +82,7 @@ import {
 } from './search.js';
 import { findKnowledge } from './kbsearch.js';
 import { Timing, withTiming } from './timing.js';
-import { batchedDatabase } from './d1batch.js';
+import { batchedDatabase, overloaded } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
 import { orgStacksOf } from './orgstacks.js';
@@ -1768,10 +1768,17 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   return json({ error: 'not found' }, 404);
 }
 
+/** The seconds a 503 for an overloaded D1 asks a client to wait (`Retry-After`). */
+export const BUSY_RETRY_AFTER = 2;
+
 /**
  * Routes `/api/*`. Returns null for paths it does not own. Every answer says where its time
  * went (`Server-Timing`: who is asking, D1, R2, total; durations and counts only). The reads it
  * asks D1 for at once go as one batch (src/d1batch.js), each batch one D1 call there.
+ *
+ * When D1 turns a request's queries away because the database is overloaded (a few seconds at a
+ * time, src/d1batch.js), the answer is 503 with `Retry-After`, not the Worker's 500: nothing is
+ * wrong with the request, and the pages ask a read again once (ui/app.js).
  */
 export async function api(request, env, url, options = {}) {
   if (!url.pathname.startsWith('/api/')) {
@@ -1780,5 +1787,18 @@ export async function api(request, env, url, options = {}) {
   const timing = new Timing();
   const timed = timing.wrap(env);
   const batched = timed && timed.DB ? { ...timed, DB: batchedDatabase(timed.DB) } : timed;
-  return withTiming(await route(request, batched, url, options, timing), timing);
+  let response;
+  try {
+    response = await route(request, batched, url, options, timing);
+  } catch (e) {
+    if (!overloaded(e)) {
+      throw e;
+    }
+    console.log(JSON.stringify({
+      level: 'warn', route: 'api', path: url.pathname, overloaded: true,
+    }));
+    response = json({ error: 'The inbox is busy: try again in a moment.', busy: true }, 503);
+    response.headers.set('retry-after', String(BUSY_RETRY_AFTER));
+  }
+  return withTiming(response, timing);
 }
