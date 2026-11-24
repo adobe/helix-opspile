@@ -141,9 +141,22 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
    A wide list puts all three in one row, the search box in the middle. */
 #threads .count { display: flex; flex-wrap: wrap; align-items: center; container-type: inline-size; }
 #threads .count > .find, #threads .count > .ctl { flex: 1 1 100%; }
-#threads .count .ctl { display: flex; align-items: center; min-height: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); }
+#threads .count .ctl { display: flex; align-items: center; min-width: 0; min-height: calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); }
 #threads .count .lead { display: flex; align-items: center; min-width: 0; }
 #threads .count .sort { margin-left: auto; display: flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; }
+/* The list never scrolls sideways: a swipe across it is the filter drawer's (wireDrawerSwipes in
+   ui/inbox.js), and the list no wider than its column. */
+#threads { overflow-x: hidden; }
+/* A narrow list (a phone): Filters or Customers by its icon and count, and the view switch, when
+   its views do not fit, scrolls sideways under the finger instead of the list. */
+@container (max-width: 559px) {
+  #threads .count .filt .word { position: absolute; width: var(--spectrum-border-width-100); height: var(--spectrum-border-width-100); overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  #threads .count .lead { flex: none; }
+  #threads .count .sort { flex: 1 1 0; justify-content: flex-end; }
+  #threads .count .order { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+  #threads .count .order::-webkit-scrollbar { display: none; }
+  #threads .count .order button { flex: none; max-width: none; }
+}
 /* The two sides share what the search box leaves equally, so it stays centred. */
 @container (min-width: 560px) {
   #threads .count .ctl { display: contents; }
@@ -553,9 +566,11 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .sidechat .chev { flex: none; margin-left: var(--spectrum-spacing-50); transition: transform var(--spectrum-animation-duration-100) ease-out; }
 .sidechat.open .chev { transform: rotate(90deg); }
 /* Beside the panel the thread's column is narrower: what the line counts goes under who talked. */
-.sidechat.paneled .sc-head { flex-wrap: wrap; }
-.sidechat.paneled .sc-what { flex-basis: calc(var(--spectrum-spacing-100) * 30); }
-.sidechat.paneled .sc-meta { margin-left: auto; }
+/* Where its line has no room for what happened and its count side by side (the panel, a phone),
+   the count goes under it, on the right. */
+.sidechat .sc-head { flex-wrap: wrap; }
+.sidechat .sc-what { flex-basis: calc(var(--spectrum-spacing-100) * 30); }
+.sidechat .sc-meta { margin-left: auto; }
 /* What a conversation shows (`.sc-body`): under its line in the feed, or in the panel. */
 .sc-body { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); }
 .sc-body .sm { display: flex; gap: var(--spectrum-spacing-100); align-items: flex-end; }
@@ -1552,7 +1567,8 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   #pane, main.reading #threads { transition: transform var(--spectrum-animation-duration-500) var(--spectrum-animation-ease-out), visibility var(--spectrum-animation-duration-0) var(--spectrum-animation-duration-500); }
   .t, #threads .count { padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); padding-right: var(--spectrum-spacing-200); }
   .t .cust { max-width: 40%; }
-  .ph { display: grid; column-gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-75); }
+  /* The back button's column as wide as it, the rest the header's (not shared out between them). */
+  .ph { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-75); }
   .ph > :not(.close) { grid-column: 2; }
   .ph .close { display: grid; grid-row: 1 / span 4; margin-top: calc(-1 * var(--spectrum-spacing-75)); }
   /* The thread's header scrolls away with the thread and back (wireHeadAway in ui/inbox.js):
@@ -2965,11 +2981,16 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .nh-pic .nh-ring { fill: none; stroke: var(--spectrum-negative-visual-color); }
 
 /* Toasts: S2's neutral Toast (white text on neutral-subdued, the large radius, elevated), its
-   action an outline Button for static white. The text wraps, a button's label never does. */
+   action an outline Button for static white. The text wraps, a button's label never does; where
+   they do not fit beside it (a phone), the buttons go under it, on the right. */
 .spectrum .toast {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
-  gap: var(--spectrum-spacing-300);
+  gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300);
+  /* As wide as it says, up to the screen's width (not half of it, where its left edge is). */
+  width: max-content;
   min-height: var(--spectrum-toast-height);
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-300);
   font-size: var(--spectrum-font-size-100);
@@ -2994,6 +3015,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   pointer-events: none;
   transition: opacity var(--s2-out), translate var(--s2-out);
 }
+.spectrum .toast > .text { flex: 1 1 calc(var(--spectrum-spacing-100) * 25); }
 .spectrum .toast :is(button, a) {
   flex: none;
   margin-left: 0;

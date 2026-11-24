@@ -31,7 +31,9 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: 
 .empty { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-100); }
 
 .bar { display: flex; flex-wrap: wrap; align-items: center; }
-.bar .group { display: flex; align-items: center; }
+.bar .group { display: flex; align-items: center; min-width: 0; max-width: 100%; }
+/* A team's long name does not make the picker wider than the page (a phone). */
+.bar select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
 /* The kinds wrap where the bar is narrower than they are (a phone), so none is cut off. */
 .bar .legend { flex-wrap: wrap; }
 .bar .spacer { flex: 1; }
@@ -108,6 +110,10 @@ p.trend { display: flex; align-items: center; }
 }
 @media (max-width: 699px) {
   main { padding: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-500) + var(--safe-bottom)); }
+  /* The page scrolls down, not sideways: a table's headings and names wrap to fit. */
+  main { overflow-x: hidden; }
+  th, td > button.link { white-space: normal; text-align: left; }
+  th.n { text-align: right; }
 }
 
 /* ==== Its look ================================================================================= */

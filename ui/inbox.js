@@ -2074,7 +2074,12 @@ function searchSoon(q, wait = 250) {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => runSearch(q), wait);
 }
-async function runSearch(q) {
+/**
+ * Searches for `q`, and puts it in the address; `asked` when the address asked for it (Back or
+ * Forward), which is then left as it is: the rest of the page is not yet what that entry says,
+ * and writing it would put the thread you went back from into the entry you went back to.
+ */
+async function runSearch(q, { asked = false } = {}) {
   clearTimeout(searchTimer);
   const query = String(q || '').replace(/\s+/g, ' ').trim();
   // The same question as the one on screen, or on its way, is not asked again.
@@ -2083,7 +2088,7 @@ async function runSearch(q) {
   if (query !== state.search.q) state.search.kbAll = false;
   state.search.q = query;
   if ($('q') && $('q').value.trim() !== query) $('q').value = query;
-  toUrl(false);
+  if (!asked) toUrl(false);
   if (!query) { Object.assign(state.search, { words: [], data: null, loading: false, error: null }); render(); return; }
   state.search.loading = true;
   state.search.error = null;
@@ -2350,10 +2355,10 @@ function renderThreads() { inPass(threadRows); }
  * excluded ones.
  */
 function filtButton(on) {
-  if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}Filters${on ? `<b>${on}</b>` : ''}</button>`;
+  if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}<span class="word">Filters</span>${on ? `<b>${on}</b>` : ''}</button>`;
   const you = listed().filter((t) => passes(t, 'customer') && !state.not.customer?.has(t.org)).reduce((n, t) => n + youCount(t), 0);
   const at = mentionsOn() ? `<span class="at" title="Showing only threads that mention you">${AT}</span>` : '';
-  return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}Customers${at}${youBadge(you)}</button>`;
+  return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}<span class="word">Customers</span>${at}${youBadge(you)}</button>`;
 }
 
 /*
@@ -2470,6 +2475,19 @@ function viewSwitch() {
     slug: t.slug, name: t.name, on: !mine && t.slug === state.team, hint: `${t.name}: the team's channels, what needs you most first, with every filter`,
   }))];
   return `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}" title="${esc(v.hint)}">${esc(v.name)}</button>`).join('')}</span>`;
+}
+/**
+ * The view switch on a phone scrolls sideways when its views do not fit (see the styles): the
+ * picked one is scrolled into it, without moving the list or the page.
+ */
+function showView(head) {
+  const order = head.querySelector('.order');
+  const on = order?.querySelector('[aria-checked="true"]');
+  if (!on || order.scrollWidth <= order.clientWidth) return;
+  const { left, right } = on.getBoundingClientRect();
+  const box = order.getBoundingClientRect();
+  if (left < box.left) order.scrollLeft += left - box.left;
+  else if (right > box.right) order.scrollLeft += right - box.right;
 }
 const LOUPE = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>';
 /** The list's heading, made once: the search box (kept, as you type in it), then the controls. */
@@ -2696,7 +2714,7 @@ function threadRows() {
   const post = state.as ? '' : `<button class="newpost" data-compose aria-pressed="${Boolean(state.compose)}" title="Start a new thread" aria-label="Start a new thread">${COMPOSE}</button>`;
   const count = `<span class="lead">${filt}${unread}${bell}${post}</span><span class="sort">${sorter}</span>`;
   const head = box.querySelector('.ctl');
-  if (head.__html !== count) { head.innerHTML = count; head.__html = count; }
+  if (head.__html !== count) { head.innerHTML = count; head.__html = count; showView(head); }
   // Patch the list instead of rebuilding it: unchanged rows keep their DOM (and images),
   // also rows a filter hid for a while, which are kept aside for when they show again.
   const list = box.querySelector('.rows');
@@ -8061,7 +8079,11 @@ function toast(text, action, { stay = false, dismiss = null } = {}) {
   const el = document.createElement('div');
   el.className = 'toast';
   el.setAttribute('role', stay ? 'alert' : 'status');
-  el.textContent = text;
+  // Its own box, so that on a narrow screen the buttons wrap under it, not it around them.
+  const said = document.createElement('span');
+  said.className = 'text';
+  said.textContent = text;
+  el.append(said);
   for (const act of [action].flat().filter(Boolean)) {
     const a = document.createElement(act.href ? 'a' : 'button');
     a.textContent = act.label;
@@ -10226,6 +10248,9 @@ function wireDrawerSwipes() {
     const where = state.filtering ? e.target === main || e.target.closest('#filters')
       : e.target.closest('#threads') && !(TAKING_TURNS.matches && state.open);
     if (!where) return;
+    // The view switch scrolls sideways when its views do not fit: a swipe there scrolls it.
+    const order = e.target.closest('.order');
+    if (order && order.scrollWidth > order.clientWidth) return;
     const t = e.touches[0];
     s = {
       x: t.clientX, y: t.clientY, open: state.filtering, width: $('filters').offsetWidth || 1,
@@ -10271,9 +10296,13 @@ function wireDrawerSwipes() {
 // comes back as you scroll up again, as far as you do: it lies over the thread, which leaves it
 // room at its top (`--ph-h`), and moves up by as much as the thread scrolled down (`--ph-off`).
 // A thread opened, or opened at a message, shows its header; an open dropdown of the header
-// keeps it where it is.
+// keeps it where it is. Only a scroll you drive moves it (a finger, the wheel, a key, and the
+// scroll they set going): not the page placing the thread as it opens, or keeping its bottom in
+// view as the header's room is made or a message comes in.
 /** How far the header is moved up (0 to `height`) after the thread scrolled down by `delta`. */
 const headAway = (off, delta, height) => Math.min(height, Math.max(0, off + delta));
+/** How long after your last touch, wheel, key or scroll a scroll of the thread is still yours. */
+const HEAD_DRIVEN_MS = 150;
 function wireHeadAway() {
   const pane = $('pane');
   const seen = new WeakMap();
@@ -10299,6 +10328,16 @@ function wireHeadAway() {
     if (now !== scroller) { scroller = now; off = 0; place(); }
   }).observe(pane, { childList: true });
   TAKING_TURNS.addEventListener('change', () => { off = 0; place(); });
+  // Yours: while a finger is down, and for a moment after it, the wheel or a key; a scroll that
+  // comes on the heels of one of yours (momentum) is yours too.
+  let touching = false;
+  let yours = 0;
+  const drive = () => { yours = performance.now() + HEAD_DRIVEN_MS; };
+  const opts = { capture: true, passive: true };
+  const lift = () => { touching = false; drive(); };
+  pane.addEventListener('touchstart', () => { touching = true; }, opts);
+  for (const ev of ['touchend', 'touchcancel']) pane.addEventListener(ev, lift, opts);
+  for (const ev of ['wheel', 'keydown']) pane.addEventListener(ev, drive, opts);
   pane.addEventListener('scroll', (e) => {
     const el = e.target;
     if (el !== scroller || !head) return;
@@ -10307,6 +10346,8 @@ function wireHeadAway() {
     // Its first scroll is where it was placed as it opened, by the page, not by you.
     const last = seen.has(el) ? seen.get(el) : top;
     seen.set(el, top);
+    if (!touching && performance.now() > yours) return;
+    drive();
     if (!TAKING_TURNS.matches || state.headOpen || state.expertsOpen) return;
     off = headAway(off, top - last, head.offsetHeight);
     place();
@@ -10910,7 +10951,7 @@ async function start() {
     if (!compose) Object.assign(state, { compose: null, awaiting: null });
     renderUser();
     if (scope !== scopeKey()) { state.prevKeys = null; state.cache.clear(); state.search.data = null; await loadInbox(); connect(); }
-    if (query !== state.search.q || !state.search.data) runSearch(query);
+    if (query !== state.search.q || !state.search.data) runSearch(query, { asked: true });
     showReview(review);
     render();
     if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && msg) openMessage(open, msg, { linked: true }); else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; }

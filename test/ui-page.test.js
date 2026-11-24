@@ -256,6 +256,23 @@ describe('inbox page', () => {
     assert.equal(headAway(20, -30, 140), 0);
   });
 
+  it('leaves the address alone on Back and Forward: the entry gone back to keeps its list', () => {
+    // The popstate handler asks for the entry's search without writing the address, which still
+    // has the thread gone back from (a second Back would reopen it instead of the list).
+    const pop = html.slice(html.indexOf("window.addEventListener('popstate'"));
+    assert.match(pop.slice(0, pop.indexOf('\n  });')), /runSearch\(query, \{ asked: true \}\)/);
+    const run = html.slice(html.indexOf('async function runSearch'));
+    assert.match(run.slice(0, run.indexOf('\n}')), /if \(!asked\) toUrl\(false\);/);
+  });
+
+  it('never scrolls the list sideways on a phone, which would take the drawer\'s swipe', () => {
+    const css = SCRIPTS['spectrum-inbox.css'];
+    assert.match(css, /\n#threads \{ overflow-x: hidden; \}/);
+    // The controls' row is no wider than the list; the view switch scrolls in it instead.
+    assert.match(css, /#threads \.count \.ctl \{[^}]*min-width: 0;/);
+    assert.match(css, /@container \(max-width: 559px\) \{[^@]*#threads \.count \.order \{ overflow-x: auto;/);
+  });
+
   it('opens the personal view unless the address names a team', () => {
     const { personalAsked } = piece('const personalAsked', 'function fromUrl', 'personalAsked');
     const asks = (search) => personalAsked(new URLSearchParams(search));
