@@ -242,7 +242,7 @@ const parseArea = (text) => {
 function topicsViewer() {
   // As /api/me on the admin pages: the admin team's, unless --manager or --member.
   const teams = store.me.teams.map((t) => ({ slug: t.slug, role: MANAGER ? 'manager' : 'member' }));
-  if (!MANAGER && !MEMBER) {
+  if (!MANAGER && !MEMBER && !NO_TEAM) {
     teams.push({ slug: 'admin', role: 'member' });
   }
   return { ...store.me, teams };
@@ -1591,17 +1591,19 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/me') {
     const {
-      id, name, email, teams,
+      id, name, email, teams, staff,
     } = store.me;
     // Dana is not in the admin team (unless --admin), except on the admin pages (and COGS), so
-    // they can be tried.
-    const admin = !MANAGER && !MEMBER
+    // they can be tried; with --no-team, never, as staff on no team see them (Inbox and Topics).
+    const admin = !MANAGER && !MEMBER && !NO_TEAM
       && (ADMIN || store.me.admin || /\/inbox\/(kb|admin|cogs|topics)\b/.test(req.headers.referer || ''));
     // Fake mode: both accounts count as connected, so the composer can be tried out.
     return json(res, {
       id,
       name,
       email,
+      // Adobe's, on a team or not (src/api.js `personWhere`).
+      staff: Boolean(staff),
       teams: MANAGER || MEMBER ? teams.map((t) => ({ ...t, role: MANAGER && t.slug === 'edge' ? 'manager' : 'member' })) : teams,
       admin,
       manages: MANAGER ? ['edge'] : [],
