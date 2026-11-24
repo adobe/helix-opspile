@@ -53,6 +53,7 @@ function page(answer, { opened = null, timers = null } = {}) {
     URL,
     setInterval: timers?.set || setInterval,
     clearInterval: timers?.clear || clearInterval,
+    setTimeout: timers?.timeout || setTimeout,
   };
   vm.runInNewContext(SCRIPTS['app.js'], context);
   return {
@@ -131,5 +132,51 @@ describe('signed out', () => {
     // The watch runs on, and has to end without that window.
     await tick();
     assert.equal(stopped, true);
+  });
+});
+
+describe('D1 busy', () => {
+  const busy = { status: 503, ok: false, headers: new Headers({ 'retry-after': '2' }) };
+  const fine = { status: 200, ok: true, headers: new Headers() };
+  /** A page whose first fetch is answered 503, the next 200; and the waits it made. */
+  const once = () => {
+    const waits = [];
+    let n = 0;
+    const p = page(async () => {
+      n += 1;
+      return n > 1 ? fine : busy;
+    }, {
+      timers: {
+        timeout: (fn, ms) => {
+          waits.push(ms);
+          fn();
+        },
+      },
+    });
+    return { p, waits };
+  };
+
+  it('asks a read again once, after Retry-After and a moment at random', async () => {
+    const { p, waits } = once();
+    assert.equal((await p.fetch('/api/thread?thread=x')).status, 200);
+    assert.equal(p.calls.length, 2);
+    assert.equal(waits.length, 1);
+    assert.ok(waits[0] >= 2000 && waits[0] < 3000, `waited ${waits[0]} ms`);
+  });
+
+  it('gives a second 503 to the caller, and never asks a write again', async () => {
+    const p = page(async () => busy, { timers: { timeout: (fn) => fn() } });
+    assert.equal((await p.fetch('/api/inbox')).status, 503);
+    assert.equal(p.calls.length, 2);
+    const w = once();
+    assert.equal((await w.p.fetch('/api/post', { method: 'POST', body: '{}' })).status, 503);
+    assert.equal(w.p.calls.length, 1);
+    assert.deepEqual(w.waits, []);
+  });
+
+  it('leaves a 503 without Retry-After alone', async () => {
+    const p = page(async () => ({ status: 503, ok: false, headers: new Headers() }));
+    assert.equal((await p.fetch('/api/inbox')).status, 503);
+    assert.equal(p.calls.length, 1);
   });
 });
