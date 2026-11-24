@@ -1304,6 +1304,8 @@ function thread(asked) {
       return shows.length ? shows : channelTech(entry);
     })(),
     topics: store.labels.get(key)?.topics || [],
+    // As src/api.js: the customer's stack drawing's parts (src/orgstacks.js).
+    stack: orgStacks[entry.row.org] || [],
     vocab: vocabNames,
     reviews: [],
     facts: store.facts.get(key) || [],

@@ -723,8 +723,14 @@ like any other: its `title` their name as the platform shows it, its `descriptio
 to us in one sentence (which the inbox's profile cards show), `aliases` the other names they go
 by, and `resource: mailto:<address>` (OKF's "canonical URI for the underlying asset") when a
 message shows it. A customer's knowledge base has everyone who works on its threads, the
-customer's, partners' and Adobe's people, with their role on that account; a team's has the
-colleagues and partners it works with across customers, and never a customer's people.
+customer's, partners' and Adobe's people, with their role on that account; a team's has its own
+members and the colleagues and partners it works with across customers, and never a customer's
+people. A member's Contact in their team's knowledge base is their **profile** on the team, the
+same for every customer: its description what they do on the team and own, its body what they
+know (products, areas), the customers they work with most and how to reach them, with sources.
+Every agent's prompt lists its team's members, the busiest first, with the path of each one's
+profile and whether it is there yet (`team-members`, src/agent/teammembers.js), and asks it to
+keep them as threads show what the members do: their role on one account still goes to kb-org.
 
 **Diagrams.** Beside the concepts, a knowledge base holds diagrams: `.dot` files, Graphviz DOT
 with the FMC attributes of the stack drawing's renderer (src/fmc.js: `fmc` on nodes and clusters,

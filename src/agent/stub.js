@@ -15,6 +15,7 @@ import {
 } from '../drafts.js';
 import { requestOf } from '../bashrequests.js';
 import { json } from '../http.js';
+import { managesTeam } from '../review.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
 import { notifyRoom } from '../notify.js';
 import {
@@ -112,7 +113,8 @@ async function notTheirs(env, entry, what) {
 /**
  * POST /api/agent/seed `{ thread, text }` or `{ team, org, text }`: shares knowledge with the
  * thread's agent, or with the knowledge-base agent of a team and customer, which files it in
- * the knowledge bases. Only members of the team.
+ * the knowledge bases. Only members of the team; a team's own knowledge base alone (`kb: 'team'`,
+ * no customer) also whoever may change it, the admin team and the team's managers.
  *
  * `kb` (`team` or `org`, on either form) chooses the knowledge base, and the agent cannot write
  * the other one (src/agent/seed.js). `{ team, kb: 'team', text }` needs no customer. Only the
@@ -160,7 +162,11 @@ export async function seedAgent(env, me, body, inTeam) {
       return json({ error: 'kb "org" needs a customer slug' }, 400);
     }
     const orgFits = org ? repoName('org', org) : kb === 'team';
-    if (!repoName('team', team) || !orgFits || !await inTeam(team)) {
+    // A team's own knowledge base alone: also whoever may change it (the admin team, the team's
+    // managers), on the team or not, as they may in the editor (src/kbaccess.js).
+    const manages = kb === 'team' && !org && Array.isArray(me.teams) && managesTeam(me, team)
+      && Boolean(await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(team).first());
+    if (!repoName('team', team) || !orgFits || !(manages || await inTeam(team))) {
       return json({ error: 'give a thread, or one of your teams and a customer slug (only kb "team" goes without one)' }, 400);
     }
     name = `kb:${team}:${org}`;
