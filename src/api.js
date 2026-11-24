@@ -1029,7 +1029,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   const mentionedP = mentionedPeople(env, {
     source: row.source, tenant: row.tenant, threads: group.map((m) => m.thread),
   }, bodies);
-  const [cards, named, channels, links, channelLinked] = await Promise.all([
+  const [cards, named, channels, links, channelLinked, stacks] = await Promise.all([
     Promise.all([linksP, mentionedP]).then(([linked, { keys: mentionKeys }]) => profiles(env, [
       ...messages.map((m) => m.authorKey),
       ...linked.map((l) => l.authorKey),
@@ -1042,6 +1042,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     linksP,
     // Links to channels, on any platform (a Teams channel's in a Slack message).
     channelLinks(env, row, bodies, me),
+    // The customer's stack drawing's parts (src/orgstacks.js): the header's button to the
+    // drawing shows where there is one.
+    orgStacksOf(env, [row.org]),
   ]);
   return {
     thread: {
@@ -1055,6 +1058,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // The channel's, from before the customer's stack came from its drawing: none now.
     tech: [],
     thread_tech: threadTech(memberTech),
+    stack: stacks[row.org] || [],
     topics: topicList(model && model.topics),
     vocab: await vocab(env, row.team),
     members: group.map((m) => ({
