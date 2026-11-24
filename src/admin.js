@@ -42,6 +42,7 @@ import {
   reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
+import { dismissMember, memberSuggestions, suggestsMembers } from './membersuggest.js';
 import { unassignedSuggestions } from './orgassign.js';
 import {
   dismissGroup, teamGroup, teamGroups, wizardRules,
@@ -80,7 +81,9 @@ import {
  *   holds it; a channel another team holds is shared with the new one instead.
  *
  * Team managers (migration 0018) use the same API for the teams they manage, and only for
- * their members: they see those teams, add and remove people, and promote or demote them.
+ * their members: they see those teams, add and remove people, and promote or demote them, and
+ * see who is likely on the team and is not yet (`member-suggestions`, src/membersuggest.js), to
+ * add or dismiss.
  * They also search every channel, and ask the admin team to assign one to their team (a
  * request, migration 0028, src/requests.js); the admin team confirms the request, which runs
  * the same assignment it makes by hand, or declines it. Everything else is for the admin team.
@@ -1209,6 +1212,8 @@ async function addMember(env, body) {
   // Identities with this email belong to the person from now on.
   await env.DB.prepare('UPDATE identities SET person = ? WHERE email = ? AND person IS NULL')
     .bind(person.id, email).run();
+  // On the team now: no dismissal of them from its suggestions stays behind.
+  await dismissMember(env, teamSlug, email, { dismiss: false });
   return json({ ok: true, person: { ...person, role: member.role } });
 }
 
@@ -1371,9 +1376,54 @@ async function removeMember(env, me, body) {
       return bad('the admin team keeps at least one member');
     }
   }
+  const who = await env.DB.prepare(`SELECT p.email FROM team_members m JOIN people p ON p.id = m.person
+    WHERE m.team = ? AND m.person = ?`).bind(teamSlug, person).first();
   const { meta } = await env.DB.prepare('DELETE FROM team_members WHERE team = ? AND person = ?')
     .bind(teamSlug, person).run();
-  return meta.changes ? json({ ok: true, self: person === me.id }) : json({ error: 'not a member' }, 404);
+  if (!meta.changes) {
+    return json({ error: 'not a member' }, 404);
+  }
+  // Taken off the team: not suggested to it again (src/membersuggest.js) until someone says so.
+  if (who && who.email && suggestsMembers(teamSlug)) {
+    await dismissMember(env, teamSlug, who.email, { by: me.email || String(me.id), why: 'removed' })
+      .catch((e) => console.error(JSON.stringify({ route: 'admin', dismissal: 'not recorded', error: e.message })));
+  }
+  return json({ ok: true, self: person === me.id });
+}
+
+/**
+ * GET /api/admin/member-suggestions?team=: the people likely on the team who are not yet, for its
+ * managers and the admin team to add (src/membersuggest.js). Not for the admin team, which holds
+ * every channel no rule files.
+ */
+async function suggestedMembers(env, slug) {
+  if (!suggestsMembers(slug)) {
+    return bad('the admin team holds every channel no rule files: nobody is suggested for it');
+  }
+  if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
+    return json({ error: 'no such team' }, 404);
+  }
+  return json(await memberSuggestions(env, slug));
+}
+
+/**
+ * POST /api/admin/member-suggestions/dismiss `{ team, email }`: not suggested to the team again;
+ * DELETE suggests them again.
+ */
+async function dismissSuggestedMember(env, me, body, dismiss) {
+  const slug = clean(body.team);
+  const email = clean(body.email).toLowerCase();
+  if (!suggestsMembers(slug) || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return bad('give the team and the person\'s email address');
+  }
+  if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
+    return json({ error: 'no such team' }, 404);
+  }
+  const changed = await dismissMember(env, slug, email, { by: me.email || String(me.id), dismiss });
+  console.log(JSON.stringify({
+    route: 'admin', memberSuggestion: dismiss ? 'dismissed' : 'restored', team: slug, by: me.id,
+  }));
+  return json({ ok: true, changed });
 }
 
 // ---- orgs -------------------------------------------------------------------------------
@@ -1573,7 +1623,8 @@ export async function admin(request, env, url, me) {
   const teamOf = m === 'GET' ? q('team') || q('slug') : clean(body.team);
   const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members',
     'GET channels', 'GET requests', 'POST requests', 'DELETE requests', 'PUT follows',
-    'POST portal/open', 'POST swap'];
+    'POST portal/open', 'POST swap', 'GET member-suggestions', 'POST member-suggestions/dismiss',
+    'DELETE member-suggestions/dismiss'];
   // Every manager may search channels; the requests they see are their teams' (`requests`).
   const anyTeam = ['GET teams', 'GET channels', 'GET requests'];
   // Duplicate customers: anyone on a team sees those of the customers it owns, and asks for a
@@ -1595,6 +1646,9 @@ export async function admin(request, env, url, me) {
     case 'POST members': return withAccessSync(env, 'member added', addMember(env, body));
     case 'PUT members': return setRole(env, body);
     case 'GET people': return people(env, clean(url.searchParams.get('q')), q('team'));
+    case 'GET member-suggestions': return suggestedMembers(env, q('team'));
+    case 'POST member-suggestions/dismiss': return dismissSuggestedMember(env, me, body, true);
+    case 'DELETE member-suggestions/dismiss': return dismissSuggestedMember(env, me, body, false);
     case 'GET team-groups': return json(await teamGroups(env));
     case 'POST team-wizard': return teamWizard(env, me, body);
     case 'POST team-wizard/dismiss': return await dismissGroup(env, clean(body.prefix).toLowerCase(), me.email || String(me.id))

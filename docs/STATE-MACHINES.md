@@ -665,6 +665,15 @@ archived. Dismissed is the only stored state, a row with the group's channel cou
 with more channels than that is suggested again (the row stays, and a later dismissal writes the new
 count). Making the group a team deletes the row, so a prefix that comes back later starts afresh.
 
+**Suggested member.** suggested → added, dismissed or gone → suggested again
+(`member_suggestion_dismissals`, migration 0095, `src/membersuggest.js`). A suggestion is computed on
+every read from the team's threads, channels and topics, so it has no state of its own: it is gone
+once the person is on the team or stops working its threads. Dismissed is the only stored state, a
+row per team and mail address, written by Dismiss on the team's page (`why` `dismissed`) and by
+taking someone off the team (`why` `removed`), so neither comes straight back. Suggest again deletes
+the row, and so does adding the person to the team; deleting the team deletes its rows. The admin
+team gets no suggestions, nor rows.
+
 **GitHub mirror.** absent → importing → ready → refreshing → ready, or given up after an hour
 (`repo_mirrors`, `src/agent/repos.js`). Reads stay on the old mirror until the new one is readable. A
 repository taken off `agent_repos` keeps its mirror.
