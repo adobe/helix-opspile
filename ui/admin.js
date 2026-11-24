@@ -44,6 +44,8 @@ const state = {
   // is open (`own`, or one of its agent's, SECTIONS), with the file open in its knowledge base.
   bases: [], section: null, path: null,
   requests: [], openRequests: 0, names: {}, noIcon: false,
+  // The people thread agents asked to be added to a team (src/memberrequests.js), under Requests.
+  memberRequests: [],
   // The bots the inbox knows (GET /api/admin/bots), under Requests.
   bots: [],
   // The customers waiting in the customer portal, and whether it is connected to this inbox.
@@ -383,6 +385,7 @@ async function load() {
   state.teams = teams.body.teams || [];
   state.names = teams.body.names || {};
   state.requests = requests.body.requests || [];
+  state.memberRequests = requests.body.memberRequests || [];
   state.portal = requests.body.portal || [];
   state.conflicts = requests.body.conflicts || [];
   state.ruleConflicts = requests.body.ruleConflicts || [];
@@ -528,6 +531,10 @@ function drawList() {
         ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
     const open = state.requests.filter((r) => r.status === 'open' && match(r));
     const decided = state.requests.filter((r) => r.status !== 'open' && match(r));
+    // The people asked to be added to a team (src/memberrequests.js).
+    const people = state.memberRequests.filter((r) => !f || `${memberName(r)} ${r.person.email} ${teamLabel(r.team)} ${r.requestedBy.name || ''} ${r.requestedBy.email}`.toLowerCase().includes(f));
+    const peopleOpen = people.filter((r) => r.status === 'open');
+    const peopleDone = people.filter((r) => r.status !== 'open');
     // The customers in the portal: each asks for a channel of its own.
     const asks = state.portal.filter((r) => !f || `${r.company || ''} ${r.domain} ${r.requestedBy.name || ''} ${r.requestedBy.email || ''}`.toLowerCase().includes(f));
     const waiting = asks.filter((r) => r.status === 'open');
@@ -551,14 +558,15 @@ function drawList() {
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter requests" value="${esc(state.filter)}"></label>
       ${waiting.length ? `<h2>Customers waiting in the portal</h2>${waiting.map(portalRow).join('')}` : ''}
       <h2>Waiting for a decision</h2>${open.map(row).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No request is waiting.'}</div>`}
+      ${peopleOpen.length ? `<h2>People to add to teams</h2>${peopleOpen.map(memberRow).join('')}` : ''}
       ${review.length ? `<h2>Bots to review</h2>${review.map(botRow).join('')}` : ''}
       ${unsettled.length ? `<h2>Conflicts between technologies</h2>${unsettled.map(conflictRow).join('')}` : ''}
       ${ruleOpen.length ? `<h2>Conflicts between team rules</h2>${ruleOpen.map(ruleConflictRow).join('')}` : ''}
       ${ruleOther.length ? `<h2>Other rule conflicts</h2>${ruleOther.map(ruleConflictRow).join('')}` : ''}
       ${mergesOpen.length ? `<h2>Customers to merge</h2>${mergesOpen.map(mergeRow).join('')}` : ''}
-      ${decided.length || answered.length || kept.length || mergesDone.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${mergesDone.map(mergeRow).join('')}${kept.join('')}` : ''}
+      ${decided.length || answered.length || kept.length || mergesDone.length || peopleDone.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${peopleDone.map(memberRow).join('')}${mergesDone.map(mergeRow).join('')}${kept.join('')}` : ''}
       ${bots.length > review.length ? `<h2>Bots</h2>${bots.filter((b) => !unreviewed(b)).map(botRow).join('')}` : ''}
-      <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team. A bot that posted waits here until you say whether it is Adobe's or external.</p>`;
+      <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team. Thread agents also ask for people to be added to a team, for whoever asked them; the team's managers decide those too, on its page. A bot that posted waits here until you say whether it is Adobe's or external.</p>`;
   } else if (!state.me.admin) {
     // The customers your teams own: their agents, which their managers change.
     const rows = state.bases.filter((b) => b.kind === 'org' && matches(b))
@@ -630,6 +638,7 @@ function select(sel, {
   else if (state.tab === 'orgs' && isPair(sel)) showPair(...String(sel).slice(PAIR.length).split(':'));
   else if (state.tab === 'requests' && String(sel).startsWith(MERGE_REQUEST)) showMergeRequest(String(sel).slice(MERGE_REQUEST.length));
   else if (agented(state.tab, sel)) showPicked({ channel, flash, fresh: true });
+  else if (state.tab === 'requests' && String(sel).startsWith(MEMBER)) showMemberRequest(String(sel).slice(MEMBER.length));
   else if (state.tab === 'requests' && String(sel).startsWith(PORTAL)) showPortalRequest(String(sel).slice(PORTAL.length));
   else if (state.tab === 'requests' && String(sel).startsWith(CONFLICT)) showConflict(String(sel).slice(CONFLICT.length));
   else if (state.tab === 'requests' && String(sel).startsWith(RULE_CONFLICT)) showRuleConflict(String(sel).slice(RULE_CONFLICT.length));
@@ -1507,7 +1516,16 @@ function wireMemberPicker() {
         if (row) row.members += 1;
       }
       status('ok', `Added ${person.name || person.email}.`);
+      // Its open requests are answered with it (src/admin.js).
+      for (const x of v.memberRequests || []) {
+        if (x.status === 'open' && x.person.email === person.email) {
+          updateMemberRequest({
+            ...x, status: 'confirmed', outcome: 'member', decidedBy: { email: state.me.email, name: state.me.name }, decidedAt: new Date().toISOString(),
+          });
+        }
+      }
       if (v === state.view) renderMembers();
+      if (v === state.view && $('memberRequestsTable')) renderMemberRequests();
       renderList();
     });
   };
@@ -1691,11 +1709,12 @@ async function showTeam(slug) {
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   const {
     team, members, rules, channels, suggestions, coverage, requests = [], follows = [], followable = [],
-    portal = [],
+    portal = [], memberRequests = [],
   } = r.body;
   if (r.body.portalBound !== undefined) state.portalBound = Boolean(r.body.portalBound);
   const v = {
     target: 'team', value: slug, team, members, rules, channels, suggestions, coverage, requests, follows, followable, portal,
+    memberRequests,
   };
   state.view = v;
   const templates = rules.filter((x) => x.value !== slug);
@@ -1719,6 +1738,8 @@ async function showTeam(slug) {
     ${real ? `<div class="card"><h2>Members</h2><div id="membersTable"></div>
       <div class="form picker"><label class="fld grow"><span>Add a member</span><input id="mFind" autocomplete="off"></label><div class="picks s2-float" id="mPicks" hidden></div></div>
       <p class="hint">Type a name or an email. Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
+    ${real && v.memberRequests.length ? `<div class="card"><h2>People asked for</h2><div id="memberRequestsTable"></div><div id="mrSlot"></div>
+      <p class="hint">People asked to be added to this team, in a thread's sidebar, through its agent. Confirming one adds them as a member, as adding them above does; declining takes a reason, for whoever asked.</p></div>` : ''}
 
     ${admin ? `<div class="card"><h2>Rules</h2><div id="rulesTable"></div>
       <div id="ruleSlot">${ruleForm()}</div>
@@ -1745,6 +1766,7 @@ async function showTeam(slug) {
   if ($('portalTable')) renderPortal();
   if (!real) return;
   renderMembers();
+  if ($('memberRequestsTable')) renderMemberRequests();
   wireMemberPicker();
   renderFollows();
   $('tSelf').onchange = async () => {
@@ -2051,6 +2073,7 @@ async function refreshRequests() {
   const r = await call('/api/admin/requests');
   if (!r.ok) return;
   state.requests = r.body.requests;
+  state.memberRequests = r.body.memberRequests || [];
   state.portal = r.body.portal || [];
   state.conflicts = r.body.conflicts || [];
   state.ruleConflicts = r.body.ruleConflicts || [];
@@ -2060,6 +2083,10 @@ async function refreshRequests() {
   if (v && v.requests) {
     for (const x of v.requests) Object.assign(x, state.requests.find((y) => y.id === x.id) || {});
     if ($('requestsTable')) renderRequests();
+  }
+  if (v && v.memberRequests) {
+    for (const x of v.memberRequests) Object.assign(x, state.memberRequests.find((y) => y.id === x.id) || {});
+    if ($('memberRequestsTable')) renderMemberRequests();
   }
   if (state.tab === 'requests') renderList();
 }
@@ -2220,6 +2247,146 @@ async function showRequest(id) {
     renderList();
   }
   drawRequest(r, preview);
+}
+
+// ---- membership requests --------------------------------------------------------------------
+//
+// A thread's agent asks, for whoever asked it in the sidebar, that someone be added to an ops team
+// (src/memberrequests.js). An admin decides under Requests (`showMemberRequest`), a team's
+// managers on its page (`renderMemberRequests`): Confirm adds the person as a member, as adding
+// them on the team's page does; Decline takes a reason.
+
+/** What marks a membership request among the requests picked (`?request=member:3`). */
+const MEMBER = 'member:';
+const memberName = (r) => r.person.name || r.person.email;
+
+/** A membership request in Requests' list. */
+const memberRow = (r) => `<div class="row${String(state.sel) === `${MEMBER}${r.id}` ? ' on' : ''}" data-sel="${MEMBER}${r.id}">
+  <span class="name">${esc(memberName(r))} <span class="sub">→ ${esc(teamLabel(r.team))}</span></span>
+  ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
+
+/** What came of a membership request, in a few words. */
+function memberDecisionText(r) {
+  const when = r.decidedAt ? ` ${esc(ago(r.decidedAt))}` : '';
+  if (r.status === 'open') return `${statusTag(r)} waiting for an admin or a manager of ${esc(teamLabel(r.team))}`;
+  if (r.status === 'declined') {
+    return `${statusTag(r)} by ${who(r.decidedBy)}${when}${r.reason ? `: <span class="note">${esc(r.reason)}</span>` : ''}`;
+  }
+  const did = { added: `added to ${esc(teamLabel(r.team))}`, member: `on ${esc(teamLabel(r.team))} already` }[r.outcome] || '';
+  return `${statusTag(r)} by ${who(r.decidedBy)}${when}${did ? `: ${did}` : ''}`;
+}
+
+/** A membership request as it is now, everywhere the page shows it. */
+function updateMemberRequest(r) {
+  const was = state.memberRequests.find((x) => x.id === r.id);
+  if (was && was.status === 'open' && r.status !== 'open') state.openRequests = Math.max(0, state.openRequests - 1);
+  if (was) Object.assign(was, r); else if (state.me.admin) state.memberRequests.unshift(r);
+  const mine = state.view?.memberRequests?.find((x) => x.id === r.id);
+  if (mine) Object.assign(mine, r);
+  renderCount();
+}
+
+/**
+ * Confirms or declines membership request `r` (`reason`: declines it); `after` redraws where it
+ * was decided. A person added joins the open team page's members.
+ */
+function decideMember(b, r, reason, after) {
+  return hold(b, `mrequest:${r.id}`, async () => {
+    const confirm = reason === undefined;
+    const res = await call(`/api/admin/member-requests/${confirm ? 'confirm' : 'decline'}`, 'POST', { id: r.id, ...(confirm ? {} : { reason: reason || undefined }) });
+    if (res.body.request) updateMemberRequest(res.body.request);
+    if (!res.ok) {
+      failed(`${confirm ? 'Confirm' : 'Decline'} ${memberName(r)}`, res);
+    } else if (confirm) {
+      const v = state.view;
+      const { person } = res.body;
+      if (v && v.value === r.team && v.members && person && !v.members.some((m) => m.id === person.id)) {
+        v.members.push(person);
+        v.members.sort((x, y) => String(x.name || x.email).localeCompare(String(y.name || y.email)));
+        const row = state.teams.find((t) => t.slug === r.team);
+        if (row) row.members += 1;
+        if ($('membersTable')) renderMembers();
+      }
+      status('ok', `Confirmed: ${memberName(r)} is on ${teamLabel(r.team)}${res.body.request?.outcome === 'member' ? ' (already was)' : ''}.`);
+    } else {
+      status('ok', `Declined ${memberName(r)} for ${teamLabel(r.team)}.`);
+    }
+    after();
+  });
+}
+
+/** The team page's people asked for: who, by whom, why, and Confirm or Decline. */
+function renderMemberRequests() {
+  const v = state.view;
+  const rows = v.memberRequests.map((r) => `<tr><td>${esc(memberName(r))}<div class="sub">${esc(r.person.email)}${r.person.teams.length ? ` · on ${esc(r.person.teams.map(teamLabel).join(', '))}` : ''}</div></td>
+    <td class="nw">${who(r.requestedBy)}<div class="sub">${esc(ago(r.requestedAt))}</div></td>
+    <td class="note">${esc(r.note || '')}</td>
+    <td>${r.status === 'open' ? '' : memberDecisionText(r)}</td>
+    <td class="nw">${r.status !== 'open' ? '' : `<button class="link" data-mconfirm="${r.id}"${off(`mrequest:${r.id}`)}>Confirm</button>
+      <button class="link" data-mdecline="${r.id}"${off(`mrequest:${r.id}`)}>Decline</button>`}</td></tr>`).join('');
+  $('memberRequestsTable').innerHTML = `<table><tr><th>Person</th><th>Asked by</th><th>Why</th><th>Answer</th><th></th></tr>${rows}</table>`;
+  const redraw = () => { if (v === state.view && $('memberRequestsTable')) renderMemberRequests(); renderList(); };
+  for (const b of $('memberRequestsTable').querySelectorAll('[data-mconfirm]')) {
+    const r = v.memberRequests.find((x) => String(x.id) === b.dataset.mconfirm);
+    b.onclick = () => decideMember(b, r, undefined, redraw);
+  }
+  for (const b of $('memberRequestsTable').querySelectorAll('[data-mdecline]')) {
+    const r = v.memberRequests.find((x) => String(x.id) === b.dataset.mdecline);
+    b.onclick = () => {
+      $('mrSlot').innerHTML = `<form class="form" id="mrForm"><span class="what">Decline <b>${esc(memberName(r))}</b> for ${esc(teamLabel(r.team))}</span>
+        <label class="fld grow"><span>Reason, for whoever asked (optional)</span><input id="mrReason" maxlength="500"></label>
+        <button class="danger" id="mrDecline">Decline</button><button type="button" id="mrCancel">Cancel</button></form>`;
+      $('mrReason').focus();
+      $('mrCancel').onclick = () => { $('mrSlot').innerHTML = ''; };
+      $('mrForm').onsubmit = (e) => {
+        e.preventDefault();
+        const reason = $('mrReason').value.trim();
+        $('mrSlot').innerHTML = '';
+        decideMember(b, r, reason, redraw);
+      };
+    };
+  }
+}
+
+/** A membership request, for the admin team: who, for which team, by whom, and Confirm or Decline. */
+function drawMemberRequest(r) {
+  const open = r.status === 'open';
+  const p = r.person;
+  $('detail').innerHTML = `
+    <div class="title">${backButton()}<h1 class="fill">${esc(memberName(r))} <span class="sep">→</span> ${esc(teamLabel(r.team))}</h1>${statusTag(r)}</div>
+    <div class="status" id="status"></div>
+    <div class="card"><div class="field">
+      <label>Person</label><span>${esc(memberName(r))} <span class="sub mono">${esc(p.email)}</span>${p.id ? '' : ' <span class="tag">new person</span>'}</span>
+      <label>Now</label><span>${p.teams.length ? `on ${esc(p.teams.map(teamLabel).join(', '))}` : 'on no team'}</span>
+      <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}">${esc(teamLabel(r.team))}</a></span>
+      <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(ago(r.requestedAt))}</span></span>
+      ${r.thread ? `<label>Asked in</label><span>the <a href="/inbox?t=${encodeURIComponent(r.thread)}">sidebar of a thread</a>, through its agent</span>` : ''}
+      ${r.note ? `<label>Why</label><span class="note">${esc(r.note)}</span>` : ''}
+      ${open ? '' : `<label>Answer</label><span>${memberDecisionText(r)}</span>`}
+    </div></div>
+    ${open ? `<div class="card"><h2>Confirming it</h2><p class="hint lead">Adds ${esc(memberName(r))} to ${esc(teamLabel(r.team))} as a member (a manager, when the team is self-managed), as adding them on the team's page does: they see its inbox.</p>
+      <div class="form"><button class="primary" id="mqConfirm"${off(`mrequest:${r.id}`)}>Confirm</button></div></div>
+      <div class="card"><h2>Declining it</h2><form class="form" id="mqDeclineForm"><label class="fld grow"><span>Reason, for whoever asked (optional)</span><input id="mqReason" maxlength="500"></label>
+      <button class="danger" id="mqDecline"${off(`mrequest:${r.id}`)}>Decline</button></form></div>` : ''}`;
+  showStatus();
+  if (!open) return;
+  const redraw = () => {
+    renderList();
+    if (state.tab === 'requests' && String(state.sel) === `${MEMBER}${r.id}`) drawMemberRequest(r);
+  };
+  $('mqConfirm').onclick = () => decideMember($('mqConfirm'), r, undefined, redraw);
+  $('mqDeclineForm').onsubmit = (e) => {
+    e.preventDefault();
+    decideMember($('mqDecline'), r, $('mqReason').value.trim(), redraw);
+  };
+}
+
+function showMemberRequest(id) {
+  loadingPage();
+  state.view = null;
+  const r = state.memberRequests.find((x) => String(x.id) === String(id));
+  if (!r) { $('detail').innerHTML = `<div class="empty">${backButton()} No such request.</div>`; return; }
+  drawMemberRequest(r);
 }
 
 // ---- customers in the portal ---------------------------------------------------------------

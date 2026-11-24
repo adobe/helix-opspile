@@ -1,7 +1,8 @@
 # State machines
 
-opspile has five status columns, `channel_requests.status`, `bash_requests.status`,
-`tool_requests.status`, `portal_requests.status` and `org_merge_requests.status` (and the customer portal, in its own database, `lobbies.status`). Everything
+opspile has six status columns, `channel_requests.status`, `bash_requests.status`,
+`tool_requests.status`, `portal_requests.status`, `org_merge_requests.status` and
+`member_requests.status` (and the customer portal, in its own database, `lobbies.status`). Everything
 else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
@@ -180,6 +181,13 @@ merge.
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status
 = 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.
+
+**Membership request.** open → confirmed (added, or member: on the team already), declined or
+withdrawn (`member_requests`, migration 0095; `src/memberrequests.js`). One open request per team and
+address (a partial unique index). Confirming claims it first (`WHERE status = 'open'`), then adds the
+person: a failure opens it again, unless they are on the team by then, and if someone asked again
+meanwhile the reopened one is closed as withdrawn instead, so the newer stands (`UPDATE OR IGNORE`).
+Adding the person on the team's page confirms their open requests (`member`).
 
 **Adobe's bot.** undecided → Adobe's ⇄ external (`identities.ours`: NULL, 1, 0; `src/ourbots.js`).
 While undecided, a bot that posted is a request under Requests (`unreviewedCount`); the answer

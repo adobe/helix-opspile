@@ -792,6 +792,29 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       'lena@example.com', 'Lena Berg', ?, 1, ?)`)
     .run('Lena says Umbrella is an Edge ops customer: the channel is filed by the aem- rule, which every EDS channel matches.', ago(0.05), umbrella ? umbrella.row.thread : null);
 
+  // People thread agents asked to be added to Edge ops, for whoever asked them in a sidebar
+  // (src/memberrequests.js): Tom for himself, Lena for a colleague the inbox has not met, and
+  // one declined.
+  DB.sqlite.prepare(`INSERT INTO member_requests (team, email, name, note, status, requested_by,
+      requested_name, requested_at, thread, decided_by, decided_name, decided_at, reason) VALUES
+    ('edge', 'tom@example.com', 'Tom Okafor', ?, 'open', 'tom@example.com', 'Tom Okafor', ?, ?,
+      NULL, NULL, NULL, NULL),
+    ('edge', 'sam.ortiz@example.com', 'Sam Ortiz', ?, 'open', 'lena@example.com', 'Lena Berg', ?, ?,
+      NULL, NULL, NULL, NULL),
+    ('edge', 'kselby@example.com', 'Kira Selby', 'Covers for Lena in August.', 'declined',
+      'lena@example.com', 'Lena Berg', ?, NULL, 'priya@example.com', 'Priya Nair', ?,
+      'Kira is on Platform ops: share the channels instead.')`)
+    .run(
+      'Tom works the Umbrella launch with Edge ops and wants its inbox.',
+      ago(0.1),
+      umbrella ? umbrella.row.thread : null,
+      'Lena says Sam joins Edge ops next week, for the CDN questions.',
+      ago(0.6),
+      umbrella ? umbrella.row.thread : null,
+      ago(8),
+      ago(7),
+    );
+
   // Lena asks for Wonka's two orgs to be one (src/orgmerge.js): it waits under Requests.
   DB.sqlite.prepare(`INSERT INTO org_merge_requests (slug, into_slug, note, requested_by, requested_name,
       requested_at) VALUES ('wonkaindustries', 'wonka', ?, 'lena@example.com', 'Lena Berg', ?)`)
