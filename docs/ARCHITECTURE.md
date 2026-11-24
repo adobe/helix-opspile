@@ -249,10 +249,23 @@ there, under "Bots to review", and counts on Requests in the header until an adm
 (`unreviewedCount`); the others are listed below the requests, with the bots only mentioned
 (`/inbox/admin?tab=requests&request=bot:<key>`); there is no page of bots. An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
 messages in D1 follow at once (`messages.staff`), and so do the ones written before in the thread
-view (`botAuthor` in `src/api.js`, since their frontmatter says what was so then). Looking the
+view (`accountAuthor` in `src/api.js`, since their frontmatter says what was so then). Looking the
 account up again keeps the say. Its messages stay a bot's: they are not counted (a bot does not
 answer the customer, `last_staff`), and the agents fence them as every bot's
 (`untrusted` in `src/agent/deliver.js`, which trusts staff people only).
+
+**Adobe's admin accounts.** The Teams tenant that hosts the teams has admin accounts of its own
+(`owner_` and initials, "People", below), staff by themselves, but nothing in Graph says who uses
+one: their name is the initials. Under Requests, after the bots, the admin page lists them
+(`GET /api/admin/accounts`, `src/accountlinks.js`), and the admin team gives each the mail address
+of the Adobe person whose it is (`PUT /api/admin/accounts`): the account is linked to that person
+(`identities.person`, with `linked_by` and `linked_at`, migration 0097), and so shows with their
+name and picture, on their profile card, and counts as one of their accounts ("One account a
+person"). Its messages in D1 follow at once (`relabelAccount`: `messages.person`, `staff`,
+`author`, and the threads' `last_staff` and `last_author`), and so do the ones written before in
+the thread view (`accountAuthor`). Only an account that is staff by itself and that no mail
+address links is linked, and only to a staff person, so no customer's account becomes Adobe's.
+Looking the account up again keeps the link; giving no address takes it back.
 
 **Alert bots.** A bot may also only post alerts (`identities.alerts`, migration 0090, set on its
 page under Requests, whatever its side): a thread it starts is an alert (`threads.kind =
@@ -277,7 +290,7 @@ Teams team's installed apps (`syncInstalledBots` in `src/bots.js`) points `ident
 at `/api/bots/icon` for the app definition installed (a new version is a new URL), which
 fetches the definition's `colorIcon` from Graph beta (`AppCatalog.Read.All`) when an image asks,
 and caches it a day; without the permission the inbox shows the initials. The name goes on its messages in D1 at once (`messages.author`, and a thread's
-`last_author` that was the bot's), on those written before in the thread view (`botAuthor`),
+`last_author` that was the bot's), on those written before in the thread view (`accountAuthor`),
 and in the frontmatter of the ones it writes from then on (`toAuthor`, `resolveAuthor`); the
 picture is read from the account (the thread view, profile cards, the bots a reply can
 mention). A Slack bot's own picture is the one its messages come with (`bot_profile.icons`),
@@ -3234,7 +3247,11 @@ Authors are normalized to `{ kind: person | bot | system, org, staff }`.
   which links it to their person: their posts move their watermark and count as theirs.
 - On **Teams**, the support tenant invites everyone as a guest, staff included, so
   `userType` and `tenantId` do not distinguish staff from customers. The organization is
-  derived from the person's **mail domain** instead. Bot posts carry `from.application`; a
+  derived from the person's **mail domain** instead. The one exception is the tenant's own
+  admin accounts: members, not guests, whose user name begins `owner_` (`owner_` and the
+  initials of the Adobe person who uses one, mailed at the tenant's own domain). They are
+  staff by themselves (`isHostAdmin` in `src/lookup.js`, `identities.staff`), and the admin
+  team says whose each is ("Adobe's admin accounts", below), so it shows as that person. Bot posts carry `from.application`; a
   bot (`applicationIdentityType: bot`) keeps its id as its identity, webhooks and connectors
   stay anonymous.
 
@@ -3257,7 +3274,9 @@ person's, the first by:
 2. in its channel at all, then of its own workspace at all: a mention reaches someone in the
    channel, and the inbox can add a colleague of its own workspace to it (an account of another
    workspace it cannot);
-3. a full member before a guest (`identities.guest`, migration 0061: Slack's `is_restricted` or
+3. their own account before one the admin team linked to them (`identities.linked_at`: a host
+   tenant's admin account, which they use only to run the tenant), then a full member before a
+   guest (`identities.guest`, migration 0061: Slack's `is_restricted` or
    `is_ultra_restricted`, Graph's `userType`; NULL until the account is looked up again);
 4. the one that posted in the last 90 days, then the one with the most messages in the last 180,
    in the most channels, that posted last, and by id.

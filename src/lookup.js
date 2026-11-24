@@ -433,23 +433,58 @@ async function slackAvatarByEmail(env, email) {
   }
 }
 
+/**
+ * What the user name of one of the host tenant's own admin accounts begins with: `owner_` and
+ * the initials of the Adobe person who uses it (`owner_ab@<tenant>.onmicrosoft.com`).
+ */
+export const HOST_ADMIN_PREFIX = 'owner_';
+
+/**
+ * Whether a Graph user (of the tenant the app reads, `MS_TENANT_ID`: the one that hosts the
+ * teams) is one of its own admin accounts: a member, not a guest, whose user principal name or
+ * mail nickname begins with `HOST_ADMIN_PREFIX`. Those are Adobe's, so they count as staff,
+ * though their mail domain is the tenant's own and in no STAFF_DOMAINS. Everyone else there is
+ * a guest, staff and customers alike (docs/ARCHITECTURE.md, "People"), and a guest is never one.
+ */
+export function isHostAdmin(u) {
+  if (!u || u.userType !== 'Member') {
+    return false;
+  }
+  const local = (v) => String(v || '').split('@')[0].toLowerCase();
+  return [u.userPrincipalName, u.mailNickname].some((v) => local(v).startsWith(HOST_ADMIN_PREFIX));
+}
+
+/**
+ * A Graph user's name: their `displayName`, unless that is only initials (`RW`, as the host
+ * tenant's admin accounts have) and Graph has their given name and surname, which say more.
+ */
+export function graphName(u, fallbackName) {
+  const full = [u.givenName, u.surname].map((v) => String(v || '').trim()).filter(Boolean).join(' ');
+  const shown = String(u.displayName || '').trim();
+  if (shown && !(/^\p{Lu}{1,3}$/u.test(shown) && full.length > shown.length)) {
+    return shown;
+  }
+  return full || shown || fallbackName || null;
+}
+
 async function fetchTeamsUser(env, userId, fallbackName) {
   try {
     const u = await graphJson(
       env,
-      `/users/${encodeURIComponent(userId)}?$select=displayName,mail,userPrincipalName,jobTitle,companyName,userType`,
+      `/users/${encodeURIComponent(userId)}?$select=displayName,givenName,surname,mail,mailNickname,userPrincipalName,jobTitle,companyName,userType`,
     );
     const upn = /#EXT#/i.test(u.userPrincipalName || '') ? null : u.userPrincipalName;
     const email = u.mail || upn || null;
     return {
       kind: 'person',
-      name: u.displayName || fallbackName,
+      name: graphName(u, fallbackName),
       email,
       home: null,
       avatar: await slackAvatarByEmail(env, email) || await gravatar(email),
       title: u.jobTitle || null,
       company: u.companyName || null,
       guest: u.userType ? u.userType === 'Guest' : null,
+      staff: isHostAdmin(u),
     };
   } catch (e) {
     // Users from other tenants cannot always be read; keep what the message says.
@@ -480,6 +515,52 @@ async function fetchDiscordUser(env, guild, userId, fallbackName) {
     staff: Boolean(member && (member.roles || []).some((r) => staffRoles.has(r))),
     aliases: aliasesOf(user.username, user.global_name),
   };
+}
+
+/**
+ * `{ kind, name, org, staff }` for the frontmatter. Staff are people marked as staff in
+ * D1, or whose mail domain is one of STAFF_DOMAINS, the accounts that are staff by themselves
+ * (`identities.staff`: a Discord staff role, a host tenant's admin account on Teams), and the
+ * bots an admin said are Adobe's
+ * (`ours`: a bot has no mail address); the org of everyone else is their mail domain (on
+ * Teams everyone is a guest, so the tenant says nothing). A bot's name is the one an admin gave
+ * it (`display_name`, the admin page's Bots), else its platform's.
+ */
+export function toAuthor(env, identity) {
+  const domain = domainOf(identity.email);
+  const staff = Boolean(identity.person_staff) || Boolean(identity.staff)
+    || Boolean(identity.ours) || isStaffDomain(env, identity.email);
+  const shown = identity.kind === 'bot' ? identity.display_name : null;
+  return {
+    kind: identity.kind || 'person',
+    name: shown || identity.person_name || identity.name || null,
+    org: domain,
+    staff,
+  };
+}
+
+/**
+ * The messages account `key` (an identity key, as `messages.author_key`) wrote, as the account
+ * says now: their person and side (`staff`), and with `name`, their author's name; and the
+ * threads it posted last in, whose `last_staff` and `last_author` follow. Their frontmatter in
+ * pile 2 keeps what was so when they were written, which the thread view reads the account for
+ * (`accountAuthor` in src/api.js), until a replay writes them again.
+ */
+export async function relabelAccount(env, key, { person, staff, name }) {
+  const { meta } = await env.DB.prepare(`UPDATE messages SET person = ?2, staff = ?3,
+      author = COALESCE(?4, author)
+    WHERE author_key = ?1 AND (person IS NOT ?2 OR staff != ?3 OR author IS NOT COALESCE(?4, author))`)
+    .bind(key, person ?? null, staff ? 1 : 0, name ?? null).run();
+  if (!meta || !meta.changes) {
+    return 0;
+  }
+  await env.DB.prepare(`UPDATE threads SET
+      last_staff = (SELECT staff FROM messages WHERE thread = threads.thread AND counted = 1
+        AND deleted = 0 ORDER BY at DESC LIMIT 1),
+      last_author = (SELECT author FROM messages WHERE thread = threads.thread AND counted = 1
+        AND deleted = 0 ORDER BY at DESC LIMIT 1)
+    WHERE thread IN (SELECT DISTINCT thread FROM messages WHERE author_key = ?)`).bind(key).run();
+  return meta.changes;
 }
 
 /**
@@ -541,18 +622,40 @@ export async function getIdentity(env, ref, now = Date.now()) {
       kind: ref.bot ? 'bot' : 'person', name: ref.name || ref.userId, email: null, home: ref.home,
     };
   }
+  if (f.error && row) {
+    // A lookup that failed (Graph cannot always read a user) keeps what was known of them.
+    f = {
+      kind: row.kind,
+      name: row.name || f.name,
+      email: row.email || null,
+      home: row.home || null,
+      avatar: row.avatar || '',
+      title: row.title || null,
+      company: row.company || null,
+      staff: Boolean(row.staff),
+      guest: row.guest === null || row.guest === undefined ? null : Boolean(row.guest),
+    };
+  }
   // Staff become people the first time they show up, so their reads count towards
   // "somebody at Adobe has seen it" even when they are in no ops team.
   if (f.email && f.kind === 'person' && isStaffDomain(env, f.email)) {
     await env.DB.prepare(`INSERT INTO people (email, name, staff) VALUES (?, ?, 1)
       ON CONFLICT (email) DO UPDATE SET staff = 1`).bind(f.email, f.name).run();
   }
-  let person = f.email
+  // An account the admin team said whose it is (src/accountlinks.js) stays that person's: its
+  // mail address, the host tenant's own, says nobody.
+  const linked = Boolean(row && row.linked_at && row.person);
+  let person = !linked && f.email
     ? await env.DB.prepare('SELECT id, staff, name FROM people WHERE email = ?').bind(f.email).first()
     : null;
-  if (!person && ref.source === 'discord' && row && row.person) {
-    // Linked when the person connected the account: Discord itself never says who it is.
+  if (!person && (linked || ref.source === 'discord') && row && row.person) {
+    // Linked by an admin, or (Discord) when the person connected the account: neither platform
+    // says who it is.
     person = await env.DB.prepare('SELECT id, staff, name FROM people WHERE id = ?').bind(row.person).first();
+  }
+  if (linked && person && !f.avatar) {
+    // Their own picture, of another account of theirs: the admin account has none.
+    f.avatar = await personAvatar(env, { id: person.id }) || '';
   }
   const home = f.home || ref.home || null;
   const aliases = f.aliases ? JSON.stringify(f.aliases) : null;
@@ -583,7 +686,7 @@ export async function getIdentity(env, ref, now = Date.now()) {
       typeof f.guest === 'boolean' ? Number(f.guest) : null,
     )
     .run();
-  return {
+  const identity = {
     ...f,
     staff: f.staff ? 1 : null,
     avatar: f.avatar || '',
@@ -595,7 +698,20 @@ export async function getIdentity(env, ref, now = Date.now()) {
     ours: (row && row.ours) ?? null,
     display_name: (row && row.display_name) ?? null,
     display_avatar: (row && row.display_avatar) ?? null,
+    linked_at: (row && row.linked_at) ?? null,
   };
+  // Its side or its person changed (a host tenant's admin account seen as one, a Discord role
+  // given): the messages it wrote before follow, as they do when an admin says a bot is Adobe's.
+  if (row && f.kind === 'person' && ref.source !== 'portal') {
+    const was = toAuthor(env, row);
+    const is = toAuthor(env, identity);
+    if (was.staff !== is.staff || (row.person ?? null) !== identity.person) {
+      await relabelAccount(env, `${ref.source}:${ref.tenant}:${ref.userId}`, {
+        person: identity.person, staff: is.staff,
+      });
+    }
+  }
+  return identity;
 }
 
 /**
@@ -631,26 +747,6 @@ export async function botIdentity(env, {
     ours: null,
     display_name: null,
     avatar: avatar || null,
-  };
-}
-
-/**
- * `{ kind, name, org, staff }` for the frontmatter. Staff are people marked as staff in
- * D1, or whose mail domain is one of STAFF_DOMAINS, and the bots an admin said are Adobe's
- * (`ours`: a bot has no mail address); the org of everyone else is their mail domain (on
- * Teams everyone is a guest, so the tenant says nothing). A bot's name is the one an admin gave
- * it (`display_name`, the admin page's Bots), else its platform's.
- */
-export function toAuthor(env, identity) {
-  const domain = domainOf(identity.email);
-  const staff = Boolean(identity.person_staff) || Boolean(identity.staff)
-    || Boolean(identity.ours) || isStaffDomain(env, identity.email);
-  const shown = identity.kind === 'bot' ? identity.display_name : null;
-  return {
-    kind: identity.kind || 'person',
-    name: shown || identity.person_name || identity.name || null,
-    org: domain,
-    staff,
   };
 }
 

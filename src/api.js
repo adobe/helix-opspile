@@ -106,15 +106,36 @@ const identityJoin = "LEFT JOIN identities i ON i.source || ':' || i.tenant || '
 const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
 
 /**
- * A bot's message author as its account says now (`account`: the message's row, with its
- * identity's `account_kind`, `ours`, `account_staff`, `account_email` and `display_name`): an
- * admin who says a bot is Adobe's, or takes it back (under Requests on the admin page), moves
- * the messages it wrote before to that side too, whose frontmatter says what was so when they
- * were written, and the name an admin gives it goes on them too. A bot nobody decided on
- * (`ours` NULL) keeps its frontmatter's side.
+ * A message's author as its account says now (`account`: the message's row, with its
+ * identity's `account_kind`, `ours`, `account_staff`, `account_email`, `display_name` and
+ * `linked_at`, and its person's `account_person_staff` and `account_person_name`), since the
+ * frontmatter says what was so when it was written:
+ *
+ * - a bot an admin says is Adobe's, or takes it back (under Requests on the admin page), moves
+ *   to that side, and the name an admin gives it goes on its messages too. A bot nobody decided
+ *   on (`ours` NULL) keeps its frontmatter's side.
+ * - a person's account that is staff now and was not then (one of the host tenant's admin
+ *   accounts, src/lookup.js `isHostAdmin`) is Adobe's, and one the admin team linked to the
+ *   Adobe person who uses it (src/accountlinks.js) goes by that person's name.
  */
-export function botAuthor(env, author, account) {
-  if (!author || author.kind !== 'bot' || !account || account.account_kind !== 'bot') {
+export function accountAuthor(env, author, account) {
+  if (!author || !account) {
+    return author;
+  }
+  if (author.kind === 'person' && account.account_kind === 'person') {
+    const now = toAuthor(env, {
+      kind: 'person',
+      staff: account.account_staff,
+      person_staff: account.account_person_staff,
+      email: account.account_email,
+    });
+    const name = account.linked_at && account.account_person_name;
+    if (!(now.staff && !author.staff) && !(name && name !== author.name)) {
+      return author;
+    }
+    return { ...author, ...(now.staff ? { staff: true } : {}), ...(name ? { name } : {}) };
+  }
+  if (author.kind !== 'bot' || account.account_kind !== 'bot') {
     return author;
   }
   const named = account.display_name && account.display_name !== author.name
@@ -893,8 +914,10 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
         || ':' || m.channel_id || ':' || m.id AS mkey, COALESCE(i.display_avatar, i.avatar) AS avatar,
         m.author_key, m.person = ? AS mine, i.kind AS account_kind, i.ours, i.display_name,
-        i.staff AS account_staff, i.email AS account_email
-      FROM messages m ${identityJoin} WHERE m.thread IN (SELECT value FROM json_each(?))`)
+        i.staff AS account_staff, i.email AS account_email, i.linked_at,
+        ap.staff AS account_person_staff, ap.name AS account_person_name
+      FROM messages m ${identityJoin} LEFT JOIN people ap ON ap.id = i.person
+      WHERE m.thread IN (SELECT value FROM json_each(?))`)
       .bind(me.id, readKeys).all(),
     env.DB.prepare(`SELECT r.message, r.emoji, r.user_key,
         COALESCE(p.name, i.name) AS name, i.person = ? AS mine
@@ -977,7 +1000,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       const m = byId.get(`${meta.thread}|${meta.id}`) || {};
       return {
         ...meta,
-        author: botAuthor(env, meta.author, m),
+        author: accountAuthor(env, meta.author, m),
         body,
         avatar: m.avatar || null,
         authorKey: m.author_key || null,

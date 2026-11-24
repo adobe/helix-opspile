@@ -64,7 +64,7 @@ const SIBLINGS = (which) => `SELECT i.user_id AS id, ${OWNER('i')} AS owner,
     i.user_id IN (${CHANNEL_PEOPLE}) AS here,
     (i.home IS NULL OR i.home = i.tenant OR i.home = (SELECT c.group_id FROM channels c
       WHERE c.source = ?1 AND c.tenant = ?2 AND c.channel_id = ?3)) AS own,
-    COALESCE(i.guest, 0) AS guest,
+    COALESCE(i.guest, 0) AS guest, i.linked_at IS NOT NULL AS linked,
     (SELECT MAX(x.at) FROM messages x
       WHERE x.author_key = i.source || ':' || i.tenant || ':' || i.user_id AND x.deleted = 0)
       AS last,
@@ -90,14 +90,17 @@ const WHICH = {
 /**
  * Which of two accounts of one person is the one for the thread, below 0 for `a`: the one of
  * the thread's own workspace or tenant in its channel, else any in its channel, else one of its
- * own workspace; a full member before a guest; the one that posted in the last `RECENT_DAYS`;
- * the one with more messages in the last `ACTIVE_DAYS`; in more channels; that posted last.
- * `standing`: `{ id, here, own, guest, last, posts, channels }`, as `SIBLINGS` has them.
+ * own workspace; their own before one the admin team linked to them (a host tenant's admin
+ * account, src/accountlinks.js, which they sign in to only to run the tenant); a full member
+ * before a guest; the one that posted in the last `RECENT_DAYS`; the one with more messages in
+ * the last `ACTIVE_DAYS`; in more channels; that posted last. `standing`: `{ id, here, own,
+ * linked, guest, last, posts, channels }`, as `SIBLINGS` has them.
  */
 export function better(a, b, now = Date.now()) {
   const recent = (x) => Boolean(x.last) && Date.parse(x.last) >= now - RECENT_DAYS * day;
   const keys = (x) => [
-    Boolean(x.here && x.own), Boolean(x.here), Boolean(x.own), !x.guest, recent(x),
+    Boolean(x.here && x.own), Boolean(x.here), Boolean(x.own), !Number(x.linked), !x.guest,
+    recent(x),
     Number(x.posts) || 0, Number(x.channels) || 0, x.last ? Date.parse(x.last) : 0,
   ].map(Number);
   const ka = keys(a);

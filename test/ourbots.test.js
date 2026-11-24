@@ -12,7 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { api, botAuthor } from '../src/api.js';
+import { api, accountAuthor } from '../src/api.js';
 import { render } from '../src/channels.js';
 import { loadRules, toAuthor } from '../src/lookup.js';
 import { plan, refile } from '../src/refile.js';
@@ -109,21 +109,21 @@ describe('Adobe\'s bots', () => {
   it('move the messages a bot wrote before to the side an admin said, and leave the rest', () => {
     const bot = { kind: 'bot', name: 'b', staff: false };
     const account = (ours, extra = {}) => ({ account_kind: 'bot', ours, ...extra });
-    assert.deepEqual(botAuthor(ENV, bot, account(1)), { ...bot, staff: true });
-    assert.deepEqual(botAuthor(ENV, { ...bot, staff: true }, account(0)), bot);
+    assert.deepEqual(accountAuthor(ENV, bot, account(1)), { ...bot, staff: true });
+    assert.deepEqual(accountAuthor(ENV, { ...bot, staff: true }, account(0)), bot);
     // Nobody decided: as its frontmatter says.
-    assert.equal(botAuthor(ENV, bot, account(null)), bot);
-    assert.equal(botAuthor(ENV, { ...bot, staff: true }, account(null)).staff, true);
+    assert.equal(accountAuthor(ENV, bot, account(null)), bot);
+    assert.equal(accountAuthor(ENV, { ...bot, staff: true }, account(null)).staff, true);
     // A person's message, or a bot's without an account, is not a bot's to move.
     const person = { kind: 'person', name: 'p', staff: false };
-    assert.equal(botAuthor(ENV, person, { account_kind: 'person', ours: 1 }), person);
-    assert.equal(botAuthor(ENV, bot, {}), bot);
+    assert.equal(accountAuthor(ENV, person, { account_kind: 'person', ours: 1 }), person);
+    assert.equal(accountAuthor(ENV, bot, {}), bot);
     // The name an admin gave it, whether or not anybody said whose it is.
-    assert.deepEqual(botAuthor(ENV, bot, account(null, { display_name: 'Helper' })), { ...bot, name: 'Helper' });
-    assert.deepEqual(botAuthor(ENV, bot, account(1, { display_name: 'Helper' })), {
+    assert.deepEqual(accountAuthor(ENV, bot, account(null, { display_name: 'Helper' })), { ...bot, name: 'Helper' });
+    assert.deepEqual(accountAuthor(ENV, bot, account(1, { display_name: 'Helper' })), {
       ...bot, name: 'Helper', staff: true,
     });
-    assert.equal(botAuthor(ENV, person, { account_kind: 'person', display_name: 'x' }), person);
+    assert.equal(accountAuthor(ENV, person, { account_kind: 'person', display_name: 'x' }), person);
   });
 
   it('go by the name an admin gave them, a person by theirs', () => {

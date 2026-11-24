@@ -136,7 +136,7 @@ Nothing below is committed; set it on the Worker.
 | `PUBLIC_ORIGIN` | var | This Worker's `https://` origin; Graph sends notifications there |
 | `RETIRED_ORIGINS` | var | Optional, comma-separated origins the Worker answered on before `PUBLIC_ORIGIN`: pages opened there (`/`, `/inbox…`, the OAuth consent and connect pages) get a 301 to `PUBLIC_ORIGIN`; Slack events, Graph notifications, `/mcp` and the API still answer; the cron deletes Graph subscriptions that still point there |
 | `WORKER_DOMAINS` | deploy | Optional, comma-separated custom domains of the deployed Worker (`cf deploy` adds the DNS record and certificate in the domain's zone, which must be in the account); `workers.dev` stays on |
-| `STAFF_DOMAINS` | var | Comma-separated mail domains whose people count as staff |
+| `STAFF_DOMAINS` | var | Comma-separated mail domains whose people count as staff (so do the Teams host tenant's own `owner_…` admin accounts, whatever their domain: `isHostAdmin` in `src/lookup.js`) |
 | `ACCESS_TEAM_DOMAIN` | var | `https://<team>.cloudflareaccess.com` |
 | `ACCESS_AUD` | var | Audience tag of the Access application in front of `/inbox` and `/api` |
 | `AGENT_MODEL` | var | Optional: the Bedrock inference profile of the thread agents' model, e.g. `us.anthropic.claude-opus-5-5`. Agents are off without it. |
