@@ -54,7 +54,7 @@ export const portalDomains = (env) => String(env.PORTAL_DOMAINS || '').toLowerCa
 /** Whether someone with this mail address may use the portal: their domain is one of its. */
 export function allowed(env, email) {
   const domain = domainOf(email);
-  return domain !== null && portalDomains(env).includes(domain);
+  return domain !== null && !domain.endsWith('.embed.invalid') && portalDomains(env).includes(domain);
 }
 
 /** A name for someone who has not given one: `ada.lovelace@…` is Ada Lovelace. */
@@ -567,7 +567,7 @@ const channelInfo = async (env, channel) => ({
   id: channel.id,
   name: channel.name,
   topic: channel.topic || null,
-  company: (await lobbyOf(env, channel.lobby) || {}).company || null,
+  company: channel.company || (await lobbyOf(env, channel.lobby) || {}).company || null,
 });
 
 /**
@@ -632,7 +632,9 @@ async function messageEvent(env, channel, author, m, files = null) {
  * `files`: the ids of the files uploaded for it (src/portal/files.js); with files, it needs no
  * text. `{ ok, id, root }`, or `{ error, status }`.
  */
-export async function writeMessage(env, channel, author, { root, text, files }, now = Date.now()) {
+export async function writeMessage(env, channel, author, {
+  root, text, files, beforeWrite,
+}, now = Date.now()) {
   const body = String(text ?? '').replace(/\r\n?/g, '\n').trim();
   const taken = await takeFiles(env, channel, author, files);
   if (taken.error) {
@@ -658,6 +660,8 @@ export async function writeMessage(env, channel, author, { root, text, files }, 
   };
   const attached = taken.files.map((f) => ({ ...f, message: m.id }));
   await env.DB.batch([
+    // Managed writes claim their retry key and ensure the channel in this transaction.
+    ...(beforeWrite ? beforeWrite(m.id) : []),
     env.DB.prepare(`INSERT INTO messages (id, channel, root, author, body, at, mentions)
       VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .bind(m.id, channel.id, m.root, author.id, m.body, m.at, mentions.length ? m.mentions : null),
@@ -835,6 +839,9 @@ export async function reactTo(env, channel, user, { id, emoji, removed }, now = 
  * is `open` from then on, and every member of it is in the channel. `{ ok, channel }`.
  */
 export async function openChannel(env, domain, { name, topic, by }, now = Date.now()) {
+  if (domain.endsWith('.embed.invalid')) {
+    return { error: 'managed lobby', status: 409 };
+  }
   const lobby = await lobbyOf(env, domain);
   if (!lobby) {
     return { error: 'no such lobby', status: 404 };

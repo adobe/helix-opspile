@@ -719,6 +719,7 @@ it, as CI does. It has its own D1 database, of the Worker's name, with the schem
 | --- | --- |
 | `GET /` | The portal's page (`ui/portal.html`), behind the portal's Cloudflare Access application. Its address keeps what is on screen: `/?c=<channel>&t=<thread>`. |
 | `/api/*` | Its API (`src/portal/api.js`), for whoever Access signed in, by their mail address: `me`, `profile`, `lobby`, `lobby/request`, `invite`, `threads`, `thread`, `people` (who can be mentioned), `status` (Adobe's side of a thread: how many listen, the typical wait, who is writing, whether the agent works on it or a draft waits, and a `stamp` that changes with the thread), `post` and `edit` (`html`, the page's rich text, which the portal makes markdown of, or `text`, markdown), `delete`, `react`, `upload` (a file for a message, as the request's body), `file/<id>/<name>`, `avatar` (one's picture; `avatar/<account>` someone's), `logo` (the customer's). Writes are JSON, or a file's bytes, from the portal's own page. `403` with `closed` for a mail domain the portal is not open to. |
+| `/integrations/portal/v1/*` | [Backend integration for registered embedding hosts](docs/PORTAL-INTEGRATION.md): provision a managed channel on first post, read/reply and resume public updates. Separate service authentication and enrollment, not the page's sign-in. |
 | entrypoint `PortalPlatform` | Not a route: what the inbox does in the portal, through its `PORTAL` binding (`src/portal/platform.js`): `post`, `edit`, `react`, `typing` (someone writes a reply), `upload` (a file for a message), `open` (a channel for a lobby), `decline`, `resend`, and as responses `file`, `avatar` and `logo`. |
 | cron `*/2 * * * *` | Delivers the events the inbox has not heard of yet, asks the inbox for its technologies, and deletes delivered events older than a week and the files no message took within a day. |
 
@@ -728,6 +729,7 @@ inbox's:
 | Name | Kind | What |
 | --- | --- | --- |
 | `PORTAL_DOMAINS` | var | Comma-separated mail domains whose people may use the portal. Nobody else gets past its API, whatever Access lets in; empty, the portal is open to nobody |
+| `PORTAL_INTEGRATION_AUD` | var | Optional, distinct Access audience for the service-only integration path. Unset disables the API. Host public keys, scopes, tenant mappings and roster are operator-managed portal D1 records; no host private credentials in Opspile. |
 | `ACCESS_AUD` | var | The audience tag of the portal's Access application, exported as `PORTAL_ACCESS_AUD` at deploy |
 | `ACCESS_TEAM_DOMAIN` | var | `https://<team>.cloudflareaccess.com`; at deploy `PORTAL_ACCESS_TEAM_DOMAIN`, else the inbox's `ACCESS_TEAM_DOMAIN` |
 | `PUBLIC_ORIGIN` | var | Optional: the portal's own `https://` origin (`PORTAL_ORIGIN` at deploy), for the links to its messages its events carry |

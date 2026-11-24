@@ -776,6 +776,20 @@ the page does not send it again by itself. If filing the new channel fails after
 it, the answer says so and names it: it is in the inbox under the admin team (the rule of last
 resort), to be assigned on a team's page.
 
+**Managed channel and member.** Reserved → enabled ⇄ suspended (`integration_customers`).
+Reserve the channel ID, pre-file it by that ID in the inbox, then enable the tenant. The first
+create materializes its lobby and channel with the root and its events; racing creates reuse
+it. A member maps one subject to one customer actor of that channel; revoke by disabling the
+member, not by recycling its actor. Every operation checks both mappings, including a retry.
+The single-use assertion nonce lasts through expiry; a write's receipt lasts with the history.
+A receipt, its message and the inbox outbox event commit or roll back together.
+
+**Managed viewer.** Snapshot → following changes → relist on expiry. Public mutations write
+`integration_changes` in the same transaction; an inbox resend writes no change. Only advancing
+a viewer's read position emits a viewer-only change. Pruning the week-old rows advances the
+channel's floor: a cursor below it cannot silently skip changes. A stale collection page must
+restart, never continue a different snapshot. See [the host contract](PORTAL-INTEGRATION.md).
+
 **Portal message.** absent → posted → edited (any number of times) → deleted (`messages.rev`,
 `edited_at`, `deleted_at` in the portal). `rev` counts the changes and is the version of the
 message's file in pile 2 (`normalizePortal`), so a file only moves to a later change whatever

@@ -65,7 +65,8 @@ export function d1({
     async all() {
       return { results: db.prepare(sql).all(...args).map((r) => ({ ...r })) };
     },
-    async run() {
+    async run() { return this.execute(); },
+    execute() {
       const prepared = db.prepare(sql);
       // As D1's, a read's rows come along too (`batch` gives each statement's that way).
       if (prepared.columns().length) {
@@ -80,12 +81,16 @@ export function d1({
     sqlite: db,
     prepare: (sql) => stmt(sql),
     async batch(statements) {
-      const out = [];
-      for (const s of statements) {
-        // eslint-disable-next-line no-await-in-loop
-        out.push(await s.run());
+      // D1 executes the batch in one transaction. No interleaved reads or partial writes.
+      db.exec('BEGIN');
+      try {
+        const out = statements.map((s) => s.execute());
+        db.exec('COMMIT');
+        return out;
+      } catch (e) {
+        db.exec('ROLLBACK');
+        throw e;
       }
-      return out;
     },
     rows: (sql, ...args) => db.prepare(sql).all(...args).map((r) => ({ ...r })),
   };
