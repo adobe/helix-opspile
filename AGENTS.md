@@ -68,7 +68,9 @@ code and docs, is the decision model that labels threads and channels.
   pictures, logos) is served so that a browser runs none of it (`src/portal/files.js`,
   `openThreadFile` in `src/fileview.js`): keep it so, and never serve SVG or HTML inline.
 - **A team's page opens at its overview** (`ui/team.js`, the global `TeamView`, from
-  `src/teamprofile.js`): everyone's at Adobe, as the Topics page. What changes the team is its
+  `src/teamprofile.js`): everyone's at Adobe, as the Topics page. A person's card there and their profile card
+  in the inbox are drawn by one script, `ui/person.js` (the global `Person`), from the same person
+  (`src/person.js`, `src/personsql.js`): change what both show there. What changes the team is its
   second section, Manage (`own` in `ui/admin.js`, `view=manage`), its managers' and the admin
   team's.
 - **A team's and a customer's agent are sections of their pages** in Teams and Customers

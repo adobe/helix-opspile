@@ -98,6 +98,8 @@ export default [
         Agent: 'readonly',
         // A team's overview, ui/team.js (in Teams, ui/admin.js).
         TeamView: 'readonly',
+        // A person's parts, as both people cards draw them, ui/person.js (the inbox, Teams).
+        Person: 'readonly',
         // Content swaps that fade in, ui/app.js.
         Swap: 'readonly',
         // Links to the app opened in it, installed, ui/app.js.

@@ -266,7 +266,7 @@ function kbPerson(thread, key, p) {
     const q = new URLSearchParams({ thread });
     if (!p.local) q.set('p', key);
     q.set('name', p.name || '');
-    const asked = get(`/api/person?${q}`).then((r) => ({ entries: r.entries || [] }), () => ({ failed: true }));
+    const asked = get(`/api/person?${q}`).then((r) => ({ entries: r.entries || [], person: r.person || null }), () => ({ failed: true }));
     kbPeople.set(k, { pending: true, asked });
     asked.then((r) => kbPeople.set(k, r));
   }
@@ -279,7 +279,7 @@ const contactHref = (e) => kbFileHref(e.repo, e.path);
 function cardKb(found) {
   if (!found || found.failed) return '';
   if (found.pending) return '<div class="kb pending">Looking in the knowledge bases…</div>';
-  if (!found.entries.length) return '<div class="kb none">Not in the knowledge bases yet.</div>';
+  if (!found.entries.length) return found.person?.profiles.length ? '' : '<div class="kb none">Not in the knowledge bases yet.</div>';
   return `<div class="kb">${found.entries.map((e) => `<div class="kb-entry">
       <p>${esc(e.description || e.title || 'No summary yet.')}${e.stale ? ' <span class="kb-stale">(may be out of date)</span>' : ''}</p>
       <a href="${esc(contactHref(e))}" target="_blank" rel="noopener" title="${esc(`${e.path} in ${e.repo}`)}">${esc(e.name)} knowledge base</a></div>`).join('')}</div>`;
@@ -302,27 +302,57 @@ async function askAbout(key, name) {
   askSide(key, `What should I know about ${name}?`);
 }
 
+/**
+ * An Adobe person's part of the card, as their card on their team's overview has it
+ * (ui/person.js): their profile on their teams, how often they post, what sets them apart (each a
+ * link to it on the Topics page) and the customers they post for the most.
+ */
+function cardPerson(person) {
+  if (!person) return '';
+  const profile = Person.profile(person.profiles.map((x) => ({ ...x, href: kbFileHref(x.repo, x.path) })));
+  const w = person.work;
+  if (!w) return profile ? `<div class="ps-part">${profile}</div>` : '';
+  const ctx = {
+    topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
+    orgHref: (slug) => `/inbox/admin?${new URLSearchParams({ tab: 'orgs', org: slug })}`,
+    orgName: (slug, name) => name || slug,
+    orgIcon: (slug, icon) => (icon ? favImg(icon) : ''),
+  };
+  // A few of each: the card is small; their team's overview has the rest.
+  const { knows, keys } = Person.work(w, ctx, { most: 3 });
+  return `<div class="ps-part">${profile}${w.messages ? Person.freq(person.name, w, w.weeks) : ''}${knows}${keys}</div>`;
+}
+
 function cardHtml(p, ctx, found) {
-  const role = [p.title, p.company].filter(Boolean).join(' · ');
+  // An Adobe person as their team's overview shows them: the best of their accounts' name,
+  // picture and title, their teams with their role, once the knowledge bases' answer is here.
+  const person = found?.person || null;
+  const name = person?.name || p.name;
+  const title = person?.title || p.title;
+  const role = [title, p.company].filter(Boolean).join(' · ');
   const rel = p.relation || 'customer';
   const label = rel === 'partner' && p.partner ? `Partner · ${p.partner}` : RELATION_LABEL[rel];
   const where = PLATFORM[p.platform] ? `${PLATFORM[p.platform]} account` : '';
   const rows = [];
   const ico = (d) => favImg(d);
   if (p.domain) rows.push(['Mail', `${ico(p.domain)}${esc(p.domain)}`]);
-  if (p.teams?.length) rows.push(['Ops teams', esc(p.teams.join(', '))]);
+  if (person?.teams.length) {
+    const team = (t) => `<a href="/inbox/admin?${new URLSearchParams({ tab: 'teams', team: t.slug })}" title="${esc(`${t.name}'s overview in Teams`)}">${esc(t.name)}</a>${t.role === 'manager' ? ' <span class="tag">Manager</span>' : ''}`;
+    rows.push(['Ops teams', `<span class="teams">${person.teams.map(team).join(', ')}</span>`]);
+  } else if (p.teams?.length) rows.push(['Ops teams', esc(p.teams.join(', '))]);
   if (ctx.org) {
     rows.push(['Channel', `${ico(ctx.icon)}${esc(ctx.org)}${ctx.channel ? ` <span style="color:var(--faint)">· ${esc(ctx.channel)}</span>` : ''}`]);
   }
   // A customer from another domain than the channel's customer may be a partner nobody listed.
   const other = rel === 'customer' && p.domain && ctx.customerDomain && p.domain !== ctx.customerDomain;
-  return `<div class="top">${avatar(p.name || '?', p.avatar)}<div>
-      <div class="nm">${esc(p.name || 'unknown')}</div>${role ? `<div class="ttl">${esc(role)}</div>` : ''}</div></div>
+  return `<div class="top">${avatar(name || '?', p.avatar || person?.avatar)}<div>
+      <div class="nm">${esc(name || 'unknown')}</div>${role ? `<div class="ttl">${esc(role)}</div>` : ''}</div></div>
     <div class="chips"><span class="rel ${esc(rel)}" title="${esc(RELATION_HINT[rel] || '')}">${esc(label)}</span>
       ${where ? `<span class="tag">${where}</span>` : ''}</div>
     ${rows.length ? `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : ''}
     ${other ? `<div class="note">Not the usual customer domain in this channel (${esc(ctx.customerDomain)}).</div>` : ''}
     ${p.local ? '<div class="note">No account details known yet.</div>' : ''}
+    ${cardPerson(person)}
     ${cardKb(found)}
     ${mayAskAbout(ctx.thread, p) ? `<button type="button" class="ask-about" data-ask-about title="Ask in the sidebar: only your team sees it, nothing is posted">${SIDE_ICON}What should I know about ${esc(p.name)}?</button>` : ''}`;
 }

@@ -1437,6 +1437,14 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .pcard .kb { margin-top: var(--spectrum-spacing-200); padding-top: var(--spectrum-spacing-100); border-top: var(--spectrum-border-width-100) solid var(--line); display: grid; gap: var(--spectrum-spacing-100); }
 .pcard .kb p { margin: 0 0 var(--spectrum-spacing-50); overflow-wrap: anywhere; }
 .pcard .kb a { font-size: var(--spectrum-font-size-50); }
+/* An Adobe person's part (ui/person.js, as on their team's overview): their profile on their
+   teams, how often they post, what they know and for whom, each list as Person draws it. */
+.pcard .ps-part { display: flex; flex-direction: column; gap: var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-200); padding-top: var(--spectrum-spacing-200); border-top: var(--spectrum-border-width-100) solid var(--line); }
+.pcard .ps-part :is(.ps-knows, .ps-keys) { display: flex; }
+.pcard .ps-part dd { display: flex; flex-wrap: wrap; align-items: center; overflow-wrap: normal; }
+.pcard .ps-part .ps-keys { padding-top: 0; border-top: 0; }
+.pcard .ps-part .ps-spark { width: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-300)); height: var(--spectrum-spacing-400); }
+.pcard dd .teams .tag { margin-left: var(--spectrum-spacing-50); }
 .pcard .ask-about { display: flex; align-items: center; gap: var(--spectrum-spacing-75); width: 100%; margin-top: var(--spectrum-spacing-200); font: inherit; text-align: left; cursor: pointer; }
 .pcard .ask-about .bubble-ico { position: static; flex: none; padding: 0; }
 

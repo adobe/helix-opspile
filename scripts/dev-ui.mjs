@@ -107,6 +107,7 @@ import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { areaFile, compileAreas, isArea } from '../src/areas.js';
 import { topicsPage } from '../src/topicsapi.js';
 import { teamDirectory, teamProfile } from '../src/teamprofile.js';
+import { personCard } from '../src/person.js';
 import { weeksTo } from '../src/trends.js';
 import { latestTopicMap } from '../src/topicmap.js';
 import { trendsFixture } from './dev-ui-topics.mjs';
@@ -2047,7 +2048,14 @@ async function api(req, res, url) {
     const found = await findPerson(reader, kbs, {
       email: p?.email, names: [p?.name, url.searchParams.get('name')].filter(Boolean),
     });
-    return json(res, { entries: found });
+    // An Adobe person: as src/person.js, over the admin pages' D1 (src/kbpeople.js leaves their
+    // profiles out of the thread's entries).
+    const person = p?.staff ? await personCard(adminApi.env, topicsViewer(), p.id) : null;
+    const shown = new Set((person?.profiles || []).map((x) => `${x.repo}|${x.path}`));
+    return json(res, {
+      entries: found.filter((x) => !shown.has(`${x.repo}|${x.path}`)),
+      ...(person ? { person } : {}),
+    });
   }
   if (url.pathname === '/api/experts') {
     // Stands in for src/experts.js with `suggested`, all the inbox asks: the thread agents'

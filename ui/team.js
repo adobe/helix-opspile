@@ -27,61 +27,23 @@
  *   catalog has (its knowledge base's products/) and what else Clef sees in its threads, which the
  *   tabs above them pick. Then its knowledge base by type, and its stack drawing where it has one.
  *
- * Everything in it is a name, a number or a picture, written escaped.
+ * A person's card is drawn with what the inbox's profile card is (ui/person.js). Everything in it
+ * is a name, a number or a picture, written escaped.
  */
 globalThis.TeamView = (() => {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
-  const COLORS = 8;
-  /** A name's hue, as ui/inbox.js and ui/header.js have it (`data-hue`, ui/spectrum.css). */
-  const hueOf = (name) => {
-    let h = 0;
-    for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-    return h % COLORS;
-  };
-  const initials = (name) => String(name || '?').replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean)
-    .map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-  /** A person's face: their picture over their initials, which show while it loads or when it fails. */
-  const face = (name, url, cls = '') => `<span class="av tv-av ${cls}" data-hue="${hueOf(name || '?')}" aria-hidden="true">${esc(initials(name))}${url ? `<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</span>`;
-  const plural = (n, one, many = `${one}s`) => `${n.toLocaleString('en')} ${n === 1 ? one : many}`;
+  // What both people cards share (ui/person.js).
+  const {
+    face: personFace, spark, plural, ago, link,
+  } = Person;
+  const face = (name, url, cls = '') => personFace(name, url, { cls });
   const monthOf = (w) => new Date(`${w}T00:00:00Z`).toLocaleString('en', { month: 'short', timeZone: 'UTC' });
   const dayOf = (w) => new Date(`${w}T00:00:00Z`).toLocaleString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-  const ago = (at) => {
-    if (!at) return '';
-    const d = (Date.now() - Date.parse(at)) / 86400000;
-    if (d < 1) return 'today';
-    if (d < 2) return 'yesterday';
-    if (d < 14) return `${Math.round(d)} days ago`;
-    if (d < 60) return `${Math.round(d / 7)} weeks ago`;
-    return `${Math.round(d / 30)} months ago`;
-  };
-  /** How often, in words: "12 a week", "3 a month", "now and then". */
-  const often = (n, weeks) => {
-    const w = n / weeks;
-    if (w >= 1) return `${w < 10 ? w.toFixed(1).replace(/\.0$/, '') : Math.round(w)} a week`;
-    if (w * 4.3 >= 1) return `${Math.round(w * 4.3)} a month`;
-    return n ? 'now and then' : 'not lately';
-  };
-
-  /** `inner` as a link to `href`, or as it is where there is none to go to. */
-  const link = (href, inner, { cls = '', title = '' } = {}) => {
-    const attrs = `${cls ? ` class="${cls}"` : ''}${title ? ` title="${esc(title)}"` : ''}`;
-    return href ? `<a href="${esc(href)}"${attrs}>${inner}</a>` : `<span${attrs}>${inner}</span>`;
-  };
 
   // ---- small drawings -----------------------------------------------------------------------
 
-  /** A line of `values` (one a week), its area under it; `cls` colors it. */
-  function spark(values, { cls = '', w = 96, h = 24, label = '' } = {}) {
-    const m = Math.max(...values, 1);
-    const n = values.length;
-    const x = (i) => ((i * w) / Math.max(1, n - 1)).toFixed(1);
-    const y = (v) => (h - 1 - ((h - 3) * v) / m).toFixed(1);
-    const pts = values.map((v, i) => `${x(i)},${y(v)}`).join(' ');
-    return `<svg class="tv-spark${cls ? ` ${cls}` : ''}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"${label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"'}>`
-      + `<polygon class="area" points="0,${h} ${pts} ${w},${h}"></polygon><polyline points="${pts}"></polyline></svg>`;
-  }
   /** A bar of `share` (0 to 1) of its track, `of` the second part of it (Adobe's, say). */
   function bar(share, of = null) {
     const w = Math.max(1, Math.round(100 * share));
@@ -143,32 +105,19 @@ globalThis.TeamView = (() => {
     </div>`;
   }
 
-  /**
-   * A chip of a tag: what it is, how many threads of theirs it was in; a link to it on the Topics
-   * page (`ctx.topicHref`, its node's id), where there is one.
-   */
-  const chip = (name, threads, { cls = '', href = null } = {}) => link(href, esc(name), {
-    cls: `tv-chip${cls ? ` ${cls}` : ''}`,
-    title: `${name}: ${plural(threads, 'thread')} of theirs${href ? '. Open it on the Topics page' : ''}`,
-  });
-
   function person(m, p, ctx) {
     const role = m.role === 'manager' ? '<span class="tag tv-manager">Manager</span>' : '';
-    const freq = `<div class="tv-freq">${spark(m.weekly, { label: `${m.name || 'Their'} messages, week by week` })}<div><b>${esc(often(m.messages, p.weeks.length))}</b><span class="sub">${esc(plural(m.messages, 'message'))} in ${esc(plural(m.threads, 'thread'))}${m.last ? ` · last ${esc(ago(m.last))}` : ''}</span></div></div>`;
-    // An area is `tag:<id>` on the Topics page, a technology `product:tech:<id>`, a person `person:<id>`.
-    const knows = [
-      m.areas.length ? `<dt>Expertise</dt><dd>${m.areas.map((a) => chip(a.name, a.threads, { href: ctx.topicHref(`tag:${a.id}`) })).join('')}</dd>` : '',
-      m.tech.length ? `<dt>Products</dt><dd>${m.tech.map((t) => chip(t.name, t.threads, { cls: 'tech', href: ctx.topicHref(`product:tech:${t.id}`) })).join('')}</dd>` : '',
-    ].join('');
-    // Key customers at the foot of the card, level with the next card's.
-    const keys = m.customers.length ? `<dl class="tv-keys"><dt>Key customers</dt><dd>${m.customers.map((c) => link(ctx.orgHref(c.slug), `${ctx.orgIcon(c.slug, c.icon)}<span>${esc(ctx.orgName(c.slug, c.name))}</span>`, {
-      cls: 'tv-org', title: `${ctx.orgName(c.slug, c.name)}: ${plural(c.n, 'message')} of theirs in ${plural(c.threads, 'thread')}`,
-    })).join('')}</dd></dl>` : '';
+    const { knows, keys } = Person.work(m, ctx);
     const name = link(ctx.topicHref(`person:${m.id}`), esc(m.name || 'Someone'), { title: 'Their topics, customers and products on the Topics page' });
-    return `<article class="tv-person" data-person="${m.id}">
+    // Their profile on the team, from its knowledge base, under who they are.
+    const profile = m.profile ? Person.profile([{
+      team: p.team.slug, teamName: p.team.name, description: m.profile.description, href: ctx.kbHref(m.profile.path),
+    }]) : '';
+    return `<article class="tv-person ps-card" data-person="${m.id}">
       <header>${face(m.name, m.avatar, 'big')}<div class="who"><b>${name}</b>${role}${m.title ? `<span class="sub">${esc(m.title)}</span>` : ''}</div></header>
-      ${freq}
-      ${knows ? `<dl class="tv-knows">${knows}</dl>` : '<p class="sub tv-none">Nothing Clef tagged in their threads yet.</p>'}
+      ${profile}
+      ${Person.freq(m.name, m, p.weeks.length)}
+      ${knows || '<p class="sub tv-none">Nothing Clef tagged in their threads yet.</p>'}
       ${keys}
     </article>`;
   }
@@ -218,7 +167,7 @@ globalThis.TeamView = (() => {
       name: `<b>${esc(c.name || 'Someone')}</b>`,
       sub: [c.title ? esc(c.title) : '', c.last ? esc(`last ${ago(c.last)}`) : ''].filter(Boolean).join(' · '),
       weekly: c.weekly,
-      tail: c.teams.length ? c.teams.map((t) => `<a class="tv-chip team" href="${esc(ctx.teamHref(t.slug))}">${esc(t.name)}</a>`).join('') : '<span class="sub">on no team</span>',
+      tail: c.teams.length ? c.teams.map((t) => `<a class="ps-chip team" href="${esc(ctx.teamHref(t.slug))}">${esc(t.name)}</a>`).join('') : '<span class="sub">on no team</span>',
     }));
     return `<section class="tv-sec" aria-labelledby="tvCollab"><h2 id="tvCollab">Top collaborators <span class="sub">${p.collaboratorCount > p.collaborators.length ? `${p.collaborators.length} of ${p.collaboratorCount}` : esc(plural(p.collaboratorCount, 'person', 'people'))}</span></h2>
       ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">Nobody from outside the team posted in its threads in these weeks.</div>'}
@@ -330,7 +279,5 @@ globalThis.TeamView = (() => {
     for (const m of el.querySelectorAll('.tv-months [data-at]')) m.style.setProperty('--at', m.dataset.at);
   }
 
-  return {
-    html, wire, spark, face,
-  };
+  return { html, wire };
 })();
