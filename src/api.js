@@ -86,6 +86,7 @@ import { batchedDatabase } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
 import { orgStacksOf } from './orgstacks.js';
+import { customerStanding, setMark } from './standing.js';
 import {
   changeArea, rebuildTopics, topicsPage, trendsApi,
 } from './topicsapi.js';
@@ -580,7 +581,7 @@ export async function inbox(env, me, team, {
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
-    { results: techRows }, stacks, techVocab, elsewhere, yours, unseen, agentLabels,
+    { results: techRows }, stacks, techVocab, elsewhere, yours, unseen, agentLabels, standing,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
     // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
@@ -649,6 +650,9 @@ export async function inbox(env, me, team, {
     unseenAnswers(env, [...threadKeys, ...threads.map((t) => t.logical_thread)], me.id),
     // What the threads' agents said of them (src/agentlabels.js), in place of Clef's answers.
     agentLabelsFor(env.DB, threadKeys),
+    // The personal view's first page: the viewer's regulars and the customers they have been
+    // active with lately, for the order of its customer column (src/standing.js).
+    personal && !only && !before ? customerStanding(env.DB, me.id) : null,
   ]);
   const by = (rows, f) => {
     const m = new Map();
@@ -703,6 +707,7 @@ export async function inbox(env, me, team, {
     vocab: techVocab,
     stacks,
     ...(elsewhere ? { elsewhere } : {}),
+    ...(standing ? { standing } : {}),
     // Channel ids Slack sent without the name, in titles and last texts, as the names.
     threads: await nameChannelIds(env, fold(states
       .map((t) => {
@@ -1299,6 +1304,18 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return json({ error: 'read-only while viewing as someone else' }, 403);
     }
     return changeArea(env, me, request.method, await request.json().catch(() => ({})));
+  }
+  if (url.pathname === '/api/standing') {
+    // The star and the mute of the personal view's customer column (src/standing.js): `{ org,
+    // mark: unstar | mute }` sets it now, with `at` (null or the `was` it answered) undoes it.
+    if (request.method !== 'POST') {
+      return json({ error: 'POST' }, 405);
+    }
+    const res = await setMark(env.DB, me.id, await request.json().catch(() => ({})));
+    if (res.error) {
+      return json({ error: res.error }, res.status);
+    }
+    return json({ was: res.was, standing: await customerStanding(env.DB, me.id) });
   }
   if (url.pathname === '/api/follows/suggest') {
     // What to follow (src/followsuggest.js): for anyone signed in, on a team or not; names and

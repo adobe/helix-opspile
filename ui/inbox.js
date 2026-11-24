@@ -1375,11 +1375,39 @@ function logo(org, ts) {
 }
 /**
  * The customers' order in the column: those the red badge counts first (youCount), most
- * first, then those with unread threads, then the rest, then the excluded ones; by name within
- * each. `c.name` is looked up once per customer, not in every comparison. A customer goes by its
+ * first, then those with unread threads, then the rest, then the excluded ones; within each your
+ * regulars, the others, then the inactive ones (`c.section`, see sectionOf); by name within those.
+ * `c.name` is looked up once per customer, not in every comparison. A customer goes by its
  * place (`c.at`, see columnPlace), not by what it has unread this instant.
  */
 const byName = new Intl.Collator(undefined, { sensitivity: 'base' });
+/**
+ * Where a customer is in your column's sections, from the first page of the personal view
+ * (`standing`, src/standing.js): 0 a regular, one of the few you send most of your messages to;
+ * 2 inactive, where you have neither posted nor been mentioned in two weeks; 1 the others. All
+ * are 1 while the inbox has not said.
+ */
+const SECTIONS = [
+  { cls: 'regular', title: 'One of your regulars: you send most of your messages here' },
+  { cls: '', title: '' },
+  { cls: 'quiet', title: 'Inactive: you have not posted here or been mentioned in two weeks' },
+];
+/**
+ * A customer's mark in the column (markCustomer): a regular's star, which takes it out of your
+ * regulars, and on the others, shown on hover, the mute, which takes it out of your inbox.
+ */
+const markButton = (section) => {
+  if (!state.data?.standing || state.as) return section === 0 ? wf('star') : '';
+  return section === 0
+    ? `<button class="mk star" type="button" data-mark="unstar" title="One of your regulars: you send most of your messages here. Click to take it out of them" aria-label="Take out of your regulars">${wf('star')}</button>`
+    : `<button class="mk mute" type="button" data-mark="mute" title="Mute: its threads leave your inbox until you post or are mentioned there again, or a thread you follow comes up there" aria-label="Mute">${wf('volume-off')}</button>`;
+};
+function sectionOf(v) {
+  const s = state.data?.standing;
+  if (!s) return 1;
+  if (!s.active.includes(v)) return 2;
+  return s.regular.includes(v) ? 0 : 1;
+}
 const columnPile = (c) => {
   if (c.out) return 3;
   if (c.you > 0) return 0;
@@ -1387,7 +1415,8 @@ const columnPile = (c) => {
 };
 /** Whether place `a` is above place `b` (negative), below it (positive), or the same. */
 const placeOrder = (a, b) => a.pile - b.pile || b.you - a.you;
-const columnOrder = ([, a], [, b]) => placeOrder(a.at, b.at) || byName.compare(a.name, b.name);
+const columnOrder = ([, a], [, b]) => placeOrder(a.at, b.at) || a.section - b.section
+  || byName.compare(a.name, b.name);
 /**
  * The column stays put while you read (`state.column`): reading the last unread thread of a
  * customer took its badge and its bold away, and moved it to the bottom under the pointer. A
@@ -1450,9 +1479,19 @@ function simpleCustomers() {
   for (const [v, c] of by) {
     c.name = customerName(v);
     c.at = columnPlace(v, c);
+    c.section = c.out ? 1 : sectionOf(v);
   }
-  const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${c.out ? ' (excluded)' : ''}">
-      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${youBadge(c.you)}</div>`).join('');
+  // A line goes between two sections of one place (the same pile and badge): where a customer's
+  // differs from the one above.
+  let above = null;
+  const rows = [...by].sort(columnOrder).map(([v, c]) => {
+    const { cls, title } = SECTIONS[c.section];
+    const cut = above && !placeOrder(above.at, c.at) && above.section !== c.section;
+    above = c;
+    const why = c.out ? ' (excluded)' : (title && `. ${title}`);
+    return `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}${cls ? ` ${cls}` : ''}${cut ? ' cut' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${esc(why)}">
+      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${c.out ? '' : markButton(c.section)}${youBadge(c.you)}</div>`;
+  }).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
   return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
     <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
@@ -3325,6 +3364,40 @@ async function toggleFollowOf(kind, id, name) {
   const shown = followName(kind, id);
   toast(follow ? `Following ${shown}: its threads are in your personal view.` : `No longer following ${shown}.`);
   afterFollow();
+}
+
+/**
+ * Sets your mark `kind` on customer `org` (POST /api/standing, src/standing.js), or with `at`
+ * undoes it: `unstar` takes a regular out of your regulars, its messages so far no longer counted
+ * toward them; `mute` takes the customer out of your inbox, until you post or are mentioned in one
+ * of its channels again (that channel comes back), or a thread of it you follow has activity. Its
+ * threads leave the list at once, and the inbox loads again without the older pages it had.
+ */
+async function markCustomer(org, kind, at) {
+  if (state.as || !personal()) return;
+  const undo = at !== undefined;
+  const name = customerName(org);
+  const res = await request('POST', '/api/standing', { org, mark: kind, ...(undo ? { at } : {}) })
+    .catch((e) => ({ ok: false, data: { error: e.message } }));
+  if (!res.ok) {
+    toast(`Could not ${kind === 'mute' ? (undo ? 'unmute' : 'mute') : 'change'} ${name}: ${res.data?.error || res.status}`);
+    return;
+  }
+  if (state.data) state.data.standing = res.data.standing;
+  if (kind === 'mute' && !undo && state.data) {
+    state.data.threads = state.data.threads.filter((t) => t.org !== org);
+    state.sel.customer?.delete(org);
+    if (!state.sel.customer?.size) delete state.sel.customer;
+    toUrl();
+  }
+  render();
+  if (!undo) {
+    const said = kind === 'mute'
+      ? `Muted ${name}: it is back once you post or are mentioned there, or a thread you follow comes up.`
+      : `${name} is no longer one of your regulars.`;
+    toast(said, { label: 'Undo', run: () => markCustomer(org, kind, res.data.was) });
+  }
+  if (kind === 'mute') loadInbox(null, { fresh: true }).catch(() => {});
 }
 
 /**
@@ -8467,10 +8540,14 @@ function splitFrom(group, keys) {
   const entry = state.data?.threads.find((t) => t.thread === group);
   if (entry?.members) entry.members = entry.members.filter((m) => !keys.includes(m.thread));
 }
-async function loadInbox(early = null) {
+/**
+ * Loads the inbox's first page, and keeps the older pages loaded but what it has folded since.
+ * `fresh` keeps none of them: the view lists other channels now (a customer was muted).
+ */
+async function loadInbox(early = null, { fresh = false } = {}) {
   const ahead = early && await early;
   const first = ahead && scopeOf(ahead) === scopeKey() ? ahead : await get(pageUrl());
-  const prev = state.data && scopeOf(state.data) === scopeOf(first) && state.data.as === (state.as || null) ? state.data : null;
+  const prev = !fresh && state.data && scopeOf(state.data) === scopeOf(first) && state.data.as === (state.as || null) ? state.data : null;
   first.as = state.as || null;
   first.page = first.page || { next: null };
   if (prev) {
@@ -10507,6 +10584,8 @@ async function start() {
     }
     const r = e.target.closest('.fr');
     if (!r || r.dataset.v === undefined) return;
+    const markBtn = e.target.closest('[data-mark]');
+    if (markBtn) { markCustomer(r.dataset.v, markBtn.dataset.mark); return; }
     toggleFilter(r.dataset.f, r.dataset.v, e.shiftKey || Boolean(e.target.closest('[data-not]')));
     render();
     toUrl();
