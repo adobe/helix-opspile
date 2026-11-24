@@ -1375,11 +1375,29 @@ function logo(org, ts) {
 }
 /**
  * The customers' order in the column: those the red badge counts first (youCount), most
- * first, then those with unread threads, then the rest, then the excluded ones; by name within
- * each. `c.name` is looked up once per customer, not in every comparison. A customer goes by its
+ * first, then those with unread threads, then the rest, then the excluded ones; within each your
+ * regulars, the others, then the inactive ones (`c.section`, see sectionOf); by name within those.
+ * `c.name` is looked up once per customer, not in every comparison. A customer goes by its
  * place (`c.at`, see columnPlace), not by what it has unread this instant.
  */
 const byName = new Intl.Collator(undefined, { sensitivity: 'base' });
+/**
+ * Where a customer is in your column's sections, from the first page of the personal view
+ * (`standing`, src/standing.js): 0 a regular, one of the few you send most of your messages to;
+ * 2 inactive, where you have neither posted nor been mentioned in two weeks; 1 the others. All
+ * are 1 while the inbox has not said.
+ */
+const SECTIONS = [
+  { cls: 'regular', title: 'One of your regulars: you send most of your messages here' },
+  { cls: '', title: '' },
+  { cls: 'quiet', title: 'Inactive: you have not posted here or been mentioned in two weeks' },
+];
+function sectionOf(v) {
+  const s = state.data?.standing;
+  if (!s) return 1;
+  if (!s.active.includes(v)) return 2;
+  return s.regular.includes(v) ? 0 : 1;
+}
 const columnPile = (c) => {
   if (c.out) return 3;
   if (c.you > 0) return 0;
@@ -1387,7 +1405,8 @@ const columnPile = (c) => {
 };
 /** Whether place `a` is above place `b` (negative), below it (positive), or the same. */
 const placeOrder = (a, b) => a.pile - b.pile || b.you - a.you;
-const columnOrder = ([, a], [, b]) => placeOrder(a.at, b.at) || byName.compare(a.name, b.name);
+const columnOrder = ([, a], [, b]) => placeOrder(a.at, b.at) || a.section - b.section
+  || byName.compare(a.name, b.name);
 /**
  * The column stays put while you read (`state.column`): reading the last unread thread of a
  * customer took its badge and its bold away, and moved it to the bottom under the pointer. A
@@ -1450,9 +1469,19 @@ function simpleCustomers() {
   for (const [v, c] of by) {
     c.name = customerName(v);
     c.at = columnPlace(v, c);
+    c.section = c.out ? 1 : sectionOf(v);
   }
-  const rows = [...by].sort(columnOrder).map(([v, c]) => `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${c.out ? ' (excluded)' : ''}">
-      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${youBadge(c.you)}</div>`).join('');
+  // A line goes between two sections of one place (the same pile and badge): where a customer's
+  // differs from the one above.
+  let above = null;
+  const rows = [...by].sort(columnOrder).map(([v, c]) => {
+    const { cls, title } = SECTIONS[c.section];
+    const cut = above && !placeOrder(above.at, c.at) && above.section !== c.section;
+    above = c;
+    const why = c.out ? ' (excluded)' : (title && `. ${title}`);
+    return `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}${cls ? ` ${cls}` : ''}${cut ? ' cut' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${esc(why)}">
+      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${c.section === 0 ? wf('star') : ''}${youBadge(c.you)}</div>`;
+  }).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
   return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
     <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;

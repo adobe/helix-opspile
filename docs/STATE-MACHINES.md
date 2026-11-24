@@ -834,7 +834,9 @@ and not after a shorter look elsewhere.
 
 **Customer column.** placed → held → let go (`state.column`, `columnPlace` and `forgetColumn` in
 `ui/inbox.js`). The simple personal view's customers go by their place: the highest they have had
-(unread mentions of you, then unread, then the rest) since the inbox was last away. Something new
+(unread mentions of you, then unread, then the rest) since the inbox was last away; within a place,
+your regulars, the others and the inactive ones (`sectionOf`, from the `standing` of the inbox's
+first page, so a reload moves a customer between them). Something new
 moves a customer up at once; reading it moves it down only once the inbox has been away for
 `AWAY_MS`, as the thread list does, but never the open thread's customer. Its badge and bold are
 what it has now. Another view, the expert view, viewing as someone and a reload start afresh;

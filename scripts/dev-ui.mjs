@@ -96,6 +96,7 @@ import {
   fold, readMembers, threadTech,
 } from '../src/api.js';
 import { stackParts } from '../src/orgstacks.js';
+import { REGULAR_DAYS, QUIET_DAYS, standingOf } from '../src/standing.js';
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin, devFavicon } from './dev-ui-admin.mjs';
 import { faviconProxy } from '../src/favicons.js';
@@ -762,6 +763,33 @@ function unreadInYours(rows) {
   return out;
 }
 
+/**
+ * Dana's standing with the customers (src/standing.js): her messages of the last REGULAR_DAYS
+ * by customer, and the customers of the mentions of her of the last QUIET_DAYS.
+ */
+function standing() {
+  const { name } = store.people.get(ME);
+  const day = 24 * 60 * 60 * 1000;
+  const since = new Date(Date.now() - REGULAR_DAYS * day).toISOString();
+  const quiet = new Date(Date.now() - QUIET_DAYS * day).toISOString();
+  const posted = new Map();
+  for (const e of store.threads.values()) {
+    for (const m of e.row.org ? e.messages : []) {
+      if (m.author.name === name && !m.deletedAt && m.at >= since) {
+        const r = posted.get(e.row.org) || { org: e.row.org, n: 0, last: '' };
+        r.n += 1;
+        if (m.at > r.last) {
+          r.last = m.at;
+        }
+        posted.set(e.row.org, r);
+      }
+    }
+  }
+  const named = store.mentions.filter((m) => m.person === ME && m.at >= quiet)
+    .map((m) => store.threads.get(m.thread)?.row.org);
+  return standingOf([...posted.values()], named);
+}
+
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
 function inbox(team, before = null, personal = false, only = null, limit = null) {
   // `limit`, as the Worker takes it: 1 to 300, the page size without one.
@@ -859,6 +887,7 @@ function inbox(team, before = null, personal = false, only = null, limit = null)
     threads,
     page,
     ...(personal && !only && !page.next ? { elsewhere: elsewhereCounts() } : {}),
+    ...(personal && !only && !before ? { standing: standing() } : {}),
   };
 }
 

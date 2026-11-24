@@ -234,6 +234,24 @@ const CHANNELS = {
   portal: {
     source: 'portal', channelId: 'c0wayne0000001', name: 'wayne-enterprises', org: 'wayne', team: 'edge', tech: ['eds', 'ue', 'da'],
   },
+  // Customers of Dana's personal view she has nothing unread from, for the sections of its
+  // customer column (src/standing.js): Hooli she posts to most (a regular), Stark now and then;
+  // Wonka, Tyrell and Cyberdyne have been quiet for her for more than two weeks (inactive).
+  hooli: {
+    source: 'slack', channelId: 'C0HOOLI001', name: 'hooli-aem', org: 'hooli', team: 'edge',
+  },
+  stark: {
+    source: 'slack', channelId: 'C0STARK001', name: 'stark-edge', org: 'stark', team: 'edge',
+  },
+  wonka: {
+    source: 'slack', channelId: 'C0WONKA001', name: 'wonka-sites', org: 'wonka', team: 'platform',
+  },
+  tyrell: {
+    source: 'slack', channelId: 'C0TYREL001', name: 'tyrell-ops', org: 'tyrell', team: 'platform',
+  },
+  cyberdyne: {
+    source: 'slack', channelId: 'C0CYBER001', name: 'cyberdyne-cdn', org: 'cyberdyne', team: 'edge',
+  },
   // A community server: a forum where every post is a thread.
   forum: {
     source: 'discord', channelId: '1100000000000000001', name: 'community-forum', org: 'opspile', team: 'edge', appPosting: true,
@@ -1458,6 +1476,33 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       kind: 'question', next_actor: 'us', urgency: 0.6, resolved_p: 0.1,
     },
   });
+
+  // The customers Dana has read everything of (CHANNELS.hooli and after): one she posts to
+  // most, one now and then, and three she has neither posted to nor been mentioned in for weeks.
+  const DAY = 24 * 60;
+  const quiet = (ch, ago, title, reply, more = []) => seed({
+    ch,
+    messages: [['lena', ago + 30, title], ['dana', ago, reply], ...more],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'nobody', urgency: 0.2, resolved_p: 0.9,
+    },
+  });
+  quiet(CHANNELS.hooli, 2 * DAY, 'Hooli asks whether the new redirects can go live with Friday\'s release.', 'They can: the redirects are in the release branch.', [
+    ['lena', 2 * DAY - 20, 'Thanks, I will tell them.'],
+    ['dana', 2 * DAY - 25, 'Tell them to purge `/promo` after it.'],
+  ]);
+  quiet(CHANNELS.hooli, 4 * DAY, 'Hooli\'s preview builds take twice as long since Monday.', 'The code bus was slow for everyone on Monday; it is back to normal.', [
+    ['dana', 4 * DAY - 10, 'Their builds are back under a minute.'],
+    ['dana', 4 * DAY - 12, 'Closing this one.'],
+  ]);
+  quiet(CHANNELS.hooli, 6 * DAY, 'Can Hooli get a second CDN property for the campaign?', 'Yes, I set it up this morning.', [
+    ['dana', 6 * DAY - 5, 'It is `campaign.hooli.example`.'],
+  ]);
+  quiet(CHANNELS.stark, 5 * DAY, 'Stark\'s sitemap lists pages that are gone.', 'It is rebuilt every night: tomorrow\'s will not have them.');
+  quiet(CHANNELS.wonka, 18 * DAY, 'Wonka\'s forms post to an endpoint that answers 404.', 'Their forms service moved: the form config needs the new URL.');
+  quiet(CHANNELS.tyrell, 26 * DAY, 'Tyrell wants to know when the old author host goes away.', 'At the end of the quarter; they have a reminder.');
+  quiet(CHANNELS.cyberdyne, 40 * DAY, 'Cyberdyne sees mixed content warnings on the product pages.', 'Two images still had http URLs; fixed in the content.');
 
   seed({
     ch: CHANNELS.forum,
