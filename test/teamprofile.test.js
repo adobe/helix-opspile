@@ -123,7 +123,8 @@ function seed() {
       ('kb-team-edge', 'issues/loop.md', 'h2', 'Known Issue', 'Sign-in loop', NULL),
       ('kb-team-edge', 'playbooks/live.md', 'h3', 'Playbook', 'Go-live', NULL),
       ('kb-team-edge', 'products/fastly/cdn.md', 'h4', 'Product', 'Fastly CDN', NULL),
-      ('kb-team-edge', 'stack.md', 'h5', 'Stack Drawing', 'What we run', NULL)`);
+      ('kb-team-edge', 'stack.md', 'h5', 'Stack Drawing', 'What we run', NULL),
+      ('kb-team-edge', 'contacts/ada-ops.md', 'h6', 'Contact', 'Ada Ops', 'Runs the CDN setups.')`);
   return { DB, STAFF_DOMAINS: 'staff.example' };
 }
 
@@ -204,7 +205,11 @@ describe('a team\'s overview', () => {
     assert.deepEqual([tech.da.followed, tech.da.catalog, tech.da.layer], [false, false, 'content']);
     assert.equal(tech.fastly.weekly.reduce((s, v) => s + v, 0), 7 + 2 + 3);
     // The knowledge base: its entries by type, not its catalog, and whether it has a drawing.
-    assert.deepEqual(p.kb.types.map((t) => [t.type, t.n]), [['Known Issue', 2], ['Playbook', 1]]);
+    assert.deepEqual(p.kb.types.map((t) => [t.type, t.n]), [['Known Issue', 2], ['Contact', 1], ['Playbook', 1]]);
+    // Ada's profile on the team is her Contact in its knowledge base; Bo has none yet.
+    assert.deepEqual(p.members.map((m) => m.profile), [
+      { path: 'contacts/ada-ops.md', description: 'Runs the CDN setups.' }, null, null,
+    ]);
     assert.equal(p.kb.stack, true);
   });
 
@@ -221,7 +226,9 @@ describe('a team\'s overview', () => {
     r = await call(e, staff, '/api/teams/profile?team=edge');
     assert.equal(r.status, 200);
     assert.equal(r.body.members.length, 3);
-    assert.deepEqual(r.body.kb.types, [{ type: 'Known Issue', n: 2, entries: [] }, { type: 'Playbook', n: 1, entries: [] }]);
+    assert.deepEqual(r.body.kb.types.map((t) => [t.type, t.n, t.entries.length]), [['Known Issue', 2, 0], ['Contact', 1, 0], ['Playbook', 1, 0]]);
+    // The members' profiles are the knowledge base's too.
+    assert.ok(r.body.members.every((m) => m.profile === null));
     assert.equal(r.body.kb.readable, false);
     assert.equal(r.body.kb.stack, false);
     assert.deepEqual(r.body.may, { manage: false });
@@ -229,6 +236,7 @@ describe('a team\'s overview', () => {
     r = await call(e, as(DEE), '/api/teams/profile?team=edge');
     assert.deepEqual(r.body.kb.types[0].entries.map((x) => x.title), ['Purge is slow', 'Sign-in loop']);
     assert.equal(r.body.kb.readable, true);
+    assert.equal(r.body.members[0].profile.description, 'Runs the CDN setups.');
     assert.equal(r.body.may.manage, false);
     r = await call(e, as(ADA, 'manager'), '/api/teams/profile?team=edge');
     assert.equal(r.body.may.manage, true);

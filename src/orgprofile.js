@@ -45,9 +45,10 @@ import { LAYERS, STACK_PATH } from './stack.js';
 import { partnerOf } from './profiles.js';
 import { personSlug } from './agent/okf.js';
 import { mailDomains } from './orgmerge.js';
+import { AVATAR, NAME, TITLE } from './personsql.js';
 import {
-  AVATAR, byWeek, CACHE_MS, CATALOG_TYPES, distinctive, MAX_ENTRIES, NAME, techNames, TITLE,
-  UNASSIGNED, WEEK, WEEKS, zeros,
+  byWeek, CACHE_MS, CATALOG_TYPES, distinctive, MAX_ENTRIES, techNames, UNASSIGNED, WEEK, WEEKS,
+  zeros,
 } from './teamprofile.js';
 
 export { WEEKS };
@@ -86,7 +87,8 @@ export function median(values) {
 /**
  * The Contact of a person among a knowledge base's `contacts` (`[{ path, title, aliases }]`, as
  * kb_concepts has them): the one whose file name, title or aliases are their name, as
- * src/kbpeople.js finds one by name. The path, or null.
+ * src/kbpeople.js finds one by name: `{ path, description }` (their profile there, as a team's
+ * members have theirs, src/teamprofile.js), or null.
  */
 export function contactOf(contacts, name) {
   const want = personSlug(name);
@@ -97,7 +99,7 @@ export function contactOf(contacts, name) {
     c.path.split('/').pop().replace(/\.md$/, ''), c.title,
     ...String(c.aliases || '').split(','),
   ].some((x) => x && personSlug(x) === want));
-  return hit ? hit.path : null;
+  return hit ? { path: hit.path, description: hit.description || null } : null;
 }
 
 /**
@@ -503,7 +505,8 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
         .map((x) => ({ ...x, name: areaName.get(x.id) || x.id })),
       tech: (techOf.get(w) || [])
         .map((x) => ({ ...x, name: names.get(x.id)?.name || x.id })),
-      contact: name ? contactOf(contacts, name) : null,
+      // Their profile in its knowledge base: their Contact there (ui/person.js draws it).
+      profile: name ? contactOf(contacts, name) : null,
     };
   };
   const staffOut = ([, e]) => {
@@ -654,7 +657,7 @@ export async function orgProfile(env, me, slug, { now = new Date() } = {}) {
   return {
     ...numbers,
     people: numbers.people.map((p) => ({
-      ...p, contact: readable && numbers.kb ? p.contact : null,
+      ...p, profile: readable && numbers.kb ? p.profile : null,
     })),
     // What its stack drawing has is its knowledge base's: what Clef sees is everyone's.
     tech: readable ? numbers.tech : numbers.tech.filter((t) => t.tech && t.threads)

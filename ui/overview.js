@@ -15,7 +15,8 @@
  * global `Overview`: the first section of their pages in Teams and Customers, everyone's at Adobe,
  * in the look of ui/spectrum-overview.css.
  *
- * - `face`, `spark` and `bar`: a person's picture over their initials, a line of weeks, a meter.
+ * - `face`, `spark` and `chip` (ui/person.js's, as the people cards have them) and `bar`: a
+ *   person's picture over their initials, a line of weeks, a tag, a meter.
  * - `stats` and `chart`: the big numbers at the top, and the weeks as an area chart of what
  *   Adobe's people said under what the others did (a team's); a week under the pointer says its
  *   numbers. `bars` and `wireBars`: the weeks as stacked bars of any breakdown (a customer's).
@@ -27,39 +28,13 @@
  * Everything in them is a name, a number or a picture, written escaped.
  */
 globalThis.Overview = (() => {
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-  const COLORS = 8;
-  /** A name's hue, as ui/inbox.js and ui/header.js have it (`data-hue`, ui/spectrum.css). */
-  const hueOf = (name) => {
-    let h = 0;
-    for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-    return h % COLORS;
-  };
-  const initials = (name) => String(name || '?').replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean)
-    .map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-  /** A person's face: their picture over their initials, which show while it loads or when it fails. */
-  const face = (name, url, cls = '') => `<span class="av tv-av ${cls}" data-hue="${hueOf(name || '?')}" aria-hidden="true">${esc(initials(name))}${url ? `<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</span>`;
-  const plural = (n, one, many = `${one}s`) => `${n.toLocaleString('en')} ${n === 1 ? one : many}`;
+  // A person's parts, as the people cards draw them (ui/person.js): one face, line and tag.
+  const {
+    esc, plural, ago, often, link, spark, chip,
+  } = Person;
+  const face = (name, url, cls = '') => Person.face(name, url, { cls });
   const monthOf = (w) => new Date(`${w}T00:00:00Z`).toLocaleString('en', { month: 'short', timeZone: 'UTC' });
   const dayOf = (w) => new Date(`${w}T00:00:00Z`).toLocaleString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-  const ago = (at) => {
-    if (!at) return '';
-    const d = (Date.now() - Date.parse(at)) / 86400000;
-    if (d < 1) return 'today';
-    if (d < 2) return 'yesterday';
-    if (d < 14) return `${Math.round(d)} days ago`;
-    if (d < 60) return `${Math.round(d / 7)} weeks ago`;
-    return `${Math.round(d / 30)} months ago`;
-  };
-  /** How often, in words: "12 a week", "3 a month", "now and then". */
-  const often = (n, weeks) => {
-    const w = n / weeks;
-    if (w >= 1) return `${w < 10 ? w.toFixed(1).replace(/\.0$/, '') : Math.round(w)} a week`;
-    if (w * 4.3 >= 1) return `${Math.round(w * 4.3)} a month`;
-    return n ? 'now and then' : 'not lately';
-  };
   /** A wait in minutes, in words: "12 min", "3.5 h", "2 days". */
   const wait = (min) => {
     if (min === null || min === undefined) return '–';
@@ -69,24 +44,8 @@ globalThis.Overview = (() => {
     return `${Math.round(h / 24)} days`;
   };
 
-  /** `inner` as a link to `href`, or as it is where there is none to go to. */
-  const link = (href, inner, { cls = '', title = '' } = {}) => {
-    const attrs = `${cls ? ` class="${cls}"` : ''}${title ? ` title="${esc(title)}"` : ''}`;
-    return href ? `<a href="${esc(href)}"${attrs}>${inner}</a>` : `<span${attrs}>${inner}</span>`;
-  };
-
   // ---- small drawings -----------------------------------------------------------------------
 
-  /** A line of `values` (one a week), its area under it; `cls` colors it. */
-  function spark(values, { cls = '', w = 96, h = 24, label = '' } = {}) {
-    const m = Math.max(...values, 1);
-    const n = values.length;
-    const x = (i) => ((i * w) / Math.max(1, n - 1)).toFixed(1);
-    const y = (v) => (h - 1 - ((h - 3) * v) / m).toFixed(1);
-    const pts = values.map((v, i) => `${x(i)},${y(v)}`).join(' ');
-    return `<svg class="tv-spark${cls ? ` ${cls}` : ''}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"${label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"'}>`
-      + `<polygon class="area" points="0,${h} ${pts} ${w},${h}"></polygon><polyline points="${pts}"></polyline></svg>`;
-  }
   /** A bar of `share` (0 to 1) of its track, `of` the second part of it (Adobe's, say). */
   function bar(share, of = null) {
     const w = Math.max(1, Math.round(100 * share));
@@ -229,17 +188,9 @@ globalThis.Overview = (() => {
     return `<div class="tv-stats">${tiles.map(tile).join('')}</div>`;
   }
 
-  /**
-   * A chip of a tag: what it is, how many threads of theirs it was in; a link to it on the Topics
-   * page (`href`, its node's), where there is one.
-   */
-  const chip = (name, threads, { cls = '', href = null } = {}) => link(href, esc(name), {
-    cls: `tv-chip${cls ? ` ${cls}` : ''}`,
-    title: `${name}: ${plural(threads, 'thread')} of theirs${href ? '. Open it on the Topics page' : ''}`,
-  });
   /** The teams of a person, a chip each that opens its overview. */
   const teamChips = (teams, href) => (teams.length
-    ? teams.map((t) => `<a class="tv-chip team" href="${esc(href(t.slug))}">${esc(t.name)}</a>`).join('')
+    ? teams.map((t) => `<a class="ps-chip team" href="${esc(href(t.slug))}">${esc(t.name)}</a>`).join('')
     : '<span class="sub">on no team</span>');
 
   /**

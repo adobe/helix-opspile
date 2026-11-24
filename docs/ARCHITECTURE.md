@@ -3373,6 +3373,15 @@ the customer's domain" would call a customer's second domain a partner. The card
 the inbox and thread payloads (`profiles`, keyed by `messages.author_key`), so a hover costs no
 request, and emails stay on the server.
 
+For an Adobe person, the card is also who they are on their teams, as their card on their team's
+overview has them (`person` of `GET /api/person`, src/person.js `personCard`; both cards are drawn
+by ui/person.js): the best name, picture and title of any of their accounts (src/personsql.js),
+their ops teams with their role on each (a link to the team's overview), their profile on each team
+(their Contact in its knowledge base, for whoever may read it), and how often they post, their
+expertise and products (each a link to the Topics page) and key customers, as their busiest team's
+overview counts them (kept there five minutes, so the first card of a team's member costs that
+team's numbers once).
+
 Below that, the card says who the person is in the thread's knowledge bases: the description
 of their Contact (`contacts/<first-last>.md`, see "Layout" under the knowledge bases) in its
 customer's and in its teams' (the one it is filed under, those it is shared with), each with a
@@ -3403,7 +3412,9 @@ the admin team; its agent's sections follow. The overview is the team's last 26 
   technologies of their threads, ranked by how much more of a member's messages are in the
   threads with one than of the team's (the lift) times the log of its threads, so a tag everyone
   has counts for its threads alone; a tag of one thread only where there is nothing more. Their
-  key customers are those they posted the most for. Those who did not post are listed after;
+  key customers are those they posted the most for, and their profile on the team, their Contact in
+  its knowledge base, is under their name (for whoever may read it). Those who did not post are
+  listed after;
 - its **customers** (no internal org) and its **collaborators** (Adobe's people not on the team,
   a person's accounts as one, no workflow or bot account), ranked by what they said in its
   threads, each with their weeks;
@@ -3440,8 +3451,10 @@ channel threads filed under it, from D1:
 - its **people**, a card each: their picture and title, a partner's marked (its mail domain in
   `partner_domains`, src/profiles.js), how often they post (in its threads, a line of their
   weeks), what they ask about (Clef's areas and technologies of their threads, ranked by their
-  lift over the rest of its people, as a team's members are), and their Contact in its knowledge
-  base (`contacts/`, found by their name as src/kbpeople.js finds one) for whoever may read it;
+  lift over the rest of its people, as a team's members are), and their profile there: their
+  Contact in its knowledge base (`contacts/`, found by their name as src/kbpeople.js finds one),
+  its description under their name, for whoever may read it. The cards are drawn by
+  `ui/person.js`, as a team's members' and the inbox's profile cards are;
 - **Adobe's people** in its threads (a person's accounts as one, no workflow or bot account),
   ranked by what they said there, with the teams they are on; and the **teams** that work it: by
   what their people said there, with the channels filed under or shared with each, and whether

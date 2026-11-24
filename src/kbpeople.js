@@ -14,6 +14,7 @@ import { entryOf } from './drafts.js';
 import { json } from './http.js';
 import { repoName } from './kb.js';
 import { access } from './kbaccess.js';
+import { personCard } from './person.js';
 import { listFiles, readBlobs } from './agent/repos.js';
 import {
   CONTACTS, personSlug, RESERVED, scalar, splitFrontmatter, strings,
@@ -150,7 +151,7 @@ export const artifactsReader = (env) => ({
 async function whoIs(env, key, name) {
   const [source, tenant, ...rest] = String(key || '').split(':');
   const row = key && rest.length ? await env.DB.prepare(`SELECT i.name, i.handle, i.aliases,
-      COALESCE(i.email, p.email) AS email, p.name AS person_name, i.kind
+      COALESCE(i.email, p.email) AS email, p.name AS person_name, i.kind, i.person
     FROM identities i LEFT JOIN people p ON p.id = i.person
     WHERE i.source = ? AND i.tenant = ? AND i.user_id = ?`).bind(source, tenant, rest.join(':')).first()
     : null;
@@ -163,7 +164,10 @@ async function whoIs(env, key, name) {
   const names = [row && row.person_name, row && row.name, row && row.handle, ...aliases, name]
     .filter((n) => typeof n === 'string' && n.trim());
   return {
-    email: (row && row.email) || null, names: [...new Set(names)], bot: Boolean(row && row.kind === 'bot'),
+    email: (row && row.email) || null,
+    names: [...new Set(names)],
+    bot: Boolean(row && row.kind === 'bot'),
+    person: (row && row.person) || null,
   };
 }
 
@@ -195,22 +199,33 @@ async function kbsOf(env, me, entry) {
 /**
  * `GET /api/person?thread=&p=&name=`: the Contact of the person with identity key `p` (or,
  * without an account, named `name`) in the knowledge bases of the thread, for those who may
- * see the thread: `{ entries: [{ repo, kind, name, path, title, description, status, stale }] }`.
+ * see the thread: `{ entries: [{ repo, kind, name, path, title, description, status, stale }] }`,
+ * and for an Adobe person `person` (src/person.js `personCard`), whose profiles on their teams are
+ * left out of `entries`.
  */
 export async function personInKb(env, me, { thread, key, name }, canSee) {
   const entry = thread ? await entryOf(env, thread) : null;
   if (!entry || !await canSee(entry.teams, entry)) {
     return json({ error: 'not found' }, 404);
   }
-  if (!env.ARTIFACTS) {
-    return json({ entries: [] });
-  }
   const who = await whoIs(env, key, name);
   if (who.bot || (!who.email && !who.names.length)) {
     return json({ entries: [] });
   }
-  const entries = await findPerson(artifactsReader(env), await kbsOf(env, me, entry), who);
-  const res = json({ entries });
+  const [entries, person] = await Promise.all([
+    env.ARTIFACTS ? findPerson(artifactsReader(env), await kbsOf(env, me, entry), who) : [],
+    // An Adobe person: who they are on their teams, as their team's overview has them.
+    personCard(env, me, who.person).catch((e) => {
+      console.error(JSON.stringify({ route: 'person', card: 'failed', error: e.message }));
+      return null;
+    }),
+  ]);
+  // Their profile on a team is the card's own part: not again among the thread's.
+  const shown = new Set((person?.profiles || []).map((x) => `${x.repo}|${x.path}`));
+  const res = json({
+    entries: entries.filter((x) => !shown.has(`${x.repo}|${x.path}`)),
+    ...(person ? { person } : {}),
+  });
   res.headers.set('cache-control', 'private, max-age=120');
   return res;
 }

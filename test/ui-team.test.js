@@ -14,9 +14,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { SCRIPTS } from './ui.js';
 
-// As the page loads them: what it is drawn with (ui/overview.js), then the team's overview.
+// As the page loads them: a person's parts (ui/person.js), what the overviews are drawn with
+// (ui/overview.js), then the team's overview.
 // eslint-disable-next-line no-new-func
-const TeamView = new Function('globalThis', `${SCRIPTS['overview.js']}\nconst { Overview } = globalThis;\n${SCRIPTS['team.js']}\nreturn globalThis.TeamView;`)({});
+const TeamView = new Function('globalThis', `${SCRIPTS['person.js']}\nconst { Person } = globalThis;\n${SCRIPTS['overview.js']}\nconst { Overview } = globalThis;\n${SCRIPTS['team.js']}\nreturn globalThis.TeamView;`)({});
 
 // Made-up people, customers and technologies only.
 const weeks = ['2026-11-16', '2026-11-23'];
@@ -47,6 +48,7 @@ const profile = {
     customers: [{
       slug: 'acme', n: 5, threads: 2, name: 'ACME', icon: null,
     }],
+    profile: { path: 'contacts/ada-ops.md', description: 'Runs the <CDN> setups.' },
   }],
   customers: [],
   customerCount: 0,
@@ -60,7 +62,7 @@ const ctx = {
   orgName: (slug, name) => name || slug,
   orgIcon: () => '',
   teamHref: (slug) => `/team/${slug}`,
-  kbHref: () => null,
+  kbHref: (path) => `/kb/${path}`,
   topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
 };
 
@@ -68,17 +70,20 @@ describe('a team\'s overview, drawn', () => {
   it('links a person\'s areas, products and name to the Topics page, and ends their card with their customers', () => {
     const html = TeamView.html(profile, ctx);
     const card = html.slice(html.indexOf('<article'), html.indexOf('</article>'));
-    assert.match(card, /<a href="\/inbox\/topics\?sel=tag%3Acdn" class="tv-chip" title="Caching: 2 threads of theirs\. Open it on the Topics page">Caching<\/a>/);
-    assert.match(card, /<a href="\/inbox\/topics\?sel=product%3Atech%3Afastly%2Fcdn" class="tv-chip tech"/);
+    assert.match(card, /<a href="\/inbox\/topics\?sel=tag%3Acdn" class="ps-chip" title="Caching: 2 threads of theirs\. Open it on the Topics page">Caching<\/a>/);
+    assert.match(card, /<a href="\/inbox\/topics\?sel=product%3Atech%3Afastly%2Fcdn" class="ps-chip tech"/);
     assert.match(card, /<b><a href="\/inbox\/topics\?sel=person%3A7"[^>]*>Ada &lt;Ops&gt;<\/a><\/b>/);
     // Expertise and products, then the key customers at the foot.
-    assert.ok(card.indexOf('class="tv-knows"') < card.indexOf('class="tv-keys"'));
-    assert.match(card, /<dl class="tv-keys"><dt>Key customers<\/dt><dd><a href="\/org\/acme" class="tv-org"[^>]*>/);
+    assert.ok(card.indexOf('class="ps-knows"') < card.indexOf('class="ps-keys"'));
+    assert.match(card, /<dl class="ps-keys"><dt>Key customers<\/dt><dd><a href="\/org\/acme" class="ps-org"[^>]*>/);
     assert.ok(card.trimEnd().endsWith('</dd></dl>'));
+    // Her profile on the team, under who she is, as the inbox's card has it (ui/person.js).
+    assert.match(card, /<div class="ps-profile">\s*<p>Runs the &lt;CDN&gt; setups\.<\/p><a href="\/kb\/contacts\/ada-ops\.md" class="ps-src"[^>]*>Profile on Edge ops<\/a><\/div>/);
+    assert.ok(card.indexOf('ps-profile') < card.indexOf('ps-freq'));
   });
 
   it('leaves a tag unlinked where there is nowhere to go', () => {
     const html = TeamView.html(profile, { ...ctx, topicHref: () => null });
-    assert.match(html, /<span class="tv-chip" title="Caching: 2 threads of theirs">Caching<\/span>/);
+    assert.match(html, /<span class="ps-chip" title="Caching: 2 threads of theirs">Caching<\/span>/);
   });
 });

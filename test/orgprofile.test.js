@@ -171,8 +171,8 @@ describe('a customer\'s overview', () => {
     assert.deepEqual(sam.areas.map((a) => a.name), ['Caching and delivery']);
     assert.deepEqual(sam.tech.map((t) => t.name), ['Fastly']);
     // Their Contacts: by file name, and by an alias.
-    assert.equal(sam.contact, 'contacts/sam-reyes.md');
-    assert.equal(kim.contact, 'contacts/kimberly-lee.md');
+    assert.deepEqual(sam.profile, { path: 'contacts/sam-reyes.md', description: 'Web lead' });
+    assert.deepEqual(kim.profile, { path: 'contacts/kimberly-lee.md', description: null });
     // Adobe's people, no workflow, with their teams.
     const teams = (x) => x.teams.map((t) => t.slug);
     assert.deepEqual(p.staff.map((x) => [x.id, x.name, x.messages, teams(x)]), [
@@ -224,7 +224,7 @@ describe('a customer\'s overview', () => {
     r = await call(e, staff, '/api/customers/profile?org=acme');
     assert.equal(r.status, 200);
     assert.equal(r.body.people.length, 3);
-    assert.equal(r.body.people[0].contact, null);
+    assert.equal(r.body.people[0].profile, null);
     assert.deepEqual(r.body.kb.types, [{ type: 'Contact', n: 2, entries: [] }, { type: 'Site', n: 1, entries: [] }]);
     assert.equal(r.body.kb.readable, false);
     assert.equal(r.body.kb.drawing, false);
@@ -234,7 +234,7 @@ describe('a customer\'s overview', () => {
     // A member of a team it has a channel of reads it all.
     r = await call(e, as(DEE), '/api/customers/profile?org=acme');
     assert.equal(r.body.kb.readable, true);
-    assert.equal(r.body.people[0].contact, 'contacts/sam-reyes.md');
+    assert.equal(r.body.people[0].profile.path, 'contacts/sam-reyes.md');
     assert.equal(r.body.tech.length, 4);
     // A merged one says where it went.
     r = await call(e, staff, '/api/customers/profile?org=acme-co');
@@ -260,9 +260,10 @@ describe('the helpers of a customer\'s overview', () => {
     assert.equal(median([5, 1, 3]), 3);
     assert.equal(median([4, 1, 3, 2]), 2.5);
     const contacts = [{ path: 'contacts/sam-reyes.md', title: 'Sam Reyes', aliases: 'sreyes, Sammy' }];
-    assert.equal(contactOf(contacts, 'Sam Reyes'), 'contacts/sam-reyes.md');
-    assert.equal(contactOf(contacts, 'Sammy'), 'contacts/sam-reyes.md');
-    assert.equal(contactOf(contacts, 'Reyes, Sam'), 'contacts/sam-reyes.md');
+    const sam = { path: 'contacts/sam-reyes.md', description: null };
+    assert.deepEqual(contactOf(contacts, 'Sam Reyes'), sam);
+    assert.deepEqual(contactOf(contacts, 'Sammy'), sam);
+    assert.deepEqual(contactOf(contacts, 'Reyes, Sam'), sam);
     assert.equal(contactOf(contacts, 'Someone Else'), null);
   });
 });

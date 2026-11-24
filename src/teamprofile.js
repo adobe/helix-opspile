@@ -38,6 +38,8 @@ import { underlying } from './d1batch.js';
 import { mayRead } from './kbaccess.js';
 import { weeksTo } from './trends.js';
 import { LAYERS, STACK_PATH } from './stack.js';
+import { AVATAR, NAME, TITLE } from './personsql.js';
+import { CONTACTS, personSlug } from './agent/okf.js';
 
 /** The weeks an overview counts, up to this one. */
 export const WEEKS = 26;
@@ -82,26 +84,6 @@ const MINE = `mine AS (SELECT keys.person, g.thread, COUNT(*) AS n FROM keys
 
 /** SQL: the Monday of the week of `col`, as YYYY-MM-DD (src/trends.js `mondayOf`). */
 export const WEEK = (col) => `date(${col}, '-6 days', 'weekday 1')`;
-
-/** SQL: a person's picture: their own account's, Slack's before Teams', Gravatar's last. */
-export const AVATAR = (person) => `(SELECT COALESCE(i.display_avatar, i.avatar) FROM identities i
-    WHERE i.person = ${person} AND i.kind = 'person' AND COALESCE(i.display_avatar, i.avatar) != ''
-    ORDER BY COALESCE(i.display_avatar, i.avatar) LIKE '%gravatar.com/%',
-      CASE i.source WHEN 'slack' THEN 0 WHEN 'teams' THEN 1 ELSE 2 END, i.fetched_at DESC LIMIT 1)`;
-/** SQL: a person's job title, as a platform has it. */
-export const TITLE = (person) => `(SELECT i.title FROM identities i WHERE i.person = ${person}
-    AND i.title IS NOT NULL AND i.title != '' ORDER BY i.source = 'slack' DESC LIMIT 1)`;
-/**
- * SQL: a person's name: a full one (with a space) first, theirs in D1 else an account's, then
- * a handle; else the start of their mail address (someone added who never posted).
- */
-export const NAME = (person) => {
-  const account = (full) => `(SELECT COALESCE(i.display_name, i.name) FROM identities i
-    WHERE i.person = ${person} AND COALESCE(i.display_name, i.name) ${full ? "LIKE '% %'" : "!= ''"}
-    ORDER BY i.source = 'slack' DESC LIMIT 1)`;
-  return `COALESCE(CASE WHEN p.name LIKE '% %' THEN p.name END, ${account(true)}, NULLIF(p.name, ''),
-    ${account(false)}, SUBSTR(p.email, 1, INSTR(p.email, '@') - 1))`;
-};
 
 /** A list of `n` zeros, one a week. */
 export const zeros = (n) => Array.from({ length: n }, () => 0);
@@ -405,9 +387,13 @@ export async function teamNumbers(env, slug, { now = new Date() } = {}) {
   }
 
   const orgName = new Map(customers.map((c) => [c.slug, c]));
+  // Each member's profile on the team: their Contact in its knowledge base (src/person.js).
+  const contacts = new Map(concepts.filter((c) => c.type === 'Contact').map((c) => [c.path, c]));
   const memberOut = members.map((m) => {
     const p = posted.get(m.id);
     const a = all.get(m.id);
+    const slugOf = personSlug(m.name);
+    const contact = slugOf ? contacts.get(`${CONTACTS}/${slugOf}.md`) : null;
     return {
       id: m.id,
       name: m.name || null,
@@ -425,6 +411,8 @@ export async function teamNumbers(env, slug, { now = new Date() } = {}) {
         name: orgName.get(o.slug)?.name || null,
         icon: orgName.get(o.slug)?.icon || null,
       })),
+      profile: contact && contact.description
+        ? { path: contact.path, description: contact.description } : null,
     };
   }).sort((a, b) => b.messages - a.messages || String(a.name).localeCompare(String(b.name)));
 
@@ -504,6 +492,8 @@ export async function teamProfile(env, me, slug, { now = new Date() } = {}) {
   const readable = numbers.kb ? await mayRead(env, me, { kind: 'team', slug: key }) : false;
   return {
     ...numbers,
+    // The members' profiles are the knowledge base's: for whoever may read it.
+    members: readable ? numbers.members : numbers.members.map((m) => ({ ...m, profile: null })),
     // The entries' titles for whoever may read the knowledge base; their number for everyone.
     kb: numbers.kb && {
       ...numbers.kb,

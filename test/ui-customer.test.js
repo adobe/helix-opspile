@@ -14,9 +14,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { SCRIPTS } from './ui.js';
 
-// As the page loads them: what it is drawn with (ui/overview.js), then the customer's overview.
+// As the page loads them: a person's parts (ui/person.js), what the overviews are drawn with
+// (ui/overview.js), then the customer's overview.
 // eslint-disable-next-line no-new-func
-const CustomerView = new Function('globalThis', `${SCRIPTS['overview.js']}\nconst { Overview } = globalThis;\n${SCRIPTS['customer.js']}\nreturn globalThis.CustomerView;`)({});
+const CustomerView = new Function('globalThis', `${SCRIPTS['person.js']}\nconst { Person } = globalThis;\n${SCRIPTS['overview.js']}\nconst { Overview } = globalThis;\n${SCRIPTS['customer.js']}\nreturn globalThis.CustomerView;`)({});
 
 // Made-up people, customers and technologies only.
 const weeks = ['2026-11-16', '2026-11-23'];
@@ -36,7 +37,7 @@ const person = (over) => ({
   tech: [{
     id: 'fastly', name: 'Fastly', n: 5, threads: 2,
   }],
-  contact: 'contacts/sam-reyes.md',
+  profile: { path: 'contacts/sam-reyes.md', description: 'Owns the <launch> date.' },
   ...over,
 });
 const profile = {
@@ -67,7 +68,7 @@ const profile = {
   threadCount: 2,
   answers: { asked: 2, answered: 2, median: 75 },
   people: [person(), person({
-    id: null, name: 'Pat', partner: 'Agency Co', contact: null, areas: [], tech: [],
+    id: null, name: 'Pat', partner: 'Agency Co', profile: { path: 'contacts/pat.md', description: null }, areas: [], tech: [],
   })],
   peopleCount: 2,
   partnerCount: 1,
@@ -94,20 +95,24 @@ const ctx = {
 };
 
 describe('a customer\'s overview, drawn', () => {
-  it('links its people\'s areas, products and names to the Topics page, their Contact at the foot', () => {
+  it('links its people\'s areas, products and names to the Topics page, with their profile', () => {
     const html = CustomerView.html(profile, ctx);
     const card = html.slice(html.indexOf('<article'), html.indexOf('</article>'));
-    assert.match(card, /<a href="\/inbox\/topics\?sel=tag%3Acdn" class="tv-chip"[^>]*>Caching<\/a>/);
-    assert.match(card, /<a href="\/inbox\/topics\?sel=product%3Atech%3Afastly" class="tv-chip tech"/);
+    assert.match(card, /<a href="\/inbox\/topics\?sel=tag%3Acdn" class="ps-chip"[^>]*>Caching<\/a>/);
+    assert.match(card, /<a href="\/inbox\/topics\?sel=product%3Atech%3Afastly" class="ps-chip tech"/);
     assert.match(card, /<b><a href="\/inbox\/topics\?sel=person%3A5"[^>]*>Sam &lt;Reyes&gt;<\/a><\/b>/);
-    assert.ok(card.indexOf('class="tv-knows"') < card.indexOf('class="tv-keys"'));
-    assert.match(card, /<dl class="tv-keys"><dt>Contact<\/dt><dd><a class="tv-contact" href="\/kb\/contacts\/sam-reyes\.md"/);
+    // Their profile (their Contact in its knowledge base) under who they are, as a team member's.
+    assert.match(card, /<div class="ps-profile">\s*<p>Owns the &lt;launch&gt; date\.<\/p><a href="\/kb\/contacts\/sam-reyes\.md" class="ps-src"[^>]*>Profile on ACME<\/a><\/div>/);
+    assert.ok(card.indexOf('ps-profile') < card.indexOf('ps-freq'));
+    assert.ok(!card.includes('ps-keys'));
   });
 
   it('marks a partner\'s person, and leaves a name without a person unlinked', () => {
     const html = CustomerView.html(profile, ctx);
     const card = html.slice(html.lastIndexOf('<article'));
     assert.match(card, /<b><span>Pat<\/span><\/b><span class="tag tv-partner"[^>]*>Agency Co<\/span>/);
+    // A Contact without a description: a link at the card's foot.
+    assert.match(card, /<dl class="ps-keys"><dt>Contact<\/dt><dd><a class="tv-contact" href="\/kb\/contacts\/pat\.md"/);
   });
 
   it('lists its stack\'s parts by layer, those Clef knows linked to the Topics page', () => {

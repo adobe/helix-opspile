@@ -28,11 +28,12 @@
  *   catalog has (its knowledge base's products/) and what else Clef sees in its threads, which the
  *   tabs above them pick. Then its knowledge base by type, and its stack drawing where it has one.
  *
- * Everything in it is a name, a number or a picture, written escaped.
+ * A person's card is drawn with what the inbox's profile card is (ui/person.js). Everything in it
+ * is a name, a number or a picture, written escaped.
  */
 globalThis.TeamView = (() => {
   const {
-    esc, face, plural, ago, often, link, spark, bar, chip, ranked,
+    esc, face, plural, ago, link, spark, bar, ranked,
   } = Overview;
 
   // ---- the parts ----------------------------------------------------------------------------
@@ -53,21 +54,19 @@ globalThis.TeamView = (() => {
 
   function person(m, p, ctx) {
     const role = m.role === 'manager' ? '<span class="tag tv-manager">Manager</span>' : '';
-    const freq = `<div class="tv-freq">${spark(m.weekly, { label: `${m.name || 'Their'} messages, week by week` })}<div><b>${esc(often(m.messages, p.weeks.length))}</b><span class="sub">${esc(plural(m.messages, 'message'))} in ${esc(plural(m.threads, 'thread'))}${m.last ? ` · last ${esc(ago(m.last))}` : ''}</span></div></div>`;
-    // An area is `tag:<id>` on the Topics page, a technology `product:tech:<id>`, a person `person:<id>`.
-    const knows = [
-      m.areas.length ? `<dt>Expertise</dt><dd>${m.areas.map((a) => chip(a.name, a.threads, { href: ctx.topicHref(`tag:${a.id}`) })).join('')}</dd>` : '',
-      m.tech.length ? `<dt>Products</dt><dd>${m.tech.map((t) => chip(t.name, t.threads, { cls: 'tech', href: ctx.topicHref(`product:tech:${t.id}`) })).join('')}</dd>` : '',
-    ].join('');
-    // Key customers at the foot of the card, level with the next card's.
-    const keys = m.customers.length ? `<dl class="tv-keys"><dt>Key customers</dt><dd>${m.customers.map((c) => link(ctx.orgHref(c.slug), `${ctx.orgIcon(c.slug, c.icon)}<span>${esc(ctx.orgName(c.slug, c.name))}</span>`, {
-      cls: 'tv-org', title: `${ctx.orgName(c.slug, c.name)}: ${plural(c.n, 'message')} of theirs in ${plural(c.threads, 'thread')}`,
-    })).join('')}</dd></dl>` : '';
+    // As the inbox's profile card draws them (ui/person.js): an area is `tag:<id>` on the Topics
+    // page, a technology `product:tech:<id>`, a person `person:<id>`; key customers at the foot.
+    const { knows, keys } = Person.work(m, ctx);
     const name = link(ctx.topicHref(`person:${m.id}`), esc(m.name || 'Someone'), { title: 'Their topics, customers and products on the Topics page' });
-    return `<article class="tv-person" data-person="${m.id}">
+    // Their profile on the team, from its knowledge base, under who they are.
+    const profile = m.profile ? Person.profile([{
+      team: p.team.slug, teamName: p.team.name, description: m.profile.description, href: ctx.kbHref(m.profile.path),
+    }]) : '';
+    return `<article class="tv-person ps-card" data-person="${m.id}">
       <header>${face(m.name, m.avatar, 'big')}<div class="who"><b>${name}</b>${role}${m.title ? `<span class="sub">${esc(m.title)}</span>` : ''}</div></header>
-      ${freq}
-      ${knows ? `<dl class="tv-knows">${knows}</dl>` : '<p class="sub tv-none">Nothing Clef tagged in their threads yet.</p>'}
+      ${profile}
+      ${Person.freq(m.name, m, p.weeks.length)}
+      ${knows || '<p class="sub tv-none">Nothing Clef tagged in their threads yet.</p>'}
       ${keys}
     </article>`;
   }
