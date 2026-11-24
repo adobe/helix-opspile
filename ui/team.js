@@ -235,12 +235,11 @@ globalThis.TeamView = (() => {
     const row = (t) => {
       const href = t.path ? ctx.kbHref(t.path) : null;
       const name = href ? `<a href="${esc(href)}">${esc(t.name)}</a>` : esc(t.name);
-      const tags = [
-        t.followed ? '<span class="tag tv-follow" title="Followed: its threads are in the team\'s inbox">Followed</span>' : '',
-        t.catalog ? '<span class="tag" title="In the team\'s catalog, its knowledge base\'s products/">Catalog</span>' : '',
-      ].join('');
-      const sub = [t.vendor !== t.name && t.vendor, t.kind && t.kind !== 'Product' ? t.kind.toLowerCase() : ''].filter(Boolean).join(' · ');
-      return `<li><span class="tv-name">${name}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span><span class="tv-tags">${tags}</span>
+      // Followed is a badge beside the name; what it is, and that the catalog has it, under it.
+      const follow = t.followed ? ' <span class="tag tv-follow" title="Followed: its threads are in the team\'s inbox">Followed</span>' : '';
+      const sub = [t.vendor !== t.name && t.vendor, t.kind && t.kind !== 'Product' ? t.kind.toLowerCase() : '',
+        t.catalog ? 'in its catalog' : ''].filter(Boolean).join(' · ');
+      return `<li><span class="tv-name"><span class="tv-line">${name}${follow}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
         <span class="tv-meter">${bar(t.threads / most)}<span class="sub">${esc(plural(t.threads, 'thread'))}</span></span>${spark(t.weekly, { cls: 'tech', label: 'messages in its threads, week by week' })}</li>`;
     };
     return layers.map((l) => `<div class="tv-layer" data-layer="${esc(l.id)}"><h3>${esc(l.name)}</h3><ul>${l.tech.map(row).join('')}</ul></div>`).join('');
@@ -278,7 +277,8 @@ globalThis.TeamView = (() => {
       <section class="tv-sec tv-hero" aria-label="Activity">${stats(p)}${chart(p)}</section>
       ${people(p, ctx)}
       <div class="tv-two">${customers(p, ctx)}${collaborators(p, ctx)}</div>
-      <div class="tv-two kb">${tech(p, ctx, 'all')}${knowledge(p, ctx)}</div>
+      ${tech(p, ctx, 'all')}
+      ${knowledge(p, ctx)}
     </div>`;
   }
 
