@@ -605,14 +605,21 @@ function renderPanel() {
   // Another pick fades in (ui/app.js); the panel is made again with the page's body.
   Swap.watch(panel, () => state.q.sel);
   const n = state.q.sel && state.graph.all.get(state.q.sel);
+  // The same subject made again (a group opened or folded, a list switched) stays where it was
+  // scrolled to; another starts at its top.
+  const subject = state.week ? `week:${state.week.week}` : state.q.sel || '';
+  const same = panel.dataset.subject === subject;
+  const top = panel.scrollTop;
+  panel.dataset.subject = subject;
   if (state.week) {
     panel.innerHTML = state.week.html || '<div class="empty">Loading…</div>';
+    panel.scrollTop = same ? top : 0;
     return;
   }
   panel.innerHTML = n ? details(n) : overview();
   // The meters' fill, as wide as its share: a class per tenth (ui/spectrum-topics.css).
   for (const f of panel.querySelectorAll('.fill[data-w]')) f.classList.add(`w${Math.max(1, Math.round(Number(f.dataset.w) / 10))}`);
-  panel.scrollTop = 0;
+  panel.scrollTop = same ? top : 0;
 }
 
 // ---- the page ---------------------------------------------------------------------------
@@ -903,7 +910,13 @@ function wire() {
       renderPanel();
     }
     const folding = ev.target.closest('button[data-fold]');
-    if (folding) fold(folding.dataset.fold);
+    if (folding) {
+      const id = folding.dataset.fold;
+      const kind = folding.classList.contains('chev') ? 'chev' : 'fold';
+      fold(id);
+      // Its button, made again, keeps the focus, and the page stays where it was.
+      $('panel')?.querySelector(`button.${kind}[data-fold="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+    }
     const follow = ev.target.closest('button[data-follow]');
     if (follow) toggleFollow(follow.dataset.follow, follow.dataset.target);
     const edit = ev.target.closest('button[data-edit-area]');
