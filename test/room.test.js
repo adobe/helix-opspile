@@ -153,3 +153,27 @@ describe('the room\'s read flush', () => {
     assert.deepEqual(reads(guest), [['t']]);
   });
 });
+
+describe('the room\'s ping', () => {
+  it('answers `ping` with `pong` in the runtime, so the inbox can ask without waking it', () => {
+    const was = globalThis.WebSocketRequestResponsePair;
+    globalThis.WebSocketRequestResponsePair = class {
+      constructor(request, response) {
+        this.request = request;
+        this.response = response;
+      }
+    };
+    try {
+      const ctx = fakeCtx();
+      let pair = null;
+      ctx.setWebSocketAutoResponse = (p) => {
+        pair = p;
+      };
+      // eslint-disable-next-line no-new
+      new TeamRoom(ctx, {});
+      assert.deepEqual({ ...pair }, { request: 'ping', response: 'pong' });
+    } finally {
+      globalThis.WebSocketRequestResponsePair = was;
+    }
+  });
+});

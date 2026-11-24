@@ -8205,7 +8205,8 @@ function markRead(t, { quiet = false } = {}) {
     // A team's view sends it to the team's room; the personal view has a socket per team, and
     // the API picks the room (one of the viewer's teams whose inbox has the thread).
     const ws = !personal() && state.sockets.find((x) => x.team === state.team);
-    if (ws?.readyState === 1) ws.send(JSON.stringify(msg));
+    // Not over a socket being asked whether it is still there (probeSockets): it may be gone.
+    if (ws?.readyState === 1 && !ws.probe) ws.send(JSON.stringify(msg));
     else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: personal() ? undefined : state.team }), credentials: 'same-origin' });
     readsSent.set(m.thread, { at, until: Date.now() + READ_HOLD_MS });
   }
@@ -8312,7 +8313,13 @@ setInterval(() => { if (!hidden() && state.data) render(); }, STATUS_TICK_MS);
 const AWAY_MS = 5 * 60 * 1000;
 const away = { since: 0, timer: null };
 const forgetSoon = () => { if ([forgetRead(), forgetColumn()].some(Boolean)) render(); };
-/** Left or back: the time away starts, or ends. */
+/**
+ * Left or back: the time away starts, or ends. Back, the sockets are asked whether they are still
+ * there (probeSockets), and after AWAY_MS the inbox reloads, whatever the rooms said meanwhile:
+ * a computer that slept, a frozen tab or a dropped network can lose what they announced without
+ * the page hearing of it, and a tab on screen with nothing in `changed` otherwise shows what it
+ * had when you left until something else changes.
+ */
 function awayOrBack() {
   if (hidden() || !document.hasFocus()) {
     if (!away.since) {
@@ -8322,14 +8329,21 @@ function awayOrBack() {
     return;
   }
   clearTimeout(away.timer);
-  if (away.since && Date.now() - away.since >= AWAY_MS) forgetSoon();
+  const { since } = away;
   away.since = 0;
+  if (!since) return;
+  probeSockets();
+  if (Date.now() - since < AWAY_MS) return;
+  forgetSoon();
+  changed.add(GAP);
 }
 awayOrBack();
-// After the blur: focus gone into one of the page's frames (a source shown) is not away.
-window.addEventListener('blur', () => setTimeout(awayOrBack));
-window.addEventListener('focus', awayOrBack);
-document.addEventListener('visibilitychange', () => {
+/**
+ * The inbox is on screen again (shown, or its window focused): what changed meanwhile, then
+ * after a long time away the read threads let go (forgetSoon), and the agent's turn if it was
+ * due to be asked (and the thread's reload did not ask already).
+ */
+function cameBack() {
   const { since } = away;
   awayOrBack();
   if (hidden() || !state.data) return;
@@ -8338,8 +8352,6 @@ document.addEventListener('visibilitychange', () => {
   const long = Boolean(since) && Date.now() - since >= AWAY_MS;
   const open = state.open;
   const agent = open && state.agents.get(open);
-  // Shown again: what changed meanwhile, and the agent's turn if it was due to be asked (and
-  // the thread's reload did not ask already).
   const caught = changed.size && !reload ? reloadChanged() : null;
   if (long && caught) caught.then(forgetSoon);
   if (agent?.due) {
@@ -8347,7 +8359,18 @@ document.addEventListener('visibilitychange', () => {
       if (state.open === open && state.agents.get(open) === agent) loadAgent(open);
     });
   }
+}
+// After the blur: focus gone into one of the page's frames (a source shown) is not away.
+window.addEventListener('blur', () => setTimeout(awayOrBack));
+window.addEventListener('focus', cameBack);
+document.addEventListener('visibilitychange', () => {
+  if (hidden()) awayOrBack();
+  else cameBack();
 });
+// A tab the browser froze (in the background, to save energy) ran nothing meanwhile, and the
+// network back after a drop may have taken the sockets with it.
+document.addEventListener('resume', () => { probeSockets(); reloadSoon(GAP); });
+window.addEventListener('online', probeSockets);
 /** The teams of whoever the inbox is shown for (you, or the person you view as). */
 async function loadWho() {
   const who = state.as ? await get('/api/me') : state.me;
@@ -8614,6 +8637,35 @@ function caughtUp() {
   if (state.open && state.experts.delete(state.open)) loadExperts(state.open);
   reloadSoon(state.open || GAP);
 }
+/**
+ * A socket can say it is open and be gone: after the computer slept, or the network changed,
+ * nothing tells the browser until it sends, and the room's announcements are lost meanwhile.
+ * Each open socket is asked (`ping`, which the room answers with `pong` without waking up:
+ * src/room.js); one that does not answer within PROBE_MS is replaced by a new one, which catches
+ * up (caughtUp). Asked again only once it has answered or been replaced.
+ */
+const PROBE_MS = 10 * 1000;
+function probeSockets() {
+  for (const ws of state.sockets) {
+    if (ws.readyState !== 1 || ws.probe) continue;
+    ws.probe = setTimeout(() => replaceSocket(ws), PROBE_MS);
+    try {
+      ws.send('ping');
+    } catch {
+      replaceSocket(ws);
+    }
+  }
+}
+/** Drops a socket that did not answer (its close would wait for a gone peer) and connects again. */
+function replaceSocket(ws) {
+  clearTimeout(ws.probe);
+  const i = state.sockets.indexOf(ws);
+  if (i < 0) return;
+  state.sockets.splice(i, 1);
+  ws.onmessage = null;
+  ws.close();
+  listen(ws.team, state.live, { again: true });
+}
 function listen(team, live, { again = false } = {}) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live?team=${encodeURIComponent(team)}${state.as ? `&as=${state.as}` : ''}`);
   ws.team = team;
@@ -8626,6 +8678,7 @@ function listen(team, live, { again = false } = {}) {
     clearTimeout(state.offline); state.offline = null; $('offline').hidden = true;
   };
   ws.onclose = () => {
+    clearTimeout(ws.probe);
     const i = state.sockets.indexOf(ws);
     if (i < 0) return;
     state.sockets.splice(i, 1);
@@ -8637,6 +8690,7 @@ function listen(team, live, { again = false } = {}) {
     }, 5000);
   };
   ws.onmessage = (e) => {
+    if (e.data === 'pong') { clearTimeout(ws.probe); ws.probe = null; return; }
     const ev = JSON.parse(e.data);
     noteEvent(ev, team);
     // A message in a channel: someone may have joined it, whom its kept pools do not have.
