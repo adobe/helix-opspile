@@ -44,40 +44,28 @@
 .team .tv-person .who { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-50) var(--spectrum-spacing-100); min-width: 0; }
 .team .tv-person .who b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team .tv-person .who .sub { flex-basis: 100%; }
-.team .tv-freq { display: flex; align-items: center; gap: var(--spectrum-spacing-200); }
-.team .tv-freq > div { display: flex; flex-direction: column; min-width: 0; }
-/* What they know: each label over its tags, which wrap across the card's whole width; their key
-   customers at the card's foot, so they are level across a row of cards. */
-.team .tv-person dl { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); margin: 0; }
-.team .tv-person dl.tv-keys { margin-top: auto; padding-top: var(--spectrum-spacing-200); }
-.team .tv-person dd { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0 0 var(--spectrum-spacing-100); }
-.team .tv-person dd:last-child { margin-bottom: 0; }
 .team .tv-quiet { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin-top: var(--spectrum-spacing-300); }
 .team .tv-q { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-100); }
+/* Key customers at a card's foot, level across a row of cards (ui/person.js draws the rest). */
+.team .tv-person .ps-keys { margin-top: auto; }
 
-/* Avatars: a circle, the initials under the picture. */
-.team .tv-av { position: relative; display: inline-grid; flex: none; place-items: center; overflow: hidden; border-radius: 50%;
-  width: var(--spectrum-component-height-100); height: var(--spectrum-component-height-100); }
-.team .tv-av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.team .tv-av.big { width: var(--spectrum-spacing-700); height: var(--spectrum-spacing-700); }
-.team .tv-av.small { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); }
 
 /* A ranking: its rank, a face or an icon, a name over what it is, a meter, a line, the rest. */
 .team .tv-rank { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
 .team .tv-rank li { display: grid; grid-template-columns: 1.5em auto minmax(0, 1fr) 7em auto; grid-template-areas: "i lead name meter spark" ". . tail tail tail";
   align-items: center; gap: var(--spectrum-spacing-50) var(--spectrum-spacing-200); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100); }
 .team .tv-rank .tv-i { grid-area: i; text-align: right; }
-.team .tv-rank li > :is(.ico, .tv-av) { grid-area: lead; }
+.team .tv-rank li > :is(.ico, .ps-av) { grid-area: lead; }
 .team .tv-rank .tv-name { grid-area: name; display: flex; flex-direction: column; min-width: 0; }
 .team .tv-rank .tv-name > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team .tv-rank .tv-meter { grid-area: meter; }
-.team .tv-rank .tv-spark { grid-area: spark; }
+.team .tv-rank .ps-spark { grid-area: spark; }
 .team .tv-rank .tv-tail { grid-area: tail; display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); }
 .team .tv-rank .tv-tail:empty { display: none; }
 .team .tv-faces { display: flex; gap: var(--spectrum-spacing-50); }
 .team .tv-meter { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 0; }
 .team .tv-bar { display: block; width: 100%; height: var(--spectrum-spacing-100); }
-.team .tv-spark { display: block; flex: none; width: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-50)); height: var(--spectrum-spacing-500); }
+.team .ps-spark { display: block; flex: none; width: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-50)); height: var(--spectrum-spacing-500); }
 
 /* The technologies: tabs, then one list per layer, its name at the left. */
 .team .tv-tabs { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100); margin-bottom: var(--spectrum-spacing-300); }
@@ -105,9 +93,9 @@
 
 @media (max-width: 699px) {
   .team .tv-rank li { grid-template-columns: 1.5em auto minmax(0, 1fr) 5em; grid-template-areas: "i lead name meter" ". . tail tail"; }
-  .team .tv-rank .tv-spark { display: none; }
+  .team .tv-rank .ps-spark { display: none; }
   .team .tv-layer li { grid-template-columns: minmax(0, 1fr) 5em; }
-  .team .tv-layer li .tv-spark { display: none; }
+  .team .tv-layer li .ps-spark { display: none; }
 }
 
 /* ==== Its look ================================================================================== */
@@ -136,35 +124,15 @@
 
 /* A person's card, on layer 2. */
 .spectrum .team .tv-person { padding: var(--spectrum-spacing-300); background: var(--card); border-radius: var(--spectrum-corner-radius-large-default); box-shadow: var(--content-shadow); }
-.spectrum .team .tv-person dl.tv-keys { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
 .spectrum .team .tv-person .who a { color: inherit; text-decoration: none; }
 .spectrum .team .tv-person .who a:hover { color: var(--link); text-decoration: underline; }
 .spectrum .team .tv-person .who b { color: var(--spectrum-heading-color); font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .team .tv-person dt { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); padding-top: var(--spectrum-spacing-50); }
-.spectrum .team .tv-freq b { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .team .tv-none { margin: 0; }
 .spectrum .team .tag.tv-manager { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-indigo-subtle-background-color-default); border-color: transparent; }
 .spectrum .team .tag.tv-follow { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
 
-/* Avatars: the initials in white on the hue (ui/spectrum.css), small and bold. */
-.spectrum .team .tv-av { color: var(--spectrum-white); font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .team .tv-av.big { font-size: var(--spectrum-font-size-200); }
-.spectrum .team .tv-av.small { font-size: var(--spectrum-font-size-50); }
-.spectrum .team .tv-faces .tv-av { box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--content); }
+.spectrum .team .tv-faces .ps-av { box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--content); }
 
-/* Tags: gray, rounded; a technology's in the informative tint, a team's a link. */
-.spectrum .team .tv-chip { display: inline-flex; align-items: center; max-width: 100%; padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-100); border-radius: var(--spectrum-corner-radius-small-size-medium); font-size: var(--spectrum-font-size-75); }
-.spectrum .team .tv-chip.tech { background: var(--spectrum-informative-subtle-background-color-default); }
-.spectrum .team a.tv-chip { text-decoration: none; }
-.spectrum .team a.tv-chip:hover { box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-gray-500); }
-.spectrum .team a.tv-chip.tech:hover { box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-informative-visual-color); }
-.spectrum .team a.tv-chip:focus-visible { outline: var(--s2-focus); }
-.spectrum .team .tv-org { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); max-width: 100%; font-size: var(--spectrum-font-size-75); }
-.spectrum .team .tv-org span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.spectrum .team a.tv-org { color: var(--link); text-decoration: none; }
-.spectrum .team a.tv-org:hover { text-decoration: underline; }
-.spectrum .team .tv-org .ico { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
 
 /* The rankings: rows that light under the pointer, the rank subdued, the meter's track gray. */
 .spectrum .team .tv-rank li { border-radius: var(--s2-radius); }
@@ -180,12 +148,8 @@
 .spectrum .team .tv-layer .tv-bar .fill { fill: var(--spectrum-accent-visual-color); }
 .spectrum .team .tv-meter .sub { font-variant-numeric: tabular-nums; }
 
-/* Sparklines: the line in gray, its area a lighter gray; a technology's in the accent color. */
-.spectrum .team .tv-spark polyline { fill: none; stroke: var(--spectrum-gray-600); stroke-width: var(--spectrum-border-width-200); stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.spectrum .team .tv-spark .area { fill: var(--spectrum-gray-100); }
-.spectrum .team .tv-person .tv-spark polyline { stroke: var(--spectrum-indigo-visual-color); }
-.spectrum .team .tv-person .tv-spark .area { fill: var(--spectrum-indigo-subtle-background-color-default); }
-.spectrum .team .tv-spark.tech polyline { stroke: var(--spectrum-accent-visual-color); }
+/* A technology's line in the accent color (the rest are ui/spectrum.css's). */
+.spectrum .team .ps-spark.tech polyline { stroke: var(--spectrum-accent-visual-color); }
 
 /* The technologies' tabs: quiet ActionButtons, the picked one selected. */
 .spectrum .team .tv-tabs button { min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100); color: var(--spectrum-neutral-content-color-default); background: transparent;

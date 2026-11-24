@@ -242,6 +242,17 @@ const SEED = {
       'playbooks/go-live.md': '---\ntype: Playbook\ntitle: Go-live checklist\ndescription: DNS, CDN, redirects and the sitemap, in that order.\n---\n\n1. Lower the DNS TTL a day before.\n',
       'decisions/managed-cdn-default.md': '---\ntype: Decision\ntitle: Adobe Managed CDN by default\ndescription: New sites start on the managed CDN unless the customer runs their own.\n---\n\nAgreed by the team in October.\n',
       'stack.md': stackFile(PLATFORM_STACK, { title: 'What Platform ops runs for its customers', keep: 'status: stable' }),
+      // Its members' profiles (docs/ARCHITECTURE.md, "Layout"): their cards show them.
+      'contacts/dana-ops.md': [
+        '---', 'type: Contact', 'title: Dana Ops',
+        'description: Platform ops\' site reliability engineer; owns the CDN setups and is on call for launches.',
+        '---', '', '# Dana Ops', '', 'Knows Fastly and Akamai in front of Edge Delivery best; ACME and Globex are hers.', '',
+      ].join('\n'),
+      'contacts/priya-nair.md': [
+        '---', 'type: Contact', 'title: Priya Nair',
+        'description: Platform ops\' support engineer for sign-in and authoring: SSO, Document Authoring and SharePoint.',
+        '---', '', '# Priya Nair', '',
+      ].join('\n'),
       // A partner the team works with across customers.
       'contacts/ravi-kumar.md': [
         '---', 'type: Contact', 'title: Ravi Kumar',

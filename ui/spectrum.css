@@ -821,6 +821,51 @@ header .note { white-space: nowrap; }
   .spectrum *, .spectrum *::before, .spectrum *::after, .spectrum dialog::backdrop { transition-duration: var(--spectrum-animation-duration-0) !important; }
 }
 
+/* A person's parts (ui/person.js), as both people cards draw them: the inbox's profile card and a
+   member's card on their team's overview. Spectrum 2: an Avatar, Tags (a technology's in the
+   informative tint, a link where it goes somewhere), a sparkline of their weeks, and their
+   profile's description as body text with its source a quiet Link. */
+.ps-av { position: relative; display: inline-grid; flex: none; place-items: center; overflow: hidden; border-radius: 50%;
+  width: var(--spectrum-component-height-100); height: var(--spectrum-component-height-100); }
+.ps-av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ps-av.big { width: var(--spectrum-spacing-700); height: var(--spectrum-spacing-700); }
+.ps-av.small { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); }
+.spectrum .ps-av { color: var(--spectrum-white); font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .ps-av.big { font-size: var(--spectrum-font-size-200); }
+.ps-freq { display: flex; align-items: center; gap: var(--spectrum-spacing-200); }
+.ps-freq > div { display: flex; flex-direction: column; min-width: 0; }
+.spectrum .ps-freq b { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
+.ps-spark { display: block; flex: none; width: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-50)); height: var(--spectrum-spacing-500); }
+.spectrum .ps-spark polyline { fill: none; stroke: var(--spectrum-gray-600); stroke-width: var(--spectrum-border-width-200); stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.spectrum .ps-spark .area { fill: var(--spectrum-gray-100); }
+.spectrum .ps-freq .ps-spark polyline { stroke: var(--spectrum-indigo-visual-color); }
+.spectrum .ps-freq .ps-spark .area { fill: var(--spectrum-indigo-subtle-background-color-default); }
+/* What they know, and for whom: each label over its tags, which wrap across the card. */
+.ps-knows, .ps-keys { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); margin: 0; }
+.ps-knows dd, .ps-keys dd { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0 0 var(--spectrum-spacing-100); }
+.ps-knows dd:last-child, .ps-keys dd:last-child { margin-bottom: 0; }
+.ps-keys { padding-top: var(--spectrum-spacing-200); }
+.spectrum .ps-keys { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum :is(.ps-knows, .ps-keys) dt { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); padding-top: var(--spectrum-spacing-50); }
+.spectrum .ps-chip { display: inline-flex; align-items: center; max-width: 100%; padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-100); border-radius: var(--spectrum-corner-radius-small-size-medium); font-size: var(--spectrum-font-size-75); }
+.spectrum .ps-chip.tech { background: var(--spectrum-informative-subtle-background-color-default); }
+.spectrum a.ps-chip { text-decoration: none; }
+.spectrum a.ps-chip:hover { box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-gray-500); }
+.spectrum a.ps-chip.tech:hover { box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-informative-visual-color); }
+.spectrum a.ps-chip:focus-visible { outline: var(--s2-focus); }
+.spectrum .ps-org { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); max-width: 100%; font-size: var(--spectrum-font-size-75); }
+.spectrum .ps-org span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spectrum a.ps-org { color: var(--link); text-decoration: none; }
+.spectrum a.ps-org:hover { text-decoration: underline; }
+.spectrum .ps-org .ico { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+/* Their profile on a team: its description, and under it where it is. */
+.ps-profile { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); }
+.ps-profile p { margin: 0; }
+.spectrum .ps-profile p { color: var(--spectrum-neutral-content-color-default); font-size: var(--spectrum-font-size-100); line-height: var(--spectrum-line-height-200); }
+.spectrum .ps-profile .ps-src { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .ps-profile a.ps-src:hover { color: var(--link); }
+
 /* FMC block diagrams (src/fmc.js): a customer's stack drawing in the inbox, a knowledge base's
    diagrams in the editor. Agents, storages and channels on the card, edges half as thick as nodes,
    groups in shades of grey; the colors are Spectrum 2's, so they follow the color scheme. */

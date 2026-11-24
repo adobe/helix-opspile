@@ -137,7 +137,10 @@ describe('GET /api/person', { skip: !hasGit() && 'git is not installed' }, () =>
           ('kb-team-platform', 'team', 'platform', '2026-10-22T00:00:00Z');
         INSERT INTO identities (source, tenant, user_id, kind, name, email, aliases, fetched_at) VALUES
           ('slack', 'E1', 'U1', 'person', 'Sam R.', 'sam@acme.example', '["sreyes"]', '2026-10-22T00:00:00Z'),
-          ('slack', 'E1', 'B1', 'bot', 'Sam Reyes', null, null, '2026-10-22T00:00:00Z');`);
+          ('slack', 'E1', 'B1', 'bot', 'Sam Reyes', null, null, '2026-10-22T00:00:00Z');
+        INSERT INTO identities (source, tenant, user_id, kind, name, email, person, avatar, title, fetched_at)
+          VALUES ('slack', 'E1', 'U2', 'person', 'lena', 'lena@example.com', 1, 'https://img.example/l.png',
+            'Support engineer', '2026-10-22T00:00:00Z');`);
       srv.create('kb-org-acme');
       srv.create('kb-team-platform');
       const env = { DB, ARTIFACTS: srv.artifacts };
@@ -148,7 +151,7 @@ describe('GET /api/person', { skip: !hasGit() && 'git is not installed' }, () =>
         path: 'contacts/sam-reyes.md',
         content: contact('Sam Reyes', 'description: ACME\'s web lead.\nresource: mailto:sam@acme.example\n'),
       }, { path: 'sites/www.md', content: '---\ntype: Site\n---\n' }], opts);
-      await writeKnowledge(env, 'kb-team-platform', [{ path: 'contacts/lena-berg.md', content: contact('Lena Berg') }], opts);
+      await writeKnowledge(env, 'kb-team-platform', [{ path: 'contacts/lena-berg.md', content: contact('Lena Berg', 'description: Platform ops\' support engineer.\n') }], opts);
 
       const lena = { email: 'lena@example.com', teams: [{ slug: 'platform', role: 'member' }] };
       const anyone = async () => true;
@@ -163,6 +166,26 @@ describe('GET /api/person', { skip: !hasGit() && 'git is not installed' }, () =>
       }]);
       // Without an account, by name; in the team's knowledge base.
       assert.deepEqual((await ask({ name: 'Berg, Lena' })).entries.map((e) => e.repo), ['kb-team-platform']);
+      // An Adobe person is also who they are on their teams, as their team's overview has them:
+      // their best name, picture and title, their teams, and their profile there, which is then
+      // not one of the thread's entries again.
+      const her = await ask({ key: 'slack:E1:U2' });
+      assert.deepEqual(her.entries, []);
+      assert.deepEqual({ ...her.person, work: undefined }, {
+        id: 1,
+        name: 'Lena Berg',
+        avatar: 'https://img.example/l.png',
+        title: 'Support engineer',
+        teams: [{ slug: 'platform', name: 'Platform ops', role: 'member' }],
+        profiles: [{
+          team: 'platform', teamName: 'Platform ops', repo: 'kb-team-platform', path: 'contacts/lena-berg.md', description: 'Platform ops\' support engineer.',
+        }],
+        work: undefined,
+      });
+      assert.deepEqual(Object.keys(her.person.work).sort(), ['areas', 'customers', 'last', 'messages', 'team', 'tech', 'threads', 'weekly', 'weeks']);
+      assert.equal(her.person.work.team, 'platform');
+      // Not for customers.
+      assert.equal(sam.person, undefined);
       // Bots are nobody's Contact; the email stays on the server.
       assert.deepEqual((await ask({ key: 'slack:E1:B1', name: 'Sam Reyes' })).entries, []);
       assert.doesNotMatch(JSON.stringify(sam), /sam@acme/);
