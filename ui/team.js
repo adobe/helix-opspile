@@ -18,8 +18,9 @@
  * - The team's threads, week by week: a chart of what Adobe's people and the customers said, and
  *   how much there is of each part below.
  * - Its people: a card each, with their picture, title and role, how often they post (a line of
- *   their weeks), what sets them apart (Clef's areas and technologies of their threads) and their
- *   key customers. Those who did not post are listed after the cards.
+ *   their weeks), what sets them apart (Clef's areas and technologies of their threads, each a
+ *   link to it on the Topics page, as their name is to them) and, at the card's foot, their key
+ *   customers. Those who did not post are listed after the cards.
  * - Its customers and its collaborators (Adobe's people on other teams in its threads), ranked by
  *   what was said, each with a bar, a line of their weeks and who of the team works them.
  * - Its products and technologies, by the layer of a stack they are in: what it follows, what its
@@ -142,23 +143,33 @@ globalThis.TeamView = (() => {
     </div>`;
   }
 
-  /** A chip of a tag: what it is, how many threads of theirs it was in. */
-  const chip = (name, threads, cls = '') => `<span class="tv-chip${cls ? ` ${cls}` : ''}" title="${esc(`${name}: ${plural(threads, 'thread')} of theirs`)}">${esc(name)}</span>`;
+  /**
+   * A chip of a tag: what it is, how many threads of theirs it was in; a link to it on the Topics
+   * page (`ctx.topicHref`, its node's id), where there is one.
+   */
+  const chip = (name, threads, { cls = '', href = null } = {}) => link(href, esc(name), {
+    cls: `tv-chip${cls ? ` ${cls}` : ''}`,
+    title: `${name}: ${plural(threads, 'thread')} of theirs${href ? '. Open it on the Topics page' : ''}`,
+  });
 
   function person(m, p, ctx) {
     const role = m.role === 'manager' ? '<span class="tag tv-manager">Manager</span>' : '';
     const freq = `<div class="tv-freq">${spark(m.weekly, { label: `${m.name || 'Their'} messages, week by week` })}<div><b>${esc(often(m.messages, p.weeks.length))}</b><span class="sub">${esc(plural(m.messages, 'message'))} in ${esc(plural(m.threads, 'thread'))}${m.last ? ` · last ${esc(ago(m.last))}` : ''}</span></div></div>`;
-    const facts = [
-      m.areas.length ? `<dt>Expertise</dt><dd>${m.areas.map((a) => chip(a.name, a.threads)).join('')}</dd>` : '',
-      m.tech.length ? `<dt>Products</dt><dd>${m.tech.map((t) => chip(t.name, t.threads, 'tech')).join('')}</dd>` : '',
-      m.customers.length ? `<dt>Key customers</dt><dd>${m.customers.map((c) => link(ctx.orgHref(c.slug), `${ctx.orgIcon(c.slug, c.icon)}<span>${esc(ctx.orgName(c.slug, c.name))}</span>`, {
-        cls: 'tv-org', title: `${ctx.orgName(c.slug, c.name)}: ${plural(c.n, 'message')} of theirs in ${plural(c.threads, 'thread')}`,
-      })).join('')}</dd>` : '',
+    // An area is `tag:<id>` on the Topics page, a technology `product:tech:<id>`, a person `person:<id>`.
+    const knows = [
+      m.areas.length ? `<dt>Expertise</dt><dd>${m.areas.map((a) => chip(a.name, a.threads, { href: ctx.topicHref(`tag:${a.id}`) })).join('')}</dd>` : '',
+      m.tech.length ? `<dt>Products</dt><dd>${m.tech.map((t) => chip(t.name, t.threads, { cls: 'tech', href: ctx.topicHref(`product:tech:${t.id}`) })).join('')}</dd>` : '',
     ].join('');
+    // Key customers at the foot of the card, level with the next card's.
+    const keys = m.customers.length ? `<dl class="tv-keys"><dt>Key customers</dt><dd>${m.customers.map((c) => link(ctx.orgHref(c.slug), `${ctx.orgIcon(c.slug, c.icon)}<span>${esc(ctx.orgName(c.slug, c.name))}</span>`, {
+      cls: 'tv-org', title: `${ctx.orgName(c.slug, c.name)}: ${plural(c.n, 'message')} of theirs in ${plural(c.threads, 'thread')}`,
+    })).join('')}</dd></dl>` : '';
+    const name = link(ctx.topicHref(`person:${m.id}`), esc(m.name || 'Someone'), { title: 'Their topics, customers and products on the Topics page' });
     return `<article class="tv-person" data-person="${m.id}">
-      <header>${face(m.name, m.avatar, 'big')}<div class="who"><b>${esc(m.name || 'Someone')}</b>${role}${m.title ? `<span class="sub">${esc(m.title)}</span>` : ''}</div></header>
+      <header>${face(m.name, m.avatar, 'big')}<div class="who"><b>${name}</b>${role}${m.title ? `<span class="sub">${esc(m.title)}</span>` : ''}</div></header>
       ${freq}
-      ${facts ? `<dl>${facts}</dl>` : '<p class="sub tv-none">Nothing Clef tagged in their threads yet.</p>'}
+      ${knows ? `<dl class="tv-knows">${knows}</dl>` : '<p class="sub tv-none">Nothing Clef tagged in their threads yet.</p>'}
+      ${keys}
     </article>`;
   }
 
@@ -169,7 +180,7 @@ globalThis.TeamView = (() => {
     const rest = quiet.length ? `<div class="tv-quiet"><span class="sub">${busy.length ? 'No posts in these weeks' : 'Nobody on the team posted in these weeks'}</span>${quiet.map((m) => `<span class="tv-q" title="${esc(m.title || '')}">${face(m.name, m.avatar)}<span>${esc(m.name || 'Someone')}</span>${m.role === 'manager' ? '<span class="tag tv-manager">Manager</span>' : ''}</span>`).join('')}</div>` : '';
     return `<section class="tv-sec" aria-labelledby="tvPeople"><h2 id="tvPeople">People <span class="sub">${esc(plural(p.members.length, 'member'))}, the busiest first</span></h2>
       ${p.members.length ? `${cards ? `<div class="tv-people">${cards}</div>` : ''}${rest}` : '<div class="empty">Nobody is on this team yet.</div>'}
-      <p class="hint">What they posted anywhere in the inbox, the last ${p.weeks.length} weeks. Expertise and products are Clef's areas and technologies of their threads, those they have more of than the rest of the team first; key customers the ones they posted the most for.</p></section>`;
+      <p class="hint">What they posted anywhere in the inbox, the last ${p.weeks.length} weeks. Expertise and products are Clef's areas and technologies of their threads, those they have more of than the rest of the team first, each a link to it on the Topics page (a name, to the person there); key customers the ones they posted the most for.</p></section>`;
   }
 
   /** A ranked list: `rows` of `{ n, of, lead, name, sub, weekly, tail }`. */
@@ -269,8 +280,9 @@ globalThis.TeamView = (() => {
 
   /**
    * The overview of profile `p` (GET /api/teams/profile), as HTML. `ctx` links and names what is
-   * elsewhere: `orgHref(slug)`, `orgName(slug, name)`, `orgIcon(slug, icon)` (HTML), `teamHref(slug)`
-   * and `kbHref(path)`, null where the viewer may not open the knowledge base.
+   * elsewhere: `orgHref(slug)`, `orgName(slug, name)`, `orgIcon(slug, icon)` (HTML), `teamHref(slug)`,
+   * `kbHref(path)`, null where the viewer may not open the knowledge base, and `topicHref(id)`, a
+   * node of the Topics page.
    */
   function html(p, ctx) {
     return `<div class="tv">

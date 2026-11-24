@@ -31,7 +31,10 @@
  * shell or a child folds it back. A double-click shows only a bubble's threads (`only`), and on
  * nothing all of them again. Without a pick the panel lists the areas and the topics. The
  * filters (a team, the kinds shown, the threads a bubble needs), the groups opened, `only` and
- * the pick are the page's address; the header brings it back as it was left. Rebuild clusters
+ * the pick are the page's address; the header brings it back as it was left. A link that picks a
+ * node (a team's overview links its people's areas and products here, ui/team.js) opens its group
+ * and adds its line to the chart, as a click on it does; a team's and its people's panels link
+ * back to the team's overview in Teams. Rebuild clusters
  * the threads again (POST /api/admin/topics).
  *
  * Under the graph, how much the channels talk about what is picked, week by week, and what else is
@@ -98,6 +101,8 @@ const state = {
   // The graph of the team, of all its threads (`only` aside).
   whole: null,
   more: false,
+  // The node a link picked, whose line is added to the chart once the trends are here (`linked`).
+  link: '',
 };
 
 // ---- the address ------------------------------------------------------------------------
@@ -574,6 +579,10 @@ function details(n) {
   const area = n.type === 'tag' ? areaList().find((a) => a.id === n.key) : null;
   const team = area && area.teams.find(mayArea);
   const parent = n.parent && map() && state.graph.all.get(n.parent);
+  // A team, and an Adobe person on one, have the team's overview in Teams (ui/team.js).
+  const teamSlug = n.type === 'team' ? n.key : (n.type === 'person' && parent?.type === 'team' ? parent.key : null);
+  const teamLink = teamSlug && !teamSlug.startsWith('_')
+    ? `<p class="sub facts"><a href="/inbox/admin?${new URLSearchParams({ tab: 'teams', team: teamSlug })}">${esc(n.type === 'team' ? 'The team\'s overview in Teams' : `${teamLabel(teamSlug)}'s overview in Teams`)}</a></p>` : '';
   return `<div class="head"><span class="dot" data-type="${dotType(n)}"></span><div><div class="sub">${esc(n.one)}${parent ? ` in ${esc(parent.label)}` : ''}</div>
       <h2>${esc(n.label)}</h2></div><button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
     ${followButton(followOf(n), n.label) || foldButton(n) || team ? `<div class="acts">${followButton(followOf(n), n.label, { strong: true })}${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
@@ -581,6 +590,7 @@ function details(n) {
     ${area?.what ? `<p class="theme">Clef is asked: is this thread about ${esc(area.what)}?</p>` : ''}
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
     <p class="sub facts">${facts.map(esc).join(' · ')}</p>
+    ${teamLink}
     ${TrendView.summary(TrendView.moving(trendCtx())?.items.get(n.id))}
 
     ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">Clef gave none of these threads a tag: a topic its questions miss.</p>' : ''}
@@ -749,14 +759,40 @@ function render({ refit = false } = {}) {
   }
   drawGraph({ refit });
   if (state.q.sel && !state.graph.all.has(state.q.sel)) state.q.sel = '';
+  // What is picked shows on the map: a link here to a feature or a person (a team's overview,
+  // ui/team.js) opens its group, as a pick in the panel does.
+  const picked = state.q.sel && state.graph.all.get(state.q.sel);
+  const group = picked?.parent && state.graph.all.get(picked.parent);
+  if (group && !group.open) {
+    state.q.open = [...state.q.open, group.id];
+    toUrl({ push: false });
+    drawGraph();
+  }
+  linked();
   renderBar();
   renderPanel();
   TrendView.chart(trendCtx());
 }
 
+/**
+ * A link that picks a node (`sel` without `tq`, from a team's overview): its line joins the chart's
+ * once both the map and the trends are here, as a pick's does. Once.
+ */
+function linked() {
+  if (!state.link || !TrendView.data || !state.graph) return;
+  const id = state.link;
+  state.link = '';
+  if (state.q.sel === id) {
+    TrendView.add(id, trendCtx());
+    toUrl({ push: false });
+  }
+}
+
 async function load() {
+  state.link = new URLSearchParams(location.search).has('tq') ? '' : state.q.sel;
   // The trends come along; the map is drawn without waiting for them.
   TrendView.load().then(() => {
+    linked();
     if (map() && $('panel')) {
       renderPanel();
       TrendView.chart(trendCtx());
