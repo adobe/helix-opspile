@@ -1638,11 +1638,19 @@ English with a Japanese greeting is English, and is not translated.
   `noTranslate`, the languages they read as written. The bar's "Don't translate Japanese" adds one;
   the user menu's **Translation** section has the switch and the list, where ✕ translates a language
   again.
-- **The model.** Workers AI's Llama 3.3 70B (`TRANSLATOR`, the titles' model), told the target
-  language by name, gets up to twelve messages (6,000 characters) a call, as a JSON object by
-  number, and answers with one: each message's translation, or null for one in that language
-  already (in a mixed thread, the English replies). It keeps markdown, mentions, names, URLs, code,
-  file names, product names and `:emoji:` codes as they are. A message with nothing to translate
+- **The model.** Workers AI's GLM-5.3 (`TRANSLATOR`), told the target language by name, gets up
+  to twelve messages (6,000 characters) a call, as a JSON object by number, each with its author's
+  name, and answers with one: each message's translation, or null for one in that language
+  already (in a mixed thread, the English replies). It writes set phrases of politeness as the
+  target language says them, names as their people write them (the authors' names tell it that
+  `龍` is Long), and keeps markdown, mentions, URLs, code, file names, product names and `:emoji:`
+  codes as they are. It thinks little first (`reasoning: low`, temperature 0.2): a call takes one
+  to six seconds. Of twelve models tried on a Japanese thread, Llama 3.3 (the titles' model)
+  translated set phrases word for word ("Please take care of me"), Llama 4 Scout and Mistral Small
+  called Japanese English, and the reasoning models (gpt-oss, DeepSeek, Gemma 4, Qwen) took ten
+  seconds to a minute; GLM-5.3 wrote the most natural English, the fastest, and stayed so on
+  German threads with links, images and mentions. It costs some three times what Llama 3.3 does,
+  about a tenth of a cent for a short thread, once. A message with nothing to translate
   (links, code, mentions and emoji only) and one over 6,000 characters are not asked. One request
   translates at most 40 messages, at the same time, and says how many are left (`more`), which the
   page asks for next; what the model did not answer for (`failed`: no JSON, or the call failed) is

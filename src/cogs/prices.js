@@ -40,6 +40,8 @@ const WORKERS_AI_MODELS = {
   '@cf/cloudflare/clef-omni': { input: 0.15, output: 0 },
   '@cf/cloudflare/clairic': { input: 0.10, output: 0 },
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { input: 0.293, output: 2.253 },
+  // The translations' (src/translate.js).
+  '@cf/zai-org/glm-5.3': { input: 1.4, output: 4.4 },
   '@cf/baai/bge-base-en-v1.5': { input: 0.067, output: 0 },
 };
 

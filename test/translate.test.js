@@ -34,8 +34,11 @@ function model(answer = (input) => Object.fromEntries(Object.entries(input)
     calls,
     AI: {
       async run(name, { messages }) {
-        const input = JSON.parse(messages[1].content);
-        calls.push({ name, system: messages[0].content, input });
+        const asked = JSON.parse(messages[1].content);
+        const input = Object.fromEntries(Object.entries(asked).map(([k, v]) => [k, v.text]));
+        calls.push({
+          name, system: messages[0].content, input, from: Object.values(asked).map((v) => v.from),
+        });
         const out = answer(input);
         return { response: typeof out === 'string' ? out : JSON.stringify(out) };
       },
@@ -78,6 +81,10 @@ describe('translation', () => {
     assert.deepEqual(parseAnswer('Here you go:\n```json\n{"1": "Hello", "2": null, "3": " "}\n```'), {
       1: 'Hello', 2: null,
     });
+    // Or in the shape it was asked in.
+    assert.deepEqual(parseAnswer('{"1": {"from": "Cy", "text": "Hello"}, "2": {"text": null}}'), {
+      1: 'Hello', 2: null,
+    });
     assert.equal(parseAnswer('no JSON'), null);
     assert.equal(parseAnswer('{"1": '), null);
     assert.equal(parseAnswer('[1, 2]'), null);
@@ -97,7 +104,7 @@ describe('translation', () => {
     const { AI, calls } = model();
     const e = { DB, AI };
     const messages = [
-      { key: 't|1', body: 'こんにちは' },
+      { key: 't|1', body: 'こんにちは', from: 'Cy' },
       { key: 't|2', body: 'Hello there' },
       { key: 't|3', body: 'https://example.com' },
     ];
@@ -109,6 +116,8 @@ describe('translation', () => {
     assert.deepEqual(calls.map((c) => c.input), [{ 1: 'こんにちは', 2: 'Hello there' }]);
     assert.equal(calls[0].name, TRANSLATOR);
     assert.match(calls[0].system, /into English/);
+    // With who wrote each, so a name is written as they write it.
+    assert.deepEqual(calls[0].from, ['Cy', 'unknown']);
     assert.deepEqual(DB.rows('SELECT message, lang, body FROM translations ORDER BY message'), [
       { message: 't|1', lang: 'en', body: 'EN: こんにちは' },
       { message: 't|2', lang: 'en', body: null },
@@ -213,6 +222,7 @@ describe('translation', () => {
     });
     // Not the platform's notices, nor what was deleted.
     assert.deepEqual(calls.map((c) => c.input), [{ 1: 'こんにちは', 2: 'Thanks' }]);
+    assert.deepEqual(calls[0].from, ['Cy', 'Cy']);
     assert.equal((await get(eve, `/api/translate?thread=${encodeURIComponent(KEY)}&to=en`)).status, 404);
     assert.equal((await get(ada, `/api/translate?thread=${encodeURIComponent(KEY)}&to=x y`)).status, 400);
   });

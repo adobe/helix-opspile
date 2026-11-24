@@ -1090,7 +1090,7 @@ export async function translation(env, asked, to, { waitUntil = null } = {}) {
   const version = new Map(files.map(({ meta }) => [`${meta.thread}|${meta.id}`,
     meta.editedAt || meta.at || null]));
   const done = await translateMessages(env, files.map(({ meta, body }) => ({
-    key: `${meta.thread}|${meta.id}`, body,
+    key: `${meta.thread}|${meta.id}`, body, from: meta.author?.name || null,
   })), target);
   return json({
     ...done,

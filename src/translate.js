@@ -19,8 +19,13 @@
  * translated, so a thread is translated once per language, and an edit again.
  */
 
-/** The language model of the translations: Workers AI's, as the titles'. */
-export const TRANSLATOR = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+/**
+ * The language model of the translations, on Workers AI. Of twelve tried on a Japanese thread
+ * (docs/ARCHITECTURE.md, "Translation"), GLM-5.3 wrote the most natural English, the fastest:
+ * Llama 3.3, the titles' model, translated set phrases word for word ("Please take care of
+ * me"), and the reasoning models took ten seconds and more.
+ */
+export const TRANSLATOR = '@cf/zai-org/glm-5.3';
 
 /**
  * The languages Clef tells apart, by ISO 639-1 code: those of the customers and colleagues the
@@ -114,12 +119,17 @@ export async function sourceHash(body) {
 /** The model's instructions, for translating into `name`. */
 export function instructions(name) {
   return 'You translate the messages of a support conversation between Adobe staff and a customer'
-    + ` into ${name}. You get a JSON object of messages in markdown, by number. Answer with a JSON`
-    + ' object of the same numbers only, and nothing before or after it: each message translated'
-    + ` into ${name}, or null for a message that is in ${name} already. Keep the markdown, the`
-    + " line breaks, @mentions, people's names, URLs, code, file names, product names and :emoji:"
-    + ' codes exactly as they are. Translate what is written, in the same tone; add, explain and'
-    + ' leave out nothing.';
+    + ` into ${name}. You get a JSON object of messages by number, each with who wrote it (\`from\`)`
+    + ' and its text in markdown. Answer with a JSON object of the same numbers only, and nothing'
+    + ` before or after it: each text translated into ${name}, or null for one that is in ${name}`
+    + ` already. Write it as a speaker of ${name} in business would: a set phrase of politeness`
+    + ` becomes the one of ${name} it means, not a word-for-word one. Write a name in another script`
+    + ` as the person writes it in ${name}: the authors are named in \`from\` (a name they sign with`
+    + ' is theirs), and an honorific such as さん or 様 goes. Keep @mentions exactly as written, in'
+    + ' their script, as they link to the person, and keep the markdown, the line breaks, URLs,'
+    + ' code, file names, product names and :emoji: codes exactly as they are. Translate every'
+    + ' sentence, also greetings, introductions, whom a message addresses and how it is signed:'
+    + ' add, explain and leave out nothing.';
 }
 
 /**
@@ -144,8 +154,10 @@ export function parseAnswer(text) {
   }
   const out = {};
   for (const [k, v] of Object.entries(parsed)) {
-    if (v === null || (typeof v === 'string' && v.trim())) {
-      out[k] = v;
+    // Some models answer in the shape they were asked in: `{ from, text }`.
+    const said = v && typeof v === 'object' && !Array.isArray(v) ? v.text : v;
+    if (said === null || (typeof said === 'string' && said.trim())) {
+      out[k] = said;
     }
   }
   return out;
@@ -173,15 +185,21 @@ export function chunks(list) {
 
 /** One call: `{ key: text or null }` for the messages the model answered for. */
 async function translateChunk(env, list, name) {
-  const input = Object.fromEntries(list.map((m, i) => [String(i + 1), m.body]));
+  const input = Object.fromEntries(list.map((m, i) => [String(i + 1), {
+    from: m.from || 'unknown', text: m.body,
+  }]));
   const chars = list.reduce((n, m) => n + m.body.length, 0);
   const res = await env.AI.run(TRANSLATOR, {
     messages: [
       { role: 'system', content: instructions(name) },
       { role: 'user', content: JSON.stringify(input) },
     ],
-    // A character of Japanese can be a word of English: room for twice the characters.
-    max_tokens: Math.min(8000, 2 * chars + 256),
+    // A character of Japanese can be a word of English: room for twice the characters, and for
+    // what the model thinks first.
+    max_tokens: Math.min(8000, 2 * chars + 1024),
+    // It thinks little before it translates: a second or two a call, not ten.
+    reasoning: { effort: 'low' },
+    temperature: 0.2,
   });
   const text = typeof res?.response === 'string' ? res.response
     : (res?.choices?.[0]?.message?.content ?? (res?.response && JSON.stringify(res.response)));
@@ -194,7 +212,8 @@ async function translateChunk(env, list, name) {
 }
 
 /**
- * The translations of `messages` (`[{ key, body }]`, `key` as `<thread>|<id>`) into `to` (from
+ * The translations of `messages` (`[{ key, body, from }]`, `key` as `<thread>|<id>`, `from` the
+ * author's name, which tells the model how they write it) into `to` (from
  * `targetOf`): `{ to, messages: { key: text or null } }`, null where it is in that language
  * already (or has nothing to translate), with `more` (how many are left for another request)
  * and `failed` (how many the model did not answer for; asked again next time). From D1 where it
@@ -202,7 +221,10 @@ async function translateChunk(env, list, name) {
  */
 export async function translateMessages(env, messages, to, now = new Date()) {
   const list = await Promise.all((messages || []).map(async (m) => ({
-    key: m.key, body: String(m.body || ''), hash: await sourceHash(String(m.body || '')),
+    key: m.key,
+    body: String(m.body || ''),
+    from: m.from || null,
+    hash: await sourceHash(String(m.body || '')),
   })));
   const out = {};
   const ask = [];
