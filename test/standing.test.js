@@ -12,7 +12,11 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { customerStanding, regularsOf, standingOf } from '../src/standing.js';
+import { inbox } from '../src/api.js';
+import {
+  customerStanding, regularsOf, setMark, standingOf,
+} from '../src/standing.js';
+import { indexMessage, recordMentions } from '../src/threads.js';
 import { d1 } from './d1.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -93,5 +97,132 @@ describe('customerStanding', () => {
       VALUES ('d:1', 'm', 1, ?, 'id'), ('c:1', 'n', 1, ?, 'id')`).run(ago(5), ago(40));
     const s = await customerStanding(db, 1, NOW);
     assert.deepEqual(s, { regular: ['a'], active: ['a', 'd'] });
+  });
+});
+
+describe('customer marks', () => {
+  /** Dana (1) posts in `a`'s channel 9 times two days ago, in `b`'s once; a mention in `c`. */
+  async function marked() {
+    const db = d1({ people: [{ id: 1, name: 'Dana' }] });
+    db.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, team, org,
+      kind, path, updated_at) VALUES ('a:1', 'slack', 'T', 'CA', '1', 'edge', 'a', 'channel', 'a/',
+      ?), ('c:1', 'slack', 'T', 'CC', '1', 'edge', 'c', 'channel', 'c/', ?)`).run(ago(0), ago(0));
+    for (let i = 0; i < 9; i += 1) {
+      db.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, person)
+        VALUES ('slack', 'T', 'CA', ?, 'a:1', ?, 1)`).run(String(i), ago(2));
+    }
+    db.sqlite.prepare(`INSERT INTO mentions (thread, message, person, at, via)
+      VALUES ('c:1', 'm', 1, ?, 'id')`).run(ago(3));
+    return db;
+  }
+
+  it('leaves out of your regulars what you posted before you took a customer out of them', async () => {
+    const db = await marked();
+    assert.deepEqual((await customerStanding(db, 1, NOW)).regular, ['a']);
+    assert.deepEqual(await setMark(db, 1, { org: 'a', mark: 'unstar' }, ago(1)), { was: null });
+    const s = await customerStanding(db, 1, NOW);
+    // Still active: you posted there lately.
+    assert.deepEqual(s, { regular: [], active: ['a', 'c'] });
+    // Undone, the row goes.
+    assert.deepEqual(await setMark(db, 1, { org: 'a', mark: 'unstar', at: null }, ago(0)), { was: ago(1) });
+    assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS n FROM customer_marks').get().n, 0);
+    assert.deepEqual((await customerStanding(db, 1, NOW)).regular, ['a']);
+  });
+
+  it('leaves out what came before you muted a customer, for regulars and for being active', async () => {
+    const db = await marked();
+    await setMark(db, 1, { org: 'a', mark: 'mute' }, ago(1));
+    await setMark(db, 1, { org: 'c', mark: 'mute' }, ago(1));
+    assert.deepEqual(await customerStanding(db, 1, NOW), { regular: [], active: [] });
+  });
+
+  it('takes a mark of unstar or mute, and a time before now to undo it', async () => {
+    const db = d1({ people: [{ id: 1, name: 'Dana' }] });
+    assert.equal((await setMark(db, 1, { org: 'a', mark: 'star' })).status, 400);
+    assert.equal((await setMark(db, 1, { org: '', mark: 'mute' })).status, 400);
+    assert.equal((await setMark(db, 1, { org: 'a', mark: 'mute', at: 'later' })).status, 400);
+    assert.equal((await setMark(db, 1, { org: 'a', mark: 'mute', at: '2999-01-01T00:00:00Z' })).status, 400);
+  });
+});
+
+describe('a muted customer in the personal view', () => {
+  const me = {
+    id: 2, email: 'dana@staff.example', name: 'Dana', teams: [],
+  };
+  let n = 0;
+  const minute = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00.000Z`;
+  const say = (DB, {
+    thread, channelId, org = 'acme', person = null, at,
+  }) => {
+    n += 1;
+    return indexMessage(DB, {
+      source: 'slack',
+      tenant: 'E1',
+      channelId,
+      org,
+      team: 'helix',
+      kind: 'channel',
+      counted: true,
+      staff: Boolean(person),
+      person,
+      rootId: thread,
+      id: `${thread}.${n}`,
+      thread,
+      at: minute(at),
+      title: thread,
+      path: `${thread}/`,
+    }).then(() => `slack:E1:${channelId}:${thread}.${n}`);
+  };
+  const listed = async (DB) => (await inbox({ DB }, me, null, { personal: true })).threads
+    .map((t) => t.thread).sort();
+
+  it('leaves it until you post or are mentioned in one of its channels again', async () => {
+    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }], people: [{ id: 1, name: 'Sam' }, { id: 2, name: 'Dana', staff: 1 }] });
+    await say(DB, {
+      thread: 'a1', channelId: 'C1', person: 2, at: 1,
+    });
+    await say(DB, {
+      thread: 'b1', channelId: 'C2', person: 2, at: 2,
+    });
+    await say(DB, {
+      thread: 'o1', channelId: 'C3', org: 'other', person: 2, at: 3,
+    });
+    assert.deepEqual(await listed(DB), ['a1', 'b1', 'o1']);
+    await setMark(DB, 2, { org: 'acme', mark: 'mute' }, minute(10));
+    assert.deepEqual(await listed(DB), ['o1']);
+    // Someone else posting does not bring it back; a mention of you in C2 does, C2 only.
+    await say(DB, {
+      thread: 'a2', channelId: 'C1', person: 1, at: 11,
+    });
+    const m = await say(DB, {
+      thread: 'b2', channelId: 'C2', person: 1, at: 12,
+    });
+    assert.deepEqual(await listed(DB), ['o1']);
+    await recordMentions(DB, { thread: 'b2', message: m, at: minute(13) }, [{ person: 2, via: 'id' }]);
+    assert.deepEqual(await listed(DB), ['b1', 'b2', 'o1']);
+    // Posting in C1 brings it back, every thread of it.
+    await say(DB, {
+      thread: 'a3', channelId: 'C1', person: 2, at: 14,
+    });
+    assert.deepEqual(await listed(DB), ['a1', 'a2', 'a3', 'b1', 'b2', 'o1']);
+  });
+
+  it('leaves what you follow of it until that has activity again', async () => {
+    const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }], people: [{ id: 1, name: 'Sam' }, { id: 2, name: 'Dana', staff: 1 }] });
+    DB.sqlite.prepare(`INSERT INTO person_follows_by (person, kind, target, added_at)
+      VALUES (2, 'org', 'acme', ?)`).run(minute(0));
+    await say(DB, {
+      thread: 'f1', channelId: 'C1', person: 1, at: 1,
+    });
+    await say(DB, {
+      thread: 'f2', channelId: 'C1', person: 1, at: 2,
+    });
+    assert.deepEqual(await listed(DB), ['f1', 'f2']);
+    await setMark(DB, 2, { org: 'acme', mark: 'mute' }, minute(10));
+    assert.deepEqual(await listed(DB), []);
+    await say(DB, {
+      thread: 'f2', channelId: 'C1', person: 1, at: 11,
+    });
+    assert.deepEqual(await listed(DB), ['f2']);
   });
 });

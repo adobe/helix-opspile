@@ -1034,7 +1034,12 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   you posted to, none with less than one in twenty of them (in production most people send four
   in five of theirs to one to three customers). Inactive are those you have neither posted to
   nor been mentioned in for two weeks (`standing` of the personal view's first page,
-  src/standing.js).
+  src/standing.js). A click on a regular's star takes it out of your regulars: what you posted
+  there so far no longer counts toward them. The others have a mute, on hover: a muted customer
+  leaves your personal view until you post or are mentioned in one of its channels again (that
+  channel comes back, with its threads), or a thread of it you follow has activity again; what came
+  before the mute no longer counts (`POST /api/standing`, `customer_marks`). Both can be undone
+  from the note they leave; neither changes what you may see or work.
   Beside each customer's heading in the list by customer are the key parts of its **stack**:
   the first part of each layer of its [stack drawing](#3-knowledge-bases), top to bottom, Other's
   left out (`stacks` of `/api/inbox`, from `org_stacks`, src/orgstacks.js); a customer without a

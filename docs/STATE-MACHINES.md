@@ -95,6 +95,18 @@ who may no longer sign in (off every team, outside `SIGNIN_DOMAINS`) keeps the r
 nothing, as nothing of theirs is asked for, and `entryFollowers` leaves them out. A relabel's room event names the technologies it gained or lost (`tech`), so
 a person whose thread no longer shows what they follow still hears of it, and their inbox lets it go.
 
+**Customer marks.** none → unstarred and/or muted → (undone) none (`customer_marks`, migration 0099,
+`setMark` in `src/standing.js`). One row per person and customer, each mark the time it was last
+set: setting it again moves it on, an undo puts back the time it answered (`was`), and a row with
+neither left goes. Nothing is ever cleared by what happens later; what a mark does is worked out from
+its time each time. `unstarred_at`: their messages there before it do not count toward their regulars
+(they may become one again by what they post after). `muted_at`: before it, their messages and
+mentions there do not put its channels in their personal view's list (`listedChannels` in
+`src/shares.js`), nor do their follows its threads (`inPersonalInbox`); a channel comes back as soon
+as they post or are mentioned in it after the mute, a followed thread once it has activity after it,
+and their messages before it do not count toward their regulars or being active. Muting changes the
+list only, not what they may see or work (`inPersonalView`, `mayWork`).
+
 **Label review.** applies to the current label → history only. A review holds while its
 `labeled_through` matches the label's (`src/review.js`).
 

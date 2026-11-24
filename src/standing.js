@@ -21,6 +21,7 @@
  *   customers has few regulars, or one);
  * - inactives: where the viewer has neither posted nor been mentioned in the last QUIET_DAYS;
  * - all others.
+ * What the viewer took out of their regulars, or muted, starts afresh there (`setMark`).
  */
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -77,18 +78,57 @@ export function standingOf(posted, named, now = Date.now()) {
 /**
  * Person `person`'s standing with customers, as of `now` (epoch ms; see standingOf). Both by
  * index: the person's messages (messages_person, migration 0030) and mentions
- * (mentions_person, migration 0004).
+ * (mentions_person, migration 0004). Their marks (customer_marks, migration 0099) keep what came
+ * before them out: toward their regulars, no message before they took a customer out of them or
+ * muted it; toward being active, no message or mention before they muted it.
  */
 export async function customerStanding(db, person, now = Date.now()) {
   const since = new Date(now - REGULAR_DAYS * DAY).toISOString();
   const quiet = new Date(now - QUIET_DAYS * DAY).toISOString();
   const [{ results: posted }, { results: named }] = await Promise.all([
-    db.prepare(`SELECT t.org, COUNT(*) AS n, MAX(m.at) AS last FROM messages m
-        JOIN threads t ON t.thread = m.thread
+    db.prepare(`SELECT t.org,
+        SUM(m.at > COALESCE(u.unstarred_at, '') AND m.at > COALESCE(u.muted_at, '')) AS n,
+        MAX(CASE WHEN m.at > COALESCE(u.muted_at, '') THEN m.at END) AS last
+      FROM messages m JOIN threads t ON t.thread = m.thread
+        LEFT JOIN customer_marks u ON u.person = ?1 AND u.org = t.org
       WHERE m.person = ?1 AND m.deleted = 0 AND m.at >= ?2 AND t.org IS NOT NULL
       GROUP BY t.org`).bind(person, since).all(),
     db.prepare(`SELECT DISTINCT t.org FROM mentions n JOIN threads t ON t.thread = n.thread
-      WHERE n.person = ?1 AND n.at >= ?2 AND t.org IS NOT NULL`).bind(person, quiet).all(),
+        LEFT JOIN customer_marks u ON u.person = ?1 AND u.org = t.org
+      WHERE n.person = ?1 AND n.at >= ?2 AND t.org IS NOT NULL
+        AND n.at > COALESCE(u.muted_at, '')`).bind(person, quiet).all(),
   ]);
   return standingOf(posted, (named || []).map((r) => r.org), now);
+}
+
+/** The marks a person may set on a customer, by the column that keeps each. */
+export const MARKS = { unstar: 'unstarred_at', mute: 'muted_at' };
+
+/**
+ * Sets person `person`'s mark `mark` (MARKS) on customer `org`: to `now` (an ISO time), or with
+ * `at` given (null, or an earlier time) back to what it was, for an undo. A row with neither mark
+ * left goes. Returns `{ was }`, the mark's time before, or `{ error, status }`.
+ */
+export async function setMark(db, person, { org, mark, at }, now = new Date().toISOString()) {
+  const column = MARKS[mark];
+  if (!column) {
+    return { error: 'mark is unstar or mute', status: 400 };
+  }
+  if (typeof org !== 'string' || !org.trim() || org.length > 200) {
+    return { error: 'org: a customer', status: 400 };
+  }
+  const to = at === undefined ? now : at;
+  if (to !== null && (typeof to !== 'string' || Number.isNaN(Date.parse(to)) || to > now)) {
+    return { error: 'at: null, or a time before now', status: 400 };
+  }
+  const row = await db.prepare(`SELECT ${column} AS was FROM customer_marks
+    WHERE person = ?1 AND org = ?2`).bind(person, org).first();
+  await db.batch([
+    db.prepare(`INSERT INTO customer_marks (person, org, ${column}) VALUES (?1, ?2, ?3)
+      ON CONFLICT (person, org) DO UPDATE SET ${column} = excluded.${column}`)
+      .bind(person, org, to),
+    db.prepare(`DELETE FROM customer_marks WHERE person = ?1 AND org = ?2
+      AND unstarred_at IS NULL AND muted_at IS NULL`).bind(person, org),
+  ]);
+  return { was: row?.was ?? null };
 }

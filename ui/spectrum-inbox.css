@@ -3016,7 +3016,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
    have not read, beside a customer, and the threads it counts are marked in the same red.
    Unread is bold; nothing else is red, nothing else has a count. A customer's \2260 excludes
    it, as on the expert view's cards: over the end of its name, before the badge. */
-main.simple .fr { grid-template-columns: var(--spectrum-spacing-300) 1fr auto; gap: var(--spectrum-spacing-100); }
+main.simple .fr { grid-template-columns: var(--spectrum-spacing-300) 1fr auto auto; gap: var(--spectrum-spacing-100); }
 main.simple .fr .lab, main.simple .fr .not { grid-column: 2; }
 main.simple .fr.all { margin-bottom: var(--spectrum-spacing-75); }
 .spectrum main.simple .card.simple h3::before { display: none; }
@@ -3396,9 +3396,15 @@ main.simple .fr.cut { margin-top: var(--spectrum-spacing-200); }
 main.simple .fr.cut::before { content: ""; position: absolute; left: var(--spectrum-spacing-75); right: var(--spectrum-spacing-75);
   top: calc(var(--spectrum-spacing-100) * -1 - var(--spectrum-border-width-100) / 2); pointer-events: none; }
 .spectrum main.simple .fr.cut::before { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); }
-main.simple .fr.regular { grid-template-columns: var(--spectrum-spacing-300) 1fr auto auto; }
-main.simple .fr.regular > .wf { grid-column: 3; grid-row: 1; }
-main.simple .fr.regular > .men { grid-column: 4; grid-row: 1; }
-.spectrum main.simple .fr.regular > .wf { color: var(--spectrum-neutral-subdued-content-color-default); }
+main.simple .fr > :is(.mk, .wf) { grid-column: 3; grid-row: 1; }
+main.simple .fr > .men { grid-column: 4; grid-row: 1; }
+/* A regular's star takes it out of your regulars; the others' mute shows on hover, as the \2260
+   does (markButton in ui/inbox.js). */
+main.simple .fr .mk { display: grid; place-items: center; padding: 0; border: 0; background: none; cursor: pointer; }
+main.simple .fr .mk.mute { opacity: 0; pointer-events: none; }
+main.simple .fr:hover .mk.mute, main.simple .fr .mk.mute:focus-visible { opacity: 1; pointer-events: auto; }
+@media (hover: none) { main.simple .fr .mk.mute { opacity: 0.6; pointer-events: auto; } }
+.spectrum main.simple .fr > :is(.mk, .wf) { color: var(--spectrum-neutral-subdued-content-color-default); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum main.simple .fr .mk:hover { color: var(--spectrum-neutral-content-color-hover); }
 .spectrum main.simple .fr.quiet .lab:not(.new) { color: var(--spectrum-neutral-subdued-content-color-default); }
 main.simple .fr.quiet:not(:has(.lab.new)) .logo { opacity: 0.5; }

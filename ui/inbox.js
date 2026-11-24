@@ -1392,6 +1392,16 @@ const SECTIONS = [
   { cls: '', title: '' },
   { cls: 'quiet', title: 'Inactive: you have not posted here or been mentioned in two weeks' },
 ];
+/**
+ * A customer's mark in the column (markCustomer): a regular's star, which takes it out of your
+ * regulars, and on the others, shown on hover, the mute, which takes it out of your inbox.
+ */
+const markButton = (section) => {
+  if (!state.data?.standing || state.as) return section === 0 ? wf('star') : '';
+  return section === 0
+    ? `<button class="mk star" type="button" data-mark="unstar" title="One of your regulars: you send most of your messages here. Click to take it out of them" aria-label="Take out of your regulars">${wf('star')}</button>`
+    : `<button class="mk mute" type="button" data-mark="mute" title="Mute: its threads leave your inbox until you post or are mentioned there again, or a thread you follow comes up there" aria-label="Mute">${wf('volume-off')}</button>`;
+};
 function sectionOf(v) {
   const s = state.data?.standing;
   if (!s) return 1;
@@ -1480,7 +1490,7 @@ function simpleCustomers() {
     above = c;
     const why = c.out ? ' (excluded)' : (title && `. ${title}`);
     return `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}${cls ? ` ${cls}` : ''}${cut ? ' cut' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${esc(why)}">
-      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${c.section === 0 ? wf('star') : ''}${youBadge(c.you)}</div>`;
+      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${c.out ? '' : markButton(c.section)}${youBadge(c.you)}</div>`;
   }).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
   return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
@@ -3354,6 +3364,40 @@ async function toggleFollowOf(kind, id, name) {
   const shown = followName(kind, id);
   toast(follow ? `Following ${shown}: its threads are in your personal view.` : `No longer following ${shown}.`);
   afterFollow();
+}
+
+/**
+ * Sets your mark `kind` on customer `org` (POST /api/standing, src/standing.js), or with `at`
+ * undoes it: `unstar` takes a regular out of your regulars, its messages so far no longer counted
+ * toward them; `mute` takes the customer out of your inbox, until you post or are mentioned in one
+ * of its channels again (that channel comes back), or a thread of it you follow has activity. Its
+ * threads leave the list at once, and the inbox loads again without the older pages it had.
+ */
+async function markCustomer(org, kind, at) {
+  if (state.as || !personal()) return;
+  const undo = at !== undefined;
+  const name = customerName(org);
+  const res = await request('POST', '/api/standing', { org, mark: kind, ...(undo ? { at } : {}) })
+    .catch((e) => ({ ok: false, data: { error: e.message } }));
+  if (!res.ok) {
+    toast(`Could not ${kind === 'mute' ? (undo ? 'unmute' : 'mute') : 'change'} ${name}: ${res.data?.error || res.status}`);
+    return;
+  }
+  if (state.data) state.data.standing = res.data.standing;
+  if (kind === 'mute' && !undo && state.data) {
+    state.data.threads = state.data.threads.filter((t) => t.org !== org);
+    state.sel.customer?.delete(org);
+    if (!state.sel.customer?.size) delete state.sel.customer;
+    toUrl();
+  }
+  render();
+  if (!undo) {
+    const said = kind === 'mute'
+      ? `Muted ${name}: it is back once you post or are mentioned there, or a thread you follow comes up.`
+      : `${name} is no longer one of your regulars.`;
+    toast(said, { label: 'Undo', run: () => markCustomer(org, kind, res.data.was) });
+  }
+  if (kind === 'mute') loadInbox(null, { fresh: true }).catch(() => {});
 }
 
 /**
@@ -8473,10 +8517,14 @@ function splitFrom(group, keys) {
   const entry = state.data?.threads.find((t) => t.thread === group);
   if (entry?.members) entry.members = entry.members.filter((m) => !keys.includes(m.thread));
 }
-async function loadInbox(early = null) {
+/**
+ * Loads the inbox's first page, and keeps the older pages loaded but what it has folded since.
+ * `fresh` keeps none of them: the view lists other channels now (a customer was muted).
+ */
+async function loadInbox(early = null, { fresh = false } = {}) {
   const ahead = early && await early;
   const first = ahead && scopeOf(ahead) === scopeKey() ? ahead : await get(pageUrl());
-  const prev = state.data && scopeOf(state.data) === scopeOf(first) && state.data.as === (state.as || null) ? state.data : null;
+  const prev = !fresh && state.data && scopeOf(state.data) === scopeOf(first) && state.data.as === (state.as || null) ? state.data : null;
   first.as = state.as || null;
   first.page = first.page || { next: null };
   if (prev) {
@@ -10482,6 +10530,8 @@ async function start() {
     }
     const r = e.target.closest('.fr');
     if (!r || r.dataset.v === undefined) return;
+    const markBtn = e.target.closest('[data-mark]');
+    if (markBtn) { markCustomer(r.dataset.v, markBtn.dataset.mark); return; }
     toggleFilter(r.dataset.f, r.dataset.v, e.shiftKey || Boolean(e.target.closest('[data-not]')));
     render();
     toUrl();

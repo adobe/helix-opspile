@@ -86,7 +86,7 @@ import { batchedDatabase } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
 import { orgStacksOf } from './orgstacks.js';
-import { customerStanding } from './standing.js';
+import { customerStanding, setMark } from './standing.js';
 import {
   changeArea, rebuildTopics, topicsPage, trendsApi,
 } from './topicsapi.js';
@@ -1304,6 +1304,18 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       return json({ error: 'read-only while viewing as someone else' }, 403);
     }
     return changeArea(env, me, request.method, await request.json().catch(() => ({})));
+  }
+  if (url.pathname === '/api/standing') {
+    // The star and the mute of the personal view's customer column (src/standing.js): `{ org,
+    // mark: unstar | mute }` sets it now, with `at` (null or the `was` it answered) undoes it.
+    if (request.method !== 'POST') {
+      return json({ error: 'POST' }, 405);
+    }
+    const res = await setMark(env.DB, me.id, await request.json().catch(() => ({})));
+    if (res.error) {
+      return json({ error: res.error }, res.status);
+    }
+    return json({ was: res.was, standing: await customerStanding(env.DB, me.id) });
   }
   if (url.pathname === '/api/follows/suggest') {
     // What to follow (src/followsuggest.js): for anyone signed in, on a team or not; names and

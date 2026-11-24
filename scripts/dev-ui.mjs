@@ -96,7 +96,9 @@ import {
   fold, readMembers, threadTech,
 } from '../src/api.js';
 import { stackParts } from '../src/orgstacks.js';
-import { REGULAR_DAYS, QUIET_DAYS, standingOf } from '../src/standing.js';
+import {
+  MARKS, REGULAR_DAYS, QUIET_DAYS, standingOf,
+} from '../src/standing.js';
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin, devFavicon } from './dev-ui-admin.mjs';
 import { faviconProxy } from '../src/favicons.js';
@@ -346,6 +348,28 @@ function myChannels() {
   return new Set([...store.threads.values()]
     .filter((e) => mentioned.has(e.key) || e.messages.some((m) => m.author.name === name))
     .map(at));
+}
+
+/** Dana's marks on customers, by org: `{ unstarred_at, muted_at }` (customer_marks). */
+const customerMarks = new Map();
+const mutedAt = (org) => customerMarks.get(org)?.muted_at || '';
+/**
+ * As src/shares.js `listedChannels`: her channels, but those of a customer she muted only where
+ * she posted or was mentioned since.
+ */
+function listedChannels() {
+  const { name } = store.people.get(ME);
+  const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
+  const since = new Map();
+  for (const e of store.threads.values()) {
+    const mute = mutedAt(e.row.org);
+    const later = e.messages.some((m) => m.author.name === name && m.at > mute)
+      || store.mentions.some((m) => m.thread === e.key && m.person === ME && m.at > mute);
+    if (later) {
+      since.set(at(e), true);
+    }
+  }
+  return new Set([...myChannels()].filter((c) => since.has(c)));
 }
 
 const inTeam = (team) => store.teams.some((t) => t.slug === team && t.members.includes(ME));
@@ -775,9 +799,10 @@ function standing() {
   const posted = new Map();
   for (const e of store.threads.values()) {
     for (const m of e.row.org ? e.messages : []) {
-      if (m.author.name === name && !m.deletedAt && m.at >= since) {
+      const mark = customerMarks.get(e.row.org) || {};
+      if (m.author.name === name && !m.deletedAt && m.at >= since && m.at > (mark.muted_at || '')) {
         const r = posted.get(e.row.org) || { org: e.row.org, n: 0, last: '' };
-        r.n += 1;
+        r.n += m.at > (mark.unstarred_at || '') ? 1 : 0;
         if (m.at > r.last) {
           r.last = m.at;
         }
@@ -785,8 +810,10 @@ function standing() {
       }
     }
   }
+  // The mentions of her of the last QUIET_DAYS, since she muted their customer if she did.
   const named = store.mentions.filter((m) => m.person === ME && m.at >= quiet)
-    .map((m) => store.threads.get(m.thread)?.row.org);
+    .map((m) => ({ at: m.at, org: store.threads.get(m.thread)?.row.org }))
+    .filter((m) => m.org && m.at > mutedAt(m.org)).map((m) => m.org);
   return standingOf([...posted.values()], named);
 }
 
@@ -796,11 +823,13 @@ function inbox(team, before = null, personal = false, only = null, limit = null)
   const size = Math.max(1, Math.min(300, Number(limit) || INBOX_PAGE));
   const latest = (r) => r.last_at || r.any_at || '';
   const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
-  const channels = personal ? myChannels() : null;
-  // Whichever team the channels are filed under.
+  const channels = personal ? listedChannels() : null;
+  // Whichever team the channels are filed under; what she follows of a customer she muted, once
+  // it has activity since.
   const inScope = (r) => (personal
     ? r.kind !== 'alert' && (channels.has(`${r.source}:${r.channel_id}`)
-      || followedByMe(store.threads.get(r.thread)))
+      || (followedByMe(store.threads.get(r.thread))
+        && (r.last_at || r.any_at || '') > mutedAt(r.org)))
     : r.team === team);
   // Paged by inbox entry, as src/api.js's: a re-threaded group counts once, by its latest member.
   const groupOf = (r) => r.logical_thread || r.thread;
@@ -1697,6 +1726,19 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/follows/suggest') {
     return json(res, await suggestNow(url.searchParams.get('q')));
+  }
+  if (url.pathname === '/api/standing' && req.method === 'POST') {
+    // As src/api.js, src/standing.js `setMark`: her star and mute on a customer, or their undo.
+    const b = await readJson(req);
+    const column = MARKS[b.mark];
+    if (!column || !b.org) {
+      return json(res, { error: 'mark is unstar or mute, org a customer' }, 400);
+    }
+    const mark = { ...customerMarks.get(b.org) };
+    const was = mark[column] ?? null;
+    mark[column] = b.at === undefined ? new Date().toISOString() : b.at;
+    customerMarks.set(b.org, mark);
+    return json(res, { was, standing: standing() });
   }
   if (url.pathname === '/api/follows') {
     // As src/api.js: what Dana follows, changed one technology at a time.
