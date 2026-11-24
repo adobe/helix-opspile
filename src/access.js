@@ -40,13 +40,9 @@ export function resetKeyCache() {
   keyCache = { at: 0, keys: [] };
 }
 
-/**
- * @returns {Promise<string|null>} the verified email, or null
- */
-export async function accessEmail(request, env, { fetchImpl = fetch, now = Date.now() } = {}) {
-  const jwt = request.headers.get('cf-access-jwt-assertion');
-  const teamDomain = String(env.ACCESS_TEAM_DOMAIN || '').replace(/\/+$/, '');
-  if (!jwt || !teamDomain || !env.ACCESS_AUD) {
+/** Verify an RS256 compact JWT using only the issuer's configured keys (never a token URL). */
+export async function signedClaims(jwt, keys) {
+  if (!jwt || jwt.length > 16384) {
     return null;
   }
   const parts = jwt.split('.');
@@ -61,10 +57,10 @@ export async function accessEmail(request, env, { fetchImpl = fetch, now = Date.
   } catch {
     return null;
   }
-  if (header.alg !== 'RS256') {
+  if (header?.alg !== 'RS256' || typeof header.kid !== 'string' || header.crit) {
     return null;
   }
-  const jwk = (await signingKeys(teamDomain, fetchImpl, now)).find((k) => k.kid === header.kid);
+  const jwk = (await keys()).find((k) => k.kid === header.kid);
   if (!jwk) {
     return null;
   }
@@ -81,11 +77,31 @@ export async function accessEmail(request, env, { fetchImpl = fetch, now = Date.
     b64url(parts[2]),
     new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
   );
+  return ok ? claims : null;
+}
+
+/** An Access application token for this issuer and audience; no unverified header is identity. */
+export async function accessClaims(request, env, { fetchImpl = fetch, now = Date.now() } = {}) {
+  const jwt = request.headers.get('cf-access-jwt-assertion');
+  const teamDomain = String(env.ACCESS_TEAM_DOMAIN || '').replace(/\/+$/, '');
+  if (!teamDomain || !env.ACCESS_AUD) {
+    return null;
+  }
+  const claims = await signedClaims(jwt, () => signingKeys(teamDomain, fetchImpl, now));
+  if (!claims) {
+    return null;
+  }
   const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   const seconds = now / 1000;
-  if (!ok || !aud.includes(env.ACCESS_AUD) || claims.iss !== teamDomain
+  if (!aud.includes(env.ACCESS_AUD) || claims.iss !== teamDomain
     || !(claims.exp > seconds) || (claims.nbf && claims.nbf > seconds + 60)) {
     return null;
   }
-  return typeof claims.email === 'string' ? claims.email.toLowerCase() : null;
+  return claims;
+}
+
+/** The verified email of the ordinary Access user, or null. */
+export async function accessEmail(request, env, options) {
+  const claims = await accessClaims(request, env, options);
+  return typeof claims?.email === 'string' ? claims.email.toLowerCase() : null;
 }

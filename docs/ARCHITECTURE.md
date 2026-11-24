@@ -3395,7 +3395,14 @@ the portal's `PortalPlatform` (`src/portal/platform.js`). Both bindings are opti
 Worker deploys without the other: an unbound portal keeps what happens in it in its outbox, and
 an unbound inbox shows the portal's threads it has, and says that it cannot post there.
 
-**Signing in.** The portal is behind its own Cloudflare Access application, whose only login
+**Embedding hosts.** [Portal integration v1](PORTAL-INTEGRATION.md) is a separate service-only
+path on this Worker. Access's verified service identity selects a registered host; a short-lived
+assertion identifies its enrolled tenant and member. Each host/customer has one reserved channel
+ID for team/customer routing and its own `<channel>.embed.invalid` lobby, never a sign-in domain.
+It uses the same messages, inbox outbox and staff reply binding as the standalone portal. A
+separate resumable feed contains public invalidations only, not the outbox or staff status.
+
+**Signing in.** The standalone portal is behind its own Cloudflare Access application, whose only login
 method is a one-time code by mail: a customer signs in with their work mail address, with no
 account at any chat tool. The Worker verifies Access's token itself (`src/access.js`) and takes
 only the mail address from it. `PORTAL_DOMAINS` lists the mail domains the portal is open to;

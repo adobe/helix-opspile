@@ -30,6 +30,8 @@ import { json, text } from '../http.js';
 import { ICONS } from '../icons.js';
 import { PORTAL_PAGE as PAGE } from './pages.js';
 import { api } from './api.js';
+import { integration } from './integration.js';
+import { BASE, pruneIntegration } from './integration-auth.js';
 import { deliver, pruneEvents } from './events.js';
 import { pruneFiles } from './files.js';
 import {
@@ -66,6 +68,9 @@ export default {
         return iconResponse;
       }
     }
+    if (pathname.startsWith(`${BASE}/`)) {
+      return integration(request, env, { waitUntil: (p) => ctx.waitUntil(p) });
+    }
     if (pathname.startsWith('/api/')) {
       // Access signs people in; the Worker checks its token itself, so a request that got
       // around Access is nobody's.
@@ -99,6 +104,7 @@ export default {
     ctx.waitUntil(techStale(env).then((stale) => (stale ? refreshTech(env) : { result: 'fresh' }))
       .then(logged('tech')).catch(failed('tech')));
     ctx.waitUntil(pruneEvents(env).then(logged('prune')).catch(failed('prune')));
+    ctx.waitUntil(pruneIntegration(env).catch(() => console.warn('portal integration: prune deferred')));
     ctx.waitUntil(pruneFiles(env).then(logged('files')).catch(failed('files')));
   },
 };

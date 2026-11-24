@@ -54,6 +54,7 @@ function vars(deployed: boolean, mode: string | undefined) {
     PORTAL_DOMAINS: process.env.PORTAL_DOMAINS,
     ACCESS_TEAM_DOMAIN: process.env.PORTAL_ACCESS_TEAM_DOMAIN || process.env.ACCESS_TEAM_DOMAIN,
     ACCESS_AUD: process.env.PORTAL_ACCESS_AUD,
+    PORTAL_INTEGRATION_AUD: process.env.PORTAL_INTEGRATION_AUD,
     PUBLIC_ORIGIN: process.env.PORTAL_ORIGIN,
     PORTAL_NAME: process.env.PORTAL_NAME || (deployed ? mode : undefined),
   };
