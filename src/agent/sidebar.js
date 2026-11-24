@@ -57,7 +57,7 @@ export async function inSidebar(agent) {
 /**
  * ThreadAgent.sidebarMessage: the id of the sidebar message the turn running now answers, or
  * null (a turn on the thread's messages, or a transcript that cannot be read), for the tools
- * that act for the person who wrote it (src/agent/channelrequest.js).
+ * that act for the person who wrote it (src/agent/channelrequest.js, src/agent/memberrequest.js).
  */
 export async function currentSidebar(agent) {
   try {
