@@ -14,8 +14,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { SCRIPTS } from './ui.js';
 
+// As the page loads them: what it is drawn with (ui/overview.js), then the team's overview.
 // eslint-disable-next-line no-new-func
-const TeamView = new Function('globalThis', `${SCRIPTS['team.js']}\nreturn globalThis.TeamView;`)({});
+const TeamView = new Function('globalThis', `${SCRIPTS['overview.js']}\nconst { Overview } = globalThis;\n${SCRIPTS['team.js']}\nreturn globalThis.TeamView;`)({});
 
 // Made-up people, customers and technologies only.
 const weeks = ['2026-11-16', '2026-11-23'];

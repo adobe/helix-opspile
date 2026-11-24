@@ -95,7 +95,7 @@ import { previewOf, readState, waitingOn } from '../src/threads.js';
 import {
   fold, readMembers, threadTech,
 } from '../src/api.js';
-import { stackParts } from '../src/orgstacks.js';
+import { stackParts, storeOrgStack } from '../src/orgstacks.js';
 import {
   MARKS, REGULAR_DAYS, QUIET_DAYS, standingOf,
 } from '../src/standing.js';
@@ -107,6 +107,7 @@ import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { areaFile, compileAreas, isArea } from '../src/areas.js';
 import { topicsPage } from '../src/topicsapi.js';
 import { teamDirectory, teamProfile } from '../src/teamprofile.js';
+import { orgDirectory, orgProfile } from '../src/orgprofile.js';
 import { weeksTo } from '../src/trends.js';
 import { latestTopicMap } from '../src/topicmap.js';
 import { trendsFixture } from './dev-ui-topics.mjs';
@@ -164,14 +165,17 @@ const adminApi = createAdmin(store, { manager: MANAGER, member: MEMBER, bases: k
 /** Compiles a team's catalog into the admin pages' D1, as a write of it does (src/catalog.js). */
 const compileKb = async (repo) => {
   const b = kb.list().find((x) => x.repo === repo);
-  if (b && b.kind === 'team') {
-    const where = { team: b.slug, repo };
-    const files = await kb.catalog(repo);
-    await storeCatalog(adminApi.env, where, {
-      ...compileCatalog(files.filter((f) => inCatalog(f.path))),
-      areas: compileAreas(files.filter((f) => isArea(f.path))),
-    });
-    // Its concepts, as src/kbindex.js keeps them: a team's overview counts them by type.
+  if (b) {
+    if (b.kind === 'team') {
+      const where = { team: b.slug, repo };
+      const files = await kb.catalog(repo);
+      await storeCatalog(adminApi.env, where, {
+        ...compileCatalog(files.filter((f) => inCatalog(f.path))),
+        areas: compileAreas(files.filter((f) => isArea(f.path))),
+      });
+    }
+    // Its concepts, as src/kbindex.js keeps them: a team's and a customer's overview count them
+    // by type.
     const db = adminApi.env.DB.sqlite;
     db.prepare('DELETE FROM kb_concepts WHERE repo = ?').run(repo);
     for (const f of await kb.files(repo)) {
@@ -200,6 +204,8 @@ const readOrgStack = async (repo) => {
     } else {
       delete orgStacks[b.slug];
     }
+    // And in D1, where a customer's overview reads them (src/orgprofile.js).
+    await storeOrgStack(adminApi.env, b.slug, f.error ? null : f.text);
   }
 };
 for (const b of kb.list()) {
@@ -1726,6 +1732,15 @@ async function api(req, res, url) {
   if (url.pathname === '/api/teams/profile') {
     const r = await teamProfile(adminApi.env, topicsViewer(), url.searchParams.get('team'));
     return json(res, r.error ? { error: r.error } : r, r.error ? r.status || 400 : 200);
+  }
+  // A customer's overview (src/orgprofile.js), the same way: the customers' half year of
+  // made-up posts (dev-ui-team.mjs, dev-ui-customer.mjs).
+  if (url.pathname === '/api/customers') {
+    return json(res, { orgs: await orgDirectory(adminApi.env) });
+  }
+  if (url.pathname === '/api/customers/profile') {
+    const { status, ...r } = await orgProfile(adminApi.env, topicsViewer(), url.searchParams.get('org'));
+    return json(res, r, r.error ? status || 400 : 200);
   }
   // The Topics page (src/topicsapi.js), over the admin pages' D1: its map, the areas the fake
   // knowledge bases have, and Dana's follows; areas are written to the fake knowledge bases.

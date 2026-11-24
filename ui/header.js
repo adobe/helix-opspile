@@ -15,8 +15,8 @@
  * page's <header>, before the page's own script.
  *
  * The switch between the pages: Inbox, Teams, Customers (each with its agents, read-only but
- * where you manage them) and Topics (the topic map) for every member of a team (Inbox and
- * Teams, for its teams' overviews, and Topics for Adobe's people on none, `staff` from /api/me,
+ * where you manage them) and Topics (the topic map) for every member of a team (Inbox, Teams and
+ * Customers, for their overviews, and Topics for Adobe's people on none, `staff` from /api/me,
  * to find what to follow), and
  * Requests (the bots too) and COGS (what the inbox costs) too for the admin team (with the
  * number of open requests on Requests); and Stats, klickhaus' statistics of all threads in a new tab,
@@ -38,7 +38,7 @@ window.Header = (() => {
   const PAGES = [
     { id: 'inbox', label: 'Inbox', href: '/inbox', title: 'Threads with customers, partners and vendors', member: true, internal: true },
     { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their people, customers, collaborators and technologies; their members, channels and rules, and their agents: thread agents, tools, instructions and knowledge base', member: true, internal: true },
-    { id: 'orgs', label: 'Customers', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors, and their agents: thread agents, tools, instructions and knowledge base', member: true },
+    { id: 'orgs', label: 'Customers', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors: their people, Adobe\'s people and teams on them, what they ask about and their technologies; their channels, and their agents: thread agents, tools, instructions and knowledge base', member: true, internal: true },
     { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for, people to add to teams, customers waiting in the portal and the bots in the threads: confirm, open or decline, and say whose each bot is', admin: true },
     { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their areas and topics, with the people, customers and products on each', member: true, internal: true },
     { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs at list prices: per service, message, thread, customer and month', admin: true },

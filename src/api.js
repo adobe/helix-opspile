@@ -91,6 +91,7 @@ import {
   changeArea, rebuildTopics, topicsPage, trendsApi,
 } from './topicsapi.js';
 import { teamDirectory, teamProfile } from './teamprofile.js';
+import { orgDirectory, orgProfile } from './orgprofile.js';
 import { drawDiagram } from './diagrams.js';
 import { targetOf, translateMessages } from './translate.js';
 
@@ -1314,6 +1315,25 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     const profile = await teamProfile(env, me, url.searchParams.get('team'));
     return profile.error ? json({ error: profile.error }, profile.status || 400) : json(profile);
+  }
+  // Every customer's overview, its first section in Customers (src/orgprofile.js): for every
+  // internal user, as a team's; what changes a customer stays the ops teams' and the admin team's.
+  if (url.pathname === '/api/customers' || url.pathname === '/api/customers/profile') {
+    if (!internal(env, me)) {
+      return json({ error: 'the customers are for Adobe\'s people' }, 403);
+    }
+    if (request.method !== 'GET') {
+      return json({ error: 'GET' }, 405);
+    }
+    if (url.pathname === '/api/customers') {
+      return json({ orgs: await orgDirectory(env) });
+    }
+    const profile = await orgProfile(env, me, url.searchParams.get('org'));
+    if (profile.error) {
+      const { status, ...rest } = profile;
+      return json(rest, status || 400);
+    }
+    return json(profile);
   }
   if (url.pathname === '/api/areas') {
     if (me.readonly) {

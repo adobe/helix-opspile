@@ -96,8 +96,12 @@ export default [
         TrendView: 'readonly',
         // A team's or a customer's agent, ui/agent.js (in Teams and Customers, ui/admin.js).
         Agent: 'readonly',
+        // What a team's and a customer's overviews are drawn with, ui/overview.js.
+        Overview: 'readonly',
         // A team's overview, ui/team.js (in Teams, ui/admin.js).
         TeamView: 'readonly',
+        // A customer's overview, ui/customer.js (in Customers, ui/admin.js).
+        CustomerView: 'readonly',
         // Content swaps that fade in, ui/app.js.
         Swap: 'readonly',
         // Links to the app opened in it, installed, ui/app.js.
