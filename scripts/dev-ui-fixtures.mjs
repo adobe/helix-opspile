@@ -135,6 +135,18 @@ const SYSTEM = {
 export const AGENT = { id: 900, name: 'opspile agent' };
 
 /**
+ * The made-up model of the preview's translations (GET /api/translate, scripts/dev-ui.mjs): the
+ * Japanese thread's messages in English. Anything else in Japanese is marked, not translated.
+ */
+export const TRANSLATIONS = {
+  'お世話になっております。プレビューの `/products` ページが今朝から **404** になっています。ご確認いただけますか？':
+    'Thank you for your support. The preview `/products` page has been returning **404** since this morning. Could you take a look?',
+  'ご連絡ありがとうございます。確認いたします。': 'Thank you for letting us know. We will look into it.',
+  'リダイレクトの設定を修正しました。もう一度お試しください。': 'We fixed the redirect configuration. Please try again.',
+  '直りました。ありがとうございます！ :pray:': 'It works now. Thank you! :pray:',
+};
+
+/**
  * Channels: where a thread lives. `org` and `team` are what the rules would file it under.
  * `appPosting`: "Post messages" is on, so a person may send as the opspile app there.
  */
@@ -735,6 +747,10 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         topics: label.topics || [],
         // The technologies the thread shows (labels.tech), as JSON; null: labeled before that.
         tech: label.tech ? JSON.stringify(label.tech) : null,
+        // The language Clef read (src/translate.js): the inbox translates it where it is not
+        // the browser's.
+        language: label.language || 'en',
+        language_p: label.language_p ?? 0.97,
         labeled_through: entry.row.any_at,
         reviewed: [],
       });
@@ -1146,6 +1162,23 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   seed({
     ch: CHANNELS.initech,
     messages: [['priya', 17 * 60, 'Purges are tracked in https://teams.microsoft.com/l/channel/CH-CDN/CDN%20tickets?groupId=TEAM-EDGE&tenantId=T-FAKE, the release dates in [the release channel](https://teams.microsoft.com/l/channel/CH-RELEASE/Release%20train?groupId=TEAM-PLATFORM&tenantId=T-FAKE).']],
+  });
+
+  // A thread in Japanese (Clef reads its language): the inbox shows it translated into the
+  // browser's language (GET /api/translate, scripts/dev-ui.mjs), with the bar above it.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 240, 'お世話になっております。プレビューの `/products` ページが今朝から **404** になっています。ご確認いただけますか？'],
+      ['priya', 230, 'ご連絡ありがとうございます。確認いたします。'],
+      ['mei', 225, 'Thanks, the URL is https://main--site--globex.aem.page/products'],
+      ['priya', 200, 'リダイレクトの設定を修正しました。もう一度お試しください。'],
+      ['mei', 190, '直りました。ありがとうございます！ :pray:'],
+    ],
+    reads: { dana: 230 },
+    label: {
+      kind: 'incident', next_actor: 'nobody', urgency: 0.8, resolved_p: 0.9, topics: ['urls'], language: 'ja',
+    },
   });
 
   // Emoji in other platforms' names and spellings (Discord's `facepalm`, `thumbs-up`, a

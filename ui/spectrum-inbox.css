@@ -22,13 +22,13 @@ html, body { overscroll-behavior: none; }
 .menu .hint { margin: 0 var(--spectrum-spacing-100) var(--spectrum-spacing-75); }
 .menu label.hint { display: block; margin-top: var(--spectrum-spacing-75); overflow-wrap: anywhere; }
 /* Bells: the views that notify you, each with the ✕ that turns it off. */
-.menu #bells .bell { display: flex; align-items: center; }
-.menu #bells .bell svg { flex: none; }
-.menu #bells .bell a { flex: 1; min-width: 0; text-decoration: none; overflow: hidden;
+.menu :is(#bells, #translateList) .bell { display: flex; align-items: center; }
+.menu :is(#bells, #translateList) .bell svg { flex: none; }
+.menu :is(#bells, #translateList) .bell :is(a, span) { flex: 1; min-width: 0; text-decoration: none; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
-.menu #bells .bell a:hover { text-decoration: underline; }
-.menu #bells .bell button { flex: none; border: 0; background: none; }
-.menu #bells .bell button:hover { background: var(--hover); color: var(--ink); }
+.menu :is(#bells, #translateList) .bell a:hover { text-decoration: underline; }
+.menu :is(#bells, #translateList) .bell button { flex: none; border: 0; background: none; }
+.menu :is(#bells, #translateList) .bell button:hover { background: var(--hover); color: var(--ink); }
 
 main { flex: 1; display: grid; grid-template-columns: var(--filters-w) minmax(calc(var(--spectrum-spacing-100) * 47 + var(--spectrum-spacing-75)), 34%) 1fr; min-height: 0; }
 :root { --filters-w: calc(var(--spectrum-spacing-100) * 33 + var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); --rail: calc(var(--spectrum-spacing-900) - var(--spectrum-spacing-200)); }
@@ -1312,6 +1312,10 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .compose-error { margin: var(--spectrum-spacing-300) 0 0; color: var(--red); text-align: center; }
 .toast button, .toast a { margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); color: var(--link); }
 .sys { text-align: center; color: var(--faint); font-size: var(--spectrum-font-size-75); margin: var(--spectrum-spacing-100) 0; }
+/* A translated thread's bar, above its messages (ui/inbox.js translationBar), and a translated
+   message's note under it. */
+.sys.translated .linkish { font: inherit; }
+.msg .meta .trnote { cursor: help; }
 /* The thread agent's latest turn, after the last message: on the Adobe side, outlined, as it
    is not a message anyone posted. Solid and tinted while it works. */
 .msg.agent .bubble { background: transparent;
@@ -2965,17 +2969,17 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
    quiet clear button. */
 .spectrum .menu .item[aria-checked="true"] { font-weight: var(--spectrum-regular-font-weight); }
 .spectrum .menu .hint { font-size: var(--spectrum-font-size-75); }
-.spectrum .menu #bells .bell { gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-50) var(--spectrum-spacing-75) var(--spectrum-spacing-50) var(--spectrum-component-edge-to-text-100); }
-.spectrum .menu #bells .bell svg { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum .menu #bells .bell a { color: var(--spectrum-neutral-content-color-default); }
-.spectrum .menu #bells .bell button {
+.spectrum .menu :is(#bells, #translateList) .bell { gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-50) var(--spectrum-spacing-75) var(--spectrum-spacing-50) var(--spectrum-component-edge-to-text-100); }
+.spectrum .menu :is(#bells, #translateList) .bell svg { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .menu :is(#bells, #translateList) .bell :is(a, span) { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .menu :is(#bells, #translateList) .bell button {
   width: var(--spectrum-component-height-75);
   height: var(--spectrum-component-height-75);
   padding: 0;
   border-radius: var(--spectrum-corner-radius-100);
   color: var(--spectrum-neutral-subdued-content-color-default);
 }
-.spectrum .menu #bells .bell button:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-down); }
+.spectrum .menu :is(#bells, #translateList) .bell button:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-down); }
 .spectrum .menu #tracesHere select { width: calc(100% - var(--spectrum-spacing-300)); margin: var(--spectrum-spacing-50) var(--spectrum-spacing-100) var(--spectrum-spacing-75); }
 
 /* Narrower screens: the filters a drawer over the underlay (on the base, elevated, no edge),

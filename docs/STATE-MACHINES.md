@@ -580,6 +580,15 @@ while all its messages are, so the same in any order; once live, never imported 
 job for an edit is not swept; it is in `dead_jobs`. Imported threads stay behind on vectors and
 full-text items until asked for (`scripts/replay.mjs`); they are exported.
 
+**Translation.** none → kept → stale → kept again, or pruned (`translations`, src/translate.js).
+A row is a message's translation into one language, with the hash of the body it is of: an edit
+makes it stale, and the next request that reads the message translates it again and replaces the
+row. A failed call writes nothing (rule 2: the page asks again a minute later), and a null `body`
+is an answer ("in that language already"), not a failure. Two pages asking at once both translate
+and the later write wins; either is a translation of the same body. The cron deletes rows older
+than 90 days, which the next request makes again. In the page, a thread's translation
+(`translations` in ui/inbox.js) is per page load: shown as written is not kept.
+
 **Topic map.** none → built → a week old → built again (`topic_maps`, `src/topicmap.js`). No state in
 between: the cron or Rebuild builds one in a single request, a row when it is done, and the newest
 five are kept. A build that fails (too few threads, no index) writes nothing and leaves the last map

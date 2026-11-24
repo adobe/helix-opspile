@@ -86,13 +86,13 @@ describe('the user menu', () => {
       return what(s);
     })), [
       ['asBox', 'expertBox', 'followBox'],
-      ['notifyBox', 'tracesBox'],
+      ['notifyBox', 'tracesBox', 'translateBox'],
       ['keyboard', 'logout'],
     ]);
   });
 
   it('ships the sections hidden that the page shows only to whom they are for', () => {
-    for (const id of ['asBox', 'expertBox', 'followBox', 'notifyBox', 'tracesBox']) {
+    for (const id of ['asBox', 'expertBox', 'followBox', 'notifyBox', 'tracesBox', 'translateBox']) {
       assert.equal(byId(tree, id).properties.hidden, true, id);
     }
     const always = kids(kids(menu)[1]).at(-1);
@@ -101,7 +101,8 @@ describe('the user menu', () => {
 
   it('keeps every control in it', () => {
     for (const id of ['as', 'expertView', 'followList', 'notifyMentions', 'notifyThreads', 'notifySound',
-      'bells', 'notifyAllow', 'tracesAll', 'tracesChannel', 'keysAll', 'logout']) {
+      'bells', 'notifyAllow', 'tracesAll', 'tracesChannel', 'translateOn', 'translateList', 'keysAll',
+      'logout']) {
       assert.ok(find(menu, (n) => n.properties?.id === id), id);
     }
   });

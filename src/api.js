@@ -90,6 +90,7 @@ import {
   changeArea, rebuildTopics, topicsPage, trendsApi,
 } from './topicsapi.js';
 import { drawDiagram } from './diagrams.js';
+import { targetOf, translateMessages } from './translate.js';
 
 /**
  * The inbox API behind Cloudflare Access. Every request is tied to a person in D1 by the
@@ -1059,6 +1060,45 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   };
 }
 
+/**
+ * GET /api/translate: the messages of thread `asked`'s inbox entry (every member's that the
+ * thread view reads, not deleted, not the platform's notices) in language `to`
+ * (src/translate.js), each by `<thread>|<id>` as `{ text, for }`: `text` null where it is in that
+ * language already, `for` the version it is of (its edit, else its time), so the page shows no
+ * translation of a text that changed since. The viewer may see the thread (the caller checks).
+ */
+export async function translation(env, asked, to, { waitUntil = null } = {}) {
+  const target = targetOf(to);
+  if (!target) {
+    return json({ error: '`to` is a language, as en or de-CH' }, 400);
+  }
+  const { results } = await env.DB.prepare(`SELECT thread, logical_thread, path, root_at, any_at
+    FROM threads
+    WHERE thread = (SELECT COALESCE(logical_thread, thread) FROM threads WHERE thread = ?1)
+      OR logical_thread = (SELECT COALESCE(logical_thread, thread) FROM threads WHERE thread = ?1)
+    ORDER BY root_at`).bind(asked).all();
+  const group = results || [];
+  const own = group.find((m) => m.thread === asked);
+  if (!own) {
+    return json({ error: 'not found' }, 404);
+  }
+  const read = readMembers(group, [own.logical_thread || asked, asked]);
+  const files = (await Promise.all(read.map((m) => folderFiles(env.CHANNELS, m.path, {
+    waitUntil,
+  })))).flat().filter((f) => f && f.meta && !f.meta.deletedAt && f.meta.author?.kind !== 'system')
+    .sort((a, b) => String(a.meta.at).localeCompare(String(b.meta.at)));
+  const version = new Map(files.map(({ meta }) => [`${meta.thread}|${meta.id}`,
+    meta.editedAt || meta.at || null]));
+  const done = await translateMessages(env, files.map(({ meta, body }) => ({
+    key: `${meta.thread}|${meta.id}`, body,
+  })), target);
+  return json({
+    ...done,
+    messages: Object.fromEntries(Object.entries(done.messages)
+      .map(([k, said]) => [k, { text: said, for: version.get(k) }])),
+  });
+}
+
 const MEDIA_MAX = 10 * 1024 * 1024;
 const mediaHeaders = (type) => ({
   'content-type': type,
@@ -1499,6 +1539,15 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     result.can_post_as_bot = Boolean(app && !app.problem
       && await mayPost(env, me)(result.thread.teams, result.thread));
     return json(result);
+  }
+  // The open thread in the reader's language, where Clef read another (src/translate.js). A GET,
+  // as reading the thread: also while viewing as someone else.
+  if (url.pathname === '/api/translate' && request.method === 'GET') {
+    const key = url.searchParams.get('thread');
+    if (!key || !await canSee(env, me, key)) {
+      return json({ error: 'not found' }, 404);
+    }
+    return translation(env, key, url.searchParams.get('to'), { waitUntil });
   }
   if (url.pathname === '/api/media') {
     // A thread's files (the copies of Teams files) only for those who may see the thread.

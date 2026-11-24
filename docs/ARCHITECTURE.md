@@ -1428,6 +1428,10 @@ and an unchanged thread is never labeled twice):
   Adobe's analytics another), where nobody had changed them since migration 0043. They are what
   Clef's topics about commerce, assets, Sites Optimizer, integrations and the inbox would have
   been.
+- In a call of its own (so that it moves none of the answers above), Clef reads the **language**
+  the thread is written in, for the most part (`labels.language`, an ISO 639-1 code of
+  src/translate.js `LANGUAGES` or `other`, and `labels.language_p`; migration 0097), which the
+  inbox [translates](#translation) from. A label from before has none until it is labeled again.
 - The inbox filters by kind, topic and tech stack (the channel's, at 0.8 or above), and so do
   the MCP server's `list_threads` and the inbox's WebMCP `filter_threads`.
 - **Clairic** extracts the loose facts: the problem in the customer's words, the affected URL,
@@ -1618,6 +1622,39 @@ there.
   listed as declining. What never came up before (an area Clef was only just given) is not
   trending. Anything mostly one customer's (more than 60% of its channel-weeks) counts half and
   is marked as such.
+
+### Translation
+
+A thread written in another language than the reader's shows translated (src/translate.js,
+`translationOf` in ui/inbox.js). The reader's language is the browser's (`navigator.language`, its
+primary subtag), and a thread's is Clef's (above): where Clef is sure of it (0.8 or more) and it is
+not the reader's, the page asks `GET /api/translate` for the thread's messages in the reader's
+language, and shows them in place of what was written, each marked "translated", under a bar that
+says from which language, shows the thread as written again (for that thread, while the page is
+open), or stops translating the language. A mixed thread is Clef's to call: one written mostly in
+English with a Japanese greeting is English, and is not translated.
+
+- **Settings.** Each person's (`person_settings`): `translate`, on unless turned off, and
+  `noTranslate`, the languages they read as written. The bar's "Don't translate Japanese" adds one;
+  the user menu's **Translation** section has the switch and the list, where ✕ translates a language
+  again.
+- **The model.** Workers AI's Llama 3.3 70B (`TRANSLATOR`, the titles' model), told the target
+  language by name, gets up to twelve messages (6,000 characters) a call, as a JSON object by
+  number, and answers with one: each message's translation, or null for one in that language
+  already (in a mixed thread, the English replies). It keeps markdown, mentions, names, URLs, code,
+  file names, product names and `:emoji:` codes as they are. A message with nothing to translate
+  (links, code, mentions and emoji only) and one over 6,000 characters are not asked. One request
+  translates at most 40 messages, at the same time, and says how many are left (`more`), which the
+  page asks for next; what the model did not answer for (`failed`: no JSON, or the call failed) is
+  not kept, and the page asks again a minute later.
+- **The cache.** D1 keeps every translation (`translations`, migration 0097), by message and
+  language, with a hash of the body it is of: a thread is translated once per language, and an
+  edited message again. It holds the text of messages, as pile 2 does, and the cron deletes rows
+  after 90 days; a page that asks again has them made again. Each answer names the version of each
+  message (`for`: its edit, else its time), so the page never shows the translation of an earlier
+  text. The log says how many were kept, made and failed (`route: 'translate'`), never the text.
+- The platform's notices and deleted messages are not translated, and nothing is translated before
+  it is sent: replies go out as written.
 
 ## Replying
 

@@ -43,6 +43,8 @@ describe('settings', () => {
       postingDeclined: [],
       expert: false,
       toured: false,
+      translate: true,
+      noTranslate: [],
     });
     const url = new URL('https://opspile.test/api/me');
     const res = await api(new Request(url), { DB }, url, { viewer: me });
@@ -66,6 +68,8 @@ describe('settings', () => {
       postingDeclined: [],
       expert: false,
       toured: false,
+      translate: true,
+      noTranslate: [],
     });
     r = await call(DB, 'PUT', { mentions: false });
     assert.deepEqual([r.body.mentions, r.body.bells.length], [false, 2]);
@@ -80,6 +84,23 @@ describe('settings', () => {
     r = await call(DB, 'PUT', { toured: true });
     assert.deepEqual([r.body.toured, r.body.expert], [true, true]);
     assert.equal((await call(DB, 'PUT', { toured: 1 })).status, 400);
+  });
+
+  it('translates threads unless turned off, and not those of the languages I read', async () => {
+    const DB = d1({ people: PEOPLE, teams: TEAMS });
+    let r = await call(DB, 'PUT', { noTranslate: ['ja', 'de', 'ja', 'other'] });
+    assert.equal(r.status, 200);
+    assert.deepEqual([r.body.translate, r.body.noTranslate], [true, ['de', 'ja', 'other']]);
+    // A list replaces the one before, and the switch keeps it.
+    r = await call(DB, 'PUT', { noTranslate: ['ja'] });
+    assert.deepEqual(r.body.noTranslate, ['ja']);
+    r = await call(DB, 'PUT', { translate: false });
+    assert.deepEqual([r.body.translate, r.body.noTranslate], [false, ['ja']]);
+    for (const body of [{ translate: 'no' }, { noTranslate: 'ja' }, { noTranslate: ['Japanese'] }]) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await call(DB, 'PUT', body)).status, 400, JSON.stringify(body));
+    }
+    assert.deepEqual(withDefaults(me, { noTranslate: ['ja', 7, 'x y'] }).noTranslate, ['ja']);
   });
 
   it('turns my threads on for those whose settings were stored before it existed', () => {
