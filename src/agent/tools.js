@@ -56,6 +56,7 @@ import {
   assignmentText, channelAssignment, requestReassignment, sidebarAuthor, teamList, teamsText,
 } from './channelrequest.js';
 import { requestTeamMembership } from './memberrequest.js';
+import { teamMembers, teamMembersText } from './teammembers.js';
 import {
   CONTACTS, LAYOUT, splitFrontmatter, SYSTEM_PROMPT, systemPromptBody,
 } from './okf.js';
@@ -252,7 +253,7 @@ Another type only when none of these fits, in a directory named after it. A conc
 
 Products (kb-team only): \`products/\` is the team's catalog, and the union of every team's is what Clef asks about in every channel: "Does this thread show that the customer uses <description>?". A technology's id is its path without \`.md\` (\`fastly/cdn\`, \`adobe/aem-sites/edge-delivery\`), as stack.md's Tech and the inbox name it. Each has a \`title\` (the name the inbox shows), a \`description\` (what Clef is asked about, a noun phrase: "Fastly as CDN"), \`aliases\` (the other names it goes by in threads: matched, never asked) and a \`layer\` (${LAYERS.map((l) => l.id).join(', ')}). Add one the team supports when threads show customers use it and no team's catalog has it; a name that is a variant of one there (an abbreviation, an old name) is an alias of it, not a new entry: every entry is one more question in every label. \`enabled: false\` in the team's own file of a path turns it off in the team's channels. To move or rename one, delete the old path and write the new one in the same kb_write: its ids go with it (\`moved_from\`).
 
-People: one Contact per person, at \`${CONTACTS}/<first-last>.md\` from their full name as the platform shows it (its title: \`${CONTACTS}/dana-ops.md\` for "Dana Ops"), never a list of people in one file; split one you find into a Contact each. In kb-org, everyone who works on this customer's threads: the customer's people, partners' and Adobe's, with their role on this account. In kb-team, the colleagues and partners the team works with across customers, never a customer's people. Its description says who they are to us in one sentence (role, company, what they own or decide); the inbox shows it when someone points at their picture. \`aliases\` lists the other names they go by (a handle, a nickname), and \`resource: mailto:<address>\` their address when a message shows it. Asked about someone, read their Contact in both knowledge bases first.
+People: one Contact per person, at \`${CONTACTS}/<first-last>.md\` from their full name as the platform shows it (its title: \`${CONTACTS}/dana-ops.md\` for "Dana Ops"), never a list of people in one file; split one you find into a Contact each. In kb-org, everyone who works on this customer's threads: the customer's people, partners' and Adobe's, with their role on this account. In kb-team, the team's own members (listed under team-members) and the colleagues and partners the team works with across customers, never a customer's people. A member's Contact in kb-team is their profile on the team, one for every customer: their description says what they do on the team and what they own; the body what they know (the products and areas they answer for), the customers they work with most, and how they like to be reached, each with its sources. Keep it as you learn: when a thread shows a member's expertise, a customer they work with, or a change of role, update their profile in kb-team (their role on this one account goes to their Contact in kb-org). Start a member's profile when a thread shows enough of their work for a description; never write one of what a thread does not show. Its description says who they are to us in one sentence (role, company, what they own or decide); the inbox shows it when someone points at their picture. \`aliases\` lists the other names they go by (a handle, a nickname), and \`resource: mailto:<address>\` their address when a message shows it. Asked about someone, read their Contact in both knowledge bases first.
 
 Each concept starts with YAML frontmatter:
 ---
@@ -394,6 +395,11 @@ export function opspileExtension(ctx) {
         parts.push(`## ${r.id}: ${r.what}\n${body}`);
       }
       return parts.join('\n\n');
+    }),
+    // Whose profiles kb-team keeps: the team's members, and whether each has one yet.
+    section('team-members', async () => {
+      const t = await ctx.target();
+      return teamMembersText(await teamMembers(env, t.team));
     }),
     // The customer's stack drawing as it is, and what Clef saw in the channel that it lacks, so
     // that every turn can tell whether it needs drawing again (draw_stack).
