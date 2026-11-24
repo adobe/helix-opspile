@@ -231,12 +231,24 @@ export const maySee = (env, me) => async (teams, place) => isAdmin(me)
  * the teams their personal view's threads are filed under (its channels', and the ones that show
  * a technology they follow). In those other rooms they hear only about the threads of their
  * personal view (`scoped`, room.js).
+ *
+ * A channel's teams one by one, each by a search of `threads_channel_team` (migration 0098): its
+ * least team, then the next after it, and so on. Its threads are nearly always one team's, and an
+ * alert channel has tens of thousands: asking for its threads' teams read every one of them.
  */
 export async function roomsOf(env, me) {
   const own = (me.teams || []).map((t) => t.slug);
-  const { results } = await env.DB.prepare(`SELECT DISTINCT team FROM threads t
-    WHERE ${inPersonalInbox('t', '?1')} AND team IS NOT NULL ORDER BY team`)
-    .bind(me.id).all();
+  const { results } = await env.DB.prepare(`WITH RECURSIVE
+      c(source, channel_id) AS (${personalChannels('?1')}),
+      s(source, channel_id, team) AS (
+        SELECT source, channel_id, (SELECT MIN(x.team) FROM threads x
+          WHERE x.channel_id = c.channel_id AND x.source = c.source) FROM c
+        UNION ALL SELECT s.source, s.channel_id, (SELECT MIN(x.team) FROM threads x
+          WHERE x.channel_id = s.channel_id AND x.source = s.source AND x.team > s.team)
+        FROM s WHERE s.team IS NOT NULL)
+    SELECT team FROM s WHERE team IS NOT NULL
+    UNION SELECT team FROM threads t WHERE ${followedByPerson('t', '?1')} AND team IS NOT NULL
+    ORDER BY team`).bind(me.id).all();
   return [...new Set([...own, ...(results || []).map((r) => r.team)])];
 }
 

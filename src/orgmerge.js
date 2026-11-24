@@ -15,6 +15,7 @@ import { MAX_CHANGES, writeKnowledge } from './agent/kbwrite.js';
 import { isEntry } from './agent/okf.js';
 import { orgDomain } from './favicons.js';
 import { json } from './http.js';
+import { underlying } from './d1batch.js';
 import { ensureKnowledgeBase, repoName } from './kb.js';
 import { CLEF } from './label.js';
 import { domainList, loadRules } from './lookup.js';
@@ -83,15 +84,19 @@ async function rows(env, sql, ...args) {
  * The mail domains of the people outside Adobe who post in an org's threads (all orgs', or
  * `slug`'s), most people first: `Map<org, [domain]>`. Free mail and tenant domains are left
  * out; the first is the org's usual mail domain, whose favicon it has without an icon.
+ *
+ * One org's from its threads (`threads_org`), not from every message: `?1 IS NULL OR t.org = ?1`
+ * kept SQLite off the index, and an org's page (and each of its icon searches) read all the
+ * messages there are, some 200,000 rows a time.
  */
 export async function mailDomains(env, slug = null) {
   const list = await rows(env, `SELECT t.org, LOWER(SUBSTR(i.email, INSTR(i.email, '@') + 1)) AS domain,
       COUNT(DISTINCT m.thread || ' ' || m.author_key) AS n
-    FROM messages m JOIN threads t ON t.thread = m.thread
+    FROM ${slug ? 'threads t JOIN messages m ON m.thread = t.thread' : 'messages m JOIN threads t ON t.thread = m.thread'}
     JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
     WHERE m.staff = 0 AND m.deleted = 0 AND m.counted = 1 AND i.email LIKE '%_@_%'
-      AND (?1 IS NULL OR t.org = ?1)
-    GROUP BY t.org, domain ORDER BY t.org, n DESC, domain`, slug);
+      ${slug ? 'AND t.org = ?1' : ''}
+    GROUP BY t.org, domain ORDER BY t.org, n DESC, domain`, ...(slug ? [slug] : []));
   const by = new Map();
   for (const r of list) {
     if (orgDomain(env, r.domain)) {
@@ -200,15 +205,26 @@ async function loadFacts(env) {
 
 let cachedFacts = null;
 
-/** The facts (`loadFacts`), from this isolate's last five minutes when it has them. */
+/**
+ * The facts (`loadFacts`), from this isolate's last five minutes when it has them. Kept by the
+ * D1 binding under the request's wrappers (`underlying`): each request wraps it anew, so kept by
+ * the wrapper they were never found again, and every list loaded them all. The promise is kept,
+ * so requests that come together load them once.
+ */
 export async function facts(env, { fresh = false } = {}) {
+  const db = underlying(env.DB);
   const c = cachedFacts;
-  if (!fresh && c && c.env === env.DB && Date.now() - c.at < FACTS_MS) {
+  if (!fresh && c && c.db === db && Date.now() - c.at < FACTS_MS) {
     return c.facts;
   }
-  const f = await loadFacts(env);
-  cachedFacts = { env: env.DB, at: Date.now(), facts: f };
-  return f;
+  const kept = { db, at: Date.now(), facts: loadFacts(env) };
+  cachedFacts = kept;
+  kept.facts.catch(() => {
+    if (cachedFacts === kept) {
+      cachedFacts = null;
+    }
+  });
+  return kept.facts;
 }
 
 /** Forgets the facts kept (after a merge, and for tests). */

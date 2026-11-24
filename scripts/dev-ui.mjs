@@ -763,7 +763,9 @@ function unreadInYours(rows) {
 }
 
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
-function inbox(team, before = null, personal = false, only = null) {
+function inbox(team, before = null, personal = false, only = null, limit = null) {
+  // `limit`, as the Worker takes it: 1 to 300, the page size without one.
+  const size = Math.max(1, Math.min(300, Number(limit) || INBOX_PAGE));
   const latest = (r) => r.last_at || r.any_at || '';
   const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
   const channels = personal ? myChannels() : null;
@@ -783,9 +785,9 @@ function inbox(team, before = null, personal = false, only = null) {
   const [at, key] = before ? String(before).split('|') : [null, null];
   const after = at === null ? groups
     : groups.filter((x) => x.latest < at || (x.latest === at && x.g < key));
-  const pageGroups = only ? after : after.slice(0, INBOX_PAGE);
+  const pageGroups = only ? after : after.slice(0, size);
   const lastGroup = pageGroups[pageGroups.length - 1];
-  const page = { next: after.length > INBOX_PAGE && lastGroup ? `${lastGroup.latest}|${lastGroup.g}` : null };
+  const page = { next: after.length > size && lastGroup ? `${lastGroup.latest}|${lastGroup.g}` : null };
   const onPage = new Set(pageGroups.map((x) => x.g));
   const rows = entries.filter((r) => onPage.has(groupOf(r)))
     .map((r) => ({
@@ -1719,7 +1721,7 @@ async function api(req, res, url) {
     return json(res, { error: 'label review is for the admin team' }, 403);
   }
   if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
-    const view = inbox(null, url.searchParams.get('before'), true);
+    const view = inbox(null, url.searchParams.get('before'), true, null, url.searchParams.get('limit'));
     return json(res, as ? { ...view, me: { id: as.id, name: as.name, readonly: true } } : view);
   }
   if (url.pathname === '/api/inbox' && as) {
@@ -1727,13 +1729,13 @@ async function api(req, res, url) {
     if (!teamsOf(as.id).some((t) => t.slug === team)) {
       return json(res, { error: 'not a member of this team' }, 403);
     }
-    return json(res, { ...inbox(team, url.searchParams.get('before')), me: { id: as.id, name: as.name, readonly: true } });
+    return json(res, { ...inbox(team, url.searchParams.get('before'), false, null, url.searchParams.get('limit')), me: { id: as.id, name: as.name, readonly: true } });
   }
   if (url.pathname === '/api/inbox') {
     if (!inTeam(team)) {
       return json(res, { error: 'not a member of this team' }, 403);
     }
-    return json(res, inbox(team, url.searchParams.get('before')));
+    return json(res, inbox(team, url.searchParams.get('before'), false, null, url.searchParams.get('limit')));
   }
   if (url.pathname === '/api/search' && url.searchParams.get('view') === 'personal') {
     const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);

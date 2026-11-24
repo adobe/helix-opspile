@@ -23,7 +23,7 @@ import {
 } from '../src/follows.js';
 import { forgetTrends, suggestFollows } from '../src/followsuggest.js';
 import {
-  mayPost, mayReply, mayWork, recipients, roomsOf, teamsOf,
+  inPersonalInbox, mayPost, mayReply, mayWork, recipients, roomsOf, teamsOf,
 } from '../src/shares.js';
 import { accessibleRepos } from '../src/agent/repos.js';
 import { d1 } from './d1.js';
@@ -449,5 +449,56 @@ describe('following technologies', () => {
     assert.deepEqual(await kb(['ew']), [
       { team: 'ew', writable: true, scope: 'shared' }, { team: 'admin', writable: false, scope: 'other' },
     ]);
+  });
+});
+
+describe('rooms', () => {
+  // Every team of the threads of their personal view, as asking each thread for its team did.
+  const asked = async (e, me) => {
+    const { results } = await e.DB.prepare(`SELECT DISTINCT team FROM threads t
+      WHERE ${inPersonalInbox('t', '?1')} AND team IS NOT NULL ORDER BY team`).bind(me.id).all();
+    return [...new Set([...me.teams.map((t) => t.slug), ...results.map((r) => r.team)])];
+  };
+
+  it("finds the teams of a person's channels one by one, as their threads have them", async () => {
+    const e = env();
+    const ew = asMe(EW);
+    // EW posted in C1, which helix holds, but one of its threads went to admin, and one to ew.
+    e.DB.sqlite.exec(`UPDATE threads SET team = 'admin' WHERE thread = '${key('C1', '2.1')}';
+      INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, person)
+        VALUES ('slack', 'E1', 'C1', '1.2', '${key('C1', '1.1')}', '${AT}', 1, 1, ${EW.id})`);
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        kind, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES (?, 'slack', 'E1', 'C1', '6.1', 'acme', 'ew', 'channel', 'p/', ?, ?, ?, 1, ?)`)
+      .run(key('C1', '6.1'), AT, AT, AT, AT);
+    // A channel of the same id on another platform is not theirs.
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        kind, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES ('teams:T:G:C1:8', 'teams', 'T', 'C1', '8', 'acme', 'cdn', 'channel', 'p/', ?, ?, ?, 1, ?)`)
+      .run(AT, AT, AT, AT);
+    assert.deepEqual(await roomsOf(e, ew), ['ew', 'admin', 'helix']);
+    // Mentioned in C3, an alert channel of a thousand threads: its team, once.
+    const alert = e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id,
+        root_id, org, team, kind, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES (?, 'slack', 'E1', 'C3', ?, 'acme', ?, 'alert', 'p/', ?, ?, ?, 1, ?)`);
+    for (let i = 0; i < 1000; i += 1) {
+      alert.run(key('C3', `9.${i}`), `9.${i}`, i === 500 ? 'cdn' : 'helix', AT, AT, AT, AT);
+    }
+    e.DB.sqlite.prepare(`INSERT INTO mentions (thread, message, person, at, via)
+      VALUES (?, ?, ?, ?, 'id')`).run(key('C3', '5.1'), 'slack:E1:C3:5.1', ADA.id, AT);
+    const ada = asMe(ADA);
+    assert.deepEqual(await roomsOf(e, ada), ['helix', 'cdn']);
+    // And the teams of what they follow: C2's group shows da.
+    e.DB.sqlite.exec(`UPDATE threads SET team = 'ew' WHERE thread = '${key('C2', '3.1')}'`);
+    followPerson(e, ADA.id, 'da');
+    assert.deepEqual(await roomsOf(e, ada), ['helix', 'cdn', 'ew']);
+    for (const me of [ew, ada, asMe(SOLO)]) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.deepEqual((await roomsOf(e, me)).sort(), (await asked(e, me)).sort(), me.email);
+    }
+    // One search of the index a team, not a row a thread.
+    const plan = e.DB.sqlite.prepare(`EXPLAIN QUERY PLAN SELECT MIN(x.team) FROM threads x
+      WHERE x.channel_id = ? AND x.source = ? AND x.team > ?`).all('C3', 'slack', 'cdn');
+    assert.match(plan.map((r) => r.detail).join(), /threads_channel_team/);
   });
 });

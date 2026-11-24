@@ -8267,10 +8267,26 @@ const changed = new Set();
 const GAP = 'gap';
 const hidden = () => document.visibilityState === 'hidden';
 const belled = () => notifying() && (state.settings?.bells || []).some((b) => b.view === scopeKey());
-function reloadSoon(thread) {
+// An alert's message (the room says `alert`), when the inbox on screen lists no alerts (the type
+// filter leaves them out, or the personal view, which has none): the reload waits up to this
+// long, for whatever else comes, instead of half a second. Alerts are most of what the rooms
+// announce, each reloaded the inbox's first page in every tab, and most tabs show none of them.
+const ALERT_RELOAD_MS = 30000;
+const TYPE_FACET = FACETS.find((f) => f.id === 'type');
+const listsAlerts = () => !personal() && (!TYPE_FACET || facetPasses(TYPE_FACET, { kind: 'alert' }));
+function reloadSoon(thread, { alert = false } = {}) {
   if (thread) changed.add(thread);
+  if (hidden() && !belled()) {
+    clearTimeout(reload);
+    reload = null;
+    return;
+  }
+  const unseen = alert && !listsAlerts() && !belled() && thread !== state.open;
+  // A reload already on its way takes the alert along.
+  if (unseen && reload) return;
+  const wait = unseen ? ALERT_RELOAD_MS : 500;
   clearTimeout(reload);
-  reload = hidden() && !belled() ? null : setTimeout(reloadChanged, 500);
+  reload = setTimeout(reloadChanged, wait);
 }
 async function reloadChanged() {
   reload = null;
@@ -8370,8 +8386,12 @@ function showReview(on) {
 // are fetched behind it (up to BACKFILL entries), and more on demand at the end of the list.
 // Reloading the first page (live updates) keeps the older pages already here.
 const BACKFILL = 1000;
+// The older pages come 300 entries at a time (the API's most), the first 100: each page counts
+// every entry of the inbox again to find where it starts (src/api.js `inbox`), so ten pages of
+// 100 read twice the rows that one of 100 and three of 300 do.
+const OLDER_PAGE = 300;
 const inboxUrl = () => (personal() ? '/api/inbox?view=personal' : `/api/inbox?team=${encodeURIComponent(state.team)}`);
-const pageUrl = (before) => `${inboxUrl()}${before ? `&before=${encodeURIComponent(before)}` : ''}`;
+const pageUrl = (before) => `${inboxUrl()}${before ? `&before=${encodeURIComponent(before)}&limit=${OLDER_PAGE}` : ''}`;
 /**
  * The threads `entries` have folded in: re-threaded roots, members of a group under another
  * key. Their own entries, loaded before the fold, are stale: kept, the row of such a stub
@@ -8639,7 +8659,7 @@ function listen(team, live, { again = false } = {}) {
       // Re-filed under another org or team (a rule change): cached copies say where they were.
       if (ev.moved) for (const k of ev.moved) if (k !== state.open) state.cache.delete(k);
       const open = ev.folded?.includes(state.open) || ev.moved?.includes(state.open);
-      reloadSoon(open ? state.open : ev.thread);
+      reloadSoon(open ? state.open : ev.thread, { alert: Boolean(ev.alert) && !open });
     }
     // A draft was saved or discarded (by anyone on the team, in any tab).
     if (ev.type === 'draft') { state.cache.delete(ev.thread); reloadSoon(ev.thread); }
