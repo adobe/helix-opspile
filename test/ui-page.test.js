@@ -589,6 +589,80 @@ describe('inbox page', () => {
     assert.deepEqual(reloads, ['a', 'g', 'b'], 'a member of a folded entry, read to its end, and a teammate\'s read');
   });
 
+  describe('live reloads', () => {
+    /** The inbox's reloadSoon with fake timers: `due()` is how long until the reload set. */
+    function live({ types = ['conversation'], view = 'team', open = null } = {}) {
+      const state = {
+        sel: { type: new Set(types) }, not: {}, open, settings: { bells: [] },
+      };
+      let timer = null;
+      const FACETS = [{ id: 'type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation') }];
+      const facetPasses = (f, t) => !state.sel[f.id]?.size || state.sel[f.id].has(f.value(t));
+      const fns = piece('let reload;', '\nasync function reloadChanged() {', 'reloadSoon, changed', {
+        state,
+        document: { visibilityState: 'visible' },
+        notifying: () => false,
+        scopeKey: () => 'helix',
+        personal: () => view === 'personal',
+        FACETS,
+        facetPasses,
+        reloadChanged: () => {},
+        setTimeout: (fn, ms) => {
+          timer = { ms };
+          return timer;
+        },
+        clearTimeout: (t) => {
+          if (t === timer) {
+            timer = null;
+          }
+        },
+      });
+      return { ...fns, due: () => timer && timer.ms };
+    }
+
+    it('reloads soon for a conversation, and waits for more for an alert the list does not show', () => {
+      const a = live();
+      a.reloadSoon('c1');
+      assert.equal(a.due(), 500);
+      const b = live();
+      b.reloadSoon('alert1', { alert: true });
+      assert.equal(b.due(), 30000);
+      // More alerts wait with it; a conversation's message does not.
+      b.reloadSoon('alert2', { alert: true });
+      assert.equal(b.due(), 30000);
+      b.reloadSoon('c1');
+      assert.equal(b.due(), 500);
+      assert.deepEqual([...b.changed], ['alert1', 'alert2', 'c1']);
+      // And an alert does not put off a reload already on its way.
+      b.reloadSoon('alert3', { alert: true });
+      assert.equal(b.due(), 500);
+    });
+
+    it('reloads soon for an alert the list shows, or the one open', () => {
+      const all = live({ types: [] });
+      all.reloadSoon('alert1', { alert: true });
+      assert.equal(all.due(), 500);
+      const alerts = live({ types: ['alert'] });
+      alerts.reloadSoon('alert1', { alert: true });
+      assert.equal(alerts.due(), 500);
+      const opened = live({ open: 'alert1' });
+      opened.reloadSoon('alert1', { alert: true });
+      assert.equal(opened.due(), 500);
+      // The personal view has no alerts, whatever the filter.
+      const mine = live({ types: [], view: 'personal' });
+      mine.reloadSoon('alert1', { alert: true });
+      assert.equal(mine.due(), 30000);
+    });
+  });
+
+  it('asks for the older pages of the inbox 300 entries at a time', () => {
+    const { pageUrl } = piece('const BACKFILL = 1000;', '\n/**', 'pageUrl', {
+      state: { team: 'helix' }, personal: () => false,
+    });
+    assert.equal(pageUrl(), '/api/inbox?team=helix');
+    assert.equal(pageUrl('2026-01-01|k'), '/api/inbox?team=helix&before=2026-01-01%7Ck&limit=300');
+  });
+
   describe('a thread folded into a group (re-threading)', () => {
     const entry = (thread, members = [thread]) => ({
       thread, members: members.map((m) => ({ thread: m })),

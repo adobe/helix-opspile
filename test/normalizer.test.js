@@ -220,15 +220,26 @@ describe('processKey', () => {
       type: 'message', channel: 'C1', user: 'U2', ts: at(n), text: 'Looking.', ...(thread ? { thread_ts: at(thread) } : {}),
     });
     // An alert, a person's reply to it, a person's question and the bot's reply to that.
+    const notified = [];
+    const ROOMS = {
+      idFromName: (n) => n,
+      get: () => ({
+        fetch: async (u, init) => {
+          notified.push(JSON.parse(init.body));
+          return new Response(null, { status: 204 });
+        },
+      }),
+    };
     const e = env({
       [key(1)]: bot(1), [key(2)]: person(2, 1), [key(3)]: person(3), [key(4)]: bot(4, 3),
-    }, { AI: {} });
+    }, { AI: {}, ROOMS });
     await processKey(e, key(1));
     const [{ author_key: bot1 }] = e.DB.rows(`SELECT author_key FROM messages WHERE id = '${at(1)}'`);
     // Not yet: its first alert is a conversation's, as the channel's are.
     assert.deepEqual(e.DB.rows('SELECT kind FROM threads'), [{ kind: 'channel' }]);
     e.DB.sqlite.prepare("UPDATE identities SET alerts = 1 WHERE source || ':' || tenant || ':' || user_id = ?").run(bot1);
     e.queued.length = 0;
+    notified.length = 0;
     for (const n of [1, 2, 3, 4]) {
       // eslint-disable-next-line no-await-in-loop
       await processKey(e, key(n));
@@ -236,6 +247,10 @@ describe('processKey', () => {
     assert.deepEqual(e.DB.rows('SELECT root_id, kind FROM threads ORDER BY root_id'), [
       { root_id: at(1), kind: 'alert' },
       { root_id: at(3), kind: 'channel' },
+    ]);
+    // The room hears which are alerts': an inbox that lists none need not reload for them.
+    assert.deepEqual(notified.filter((n) => n.type === 'thread').map((n) => [n.thread.endsWith(at(1)), Boolean(n.alert)]), [
+      [true, true], [true, true], [false, false], [false, false],
     ]);
     // Clef labels only the person's conversation; the alert gets its title when it is re-threaded.
     const labels = e.queued.filter((q) => q.body.label).map((q) => q.body.label);

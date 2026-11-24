@@ -188,6 +188,30 @@ describe('duplicate candidates', () => {
 });
 
 describe('admin: duplicate customers', () => {
+  it('keeps the facts across requests, and loads them once for requests that come together', async () => {
+    const e = env();
+    let loads = 0;
+    const prepare = e.DB.prepare.bind(e.DB);
+    e.DB.prepare = (sql) => {
+      // mailDomains, one of the facts' queries.
+      if (sql.includes("COUNT(DISTINCT m.thread || ' ' || m.author_key)")) {
+        loads += 1;
+      }
+      return prepare(sql);
+    };
+    // Each request wraps the binding anew (src/api.js): the facts are kept by the binding.
+    const [a, b] = await Promise.all([
+      call(e, ADA, 'GET', '/api/admin/org-duplicates'),
+      call(e, ADA, 'GET', '/api/admin/org-duplicates'),
+    ]);
+    const c = await call(e, ADA, 'GET', '/api/admin/org-duplicates');
+    assert.deepEqual([a.status, b.status, c.status], [200, 200, 200]);
+    assert.deepEqual(c.body.pairs.map((p) => [p.a, p.b]), a.body.pairs.map((p) => [p.a, p.b]));
+    assert.equal(loads, 1);
+    await call(e, ADA, 'GET', '/api/admin/org-duplicates?fresh=1');
+    assert.equal(loads, 2);
+  });
+
   it('lists likely duplicates with Clef, and keeps what it said', async () => {
     const e = env();
     const r = await call(e, ADA, 'GET', '/api/admin/org-duplicates');

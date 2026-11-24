@@ -626,6 +626,9 @@ export async function processKey(env, key, cache = {}) {
   await notifyRoom(env, rooms, {
     type: 'thread',
     thread: message.thread,
+    // An alert's (a bot's post in an alert channel): an inbox that does not list alerts need not
+    // reload at once for it (ui/inbox.js `reloadSoon`). Most of what is announced is alerts.
+    ...(kind === 'alert' ? { alert: true } : {}),
     ...(mentions.length || involved.length ? {
       mentions, involved, by: person, author: author.name, at: message.at,
     } : {}),
