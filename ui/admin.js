@@ -33,6 +33,10 @@
  * after the other, so many can be made in a row (see `serial`). Text fields save when they
  * change. A change updates the open page in place (see "view state"); nothing reloads.
  *
+ * A team's page opens at its overview, everyone's at Adobe (see "a team's overview", ui/team.js):
+ * its people, customers, collaborators, technologies and knowledge base. What changes the team
+ * is its second section, Manage (`own`, `view=manage`), its managers' and the admin team's.
+ *
  * A team's or a customer's page has its agent too, a section each (see "sections"): its thread
  * agents, its tools and MCP servers, a team's extraction rules, and the knowledge base with its
  * agent instructions, which ui/agent.js shows. Every member of an ops team sees those, of every
@@ -44,6 +48,8 @@ const state = {
   // The knowledge bases you see (GET /api/kb), and which section of the team or the org picked
   // is open (`own`, or one of its agent's, SECTIONS), with the file open in its knowledge base.
   bases: [], section: null, path: null,
+  // Every ops team (GET /api/teams): the list of the teams you do not manage.
+  directory: [],
   requests: [], openRequests: 0, names: {}, noIcon: false,
   // The people thread agents asked to be added to a team (src/memberrequests.js), under Requests.
   memberRequests: [],
@@ -281,7 +287,9 @@ function address({
 } = {}) {
   const q = new URLSearchParams({ tab });
   if (sel) q.set(PARAM[tab], sel);
-  if (sel && agented(tab, sel) && section && section !== 'own') {
+  // A team's page opens at its overview; what its managers change is `manage`.
+  if (sel && agented(tab, sel) && section === 'own' && tab === 'teams' && sel !== UNASSIGNED) q.set('view', 'manage');
+  else if (sel && agented(tab, sel) && section && !['own', 'overview'].includes(section)) {
     q.set('view', section);
     if (section === 'kb' && path) q.set('path', path);
   }
@@ -313,10 +321,13 @@ function wanted(url) {
     } else if (q.get('org') && !q.get('team') && state.orgs.some((o) => o.slug === q.get('org'))) tab = 'orgs';
   }
   if (!['orgs', 'requests'].includes(tab) || (tab !== 'orgs' && !state.me.admin)) tab = 'teams';
+  // Customers is for the members of a team; Adobe's people on none see the teams' overviews.
+  if (tab === 'orgs' && !state.me.admin && !(state.me.teams || []).length) tab = 'teams';
   sel = sel || q.get(PARAM[tab]);
   const view = q.get('view');
   const legacy = Boolean(q.get('repo') || q.get('path'));
   let section = SECTIONS.includes(view) ? view : null;
+  if (view === 'manage') section = 'own';
   if (view === 'file' || (!section && legacy)) section = 'kb';
   // Back from an MCP server's sign-in (src/mcpadmin.js): said once, on the servers' section.
   let flash = null;
@@ -385,18 +396,21 @@ async function load() {
   const none = Promise.resolve({ ok: true, body: {} });
   // Everyone on a team sees every customer, to follow it, and the channels of it.
   const onTeam = state.me.admin || (state.me.teams || []).length > 0;
-  const [teams, orgs, requests, bots, accounts, bases, follows] = await Promise.all([
+  const [teams, orgs, requests, bots, accounts, bases, follows, directory] = await Promise.all([
     state.me.admin || state.me.manages?.length ? call('/api/admin/teams') : none,
     onTeam ? call('/api/admin/orgs') : none,
     state.me.admin ? call('/api/admin/requests') : none,
     state.me.admin ? call('/api/admin/bots') : none,
     state.me.admin ? call('/api/admin/accounts') : none,
     call('/api/kb'),
-    call('/api/follows')]);
+    call('/api/follows'),
+    // Every team, whose overview everyone at Adobe sees.
+    call('/api/teams')]);
   if (!teams.ok) { $('list').innerHTML = `<div class="empty">${esc(teams.body.error || 'Could not load.')}</div>`; return false; }
   // In place: the agent (ui/agent.js) counts on the same list.
   state.bases.splice(0, state.bases.length, ...(bases.ok ? bases.body.bases : []));
   state.teams = teams.body.teams || [];
+  state.directory = directory.ok ? directory.body.teams || [] : [];
   state.names = teams.body.names || {};
   state.requests = requests.body.requests || [];
   state.memberRequests = requests.body.memberRequests || [];
@@ -487,6 +501,17 @@ const orgRow = (o) => `
         ${state.me.admin && state.myOrgs.has(o.slug) ? '<span class="tag" title="You follow it: its conversations are in your personal view">following</span>' : ''}
         <span class="sub">${channelCount(o.channels)}</span></div>`;
 
+/** A team's row that you do not manage: its people, its agent, its entries. */
+function teamRow(t) {
+  const b = baseOf('teams', t.slug);
+  const agents = b && b.agents ? `agent in ${channelCount(b.agents)}` : '';
+  const people = t.members !== undefined ? `${t.members} ${t.members === 1 ? 'person' : 'people'}` : '';
+  const mine = (state.me.teams || []).some((x) => x.slug === t.slug) ? 'yours' : '';
+  return `<div class="row two${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}" title="${esc(t.name)} (${esc(t.slug)})">
+        <span class="name">${esc(t.name)}</span>
+        <span class="sub">${esc([mine, people, agents, b && Agent.activity(b), t.slug].filter(Boolean).join(' · '))}</span></div>`;
+}
+
 /** A knowledge base's row (a team's or a customer's you do not manage): its agent, its entries. */
 function baseRow(b) {
   const agents = b.agents ? `agent in ${channelCount(b.agents)}` : '';
@@ -501,9 +526,11 @@ function drawList() {
   const f = state.filter.toLowerCase();
   const matches = (b) => !f || `${b.name} ${b.slug}`.toLowerCase().includes(f);
   if (state.tab === 'teams') {
-    // The teams you do not manage: their agents, read-only.
+    // The teams you do not manage: their overview, and their agents read-only.
     const managed = new Set(state.teams.map((t) => t.slug));
-    const others = state.me.admin ? [] : state.bases.filter((b) => b.kind === 'team' && !managed.has(b.slug) && matches(b));
+    const listed = state.directory.length ? state.directory
+      : state.bases.filter((b) => b.kind === 'team').map((b) => ({ slug: b.slug, name: b.name }));
+    const others = state.me.admin ? [] : listed.filter((t) => !managed.has(t.slug) && matches(t));
     const rows = state.teams.filter((t) => !f || `${t.name} ${t.slug}`.toLowerCase().includes(f)).map((t) => `
       <div class="row two${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}" title="${esc(t.name)} (${esc(t.slug)})">
         <span class="name">${esc(t.name)}</span>
@@ -512,7 +539,7 @@ function drawList() {
         <span class="name"><i>Unassigned</i></span><span class="sub">${channelCount(state.unassigned.channels)}</span></div>` : '';
     const yours = state.me.admin || state.me.manages?.length
       ? `<h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}` : '';
-    const theirs = others.length || !yours ? `<h2>${yours ? 'Other teams' : 'Ops teams'}</h2>${others.map(baseRow).join('') || '<div class="empty">No teams.</div>'}` : '';
+    const theirs = others.length || !yours ? `<h2>${yours ? 'Other teams' : 'Ops teams'}</h2>${others.map(teamRow).join('') || '<div class="empty">No teams.</div>'}` : '';
     const groups = state.me.admin ? groupList(f) : '';
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter teams" value="${esc(state.filter)}"></label>
       ${yours}${groups}${theirs}
@@ -741,6 +768,8 @@ function sectionsOf(tab, slug) {
     : Boolean(state.me.admin) || (slug !== UNASSIGNED && state.orgs.some((o) => o.slug === slug));
   const b = baseOf(tab, slug);
   return [
+    // A team's overview, everyone's (ui/team.js); then what its managers change.
+    ...(tab === 'teams' && slug !== UNASSIGNED ? ['overview'] : []),
     ...(own ? ['own'] : []),
     ...(b ? ['agents', 'mcp', ...(b.kind === 'team' ? ['extraction'] : []), 'kb', 'history'] : []),
   ];
@@ -751,10 +780,14 @@ function sectionTabs() {
   const b = baseOf(state.tab, state.sel);
   const tags = b ? Agent.tags(b.repo) : {};
   const type = state.orgs.find((o) => o.slug === state.sel)?.type || 'customer';
-  const own = state.tab === 'teams' ? 'Team' : `${type[0].toUpperCase()}${type.slice(1)}`;
-  const label = { own, ...SECTION_LABEL };
+  const own = state.tab === 'teams' ? 'Manage' : `${type[0].toUpperCase()}${type.slice(1)}`;
+  const label = { overview: 'Overview', own, ...SECTION_LABEL };
   const orgTitle = state.me.admin ? 'Its name, icon, type, channels and who follows it' : 'Its channels and who follows it';
-  const title = { own: state.tab === 'teams' ? 'Its members, rules, channels and technologies' : orgTitle, ...SECTION_TITLE };
+  const title = {
+    overview: 'Its people, customers, collaborators, technologies and knowledge base',
+    own: state.tab === 'teams' ? 'Its members, rules, channels and technologies: for its managers and the admin team' : orgTitle,
+    ...SECTION_TITLE,
+  };
   const open = state.section === 'history' ? 'kb' : state.section;
   return sectionsOf(state.tab, state.sel).filter((x) => x !== 'history').map((x) => `<a href="${esc(address({ section: x, path: null }))}"
     data-section="${x}"${open === x ? ' aria-current="page"' : ''} title="${esc(title[x])}"><span>${esc(label[x])}</span>${tags[x] || ''}</a>`).join('');
@@ -802,8 +835,9 @@ function showPicked({ channel = null, flash = null, fresh = false } = {}) {
       <div class="empty">${tab === 'teams' ? 'This team has no knowledge base yet.' : 'None of your teams works with this customer, or its agents have not started a knowledge base yet.'}</div>`;
     return;
   }
-  if (section === 'own') {
-    if (tab === 'teams') showTeam(sel);
+  if (section === 'overview' || section === 'own') {
+    if (section === 'overview') showOverview(sel);
+    else if (tab === 'teams') showTeam(sel);
     else showOrg(sel);
     // The agent's badges, on its tabs.
     if (b) Agent.load(b.repo, { fresh });
@@ -1874,6 +1908,65 @@ function loadingPage() {
   return () => ticket === loading;
 }
 
+// ---- a team's overview ----------------------------------------------------------------------
+//
+// The first section of a team's page, everyone's: its people, customers, collaborators,
+// technologies and knowledge base, from GET /api/teams/profile (src/teamprofile.js), which
+// ui/team.js draws. What changes the team is its managers' section (`own`, "Manage").
+
+/** A team's stack drawing, where its knowledge base has one: under its entries. */
+async function drawTeamStack(slug, current) {
+  const r = await call(`/api/kb/stack?team=${encodeURIComponent(slug)}`, 'GET', undefined, { parallel: true });
+  const slot = $('tvStack');
+  if (!current() || !slot || !r.ok || !r.body.drawing) return;
+  const view = r.body.drawing;
+  const name = teamLabel(slug);
+  slot.innerHTML = `<div class="tv-drawing"><h3>Stack drawing</h3>${Stack.html(view)}
+    <p class="hint"><a href="${esc(address({ section: 'kb', path: r.body.path }))}">${r.body.may ? 'Edit it in its knowledge base' : 'Open it in its knowledge base'}</a></p></div>`;
+  Stack.wire(slot, view, { title: `${name}'s stack` });
+}
+
+async function showOverview(slug) {
+  const current = loadingPage();
+  const r = await call(`/api/teams/profile?team=${encodeURIComponent(slug)}`);
+  if (!current()) return;
+  state.view = { target: 'overview', value: slug };
+  if (!r.ok) {
+    $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(teamLabel(slug))}</h1></div>
+      ${sectionsNav()}<div class="empty">${esc(r.body.error || 'Could not load.')}</div>`;
+    tabInView();
+    return;
+  }
+  const p = r.body;
+  const onTeam = Boolean(state.me.admin) || (state.me.teams || []).some((t) => t.slug === slug);
+  // The customers' pages are for the members of a team; anyone else reads their names.
+  const customers = Boolean(state.me.admin || (state.me.teams || []).length);
+  const base = baseOf('teams', slug);
+  const ctx = {
+    orgHref: (org) => (customers ? address({ tab: 'orgs', sel: org, section: 'own' }) : null),
+    orgName: (org, name) => name || orgLabel(org),
+    orgIcon: (org, icon) => {
+      const o = state.orgs.find((x) => x.slug === org);
+      return ico(icon || o?.icon || null, o?.domain || null);
+    },
+    teamHref: (team) => address({ tab: 'teams', sel: team, section: 'overview' }),
+    kbHref: (path) => (base && p.kb?.readable ? address({ section: 'kb', path }) : null),
+  };
+  const facts = [
+    p.team.self_managed ? '<span title="Every member is a team manager">Self-managed</span>' : '',
+    `${channelCount(p.team.channels)}${p.team.shared ? ` + ${p.team.shared} shared` : ''}`,
+    onTeam && slug !== 'admin' ? `<a href="/inbox?team=${encodeURIComponent(slug)}">Its inbox</a>` : '',
+  ].filter(Boolean).join(' · ');
+  $('detail').innerHTML = `
+    <div class="title">${backButton()}<h1 class="fill">${esc(p.team.name)}</h1>
+      <span class="sub">${facts}</span><span class="sub mono">${esc(p.team.slug)}</span></div>
+    ${sectionsNav()}
+    <div class="team" id="overview">${TeamView.html(p, ctx)}</div>`;
+  tabInView();
+  TeamView.wire($('overview'), p, ctx);
+  if (p.kb?.stack) drawTeamStack(slug, current);
+}
+
 async function showTeam(slug) {
   const current = loadingPage();
   const r = await call(`/api/admin/team?slug=${encodeURIComponent(slug)}`);
@@ -2360,7 +2453,7 @@ function drawRequest(r, preview) {
     <div class="card"><div class="field">
       <label>Channel</label><span>${channelName(c)} <span class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></span></span>
       <label>Now</label><span>${c.team ? `filed under <b>${esc(teamLabel(c.team))}</b>` : 'no threads yet'}${org ? ` · customer <b>${esc(org)}</b>` : ''} · ${c.threads} thread${c.threads === 1 ? '' : 's'}</span>
-      <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}">${esc(teamLabel(r.team))}</a></span>
+      <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}&view=manage">${esc(teamLabel(r.team))}</a></span>
       <label>Asks</label><span>${r.move ? `a move: filed under ${esc(teamLabel(r.team))}${c.team && c.team !== r.team ? ` instead of ${esc(teamLabel(c.team))}` : ''}` : `to be in ${esc(teamLabel(r.team))}'s inbox`}</span>
       <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(ago(r.requestedAt))}</span></span>
       ${r.thread ? `<label>Asked in</label><span>the <a href="/inbox?team=${encodeURIComponent(c.team || r.team)}&t=${encodeURIComponent(r.thread)}">sidebar of a thread</a> of this channel, through its agent</span>` : ''}
@@ -2534,7 +2627,7 @@ function drawMemberRequest(r) {
     <div class="card"><div class="field">
       <label>Person</label><span>${esc(memberName(r))} <span class="sub mono">${esc(p.email)}</span>${p.id ? '' : ' <span class="tag">new person</span>'}</span>
       <label>Now</label><span>${p.teams.length ? `on ${esc(p.teams.map(teamLabel).join(', '))}` : 'on no team'}</span>
-      <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}">${esc(teamLabel(r.team))}</a></span>
+      <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}&view=manage">${esc(teamLabel(r.team))}</a></span>
       <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(ago(r.requestedAt))}</span></span>
       ${r.thread ? `<label>Asked in</label><span>the <a href="/inbox?t=${encodeURIComponent(r.thread)}">sidebar of a thread</a>, through its agent</span>` : ''}
       ${r.note ? `<label>Why</label><span class="note">${esc(r.note)}</span>` : ''}
@@ -2618,11 +2711,11 @@ function drawPortalRequest(r, forTeam = null) {
     <div class="card"><div class="field">
       <label>Asks for</label><span>a channel in the customer portal</span>
       <label>Uses</label><span>${r.tech.map((t) => `<span class="tag">${esc(t.name)}</span>`).join(' ') || '<span class="sub">nothing picked</span>'}</span>
-      <label>Followed by</label><span>${r.teams.length ? r.teams.map((t) => `<a href="/inbox/admin?tab=teams&team=${encodeURIComponent(t.team)}">${esc(t.name)}</a> <span class="sub">${esc(t.tech.map((id) => techName.get(id) || id).join(', '))}</span>`).join(' · ') : '<span class="sub">no team follows any of these</span>'}</span>
+      <label>Followed by</label><span>${r.teams.length ? r.teams.map((t) => `<a href="/inbox/admin?tab=teams&team=${encodeURIComponent(t.team)}&view=manage">${esc(t.name)}</a> <span class="sub">${esc(t.tech.map((id) => techName.get(id) || id).join(', '))}</span>`).join(' · ') : '<span class="sub">no team follows any of these</span>'}</span>
       ${r.note ? `<label>Needs</label><span class="note">${esc(r.note)}</span>` : ''}
       <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(r.requestedBy.email || '')} · ${esc(ago(r.requestedAt))}</span></span>
       <label>People</label><span>${r.members.map((m) => `${esc(m.name || m.email)}${m.joined ? '' : ' <span class="sub">(invited)</span>'}`).join(', ')}</span>
-      ${c ? `<label>Channel</label><span>filed under <a href="/inbox/admin?tab=teams&team=${encodeURIComponent(c.team)}">${esc(teamLabel(c.team))}</a> · customer <b>${esc(orgLabel(c.org))}</b> <span class="sub mono">${esc(c.channelId)}</span></span>` : ''}
+      ${c ? `<label>Channel</label><span>filed under <a href="/inbox/admin?tab=teams&team=${encodeURIComponent(c.team)}&view=manage">${esc(teamLabel(c.team))}</a> · customer <b>${esc(orgLabel(c.org))}</b> <span class="sub mono">${esc(c.channelId)}</span></span>` : ''}
       ${open ? '' : `<label>Answer</label><span>${statusTag(r)} by ${who(r.decidedBy)} ${esc(ago(r.decidedAt))}${r.reason ? `: <span class="note">${esc(r.reason)}</span>` : ''}</span>`}
     </div></div>
     ${r.status === 'declined' ? '' : `<div class="card"><h2>${c ? 'Opening another channel' : 'Opening a channel'}</h2>
@@ -4167,8 +4260,9 @@ function wirePersonPicker(input, picks, pick) {
   if (!me.ok) { $('list').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
   state.me = me.body;
   Header.user(state.me, Header.role(state.me) || (state.me.teams?.length ? 'Read-only' : ''));
-  if (!state.me.admin && !state.me.manages?.length && !state.me.teams?.length) {
-    $('list').innerHTML = '<div class="empty">These pages are for the members of an ops team.</div>';
+  // Teams is everyone's at Adobe (a team's overview); the rest is for the members of a team.
+  if (!state.me.admin && !state.me.manages?.length && !state.me.teams?.length && !state.me.staff) {
+    $('list').innerHTML = '<div class="empty">These pages are for Adobe\'s people.</div>';
     $('detail').innerHTML = '<div class="empty"><a href="/inbox">Back to the inbox</a></div>';
     return;
   }

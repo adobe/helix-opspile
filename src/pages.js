@@ -40,12 +40,14 @@ import topicSpaceJs from '../ui/topicspace.js' with { type: 'text' };
 import topicViewJs from '../ui/topicview.js' with { type: 'text' };
 import trendsJs from '../ui/trends.js' with { type: 'text' };
 import trendViewJs from '../ui/trendview.js' with { type: 'text' };
+import teamJs from '../ui/team.js' with { type: 'text' };
 // Spectrum 2's look of every page (README, "Spectrum 2").
 import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
 import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
 import spectrumInboxCss from '../ui/spectrum-inbox.css' with { type: 'text' };
 import spectrumAdminCss from '../ui/spectrum-admin.css' with { type: 'text' };
 import spectrumAgentCss from '../ui/spectrum-agent.css' with { type: 'text' };
+import spectrumTeamCss from '../ui/spectrum-team.css' with { type: 'text' };
 import spectrumCogsCss from '../ui/spectrum-cogs.css' with { type: 'text' };
 import spectrumTopicsCss from '../ui/spectrum-topics.css' with { type: 'text' };
 import { inboxPage, page } from './page.js';
@@ -71,11 +73,13 @@ export const SCRIPTS = {
   'topicview.js': topicViewJs,
   'trends.js': trendsJs,
   'trendview.js': trendViewJs,
+  'team.js': teamJs,
   'spectrum-fonts.css': spectrumFontsCss,
   'spectrum.css': spectrumCss,
   'spectrum-inbox.css': spectrumInboxCss,
   'spectrum-admin.css': spectrumAdminCss,
   'spectrum-agent.css': spectrumAgentCss,
+  'spectrum-team.css': spectrumTeamCss,
   'spectrum-cogs.css': spectrumCogsCss,
   'spectrum-topics.css': spectrumTopicsCss,
 };

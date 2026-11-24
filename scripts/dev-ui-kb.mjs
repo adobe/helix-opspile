@@ -141,6 +141,64 @@ digraph delivery {
   author -> c4 -> editor; editor -> p1 [dir=forward, lhead=cluster_store];
 }
 `;
+/**
+ * Platform ops' own stack drawing: the setup it runs for its customers, which its overview shows
+ * under its knowledge base (ui/team.js).
+ */
+export const PLATFORM_STACK = {
+  summary: 'Most of Platform ops\' customers run Edge Delivery behind their own CDN, authors writing in SharePoint or Document Authoring, code on GitHub.',
+  parts: [
+    { layer: 'edge', name: 'Visitors', kind: 'person' },
+    {
+      layer: 'edge', name: 'Customer CDN', tech: 'fastly', note: 'Fastly or Akamai, run by the customer',
+    },
+    {
+      layer: 'edge', name: 'Adobe Managed CDN', tech: 'adobe/aem-sites/managed-cdn', note: 'for those without one',
+    },
+    {
+      layer: 'site', name: 'Edge Delivery', tech: 'eds', note: 'the pages and their code',
+    },
+    { layer: 'content', name: 'Authors', kind: 'person' },
+    {
+      layer: 'content', name: 'SharePoint', kind: 'storage', tech: 'sharepoint', note: 'documents and sheets',
+    },
+    {
+      layer: 'content', name: 'Document Authoring', kind: 'storage', tech: 'da',
+    },
+    {
+      layer: 'code', name: 'GitHub', kind: 'storage', tech: 'github', note: 'one repository per site',
+    },
+  ],
+  flows: [
+    {
+      from: 'Visitors', to: 'Customer CDN', kind: 'request', label: 'HTTPS',
+    },
+    {
+      from: 'Visitors', to: 'Adobe Managed CDN', kind: 'request', label: 'HTTPS',
+    },
+    {
+      from: 'Customer CDN', to: 'Edge Delivery', kind: 'request', label: 'cache misses',
+    },
+    {
+      from: 'Adobe Managed CDN', to: 'Edge Delivery', kind: 'request', label: 'cache misses',
+    },
+    {
+      from: 'Authors', to: 'SharePoint', kind: 'modify', label: 'pages',
+    },
+    {
+      from: 'Authors', to: 'Document Authoring', kind: 'modify', label: 'pages',
+    },
+    {
+      from: 'Edge Delivery', to: 'SharePoint', kind: 'read', label: 'preview and publish',
+    },
+    {
+      from: 'Edge Delivery', to: 'Document Authoring', kind: 'read', label: 'preview and publish',
+    },
+    {
+      from: 'Edge Delivery', to: 'GitHub', kind: 'read', label: 'code',
+    },
+  ],
+};
 const SEED = {
   'kb-team-platform': {
     name: 'Platform ops',
@@ -177,6 +235,13 @@ const SEED = {
         'aliases: [Managed CDN]', 'layer: edge', '---', '',
         'Adobe runs it; the customer points their domain at it.', '',
       ].join('\n'),
+      // What it learned, a few of each type, for its overview (ui/team.js).
+      'issues/purge-stale-html.md': '---\ntype: Known Issue\ntitle: Purged pages still served stale\ndescription: A second CDN in front keeps its own copy after a purge.\n---\n\nPurge both CDNs, ours first.\n',
+      'issues/sso-loop.md': '---\ntype: Known Issue\ntitle: Sign-in loops after an IdP change\ndescription: The Sidekick keeps the old session until it is signed out.\n---\n\nSign out of the Sidekick, then in again.\n',
+      'issues/redirect-sheet-limit.md': '---\ntype: Known Issue\ntitle: Redirects sheet over its row limit\ndescription: Rows after the limit are ignored, silently.\n---\n\nSplit the sheet by path prefix.\n',
+      'playbooks/go-live.md': '---\ntype: Playbook\ntitle: Go-live checklist\ndescription: DNS, CDN, redirects and the sitemap, in that order.\n---\n\n1. Lower the DNS TTL a day before.\n',
+      'decisions/managed-cdn-default.md': '---\ntype: Decision\ntitle: Adobe Managed CDN by default\ndescription: New sites start on the managed CDN unless the customer runs their own.\n---\n\nAgreed by the team in October.\n',
+      'stack.md': stackFile(PLATFORM_STACK, { title: 'What Platform ops runs for its customers', keep: 'status: stable' }),
       // A partner the team works with across customers.
       'contacts/ravi-kumar.md': [
         '---', 'type: Contact', 'title: Ravi Kumar',
