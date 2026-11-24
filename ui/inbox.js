@@ -1500,6 +1500,7 @@ function simpleCustomers() {
 function renderFilters() { inPass(filterCards); }
 function filterCards() {
   syncList();
+  offViewSoon();
   if (simple()) {
     const html = simpleCustomers();
     const box = $('facets');
@@ -1537,6 +1538,115 @@ function filterCards() {
   });
 }
 
+// ---------------------------------------------------------------- filters out of view
+/*
+ * Filters set where the filter column does not show them: the column scrolls without a
+ * scrollbar, so a customer picked at the bottom of it filters the list with nothing on screen to
+ * say so. A hint at the column's top or bottom edge (`#offview-up`, `#offview-down`, sticky over
+ * the cards, ui/spectrum-inbox.css) names what is set out of view that way, picked or excluded: a
+ * click on it scrolls the column to the nearest of them, its × clears them. A row is out of view
+ * when less than half of it shows. Folded to the rail, the hint is its arrow and how many (it
+ * slides out with the cards); on a touch screen a tap on it slides the rail out, too. The hints
+ * take no room (they hang off empty boxes), so showing one moves nothing under it.
+ */
+/** The rows `rows` ({ top, bottom }, as on screen) above `top` and below `bottom`. */
+function offView(rows, top, bottom) {
+  const up = [];
+  const down = [];
+  for (const r of rows) {
+    const mid = (r.top + r.bottom) / 2;
+    if (mid < top) up.push(r);
+    else if (mid > bottom) down.push(r);
+  }
+  return { up, down };
+}
+/**
+ * What a filter row ({ f, v, out }) says in a hint: "Customer: ACME", "Kind ≠ Alert". A value
+ * starts with a capital, as on its card, but a customer's name is its own.
+ */
+function offViewSay(r) {
+  const f = FACETS.find((x) => x.id === r.f);
+  const label = String((f ? rowLabel(f, r.v) : r.v) || '');
+  return { title: f?.title || r.f, label: r.f === 'customer' || !label ? label : cap(label), out: r.out };
+}
+/**
+ * A hint's content for the filters `list`, out of view `dir` ('up' or 'down'): the nearest
+ * named, the others counted. Empty without any.
+ */
+function offViewHtml(list, dir) {
+  if (!list.length) return '';
+  const says = list.map(offViewSay);
+  const near = dir === 'up' ? says[says.length - 1] : says[0];
+  const where = dir === 'up' ? 'above' : 'below';
+  const n = list.length;
+  const lines = says.map((s) => `${s.title}${s.out ? ' ≠ ' : ': '}${s.label}`);
+  const what = `${n} ${n === 1 ? 'filter' : 'filters'} set ${where}, out of view`;
+  return `<button type="button" class="ov-go" data-ov-go title="${esc(`${what}:\n${lines.join('\n')}\nClick to show`)}" aria-label="${esc(`${what}: ${lines.join(', ')}. Show`)}">`
+    + `<span class="s2-chevron${dir === 'up' ? ' up' : ''}" aria-hidden="true"></span><span class="ov-n" aria-hidden="true">${n}</span>`
+    + `<span class="ov-say" aria-hidden="true"><b>${esc(near.title)}${near.out ? '</b> ≠ ' : ':</b> '}<span class="${near.out ? 'ov-out' : ''}">${esc(near.label)}</span></span>`
+    + `${n > 1 ? `<span class="ov-more" aria-hidden="true">+${n - 1}</span>` : ''}</button>`
+    + `<button type="button" class="ov-x" data-ov-clear title="${esc(n === 1 ? 'Clear this filter' : `Clear these ${n} filters`)}" aria-label="${esc(n === 1 ? 'Clear this filter' : `Clear these ${n} filters`)}"><span class="s2-cross" aria-hidden="true"></span></button>`;
+}
+/** The filter rows set (picked or excluded), where they are on screen. */
+function setRows() {
+  return [...$('facets').querySelectorAll('.fr[data-v]:is(.on, .off)')].map((el) => {
+    const r = el.getBoundingClientRect();
+    return {
+      el, f: el.dataset.f, v: el.dataset.v, out: el.classList.contains('off'), top: r.top, bottom: r.bottom,
+    };
+  });
+}
+const offViewLists = { up: [], down: [] };
+function syncOffView() {
+  const box = $('filters');
+  const edge = box.getBoundingClientRect();
+  const lists = offView(setRows(), edge.top, edge.bottom);
+  for (const dir of ['up', 'down']) {
+    offViewLists[dir] = lists[dir];
+    const el = $(`offview-${dir}`);
+    const html = offViewHtml(lists[dir], dir);
+    if (el.__html === html) continue;
+    el.__html = html;
+    el.innerHTML = html;
+    el.classList.toggle('on', Boolean(html));
+  }
+}
+let offViewFrame = 0;
+function offViewSoon() {
+  if (offViewFrame) return;
+  offViewFrame = requestAnimationFrame(() => { offViewFrame = 0; syncOffView(); });
+}
+/** Scrolls the filter column so that filter row `el` is in the middle of it. */
+function showFilterRow(el) {
+  const box = $('filters');
+  const r = el.getBoundingClientRect();
+  const edge = box.getBoundingClientRect();
+  const top = box.scrollTop + r.top - edge.top - (edge.height - r.height) / 2;
+  box.scrollTo({ top: Math.max(0, top), behavior: REDUCED_MOTION.matches ? 'auto' : 'smooth' });
+}
+function wireOffView() {
+  const box = $('filters');
+  box.addEventListener('scroll', offViewSoon, { passive: true });
+  new ResizeObserver(offViewSoon).observe(box);
+  new ResizeObserver(offViewSoon).observe($('facets'));
+  const click = (dir, e) => {
+    syncOffView();
+    const list = offViewLists[dir];
+    if (!list.length) return;
+    if (e.target.closest('[data-ov-clear]')) {
+      for (const r of list) toggleFilter(r.f, r.v, r.out);
+      render();
+      toUrl();
+      return;
+    }
+    if (!e.target.closest('[data-ov-go]')) return;
+    const main = document.querySelector('main');
+    if (main.classList.contains('rail') && lastPointer !== 'mouse') main.classList.add('railopen');
+    showFilterRow((dir === 'up' ? list[list.length - 1] : list[0]).el);
+  };
+  $('offview-up').addEventListener('click', (e) => click('up', e));
+  $('offview-down').addEventListener('click', (e) => click('down', e));
+}
 // ---------------------------------------------------------------- thread list
 // `:name:` to the emoji, for titles (the body renderer does the same).
 const emojify = (text) => esc(text).replace(EMOJI_CODE, (m, n, at, s) => emojiHtml(n, { alone: Markdown.emojiAlone(s, at, m.length) }) || m);
@@ -10592,6 +10702,7 @@ async function start() {
   };
   // Shift-click excludes: it should not select the labels it passes over.
   $('filters').addEventListener('mousedown', (e) => { if (e.shiftKey && e.target.closest('.fr')) e.preventDefault(); });
+  wireOffView();
   // A row under the pointer is about to be opened: fetch it first.
   $('threads').addEventListener('pointerover', (e) => {
     const t = e.target.closest('.t');
