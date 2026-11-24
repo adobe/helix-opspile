@@ -259,7 +259,7 @@ answer the customer, `last_staff`), and the agents fence them as every bot's
 one: their name is the initials. Under Requests, after the bots, the admin page lists them
 (`GET /api/admin/accounts`, `src/accountlinks.js`), and the admin team gives each the mail address
 of the Adobe person whose it is (`PUT /api/admin/accounts`): the account is linked to that person
-(`identities.person`, with `linked_by` and `linked_at`, migration 0096), and so shows with their
+(`identities.person`, with `linked_by` and `linked_at`, migration 0097), and so shows with their
 name and picture, on their profile card, and counts as one of their accounts ("One account a
 person"). Its messages in D1 follow at once (`relabelAccount`: `messages.person`, `staff`,
 `author`, and the threads' `last_staff` and `last_author`), and so do the ones written before in
@@ -390,6 +390,21 @@ confirmed, the channel is filed under the team even when another team holds it, 
 shared with it (with `share`, the agent asks for the usual request instead). It names the thread
 whose sidebar it came from (`thread`), which the request's page links to. The agent files one only
 while it answers a sidebar message, never on the thread's messages, which customers write.
+
+**Membership requests.** The agent asks for people as well: asked in its sidebar to add someone to
+an ops team (the person who wrote, or a colleague they name), it finds the team with `list_teams`,
+and `request_team_membership` files a request (`member_requests`, migration 0096,
+`src/memberrequests.js`, `src/agent/memberrequest.js`) for the person who wrote the sidebar
+message, with their reason and the person: their mail address as written, or the one person the
+inbox knows by exactly that name, the author when neither is given. Only staff addresses
+(`STAFF_DOMAINS`) are asked for, nobody already on the team, and one request per team and address
+is open at a time. An admin decides it under **Requests**, or one of that team's managers on the
+team's page (**People asked for**): **Confirm** adds the person as adding them on the team's page
+does (a member, a manager in a self-managed team; the sign-in allow list follows), **Decline** takes
+an optional reason. Confirming closes the request first, and a failed addition opens it again; adding
+the person on the team's page answers their open requests. As with channel requests, the agent
+files one only while it answers a sidebar message, never on the thread's messages. It is not
+`request_membership`, which asks a platform's admin bot to add people to the channel itself.
 
 **Portal requests.** Customers ask as well, for a channel of their own in the customer portal:
 the admin team opens one for them under Requests, and a team's managers on their team's page
@@ -2437,7 +2452,7 @@ written by people outside its control.
 | `find_channels` | with `read_any_thread`: the inbox's channels, on every platform, that a customer's name, a channel's or Teams team's name, a domain's name, or a site or repository (`owner/name`, or an Edge Delivery host) names, best first, the agent's own left out: id, platform and name, customer, ops teams, conversations and latest activity, why it matched, and the channel's link on its platform |
 | `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for any channel, by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
-| `channel_assignment`, `list_teams`, `request_channel_reassignment` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"). The admin team decides |
+| `channel_assignment`, `list_teams`, `request_channel_reassignment`, `request_team_membership` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"), which the admin team decides; or a membership request: add its author, or someone they name, to an ops team (see "Membership requests"), which an admin or that team's managers decide |
 | `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
 | `sidebar_followup` | tells the person who asked something in the sidebar (`message`, its `sb_…` id) what has happened since, from a later turn on the thread's messages (`addSidebarFollowup` in `src/sidebar.js`): a new answer of the agent's to them, under their question; refused while it answers a sidebar message, for a message it did not answer yet, over a week old, or followed up three times |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |

@@ -60,7 +60,7 @@ function env() {
       INTO identities (source, tenant, user_id, kind, name, email, fetched_at, avatar, staff, guest)
     VALUES ('teams', 'T', ?, 'person', ?, ?, ?, '', ?, ?)`)
     .run(id, name, email, AT, staff, guest);
-  // The host tenant's admin account, already seen as staff (the lookup, or migration 0096).
+  // The host tenant's admin account, already seen as staff (the lookup, or migration 0097).
   account('u-owner', 'BO', `owner_bo@${HOST}`, { staff: 1, guest: 0 });
   account('u-cy', 'Cy', 'cy@customer.example');
   const message = (id, at, key, name, staff) => DB.sqlite.prepare(`INSERT INTO messages (source,
@@ -287,7 +287,7 @@ describe('the host tenant\'s admin accounts', () => {
     assert.equal(accountAuthor(ENV, author, { account_kind: 'person' }), author);
   });
 
-  it('are seen as staff before migration 0096 by the migration itself', () => {
+  it('are seen as staff before migration 0097 by the migration itself', () => {
     const e = env();
     const db = e.DB.sqlite;
     db.prepare("UPDATE identities SET staff = NULL WHERE user_id = 'u-owner'").run();
@@ -296,7 +296,7 @@ describe('the host tenant\'s admin accounts', () => {
     // A guest of the tenant with such an address stays a customer's.
     db.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, email, fetched_at, guest)
       VALUES ('teams', 'T', 'u-eve', 'person', 'Eve', 'owner_eve@customer.example', ?, 1)`).run(AT);
-    const sql = readFileSync(new URL('../migrations/0096_host_admins.sql', import.meta.url), 'utf8');
+    const sql = readFileSync(new URL('../migrations/0097_host_admins.sql', import.meta.url), 'utf8');
     db.exec(sql.slice(0, sql.indexOf('ALTER TABLE')));
     assert.deepEqual(e.DB.rows("SELECT user_id, staff FROM identities WHERE user_id IN ('u-owner', 'u-eve') ORDER BY user_id"), [
       { user_id: 'u-eve', staff: null }, { user_id: 'u-owner', staff: 1 },
