@@ -1849,9 +1849,9 @@ function orgStack(org) {
   return (state.data?.stacks?.[org] || []).map((t) => ({ tech: t.tech, name: t.name, layer: t.layer }));
 }
 /** The names of the key parts of a customer's stack: each layer's likeliest, but Other's. */
-function stackLine(org) {
+function stackLine(org, parts = orgStack(org)) {
   const by = new Map();
-  for (const t of orgStack(org)) if (t.layer && t.layer !== 'other' && !by.has(t.layer)) by.set(t.layer, t.name);
+  for (const t of parts) if (t.layer && t.layer !== 'other' && !by.has(t.layer)) by.set(t.layer, t.name);
   return (state.data?.vocab?.stack || []).map((l) => by.get(l.id)).filter(Boolean);
 }
 /** Pages of the inbox, merged: a customer's drawing is the same on each, the later's kept. */
@@ -3613,13 +3613,36 @@ function techMenu(data) {
   const topic = (t) => `<div class="hmi"><span>${esc(t.name)}</span></div>`;
   const customer = orgName(data.thread) && !String(orgName(data.thread)).startsWith('_') ? orgName(data.thread) : 'the customer';
   const org = data.thread.org && !String(data.thread.org).startsWith('_') ? data.thread.org : null;
-  // The customer's whole stack, drawn (showStack).
-  const drawing = org ? `<div class="hms"><button type="button" class="hmi stk-open" data-stack="${esc(org)}"><span>${esc(customer)}'s stack drawing</span></button></div>` : '';
+  // The customer's whole stack, drawn (showStack): its own button beside this one where it has a
+  // drawing (stackButton); else here, which says there is none yet.
+  const drawing = org && !headStack(data).length ? `<div class="hms"><button type="button" class="hmi stk-open" data-stack="${esc(org)}"><span>${esc(customer)}'s stack drawing</span></button></div>` : '';
   const list = hmSection('In this thread', here.map(item))
     + hmSection(here.length ? `Also used by ${customer}` : `Used by ${customer}`, also.map(item))
     + hmSection('Topics of the thread', topics.map(topic)) + drawing;
   const more = count > 1 ? `<span class="n">+${count - 1}</span>` : '';
   return headMenu('tech', { button: `<span class="lb">${esc(label)}</span>${more}`, label: 'Tech stack and topics', list });
+}
+
+/** The parts of the thread's customer's stack drawing: the thread view's, else the list's. */
+function headStack(data) {
+  const org = data.thread?.org;
+  if (!org || String(org).startsWith('_')) return [];
+  return data.stack?.length ? data.stack : orgStack(org);
+}
+
+/**
+ * The header's button to the customer's stack drawing (showStack), where it has one: in a team's
+ * inbox, whose list is not by customer, the thread is the way to it. Its tooltip names the key
+ * parts, as the customer's heading in the personal view's list does (stackLine).
+ */
+function stackButton(data) {
+  const parts = headStack(data);
+  if (!parts.length) return '';
+  const { org } = data.thread;
+  const name = customerName(org);
+  const keys = stackLine(org, parts);
+  const title = `${name}'s tech stack${keys.length ? `: ${keys.join(', ')}` : ''}. Show the drawing`;
+  return `<div class="hm stk"><button type="button" class="hmb" data-stack="${esc(org)}" aria-haspopup="dialog" aria-expanded="false" title="${esc(title)}"><span class="wf wf-layers" aria-hidden="true"></span><span class="lb">Stack drawing</span></button></div>`;
 }
 
 /** A link's favicon (Google's, as the customers' icons are), for the header's links. */
@@ -5034,7 +5057,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const lead = `<div class="lead">${headSource(thread, members, t)}${headWhat(thread.title, chan)}</div>`;
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
       <div class="l1">${lead}</div>
-      <div class="l2">${techMenu(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
+      <div class="l2">${techMenu(data)}${stackButton(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
   const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
   const reply = sideInline(key) ? sideComposer(key, thread)
     : composer(thread, resolveButton(thread, resolution), key);
@@ -10874,10 +10897,11 @@ async function start() {
       return;
     }
     if (e.target.closest('[data-rechannel]')) { setChannel(null); return; }
-    // The customer's stack drawing, from the tech stack's dropdown: under the dropdown's button.
+    // The customer's stack drawing: under its button in the header, or from the tech stack's
+    // dropdown, under the dropdown's button.
     const stk = e.target.closest('[data-stack]');
     if (stk) {
-      const anchor = document.querySelector('#pane > .ph [data-hm-toggle="tech"]') || stk;
+      const anchor = stk.closest('.hmpop') ? document.querySelector('#pane > .ph [data-hm-toggle="tech"]') || stk : stk;
       closeHeadMenus();
       showStack(stk.dataset.stack, anchor);
       return;
