@@ -92,6 +92,10 @@ import {
 } from './topicsapi.js';
 import { teamDirectory, teamProfile } from './teamprofile.js';
 import { drawDiagram } from './diagrams.js';
+import { isRequestKey } from './requestkeys.js';
+import {
+  addNote, requestEntries, requestThread, resolveRequest,
+} from './requestthreads.js';
 import { targetOf, translateMessages } from './translate.js';
 
 /**
@@ -114,9 +118,9 @@ const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop
  * `linked_at`, and its person's `account_person_staff` and `account_person_name`), since the
  * frontmatter says what was so when it was written:
  *
- * - a bot an admin says is Adobe's, or takes it back (under Requests on the admin page), moves
- *   to that side, and the name an admin gives it goes on its messages too. A bot nobody decided
- *   on (`ours` NULL) keeps its frontmatter's side.
+ * - a bot an admin says is Adobe's, or takes it back (in its thread of the admin team's inbox),
+ *   moves to that side, and the name an admin gives it goes on its messages too. A bot nobody
+ *   decided on (`ours` NULL) keeps its frontmatter's side.
  * - a person's account that is staff now and was not then (one of the host tenant's admin
  *   accounts, src/lookup.js `isHostAdmin`) is Adobe's, and one the admin team linked to the
  *   Adobe person who uses it (src/accountlinks.js) goes by that person's name.
@@ -1595,6 +1599,27 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
       limit: url.searchParams.get('limit'),
     }));
   }
+  // The admin team's requests, threads of its inbox (src/requestthreads.js).
+  if (url.pathname === '/api/requests' || url.pathname.startsWith('/api/requests/')) {
+    if (!isAdmin(me)) {
+      return json({ error: 'for the admin team' }, 403);
+    }
+    if (url.pathname === '/api/requests' && request.method === 'GET') {
+      return json(await requestEntries(env, me));
+    }
+    const body = await request.json().catch(() => ({}));
+    if (url.pathname === '/api/requests/note' && request.method === 'POST') {
+      return addNote(env, me, body);
+    }
+    if (url.pathname === '/api/requests/resolve' && request.method === 'POST') {
+      return resolveRequest(env, me, body);
+    }
+    return json({ error: 'not found' }, 404);
+  }
+  if (url.pathname === '/api/thread' && isRequestKey(url.searchParams.get('thread'))) {
+    const result = isAdmin(me) ? await requestThread(env, me, url.searchParams.get('thread')) : null;
+    return result ? json(result) : json({ error: 'not found' }, 404);
+  }
   if (url.pathname === '/api/thread') {
     const key = url.searchParams.get('thread');
     // Whether the viewer may send as the opspile app here (POST /api/post/app): asked
@@ -1718,6 +1743,17 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
   }
   if (url.pathname === '/api/read' && request.method === 'POST') {
     const { thread: key, at, team: from } = await request.json().catch(() => ({}));
+    // A request's thread is read in the admin team's inbox, and its room has it.
+    if (isRequestKey(key)) {
+      if (!isAdmin(me) || typeof at !== 'string') {
+        return json({ error: 'not found' }, 404);
+      }
+      await room(env, 'admin').fetch('https://room/read', {
+        method: 'POST',
+        body: JSON.stringify({ person: me.id, thread: key, at }),
+      });
+      return new Response(null, { status: 204 });
+    }
     const row = key && await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
       .bind(key).first();
     const teams = await teamsOf(env, row);

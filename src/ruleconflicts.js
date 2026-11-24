@@ -11,10 +11,10 @@
  */
 
 /**
- * Conflicts between team rules, for the admin team to settle under Requests: two rules of two
- * teams that both match a channel opspile knows. The lowest priority decides (src/rules.js), so a
- * conflict is no error, but often an accident: a prefix of one team's (`^aem-`) that also takes
- * the channels a narrower rule of another's was meant for. Computed from the rules and the
+ * Conflicts between team rules, for the admin team to settle in its inbox, a thread each: two rules
+ * of two teams that both match a channel opspile knows. The lowest priority decides (src/rules.js),
+ * so a conflict is no error, but often an accident: a prefix of one team's (`^aem-`) that also
+ * takes the channels a narrower rule of another's was meant for. Computed from the rules and the
  * channels every time, never curated.
  *
  * Manual assignments (`channel_id` rules) are never in a conflict: they are how one is settled for

@@ -18,8 +18,9 @@
  * where you manage them) and Topics (the topic map) for every member of a team (Inbox and
  * Teams, for its teams' overviews, and Topics for Adobe's people on none, `staff` from /api/me,
  * to find what to follow), and
- * Requests (the bots too) and COGS (what the inbox costs) too for the admin team (with the
- * number of open requests on Requests); and Stats, klickhaus' statistics of all threads in a new tab,
+ * COGS (what the inbox costs) too for the admin team, whose requests (channels and people asked
+ * for, customers in the portal, bots, conflicts) are threads of its inbox, their number on Inbox;
+ * and Stats, klickhaus' statistics of all threads in a new tab,
  * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
@@ -39,7 +40,6 @@ window.Header = (() => {
     { id: 'inbox', label: 'Inbox', href: '/inbox', title: 'Threads with customers, partners and vendors', member: true, internal: true },
     { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their people, customers, collaborators and technologies; their members, channels and rules, and their agents: thread agents, tools, instructions and knowledge base', member: true, internal: true },
     { id: 'orgs', label: 'Customers', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors, and their agents: thread agents, tools, instructions and knowledge base', member: true },
-    { id: 'requests', label: 'Requests', href: '/inbox/admin?tab=requests', title: 'Channels team managers asked for, people to add to teams, customers waiting in the portal and the bots in the threads: confirm, open or decline, and say whose each bot is', admin: true },
     { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their areas and topics, with the people, customers and products on each', member: true, internal: true },
     { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs at list prices: per service, message, thread, customer and month', admin: true },
     // On klickhaus, in a new tab: its address comes from /api/me (`stats.url`).
@@ -119,7 +119,7 @@ window.Header = (() => {
     if (u.pathname === '/inbox/topics') return 'topics';
     if (u.pathname !== '/inbox/admin') return null;
     const tab = u.searchParams.get('tab');
-    return ['orgs', 'requests'].includes(tab) ? tab : 'teams';
+    return tab === 'orgs' ? tab : 'teams';
   }
   /** Keeps an address (the page's own, by default) as where its page was left. */
   function remember(url = location.href) {
@@ -205,7 +205,7 @@ window.Header = (() => {
     const nav = $('pages');
     const item = (p) => (p.external
       ? `<a data-page="${p.id}" href="${href(p.id)}" title="${p.title}" target="_blank" rel="noopener">${p.label}<span class="ext" aria-hidden="true">↗</span></a>`
-      : `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'requests' ? '<span class="count" hidden></span>' : ''}</a>`);
+      : `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'inbox' && me.admin ? '<span class="count" hidden></span>' : ''}</a>`);
     nav.innerHTML = shown.map(item).join('');
     nav.hidden = !shown.length;
     let menu = $('pagemenu');
@@ -227,14 +227,14 @@ window.Header = (() => {
     }
   }
 
-  /** The number of open channel requests, on Requests. */
+  /** The number of the admin team's requests that wait, on Inbox: they are threads of its inbox. */
   function setCount(n) {
     $('pages').dataset.count = String(n);
-    for (const el of document.querySelectorAll('[data-page="requests"] .count:not(.total)')) {
+    for (const el of document.querySelectorAll('[data-page="inbox"] .count:not(.total)')) {
       el.textContent = String(n);
       el.hidden = !n;
-      el.closest('a').title = n ? `${n} channel request${n === 1 ? '' : 's'} from team managers to confirm or decline`
-        : PAGES.find((p) => p.id === 'requests').title;
+      el.closest('a').title = n ? `${n} request${n === 1 ? '' : 's'} wait${n === 1 ? 's' : ''} for the admin team, in its inbox`
+        : PAGES.find((p) => p.id === 'inbox').title;
     }
     sync();
   }

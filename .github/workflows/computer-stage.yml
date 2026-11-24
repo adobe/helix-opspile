@@ -93,6 +93,7 @@ on:
       - 'src/profiles.js'
       - 'src/raw.js'
       - 'src/refile.js'
+      - 'src/requestkeys.js'
       - 'src/requests.js'
       - 'src/resolve.js'
       - 'src/response-model.js'

@@ -683,7 +683,7 @@ export function opspileExtension(ctx) {
       }),
       defineTool({
         name: 'request_channel_reassignment',
-        description: 'Only while you answer a sidebar message, and only when its author asks for it: asks the admin team to file your channel under another ops team (its threads move to that team\'s inbox), or with `share`, to put it in that team\'s inbox too and leave it where it is. It is a request for the person who asked, with their reason: the admin team confirms or declines it under Requests in the admin pages, and nothing moves until then.',
+        description: 'Only while you answer a sidebar message, and only when its author asks for it: asks the admin team to file your channel under another ops team (its threads move to that team\'s inbox), or with `share`, to put it in that team\'s inbox too and leave it where it is. It is a request for the person who asked, with their reason: the admin team confirms or declines it in its inbox, where the request is a thread, and nothing moves until then.',
         parameters: Type.Object({
           team: Type.String({ description: 'The team\'s slug, from list_teams' }),
           note: Type.String({ description: 'Why, for the admin team, in a sentence or two: what the person said, and what backs it (the rule that put it here, a name prefix it should follow)' }),
@@ -710,12 +710,12 @@ export function opspileExtension(ctx) {
             route: 'agent', action: 'channel_request', id: r.id, move: r.move, team: t.team,
           }));
           const what = r.move ? `move the channel from ${t.team} to ${r.team}` : `add the channel to ${r.team}'s inbox, filed under ${t.team} still`;
-          return text(`requested (request ${r.id}) for ${asker.name || asker.email}: ${what}. The admin team confirms or declines it under Requests in the admin pages; nothing moved yet. Tell ${asker.name || 'them'} so.`);
+          return text(`requested (request ${r.id}) for ${asker.name || asker.email}: ${what}. The admin team confirms or declines it in its inbox; nothing moved yet. Tell ${asker.name || 'them'} so.`);
         },
       }),
       defineTool({
         name: 'request_team_membership',
-        description: 'Only while you answer a sidebar message, and only when its author asks for it: asks that a person be added to an ops team (its inbox, its threads), the author or someone they name. It is a request for the person who asked, with their reason: an admin or one of the team\'s managers confirms or declines it, under Requests in the admin pages or on the team\'s page, and nobody is added until then.',
+        description: 'Only while you answer a sidebar message, and only when its author asks for it: asks that a person be added to an ops team (its inbox, its threads), the author or someone they name. It is a request for the person who asked, with their reason: an admin or one of the team\'s managers confirms or declines it, in the admin team\'s inbox or on the team\'s page, and nobody is added until then.',
         parameters: Type.Object({
           team: Type.String({ description: 'The team\'s slug, from list_teams' }),
           note: Type.String({ description: 'Why, for whoever decides, in a sentence or two: what the person said, and what they will work on in the team' }),
@@ -740,7 +740,7 @@ export function opspileExtension(ctx) {
             route: 'agent', action: 'member_request', id: r.id, team: t.team,
           }));
           const who = r.person.email === asker.email.toLowerCase() ? `${asker.name || asker.email} (themselves)` : `${r.person.name ? `${r.person.name} <${r.person.email}>` : r.person.email}`;
-          return text(`requested (membership request ${r.id}) for ${asker.name || asker.email}: add ${who} to ${r.team}. An admin or one of ${r.team}'s managers confirms or declines it, under Requests in the admin pages or on the team's page; nobody was added yet. Tell ${asker.name || 'them'} so.`);
+          return text(`requested (membership request ${r.id}) for ${asker.name || asker.email}: add ${who} to ${r.team}. An admin or one of ${r.team}'s managers confirms or declines it, in the admin team's inbox or on the team's page; nobody was added yet. Tell ${asker.name || 'them'} so.`);
         },
       }),
       ...wakeupTools(ctx),

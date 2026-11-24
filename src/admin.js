@@ -43,6 +43,7 @@ import {
   recordOutcome,
   reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
+import { announceRequest } from './requestkeys.js';
 import {
   claimMemberRequest, closeMemberRequest, getMemberRequest, listMemberRequests, memberOpenCount,
   recordMemberOutcome, reopenMemberRequest, settleMemberRequests,
@@ -78,11 +79,11 @@ import {
  *   (`^aem-` style prefixes, Teams team names, Slack Connect teams), and manual assignments
  *   of one channel (a `channel_id` rule with priority 10); follow rules, which share the
  *   channels they match with a team (src/followrules.js); and the conflicts between team
- *   rules, which the admin team settles under Requests (src/ruleconflicts.js);
+ *   rules, which the admin team settles in its inbox (src/ruleconflicts.js, src/requestthreads.js);
  * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments;
  * - bots: which of the bots the inbox knows are Adobe's, and so count as staff, and which only
  *   post alerts, each with its latest messages (src/ourbots.js); a bot nobody said either of is
- *   a request, under Requests;
+ *   a request, a thread of the admin team's inbox;
  * - shared channels (migration 0024): a channel is filed under one team, its first, and can be
  *   shared with more. Adding a team to a channel moves it only when the admin team (or nobody)
  *   holds it; a channel another team holds is shared with the new one instead.
@@ -1866,7 +1867,7 @@ async function addMemberSettling(env, me, body) {
 export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests',
   'GET orgs', 'GET org'];
 
-export async function admin(request, env, url, me) {
+async function adminRoute(request, env, url, me) {
   const p = url.pathname;
   if (!p.startsWith('/api/admin/')) {
     return null;
@@ -1973,4 +1974,25 @@ export async function admin(request, env, url, me) {
     case 'POST topics': return buildTopics(env, me);
     default: return json({ error: 'not found' }, 404);
   }
+}
+
+/**
+ * The routes that may decide one of the admin team's requests, or settle or open a conflict: its
+ * inboxes load the requests again (src/requestthreads.js), unless it was a dry run.
+ */
+const DECIDING = new Set(['DELETE requests', 'POST member-requests/confirm',
+  'POST member-requests/decline', 'POST portal/open', 'POST portal/decline',
+  'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
+  'DELETE org-merge', 'POST members', 'POST assign', 'DELETE assign', 'POST rules', 'PUT rules',
+  'DELETE rules', 'PUT bots', 'PUT accounts', 'POST conflicts', 'POST rule-conflicts']);
+
+export async function admin(request, env, url, me) {
+  const route = `${request.method} ${url.pathname.slice('/api/admin/'.length)}`;
+  const deciding = url.pathname.startsWith('/api/admin/') && DECIDING.has(route);
+  const asked = deciding ? await request.clone().json().catch(() => ({})) : null;
+  const res = await adminRoute(request, env, url, me);
+  if (deciding && res && res.ok && !asked.dryRun) {
+    await announceRequest(env);
+  }
+  return res;
 }

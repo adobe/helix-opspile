@@ -20,6 +20,7 @@ import { ensureKnowledgeBase, repoName } from './kb.js';
 import { CLEF } from './label.js';
 import { domainList, loadRules } from './lookup.js';
 import { platformName } from './platforms.js';
+import { announceRequest } from './requestkeys.js';
 import { isAdmin } from './review.js';
 import { mergeRule, UNASSIGNED } from './rules.js';
 import { ownedCustomers } from './shares.js';
@@ -43,10 +44,11 @@ import { ownedCustomers } from './shares.js';
  * its channels move as a rule change moves them (src/refile.js), and so do the ones a template
  * names it later. Its name and icon fill in the other's where that has none; its agents' MCP
  * servers, secrets and repositories, the people who follow it, its stack drawing and its portal
- * lobbies go to the other; and the entries of its knowledge base the other has not are copied
- * over (`mergeKnowledge`). A merge can be undone (`unmergeOrg`): its channels move back, what
- * moved with it stays. Anyone who sees one of the two asks the admin team for a merge instead
- * (`org_merge_requests`), which the admin team merges or declines under Requests.
+ * lobbies go to the other; and the entries of its knowledge base the other has not are copied over
+ * (`mergeKnowledge`). A merge can be undone (`unmergeOrg`): its channels move back, what moved with
+ * it stays. Anyone who sees one of the two asks the admin team for a merge instead
+ * (`org_merge_requests`), which the admin team merges or declines in its inbox, where it is a
+ * thread.
  */
 
 /** From this probability on, Clef says two orgs are one: the list's "likely" pairs. */
@@ -555,6 +557,13 @@ export async function listMergeRequests(env, me, { limit = 50 } = {}) {
   return list.map(requestOf);
 }
 
+/** Merge request `id`, as the lists give it, or null. */
+export async function getMergeRequest(env, id) {
+  const r = await env.DB.prepare('SELECT * FROM org_merge_requests WHERE id = ?')
+    .bind(Number(id) || 0).first();
+  return r ? requestOf(r) : null;
+}
+
 /** How many merge requests wait for the admin team. */
 export async function openMergeCount(env) {
   const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM org_merge_requests WHERE status = 'open'").first();
@@ -611,6 +620,7 @@ export async function requestMerge(env, me, body) {
   console.log(JSON.stringify({
     route: 'orgmerge', request: 'created', by: me.id, id: r.id,
   }));
+  await announceRequest(env, 'merge', r.id);
   return json({ ok: true, request: requestOf(r) });
 }
 

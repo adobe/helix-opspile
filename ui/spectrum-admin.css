@@ -162,9 +162,6 @@ ul.teams { margin: 0; padding: 0; list-style: none; }
 td.picks-cell { white-space: normal; }
 .movepop .newtype { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
 .movepop .newtype[hidden] { display: none; }
-/* A conflict between technologies: each team's definition, what differs marked, its actions. */
-.conflict .acts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-300); }
-.spectrum .conflict .field > .differs { background: var(--spectrum-notice-subtle-background-color-default); font-weight: var(--spectrum-bold-font-weight); }
 /* A text field under 16px makes iOS zoom in on it when it is focused: the large scale's body
    size (17px), on a touch screen. */
 @media (hover: none) and (pointer: coarse) {
@@ -476,13 +473,6 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .tag.manual { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-indigo-subtle-background-color-default); }
 .spectrum .tag.partner { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-purple-subtle-background-color-default); }
 .spectrum .tag.vendor { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-yellow-subtle-background-color-default); }
-.spectrum .recent { list-style: none; margin: 0; padding: 0; }
-.spectrum .recent li { padding: var(--spectrum-spacing-200) 0; border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
-.spectrum .recent li:first-child { border-top: 0; padding-top: 0; }
-.spectrum .recent .said { overflow-wrap: anywhere; margin-bottom: var(--spectrum-spacing-75); }
-.spectrum .tag.ours { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-informative-subtle-background-color-default); }
-/* A bot that only posts alerts: the threads it starts are alerts. */
-.spectrum .tag.alerts { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-orange-subtle-background-color-default); }
 /* A request's status, and Clef's verdict when it is this team's. */
 .spectrum .tag.open { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); }
 .spectrum .tag.confirmed, .spectrum .tag.merged, .spectrum .tag.clef.yes { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); }

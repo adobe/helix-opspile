@@ -198,7 +198,7 @@ async function call(e, method, path, body) {
 describe('admin: rule conflicts', () => {
   const KEYS = ['rule:1|rule:2', 'rule:1|rule:4'];
 
-  it('lists them under Requests and counts them, and keeps one while it stays as kept', async () => {
+  it('lists them for the admin team\'s inbox and counts them, and keeps one while it stays as kept', async () => {
     const e = env();
     let r = await call(e, 'GET', '/api/admin/requests');
     assert.deepEqual(r.body.ruleConflicts.map((c) => c.key), KEYS);

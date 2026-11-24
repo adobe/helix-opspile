@@ -11,6 +11,7 @@
  */
 
 import { domainList, isStaffDomain } from './lookup.js';
+import { announceRequest } from './requestkeys.js';
 
 /**
  * Team membership requests (migration 0096): someone asks for a person to be added to an ops
@@ -159,6 +160,7 @@ export async function createMemberRequest(env, me, {
   console.log(JSON.stringify({
     route: 'admin', memberRequest: 'created', by: me.id, id: row.id, team: slug, via: thread ? 'agent' : 'page',
   }));
+  await announceRequest(env, 'member', row.id);
   return { request: await getMemberRequest(env, row.id) };
 }
 

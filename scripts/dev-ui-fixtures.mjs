@@ -1289,7 +1289,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       ['dana', 130, 'Does this channel belong to us or to Forms?'],
       ['agent', 129.5, 'It is filed under Platform ops: the `aem-` prefix rule puts it there. It is about AEM Forms, so Forms ops may be the better owner. Should I ask the admin team to move it?'],
       ['dana', 129, 'move.'],
-      ['agent', 128.5, 'I filed a request to move the channel to Forms ops. The admin team confirms or declines it under Requests in the admin pages.'],
+      ['agent', 128.5, 'I filed a request to move the channel to Forms ops. The admin team confirms or declines it in its inbox.'],
     ],
     label: {
       kind: 'incident', next_actor: 'us', urgency: 1.2, resolved_p: 0.1,

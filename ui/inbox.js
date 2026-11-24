@@ -116,7 +116,10 @@ function timeLabel(iso, now = new Date()) {
  */
 const timeTag = (iso, dated = false) => `<time datetime="${esc(iso)}" title="${esc(WHOLE_TIME(new Date(iso)))}">${esc(dated ? timeLabel(iso) : clock(iso))}</time>`;
 // `portal` is the customer portal (src/portalsource.js): a platform of the inbox's own.
-const PLATFORM = { slack: 'Slack', teams: 'Teams', discord: 'Discord', portal: 'Portal' };
+// A request of the admin team's (see "the admin team's requests") is the inbox's own.
+const PLATFORM = {
+  slack: 'Slack', teams: 'Teams', discord: 'Discord', portal: 'Portal', request: 'Inbox',
+};
 const platform = (t) => PLATFORM[t.source] || 'Teams';
 // The account a person connects for a platform.
 const accountOf = (p) => (p === 'teams' ? 'Microsoft' : PLATFORM[p] || p);
@@ -2930,7 +2933,7 @@ function reviewPanel(thread, model, reviews) {
 }
 // Discord lets only bots react through its API: reactions there are made in Discord.
 const canReact = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt && m.author?.kind !== 'system'
-  && m.source !== 'discord';
+  && m.source !== 'discord' && m.source !== 'request';
 
 /**
  * Whether the viewer may edit a message from here (the server says how, `m.editable`): as
@@ -3004,7 +3007,7 @@ function message(m, prev, fresh, followed = false, dated = false) {
   }).join('')}<button class="more" data-picker="1" aria-haspopup="true" aria-expanded="false" title="More reactions">☺</button>` : '';
   // ⋮, last: the message's menu (its links, openMessageMenu), on every message that has come in,
   // also where one may not react.
-  const acts = m.pending ? '' : `<button class="acts" data-acts="1" aria-haspopup="menu" aria-expanded="false" title="More actions (m)" aria-label="More actions">${KEBAB}</button>`;
+  const acts = m.pending || m.source === 'request' ? '' : `<button class="acts" data-acts="1" aria-haspopup="menu" aria-expanded="false" title="More actions (m)" aria-label="More actions">${KEBAB}</button>`;
   // The quick reactions are the bubble's: pointing at the bubble shows them, beside the header
   // (or above it, where the line has no room), never over the name or the time, which have
   // their own (the profile card, the whole date).
@@ -4932,6 +4935,14 @@ async function openThread(key, { live = false, cached = false } = {}) {
   mergeProfiles(data.profiles);
   // Shown from the preload: fetch the current state behind it.
   if (hit && !cached && Date.now() - hit.at > 5000) setTimeout(() => { if (state.open === key) openThread(key, { live: true }); }, 0);
+  // One of the admin team's requests: its own thread view (see "the admin team's requests").
+  if (data.request) {
+    if (state.open !== key) return;
+    drawRequest(key, data, {
+      live, switching, prevScroller, keepTop, keepHeight, wasNear,
+    });
+    return;
+  }
   const { thread, members = [], messages, watermarks, model, reviews, facts, resolution } = data;
   if (state.open !== key) return;
   const group = members.length > 1;
@@ -5178,6 +5189,300 @@ async function openThread(key, { live = false, cached = false } = {}) {
   renderDraftBar(key);
   renderBashBar(key);
   if (searchEntry(key) && (switching || !live)) markRead(t);
+}
+
+// ---------------------------------------------------------------- the admin team's requests
+// What waits for the admin team (a channel a team asked for, a person to add to a team, a
+// customer in the portal, a merge of customers, a bot or an admin account nobody said whose it
+// is, a conflict between technologies or team rules) is a thread of its inbox (GET /api/requests,
+// src/requestthreads.js), keyed `request:<kind>:<id>`; decided ones stay, resolved. Its thread is
+// the request, what the admin team writes about it (its decision log: POST /api/requests/note)
+// and what was decided; the card under it has what can be decided now (POST
+// /api/requests/resolve), each with what it does, its fields and, where it can be tried, what it
+// would change. Nothing there is posted anywhere, and no agent, draft or reaction is theirs.
+const isRequestKey = (key) => typeof key === 'string' && key.startsWith('request:');
+/** Whether the inbox on screen has the requests: the admin team's, for one of its members. */
+const requestsShown = () => !personal() && state.team === 'admin' && Boolean(state.me?.admin) && !state.as;
+// The requests as entries, loaded with the inbox, again once a room says one changed, else at
+// most every REQUESTS_FRESH_MS.
+const rqList = { entries: [], at: 0, loading: null };
+const REQUESTS_FRESH_MS = 5 * 60 * 1000;
+/** The requests' entries, loaded again when they are stale (`force`: whatever their age). */
+function loadRequests({ force = false } = {}) {
+  if (!force && rqList.loading) return rqList.loading;
+  if (!force && Date.now() - rqList.at < REQUESTS_FRESH_MS) return Promise.resolve(rqList.entries);
+  const asked = get('/api/requests').then((r) => {
+    rqList.entries = r.threads || [];
+    rqList.at = Date.now();
+    // What waits, on Inbox in the header.
+    Header.setCount(rqList.entries.filter((t) => t.request?.open).length);
+    return rqList.entries;
+  }).catch(() => rqList.entries).finally(() => { if (rqList.loading === asked) rqList.loading = null; });
+  rqList.loading = asked;
+  return asked;
+}
+/** What the room said of the requests: their entries are stale, and a changed one's thread. */
+function heardRequest(ev) {
+  if (ev.type !== 'request') return;
+  rqList.at = 0;
+  if (ev.thread && ev.thread !== state.open) state.cache.delete(ev.thread);
+  reloadSoon(ev.thread || 'request:');
+}
+
+// The decision card's state, for the open request: the action whose form is open, what was typed
+// in its fields, its dry run, and the answer to the last decision.
+const rq = {
+  key: null, open: null, values: {}, preview: {}, busy: false, error: null, noting: false,
+};
+const RQ_LABEL = {
+  waiting: 'Waiting for the admin team', confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged', adobe: 'Adobe\'s', external: 'External', linked: 'Linked', kept: 'Kept as it is', gone: 'Settled', mentioned: 'Mentioned only',
+};
+
+/** One field of an action's form. */
+function rqField(a, f) {
+  const id = `rq-${a.id}-${f.name}`.replace(/[^\w-]/g, '_');
+  const name = `data-rq-field="${esc(f.name)}"`;
+  if (f.type === 'check') return `<label class="rq-check"><input type="checkbox" id="${id}" ${name}${f.value ? ' checked' : ''}> <span>${esc(f.label)}</span></label>`;
+  if (f.type === 'checks') {
+    return `<fieldset class="rq-checks"><legend>${esc(f.label)}</legend>${(f.options || []).map((o) => `<label class="rq-check"><input type="checkbox" ${name} value="${esc(o.value)}"${(f.value || []).includes(o.value) ? ' checked' : ''}> <span>${esc(o.label)}</span></label>`).join('')}</fieldset>`;
+  }
+  const input = {
+    select: () => `<select id="${id}" ${name}>${(f.options || []).map((o) => `<option value="${esc(o.value)}"${o.value === f.value ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`,
+    textarea: () => `<textarea id="${id}" ${name} rows="4"${f.max ? ` maxlength="${f.max}"` : ''}>${esc(f.value || '')}</textarea>`,
+  }[f.type];
+  const control = input ? input() : `<input id="${id}" ${name} type="${f.type === 'email' ? 'email' : 'text'}" value="${esc(f.value || '')}"${f.max ? ` maxlength="${f.max}"` : ''}${f.required ? ' required' : ''} autocomplete="off">`;
+  return `<label class="fld" for="${id}"><span>${esc(f.label)}</span>${control}</label>`;
+}
+
+/** An action's form: what it does, its dry run, its fields, and the button that does it. */
+function rqForm(a) {
+  const p = rq.preview[a.id];
+  let tried = '';
+  if (a.preview) {
+    if (!p || p.loading) tried = '<div class="rq-preview sub">Trying it…</div>';
+    else tried = p.error ? `<div class="rq-preview err">${esc(p.error)}</div>` : `<div class="rq-preview">${md(p.text)}</div>`;
+  }
+  const ready = !a.preview || (p && !p.loading && !p.error);
+  return `<form class="rq-form" data-rq-form="${esc(a.id)}">
+    ${a.ask ? `<b class="rq-ask">${esc(a.ask)}</b>` : ''}${a.hint ? `<div class="rq-hint">${md(a.hint)}</div>` : ''}${tried}
+    ${(a.fields || []).map((f) => rqField(a, f)).join('')}
+    ${rq.error ? `<div class="rq-err" role="alert">${esc(rq.error)}</div>` : ''}
+    <div class="rq-go"><button type="button" class="link" data-rq-cancel>Cancel</button><button type="submit" class="rq-do ${a.tone === 'negative' ? 'danger' : 'primary'}"${ready && !rq.busy ? '' : ' disabled'}>${esc(a.label)}</button></div></form>`;
+}
+
+/** The card under the request's thread: where it stands, and what can be decided now. */
+function rqCard(key, req) {
+  const acts = req.actions || [];
+  const st = `<span class="rq-st ${req.open ? 'open' : 'done'}">${esc(RQ_LABEL[req.status] || req.status)}</span>`;
+  if (!acts.length) return `<div class="rq" data-request="${esc(key)}"><div class="rq-head"><b>${esc(req.kindName)}</b>${st}</div><p class="rq-none">Nothing to decide: it is closed. What the admin team wrote stays above.</p></div>`;
+  const open = acts.find((a) => a.id === rq.open);
+  const buttons = acts.map((a) => `<button type="button" class="rq-act" data-rq-act="${esc(a.id)}" aria-expanded="${a === open}" aria-pressed="${Boolean(a.pressed)}"${a.off ? ` disabled title="${esc(a.off)}"` : ''}${rq.busy ? ' disabled' : ''}>${esc(a.label)}</button>`).join('');
+  const off = acts.filter((a) => a.off).map((a) => `<p class="rq-off">${esc(a.label)}: ${esc(a.off)}</p>`).join('');
+  return `<div class="rq" data-request="${esc(key)}"><div class="rq-head"><b>${req.open ? 'Decide' : 'Change the decision'}</b>${st}</div>
+    <div class="rq-acts">${buttons}</div>${off}${open ? rqForm(open) : ''}</div>`;
+}
+
+/** The reply box's place: the decision log's box. */
+function rqComposer() {
+  if (state.data?.me?.readonly) return `<div class="composer"><span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span></div>`;
+  return `<div class="composer rqbox"><label class="rq-lbl" for="rqnote">Decision log: what you write here, only the admin team sees</label><textarea id="rqnote" rows="1"></textarea><button class="send" id="rqsend"${rq.noting ? ' disabled' : ''}>Add</button></div>`;
+}
+
+/**
+ * Shows request `key`'s thread in the pane (see openThread, whose `view` it gets: how the pane
+ * was before): the request and its log as messages, the decision card, the log's box.
+ */
+function drawRequest(key, data, view) {
+  if (rq.key !== key) Object.assign(rq, {
+    key, open: null, values: {}, preview: {}, error: null, busy: false,
+  });
+  const { thread, messages, request: req } = data;
+  const pane = $('pane');
+  const items = [];
+  let prev = null;
+  let day = null;
+  messages.forEach((m) => {
+    if (dayLabel(m.at) !== day) { day = dayLabel(m.at); items.push({ html: `<div class="day"><span>${esc(day)}</span></div>` }); prev = null; }
+    // A decision is a line, its words and its time on one.
+    const html = message(m, prev, false, false, !prev).replace(/^<div class="sys /, '<div class="sys rqsys ');
+    items.push({ html, enter: view.live && state.shownIds && !state.shownIds.has(`${m.thread}|${m.id}`) });
+    prev = m;
+  });
+  items.push({ html: rqCard(key, req) });
+  const lead = `<div class="lead"><span class="src rqsrc" title="${esc(req.kindName)}">${wf(KIND_ICON.request)}</span>${headWhat(thread.title, req.kindName)}</div>`;
+  const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
+      <div class="l1">${lead}</div><div class="l2"></div></div>`;
+  renderPane(pane, key, {
+    head, review: '', items, reply: rqComposer(), patch: !view.switching,
+  });
+  placeSidePanel(key, thread, []);
+  syncSideTab();
+  state.shownIds = new Set(messages.map((m) => `${m.thread}|${m.id}`));
+  cardGone();
+  const scroller = pane.querySelector('.scroller');
+  if (view.live && !view.switching && view.prevScroller) {
+    scroller.scrollTop = view.keepTop;
+    if (view.wasNear && scroller.scrollHeight > view.keepHeight) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+  } else {
+    // Where it was read up to: the first message after it, else the end (the decision card).
+    const myRead = data.watermarks.filter((w) => w.person === state.me.id).map((w) => w.read_at).sort().pop() || null;
+    const first = myRead && messages.find((m) => m.at > myRead && !m.mine);
+    const el = first && scroller.querySelector(`[data-id="${CSS.escape(`${first.thread}|${first.id}`)}"]`);
+    if (el) scrollToMessage(scroller, el); else scroller.scrollTop = scroller.scrollHeight;
+  }
+  wireRequest(key, data);
+  const t = searchEntry(key);
+  if (t && (view.switching || !view.live)) markRead(t);
+}
+
+/** The pane's request again, from what is known, with the card as it stands now. */
+function redrawRequest(key) {
+  if (state.open === key && state.cache.get(key)) openThread(key, { live: true, cached: true });
+}
+
+/** What the open action's fields say now, as the server takes them. */
+function rqValues(form, a) {
+  const out = {};
+  for (const f of a.fields || []) {
+    const els = [...form.querySelectorAll(`[data-rq-field="${CSS.escape(f.name)}"]`)];
+    if (f.type === 'checks') out[f.name] = els.filter((x) => x.checked).map((x) => x.value);
+    else if (f.type === 'check') out[f.name] = Boolean(els[0]?.checked);
+    else out[f.name] = els[0]?.value ?? '';
+  }
+  return out;
+}
+
+/** Puts what was typed back into the form, drawn anew. */
+function rqRestore(form, a) {
+  const kept = rq.values[a.id];
+  if (!kept) return;
+  for (const f of a.fields || []) {
+    const els = [...form.querySelectorAll(`[data-rq-field="${CSS.escape(f.name)}"]`)];
+    if (!(f.name in kept)) continue;
+    if (f.type === 'checks') for (const x of els) x.checked = kept[f.name].includes(x.value);
+    else if (f.type === 'check') { if (els[0]) els[0].checked = kept[f.name]; } else if (els[0]) els[0].value = kept[f.name];
+  }
+}
+
+/** Asks what the open action would do with the values it has (a dry run), and shows it. */
+async function rqTry(key, a, values) {
+  rq.tries = (rq.tries || 0) + 1;
+  const seq = rq.tries;
+  rq.preview[a.id] = { loading: true };
+  const res = await fetch('/api/requests/resolve', {
+    method: 'POST', credentials: 'same-origin', redirect: 'manual', body: JSON.stringify({ key, action: a.id, values, dryRun: true }),
+  }).then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => ({})) })).catch((e) => ({ ok: false, body: { error: e.message } }));
+  if (seq !== rq.tries || rq.key !== key) return;
+  rq.preview[a.id] = res.ok ? { text: res.body.preview || '' } : { error: res.body.error || 'Could not try it.' };
+  redrawRequest(key);
+}
+
+/** Decides request `key` by action `a`, with `values`; the thread shows what came of it. */
+async function rqDecide(key, a, values) {
+  rq.busy = true;
+  rq.error = null;
+  redrawRequest(key);
+  const res = await fetch('/api/requests/resolve', {
+    method: 'POST', credentials: 'same-origin', redirect: 'manual', body: JSON.stringify({ key, action: a.id, values }),
+  }).then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => ({})) })).catch((e) => ({ ok: false, body: { error: e.message } }));
+  rq.busy = false;
+  if (rq.key !== key) return;
+  if (res.body.thread) state.cache.set(key, { data: res.body.thread, at: Date.now() });
+  if (res.ok) {
+    Object.assign(rq, { open: null, values: {}, preview: {} });
+    toast(plain(res.body.done || 'Done.'));
+  } else {
+    rq.error = res.body.error || 'It did not go through.';
+  }
+  rqList.at = 0;
+  redrawRequest(key);
+  loadInbox();
+}
+
+/** Writes the log box's text into request `key`'s decision log. */
+async function rqNote(key) {
+  const box = $('rqnote');
+  const text = box?.value.trim();
+  if (!text || rq.noting) return;
+  rq.noting = true;
+  $('rqsend').disabled = true;
+  const res = await fetch('/api/requests/note', {
+    method: 'POST', credentials: 'same-origin', redirect: 'manual', body: JSON.stringify({ key, text }),
+  }).then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => ({})) })).catch((e) => ({ ok: false, body: { error: e.message } }));
+  rq.noting = false;
+  // The box is kept as it is drawn (its HTML has not changed): free again.
+  if ($('rqsend')) $('rqsend').disabled = false;
+  if (!res.ok) {
+    toast(`Not written: ${res.body.error || 'it did not go through'}.`);
+    return;
+  }
+  state.composers.delete(key);
+  if ($('rqnote') && state.open === key) $('rqnote').value = '';
+  state.cache.set(key, { data: res.body.thread, at: Date.now() });
+  rqList.at = 0;
+  redrawRequest(key);
+  loadInbox();
+}
+
+/** The decision card's and the log box's controls. */
+function wireRequest(key, data) {
+  const pane = $('pane');
+  const box = pane.querySelector('.rq');
+  const acts = data.request.actions || [];
+  for (const b of box?.querySelectorAll('[data-rq-act]') || []) {
+    const a = acts.find((x) => x.id === b.dataset.rqAct);
+    b.onclick = () => {
+      rq.error = null;
+      // Nothing to say, fill in or try first: done at once.
+      if (!a.fields?.length && !a.hint && !a.ask && !a.preview) { rqDecide(key, a, {}); return; }
+      rq.open = rq.open === a.id ? null : a.id;
+      redrawRequest(key);
+      if (rq.open && a.preview && !rq.preview[a.id]) rqTry(key, a, rqValues(pane.querySelector('.rq-form'), a));
+      pane.querySelector('.rq-form input, .rq-form textarea, .rq-form select, .rq-form .rq-do')?.focus({ preventScroll: true });
+      pane.querySelector('.rq')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    };
+  }
+  const form = box?.querySelector('.rq-form');
+  const a = form && acts.find((x) => x.id === form.dataset.rqForm);
+  if (form && a) {
+    rqRestore(form, a);
+    form.oninput = (e) => {
+      const was = rq.values[a.id] || {};
+      const now = rqValues(form, a);
+      // A field that follows another (the welcome names the team) changes with it, until written by hand.
+      for (const f of a.fields || []) {
+        if (!f.by) continue;
+        const el = form.querySelector(`[data-rq-field="${CSS.escape(f.name)}"]`);
+        if (e.target === el) el.dataset.touched = '1';
+        else if (e.target.dataset.rqField === f.by.field && !el.dataset.touched && f.by.values[now[f.by.field]] !== undefined) {
+          el.value = f.by.values[now[f.by.field]];
+          now[f.name] = el.value;
+        }
+      }
+      rq.values[a.id] = now;
+      // What it would do depends on what is checked (a follow): tried again.
+      if (a.preview && (a.fields || []).some((f) => f.type === 'check' && was[f.name] !== now[f.name])) rqTry(key, a, now);
+    };
+    form.onchange = form.oninput;
+    form.querySelector('[data-rq-cancel]').onclick = () => { Object.assign(rq, { open: null, error: null }); redrawRequest(key); };
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      if (rq.busy) return;
+      const values = rqValues(form, a);
+      rq.values[a.id] = values;
+      rqDecide(key, a, values);
+    };
+  }
+  const note = $('rqnote');
+  if (!note) return;
+  const kept = state.composers.get(key)?.text || '';
+  if (note.value !== kept && document.activeElement !== note) note.value = kept;
+  growReply(note);
+  note.oninput = () => { state.composers.set(key, { text: note.value, from: '', base: null }); growReply(note); };
+  note.onkeydown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !TOUCH_ONLY.matches) { e.preventDefault(); rqNote(key); }
+  };
+  $('rqsend').onclick = (e) => { e.preventDefault(); rqNote(key); };
 }
 
 // Keeping the pointer on Send for a second (or pressing it for a second on touch) shows
@@ -8570,6 +8875,8 @@ async function reloadChanged() {
   // The open thread itself changed: fetch it alongside the inbox, not after it.
   const early = state.open && threads.has(state.open) ? state.open : null;
   if (early) openThread(early, { live: true });
+  // A request changed, or was read: the requests' entries are asked for again with the inbox.
+  if ([...threads].some(isRequestKey)) rqList.at = 0;
   await loadInbox();
   if (state.open && state.open !== early && touched(state.open)) openThread(state.open, { live: true });
 }
@@ -8774,6 +9081,8 @@ function keepFiltersAt() {
  * they lack; the filter column stays where it was scrolled while they load again (holdFilters).
  */
 async function loadInbox(early = null, { fresh = false } = {}) {
+  // The admin team's requests come along (see "the admin team's requests"), asked at once.
+  const asked = requestsShown() ? loadRequests() : null;
   const ahead = early && await early;
   const first = ahead && scopeOf(ahead) === scopeKey() ? ahead : await get(pageUrl());
   const prev = !fresh && state.data && scopeOf(state.data) === scopeOf(first) && state.data.as === (state.as || null) ? state.data : null;
@@ -8784,7 +9093,7 @@ async function loadInbox(early = null, { fresh = false } = {}) {
     // Older pages stay, but not the threads the first page has folded into a group since.
     const folded = foldedIn(first.threads);
     first.threads = [...first.threads,
-      ...prev.threads.filter((t) => !keys.has(t.thread) && !folded.has(t.thread))];
+      ...prev.threads.filter((t) => !keys.has(t.thread) && !folded.has(t.thread) && !isRequestKey(t.thread))];
     first.people = { ...prev.people, ...first.people };
     first.stacks = mergeStacks(prev.stacks, first.stacks);
     // The deepest page loaded so far is where the next one starts.
@@ -8792,6 +9101,10 @@ async function loadInbox(early = null, { fresh = false } = {}) {
     // The first page is not the last one: keep the counts the last page brought.
     if (!first.elsewhere && prev.elsewhere) first.elsewhere = prev.elsewhere;
   }
+  // The requests, as they are now: their entries, with the inbox's (an inbox switched away from
+  // meanwhile has none).
+  const entries = asked ? await asked : [];
+  if (asked && requestsShown() && scopeOf(first) === 'admin') first.threads.push(...entries.map((t) => ({ ...t })));
   state.data = first;
   settleFolds();
   keepReads(first.threads);
@@ -9014,6 +9327,7 @@ function listen(team, live, { again = false } = {}) {
     // A room only the notifications listen to: the inbox on screen is not its.
     if (!screenTeams().includes(team)) return;
     heardRead(ev);
+    heardRequest(ev);
     // Threads folded into a group (re-threading): the open one, if it is among them, reopens as
     // its group; cached copies of them and of the group are out of date.
     if (ev.type === 'thread') {

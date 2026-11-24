@@ -12,9 +12,9 @@
 
 /**
  * Conflicts between the teams' technologies (src/catalog.js, docs/ARCHITECTURE.md "Labels and
- * facts"), for the admin team to settle under Requests and with the MCP server's
- * `list_tech_conflicts` and `resolve_tech_conflict`. They are computed from `tech_stack` each
- * time, never curated:
+ * facts"), for the admin team to settle in their threads of its inbox (src/requestthreads.js) and
+ * with the MCP server's `list_tech_conflicts` and `resolve_tech_conflict`. They are computed from
+ * `tech_stack` each time, never curated:
  *
  * - `diverging`: one id that two teams define otherwise (name, description, layer, product, or
  *   on in one and off in another). Each team's is what Clef asks in its channels, so it may be
@@ -127,7 +127,7 @@ export async function techConflicts(env, { kept: withKept = true } = {}) {
   return withKept ? all : all.filter((c) => !c.kept);
 }
 
-/** How many conflicts are waiting for the admin team: Requests counts them. */
+/** How many conflicts are waiting for the admin team: Inbox in the header counts them. */
 export async function openConflictCount(env) {
   return (await techConflicts(env, { kept: false })).length;
 }

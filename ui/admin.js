@@ -17,18 +17,19 @@
  * remove members and promote or demote them (and add the ones the page suggests, see "suggested
  * members"), and ask the admin team for channels (a request:
  * they pick one in the same search the admin team adds channels with). The admin team confirms
- * or declines the requests under Requests; the rest is for the admin team. Customers ask too,
- * from the customer portal, for a channel: the admin team opens one under Requests, and a team's
- * managers on their team's page, when the team follows a technology the customer picked.
+ * or declines the requests in its inbox, where each is a thread (src/requestthreads.js); the rest
+ * is for the admin team. Customers ask too, from the customer portal, for a channel: the admin
+ * team opens one from its thread, and a team's managers on their team's page, when the team
+ * follows a technology the customer picked.
  *
  * Teams: create, rename and delete teams; add members (found by name or email) and remove
  * them; the rules that file channels under the team (a channel-name prefix like `aem-`, a
  * Teams team name, a Slack Connect team id); and manual assignments of single channels, one of
  * which moves a channel to the team picked under its name (`moveMenu`). Orgs: display name, icon and
- * type (customer, partner, vendor), and manual assignments. The bots, under Requests: which of
- * the bots in the threads are Adobe's, and so on Adobe's side in the inbox, which are external,
- * and which only post alerts (src/ourbots.js); one nobody said whose it is waits there as a
- * request. Changes apply at once, without
+ * type (customer, partner, vendor), and manual assignments. The bots (which are Adobe's, which
+ * external, which only post alerts, src/ourbots.js), the admin accounts and the conflicts between
+ * the teams' technologies and rules are threads of the admin team's inbox too, with the other
+ * requests. Changes apply at once, without
  * asking (the status line names the channels a rule change moved), and go to the API one
  * after the other, so many can be made in a row (see `serial`). Text fields save when they
  * change. A change updates the open page in place (see "view state"); nothing reloads.
@@ -51,19 +52,15 @@ const state = {
   // Every ops team (GET /api/teams): the list of the teams you do not manage.
   directory: [],
   requests: [], openRequests: 0, names: {}, noIcon: false,
-  // The people thread agents asked to be added to a team (src/memberrequests.js), under Requests.
+  // The people thread agents asked to be added to a team (src/memberrequests.js), on team pages.
   memberRequests: [],
-  // The bots the inbox knows (GET /api/admin/bots), under Requests.
-  bots: [],
-  // The host tenant's admin accounts, and whose each is (GET /api/admin/accounts), under Requests.
-  accounts: [],
   // The customers waiting in the customer portal, and whether it is connected to this inbox.
   portal: [], portalBound: false,
   // The team wizard's groups of the admin team's channels (GET /api/admin/team-groups): the
   // ones offered, the dismissed ones, and how much of the admin team's channels it saw.
   groups: [], dismissedGroups: [], groupCoverage: null,
   // The pairs of orgs that may be one (GET /api/admin/org-duplicates), whether the list shows the
-  // less likely ones too, and the merges asked for (the admin team's, under Requests).
+  // less likely ones too, and the merges asked for (the admin team's, threads of its inbox).
   dups: null, dupsMore: false, orgMerges: [],
   // The channels no rule files under an org (GET /api/admin/orgs `unassigned`): how many.
   orgsUnassigned: null,
@@ -263,12 +260,8 @@ async function ruleChange(method, path, body, what = 'Rule change') {
 // ---- navigation ---------------------------------------------------------------------------
 
 // What is picked on each tab, in the URL.
-const PARAM = {
-  teams: 'team', orgs: 'org', requests: 'request',
-};
-const PICK = {
-  teams: 'a team', orgs: 'a customer', requests: 'a request',
-};
+const PARAM = { teams: 'team', orgs: 'org' };
+const PICK = { teams: 'a team', orgs: 'a customer' };
 /** The tabs whose rows have an agent: a team's, a customer's. */
 const AGENTED = ['teams', 'orgs'];
 /** A suggested team of the team wizard, picked in Teams (see "the team wizard"). */
@@ -320,7 +313,7 @@ function wanted(url) {
       sel = named.slug;
     } else if (q.get('org') && !q.get('team') && state.orgs.some((o) => o.slug === q.get('org'))) tab = 'orgs';
   }
-  if (!['orgs', 'requests'].includes(tab) || (tab !== 'orgs' && !state.me.admin)) tab = 'teams';
+  if (tab !== 'orgs') tab = 'teams';
   // Customers is for the members of a team; Adobe's people on none see the teams' overviews.
   if (tab === 'orgs' && !state.me.admin && !(state.me.teams || []).length) tab = 'teams';
   sel = sel || q.get(PARAM[tab]);
@@ -340,7 +333,7 @@ function wanted(url) {
 }
 
 /**
- * Teams, Customers and Requests are pages of the header (ui/header.js), each opening as it
+ * Teams and Customers are pages of the header (ui/header.js), each opening as it
  * was left: one of them, from its address, without loading the page again. Going to another is a
  * new history entry (`push`), so Back returns to the one before. What the agent has open is
  * saved first; where it cannot be and you stay, so does the address.
@@ -396,12 +389,10 @@ async function load() {
   const none = Promise.resolve({ ok: true, body: {} });
   // Everyone on a team sees every customer, to follow it, and the channels of it.
   const onTeam = state.me.admin || (state.me.teams || []).length > 0;
-  const [teams, orgs, requests, bots, accounts, bases, follows, directory] = await Promise.all([
+  const [teams, orgs, requests, bases, follows, directory] = await Promise.all([
     state.me.admin || state.me.manages?.length ? call('/api/admin/teams') : none,
     onTeam ? call('/api/admin/orgs') : none,
     state.me.admin ? call('/api/admin/requests') : none,
-    state.me.admin ? call('/api/admin/bots') : none,
-    state.me.admin ? call('/api/admin/accounts') : none,
     call('/api/kb'),
     call('/api/follows'),
     // Every team, whose overview everyone at Adobe sees.
@@ -415,8 +406,6 @@ async function load() {
   state.requests = requests.body.requests || [];
   state.memberRequests = requests.body.memberRequests || [];
   state.portal = requests.body.portal || [];
-  state.conflicts = requests.body.conflicts || [];
-  state.ruleConflicts = requests.body.ruleConflicts || [];
   state.orgMerges = requests.body.orgMerges || [];
   state.portalBound = Boolean(requests.body.portalBound);
   state.openRequests = requests.body.open ?? teams.body.requests ?? 0;
@@ -426,8 +415,6 @@ async function load() {
   state.orgsUnassigned = state.me.admin ? orgs.body.unassigned || null : null;
   state.myOrgs = new Set((follows.ok && follows.body.by?.org) || []);
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
-  state.bots = bots.body.bots || [];
-  state.accounts = accounts.body.accounts || [];
   if (state.me.admin) loadGroups();
   loadDups();
   return true;
@@ -576,56 +563,6 @@ function drawList() {
       state.teams.sort((x, y) => x.name.localeCompare(y.name));
       select(r.body.team.slug);
     };
-  } else if (state.tab === 'requests') {
-    const match = (r) => !f || `${plainName(r.channel)} ${r.channel.channelId} ${teamLabel(r.team)} ${r.requestedBy.name || ''} ${r.requestedBy.email}`
-      .toLowerCase().includes(f);
-    const row = (r) => `<div class="row${String(state.sel) === String(r.id) ? ' on' : ''}" data-sel="${r.id}">
-        <span class="name">${channelName(r.channel)} <span class="sub">${r.move && r.channel.team ? `${esc(teamLabel(r.channel.team))} ` : ''}→ ${esc(teamLabel(r.team))}</span></span>
-        ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
-    const open = state.requests.filter((r) => r.status === 'open' && match(r));
-    const decided = state.requests.filter((r) => r.status !== 'open' && match(r));
-    // The people asked to be added to a team (src/memberrequests.js).
-    const people = state.memberRequests.filter((r) => !f || `${memberName(r)} ${r.person.email} ${teamLabel(r.team)} ${r.requestedBy.name || ''} ${r.requestedBy.email}`.toLowerCase().includes(f));
-    const peopleOpen = people.filter((r) => r.status === 'open');
-    const peopleDone = people.filter((r) => r.status !== 'open');
-    // The customers in the portal: each asks for a channel of its own.
-    const asks = state.portal.filter((r) => !f || `${r.company || ''} ${r.domain} ${r.requestedBy.name || ''} ${r.requestedBy.email || ''}`.toLowerCase().includes(f));
-    const waiting = asks.filter((r) => r.status === 'open');
-    const answered = asks.filter((r) => r.status !== 'open');
-    // The conflicts between the teams' technologies (src/techconflicts.js).
-    const clash = (state.conflicts || []).filter((c) => !f || conflictTitle(c).toLowerCase().includes(f));
-    const unsettled = clash.filter((c) => !c.kept);
-    // The conflicts between team rules (src/ruleconflicts.js): the ones a change of a pattern
-    // settles, and the others (rules that read different things of a channel), kept or by hand.
-    const ruleClash = (state.ruleConflicts || []).filter((c) => !f || ruleConflictTitle(c).toLowerCase().includes(f));
-    const ruleOpen = ruleClash.filter((c) => !c.kept && c.section === 'rules');
-    const ruleOther = ruleClash.filter((c) => !c.kept && c.section !== 'rules');
-    const kept = [...clash.filter((c) => c.kept).map(conflictRow), ...ruleClash.filter((c) => c.kept).map(ruleConflictRow)];
-    // The merges of customers asked for (src/orgmerge.js).
-    const merges = (state.orgMerges || []).filter((r) => !f || `${r.from} ${r.into} ${r.requestedBy.name || ''} ${r.requestedBy.email}`.toLowerCase().includes(f));
-    const mergesOpen = merges.filter((r) => r.status === 'open');
-    const mergesDone = merges.filter((r) => r.status !== 'open');
-    // The bots (src/ourbots.js): those nobody said whose they are wait for it, the others follow.
-    const bots = state.bots.filter((b) => botMatch(b, f));
-    const review = bots.filter(unreviewed);
-    // The host tenant's admin accounts (src/accountlinks.js): those nobody said whose they are
-    // first, the others with the bots.
-    const accounts = state.accounts.filter((a) => accountMatch(a, f));
-    const unlinked = accounts.filter((a) => !a.person);
-    $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter requests" value="${esc(state.filter)}"></label>
-      ${waiting.length ? `<h2>Customers waiting in the portal</h2>${waiting.map(portalRow).join('')}` : ''}
-      <h2>Waiting for a decision</h2>${open.map(row).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No request is waiting.'}</div>`}
-      ${peopleOpen.length ? `<h2>People to add to teams</h2>${peopleOpen.map(memberRow).join('')}` : ''}
-      ${review.length ? `<h2>Bots to review</h2>${review.map(botRow).join('')}` : ''}
-      ${unlinked.length ? `<h2>Admin accounts to link</h2>${unlinked.map(accountRow).join('')}` : ''}
-      ${unsettled.length ? `<h2>Conflicts between technologies</h2>${unsettled.map(conflictRow).join('')}` : ''}
-      ${ruleOpen.length ? `<h2>Conflicts between team rules</h2>${ruleOpen.map(ruleConflictRow).join('')}` : ''}
-      ${ruleOther.length ? `<h2>Other rule conflicts</h2>${ruleOther.map(ruleConflictRow).join('')}` : ''}
-      ${mergesOpen.length ? `<h2>Customers to merge</h2>${mergesOpen.map(mergeRow).join('')}` : ''}
-      ${decided.length || answered.length || kept.length || mergesDone.length || peopleDone.length ? `<h2>Decided</h2>${answered.map(portalRow).join('')}${decided.map(row).join('')}${peopleDone.map(memberRow).join('')}${mergesDone.map(mergeRow).join('')}${kept.join('')}` : ''}
-      ${bots.length > review.length ? `<h2>Bots</h2>${bots.filter((b) => !unreviewed(b)).map(botRow).join('')}` : ''}
-      ${accounts.length > unlinked.length ? `<h2>Admin accounts</h2>${accounts.filter((a) => a.person).map(accountRow).join('')}` : ''}
-      <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team. Thread agents also ask for people to be added to a team, for whoever asked them; the team's managers decide those too, on its page. A bot that posted waits here until you say whether it is Adobe's or external, and an admin account of the Teams tenant until you say whose it is.</p>`;
   } else if (!state.me.admin) {
     // The customers you follow, then those your teams own (their agents, which their managers
     // change), then every other one: to follow it, or ask for its channels.
@@ -698,15 +635,7 @@ function select(sel, {
   renderList();
   if (state.tab === 'teams' && isGroup(sel)) showGroup(String(sel).slice(GROUP.length));
   else if (state.tab === 'orgs' && isPair(sel)) showPair(...String(sel).slice(PAIR.length).split(':'));
-  else if (state.tab === 'requests' && String(sel).startsWith(MERGE_REQUEST)) showMergeRequest(String(sel).slice(MERGE_REQUEST.length));
   else if (agented(state.tab, sel)) showPicked({ channel, flash, fresh: true });
-  else if (state.tab === 'requests' && String(sel).startsWith(MEMBER)) showMemberRequest(String(sel).slice(MEMBER.length));
-  else if (state.tab === 'requests' && String(sel).startsWith(PORTAL)) showPortalRequest(String(sel).slice(PORTAL.length));
-  else if (state.tab === 'requests' && String(sel).startsWith(CONFLICT)) showConflict(String(sel).slice(CONFLICT.length));
-  else if (state.tab === 'requests' && String(sel).startsWith(RULE_CONFLICT)) showRuleConflict(String(sel).slice(RULE_CONFLICT.length));
-  else if (state.tab === 'requests' && String(sel).startsWith(BOT)) showBot(String(sel).slice(BOT.length));
-  else if (state.tab === 'requests' && String(sel).startsWith(ACCOUNT)) showAccount(String(sel).slice(ACCOUNT.length));
-  else if (state.tab === 'requests') showRequest(sel);
 }
 
 /** Back to the list (phones), its filter as it was. */
@@ -1024,7 +953,7 @@ function channelsCard(target) {
     <div class="form picker"><label class="fld grow"><span>Ask for a channel</span><input id="pick" autocomplete="off"></label><div class="picks s2-float" id="picks" hidden></div></div>
     <p class="hint">Search by channel, Teams team, customer or id.</p>
     <div id="askSlot"></div>
-    <p class="hint">The admin team decides which channels a team gets. Pick a channel to ask them to add it to this team, with a note; they confirm or decline, and the answer shows under Requests. A channel another team holds is shared with this one: it stays filed under its team, and is in this team's inbox too.</p></div>`;
+    <p class="hint">The admin team decides which channels a team gets. Pick a channel to ask them to add it to this team, with a note; they confirm or decline, and the answer shows here. A channel another team holds is shared with this one: it stays filed under its team, and is in this team's inbox too.</p></div>`;
   }
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
     <div class="form picker"><label class="fld grow"><span>${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}</span><input id="pick" autocomplete="off"></label><div class="picks s2-float" id="picks" hidden></div></div>
@@ -2013,7 +1942,7 @@ async function showTeam(slug) {
 
     ${admin ? `<div class="card"><h2>Rules</h2><div id="rulesTable"></div>
       <div id="ruleSlot">${ruleForm()}</div>
-      <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>. A follow rule files nothing: the channels it matches are shared with the team, wherever they are filed. Conflicts between the teams' rules are under Requests.</p>
+      <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>. A follow rule files nothing: the channels it matches are shared with the team, wherever they are filed. Conflicts between the teams' rules are threads of the admin team's inbox.</p>
       ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}` : ''}
     ${channelsCard('team')}
     ${real ? `<div class="card"><h2>Technologies</h2><div id="followsTable"></div>
@@ -2297,10 +2226,23 @@ function showGroup(prefix) {
 // ---- channel assignment requests ----------------------------------------------------------
 //
 // A team manager asks for a channel on their team's page (`askFor`); the admin team decides
-// under Requests (`showRequest`): Confirm runs the assignment the team's page makes, after its
+// in its inbox, where the request is a thread (src/requestthreads.js): Confirm runs the assignment the team's page makes, after its
 // dry run said what it moves; Decline takes a reason. Both pages show what came of each.
 
 const who = (p) => esc((p && (p.name || p.email)) || 'someone');
+/** A request's thread in the admin team's inbox (src/requestthreads.js): where it is decided. */
+const requestThread = (kind, id) => `/inbox?team=admin&t=${encodeURIComponent(`request:${kind}:${id}`)}`;
+/**
+ * Where an address of Requests, the page the requests had before they were threads of the admin
+ * team's inbox, goes now: `request=<id>` a channel request, the others by their prefix.
+ */
+function requestsAddress(sel) {
+  if (!sel) return '/inbox?team=admin';
+  const kinds = [['member:', 'member'], ['portal:', 'portal'], ['orgmerge:', 'merge'], ['conflict:', 'tech'],
+    ['ruleconflict:', 'rule'], ['bot:', 'bot'], ['account:', 'account']];
+  const k = kinds.find(([prefix]) => sel.startsWith(prefix));
+  return k ? requestThread(k[1], sel.slice(k[0].length)) : requestThread('channel', sel);
+}
 const STATUS = {
   open: 'pending', confirmed: 'confirmed', declined: 'declined', withdrawn: 'withdrawn', opened: 'opened', merged: 'merged',
 };
@@ -2322,7 +2264,7 @@ function decisionText(r) {
   return `${statusTag(r)} by ${who(r.decidedBy)}${when}${did ? `: ${did}` : ''}`;
 }
 
-/** The number of open requests, on Requests in the header. */
+/** The number of open requests, on Inbox in the header: the admin team's inbox has them. */
 function renderCount() {
   Header.setCount(state.me.admin ? state.openRequests : 0);
 }
@@ -2346,8 +2288,6 @@ async function refreshRequests() {
   state.requests = r.body.requests;
   state.memberRequests = r.body.memberRequests || [];
   state.portal = r.body.portal || [];
-  state.conflicts = r.body.conflicts || [];
-  state.ruleConflicts = r.body.ruleConflicts || [];
   state.openRequests = r.body.open;
   renderCount();
   const v = state.view;
@@ -2359,7 +2299,6 @@ async function refreshRequests() {
     for (const x of v.memberRequests) Object.assign(x, state.memberRequests.find((y) => y.id === x.id) || {});
     if ($('memberRequestsTable')) renderMemberRequests();
   }
-  if (state.tab === 'requests') renderList();
 }
 
 /** The team page's requests: what was asked for, by whom, and the answer. */
@@ -2370,14 +2309,11 @@ function renderRequests() {
     <td class="note">${esc(r.note || '')}</td>
     <td>${decisionText(r)}</td>
     <td class="nw">${r.status !== 'open' ? '' : state.me.admin
-    ? `<button class="link" data-review="${r.id}">Review</button>`
+    ? `<a href="${esc(requestThread('channel', r.id))}" title="Its thread in the admin team's inbox">Review</a>`
     : `<button class="link" data-withdraw="${r.id}"${off(`request:${r.id}`)} title="Take the request back">Withdraw</button>`}</td></tr>`).join('');
   $('requestsTable').innerHTML = rows
     ? `<table><tr><th>Channel</th><th>Asked by</th><th>Note</th><th>Answer</th><th></th></tr>${rows}</table>`
     : '<div class="empty">Nothing asked for yet. Search for a channel above to ask for it.</div>';
-  for (const b of $('requestsTable').querySelectorAll('[data-review]')) {
-    b.onclick = () => instantly(() => { switchTab('requests'); select(b.dataset.review); });
-  }
   for (const b of $('requestsTable').querySelectorAll('[data-withdraw]')) {
     const r = v.requests.find((x) => String(x.id) === b.dataset.withdraw);
     b.onclick = () => hold(b, `request:${r.id}`, async () => {
@@ -2392,7 +2328,7 @@ function renderRequests() {
 
 /**
  * A team manager picked a channel: a short form to ask the admin team for it, with a note.
- * Sent, the request shows under Requests as pending.
+ * Sent, the request is a thread of the admin team's inbox, and pending here.
  */
 function askFor(c) {
   const v = state.view;
@@ -2426,115 +2362,14 @@ function askFor(c) {
   };
 }
 
-/** What confirming a request does, from the assignment's dry run. */
-function previewText(r, res) {
-  const name = channelName(r.channel);
-  const team = esc(teamLabel(r.team));
-  if (!res.ok) return `<span class="status err">${esc(res.body.error || `Could not try it (${res.status}).`)}</span>`;
-  const { moves, shared } = res.body;
-  if (shared) {
-    return `Shares ${name} with ${team}: it stays filed under ${esc(teamLabel(shared.from))} (its folders, knowledge base and agents) and is in ${team}'s inbox too. Nothing moves.`;
-  }
-  if (!moves.length) return `Files ${name} under ${team} by hand (a channel-id rule with priority 10). It has no threads here yet, so nothing moves now.`;
-  const items = moves.map((m) => {
-    const threads = m.from.reduce((n, f) => n + f.threads, 0);
-    const from = [...new Set(m.from.map((f) => teamLabel(f.team)))].join(', ');
-    return `<li>${channelName(m.channel)}: ${threads} thread${threads === 1 ? '' : 's'} from ${esc(from)} to ${esc(teamLabel(m.to.team))} / ${esc(orgLabel(m.to.org))}</li>`;
-  }).join('');
-  return `Files ${name} under ${team} by hand (a channel-id rule with priority 10), and re-files:<ul>${items}</ul>`;
-}
-
-/** A request, for the admin team: what is asked, by whom, and Confirm or Decline. */
-function drawRequest(r, preview) {
-  const c = r.channel;
-  const org = c.org && !c.org.startsWith('_') ? (c.orgName || orgLabel(c.org)) : '';
-  const open = r.status === 'open';
-  $('detail').innerHTML = `
-    <div class="title">${backButton()}<h1 class="fill">${channelName(c)} <span class="sep">→</span> ${esc(teamLabel(r.team))}</h1>${statusTag(r)}</div>
-    <div class="status" id="status"></div>
-    <div class="card"><div class="field">
-      <label>Channel</label><span>${channelName(c)} <span class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></span></span>
-      <label>Now</label><span>${c.team ? `filed under <b>${esc(teamLabel(c.team))}</b>` : 'no threads yet'}${org ? ` · customer <b>${esc(org)}</b>` : ''} · ${c.threads} thread${c.threads === 1 ? '' : 's'}</span>
-      <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}&view=manage">${esc(teamLabel(r.team))}</a></span>
-      <label>Asks</label><span>${r.move ? `a move: filed under ${esc(teamLabel(r.team))}${c.team && c.team !== r.team ? ` instead of ${esc(teamLabel(c.team))}` : ''}` : `to be in ${esc(teamLabel(r.team))}'s inbox`}</span>
-      <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(ago(r.requestedAt))}</span></span>
-      ${r.thread ? `<label>Asked in</label><span>the <a href="/inbox?team=${encodeURIComponent(c.team || r.team)}&t=${encodeURIComponent(r.thread)}">sidebar of a thread</a> of this channel, through its agent</span>` : ''}
-      ${r.note ? `<label>Note</label><span class="note">${esc(r.note)}</span>` : ''}
-      ${open ? '' : `<label>Answer</label><span>${decisionText(r)}</span>`}
-    </div></div>
-    ${open ? `<div class="card"><h2>Confirming it</h2><div class="preview" id="rqPreview">${preview ? previewText(r, preview) : '<span class="sub">Trying it…</span>'}</div>
-      <div class="form"><button class="primary" id="rqConfirm"${preview && preview.ok ? '' : ' disabled'}${off(`request:${r.id}`)}>Confirm</button></div></div>
-      <div class="card"><h2>Declining it</h2><form class="form" id="rqDeclineForm"><label class="fld grow"><span>Reason, for the manager (optional)</span><input id="rqReason" maxlength="500"></label>
-      <button class="danger" id="rqDecline"${off(`request:${r.id}`)}>Decline</button></form></div>` : ''}`;
-  showStatus();
-  if (!open) return;
-  /** After a decision: the lists, the counts and this page. */
-  const decided = (req) => {
-    updateRequest(req);
-    renderList();
-    if (state.tab === 'requests' && String(state.sel) === String(req.id)) drawRequest(req, preview);
-  };
-  $('rqConfirm').onclick = () => hold($('rqConfirm'), `request:${r.id}`, async () => {
-    const res = await call('/api/admin/requests/confirm', 'POST', { id: r.id });
-    if (!res.ok) {
-      failed(`Confirm ${plainName(c)}`, res);
-      if (res.body.request) decided(res.body.request);
-      return;
-    }
-    applyMoves(res.body.moves, null);
-    if (res.body.shared && res.body.shared.added) {
-      const row = state.teams.find((t) => t.slug === r.team);
-      if (row) row.shared = (row.shared || 0) + 1;
-    }
-    status('ok', res.body.shared
-      ? `Confirmed: ${plainName(c)} is in ${teamLabel(r.team)}'s inbox too, and stays filed under ${teamLabel(res.body.shared.from)}.`
-      : `Confirmed: ${plainName(c)} is filed under ${teamLabel(r.team)}${res.body.moves.length ? '; its threads are re-filed' : ''}.`);
-    decided(res.body.request);
-  });
-  $('rqDeclineForm').onsubmit = (e) => {
-    e.preventDefault();
-    const b = $('rqDecline');
-    hold(b, `request:${r.id}`, async () => {
-      const res = await call('/api/admin/requests/decline', 'POST', { id: r.id, reason: $('rqReason').value.trim() || undefined });
-      if (!res.ok) failed(`Decline ${plainName(c)}`, res);
-      else status('ok', `Declined ${plainName(c)} for ${teamLabel(r.team)}.`);
-      if (res.body.request) decided(res.body.request);
-    });
-  };
-}
-
-async function showRequest(id) {
-  const current = loadingPage();
-  state.view = null;
-  const r = state.requests.find((x) => String(x.id) === String(id));
-  if (!r) { $('detail').innerHTML = '<div class="empty">No such request.</div>'; return; }
-  drawRequest(r, null);
-  if (r.status !== 'open') return;
-  // The assignment's dry run: what confirming moves, or that it shares the channel.
-  const preview = await call('/api/admin/requests/confirm', 'POST', { id: r.id, dryRun: true }, { parallel: true, idempotent: true });
-  if (!current()) return;
-  if (preview.body.request && preview.body.request.status !== 'open') {
-    updateRequest(preview.body.request);
-    renderList();
-  }
-  drawRequest(r, preview);
-}
-
 // ---- membership requests --------------------------------------------------------------------
 //
 // A thread's agent asks, for whoever asked it in the sidebar, that someone be added to an ops team
-// (src/memberrequests.js). An admin decides under Requests (`showMemberRequest`), a team's
+// (src/memberrequests.js). An admin decides in the admin team's inbox, where it is a thread, a team's
 // managers on its page (`renderMemberRequests`): Confirm adds the person as a member, as adding
 // them on the team's page does; Decline takes a reason.
 
-/** What marks a membership request among the requests picked (`?request=member:3`). */
-const MEMBER = 'member:';
 const memberName = (r) => r.person.name || r.person.email;
-
-/** A membership request in Requests' list. */
-const memberRow = (r) => `<div class="row${String(state.sel) === `${MEMBER}${r.id}` ? ' on' : ''}" data-sel="${MEMBER}${r.id}">
-  <span class="name">${esc(memberName(r))} <span class="sub">→ ${esc(teamLabel(r.team))}</span></span>
-  ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
 
 /** What came of a membership request, in a few words. */
 function memberDecisionText(r) {
@@ -2619,63 +2454,15 @@ function renderMemberRequests() {
   }
 }
 
-/** A membership request, for the admin team: who, for which team, by whom, and Confirm or Decline. */
-function drawMemberRequest(r) {
-  const open = r.status === 'open';
-  const p = r.person;
-  $('detail').innerHTML = `
-    <div class="title">${backButton()}<h1 class="fill">${esc(memberName(r))} <span class="sep">→</span> ${esc(teamLabel(r.team))}</h1>${statusTag(r)}</div>
-    <div class="status" id="status"></div>
-    <div class="card"><div class="field">
-      <label>Person</label><span>${esc(memberName(r))} <span class="sub mono">${esc(p.email)}</span>${p.id ? '' : ' <span class="tag">new person</span>'}</span>
-      <label>Now</label><span>${p.teams.length ? `on ${esc(p.teams.map(teamLabel).join(', '))}` : 'on no team'}</span>
-      <label>For</label><span><a href="/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}&view=manage">${esc(teamLabel(r.team))}</a></span>
-      <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(ago(r.requestedAt))}</span></span>
-      ${r.thread ? `<label>Asked in</label><span>the <a href="/inbox?t=${encodeURIComponent(r.thread)}">sidebar of a thread</a>, through its agent</span>` : ''}
-      ${r.note ? `<label>Why</label><span class="note">${esc(r.note)}</span>` : ''}
-      ${open ? '' : `<label>Answer</label><span>${memberDecisionText(r)}</span>`}
-    </div></div>
-    ${open ? `<div class="card"><h2>Confirming it</h2><p class="hint lead">Adds ${esc(memberName(r))} to ${esc(teamLabel(r.team))} as a member (a manager, when the team is self-managed), as adding them on the team's page does: they see its inbox.</p>
-      <div class="form"><button class="primary" id="mqConfirm"${off(`mrequest:${r.id}`)}>Confirm</button></div></div>
-      <div class="card"><h2>Declining it</h2><form class="form" id="mqDeclineForm"><label class="fld grow"><span>Reason, for whoever asked (optional)</span><input id="mqReason" maxlength="500"></label>
-      <button class="danger" id="mqDecline"${off(`mrequest:${r.id}`)}>Decline</button></form></div>` : ''}`;
-  showStatus();
-  if (!open) return;
-  const redraw = () => {
-    renderList();
-    if (state.tab === 'requests' && String(state.sel) === `${MEMBER}${r.id}`) drawMemberRequest(r);
-  };
-  $('mqConfirm').onclick = () => decideMember($('mqConfirm'), r, undefined, redraw);
-  $('mqDeclineForm').onsubmit = (e) => {
-    e.preventDefault();
-    decideMember($('mqDecline'), r, $('mqReason').value.trim(), redraw);
-  };
-}
-
-function showMemberRequest(id) {
-  loadingPage();
-  state.view = null;
-  const r = state.memberRequests.find((x) => String(x.id) === String(id));
-  if (!r) { $('detail').innerHTML = `<div class="empty">${backButton()} No such request.</div>`; return; }
-  drawMemberRequest(r);
-}
-
 // ---- customers in the portal ---------------------------------------------------------------
 //
 // A customer who can use neither Slack nor Teams with Adobe signs in to the customer portal
 // with their work mail address, says what they use of Adobe's and asks for a channel
-// (src/portalrequests.js). The admin team answers under Requests: Open channel makes the
+// (src/portalrequests.js). The admin team answers in its inbox, where it is a thread: Open channel makes the
 // channel in the portal, files it under a team and a customer, and posts the welcome message
 // as whoever opens it; Decline takes a reason the customer reads. A team's managers see the
 // customers who picked a technology the team follows on their team's page, and open a channel
 // for their team.
-
-/** What marks a portal request among the requests picked (`?request=portal:3`). */
-const PORTAL = 'portal:';
-
-const portalRow = (r) => `<div class="row${String(state.sel) === `${PORTAL}${r.id}` ? ' on' : ''}" data-sel="${PORTAL}${r.id}">
-  <span class="name">${esc(r.company || r.domain)} <span class="sub">${esc(r.domain)}</span></span>
-  ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
 
 /** The message a new channel starts with, until whoever opens it writes their own. */
 const welcomeText = (r, team) => `Welcome to Adobe Enterprise Support, ${r.company || r.domain}! This is your channel with the ${teamLabel(team)} team. Start a new thread for each question, and we answer you here.`;
@@ -2797,14 +2584,6 @@ function drawPortalRequest(r, forTeam = null) {
   }
 }
 
-function showPortalRequest(id) {
-  loadingPage();
-  state.view = null;
-  const r = state.portal.find((x) => String(x.id) === String(id));
-  if (!r) { $('detail').innerHTML = '<div class="empty">No such request.</div>'; return; }
-  drawPortalRequest(r);
-}
-
 /** The team page's customers in the portal: those who picked a technology the team follows. */
 function renderPortal() {
   const v = state.view;
@@ -2820,311 +2599,6 @@ function renderPortal() {
       if (!state.portal.some((x) => x.id === r.id)) state.portal.push(r);
       drawPortalRequest(r, v.value);
     };
-  }
-}
-
-// ---- conflicts between the teams' technologies ---------------------------------------------
-//
-// Computed from the tech stack every time (src/techconflicts.js): an id two teams define
-// otherwise, or a name two ids share. Settling one writes the teams' catalog files as you.
-
-const CONFLICT = 'conflict:';
-const FIELD_NAMES = {
-  name: 'name', description: 'what Clef is asked', layer: 'layer', product: 'product', enabled: 'on or off',
-};
-
-function conflictTitle(c) {
-  return c.kind === 'diverging' ? `${c.tech}: ${c.fields.map((x) => FIELD_NAMES[x] || x).join(', ')}`
-    : `"${c.name}": ${c.techs.join(', ')}`;
-}
-
-function conflictRow(c) {
-  const sel = `${CONFLICT}${c.key}`;
-  return `<div class="row${String(state.sel) === sel ? ' on' : ''}" data-sel="${esc(sel)}">
-    <span class="name">${esc(c.kind === 'diverging' ? c.tech : `"${c.name}"`)} <span class="sub">${esc(c.kind === 'diverging' ? `${c.definitions.map((d) => teamLabel(d.team)).join(' · ')}` : c.techs.join(' · '))}</span></span>
-    ${c.kept ? '<span class="tag confirmed">kept</span>' : ''}</div>`;
-}
-
-/**
- * Where a definition is asked: in its team's channels, and the shared one (the admin team's if it
- * is on, else the first team's by name that is on, as src/extract.js `techFor`) everywhere else.
- */
-function askedWhere(c, d) {
-  if (!d.enabled) return 'no, turned off';
-  if (c.kind !== 'diverging') return 'yes';
-  const shared = c.definitions.find((x) => x.enabled);
-  return `in ${esc(teamLabel(d.team))}'s channels${shared === d ? ', and in every channel of a team without its own' : ''}`;
-}
-
-/** One team's definition of a technology: where it is kept, and what it says. */
-function definitionCard(c, d) {
-  const where = d.path ? `<a href="${esc(address({
-    tab: 'teams', sel: d.team, section: 'kb', path: d.path,
-  }))}">${esc(d.path)}</a>`
-    : '<span class="sub">saved in D1</span>';
-  const differs = (f) => (c.kind === 'diverging' && c.fields.includes(f) ? ' class="differs"' : '');
-  const k = c.kind === 'name' ? c.key.slice('name:'.length) : null;
-  const asAlias = k && d.aliases.some((a) => a.toLowerCase().replace(/[^a-z0-9.+#@]+/g, ' ').trim() === k);
-  const acts = [];
-  if (c.kind === 'diverging') acts.push(`<button class="primary" data-act="use" data-team="${esc(d.team)}">Use this one everywhere</button>`);
-  if (asAlias) acts.push(`<button data-act="unalias" data-team="${esc(d.team)}" data-tech="${esc(d.tech)}">Take "${esc(c.name)}" off its aliases</button>`);
-  if (c.kind === 'name' && d.path) acts.push(...c.techs.filter((t) => t !== d.tech).map((t) => `<button data-act="merge" data-from="${esc(t)}" data-into="${esc(d.tech)}">Merge ${esc(t)} into this</button>`));
-  acts.push(`<button class="danger" data-act="delete" data-team="${esc(d.team)}" data-tech="${esc(d.tech)}">Delete</button>`);
-  return `<div class="card conflict"><h2>${esc(d.name)} <span class="sub mono">${esc(d.tech)}</span> <span class="sub">${esc(teamLabel(d.team))}</span></h2>
-    <div class="field">
-      <label>Kept in</label><span>${where}</span>
-      <label${differs('description')}>Clef is asked</label><span${differs('description')}>Does this thread show that the customer uses ${esc(d.description)}?</span>
-      <label${differs('name')}>Name</label><span${differs('name')}>${esc(d.name)}</span>
-      <label${differs('product')}>Product</label><span${differs('product')}>${esc(d.product || '–')}</span>
-      <label${differs('layer')}>Layer</label><span${differs('layer')}>${esc(d.layer || '–')}</span>
-      <label${differs('enabled')}>Asked</label><span${differs('enabled')}>${askedWhere(c, d)}</span>
-      <label>Also called</label><span>${d.aliases.length ? d.aliases.map((a) => esc(a)).join(', ') : '–'}</span>
-    </div>
-    <div class="acts">${acts.join('')}</div></div>`;
-}
-
-function drawConflict(c) {
-  const what = c.kind === 'diverging'
-    ? `${c.definitions.length} teams define <span class="mono">${esc(c.tech)}</span> otherwise (${esc(c.fields.map((x) => FIELD_NAMES[x] || x).join(', '))}). Each team's is what Clef asks in its channels. Keep it if that is meant, or use one of them everywhere.`
-    : `"${esc(c.name)}" is a name or alias of ${c.techs.map((t) => `<span class="mono">${esc(t)}</span>`).join(' and ')}: a thread that names it matches either. Take it off the aliases of one, merge them into one technology, or keep it.`;
-  $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(c.kind === 'diverging' ? c.tech : `"${c.name}"`)}</h1>${c.kept ? '<span class="tag confirmed">kept</span>' : ''}</div>
-    <div class="status" id="status"></div>
-    <div class="card"><p class="lead">${what}</p>
-      ${c.kept ? `<p class="hint">Kept by ${esc(c.kept.by)} ${esc(ago(c.kept.at))}${c.kept.note ? `: <span class="note">${esc(c.kept.note)}</span>` : ''}. It shows again once a definition changes.</p>`
-    : '<form class="form" id="cfKeep"><label class="fld grow"><span>Why it is meant (optional)</span><input id="cfNote" maxlength="300"></label><button id="cfKeepBtn">Keep as it is</button></form>'}
-      <p class="hint">Settling it writes the teams' catalog files as you (or the rows saved in D1). A merge also rewrites the labels, follows, rules and lobbies that name the technology that goes: that cannot be undone by reverting the file.</p></div>
-    ${c.definitions.map((d) => definitionCard(c, d)).join('')}`;
-  showStatus();
-  const settle = (btn, body, done) => hold(btn, `conflict:${c.key}`, () => call('/api/admin/conflicts', 'POST', { key: c.key, ...body })).then((res) => {
-    if (!res) return;
-    if (!res.ok) { failed(`Settle ${conflictTitle(c)}`, res); return; }
-    state.conflicts = res.body.conflicts || [];
-    refreshRequests();
-    status('ok', done);
-    const now = state.conflicts.find((x) => x.key === c.key);
-    if (now) drawConflict(now);
-    else $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(conflictTitle(c))}</h1></div><div class="status" id="status"></div><div class="empty">Settled: ${esc(done)}</div>`;
-    showStatus();
-    renderList();
-  });
-  if ($('cfKeep')) {
-    $('cfKeep').onsubmit = (e) => {
-      e.preventDefault();
-      settle($('cfKeepBtn'), { action: 'keep', note: $('cfNote').value.trim() || undefined }, 'Kept as it is.');
-    };
-  }
-  for (const b of $('detail').querySelectorAll('[data-act]')) {
-    b.onclick = async () => {
-      const { act } = b.dataset;
-      const body = {
-        action: act, team: b.dataset.team, tech: b.dataset.tech, from: b.dataset.from, into: b.dataset.into,
-      };
-      const ask = {
-        use: [`Use ${teamLabel(b.dataset.team)}'s ${c.tech} everywhere?`, 'The other teams\' files and rows of it are deleted.', 'Use it'],
-        delete: [`Delete ${teamLabel(b.dataset.team)}'s ${b.dataset.tech}?`, 'Its file (or row) goes; Clef asks the others\' where they are.', 'Delete'],
-        merge: [`Merge ${b.dataset.from} into ${b.dataset.into}?`, `Every file of ${b.dataset.from} goes, and what was labeled, followed or detected as ${b.dataset.from} becomes ${b.dataset.into}, for good.`, 'Merge'],
-      }[act];
-      if (ask && !(await confirmFirst(...ask))) return;
-      const done = {
-        use: `${c.tech} is ${teamLabel(b.dataset.team)}'s everywhere.`,
-        delete: `Deleted ${teamLabel(b.dataset.team)}'s ${b.dataset.tech}.`,
-        unalias: `"${c.name}" is not an alias of ${b.dataset.tech} any more.`,
-        merge: `Merged ${b.dataset.from} into ${b.dataset.into}.`,
-      }[act];
-      settle(b, body, done);
-    };
-  }
-}
-
-function showConflict(key) {
-  loadingPage();
-  state.view = null;
-  const c = (state.conflicts || []).find((x) => x.key === key);
-  if (!c) { $('detail').innerHTML = '<div class="empty">No such conflict: it may be settled already.</div>'; return; }
-  drawConflict(c);
-}
-
-// ---- conflicts between team rules ------------------------------------------------------------
-//
-// Computed from the rules and the channels every time (src/ruleconflicts.js): two teams' rules that
-// both match a channel no manual assignment decides. Side a is the broader, b the narrower. Either
-// side can win: the other rule leaves the winner's out, and the other team may follow the channels
-// both match (a follow rule). Or it is kept as it is. Each way is tried first (a dry run), so the
-// page says what would move before anything does.
-
-const RULE_CONFLICT = 'ruleconflict:';
-/** A team's, in words: "Edge's", "Platform ops'". */
-const poss = (slug) => { const n = teamLabel(slug); return /s$/i.test(n) ? `${n}'` : `${n}'s`; };
-const sideRule = (x) => x.rules[0];
-
-/** One side of a rule conflict, in a few words: "Platform ops' aem-…". */
-function sideText(x) {
-  const prefix = prefixOf(sideRule(x).pattern);
-  return `${poss(x.team)} ${prefix !== null ? `${prefix}…` : sideRule(x).pattern}`;
-}
-/** The same as HTML, the pattern as code. */
-function sideHtml(x) {
-  const r = sideRule(x);
-  return `${esc(poss(x.team))} rule (${esc((FIELD_LABEL[r.field] || r.field).toLowerCase())} ${describe(r)})`;
-}
-
-function ruleConflictTitle(c) {
-  return `${sideText(c.a)} · ${sideText(c.b)}`;
-}
-
-function ruleConflictRow(c) {
-  const sel = `${RULE_CONFLICT}${c.key}`;
-  return `<div class="row${String(state.sel) === sel ? ' on' : ''}" data-sel="${esc(sel)}">
-    <span class="name">${esc(teamLabel(c.a.team))} <span class="sub">and</span> ${esc(teamLabel(c.b.team))} <span class="sub">${esc(sideRule(c.b).pattern)} inside ${esc(sideRule(c.a).pattern)}</span></span>
-    ${c.kept ? '<span class="tag confirmed">kept</span>' : ''}<span class="sub">${esc(channelCount(c.channels.length))}</span></div>`;
-}
-
-/** Who files the channels both sides match now: "Edge files all 15", "Edge 12, Platform ops 3". */
-function winnersText(c) {
-  const n = c.channels.length;
-  const rest = n - c.a.wins - c.b.wins;
-  const parts = [[c.b, c.b.wins], [c.a, c.a.wins]].filter(([, k]) => k)
-    .map(([x, k]) => `${teamLabel(x.team)} ${k === n ? ({ 1: 'files it', 2: 'files both' }[n] || `files all ${n}`) : k}`);
-  if (rest) parts.push(`another rule ${rest}`);
-  return parts.join(', ');
-}
-
-const MAX_RC_ROWS = 25;
-const ruleCells = (r) => `<td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td>
-  <td>${r.source ? `<span class="tag">${esc(r.source)} only</span>` : ''}</td><td class="n">${r.priority}</td>
-  <td class="sub">${esc(r.note || '')}${r.updatedBy ? `<div>${esc(r.updatedBy)} ${esc(ago(r.updatedAt))}</div>` : ''}</td>`;
-
-/** Both rules: what they read, how much they match, how many of these they file now. */
-function rulesCard(c) {
-  const row = (x, which) => `<tr><td>${esc(teamLabel(x.team))}<div class="sub">${which} · matches ${esc(channelCount(x.matches))}, files ${x.wins} of these</div></td>${ruleCells(sideRule(x))}</tr>`;
-  return `<div class="card"><h2>The rules</h2>
-    <table><tr><th>Team</th><th>Field</th><th>Pattern</th><th></th><th>Priority</th><th>Note</th></tr>${row(c.a, 'the broader')}${row(c.b, 'the narrower')}</table></div>`;
-}
-
-/** The channels both rules match, and who files each now. */
-function overlapCard(c) {
-  const rows = c.channels.slice(0, MAX_RC_ROWS).map((ch) => `<tr><td>${channelName(ch)}<div class="sub">${esc(platform(ch))} · <span class="mono">${esc(ch.channelId)}</span></div></td>
-    <td>${esc(teamLabel(ch.winner))}</td></tr>`).join('');
-  const more = c.channels.length > MAX_RC_ROWS ? `<tr><td colspan="2" class="sub">and ${c.channels.length - MAX_RC_ROWS} more</td></tr>` : '';
-  return `<div class="card"><h2>The channels both match <span class="sub">${esc(channelCount(c.channels.length))}</span></h2>
-    <table><tr><th>Channel</th><th>Filed under now</th></tr>${rows}${more}</table>
-    <p class="hint">Channels assigned by hand are not in a conflict: the assignment decides them.</p></div>`;
-}
-
-/** What a dry run of a side winning says: the moves, and, when it follows, what the other team follows. */
-function settlePreview(loser, p, follows) {
-  if (!p) return '<p class="hint">Trying it…</p>';
-  if (!p.ok) return `<p class="hint">Could not try it: ${esc(p.body.error || `failed (${p.status})`)}</p>`;
-  const { moves = [], follows: list = [] } = p.body;
-  const moved = moves.length ? `Moves ${esc(channelCount(moves.length))}: ${esc(movesText(moves))}.` : 'No channel moves.';
-  const followed = follows && list.length ? ` ${esc(teamLabel(loser.team))} follows ${esc(channelCount(list.length))}: ${esc(list.slice(0, 5).map(plainName).join(', '))}${list.length > 5 ? ` and ${list.length - 5} more` : ''}.` : '';
-  return `<p class="hint">${moved}${followed}</p>`;
-}
-
-/** One side winning: what happens to the other rule, whether the other team follows, and the button. */
-function winCard(c, side, previews, follows) {
-  const winner = c[side];
-  const loser = c[side === 'a' ? 'b' : 'a'];
-  const w = c.win[side];
-  const name = esc(teamLabel(winner.team));
-  const other = esc(teamLabel(loser.team));
-  if (!w.ok) return `<div class="card conflict"><h2>${name} wins</h2><p class="hint">Not possible: ${esc(w.why)}.</p></div>`;
-  const rule = w.empty
-    ? `${esc(poss(loser.team))} rule matches no other channel: it goes${w.follow ? ', or becomes the follow rule' : ''}.`
-    : `${esc(poss(loser.team))} rule leaves ${esc(poss(winner.team))} out: its pattern becomes <code>${esc(w.pattern)}</code>.`;
-  const follow = w.follow
-    ? `<label class="only"><input type="checkbox" data-follow="${side}"${follows[side] ? ' checked' : ''}> ${other} follows them: they are in ${esc(poss(loser.team))} inbox too${w.empty ? '' : ` (a follow rule, <code>${esc(w.follow.pattern)}</code>)`}</label>`
-    : '';
-  return `<div class="card conflict"><h2>${name} wins</h2>
-    <p class="lead">${name} files the channels both match. ${rule}</p>${follow}
-    ${settlePreview(loser, previews[side], w.follow && follows[side])}
-    <div class="acts"><button class="primary" data-win="${side}"${previews[side] && previews[side].ok ? '' : ' disabled'}>${name} wins${w.follow && follows[side] ? `, ${other} follows` : ''}</button></div></div>`;
-}
-
-function drawRuleConflict(c, previews = {}, follows = { a: true, b: true }) {
-  const neither = !c.win.a.ok && !c.win.b.ok;
-  $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(teamLabel(c.a.team))} and ${esc(teamLabel(c.b.team))}</h1>${c.kept ? '<span class="tag confirmed">kept</span>' : ''}</div>
-    <div class="status" id="status"></div>
-    <div class="card"><p class="lead">${sideHtml(c.a)} and ${sideHtml(c.b)} both match ${esc(channelCount(c.channels.length))}. The lowest priority decides: now ${esc(winnersText(c))}.</p>
-      ${neither ? `<p class="hint">Neither can win by a change of its pattern: ${esc(c.win.a.why)}. Change the rules on the teams' pages, or keep it as it is.</p>` : ''}
-      ${c.kept ? `<p class="hint">Kept by ${esc(c.kept.by)} ${esc(ago(c.kept.at))}${c.kept.note ? `: <span class="note">${esc(c.kept.note)}</span>` : ''}. It shows again once its rules or channels change.</p>`
-    : '<form class="form" id="rcKeep"><label class="fld grow"><span>Why it is meant (optional)</span><input id="rcNote" maxlength="300"></label><button id="rcKeepBtn">Keep as it is</button></form>'}
-      <p class="hint">Settling it changes the rules as you, and re-files the channels it moves, as a change on a team's page does.</p></div>
-    ${neither ? '' : `${winCard(c, 'a', previews, follows)}${winCard(c, 'b', previews, follows)}`}
-    ${rulesCard(c)}${overlapCard(c)}`;
-  showStatus();
-  const settle = (btn, body, done) => hold(btn, `ruleconflict:${c.key}`, () => call('/api/admin/rule-conflicts', 'POST', {
-    key: c.key, fingerprint: c.fingerprint, ...body,
-  })).then((res) => {
-    if (!res) return;
-    if (!res.ok) {
-      failed(`Settle ${ruleConflictTitle(c)}`, res);
-      if (res.status === 409 && res.body.conflict) showRuleConflict(c.key, res.body.conflict);
-      return;
-    }
-    state.ruleConflicts = res.body.ruleConflicts || [];
-    refreshRequests();
-    const now = state.ruleConflicts.find((x) => x.key === c.key);
-    if (now) showRuleConflict(now.key);
-    else $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(teamLabel(c.a.team))} and ${esc(teamLabel(c.b.team))}</h1></div><div class="status" id="status"></div><div class="empty">Settled: ${esc(done)}</div>`;
-    const moves = res.body.moves || [];
-    status('ok', `${done}${moves.length ? ` Re-filing ${channelCount(moves.length)} (${movesText(moves)}).` : ''}`);
-    renderList();
-  });
-  if ($('rcKeep')) {
-    $('rcKeep').onsubmit = (e) => {
-      e.preventDefault();
-      settle($('rcKeepBtn'), { action: 'keep', note: $('rcNote').value.trim() || undefined }, 'Kept as it is.');
-    };
-  }
-  for (const box of $('detail').querySelectorAll('[data-follow]')) {
-    box.onchange = () => {
-      follows[box.dataset.follow] = box.checked;
-      drawRuleConflict(c, previews, follows);
-    };
-  }
-  for (const btn of $('detail').querySelectorAll('[data-win]')) {
-    btn.onclick = async () => {
-      const side = btn.dataset.win;
-      const w = c.win[side];
-      const winner = teamLabel(c[side].team);
-      const loser = c[side === 'a' ? 'b' : 'a'];
-      const follow = Boolean(w.follow && follows[side]);
-      const p = previews[side] && previews[side].body;
-      const n = (p && p.moves && p.moves.length) || 0;
-      const rule = w.empty ? `${poss(loser.team)} rule ${follow ? 'becomes a follow rule' : 'goes'}` : `${poss(loser.team)} rule gets a new pattern${follow ? `, and ${teamLabel(loser.team)} a follow rule` : ''}`;
-      if (!(await confirmFirst(`${winner} wins${follow ? `, ${teamLabel(loser.team)} follows` : ''}?`, `${rule}; ${n ? `${channelCount(n)} move` : 'no channel moves'}.`, 'Settle it'))) return;
-      settle(btn, { action: 'win', side, follow }, `${winner} files them${follow ? `, ${teamLabel(loser.team)} follows them` : ''}.`);
-    };
-  }
-}
-
-/**
- * A rule conflict, and a dry run of each side winning (`/api/admin/rule-conflicts` with `dryRun`),
- * shown as they come. `c` is the conflict as an answer gave it, when it is newer.
- */
-function showRuleConflict(key, c = null) {
-  loadingPage();
-  state.view = null;
-  const found = c || (state.ruleConflicts || []).find((x) => x.key === key);
-  if (!found) { $('detail').innerHTML = '<div class="empty">No such conflict: it may be settled already.</div>'; return; }
-  const previews = {};
-  const follows = { a: true, b: true };
-  drawRuleConflict(found, previews, follows);
-  const shownNow = () => state.sel === `${RULE_CONFLICT}${key}`;
-  for (const side of ['a', 'b'].filter((x) => found.win[x].ok)) {
-    call('/api/admin/rule-conflicts', 'POST', {
-      key, fingerprint: found.fingerprint, action: 'win', side, follow: Boolean(found.win[side].follow), dryRun: true,
-    }, { parallel: true, idempotent: true }).then((p) => {
-      previews[side] = p;
-      if (shownNow()) {
-        const el = document.activeElement && document.activeElement.id;
-        const typed = $('rcNote') ? $('rcNote').value : '';
-        drawRuleConflict(found, previews, follows);
-        if ($('rcNote')) $('rcNote').value = typed;
-        if (el && $(el)) $(el).focus();
-      }
-    });
   }
 }
 
@@ -3629,11 +3103,10 @@ function orgMenu(button, v, c) {
 // domains, Slack Connect teams and people, each with Clef's verdict (src/orgmerge.js); the list
 // on the left shows the likely ones first. A pair's page puts the two side by side: the admin
 // team merges one into the other (tried first: what would be re-filed) or says they are not the
-// same; anyone else who sees one of them asks the admin team for the merge, which waits under
-// Requests. A merge can be undone on the page of the org kept.
+// same; anyone else who sees one of them asks the admin team for the merge, which waits in its
+// inbox, a thread there. A merge can be undone on the page of the org kept.
 
 const PAIR = 'pair:';
-const MERGE_REQUEST = 'orgmerge:';
 const pairSel = (a, b) => `${PAIR}${a < b ? `${a}:${b}` : `${b}:${a}`}`;
 /** An org's name in a pair: its display name, else its slug. */
 const dupName = (slug, orgs = state.dups?.orgs) => (orgs && orgs[slug] && orgs[slug].name) || orgLabel(slug);
@@ -3816,7 +3289,7 @@ function drawPair(v) {
     act = `<div class="card"><h2>Ask for a merge</h2><form class="form" id="pAskForm"><div class="fld"><span class="sub">Keep</span>${seg}</div>
       <label class="fld grow"><span>Why they are one (optional)</span><input id="pNote" maxlength="500"></label>
       <button class="primary" id="pAsk"${off(`ask:${v.value}`)}>Ask the admin team</button></form>
-      <p class="hint">The admin team merges customers: the one is filed under the other from then on, its channels, knowledge and agents' set-up too. They answer under Requests.</p></div>`;
+      <p class="hint">The admin team merges customers: the one is filed under the other from then on, its channels, knowledge and agents' set-up too. They answer in their inbox.</p></div>`;
   }
   // Your own open request is the card that takes it back.
   const listed = asks.filter((q) => q !== mine);
@@ -3913,7 +3386,7 @@ function wirePair(v) {
           if (res.body.request) pair.requests = [res.body.request, ...(pair.requests || [])];
         } else {
           pair.requests = [res.body.request, ...(pair.requests || [])];
-          status('ok', 'Asked: the admin team answers under Requests.');
+          status('ok', 'Asked: the admin team answers in its inbox.');
         }
         updatePair(pair, v.orgs);
         renderList();
@@ -3967,23 +3440,6 @@ async function unmerge(slug) {
   return res.body;
 }
 
-/** A merge request in Requests' list. */
-const mergeRow = (r) => `<div class="row${String(state.sel) === `${MERGE_REQUEST}${r.id}` ? ' on' : ''}" data-sel="${MERGE_REQUEST}${r.id}">
-  <span class="name">${esc(dupName(r.from))} <span class="sub">into ${esc(dupName(r.into))}</span></span>
-  ${r.status === 'open' ? '' : statusTag(r)}<span class="sub">${esc(ago(r.status === 'open' ? r.requestedAt : r.decidedAt))}</span></div>`;
-
-/** A merge request picked under Requests: the pair's page while it is open, else what came of it. */
-function showMergeRequest(id) {
-  const r = state.orgMerges.find((x) => String(x.id) === String(id));
-  if (!r) { $('detail').innerHTML = `<div class="empty">${backButton()} No such request.</div>`; return; }
-  if (r.status === 'open') { showPair(r.from, r.into); return; }
-  loadingPage();
-  state.view = null;
-  $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(dupName(r.from))} <span class="sub">into</span> ${esc(dupName(r.into))}</h1></div>
-    <div class="card"><p>${askText(r)}</p><p>${decisionText(r)}</p>
-    <p><a href="${esc(address({ tab: 'orgs', sel: pairSel(r.from, r.into) }))}">The two side by side</a></p></div>`;
-}
-
 /**
  * An org's page: the orgs merged into it, each undone here, its likely duplicates, and any
  * other org to compare it with.
@@ -4021,242 +3477,16 @@ function wireOrgMerge(slug) {
   };
 }
 
-// ---- bots -------------------------------------------------------------------------------
-//
-// The bots in the threads (src/ourbots.js), under Requests: Adobe's own count as staff, so the
-// inbox shows them on Adobe's side, as a colleague; the external ones on the customer's. Bots
-// have no mail address, which is how the inbox tells people apart, so an admin says whose each
-// is: one that posted and nobody said yet waits as a request. A bot may also only post alerts:
-// the threads it starts are alerts (src/alertbots.js).
-
-/** What marks a bot among the requests picked (`?request=bot:slack:T…:B…`). */
-const BOT = 'bot:';
-/** A bot's name as the inbox shows it: an admin's, else the platform's. */
-const botName = (b) => b.displayName || b.name || b.handle || b.id;
-/** A bot's picture: an admin's, else the platform's (Slack, Discord), else an empty square. */
-const botIco = (b) => {
-  const url = b.displayAvatar || b.avatar || '';
-  return /^(https:\/\/|\/)/.test(url) ? `<img class="ico" src="${esc(url)}" alt="">` : '<span class="ico none"></span>';
-};
-/** Whether a bot waits for an admin to say whose it is: nobody did, and it posted. */
-const unreviewed = (b) => b.ours === null && b.messages > 0;
-const botTags = (b) => [
-  b.ours === true ? '<span class="tag ours" title="Adobe\'s: on Adobe\'s side in the inbox">Adobe</span>' : '',
-  b.ours === false ? '<span class="tag" title="External: on the customer\'s side in the inbox">External</span>' : '',
-  b.alerts ? '<span class="tag alerts" title="Only posts alerts: the threads it starts are alerts">Alerts</span>' : '',
-].join('');
-const botPosts = (b) => (b.messages ? `${b.messages} ${b.messages === 1 ? 'message' : 'messages'}` : 'mentioned only');
-const botMatch = (b, f) => !f || `${b.displayName || ''} ${b.name || ''} ${b.handle || ''} ${b.id} ${platform(b)} ${b.channel || ''} ${b.ours === true ? 'adobe' : ''} ${b.ours === false ? 'external' : ''} ${b.alerts ? 'alerts' : ''}`.toLowerCase().includes(f);
-// A bot that waits for a review says where and how much it posted; the others say what was said.
-const botRow = (b) => `
-      <div class="row${state.sel === `${BOT}${b.key}` ? ' on' : ''}" data-sel="${esc(`${BOT}${b.key}`)}" title="${esc(botName(b))} (${esc(platform(b))}, ${esc(botPosts(b))})">
-        ${botIco(b)}<span class="name">${esc(botName(b))}${unreviewed(b) ? ` <span class="sub">${esc(platform(b))}</span>` : ''}</span>
-        ${botTags(b)}${unreviewed(b) || !botTags(b) ? `<span class="sub">${esc(botPosts(b))}</span>` : ''}</div>`;
-
-function showBot(key) {
-  const b = state.bots.find((x) => x.key === key);
-  if (!b) { $('detail').innerHTML = `<div class="empty">${backButton()} No such bot.</div>`; return; }
-  note = { kind: '', text: '' };
-  state.view = { target: 'bot', value: key, bot: b, recent: null };
-  const v = state.view;
-  // Its latest messages (GET /api/admin/bot), each a link to its thread in the inbox: what the
-  // bot says tells whose it is.
-  const recentCard = () => {
-    if (!b.messages) return '';
-    const items = v.recent === null ? '<div class="empty pad">Loading…</div>'
-      : v.recent.error ? `<div class="empty pad">${esc(v.recent.error)}</div>`
-        : v.recent.map((m) => {
-          const ch = m.channel && (b.source === 'teams' ? [m.group, m.channel].filter(Boolean).join(' › ') : `#${m.channel}`);
-          return `<li><div class="said">${esc(m.preview) || '<i>No text</i>'}</div>
-            <div class="sub"><time datetime="${esc(m.at)}">${esc(new Date(m.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}</time>${ch ? ` · ${esc(ch)}` : ''}${m.org ? ` · ${esc(orgLabel(m.org))}` : ''} · <a href="/inbox?team=${encodeURIComponent(m.team)}&t=${encodeURIComponent(m.thread)}">Open the thread</a>${m.permalink ? ` · <a href="${esc(m.permalink)}" target="_blank" rel="noopener">on ${esc(platform(b))}</a>` : ''}</div></li>`;
-        }).join('');
-    return `<div class="card"><h2>Latest messages</h2>${v.recent && !v.recent.error && !v.recent.length ? '<div class="empty pad">Its messages were deleted.</div>' : `<ul class="recent">${items}</ul>`}</div>`;
-  };
-  let saves = 0;
-  const draw = () => {
-    const channel = b.channel && (b.source === 'teams' ? [b.group, b.channel].filter(Boolean).join(' › ') : `#${b.channel}`);
-    const where = [b.latest ? `latest ${ago(b.latest)}` : '', channel ? `in ${channel}` : '', b.org ? `(${orgLabel(b.org)})` : ''].filter(Boolean).join(' ');
-    $('detail').innerHTML = `
-      <div class="title">${backButton()}<span id="bIco">${botIco(b)}</span><h1 class="fill" id="bTitle">${esc(botName(b))}</h1><span class="sub">${esc(platform(b))} bot</span></div>
-      <div class="status" id="status"></div>
-      <div class="card"><div class="field">
-        <label>Whose</label><span class="seg" id="bOurs">
-          <button type="button" data-ours="1" aria-pressed="${b.ours === true}"${off(`bot:${key}`)}>Adobe's</button>
-          <button type="button" data-ours="0" aria-pressed="${b.ours === false}"${off(`bot:${key}`)}>External</button></span>
-        <label>Alerts</label><label class="inline"><input type="checkbox" id="bAlerts"${b.alerts ? ' checked' : ''}${off(`bot:${key}`)}>
-          <span>It only posts alerts: the threads it starts are alerts</span></label>
-        <label>Posted</label><span>${b.messages ? `${esc(botPosts(b))} in ${b.threads} ${b.threads === 1 ? 'thread' : 'threads'}${where ? `, ${esc(where)}` : ''}` : 'Nothing yet: it was mentioned'}</span>
-        ${b.handle && b.handle !== b.name ? `<label>Mentioned as</label><span>@${esc(b.handle)}</span>` : ''}
-        <label>Id</label><span class="mono">${esc(b.id)}</span>
-        ${b.oursBy ? `<label>Said by</label><span class="sub">${esc(b.oursBy)}, ${esc(ago(b.oursAt))}</span>` : ''}
-      </div><p class="hint">${b.ours === null ? 'Nobody said whose this bot is yet, so it waits under Requests. ' : ''}Bots have no mail address, which is how the inbox tells Adobe people from customers, so an admin says which bots are Adobe's and which are external. An Adobe bot's messages show on Adobe's side, as your colleagues' do, the ones it wrote before too${b.staff && !b.ours ? '; this one is there already, by its Discord role' : ''}. They stay a bot's: they are not an answer to the customer, and the thread agents read them as they read every bot's. A bot that only posts alerts starts alerts, also in a channel of conversations: they are counted, not unread, and no agent works them. Its replies in a person's thread leave that a conversation.</p></div>
-      <div class="card"><h2>How the inbox shows it</h2><div class="field">
-        <label>On ${esc(platform(b))}</label><span class="inline">${botIco({ avatar: b.avatar })}<span>${esc(b.name || b.handle || b.id)}</span>${b.avatar ? '' : '<span class="sub">no picture</span>'}</span>
-        <label for="bName">Name</label><span class="inline"><input id="bName" class="fill" maxlength="80" value="${esc(b.displayName || '')}"></span>
-        <label for="bAvatar">Picture</label><span class="inline"><input id="bAvatar" class="mono fill" maxlength="500" value="${esc(b.displayAvatar || '')}"></span>
-      </div><p class="hint">The inbox shows this name and picture instead of the ones from ${esc(platform(b))}, on the messages it wrote before too; left empty, the ones from ${esc(platform(b))}.${b.source === 'teams' ? ' Teams gives a bot\'s messages no picture, so its picture there is its app\'s icon, and names it by its registration, not by its app.' : ''} The picture is the https URL of an image.</p></div>
-      ${recentCard()}`;
-    showStatus();
-    // Each save sends both fields as the page shows them; only the answer to the last one is
-    // shown, so an earlier answer does not take back what was changed after it.
-    const look = async () => {
-      const now = { name: $('bName').value.trim() || null, avatar: $('bAvatar').value.trim() || null };
-      if (now.name === (b.displayName || null) && now.avatar === (b.displayAvatar || null)) return;
-      const mine = ++saves;
-      const res = await call('/api/admin/bots', 'PUT', { key, ...now });
-      if (mine !== saves) return;
-      if (!res.ok) { failed('Save', res); return; }
-      Object.assign(b, res.body.bot);
-      status('ok', 'Saved.');
-      renderList();
-      if (v !== state.view) return;
-      $('bTitle').textContent = botName(b);
-      $('bIco').innerHTML = botIco(b);
-    };
-    $('bName').onchange = look;
-    $('bAvatar').onchange = look;
-    // Saying whose it is answers its request: Requests in the header counts one less.
-    const said = (res) => {
-      const waited = unreviewed(b);
-      Object.assign(b, res.body.bot);
-      if (waited && !unreviewed(b)) state.openRequests = Math.max(0, state.openRequests - 1);
-      renderCount();
-      renderList();
-    };
-    // Drawn again once the save is done, so its controls are not drawn as busy.
-    const redraw = () => { if (v === state.view) draw(); };
-    for (const btn of $('bOurs').querySelectorAll('[data-ours]')) {
-      btn.onclick = () => hold(btn, `bot:${key}`, async () => {
-        const ours = btn.dataset.ours === '1';
-        if (ours === b.ours) return;
-        const res = await call('/api/admin/bots', 'PUT', { key, ours });
-        if (!res.ok) { failed('Save', res); return; }
-        said(res);
-        status('ok', ours ? `${botName(b)} is Adobe's now.` : `${botName(b)} is external now.`);
-      }).then(redraw);
-    }
-    $('bAlerts').onchange = (e) => hold(e.target, `bot:${key}`, async () => {
-      const alerts = e.target.checked;
-      const res = await call('/api/admin/bots', 'PUT', { key, alerts });
-      if (!res.ok) { failed('Save', res); return; }
-      said(res);
-      const jobs = res.body.refile ? ': re-filing the threads it started' : '';
-      status('ok', alerts ? `${botName(b)} only posts alerts now${jobs}.` : `${botName(b)} posts more than alerts now${jobs}.`);
-    }).then(redraw);
-  };
-  draw();
-  if (!b.messages) return;
-  call(`/api/admin/bot?key=${encodeURIComponent(key)}`).then((r) => {
-    v.recent = r.ok ? r.body.recent : { error: r.body.error || `Could not load its messages (${r.status}).` };
-    if (v === state.view) draw();
-  });
-}
-
-// ---- admin accounts ---------------------------------------------------------------------
-//
-// The Teams tenant that hosts the teams has admin accounts of its own (src/accountlinks.js):
-// `owner_` and the initials of the Adobe person who uses one. They are Adobe's by themselves,
-// but nothing says whose: an admin gives each the mail address of its person, and the inbox
-// shows it as them, the messages it wrote before too.
-
-/** What marks an account among the requests picked (`?request=account:teams:…`). */
-const ACCOUNT = 'account:';
-const accountName = (a) => a.name || a.email || a.id;
-const accountPosts = (a) => (a.messages ? `${a.messages} ${a.messages === 1 ? 'message' : 'messages'}` : 'no messages');
-const accountMatch = (a, f) => !f || `${a.name || ''} ${a.email || ''} ${a.person?.name || ''} ${a.person?.email || ''} admin account`.toLowerCase().includes(f);
-const accountRow = (a) => `
-      <div class="row${state.sel === `${ACCOUNT}${a.key}` ? ' on' : ''}" data-sel="${esc(`${ACCOUNT}${a.key}`)}" title="${esc(accountName(a))} (${esc(platform(a))} admin account, ${esc(accountPosts(a))})">
-        <span class="ico none"></span><span class="name">${esc(accountName(a))}${a.person ? ` <span class="sub">${esc(a.person.name || a.person.email)}</span>` : ''}</span>
-        <span class="tag ours" title="Adobe's: on Adobe's side in the inbox">Adobe</span><span class="sub">${esc(accountPosts(a))}</span></div>`;
-
-function showAccount(key) {
-  const a = state.accounts.find((x) => x.key === key);
-  if (!a) { $('detail').innerHTML = `<div class="empty">${backButton()} No such account.</div>`; return; }
-  note = { kind: '', text: '' };
-  state.view = { target: 'account', value: key, account: a };
-  const v = state.view;
-  const draw = () => {
-    const whose = a.person ? `${a.person.name ? `${esc(a.person.name)} <span class="sub mono">${esc(a.person.email || '')}</span>` : `<span class="mono">${esc(a.person.email || '')}</span>`}` : '<span class="sub">Nobody said yet</span>';
-    $('detail').innerHTML = `
-      <div class="title">${backButton()}<span class="ico none"></span><h1 class="fill">${esc(accountName(a))}</h1><span class="sub">${esc(platform(a))} admin account</span></div>
-      <div class="status" id="status"></div>
-      <div class="card"><div class="field">
-        <label>Whose</label><span>${whose}</span>
-        <label>Posted</label><span>${a.messages ? `${esc(accountPosts(a))}${a.latest ? `, latest ${esc(ago(a.latest))}` : ''}` : 'Nothing yet'}</span>
-        <label>Account</label><span class="mono">${esc(a.email || a.id)}</span>
-        ${a.linkedBy ? `<label>Said by</label><span class="sub">${esc(a.linkedBy)}, ${esc(ago(a.linkedAt))}</span>` : ''}
-      </div>
-      <div class="form picker"><label class="fld grow"><span>${a.person ? 'Someone else\'s: their name or mail address' : 'Whose it is: their name or mail address'}</span><input id="aFind" autocomplete="off"></label><div class="picks s2-float" id="aPicks" hidden></div>
-        ${a.person ? `<button type="button" id="aUnlink"${off(`account:${key}`)}>Nobody's</button>` : ''}</div>
-      <p class="hint">An admin account of the Teams tenant that hosts the teams: Adobe's, so its messages show on Adobe's side, but it is named by initials, and nothing in Teams says whose it is. Give the colleague who uses it: the inbox then shows it as them, with their name and picture, the messages it wrote before too, and counts it as one of their accounts, after their own.</p></div>`;
-    showStatus();
-    const save = (email) => once(`account:${key}`, async () => {
-      const res = await call('/api/admin/accounts', 'PUT', { key, email });
-      if (!res.ok) { failed('Save', res); return; }
-      Object.assign(a, res.body.account);
-      status('ok', a.person ? `${accountName(a)} is ${a.person.name || a.person.email}'s now.` : `${accountName(a)} is nobody's now.`);
-      renderList();
-    }).then(() => { if (v === state.view) draw(); });
-    if ($('aUnlink')) $('aUnlink').onclick = () => save(null);
-    wirePersonPicker($('aFind'), $('aPicks'), (p) => save(p.email));
-  };
-  draw();
-}
-
-/**
- * A field that finds a colleague (GET /api/admin/people), or takes a full mail address, and
- * gives the one picked to `pick`: only staff are offered.
- */
-function wirePersonPicker(input, picks, pick) {
-  let timer;
-  let list = [];
-  let at = 0;
-  const choose = (p) => { picks.hidden = true; input.value = ''; list = []; pick(p); };
-  const render = () => {
-    picks.innerHTML = list.map((p, i) => `<div class="row${i === at ? ' on' : ''}" data-i="${i}">
-      <span class="name">${p.name ? esc(p.name) : `<i>${esc(p.email)}</i>`} ${p.name ? `<span class="sub mono">${esc(p.email)}</span>` : ''}</span></div>`).join('')
-      || '<div class="empty pad">No colleague matches. Type their full mail address.</div>';
-    placePicks(input, picks);
-    picks.hidden = false;
-    for (const el of picks.querySelectorAll('[data-i]')) {
-      // eslint-disable-next-line no-loop-func
-      el.onmousedown = (e) => { e.preventDefault(); choose(list[Number(el.dataset.i)]); };
-    }
-  };
-  input.oninput = () => {
-    clearTimeout(timer);
-    const q = input.value.trim();
-    if (q.length < 2) { picks.hidden = true; list = []; return; }
-    timer = setTimeout(async () => {
-      const r = await call(`/api/admin/people?q=${encodeURIComponent(q)}`);
-      if (input.value.trim() !== q) return;
-      list = (r.body.people || []).filter((p) => p.staff);
-      const email = q.toLowerCase();
-      if (EMAIL.test(email) && !list.some((p) => p.email === email)) list.push({ email, name: null });
-      at = 0;
-      render();
-    }, 150);
-  };
-  input.onkeydown = (e) => {
-    if (picks.hidden || !list.length) return;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      at = (at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length;
-      render();
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      choose(list[at]);
-    } else if (e.key === 'Escape') {
-      picks.hidden = true;
-    }
-  };
-  input.onblur = () => setTimeout(() => { picks.hidden = true; }, 150);
-}
-
 // ---- start ------------------------------------------------------------------------------
 
 (async () => {
-  // Another team, org, request or section fades in (ui/app.js).
+  // Requests was a page of these: its requests are threads of the admin team's inbox now.
+  const legacy = new URLSearchParams(location.search);
+  if (legacy.get('tab') === 'requests') {
+    location.replace(requestsAddress(legacy.get('request')));
+    return;
+  }
+  // Another team, org or section fades in (ui/app.js).
   Swap.watch($('detail'), () => `${state.tab}|${state.sel ?? ''}|${state.section === 'history' ? 'kb' : state.section ?? ''}`);
   const me = await call('/api/me');
   if (!me.ok) { $('list').innerHTML = `<div class="empty">${esc(me.body.error || 'Not signed in.')}</div>`; return; }
@@ -4276,7 +3506,7 @@ function wirePersonPicker(input, picks, pick) {
     // Leaving saves what the agent has open, and asks, in the page, about edits that cannot be
     // saved; a new tab (⌘-click, middle click) leaves nothing.
     go: async (id, url) => {
-      if (['teams', 'orgs', 'requests'].includes(id)) openUrl(url);
+      if (['teams', 'orgs'].includes(id)) openUrl(url);
       else if (await Agent.leave()) location.assign(url);
     },
   });

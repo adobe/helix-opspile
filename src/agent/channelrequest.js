@@ -23,9 +23,9 @@ import { entryFollows } from '../follows.js';
  * elsewhere: the thread agent's `channel_assignment`, `list_teams` and
  * `request_channel_reassignment` (src/agent/tools.js). The request is the admin pages' channel
  * request (src/requests.js, migration 0028), asking for a move (migration 0071): the admin team
- * confirms or declines it under Requests, as one a team manager sends. The agent files one only
- * while it answers a sidebar message, for the person who wrote it: the sidebar is trusted, and
- * the thread's messages, which customers write, cannot get a channel moved.
+ * confirms or declines it in its inbox, where it is a thread, as one a team manager sends. The
+ * agent files one only while it answers a sidebar message, for the person who wrote it: the sidebar
+ * is trusted, and the thread's messages, which customers write, cannot get a channel moved.
  */
 
 const MAX_MEMBERS = 12;
