@@ -220,7 +220,8 @@ describe('admin: team managers', () => {
         target: 'team', field: 'name', pattern: '^x', value: 'helix',
       }],
       ['POST', '/api/admin/assign', { target: 'team', channelId: 'C3', value: 'helix' }],
-      ['GET', '/api/admin/orgs'],
+      ['PUT', '/api/admin/orgs', { slug: 'acme', name: 'ACME' }],
+      ['GET', '/api/admin/org?slug=_unassigned'],
       ['GET', '/api/admin/org-icons?slug=acme'],
       ['GET', '/api/admin/favicon?domain=acme.example'],
     ]) {
@@ -234,6 +235,80 @@ describe('admin: team managers', () => {
     assert.equal((await as(e, asMe(CY), 'GET', '/api/admin/teams')).status, 403);
     assert.equal((await as(e, asMe(CY), 'GET', '/api/kb')).status, 200);
     assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/agent', { team: 'edge', enabled: true })).status, 403);
+  });
+
+  it('see a customer\'s page, one row per channel, and act on their teams\' part of it', async () => {
+    const e = managers();
+    // A thread of C1 still filed under edge (a re-filing not done): C1 is one channel all the
+    // same, under the team the rules file it under, with what is left elsewhere.
+    e.DB.sqlite.exec(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        kind, channel_name, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES ('slack:E1:C1:9.1', 'slack', 'E1', 'C1', '9.1', 'acme', 'edge', 'channel', 'aem-acme',
+        'channels/acme/edge/slack-C1/9.1/', '2026-10-23T00:00:00Z', '2026-10-23T00:00:00Z',
+        '2026-10-23T00:00:00Z', 1, '2026-10-23T00:00:00Z')`);
+    let r = await call(e, ADA, 'GET', '/api/admin/org?slug=acme');
+    assert.deepEqual(r.body.channels.map((c) => [c.channelId, c.team, c.threads, c.split]), [
+      ['C1', 'helix', 3, [{ team: 'edge', threads: 1 }]],
+    ]);
+    assert.equal(r.body.channels[0].latest, '2026-10-23T00:00:00Z');
+    assert.equal((await call(e, ADA, 'GET', '/api/admin/orgs')).body.orgs.find((o) => o.slug === 'acme').channels, 1);
+    assert.ok(r.body.rules.length);
+
+    // Everyone on a team sees it, without the rules; Unassigned stays the admin team's.
+    const me = asBo(bo);
+    r = await as(e, me, 'GET', '/api/admin/org?slug=acme');
+    assert.deepEqual(
+      [r.status, r.body.rules, r.body.channels.length, r.body.follows],
+      [200, [], 1, []],
+    );
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/admin/org?slug=acme')).status, 200);
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/admin/orgs')).status, 200);
+
+    // A team follows the customer: every channel of it is shared with the team, by a rule.
+    assert.equal((await as(e, me, 'PUT', '/api/admin/org-follows', { team: 'edge', org: 'acme' })).status, 403);
+    r = await call(e, ADA, 'PUT', '/api/admin/org-follows', { team: 'edge', org: 'acme' });
+    assert.deepEqual([r.status, r.body.followers.map((f) => f.team)], [200, ['edge']]);
+    const shares = () => e.DB.rows(`SELECT channel_id, team, added_by FROM channel_teams
+      ORDER BY channel_id, team`)
+      .map((x) => [x.channel_id, x.team, x.added_by.startsWith('rule:')]);
+    assert.deepEqual(shares(), [['C1', 'edge', true]]);
+    r = await call(e, ADA, 'PUT', '/api/admin/org-follows', { team: 'edge', org: 'acme' });
+    assert.equal(e.DB.rows("SELECT id FROM rules WHERE target = 'follow'").length, 1, 'once');
+    r = await as(e, asMe(CY), 'GET', '/api/admin/org?slug=acme');
+    assert.deepEqual([r.body.follows.map((f) => f.team), r.body.channels[0].followedByRule], [['edge'], ['edge']]);
+    // Taken out by hand, it is not: the rule's.
+    assert.equal((await call(e, ADA, 'DELETE', '/api/admin/share', { team: 'edge', source: 'slack', channelId: 'C1' })).status, 409);
+    // A manager follows with their own team: helix holds C1, so nothing is shared with it.
+    r = await as(e, me, 'PUT', '/api/admin/org-follows', { team: 'helix', org: 'acme' });
+    assert.deepEqual(r.body.followers.map((f) => f.team).sort(), ['edge', 'helix']);
+    assert.deepEqual(shares(), [['C1', 'edge', true]]);
+    r = await as(e, me, 'PUT', '/api/admin/org-follows', { team: 'helix', org: 'acme', follow: false });
+    assert.deepEqual(r.body.followers.map((f) => f.team), ['edge']);
+    r = await call(e, ADA, 'PUT', '/api/admin/org-follows', { team: 'edge', org: 'acme', follow: false });
+    assert.deepEqual([r.body.followers, shares()], [[], []]);
+    assert.equal((await call(e, ADA, 'PUT', '/api/admin/org-follows', { team: 'edge', org: 'nobody' })).status, 404);
+
+    // A manager gives a channel of their team back to the admin team; another team's they
+    // cannot, and one the admin team holds is not theirs to give.
+    assert.equal((await as(e, me, 'POST', '/api/admin/release', { team: 'edge', source: 'slack', channelId: 'C1' })).status, 403);
+    r = await as(e, me, 'POST', '/api/admin/release', { team: 'helix', source: 'slack', channelId: 'C1' });
+    assert.equal(r.status, 200);
+    await drain(e);
+    assert.deepEqual(e.DB.rows("SELECT DISTINCT team FROM threads WHERE channel_id = 'C1'"), [{ team: 'admin' }]);
+    assert.equal((await as(e, me, 'POST', '/api/admin/release', { team: 'helix', source: 'slack', channelId: 'C1' })).status, 409);
+    // and asks for it again, as a move.
+    r = await as(e, me, 'POST', '/api/admin/requests', {
+      team: 'helix', source: 'slack', channelId: 'C1', move: true,
+    });
+    assert.deepEqual([r.status, r.body.request.move], [200, true]);
+    r = await as(e, me, 'GET', '/api/admin/org?slug=acme');
+    assert.deepEqual(r.body.requests.map((x) => [x.team, x.move]), [['helix', true]]);
+
+    // A channel shared with their team by hand, they take out of its inbox; not another team's.
+    e.DB.sqlite.exec(`INSERT INTO channel_teams (source, channel_id, team, added_by, added_at)
+      VALUES ('slack', 'C1', 'helix', 'ada@staff.example', 'x'), ('slack', 'C1', 'edge', 'ada@staff.example', 'x')`);
+    assert.equal((await as(e, me, 'DELETE', '/api/admin/share', { team: 'edge', source: 'slack', channelId: 'C1' })).status, 403);
+    assert.equal((await as(e, me, 'DELETE', '/api/admin/share', { team: 'helix', source: 'slack', channelId: 'C1' })).status, 200);
   });
 
   it('edit their teams\' knowledge base, and no other', async () => {

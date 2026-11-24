@@ -216,7 +216,7 @@ describe('admin: duplicate customers', () => {
     assert.equal((await call(e, CY, 'GET', '/api/admin/org-duplicates')).body.pairs.length, 0);
     assert.equal((await call(e, CY, 'POST', '/api/admin/org-merge-requests', { from: 'acmeco', into: 'acme' })).status, 403);
     assert.equal((await call(e, BO, 'POST', '/api/admin/org-merge', { from: 'acmeco', into: 'acme' })).status, 403);
-    assert.equal((await call(e, BO, 'GET', '/api/admin/orgs')).status, 403);
+    assert.equal((await call(e, BO, 'PUT', '/api/admin/orgs', { slug: 'acme', name: 'Acme' })).status, 403);
     r = await call(e, BO, 'POST', '/api/admin/org-merge-requests', { from: 'acmeco', into: 'acme', note: 'one customer' });
     assert.equal(r.status, 200);
     const { id } = r.body.request;

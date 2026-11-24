@@ -153,7 +153,13 @@ A person also follows a **customer**, a **person** or an **area** (`person_follo
 0087; `PUT /api/follows { kind, target }`): the customer's conversations, the threads the person
 posted in, and those Clef puts in the area (`thread_areas`, by index, written with the label, as
 `thread_tech` is) are in their personal view the same way, and in `followersOf` for live updates
-and notifications. Teams follow technologies only.
+and notifications. A team follows a customer too (on the customer's page in Customers, its managers
+and the admin team; `PUT /api/admin/org-follows`): a follow rule of field `org` (migration 0095),
+which matches the org the other rules file a channel under, and the org's that were merged into it,
+so every channel of the customer is shared with the team, now and later, as any follow rule's
+channels are. On the customer's page everyone on a team follows it themselves, a manager gives a
+channel of their team back to the admin team (`POST /api/admin/release`) or takes it out of their
+team's inbox where it is shared by hand, and asks for one of another team's (a request with `move`).
 
 **What to follow, suggested** (`GET /api/follows/suggest`, `src/followsuggest.js`): products
 (technologies), topics (areas) and customers, for everyone signed in. Without a query, what the

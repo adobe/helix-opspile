@@ -141,7 +141,10 @@ follow rules want from the rules and `channels` and writes the difference, after
 channel seen or renamed since and a sync that failed. It only adds where no row is (a share by hand
 of the same channel and team stays a share by hand) and only deletes `WHERE added_by = 'rule:<id>'`,
 so it never takes away a share by hand. A channel filed under the rule's team is not shared with it.
-`DELETE /api/admin/share` refuses a rule's share: the cron would add it again.
+`DELETE /api/admin/share` refuses a rule's share: the cron would add it again. A team that follows
+a customer is a follow rule of field `org` (`PUT /api/admin/org-follows` writes and deletes it): its
+shares come and go with the channels the rules file under that customer, as a merge or a manual
+assignment to another org changes them.
 
 **Rule conflict.** open → settled or kept → open again (`src/ruleconflicts.js`). Computed from the
 team rules and the channels on every read, never stored; a settled one is gone because the rules

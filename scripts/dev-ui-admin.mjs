@@ -18,6 +18,7 @@ import { SLACK_MCP_URL } from '../src/agent/slackmcp.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
+import { syncFollowRules } from '../src/followrules.js';
 import { previewOf } from '../src/threads.js';
 import { seal } from '../src/post.js';
 import { d1 } from '../test/d1.js';
@@ -809,6 +810,15 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     WHERE team = 'platform' AND channel_id NOT IN ('C0UMBRELLA', 'C0INITECH1')
     ORDER BY channel_id LIMIT 1`).run(ago(4));
 
+  // Edge ops follows ACME (a follow rule of field `org`, src/rules.js): ACME's channels are shared
+  // with it, which `syncFollowRules` writes (below). One of Platform ops' ACME threads is still
+  // filed under Forms ops, a re-filing not done: ACME's page shows the channel once, and says so.
+  DB.sqlite.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by,
+      updated_at) VALUES ('follow', 100, NULL, 'org', '^acme$', 'edge', 'follows the customer',
+      'lena@example.com', ?)`).run(ago(2));
+  DB.sqlite.exec(`UPDATE threads SET team = 'forms', path = replace(path, '/platform/', '/forms/')
+    WHERE thread = (SELECT thread FROM threads WHERE channel_id = 'C0ACMEAEM' ORDER BY any_at LIMIT 1)`);
+
   // Customers waiting in the customer portal (src/portalrequests.js): one who picked what Edge
   // ops follows (its managers may open a channel too), one nobody follows, and one declined.
   const lobby = (domain, company, tech, note, members, at, status = 'open', decided = []) => DB.sqlite
@@ -1031,6 +1041,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       checkUrl,
       admins,
     ))));
+  // The follow rules' shares, as the Worker writes them after a rule change and on the cron.
+  const followed = syncFollowRules(env);
   /** `/api/kb`, its channels, agents and MCP servers, by the real src/kbadmin.js. */
   const kb = async (req, url, body) => {
     await seeded;
@@ -1048,6 +1060,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     }
     // Clef, made up, for the duplicate customers (src/orgmerge.js): two orgs of one name are one.
     const asked = url.pathname === '/api/admin/org-duplicates' ? { ...env, AI: DEV_CLEF } : env;
+    await followed;
     const res = await admin(toRequest(req, url, body), asked, url, me);
     // Re-filing runs right away here.
     while (queued.length) {
