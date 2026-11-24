@@ -61,6 +61,8 @@ const state = {
   dups: null, dupsMore: false, orgMerges: [],
   // The channels no rule files under an org (GET /api/admin/orgs `unassigned`): how many.
   orgsUnassigned: null,
+  // The customers you follow yourself (GET /api/follows `by.org`): in your personal view.
+  myOrgs: new Set(),
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -215,6 +217,10 @@ function confirmFirst(question, detail, yes) {
     dlg.querySelector('[value="no"]').focus();
   });
 }
+/** The customer a follow rule follows (field `org`, src/rules.js `followedOrg`), or null. */
+const followedOrg = (r) => (r.target === 'follow' && r.field === 'org'
+  ? (/^\^([a-z0-9_][a-z0-9-]*)\$$/.exec(r.pattern || '') || [])[1] || null : null);
+
 /** How many channels, in words: "1 channel", "48 channels". */
 const channelCount = (n) => `${n} ${n === 1 ? 'channel' : 'channels'}`;
 
@@ -225,7 +231,8 @@ const orgLabel = (slug) => {
 // The admin team holds the channels no other team has (yet); adding a team to one of those
 // moves it, adding a team to any other channel shares it (src/shares.js).
 const isHolding = (slug) => !slug || slug === UNASSIGNED || slug === 'admin';
-const teamLabel = (slug) => (slug === UNASSIGNED ? 'Unassigned' : (state.teams.find((t) => t.slug === slug)?.name || state.names[slug] || slug));
+const teamLabel = (slug) => (slug === UNASSIGNED ? 'Unassigned' : (state.teams.find((t) => t.slug === slug)?.name || state.names[slug]
+  || state.bases.find((b) => b.kind === 'team' && b.slug === slug)?.name || slug));
 
 /** The channels a rule change moved, in a few words. */
 function movesText(moves) {
@@ -303,7 +310,7 @@ function wanted(url) {
     if (named) {
       tab = named.kind === 'org' ? 'orgs' : 'teams';
       sel = named.slug;
-    } else if (q.get('org') && !q.get('team') && state.me.admin) tab = 'orgs';
+    } else if (q.get('org') && !q.get('team') && state.orgs.some((o) => o.slug === q.get('org'))) tab = 'orgs';
   }
   if (!['orgs', 'requests'].includes(tab) || (tab !== 'orgs' && !state.me.admin)) tab = 'teams';
   sel = sel || q.get(PARAM[tab]);
@@ -376,13 +383,16 @@ async function load() {
   // Team managers see their teams only, and no orgs; the other members of a team only the
   // knowledge bases (their agents), as everyone does.
   const none = Promise.resolve({ ok: true, body: {} });
-  const [teams, orgs, requests, bots, accounts, bases] = await Promise.all([
+  // Everyone on a team sees every customer, to follow it, and the channels of it.
+  const onTeam = state.me.admin || (state.me.teams || []).length > 0;
+  const [teams, orgs, requests, bots, accounts, bases, follows] = await Promise.all([
     state.me.admin || state.me.manages?.length ? call('/api/admin/teams') : none,
-    state.me.admin ? call('/api/admin/orgs') : none,
+    onTeam ? call('/api/admin/orgs') : none,
     state.me.admin ? call('/api/admin/requests') : none,
     state.me.admin ? call('/api/admin/bots') : none,
     state.me.admin ? call('/api/admin/accounts') : none,
-    call('/api/kb')]);
+    call('/api/kb'),
+    call('/api/follows')]);
   if (!teams.ok) { $('list').innerHTML = `<div class="empty">${esc(teams.body.error || 'Could not load.')}</div>`; return false; }
   // In place: the agent (ui/agent.js) counts on the same list.
   state.bases.splice(0, state.bases.length, ...(bases.ok ? bases.body.bases : []));
@@ -399,7 +409,8 @@ async function load() {
   renderCount();
   state.unassigned = teams.body.unassigned;
   state.orgs = orgs.body.orgs || [];
-  state.orgsUnassigned = orgs.body.unassigned || null;
+  state.orgsUnassigned = state.me.admin ? orgs.body.unassigned || null : null;
+  state.myOrgs = new Set((follows.ok && follows.body.by?.org) || []);
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
   state.bots = bots.body.bots || [];
   state.accounts = accounts.body.accounts || [];
@@ -468,12 +479,22 @@ function listError(text) {
   if ($('listStatus')) $('listStatus').textContent = text;
 }
 
+/** An org's row in the Customers list: its icon, name, type and channels, and whether you follow it. */
+const orgRow = (o) => `
+      <div class="row${state.sel === o.slug ? ' on' : ''}" data-sel="${esc(o.slug)}">
+        ${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
+        ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
+        ${state.me.admin && state.myOrgs.has(o.slug) ? '<span class="tag" title="You follow it: its conversations are in your personal view">following</span>' : ''}
+        <span class="sub">${channelCount(o.channels)}</span></div>`;
+
 /** A knowledge base's row (a team's or a customer's you do not manage): its agent, its entries. */
 function baseRow(b) {
   const agents = b.agents ? `agent in ${channelCount(b.agents)}` : '';
-  return `<div class="row two${state.sel === b.slug ? ' on' : ''}" data-sel="${esc(b.slug)}" title="${esc(b.name)} (${esc(b.slug)})">
-        <span class="name">${esc(b.name)}</span>
-        <span class="sub">${esc([agents, Agent.activity(b), b.name !== b.slug && b.slug].filter(Boolean).join(' · '))}</span></div>`;
+  // A customer by the name the admin team gave it.
+  const name = (b.kind === 'org' && state.orgs.find((o) => o.slug === b.slug)?.name) || b.name;
+  return `<div class="row two${state.sel === b.slug ? ' on' : ''}" data-sel="${esc(b.slug)}" title="${esc(name)} (${esc(b.slug)})">
+        <span class="name">${esc(name)}</span>
+        <span class="sub">${esc([agents, Agent.activity(b), name !== b.slug && b.slug].filter(Boolean).join(' · '))}</span></div>`;
 }
 
 function drawList() {
@@ -579,20 +600,23 @@ function drawList() {
       ${accounts.length > unlinked.length ? `<h2>Admin accounts</h2>${accounts.filter((a) => a.person).map(accountRow).join('')}` : ''}
       <p class="hint">Team managers ask for channels on their team's page, and thread agents for whoever asks them in a thread's sidebar. Confirming one assigns the channel to the team, as adding it on the team's page does; one that asks for a move moves it, also from another team. Thread agents also ask for people to be added to a team, for whoever asked them; the team's managers decide those too, on its page. A bot that posted waits here until you say whether it is Adobe's or external, and an admin account of the Teams tenant until you say whose it is.</p>`;
   } else if (!state.me.admin) {
-    // The customers your teams own: their agents, which their managers change.
-    const rows = state.bases.filter((b) => b.kind === 'org' && matches(b))
-      .sort((x, y) => x.name.localeCompare(y.name)).map(baseRow).join('');
+    // The customers you follow, then those your teams own (their agents, which their managers
+    // change), then every other one: to follow it, or ask for its channels.
+    const orgMatch = (o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f);
+    const followed = state.orgs.filter((o) => state.myOrgs.has(o.slug) && orgMatch(o));
+    const kb = state.bases.filter((b) => b.kind === 'org' && matches(b) && !state.myOrgs.has(b.slug))
+      .sort((x, y) => x.name.localeCompare(y.name));
+    const ours = new Set(kb.map((b) => b.slug));
+    const rest = state.orgs.filter((o) => orgMatch(o) && !ours.has(o.slug) && !state.myOrgs.has(o.slug));
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter customers" value="${esc(state.filter)}"></label>
-      ${dupSection(f)}<h2>Customers of your teams</h2>${rows || `<div class="empty">${f ? 'Nothing matches.' : 'No customer of your teams has a knowledge base yet.'}</div>`}
-      <p class="hint">The customers with a channel filed under or shared with one of your teams, once their thread agents started a knowledge base.</p>`;
+      ${dupSection(f)}${followed.length ? `<h2>Customers you follow</h2>${followed.map(orgRow).join('')}` : ''}
+      <h2>Customers of your teams</h2>${kb.map(baseRow).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No customer of your teams has a knowledge base yet.'}</div>`}
+      <p class="hint">The customers with a channel filed under or shared with one of your teams, once their thread agents started a knowledge base.</p>
+      ${rest.length ? `<h2>Every other customer</h2>${rest.map(orgRow).join('')}` : ''}`;
     wireDups();
   } else {
     const rows = state.orgs.filter((o) => (!f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f))
-      && (!state.noIcon || iconless(o))).map((o) => `
-      <div class="row${state.sel === o.slug ? ' on' : ''}" data-sel="${esc(o.slug)}">
-        ${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
-        ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
-        <span class="sub">${channelCount(o.channels)}</span></div>`).join('');
+      && (!state.noIcon || iconless(o))).map(orgRow).join('');
     // The channels without an org, to be given one (see "unassigned channels").
     const un = state.orgsUnassigned && state.orgsUnassigned.channels && (!f || 'unassigned'.includes(f))
       ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}"><span class="ico none"></span>
@@ -711,8 +735,10 @@ const baseOf = (tab, slug) => state.bases.find((b) => b.kind === (tab === 'orgs'
  * agent's where it has a knowledge base.
  */
 function sectionsOf(tab, slug) {
+  // A customer's own section is everyone's: who follows it, and its channels; the admin team
+  // edits its name, icon and type there too.
   const own = tab === 'teams' ? state.teams.some((t) => t.slug === slug) || (slug === UNASSIGNED && state.me.admin)
-    : Boolean(state.me.admin);
+    : Boolean(state.me.admin) || (slug !== UNASSIGNED && state.orgs.some((o) => o.slug === slug));
   const b = baseOf(tab, slug);
   return [
     ...(own ? ['own'] : []),
@@ -727,7 +753,8 @@ function sectionTabs() {
   const type = state.orgs.find((o) => o.slug === state.sel)?.type || 'customer';
   const own = state.tab === 'teams' ? 'Team' : `${type[0].toUpperCase()}${type.slice(1)}`;
   const label = { own, ...SECTION_LABEL };
-  const title = { own: state.tab === 'teams' ? 'Its members, rules, channels and technologies' : 'Its name, icon, type and channels', ...SECTION_TITLE };
+  const orgTitle = state.me.admin ? 'Its name, icon, type, channels and who follows it' : 'Its channels and who follows it';
+  const title = { own: state.tab === 'teams' ? 'Its members, rules, channels and technologies' : orgTitle, ...SECTION_TITLE };
   const open = state.section === 'history' ? 'kb' : state.section;
   return sectionsOf(state.tab, state.sel).filter((x) => x !== 'history').map((x) => `<a href="${esc(address({ section: x, path: null }))}"
     data-section="${x}"${open === x ? ' aria-current="page"' : ''} title="${esc(title[x])}"><span>${esc(label[x])}</span>${tags[x] || ''}</a>`).join('');
@@ -978,9 +1005,8 @@ function channelsCard(target) {
  * assignment twice at once is made once; others queue up behind it (see `serial`).
  */
 const assignKey = (target, channelId, value) => `assign:${target}:${channelId}:${value}`;
-function assignHere(c, value = state.view.value, { move = false } = {}) {
+function assignHere(c, value = state.view.value, { move = false, target = state.view.target } = {}) {
   const v = state.view;
-  const { target } = v;
   const { channelId, source } = c;
   return once(assignKey(target, channelId, value), async () => {
     const what = `${plainName(c)} → ${target === 'team' ? teamLabel(value) : orgLabel(value)}`;
@@ -1003,7 +1029,7 @@ function assignHere(c, value = state.view.value, { move = false } = {}) {
     }
     applyMoves(res.moves, v);
     // Moved away with no thread to re-file: the API names no move, but it left all the same.
-    if (move && target === 'team' && value !== v.value) {
+    if (move && target === 'team' && v.target === 'team' && value !== v.value) {
       for (const row of v.channels.filter((x) => x.channelId === channelId && !x.left && x.team !== value)) {
         row.left = { team: value, org: row.org, kind: row.kind };
       }
@@ -1022,6 +1048,14 @@ function assignHere(c, value = state.view.value, { move = false } = {}) {
     // Already here by rule: no move, but now by hand. A channel the API did not move
     // (no threads yet) shows up once something is filed.
     if (value === v.value && !res.shared) setManual(channelId, res.rule, v);
+    // A customer's page moved one of its channels to a team: filed there by hand, it stays here.
+    if (target === 'team' && v.target === 'org') {
+      for (const row of v.channels.filter((x) => x.channelId === channelId && !x.left)) {
+        row.team = value;
+        row.sharedWith = (row.sharedWith || []).filter((t) => t !== value);
+        row.manual = { ...row.manual, team: res.rule ? { id: res.rule.id, value } : row.manual?.team };
+      }
+    }
     // A suggestion taken stays in its row, marked, for the same reason as a channel that left.
     if (value === v.value) for (const x of v.suggestions || []) if (x.channelId === channelId) x.added = true;
     if (v === state.view) {
@@ -1034,6 +1068,11 @@ function assignHere(c, value = state.view.value, { move = false } = {}) {
 }
 
 function renderChannels() {
+  // A customer's page has a table of its own (`renderOrgChannels`).
+  if (state.view.target === 'org' && $('orgChannels')) {
+    renderOrgChannels();
+    return;
+  }
   const { target, channels } = state.view;
   const other = target === 'team' ? 'org' : 'team';
   // On the admin team's page, Clef's pick for each channel, to hand it to that team.
@@ -1173,7 +1212,7 @@ function moveMenu(button, c) {
   const go = (t) => {
     if (!t) return;
     el.hidePopover();
-    if (v === state.view) assignHere(c, t.slug, { move: true });
+    if (v === state.view) assignHere(c, t.slug, { move: true, target: 'team' });
   };
   const render = () => {
     opts.innerHTML = list.map((t, i) => `<div class="row${i === at ? ' on' : ''}" role="option" aria-selected="${i === at}" data-i="${i}">
@@ -1713,6 +1752,14 @@ function describe(r) {
 
 function ruleRow(r) {
   const does = r.target === 'follow' ? '<span class="tag" title="Shares the channels it matches with the team; files none">follows</span>' : '<span class="tag manual" title="Files the channels it matches under the team">files</span>';
+  // A customer the team follows (PUT /api/admin/org-follows): changed on the customer's page.
+  const org = followedOrg(r);
+  if (org) {
+    return `<tr data-rule="${r.id}"><td>${does}</td><td>Customer</td><td><a href="${esc(address({ tab: 'orgs', sel: org, section: 'own' }))}">${esc(orgLabel(org))}</a></td>
+    <td>${r.source ? `<span class="tag">${esc(r.source)} only</span>` : ''}</td>
+    <td class="n">${r.priority}</td><td class="sub">${esc(r.note || '')}</td>
+    <td><button class="link" data-del="${r.id}"${off(`rule:${r.id}`)}>Delete</button></td></tr>`;
+  }
   return `<tr data-rule="${r.id}"><td>${does}</td><td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td>
     <td>${r.source ? `<span class="tag">${esc(r.source)} only</span>` : ''}</td>
     <td class="n">${r.priority}</td><td class="sub">${esc(r.note || '')}</td>
@@ -3001,30 +3048,49 @@ async function showOrg(slug) {
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   if (r.body.unassigned) { showUnassigned(r.body); return; }
   const {
-    org, rules, channels, types, domains = [], merged = [],
+    org, rules, channels, types, domains = [], merged = [], follows = [], requests = [],
   } = r.body;
+  Object.assign(state.names, r.body.names || {});
   const v = {
-    target: 'org', value: slug, org, rules, channels,
+    target: 'org', value: slug, org, rules, channels, follows, requests,
   };
   const domain = domains[0] || null;
   state.view = v;
+  if (!state.me.admin) {
+    // Everyone else: who follows it (you, your teams), and its channels, with what you may do
+    // there for your teams.
+    $('detail').innerHTML = `
+      <div class="title">${backButton()}${ico(org.icon, domain)}<h1 class="fill">${esc(org.name || org.slug)}</h1>
+        <span class="sub mono">${esc(org.slug)}</span></div>
+      ${sectionsNav()}
+      <div class="status" id="status"></div>
+      ${followCard()}
+      ${orgChannelsCard()}`;
+    showStatus();
+    tabInView();
+    renderOrgFollows();
+    renderChannels();
+    return;
+  }
   $('detail').innerHTML = `
     <div class="title">${backButton()}<span id="oIco">${ico(org.icon, domain)}</span><h1 class="fill" id="oTitle">${esc(org.name || org.slug)}</h1>
       <span class="sub mono">${esc(org.slug)}</span><button class="danger" id="oDelete" title="Forget the name, icon and type"${org.updated_at ? '' : ' hidden'}>Reset</button></div>
     ${sectionsNav()}
     <div class="status" id="status"></div>
+    ${followCard()}
     <div class="card"><div class="field">
       <label for="oName">Display name</label><span class="inline"><input id="oName" class="fill" value="${esc(org.name || '')}"></span>
       <label>Type</label><span class="seg" id="oType">${types.map((t) => `<button type="button" data-type="${t}" aria-pressed="${org.type === t}">${t}</button>`).join('')}</span>
       <label for="oIcon">Icon</label><span class="inline"><input id="oIcon" class="mono fill" value="${esc(org.icon || '')}"></span>
       <label>Suggestions</label><div class="icons" id="oIcons"><span class="sub">Looking for icons…</span></div>
     </div><p class="hint">The inbox shows the display name and icon instead of the slug and the favicon of the customer's mail domain${domain ? ` (here ${esc(domain)})` : ''}. A domain shows its favicon; an https URL is used as the image. The suggestions are the favicons of the websites its name and its people's mail domains suggest, and the icons those sites name, most likely first as Clef sees them; pick one to use it.</p></div>
-    ${channelsCard('org')}
+    ${orgChannelsCard()}
     ${orgMergeCard(slug, merged)}
     ${rules.length ? `<div class="card"><h2>Rules naming this org</h2><table><tr><th>Field</th><th>Pattern</th><th>Value</th><th>Priority</th><th>Note</th></tr>
       ${rules.filter((x) => x.field !== 'channel_id' || x.note !== 'manual assignment').map((x) => `<tr><td>${esc(FIELD_LABEL[x.field] || x.field)}</td><td>${describe(x)}</td><td><code>${esc(x.value)}</code></td><td class="n">${x.priority}</td><td class="sub">${esc(x.note || '')}</td></tr>`).join('')}</table></div>` : ''}`;
   showStatus();
   tabInView();
+  renderOrgFollows();
   renderChannels();
   wireChannelPicker();
   wireOrgMerge(slug);
@@ -3123,6 +3189,182 @@ async function showOrg(slug) {
     $('oIcon').value = '';
     show(v.org);
   });
+}
+
+// ---- a customer's followers and channels ----------------------------------------------------
+//
+// Everyone on a team sees a customer's page: who follows it, and its channels, each under the
+// team it is filed under and the teams it is shared with. You follow it yourself (PUT
+// /api/follows: its conversations are in your personal view); your teams do, which you manage
+// (PUT /api/admin/org-follows: a follow rule shares its channels with the team, now and later).
+// A channel of a team you manage you give back to the admin team (POST /api/admin/release) or
+// take out of its inbox where it is shared by hand (DELETE /api/admin/share); one of another
+// team's you ask the admin team to move to yours (a request, `move`). The admin team moves any
+// channel to any team (its name, as on a team's page) and assigns one here by hand.
+
+/** Whether you may change what team `slug` has: the admin team, or its manager. */
+const managesHere = (slug) => Boolean(state.me.admin || (state.me.manages || []).includes(slug));
+
+/** The teams whose following you see on a customer's page: those that follow it, and yours. */
+function followRows(v) {
+  const following = new Set(v.follows.map((f) => f.team));
+  const yours = state.me.admin ? [] : (state.me.manages || []);
+  return [...new Set([...yours, ...following])].map((team) => ({ team, on: following.has(team) }))
+    .sort((a, b) => teamLabel(a.team).localeCompare(teamLabel(b.team)));
+}
+
+function followCard() {
+  return `<div class="card"><h2>Following</h2><div id="orgFollows"></div>
+    <p class="hint">You following it puts its conversations in your personal view. A team that follows it has every channel of it in its inbox, shared, now and later (a follow rule on the team's page); the channels stay filed under their teams.</p></div>`;
+}
+
+function renderOrgFollows() {
+  const v = state.view;
+  const slug = v.value;
+  const name = v.org.name || slug;
+  const me = state.myOrgs.has(slug);
+  const button = (data, on, label, key) => `<button type="button" class="ofollow" ${data} aria-pressed="${on}"
+    aria-label="${esc(`${on ? 'Following' : 'Follow'}: ${label}`)}"${off(key)}>${on ? 'Following' : 'Follow'}</button>`;
+  const rows = followRows(v).map(({ team, on }) => `<li><span class="name">${esc(teamLabel(team))}</span>
+      ${managesHere(team) ? button(`data-team="${esc(team)}"`, on, teamLabel(team), `orgfollow:${team}:${slug}`) : '<span class="sub">follows it</span>'}</li>`).join('');
+  const others = state.me.admin ? state.teams.filter((t) => !isHolding(t.slug) && !v.follows.some((f) => f.team === t.slug)) : [];
+  $('orgFollows').innerHTML = `<ul class="followers">
+      <li><span class="name">You</span>${button('data-me="1"', me, 'you', `orgfollow:me:${slug}`)}</li>${rows}</ul>
+    ${others.length ? `<form class="form" id="ofAdd"><label class="fld"><span>Follow it with a team</span><select id="ofTeam"><option value="">Pick one…</option>
+      ${others.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('')}</select></label><button>Follow</button></form>` : ''}`;
+  // The card is drawn again once the change is done and its button no longer busy (`off`): drawn
+  // while it is, the new button would be disabled for good.
+  const redraw = () => { if (v === state.view) renderOrgFollows(); };
+  const team = (t, follow, b) => hold(b, `orgfollow:${t}:${slug}`, async () => {
+    const res = await call('/api/admin/org-follows', 'PUT', { team: t, org: slug, follow });
+    if (!res.ok) { failed(follow ? `${teamLabel(t)}: follow ${name}` : `${teamLabel(t)}: unfollow ${name}`, res); return; }
+    v.follows = res.body.followers;
+    // The shares are the rule's: its channels as they are now.
+    const now = await call(`/api/admin/org?slug=${encodeURIComponent(slug)}`);
+    if (now.ok && now.body.channels) v.channels = now.body.channels;
+    if (v === state.view) renderChannels();
+    status('ok', follow ? `${teamLabel(t)} follows ${name}: its channels are in ${teamLabel(t)}'s inbox, shared.` : `${teamLabel(t)} no longer follows ${name}.`);
+  }).then(redraw);
+  for (const b of $('orgFollows').querySelectorAll('[data-team]')) {
+    b.onclick = () => team(b.dataset.team, b.getAttribute('aria-pressed') !== 'true', b);
+  }
+  $('orgFollows').querySelector('[data-me]').onclick = (e) => hold(e.currentTarget, `orgfollow:me:${slug}`, async () => {
+    const follow = !state.myOrgs.has(slug);
+    const res = await call('/api/follows', 'PUT', { kind: 'org', target: slug, follow });
+    if (!res.ok) { failed(follow ? `Follow ${name}` : `Unfollow ${name}`, res); return; }
+    state.myOrgs = new Set(res.body.by?.org || []);
+    status('ok', follow ? `You follow ${name}: its conversations are in your personal view.` : `You no longer follow ${name}.`);
+    renderList();
+  }).then(redraw);
+  if ($('ofAdd')) {
+    $('ofAdd').onsubmit = (e) => {
+      e.preventDefault();
+      if ($('ofTeam').value) team($('ofTeam').value, true, e.submitter || $('ofAdd').querySelector('button'));
+    };
+  }
+}
+
+/** A customer's channels card: the table, and for the admin team the picker that assigns one here. */
+function orgChannelsCard() {
+  return `<div class="card"><h2>Channels</h2><div id="orgChannels"></div>
+    ${state.me.admin ? '<div class="form picker"><label class="fld grow"><span>Assign a channel here by hand</span><input id="pick" autocomplete="off"></label><div class="picks s2-float" id="picks" hidden></div></div>' : ''}
+    <p class="hint">Each channel is filed under one team (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. ${state.me.admin
+    ? 'Click a channel\'s name to move it to another team. <b>Remove</b> hands one back to the admin team, or takes it out of a team\'s inbox it is shared with. A manual assignment files one channel under this org whatever the rules say (a channel-id rule with priority 10).'
+    : `${(state.me.manages || []).length ? '<b>Remove</b> hands a channel of your team back to the admin team, or takes it out of your team\'s inbox where it is shared with it. <b>Ask for</b> asks the admin team to move one to your team; the answer shows on your team\'s page.' : 'Your team managers change which channels your teams have.'}`}</p></div>`;
+}
+
+function renderOrgChannels() {
+  const v = state.view;
+  const asked = (c, team) => v.requests.some((r) => r.team === team && r.channel.channelId === c.channelId && r.channel.source === c.source);
+  const movable = state.me.admin && state.teams.length > 1;
+  const rows = v.channels.map((c) => {
+    const where = `<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div>`;
+    if (c.left) {
+      return `<tr class="left"><td>${channelName(c)}${where}</td><td colspan="4" class="sub">${c.left.unshared ? `Out of ${esc(teamLabel(c.left.team))}'s inbox.`
+        : `Filed under ${esc(teamLabel(c.left.team))} / ${esc(orgLabel(c.left.org))} now; its threads are re-filed in the background.`}</td></tr>`;
+    }
+    const byRule = c.followedByRule || [];
+    const shares = (c.sharedWith || []).map((t) => `<li>${esc(teamLabel(t))} <span class="sub">${byRule.includes(t) ? (v.follows.some((f) => f.team === t) ? 'follows the customer' : 'by a follow rule') : 'shared'}</span>
+      ${managesHere(t) && !byRule.includes(t) ? `<button class="link" data-unshare="${esc(c.channelId)}" data-team="${esc(t)}"${off(`unshare:${t}:${c.channelId}`)} title="Take it out of ${esc(teamLabel(t))}'s inbox; it stays filed under ${esc(teamLabel(c.team))}">Remove</button>` : ''}</li>`).join('');
+    const split = (c.split || []).filter((x) => x.threads);
+    const home = `<li><b>${esc(teamLabel(c.team))}</b> <span class="sub">filed${c.manual?.team ? ' by hand' : ''}</span>
+      ${!isHolding(c.team) && managesHere(c.team) ? `<button class="link" data-release="${esc(c.channelId)}"${off(`release:${c.channelId}`)} title="Hand it back to ${esc(teamLabel('admin'))}: filed there by hand, its threads re-filed">Remove</button>` : ''}</li>`;
+    // A manager asks for it for their teams that do not have it filed.
+    const ask = state.me.admin ? '' : (state.me.manages || []).filter((t) => t !== c.team).map((t) => (asked(c, t)
+      ? `<span class="tag manual" title="Waiting for the admin team">asked for ${esc(teamLabel(t))}</span>`
+      : `<button class="link" data-ask="${esc(c.channelId)}" data-team="${esc(t)}"${off(`ask:${t}:${c.channelId}`)} title="Ask the admin team to file it under ${esc(teamLabel(t))} (a move: its folders, knowledge base and agents go there)">Ask for ${esc(teamLabel(t))}</button>`)).join(' ');
+    const manualOrg = state.me.admin && c.manual?.org
+      ? `<span class="tag manual" title="Assigned to this org by hand, whatever the rules say">manual</span> <button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unassign:org:${c.channelId}`)}>Undo</button>` : '';
+    const name = movable
+      ? `<button class="link chan" data-move="${esc(c.channelId)}" aria-haspopup="dialog" title="Move it to another team">${channelName(c)}</button>` : channelName(c);
+    return `<tr><td>${name}${where}</td>
+      <td><ul class="teams">${home}${shares}</ul>${split.length ? `<div class="sub" title="Its threads are being re-filed under ${esc(teamLabel(c.team))}">${split.map((x) => `${x.threads} ${x.threads === 1 ? 'thread' : 'threads'} still under ${esc(teamLabel(x.team))}`).join(', ')}</div>` : ''}
+        ${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}</td>
+      <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td><td class="nw">${manualOrg}${ask}</td></tr>`;
+  }).join('');
+  $('orgChannels').innerHTML = rows
+    ? `<table><tr><th>Channel</th><th>Teams</th><th>Threads</th><th>Latest</th><th></th></tr>${rows}</table>`
+    : '<div class="empty">No channel is filed here.</div>';
+  const find = (id) => v.channels.find((c) => c.channelId === id && !c.left);
+  const redraw = () => { if (v === state.view) renderOrgChannels(); renderList(); };
+  for (const b of $('orgChannels').querySelectorAll('[data-move]')) {
+    b.onclick = () => moveMenu(b, find(b.dataset.move));
+  }
+  for (const b of $('orgChannels').querySelectorAll('[data-release]')) {
+    const c = find(b.dataset.release);
+    const from = c.team;
+    b.onclick = async () => {
+      if (!(await confirmFirst(`Remove ${plainName(c)} from ${teamLabel(from)}?`, `It goes back to ${teamLabel('admin')}, filed there by hand, and its threads are re-filed. ${teamLabel(from)} gets it again only from ${teamLabel('admin')}.`, 'Remove'))) return;
+      hold(b, `release:${c.channelId}`, async () => {
+        const res = await ruleChange('POST', '/api/admin/release', { team: from, source: c.source, channelId: c.channelId }, `${plainName(c)} → ${teamLabel('admin')}`);
+        if (!res) return;
+        applyMoves(res.moves, v);
+        // Filed under the admin team now, also with no thread to move.
+        for (const x of v.channels.filter((y) => y.channelId === c.channelId && !y.left)) {
+          x.team = 'admin';
+          x.manual = { ...x.manual, team: res.rule ? { id: res.rule.id, value: res.rule.value } : x.manual?.team };
+        }
+        redraw();
+      });
+    };
+  }
+  for (const b of $('orgChannels').querySelectorAll('[data-unshare]')) {
+    const c = find(b.dataset.unshare);
+    const { team } = b.dataset;
+    b.onclick = () => hold(b, `unshare:${team}:${c.channelId}`, async () => {
+      const res = await call('/api/admin/share', 'DELETE', { team, channelId: c.channelId, source: c.source });
+      if (!res.ok) { failed(`Remove ${plainName(c)} from ${teamLabel(team)}`, res); return; }
+      c.sharedWith = (c.sharedWith || []).filter((t) => t !== team);
+      const row = state.teams.find((t) => t.slug === team);
+      if (row) row.shared = Math.max(0, (row.shared || 0) - 1);
+      status('ok', `${plainName(c)} is out of ${teamLabel(team)}'s inbox; it stays filed under ${teamLabel(c.team)}.`);
+      redraw();
+    });
+  }
+  for (const b of $('orgChannels').querySelectorAll('[data-ask]')) {
+    const c = find(b.dataset.ask);
+    const { team } = b.dataset;
+    b.onclick = () => hold(b, `ask:${team}:${c.channelId}`, async () => {
+      // The same request twice is refused as a duplicate: safe to send again.
+      const res = await call('/api/admin/requests', 'POST', {
+        team, source: c.source, channelId: c.channelId, move: true,
+      }, { idempotent: true });
+      if (res.body.request) v.requests = [...v.requests.filter((r) => r.id !== res.body.request.id), res.body.request];
+      if (!res.ok) failed(`Ask for ${plainName(c)}`, res);
+      else status('ok', `Asked the admin team to move ${plainName(c)} to ${teamLabel(team)}; the answer shows on ${teamLabel(team)}'s page.`);
+      redraw();
+    });
+  }
+  for (const b of $('orgChannels').querySelectorAll('[data-unassign]')) {
+    const id = b.dataset.unassign;
+    b.onclick = () => hold(b, `unassign:org:${id}`, async () => {
+      const res = await ruleChange('DELETE', '/api/admin/assign', { target: 'org', channelId: id, source: b.dataset.source }, `Undo ${plainName(find(id) || { channelId: id })}`);
+      if (!res) return;
+      setManual(id, null, v);
+      applyMoves(res.moves, v);
+      redraw();
+    });
+  }
 }
 
 // ---- unassigned channels ---------------------------------------------------------------------

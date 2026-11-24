@@ -26,7 +26,9 @@ import { enqueueMoves, plan } from './refile.js';
 import {
   ADMIN_TEAM, isAdmin, managedTeams, managesTeam,
 } from './review.js';
-import { classify, slug as toSlug, UNASSIGNED } from './rules.js';
+import {
+  classify, followedOrg, orgPattern, slug as toSlug, UNASSIGNED,
+} from './rules.js';
 import {
   isHolding, share, sharesByChannel, sharesOf, unshare,
 } from './shares.js';
@@ -119,6 +121,9 @@ const MAX_RULE_ID = Number.MAX_SAFE_INTEGER - 1000;
 const MANUAL_NOTE = 'manual assignment';
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const FIELDS = ['name', 'group_name', 'connected', 'channel_id'];
+// A follow rule may also follow a customer: the org the other rules file a channel under.
+const FOLLOW_FIELDS = [...FIELDS, 'org'];
+const ORG_FOLLOW_NOTE = 'follows the customer';
 const TARGETS = ['team', 'org', 'kind', 'follow'];
 const KINDS = ['channel', 'alert', 'ignore'];
 const TYPES = ['customer', 'partner', 'vendor', 'internal'];
@@ -130,6 +135,10 @@ const bad = (error) => json({ error }, 400);
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const manualPattern = (channelId) => `^${escapeRe(channelId)}$`;
 const isManual = (r) => r.field === 'channel_id' && r.priority === MANUAL_PRIORITY && r.note === MANUAL_NOTE;
+
+/** The teams that follow customer `slug` (follow rules of field `org`): `[{ team, rule }]`. */
+const orgFollowers = (rules, slug) => rules.filter((r) => followedOrg(r) === slug)
+  .map((r) => ({ team: r.value, rule: r.id }));
 
 async function rows(env, sql, ...args) {
   const { results } = await env.DB.prepare(sql).bind(...args).all();
@@ -299,8 +308,9 @@ async function ruleFrom(env, body) {
   if (!TARGETS.includes(target)) {
     return { error: `target is one of ${TARGETS.join(', ')}` };
   }
-  if (!FIELDS.includes(field)) {
-    return { error: `field is one of ${FIELDS.join(', ')}` };
+  const fields = target === 'follow' ? FOLLOW_FIELDS : FIELDS;
+  if (!fields.includes(field)) {
+    return { error: `field is one of ${fields.join(', ')}` };
   }
   if (source && !PLATFORMS.includes(source)) {
     return { error: `source is ${PLATFORMS.join(', ')} or empty (all)` };
@@ -624,6 +634,94 @@ async function swapChannel(env, me, body) {
       source, channelId, team: slug, from, shared: Boolean(shared),
     },
   });
+}
+
+/**
+ * POST /api/admin/release `{ team, source, channelId }`: a channel filed under `team` goes back
+ * to the admin team (a manual assignment there, a move, as **→ admin** on a team's page). For the
+ * admin team, and for the team's managers, who give a channel up this way but take one only by
+ * asking (`POST requests` with `move`).
+ */
+async function releaseChannel(env, me, body) {
+  const channelId = clean(body.channelId);
+  const slug = clean(body.team);
+  const source = clean(body.source);
+  if (!channelId || !slug || !source) {
+    return bad('give a source, a channelId and a team');
+  }
+  if (isHolding(slug)) {
+    return json({ error: 'the admin team holds what no team has: give it to a team instead' }, 409);
+  }
+  const home = await homeOf(env, await loadRules(env), source, channelId);
+  if (home.team !== slug) {
+    return json({ error: `this channel is filed under ${home.team}, not ${slug}` }, 409);
+  }
+  return assign(env, me, {
+    target: 'team', source, channelId, value: ADMIN_TEAM, move: true, dryRun: body.dryRun,
+  }, false);
+}
+
+/**
+ * PUT /api/admin/org-follows `{ team, org, follow }`: `team` follows customer `org`, or (`follow`
+ * false) no more: a follow rule of field `org` (src/rules.js), which shares every channel the
+ * rules file under the org with the team, now and later (src/followrules.js); the channels stay
+ * filed under their teams. For the admin team and the team's managers. The answer has the teams
+ * that follow it after the change (`followers`).
+ */
+async function followOrg(env, me, body) {
+  const slug = clean(body.team);
+  const target = toSlug(clean(body.org));
+  const follow = body.follow !== false;
+  if (!slug || !clean(body.org) || target === UNASSIGNED) {
+    return bad('give a team and a customer');
+  }
+  if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
+    return json({ error: 'no such team' }, 404);
+  }
+  const merged = await env.DB.prepare('SELECT into_slug FROM org_merges WHERE slug = ?').bind(target).first();
+  if (merged) {
+    return json({ error: `${target} was merged into ${merged.into_slug}: follow that one` }, 409);
+  }
+  const current = await loadRules(env);
+  const mine = current.filter((r) => followedOrg(r) === target && r.value === slug);
+  const answer = async (res) => {
+    if (!res.ok) {
+      return res;
+    }
+    const done = await res.json();
+    return json({
+      ok: true, follows: done.follows, followers: orgFollowers(await loadRules(env), target),
+    });
+  };
+  if (!follow) {
+    if (!mine.length) {
+      return json({ ok: true, followers: orgFollowers(current, target) });
+    }
+    const gone = new Set(mine.map((r) => r.id));
+    return answer(await applyRules(env, me, {
+      next: current.filter((r) => !gone.has(r.id)),
+      write: async () => {
+        await env.DB.batch(mine.map((r) => env.DB.prepare('DELETE FROM rules WHERE id = ?').bind(r.id)));
+        return { deleted: [...gone] };
+      },
+    }));
+  }
+  if (mine.length) {
+    return json({ ok: true, followers: orgFollowers(current, target) });
+  }
+  const known = await env.DB.prepare(`SELECT 1 FROM orgs WHERE slug = ?1
+    UNION ALL SELECT 1 FROM threads WHERE org = ?1 LIMIT 1`).bind(target).first();
+  if (!known) {
+    return json({ error: 'no such customer' }, 404);
+  }
+  return answer(await createRule(env, me, {
+    target: 'follow',
+    field: 'org',
+    pattern: orgPattern(target),
+    value: slug,
+    priority: 100,
+    note: ORG_FOLLOW_NOTE,
+  }));
 }
 
 // ---- assignment requests ----------------------------------------------------------------
@@ -1488,9 +1586,49 @@ async function unassignedOrg(env) {
   });
 }
 
-async function org(env, slug) {
+/**
+ * The channels of an org, one row each: a channel whose threads are filed under more than one
+ * team (a re-filing not done yet) is under the team the rules file it under now, with the
+ * threads still elsewhere in `split` (`[{ team, threads }]`), and every thread counted.
+ */
+async function oneRowEach(env, rules, channels) {
+  const by = new Map();
+  for (const c of channels) {
+    const k = `${c.source}:${c.tenant}:${c.channelId}`;
+    by.set(k, [...(by.get(k) || []), c]);
+  }
+  const out = [];
+  for (const list of by.values()) {
+    if (list.length === 1) {
+      out.push({ ...list[0], split: [] });
+    } else {
+      // eslint-disable-next-line no-await-in-loop
+      const { team: home } = await homeOf(env, rules, list[0].source, list[0].channelId);
+      const row = list.find((c) => c.team === home) || list[0];
+      const latest = list.map((c) => c.latest).filter(Boolean).sort().pop() || null;
+      out.push({
+        ...row,
+        team: home,
+        sharedWith: row.sharedWith.filter((t) => t !== home),
+        followedByRule: row.followedByRule.filter((t) => t !== home),
+        threads: list.reduce((n, c) => n + c.threads, 0),
+        latest,
+        split: list.filter((c) => c.team !== home)
+          .map((c) => ({ team: c.team, threads: c.threads })),
+      });
+    }
+  }
+  return out.sort((a, b) => String(b.latest || '').localeCompare(String(a.latest || '')));
+}
+
+/**
+ * GET /api/admin/org?slug=: an org, its channels (one row each), the teams that follow it, and
+ * the open requests for its channels you see (the admin team every team's, a manager their
+ * teams'). For everyone on an ops team; its rules and Unassigned for the admin team only.
+ */
+async function org(env, slug, me) {
   if (slug === UNASSIGNED) {
-    return unassignedOrg(env);
+    return isAdmin(me) ? unassignedOrg(env) : json({ error: 'for the admin team' }, 403);
   }
   // A merged org is the one it was merged into now (src/orgmerge.js).
   const merged = await env.DB.prepare('SELECT into_slug FROM org_merges WHERE slug = ?').bind(slug).first();
@@ -1499,7 +1637,7 @@ async function org(env, slug) {
   }
   const row = await env.DB.prepare('SELECT slug, name, type, icon, updated_at FROM orgs WHERE slug = ?').bind(slug).first();
   const rules = await loadRules(env);
-  const channels = await channelList(env, rules, { org: slug });
+  const channels = await oneRowEach(env, rules, await channelList(env, rules, { org: slug }));
   const orgRules = rules.filter((r) => r.target === 'org' && (r.value === slug || /\$\d/.test(r.value)))
     .sort((a, b) => a.priority - b.priority || a.id - b.id);
   if (!row && !channels.length && !orgRules.some((r) => r.value === slug)) {
@@ -1513,9 +1651,16 @@ async function org(env, slug) {
       slug, name: null, type: 'customer', icon: null,
     },
     domains: ((await mailDomains(env, slug)).get(slug) || []).slice(0, 3),
-    rules: orgRules,
+    rules: isAdmin(me) ? orgRules : [],
     channels,
     types: TYPES,
+    follows: orgFollowers(rules, slug),
+    // Every team's name, for a page that lists only some teams (a manager's, a member's).
+    names: Object.fromEntries((await rows(env, 'SELECT slug, name FROM teams')).map((t) => [t.slug, t.name])),
+    requests: channels.length ? (await listRequests(env, {
+      teams: isAdmin(me) ? null : managedTeams(me), status: 'open',
+    })).filter((r) => channels.some((c) => c.source === r.channel.source
+      && c.channelId === r.channel.channelId)) : [],
     // The orgs merged into this one, which an admin may take out again.
     merged: await rows(env, `SELECT slug, name, merged_by, merged_at FROM org_merges
       WHERE into_slug = ? ORDER BY merged_at DESC`, slug),
@@ -1715,9 +1860,11 @@ async function addMemberSettling(env, me, body) {
 
 /**
  * The routes of `/api/admin/*` for every member of an ops team, not only the admin team and
- * team managers: the duplicate customers they see, and asking for a merge (src/orgmerge.js).
+ * team managers: the duplicate customers they see, asking for a merge (src/orgmerge.js), and the
+ * customers' pages (whose channels, and who follows them).
  */
-export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests'];
+export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests',
+  'GET orgs', 'GET org'];
 
 export async function admin(request, env, url, me) {
   const p = url.pathname;
@@ -1732,8 +1879,9 @@ export async function admin(request, env, url, me) {
   const teamOf = m === 'GET' ? q('team') || q('slug') : clean(body.team);
   const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members',
     'GET channels', 'GET requests', 'POST requests', 'DELETE requests', 'PUT follows',
-    'POST portal/open', 'POST swap', 'GET member-suggestions', 'POST member-suggestions/dismiss',
-    'DELETE member-suggestions/dismiss', 'POST member-requests/confirm', 'POST member-requests/decline'];
+    'POST portal/open', 'POST swap', 'PUT org-follows', 'POST release', 'DELETE share',
+    'GET member-suggestions', 'POST member-suggestions/dismiss', 'DELETE member-suggestions/dismiss',
+    'POST member-requests/confirm', 'POST member-requests/decline'];
   // Every manager may search channels; the requests they see are their teams' (`requests`), and
   // a membership request is decided by its own team's managers (`openMemberRequest`).
   const anyTeam = ['GET teams', 'GET channels', 'GET requests', 'POST member-requests/confirm',
@@ -1780,7 +1928,7 @@ export async function admin(request, env, url, me) {
     case 'PUT follows': return followTech(env, me, body);
     case 'GET channels': return json({ channels: (await channelList(env, await loadRules(env), { q: q('q') })).slice(0, 100) });
     case 'GET requests': return requestList(env, me, { status: q('status'), count: q('count') });
-    case 'POST requests': return createRequest(env, me, body);
+    case 'POST requests': return createRequest(env, me, body, { move: Boolean(body.move) });
     case 'DELETE requests': return withdrawRequest(env, me, body);
     case 'POST requests/confirm': return confirmRequest(env, me, body);
     case 'POST requests/decline': return declineRequest(env, me, body);
@@ -1800,7 +1948,9 @@ export async function admin(request, env, url, me) {
     case 'POST orgs': return saveOrg(env, body, true);
     case 'PUT orgs': return saveOrg(env, body, false);
     case 'DELETE orgs': return deleteOrg(env, body);
-    case 'GET org': return org(env, q('slug'));
+    case 'GET org': return org(env, q('slug'), me);
+    case 'PUT org-follows': return followOrg(env, me, body);
+    case 'POST release': return releaseChannel(env, me, body);
     case 'GET org-duplicates': return orgDuplicates(env, me, { pair: q('pair'), fresh: Boolean(q('fresh')) });
     case 'POST org-duplicates/dismiss': return dismissPair(env, me, body);
     case 'POST org-merge': return mergeOrgs(env, me, body, { applyRules });

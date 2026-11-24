@@ -15,7 +15,8 @@
  * kind. Rules are rows in D1 (`rules`); see migrations/0001_index.sql.
  *
  * A rule of target `follow` (migration 0086) files nothing: every one that matches a channel
- * shares it with its team (`followers`), which src/followrules.js keeps in `channel_teams`.
+ * shares it with its team (`followers`), which src/followrules.js keeps in `channel_teams`. One
+ * of field `org` follows a customer: it matches the org the other rules file the channel under.
  *
  * A merged org (migration 0091, src/orgmerge.js) is a rule of target `merge` that `loadRules`
  * adds (`mergeRule`): the org the other rules give is looked up among them last (`mergedOrg`), so
@@ -45,6 +46,11 @@ export function slug(value) {
 function candidates(channel, field) {
   if (field === 'connected') {
     return channel.connected || [];
+  }
+  // A follow rule of a customer (src/followrules.js): the orgs the channel is filed under, which
+  // the other rules decide, so only `followers` is given them (`orgs`).
+  if (field === 'org') {
+    return channel.orgs || [];
   }
   const value = {
     channel_id: channel.channelId,
@@ -162,5 +168,21 @@ export function matching(rules, channel, target) {
  * not only the first. `[{ rule, team }]`, in the order the rules are tried.
  */
 export function followers(rules, channel) {
-  return matching(rules, channel, 'follow').map(({ rule, value }) => ({ rule, team: value }));
+  // The org it is filed under, and the ones merged into that one, for a customer's follow rule.
+  const { org } = classify(rules, channel);
+  const orgs = [org, ...rules.filter((r) => r.target === 'merge' && mergedOrg(rules, r.pattern) === org)
+    .map((r) => r.pattern)];
+  return matching(rules, { ...channel, orgs }, 'follow').map(({ rule, value }) => ({ rule, team: value }));
+}
+
+/** The pattern of a follow rule of field `org` that follows customer `org` (a slug). */
+export const orgPattern = (org) => `^${String(org).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
+
+/** Whether `rule` follows a customer (one of field `org`), and which: its slug, or null. */
+export function followedOrg(rule) {
+  if (rule.target !== 'follow' || rule.field !== 'org') {
+    return null;
+  }
+  const m = /^\^([a-z0-9_][a-z0-9-]*)\$$/.exec(String(rule.pattern || ''));
+  return m ? m[1] : null;
 }

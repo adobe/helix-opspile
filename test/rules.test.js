@@ -12,7 +12,9 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { classify, slug, UNASSIGNED } from '../src/rules.js';
+import {
+  classify, followedOrg, followers, mergeRule, orgPattern, slug, UNASSIGNED,
+} from '../src/rules.js';
 
 // Made-up channel names and slugs only.
 const rule = (id, target, field, pattern, value, extra = {}) => ({
@@ -77,5 +79,38 @@ describe('slug', () => {
     assert.equal(slug('Acme Corp. (EMEA)'), 'acme-corp-emea');
     assert.equal(slug('Müller & Söhne'), 'muller-sohne');
     assert.equal(slug(''), UNASSIGNED);
+  });
+});
+
+describe('follow rules of a customer', () => {
+  const rules = [
+    {
+      id: 1, target: 'org', priority: 100, field: 'name', pattern: '^aem-(.+)$', value: '$1',
+    },
+    {
+      id: 2, target: 'team', priority: 100, field: 'name', pattern: '^aem-', value: 'helix',
+    },
+    {
+      id: 3, target: 'follow', priority: 100, field: 'org', pattern: orgPattern('acme'), value: 'edge',
+    },
+  ];
+  const channel = (name) => ({ source: 'slack', channelId: 'C1', name });
+
+  it('shares the channels the rules file under the customer with the team', () => {
+    assert.deepEqual(followers(rules, channel('aem-acme')).map((f) => f.team), ['edge']);
+    assert.deepEqual(followers(rules, channel('aem-acmecorp')), []);
+    // The org it files nothing under: the channel is acme's all the same.
+    assert.equal(classify(rules, channel('aem-acme')).org, 'acme');
+  });
+
+  it('follows the channels of a customer merged into it', () => {
+    const merged = [...rules, mergeRule({ slug: 'acme-co', into_slug: 'acme' })];
+    assert.deepEqual(followers(merged, channel('aem-acme-co')).map((f) => f.team), ['edge']);
+  });
+
+  it('names its customer', () => {
+    assert.equal(followedOrg(rules[2]), 'acme');
+    assert.equal(followedOrg({ ...rules[2], target: 'team' }), null);
+    assert.equal(followedOrg({ ...rules[2], pattern: '^acme' }), null);
   });
 });

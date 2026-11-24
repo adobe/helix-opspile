@@ -153,6 +153,11 @@ tr.left td { opacity: .55; }
 .sub.pad { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
 details.dismissed > summary { cursor: pointer; padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
 @media (max-width: 699px) { .pair { grid-template-columns: 1fr; } }
+/* Who follows a customer: you, then the teams, each a row with its Follow toggle; a channel's
+   teams on a customer's page, one per line. */
+ul.followers { display: grid; grid-template-columns: max-content max-content; align-items: center; margin: 0; padding: 0; list-style: none; }
+ul.followers li { display: contents; }
+ul.teams { margin: 0; padding: 0; list-style: none; }
 /* An unassigned channel's orgs: the suggested ones, then the popover; a new org's type in it. */
 td.picks-cell { white-space: normal; }
 .movepop .newtype { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
@@ -659,3 +664,27 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .asks li + li, .spectrum .dups li + li { margin-top: var(--spectrum-spacing-100); }
 .spectrum .movepop .newtype { padding: 0 var(--spectrum-component-edge-to-text-100); }
 .spectrum td.picks-cell .link + .link { margin-inline-start: var(--spectrum-spacing-100); }
+/* Following a customer: a row per follower, its toggle a ToggleButton, quiet and small. */
+.spectrum ul.followers { column-gap: var(--spectrum-spacing-400); row-gap: var(--spectrum-spacing-100); }
+.spectrum ul.followers .name { font-size: var(--spectrum-font-size-100); }
+.spectrum #ofAdd { margin-top: var(--spectrum-spacing-200); }
+.spectrum .ofollow {
+  justify-self: start;
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  background: transparent;
+  font: inherit;
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-content-color-default);
+  cursor: pointer;
+}
+.spectrum .ofollow:hover { background: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .ofollow:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .ofollow[aria-pressed="true"] { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); border-color: transparent; }
+.spectrum .ofollow[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
+.spectrum .ofollow:disabled { cursor: progress; }
+.spectrum ul.teams li + li { margin-top: var(--spectrum-spacing-50); }
+.spectrum ul.teams .link { margin-inline-start: var(--spectrum-spacing-100); }
