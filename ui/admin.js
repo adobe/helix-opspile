@@ -14,7 +14,8 @@
  * The admin team's pages for ops teams (#17) and orgs (#18), over /api/admin (src/admin.js).
  *
  * Team managers (and every member of a self-managed team) see the teams they manage, add and
- * remove members and promote or demote them, and ask the admin team for channels (a request:
+ * remove members and promote or demote them (and add the ones the page suggests, see "suggested
+ * members"), and ask the admin team for channels (a request:
  * they pick one in the same search the admin team adds channels with). The admin team confirms
  * or declines the requests under Requests; the rest is for the admin team. Customers ask too,
  * from the customer portal, for a channel: the admin team opens one under Requests, and a team's
@@ -1477,7 +1478,7 @@ function renderMembers() {
       const row = state.teams.find((t) => t.slug === team.slug);
       if (row) row.members -= 1;
       status('ok', `Removed ${m.name || m.email}.`);
-      if (v === state.view) renderMembers();
+      if (v === state.view) { renderMembers(); memberChanged(m.email, false, m.name); }
       renderList();
     });
   }
@@ -1524,7 +1525,7 @@ function wireMemberPicker() {
           });
         }
       }
-      if (v === state.view) renderMembers();
+      if (v === state.view) { renderMembers(); memberChanged(person.email, true); }
       if (v === state.view && $('memberRequestsTable')) renderMemberRequests();
       renderList();
     });
@@ -1573,6 +1574,119 @@ function wireMemberPicker() {
     }
   };
   input.onblur = () => setTimeout(() => { picks.hidden = true; }, 150);
+}
+
+// ---- suggested members --------------------------------------------------------------------
+
+/**
+ * Suggested members (src/membersuggest.js): the Adobe people who work the team's threads, are in
+ * its channels or work its topics, and are not on it. Loaded after the page: they take a while.
+ * Add makes one a member, as the field above does; Dismiss stops suggesting them, and so does
+ * taking someone off the team, until Suggest again.
+ */
+async function loadMemberSuggestions(v) {
+  const r = await call(`/api/admin/member-suggestions?team=${encodeURIComponent(v.team.slug)}`, 'GET', undefined, { parallel: true });
+  if (v !== state.view || !$('memberSuggest')) return;
+  if (!r.ok) { $('memberSuggest').innerHTML = `<div class="empty">${esc(r.body.error || 'Could not load the suggestions.')}</div>`; return; }
+  v.memberSuggest = { ...r.body, showDismissed: false };
+  renderMemberSuggestions();
+}
+
+/** Why someone is suggested, in words: what they did in the team's threads, channels and topics. */
+function suggestedWhy(p) {
+  return [
+    p.posted ? `posted in ${p.posted} of its threads` : '',
+    p.reacted ? `reacted in ${p.reacted} ${p.reacted === 1 ? 'thread' : 'threads'}` : '',
+    p.channels ? `in ${p.channels} of its channels` : '',
+    p.topics.length ? `works on ${p.topics.map((t) => t.label).join(', ')}` : '',
+  ].filter(Boolean).join(' · ');
+}
+
+function renderMemberSuggestions() {
+  const v = state.view;
+  const s = v.memberSuggest;
+  const el = $('memberSuggest');
+  if (!s || !el) return;
+  const slug = v.team.slug;
+  const key = (email) => `msug:${slug}:${email}`;
+  const rows = s.suggestions.map((p) => `<tr>
+      <td>${esc(p.name || p.email)}<div class="sub">${esc(p.email)}${p.teams.length ? ` · on ${esc(p.teams.map(teamLabel).join(', '))}` : ''}</div></td>
+      <td class="sub">${esc(suggestedWhy(p))}${p.last ? ` · last ${esc(ago(p.last))}` : ''}</td>
+      <td class="nw">${p.added ? '<span class="tag manual">added</span>' : `<button data-sadd="${esc(p.email)}"${off(key(p.email))}>Add</button>
+        <button class="link" data-sdismiss="${esc(p.email)}"${off(key(p.email))} title="Not suggested for this team again">Dismiss</button>`}</td></tr>`).join('');
+  const { coverage: c } = s;
+  const covered = [
+    'Threads of the last six months',
+    `the members of ${c.membersListed} of its ${channelCount(c.channels)} are listed`,
+    c.topicMap ? (c.topics.length ? `its topics: ${c.topics.join(', ')}` : 'no topic of the topic map is mostly this team\'s') : 'there is no topic map yet',
+  ].join('; ');
+  const dismissed = s.dismissed.length ? `<p class="hint">${s.showDismissed
+    ? `Not suggested: ${s.dismissed.map((d) => `${esc(d.name || d.email)} <span class="sub">(${d.why === 'removed' ? 'taken off the team' : 'dismissed'}${d.by ? ` by ${esc(d.by)}` : ''} ${esc(ago(d.at))})</span> <button class="link" data-sagain="${esc(d.email)}"${off(key(d.email))}>Suggest again</button>`).join(' · ')}`
+    : `<button class="link" id="sDismissed">${peopleCount(s.dismissed.length)} not suggested any more</button>`}</p>` : '';
+  el.innerHTML = `${rows ? `<table><tr><th>Name</th><th>Why</th><th></th></tr>${rows}</table>`
+    : '<div class="empty">Nobody: everyone who works this team\'s threads, is in its channels or works its topics is on it.</div>'}
+    <p class="hint">${esc(covered)}.</p>${dismissed}`;
+  for (const b of el.querySelectorAll('[data-sadd]')) {
+    const p = s.suggestions.find((x) => x.email === b.dataset.sadd);
+    b.onclick = () => hold(b, key(p.email), async () => {
+      // Adding someone twice keeps one membership: safe to send again.
+      const res = await call('/api/admin/members', 'POST', { team: slug, email: p.email, name: p.name || undefined }, { idempotent: true });
+      if (!res.ok) { failed(`Add ${p.name || p.email}`, res); return; }
+      const { person } = res.body;
+      // Taken, it stays in its row, marked, so the rows do not jump under the pointer.
+      p.added = true;
+      if (!v.members.some((m) => m.id === person.id)) {
+        v.members.push(person);
+        v.members.sort((a, b2) => String(a.name || a.email).localeCompare(String(b2.name || b2.email)));
+        const row = state.teams.find((t) => t.slug === slug);
+        if (row) row.members += 1;
+      }
+      status('ok', `Added ${person.name || person.email}.`);
+      if (v === state.view) { renderMembers(); renderMemberSuggestions(); }
+      renderList();
+    });
+  }
+  for (const b of el.querySelectorAll('[data-sdismiss]')) {
+    const p = s.suggestions.find((x) => x.email === b.dataset.sdismiss);
+    b.onclick = () => hold(b, key(p.email), async () => {
+      const res = await call('/api/admin/member-suggestions/dismiss', 'POST', { team: slug, email: p.email });
+      if (!res.ok) { failed(`Dismiss ${p.name || p.email}`, res); return; }
+      s.suggestions = s.suggestions.filter((x) => x !== p);
+      s.dismissed.unshift({
+        email: p.email, name: p.name, why: 'dismissed', by: state.me.email || null, at: new Date().toISOString(),
+      });
+      status('ok', `${p.name || p.email} is not suggested for ${v.team.name} any more.`);
+      if (v === state.view) renderMemberSuggestions();
+    });
+  }
+  for (const b of el.querySelectorAll('[data-sagain]')) {
+    const d = s.dismissed.find((x) => x.email === b.dataset.sagain);
+    b.onclick = () => hold(b, key(d.email), async () => {
+      const res = await call('/api/admin/member-suggestions/dismiss', 'DELETE', { team: slug, email: d.email });
+      if (!res.ok) { failed(`Suggest ${d.name || d.email} again`, res); return; }
+      status('ok', `${d.name || d.email} may be suggested again.`);
+      // Where they come in the list, and whether, the server says.
+      if (v === state.view) loadMemberSuggestions(v);
+    });
+  }
+  if ($('sDismissed')) $('sDismissed').onclick = () => { s.showDismissed = true; renderMemberSuggestions(); };
+}
+
+/** Someone added or taken off the team elsewhere on the page: the suggestions follow. */
+function memberChanged(email, joined, name = null) {
+  const s = state.view.memberSuggest;
+  if (!s || !email) return;
+  const k = String(email).toLowerCase();
+  if (joined) {
+    for (const p of s.suggestions) if (p.email === k) p.added = true;
+    s.dismissed = s.dismissed.filter((d) => d.email !== k);
+  } else {
+    s.suggestions = s.suggestions.filter((p) => p.email !== k);
+    s.dismissed = [{
+      email: k, name, why: 'removed', by: state.me.email || null, at: new Date().toISOString(),
+    }, ...s.dismissed.filter((d) => d.email !== k)];
+  }
+  renderMemberSuggestions();
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1740,6 +1854,9 @@ async function showTeam(slug) {
       <p class="hint">Type a name or an email. Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
     ${real && v.memberRequests.length ? `<div class="card"><h2>People asked for</h2><div id="memberRequestsTable"></div><div id="mrSlot"></div>
       <p class="hint">People asked to be added to this team, in a thread's sidebar, through its agent. Confirming one adds them as a member, as adding them above does; declining takes a reason, for whoever asked.</p></div>` : ''}
+    ${slug !== 'admin' ? `<div class="card"><h2>Suggested members</h2>
+      <p class="hint lead">Adobe people who are not on ${esc(team.name)} but work its threads, are members of its channels on Slack or Teams, or work the topics its threads are about elsewhere, the likeliest first. Add makes one a member.</p>
+      <div id="memberSuggest"><div class="empty">Looking for people…</div></div></div>` : ''}
 
     ${admin ? `<div class="card"><h2>Rules</h2><div id="rulesTable"></div>
       <div id="ruleSlot">${ruleForm()}</div>
@@ -1768,6 +1885,7 @@ async function showTeam(slug) {
   renderMembers();
   if ($('memberRequestsTable')) renderMemberRequests();
   wireMemberPicker();
+  if ($('memberSuggest')) loadMemberSuggestions(v);
   renderFollows();
   $('tSelf').onchange = async () => {
     const box = $('tSelf');
@@ -2305,7 +2423,7 @@ function decideMember(b, r, reason, after) {
         v.members.sort((x, y) => String(x.name || x.email).localeCompare(String(y.name || y.email)));
         const row = state.teams.find((t) => t.slug === r.team);
         if (row) row.members += 1;
-        if ($('membersTable')) renderMembers();
+        if ($('membersTable')) { renderMembers(); memberChanged(person.email, true); }
       }
       status('ok', `Confirmed: ${memberName(r)} is on ${teamLabel(r.team)}${res.body.request?.outcome === 'member' ? ' (already was)' : ''}.`);
     } else {

@@ -15,7 +15,7 @@ import { createMemberRequest } from '../memberrequests.js';
 /**
  * A request to add someone to an ops team: the thread agent's `request_team_membership`
  * (src/agent/tools.js). The request is a membership request (src/memberrequests.js, migration
- * 0095): an admin or one of the team's managers confirms or declines it, under Requests or on the
+ * 0096): an admin or one of the team's managers confirms or declines it, under Requests or on the
  * team's page. As `request_channel_reassignment` (src/agent/channelrequest.js), the agent files
  * one only while it answers a sidebar message, for the person who wrote it: the sidebar is
  * trusted, and the thread's messages, which customers write, cannot get anyone onto a team.

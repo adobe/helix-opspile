@@ -337,6 +337,21 @@ Turning that off keeps the roles as they are; from then on new members join as m
 managers can be demoted. The role is `team_members.role`, the flag `teams.self_managed`;
 only the admin team sets the flag.
 
+**Suggested members.** A team's page (but the admin team's) suggests the Adobe people who are likely
+on the team and are not (`GET /api/admin/member-suggestions`, `src/membersuggest.js`), for its
+managers and the admin team to add with one click (the same `POST /api/admin/members` as the field
+above it). The team's channels are the ones it holds and the ones shared with it. Three signals,
+each scaled to its best person and weighed: the team's threads they posted or reacted in over the
+last six months (a reaction half a thread), the team's channels they are in (`channel_members`:
+Slack's members of the channel, the Teams team's), both tf-idf style (the log of the count, times
+the square root of the share of everything they worked, or are listed in, that is the team's, so an
+admin active everywhere counts for little), and the topics of the newest topic map that are mostly
+the team's (at least two of its threads and a quarter of the topic's), with who worked their threads
+anywhere: the people `list_experts` and `list_topics` name for them. Staff with a mail address only,
+as a member is. Each comes with why, in numbers and topic names. **Dismiss** leaves someone out for
+the team (`member_suggestion_dismissals`, migration 0095), and so does taking someone off it, until
+**Suggest again**.
+
 **Channel requests.** A team manager does not assign channels, but asks for them: their team's
 page has the same channel search the admin team adds channels with (every channel, by name,
 Teams team, customer or id), and picking one sends a request, "add this channel to this team",
@@ -365,7 +380,7 @@ while it answers a sidebar message, never on the thread's messages, which custom
 
 **Membership requests.** The agent asks for people as well: asked in its sidebar to add someone to
 an ops team (the person who wrote, or a colleague they name), it finds the team with `list_teams`,
-and `request_team_membership` files a request (`member_requests`, migration 0095,
+and `request_team_membership` files a request (`member_requests`, migration 0096,
 `src/memberrequests.js`, `src/agent/memberrequest.js`) for the person who wrote the sidebar
 message, with their reason and the person: their mail address as written, or the one person the
 inbox knows by exactly that name, the author when neither is given. Only staff addresses

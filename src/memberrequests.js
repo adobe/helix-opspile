@@ -13,7 +13,7 @@
 import { domainList, isStaffDomain } from './lookup.js';
 
 /**
- * Team membership requests (migration 0095): someone asks for a person to be added to an ops
+ * Team membership requests (migration 0096): someone asks for a person to be added to an ops
  * team, with a reason. A thread's agent files them from its sidebar, for the person who wrote
  * there (`request_team_membership`, src/agent/memberrequest.js), as it files channel requests
  * (src/requests.js). An admin or one of the team's managers confirms one, which adds the person

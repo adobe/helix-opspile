@@ -183,7 +183,7 @@ One open request per pair, either way round (checked before the insert). Every c
 = 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.
 
 **Membership request.** open → confirmed (added, or member: on the team already), declined or
-withdrawn (`member_requests`, migration 0095; `src/memberrequests.js`). One open request per team and
+withdrawn (`member_requests`, migration 0096; `src/memberrequests.js`). One open request per team and
 address (a partial unique index). Confirming claims it first (`WHERE status = 'open'`), then adds the
 person: a failure opens it again, unless they are on the team by then, and if someone asked again
 meanwhile the reopened one is closed as withdrawn instead, so the newer stands (`UPDATE OR IGNORE`).
@@ -672,6 +672,15 @@ state of its own: it is gone once a rule files its channels elsewhere, or they a
 archived. Dismissed is the only stored state, a row with the group's channel count then; a group
 with more channels than that is suggested again (the row stays, and a later dismissal writes the new
 count). Making the group a team deletes the row, so a prefix that comes back later starts afresh.
+
+**Suggested member.** suggested → added, dismissed or gone → suggested again
+(`member_suggestion_dismissals`, migration 0095, `src/membersuggest.js`). A suggestion is computed on
+every read from the team's threads, channels and topics, so it has no state of its own: it is gone
+once the person is on the team or stops working its threads. Dismissed is the only stored state, a
+row per team and mail address, written by Dismiss on the team's page (`why` `dismissed`) and by
+taking someone off the team (`why` `removed`), so neither comes straight back. Suggest again deletes
+the row, and so does adding the person to the team; deleting the team deletes its rows. The admin
+team gets no suggestions, nor rows.
 
 **GitHub mirror.** absent → importing → ready → refreshing → ready, or given up after an hour
 (`repo_mirrors`, `src/agent/repos.js`). Reads stay on the old mirror until the new one is readable. A

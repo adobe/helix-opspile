@@ -607,6 +607,77 @@ function seedAdminChannels(DB) {
 }
 
 /**
+ * Edge ops' suggested members (src/membersuggest.js): Priya works its threads, Tom reacts in one,
+ * Kira and Noor are only members of its channels (Kira of more), and the topic map's people of a
+ * topic that is mostly Edge ops' threads work it elsewhere, two of them known by mail address.
+ * Made up.
+ */
+function seedMemberSuggestions(DB) {
+  const db = DB.sqlite;
+  const at = (days) => new Date(Date.now() - days * 86400000).toISOString();
+  const threads = db.prepare(`SELECT thread, source, tenant, channel_id FROM threads
+    WHERE team = 'edge' AND source IN ('slack', 'teams') ORDER BY last_at DESC LIMIT 6`).all();
+  threads.slice(0, 4).forEach((t, i) => {
+    db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at, person, staff, counted, author_key)
+      VALUES (?, ?, ?, ?, ?, ?, 2, 1, 1, ?)`).run(t.source, t.tenant, t.channel_id, `msug-${i}`, t.thread, at(i + 1), `${t.source}:${t.tenant}:U-2`);
+  });
+  if (threads[0]) {
+    const t = threads[0];
+    db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email, person, fetched_at)
+      VALUES (?, ?, 'U-4', 'person', 'Tom Okafor', 'tom@example.com', 4, ?)`).run(t.source, t.tenant, at(0));
+    db.prepare('INSERT OR IGNORE INTO reactions (message, thread, emoji, user_key, at) VALUES (?, ?, \'eyes\', ?, ?)')
+      .run(`${t.thread}:msug`, t.thread, `${t.source}:${t.tenant}:U-4`, at(3));
+  }
+  const channels = [...new Map(threads.map((t) => [`${t.source}:${t.channel_id}`, t])).values()];
+  channels.forEach((c, i) => {
+    const member = db.prepare(`INSERT OR IGNORE INTO channel_members (source, tenant, channel_id, user_id, email, name)
+      VALUES (?, ?, ?, ?, ?, ?)`);
+    member.run(c.source, c.tenant, c.channel_id, 'U-KIRA', 'kselby@example.com', 'Kira Selby');
+    if (i === 0) {
+      member.run(c.source, c.tenant, c.channel_id, 'U-NOOR', 'nhaddad@example.com', 'Noor Haddad');
+    }
+    db.prepare(`UPDATE channels SET members_at = ?, members_error = NULL
+      WHERE source = ? AND tenant = ? AND channel_id = ?`).run(at(1), c.source, c.tenant, c.channel_id);
+  });
+  // The topic map's smallest topic gets Edge ops' threads, and its people are known here.
+  const row = db.prepare('SELECT id, map FROM topic_maps ORDER BY built_at DESC, id DESC LIMIT 1').get();
+  if (!row || !threads.length) {
+    return;
+  }
+  const map = JSON.parse(row.map);
+  const [topic] = [...map.topics].sort((a, b) => a.size - b.size);
+  const crew = new Set(map.threads.filter((t) => t.topic === topic.id)
+    .flatMap((t) => Object.keys(t.staff).map(Number)));
+  const known = new Set(db.prepare('SELECT name FROM people').all().map((p) => p.name));
+  const newcomers = [...crew].filter((id) => map.people[id] && !known.has(map.people[id]));
+  newcomers.slice(0, 2).forEach((id) => {
+    const name = map.people[id];
+    db.prepare('INSERT OR IGNORE INTO people (id, email, name, staff) VALUES (?, ?, ?, 1)')
+      .run(id, `${name.toLowerCase().replace(/[^a-z]+/g, '.')}@example.com`, name);
+  });
+  for (const t of threads) {
+    map.threads.push({
+      key: t.thread,
+      title: '',
+      team: 'edge',
+      org: 'opspile',
+      at: at(5),
+      last: at(4),
+      messages: 3,
+      kind: 'question',
+      tags: [],
+      products: [],
+      topic: topic.id,
+      sim: 0.5,
+      staff: {},
+      customers: {},
+    });
+  }
+  topic.size += threads.length;
+  db.prepare('UPDATE topic_maps SET map = ? WHERE id = ?').run(JSON.stringify(map), row.id);
+}
+
+/**
  * The bots under the admin page's Requests (src/ourbots.js): the fake inbox's bots with their
  * messages, Alertmanager and opspile waiting for an admin to say whose they are, one an admin said
  * is Adobe's (Provisioning Agent, on Adobe's side in its thread, which an admin also
@@ -750,6 +821,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   seedCogs(DB);
   // The Topics page's map (dev-ui-topics.mjs).
   seedTopicMap(DB);
+  seedMemberSuggestions(DB);
   // The people outside Adobe post in their org's threads, so each org has a usual mail
   // domain: the org list shows its favicon when the org has no icon (src/admin.js).
   for (const p of store.people.values()) {
