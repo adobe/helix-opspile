@@ -19,8 +19,12 @@ import { kbAdmin } from '../src/kbadmin.js';
 import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
 import { syncFollowRules } from '../src/followrules.js';
-import { previewOf } from '../src/threads.js';
+import { advanceWatermark, previewOf } from '../src/threads.js';
 import { seal } from '../src/post.js';
+import {
+  addNote, requestEntries, requestThread, resolveRequest,
+} from '../src/requestthreads.js';
+import { isRequestKey } from '../src/requestkeys.js';
 import { d1 } from '../test/d1.js';
 import { IMAGES, layerNames } from './computer-images.mjs';
 import { seedCogs } from './dev-ui-cogs.mjs';
@@ -524,11 +528,12 @@ const ADMIN_CHANNELS = [
 ];
 
 /**
- * Conflicts between team rules, under Requests (src/ruleconflicts.js): Edge ops' narrower
- * `^aem-edge-` inside Platform ops' `^aem-` (either may win), and Edge ops' rule for a Teams team
- * name against Platform ops' `^aem-` (one of the other conflicts: only a keep settles it). Edge
- * ops' manual assignment of an `aem-` channel is none: it decides that channel. And a follow rule
- * of Edge ops', which its page lists. The channels have no threads, so settling moves nothing.
+ * Conflicts between team rules, threads of the admin team's inbox (src/ruleconflicts.js): Edge ops'
+ * narrower `^aem-edge-` inside Platform ops' `^aem-` (either may win), and Edge ops' rule for a
+ * Teams team name against Platform ops' `^aem-` (one of the other conflicts: only a keep settles
+ * it). Edge ops' manual assignment of an `aem-` channel is none: it decides that channel. And a
+ * follow rule of Edge ops', which its page lists. The channels have no threads, so settling moves
+ * nothing.
  */
 function seedRuleConflicts(DB) {
   const db = DB.sqlite;
@@ -921,6 +926,17 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       requested_name, requested_at, move, thread) VALUES ('slack', 'C0UMBRELLA', 'edge', ?, 'open',
       'lena@example.com', 'Lena Berg', ?, 1, ?)`)
     .run('Lena says Umbrella is an Edge ops customer: the channel is filed by the aem- rule, which every EDS channel matches.', ago(0.05), umbrella ? umbrella.row.thread : null);
+  // The admin team's decision log of the Hooli request, a thread of its inbox
+  // (src/requestthreads.js): what Priya found out, and what Dana asked.
+  DB.sqlite.prepare(`INSERT INTO request_log (request, type, body, person, author_name, author_email, at)
+    VALUES ('request:channel:1', 'note', ?, 2, 'Priya Nair', 'priya@example.com', ?),
+      ('request:channel:1', 'note', ?, 1, 'Dana Ops', 'dana@example.com', ?)`)
+    .run(
+      'Checked with Platform ops: they keep the channel and are fine with Edge ops following it. Sharing is enough, no move.',
+      ago(1.2),
+      'Agreed. Lena, ping us here if you need it filed under Edge ops after the launch.',
+      ago(1.1),
+    );
 
   // People thread agents asked to be added to Edge ops, for whoever asked them in a sidebar
   // (src/memberrequests.js): Tom for himself, Lena for a colleague the inbox has not met, and
@@ -945,7 +961,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       ago(7),
     );
 
-  // Lena asks for Wonka's two orgs to be one (src/orgmerge.js): it waits under Requests.
+  // Lena asks for Wonka's two orgs to be one (src/orgmerge.js): it waits in the admin team's inbox.
   DB.sqlite.prepare(`INSERT INTO org_merge_requests (slug, into_slug, note, requested_by, requested_name,
       requested_at) VALUES ('wonkaindustries', 'wonka', ?, 'lena@example.com', 'Lena Berg', ?)`)
     .run('Their second Teams team: the same company, the same people.', ago(0.3));
@@ -1201,6 +1217,45 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     return kbAdmin(toRequest(req, url, body), env, url, me);
   };
 
+  /**
+   * The admin team's requests as threads of its inbox (src/requestthreads.js), by the real
+   * module over this D1: `/api/requests`, `/api/requests/note`, `/api/requests/resolve`, a
+   * request's `/api/thread` and its reads. Null for anything else.
+   */
+  const requests = async (req, url, body) => {
+    const key = url.pathname === '/api/thread' ? url.searchParams.get('thread') : body?.thread;
+    const ours = url.pathname === '/api/requests' || url.pathname.startsWith('/api/requests/')
+      || (['/api/thread', '/api/read'].includes(url.pathname) && isRequestKey(key));
+    if (!ours) {
+      return null;
+    }
+    await seeded;
+    await followed;
+    if (!me.admin) {
+      return Response.json({ error: 'for the admin team' }, { status: 403 });
+    }
+    if (url.pathname === '/api/requests') {
+      return Response.json(await requestEntries(env, me));
+    }
+    if (url.pathname === '/api/thread') {
+      const t = await requestThread(env, me, key);
+      return t ? Response.json(t) : Response.json({ error: 'not found' }, { status: 404 });
+    }
+    if (url.pathname === '/api/read') {
+      await advanceWatermark(env.DB, me.id, key, body.at, 'open');
+      return new Response(null, { status: 204 });
+    }
+    const run = { '/api/requests/note': addNote, '/api/requests/resolve': resolveRequest }[url.pathname];
+    const res = run ? await run(env, me, body || {}) : Response.json({ error: 'not found' }, { status: 404 });
+    // Re-filing runs right away here.
+    while (queued.length) {
+      const messages = queued.splice(0).map((b) => ({ body: b, ack() {}, retry() {} }));
+      // eslint-disable-next-line no-await-in-loop
+      await consume({ messages }, env);
+    }
+    return res;
+  };
+
   return Object.assign(async (req, url, body) => {
     // Org icons without the internet: the fake orgs' favicons, and suggestions as Clef ranks
     // them (src/favicons.js). `globex.example`, a mail domain, has no favicon.
@@ -1221,5 +1276,5 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       await consume({ messages }, env);
     }
     return res;
-  }, { kb, env });
+  }, { kb, env, requests });
 }

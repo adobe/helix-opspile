@@ -101,6 +101,7 @@ import {
 } from '../src/standing.js';
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin, devFavicon } from './dev-ui-admin.mjs';
+import { isRequestKey } from '../src/requestkeys.js';
 import { faviconProxy } from '../src/favicons.js';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
@@ -1645,6 +1646,12 @@ async function api(req, res, url) {
     res.writeHead(r.status, headers).end(Buffer.from(await r.arrayBuffer()));
     return true;
   }
+  // The admin team's requests, threads of its inbox (src/requestthreads.js), over the admin D1.
+  if (url.pathname === '/api/requests' || url.pathname.startsWith('/api/requests/')
+    || (url.pathname === '/api/thread' && isRequestKey(url.searchParams.get('thread')))) {
+    const r = await adminApi.requests(req, url, req.method === 'GET' ? null : await readJson(req));
+    return json(res, await r.json(), r.status);
+  }
   if (url.pathname.startsWith('/api/admin/')) {
     const body = req.method === 'GET' ? null : await readJson(req);
     const r = await adminApi(req, url, body);
@@ -2508,6 +2515,11 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/read' && req.method === 'POST') {
     const { thread: key, at } = await readJson(req);
+    if (isRequestKey(key)) {
+      const r = await adminApi.requests(req, url, { thread: key, at });
+      res.writeHead(r.status).end();
+      return true;
+    }
     const entry = store.threads.get(key);
     if (!entry || !inTeam(entry.row.team) || typeof at !== 'string') {
       return json(res, { error: 'not found' }, 404);
@@ -2599,6 +2611,11 @@ function handleClientMessage(team, data) {
     msg = JSON.parse(data);
   } catch {
     return;
+  }
+  // A request's thread (src/requestthreads.js): its watermark is in the admin D1.
+  if (msg.type === 'read' && isRequestKey(msg.thread) && typeof msg.at === 'string') {
+    adminApi.requests({ method: 'POST' }, new URL('http://localhost/api/read'), { thread: msg.thread, at: msg.at })
+      .then(() => broadcast(team, { type: 'reads', reads: [{ person: ME, thread: msg.thread, at: msg.at }] }));
   }
   if (msg.type === 'read' && store.threads.get(msg.thread)) {
     readInRoom(team, msg.thread, msg.at);

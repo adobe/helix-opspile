@@ -90,7 +90,7 @@ describe('agent: request_team_membership', () => {
     const run = agentTools(e, 'sb_1');
     const res = await quiet(() => run('request_team_membership', { team: 'edge', note: 'Works on edge now' }));
     assert.deepEqual(res, {
-      text: 'requested (membership request 1) for Dee Lee: add Dee Lee (themselves) to edge. An admin or one of edge\'s managers confirms or declines it, under Requests in the admin pages or on the team\'s page; nobody was added yet. Tell Dee Lee so.',
+      text: 'requested (membership request 1) for Dee Lee: add Dee Lee (themselves) to edge. An admin or one of edge\'s managers confirms or declines it, in the admin team\'s inbox or on the team\'s page; nobody was added yet. Tell Dee Lee so.',
       error: false,
     });
     const [row] = e.DB.rows('SELECT team, email, note, thread, requested_by, status FROM member_requests');

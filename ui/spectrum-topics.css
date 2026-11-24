@@ -100,6 +100,9 @@ ul.tree li.tr { display: flex; align-items: center; }
 ul.tree .chev { flex: none; }
 ul.tree .pickr { flex: 1; min-width: 0; }
 .panel ul.tree .pickr { grid-template-columns: auto minmax(0, 1fr) auto auto calc(var(--spectrum-spacing-100) * 4); }
+/* A row without a badge keeps its column empty: its line and share line up with the others'. */
+.panel ul.tree .pickr .spark { grid-column: 4; }
+.panel ul.tree .pickr .n { grid-column: 5; }
 .spark { display: block; width: calc(var(--spectrum-spacing-100) * 8); height: var(--spectrum-spacing-300); }
 p.trend { display: flex; align-items: center; }
 

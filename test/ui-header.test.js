@@ -151,9 +151,9 @@ describe('the header', () => {
     assert.equal(Header.pageOf('/inbox/admin?tab=teams&team=t&view=kb&path=a.md'), 'teams');
     assert.equal(Header.pageOf('/inbox/admin'), 'teams');
     assert.equal(Header.pageOf('/inbox/admin?tab=orgs&org=o'), 'orgs');
-    // The bots are under Requests: there is no page of their own.
+    // The bots and the other requests are threads of the admin team's inbox: no page of their own.
     assert.equal(Header.pageOf('/inbox/admin?tab=bots&bot=k'), 'teams');
-    assert.equal(Header.pageOf('/inbox/admin?tab=requests'), 'requests');
+    assert.equal(Header.pageOf('/inbox/admin?tab=requests'), 'teams');
     assert.equal(Header.pageOf('/inbox/cogs?range=7d'), 'cogs');
     assert.equal(Header.pageOf('/inbox/topics?team=helix'), 'topics');
     assert.equal(Header.pageOf('/inbox/admin?tab=nope'), 'teams');
@@ -174,7 +174,7 @@ describe('the header', () => {
     assert.equal(admin.Header.href('teams'), '/inbox/admin?tab=teams&team=edge');
     assert.equal(admin.Header.href('orgs'), '/inbox/admin?tab=orgs&org=acme');
     // Never opened: where it starts.
-    assert.equal(admin.Header.href('requests'), '/inbox/admin?tab=requests');
+    assert.equal(admin.Header.href('cogs'), '/inbox/cogs');
     // A section of a team's page, and the file open there, too.
     admin.history.pushState(null, '', '/inbox/admin?tab=teams&team=edge&view=kb&path=a.md');
     assert.equal(admin.Header.href('teams'), '/inbox/admin?tab=teams&team=edge&view=kb&path=a.md');
@@ -218,8 +218,12 @@ describe('the header', () => {
     // Another site, in a new tab, with what it is in its title.
     assert.match(member.html, /<a data-page="stats" href="https:\/\/klickhaus\.example\/opspile\.html\?t=1mo" title="Statistics of all threads[^"]*klickhaus[^"]*new tab\)" target="_blank" rel="noopener">Stats/);
     assert.deepEqual(nav({ manages: ['edge'], stats }).pages, ['inbox', 'teams', 'orgs', 'topics', 'stats']);
-    assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'teams', 'orgs', 'requests', 'topics', 'cogs', 'stats']);
-    assert.deepEqual(nav({ admin: true }).pages, ['inbox', 'teams', 'orgs', 'requests', 'topics', 'cogs']);
+    assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs', 'stats']);
+    const admin = nav({ admin: true });
+    assert.deepEqual(admin.pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs']);
+    // The requests that wait for the admin team are counted on Inbox: they are threads there.
+    assert.match(admin.html, /<a data-page="inbox" href="\/inbox" title="[^"]*">Inbox<span class="count" hidden><\/span><\/a>/);
+    assert.doesNotMatch(nav({ teams: [{ slug: 'edge' }] }).html, /class="count"/);
   });
 
   it('opens Stats on the org and the team the page on screen sends', () => {

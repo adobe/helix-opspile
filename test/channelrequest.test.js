@@ -155,7 +155,7 @@ describe('agent: request_channel_reassignment', () => {
     const run = agentTools(e, 'sb_1');
     const res = await quiet(() => run('request_channel_reassignment', { team: 'edge', note: 'A shop- channel' }));
     assert.deepEqual(res, {
-      text: 'requested (request 1) for Bo: move the channel from helix to edge. The admin team confirms or declines it under Requests in the admin pages; nothing moved yet. Tell Bo so.',
+      text: 'requested (request 1) for Bo: move the channel from helix to edge. The admin team confirms or declines it in its inbox; nothing moved yet. Tell Bo so.',
       error: false,
     });
     const [row] = e.DB.rows('SELECT team, note, move, thread, requested_by, status FROM channel_requests');
