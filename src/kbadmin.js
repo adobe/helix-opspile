@@ -403,16 +403,17 @@ async function switchAgent(env, me, body) {
  * GET /api/kb/stack?org=: the customer's stack drawing (`stack.md` of its knowledge base,
  * src/stack.js) as the inbox draws it, `{ org, repo, path, hash, drawing, by, at, may }`;
  * `drawing` is null while it has none, `error` says why one cannot be drawn. For whoever may
- * read the knowledge base; anyone else, or a customer without one, gets a 404.
+ * read the knowledge base; anyone else, or a customer without one, gets a 404. `?team=` is a
+ * team's, where someone drew one in its knowledge base (its overview shows it, ui/admin.js).
  */
-async function stack(env, me, org) {
-  const repo = repoName('org', String(org || ''));
+async function stack(env, me, org, kind = 'org') {
+  const repo = repoName(kind, String(org || ''));
   const base = repo && await knownRepo(env, repo);
   if (!base || !await mayRead(env, me, base)) {
     return json({ error: 'no such knowledge base' }, 404);
   }
   const out = {
-    org: base.slug, repo, path: STACK_PATH, may: await mayEdit(env, me, base),
+    [kind === 'team' ? 'team' : 'org']: base.slug, repo, path: STACK_PATH, may: await mayEdit(env, me, base),
   };
   const file = env.ARTIFACTS ? await readText(env, repo, STACK_PATH, { full: true })
     .catch(() => ({ error: 'unreadable' })) : { error: 'knowledge bases are not configured' };
@@ -461,7 +462,8 @@ export async function kbAdmin(request, env, url, me) {
     return extraction;
   }
   if (url.pathname === '/api/kb/stack' && request.method === 'GET') {
-    return stack(env, me, url.searchParams.get('org'));
+    const team = url.searchParams.get('team');
+    return team ? stack(env, me, team, 'team') : stack(env, me, url.searchParams.get('org'));
   }
   if (url.pathname === '/api/kb/channels' && request.method === 'GET') {
     const base = await knownRepo(env, url.searchParams.get('repo'));

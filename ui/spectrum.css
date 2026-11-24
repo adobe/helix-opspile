@@ -848,3 +848,47 @@ header .note { white-space: nowrap; }
 .fmc [data-part] { cursor: default; outline: none; }
 .fmc [data-part]:focus-visible .fmc-shape { stroke: var(--accent); }
 .fmc .fmc-node, .fmc .fmc-edge, .fmc .fmc-arrow { transition: opacity var(--s2-ease); }
+/* A stack drawing (ui/stack.js): a customer's in the inbox, a team's on its overview. Its layers,
+   top to bottom, each a row of its parts, and the flows between them as arrows behind the parts.
+   A part under the pointer lights its flows. Its frame is the page's. */
+.stk .stk-sum, .stk .stk-notes { font-size: var(--spectrum-font-size-100); line-height: 1.5; color: var(--mute); }
+.stk .stk-sum p, .stk .stk-notes p { margin: 0 0 var(--spectrum-spacing-100); }
+.stk .stk-notes { padding-top: var(--spectrum-spacing-100); border-top: var(--spectrum-border-width-100) solid var(--line); }
+.stk .stk-draw { position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-400); padding: var(--spectrum-spacing-200) 0px; }
+/* The parts as a list until the diagram is drawn (or for good, when it cannot be): hidden while
+   the renderer loads, which is quick once the browser has it. */
+.stk .stk-draw[aria-busy="true"] .stk-rows { visibility: hidden; }
+.stk .stk-draw.drawn .stk-rows { display: none; }
+.stk .stk-svg:empty { display: none; }
+.stk .stk-svg { overflow: auto; }
+.stk .stk-layer { position: relative; display: grid; grid-template-columns: 8em 1fr; align-items: start; gap: var(--spectrum-spacing-200); }
+.stk .stk-ln { padding-top: var(--spectrum-spacing-100); color: var(--faint); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); text-transform: uppercase; letter-spacing: 0.04em; }
+.stk .stk-parts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-200); }
+.stk .stk-part { --layer: var(--faint); position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 7em; max-width: 14em;
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
+  border-left: var(--spectrum-border-width-400) solid var(--layer); border-radius: var(--s2-radius); font-size: var(--spectrum-font-size-100);
+  transition: opacity var(--s2-ease), border-color var(--s2-ease); }
+.stk .stk-part:focus-visible { outline: var(--s2-focus); }
+.stk .stk-part b { font-weight: var(--spectrum-bold-font-weight); }
+.stk .stk-part small { color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.4; }
+.stk .stk-part small code { font-size: var(--spectrum-font-size-50); }
+.stk .stk-draw.lit .stk-part { opacity: 0.45; }
+.stk .stk-draw.lit .stk-part.on { opacity: 1; border-color: var(--accent); border-left-color: var(--layer); }
+.stk .stk-layer[data-layer="edge"] .stk-part { --layer: var(--cyan); }
+.stk .stk-layer[data-layer="site"] .stk-part { --layer: var(--accent); }
+.stk .stk-layer[data-layer="content"] .stk-part { --layer: var(--lime); }
+.stk .stk-layer[data-layer="code"] .stk-part { --layer: var(--slate); }
+.stk .stk-layer[data-layer="commerce"] .stk-part { --layer: var(--orange); }
+.stk .stk-layer[data-layer="martech"] .stk-part { --layer: var(--purple); }
+.stk .stk-layer[data-layer="identity"] .stk-part { --layer: var(--pink); }
+.stk-draw.lit .fmc .fmc-edge, .stk-draw.lit .fmc .fmc-arrow, .stk-draw.lit .fmc .fmc-channel, .stk-draw.lit .fmc .fmc-node[data-part] { opacity: 0.3; }
+.stk-draw.lit .fmc .fmc-node.on, .stk-draw.lit .fmc .fmc-node[data-part].on, .stk-draw.lit .fmc .fmc-edge.on, .stk-draw.lit .fmc .fmc-arrow.on { opacity: 1; }
+.stk-draw.lit .fmc .fmc-edge.on { stroke: var(--accent); }
+.stk-draw.lit .fmc .fmc-arrow.on { fill: var(--accent); }
+.stk-draw.lit .fmc .fmc-node.on .fmc-shape { stroke: var(--accent); }
+.stk .stk-cap { min-height: calc(var(--spectrum-font-size-75) * 1.5); color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.5; }
+.stk .stk-cap b { color: var(--ink); font-weight: var(--spectrum-bold-font-weight); }
+.stk .stk-more { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); }
+.stk .stk-mh { margin-right: var(--spectrum-spacing-75); color: var(--faint); }
+.stk .stk-chip { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--s2-radius); color: var(--mute); }
+@media (max-width: 640px) { .stk .stk-layer { grid-template-columns: 1fr; gap: var(--spectrum-spacing-75); } }

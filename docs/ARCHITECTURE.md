@@ -3385,6 +3385,36 @@ card's *What should I know about …?*) opens the thread, enters its sidebar and
 that, where the thread has an agent and the viewer may talk to it; elsewhere the click does what
 it did.
 
+### Team overview
+
+A team's page in Teams opens at its overview (`ui/team.js`, from `GET /api/teams/profile?team=`,
+`src/teamprofile.js`), which every internal user sees, as the Topics page: the members of the ops
+teams and Adobe's people on none. What changes the team (its members, rules, channels and the
+technologies it follows) is its second section, **Manage** (`view=manage`), for its managers and
+the admin team; its agent's sections follow. The overview is the team's last 26 weeks, from D1:
+
+- the **team's threads**, its inbox's conversations (filed under it, in the channels shared with
+  it, and those that show a technology it follows) with a message in the window, week by week:
+  what Adobe's people said in them and what the customers and partners said, as a chart;
+- its **people**, a card each: their picture and title (their accounts'), role, how often they
+  post (anywhere in the inbox, a line of their weeks), and what sets them apart: Clef's areas and
+  technologies of their threads, ranked by how much more of a member's messages are in the
+  threads with one than of the team's (the lift) times the log of its threads, so a tag everyone
+  has counts for its threads alone; a tag of one thread only where there is nothing more. Their
+  key customers are those they posted the most for. Those who did not post are listed after;
+- its **customers** (no internal org) and its **collaborators** (Adobe's people not on the team,
+  a person's accounts as one, no workflow or bot account), ranked by what they said in its
+  threads, each with their weeks;
+- its **technologies**, by the layer of a stack: those it follows, those of its catalog, and the
+  others Clef sees most in its threads, each with how many of its threads show it;
+- its **knowledge base**, its entries by type (`kb_concepts`, the catalog left out), listed for
+  whoever may read it (src/kbaccess.js) and counted for everyone else, and its stack drawing
+  where someone drew one at `stack.md` of the team's knowledge base (`GET /api/kb/stack?team=`).
+
+Names, numbers, pictures and titles only: no message text and no mail address. A team's numbers
+cost the biggest team under a second of D1, and are kept five minutes per isolate.
+`GET /api/teams` lists every team, for the list beside it.
+
 ## Customer portal
 
 Some customers can use neither Slack nor Teams with Adobe: their company allows no chat tool

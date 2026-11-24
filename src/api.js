@@ -90,6 +90,7 @@ import { customerStanding, setMark } from './standing.js';
 import {
   changeArea, rebuildTopics, topicsPage, trendsApi,
 } from './topicsapi.js';
+import { teamDirectory, teamProfile } from './teamprofile.js';
 import { drawDiagram } from './diagrams.js';
 import { targetOf, translateMessages } from './translate.js';
 
@@ -1298,6 +1299,21 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
         : rebuildTopics(env, me);
     }
     return json({ error: 'GET or POST' }, 405);
+  }
+  // Every team's overview, its first section in Teams (src/teamprofile.js): for every internal
+  // user, as the Topics page; what changes a team stays its managers' and the admin team's.
+  if (url.pathname === '/api/teams' || url.pathname === '/api/teams/profile') {
+    if (!internal(env, me)) {
+      return json({ error: 'the teams are for Adobe\'s people' }, 403);
+    }
+    if (request.method !== 'GET') {
+      return json({ error: 'GET' }, 405);
+    }
+    if (url.pathname === '/api/teams') {
+      return json({ teams: await teamDirectory(env) });
+    }
+    const profile = await teamProfile(env, me, url.searchParams.get('team'));
+    return profile.error ? json({ error: profile.error }, profile.status || 400) : json(profile);
   }
   if (url.pathname === '/api/areas') {
     if (me.readonly) {

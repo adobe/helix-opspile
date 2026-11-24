@@ -106,6 +106,7 @@ import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { areaFile, compileAreas, isArea } from '../src/areas.js';
 import { topicsPage } from '../src/topicsapi.js';
+import { teamDirectory, teamProfile } from '../src/teamprofile.js';
 import { weeksTo } from '../src/trends.js';
 import { latestTopicMap } from '../src/topicmap.js';
 import { trendsFixture } from './dev-ui-topics.mjs';
@@ -170,6 +171,17 @@ const compileKb = async (repo) => {
       ...compileCatalog(files.filter((f) => inCatalog(f.path))),
       areas: compileAreas(files.filter((f) => isArea(f.path))),
     });
+    // Its concepts, as src/kbindex.js keeps them: a team's overview counts them by type.
+    const db = adminApi.env.DB.sqlite;
+    db.prepare('DELETE FROM kb_concepts WHERE repo = ?').run(repo);
+    for (const f of await kb.files(repo)) {
+      // eslint-disable-next-line no-await-in-loop
+      const c = conceptOf(f.path, (await kb.read(repo, f.path)).text);
+      if (c) {
+        db.prepare(`INSERT INTO kb_concepts (repo, path, hash, type, title, description, tags, aliases, body)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(repo, f.path, f.hash, c.type, c.title, c.description, c.tags, c.aliases, c.body);
+      }
+    }
   }
 };
 for (const b of kb.list()) {
@@ -1469,13 +1481,14 @@ async function kbApi(req, res, url) {
   }
   // A customer's stack drawing, as src/kbadmin.js draws it.
   if (url.pathname === '/api/kb/stack') {
-    const repo = `kb-org-${url.searchParams.get('org')}`;
+    const team = url.searchParams.get('team');
+    const repo = team ? `kb-team-${team}` : `kb-org-${url.searchParams.get('org')}`;
     const listing = kb.has(repo) && await listed(repo);
     if (!listing) {
       return json(res, { error: 'no such knowledge base' }, 404);
     }
     const out = {
-      org: listing.slug, repo, path: STACK_PATH, may: listing.may,
+      [team ? 'team' : 'org']: listing.slug, repo, path: STACK_PATH, may: listing.may,
     };
     const file = await kb.read(repo, STACK_PATH);
     if (file.error) {
@@ -1704,6 +1717,15 @@ async function api(req, res, url) {
       return json(res, { threads: trends.threads((url.searchParams.get('ids') || '').split(',')) });
     }
     return json(res, trends.data);
+  }
+  // A team's overview (src/teamprofile.js), over the admin pages' D1: its half year of made-up
+  // posts (dev-ui-team.mjs), as whoever the preview signs in as sees it.
+  if (url.pathname === '/api/teams') {
+    return json(res, { teams: await teamDirectory(adminApi.env) });
+  }
+  if (url.pathname === '/api/teams/profile') {
+    const r = await teamProfile(adminApi.env, topicsViewer(), url.searchParams.get('team'));
+    return json(res, r.error ? { error: r.error } : r, r.error ? r.status || 400 : 200);
   }
   // The Topics page (src/topicsapi.js), over the admin pages' D1: its map, the areas the fake
   // knowledge bases have, and Dana's follows; areas are written to the fake knowledge bases.

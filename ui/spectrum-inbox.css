@@ -3321,51 +3321,10 @@ main.simple .t .you { flex: none; width: calc(var(--spectrum-spacing-100) + var(
 .stkpop .stk-x { display: grid; place-items: center; width: var(--s2-ctl); height: var(--s2-ctl); padding: 0; border: 0; border-radius: var(--s2-radius); background: none; color: var(--mute); cursor: pointer; }
 .stkpop .stk-x:hover { background: var(--hover); color: var(--ink); }
 .stkpop .stk { display: flex; flex-direction: column; gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
-.stkpop .stk-sum, .stkpop .stk-notes { font-size: var(--spectrum-font-size-100); line-height: 1.5; color: var(--mute); }
-.stkpop .stk-sum p, .stkpop .stk-notes p { margin: 0 0 var(--spectrum-spacing-100); }
-.stkpop .stk-notes { padding-top: var(--spectrum-spacing-100); border-top: var(--spectrum-border-width-100) solid var(--line); }
-.stkpop .stk-draw { position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-400); padding: var(--spectrum-spacing-200) 0px; }
-/* The parts as a list until the diagram is drawn (or for good, when it cannot be): hidden while
-   the renderer loads, which is quick once the browser has it. */
-.stkpop .stk-draw[aria-busy="true"] .stk-rows { visibility: hidden; }
-.stkpop .stk-draw.drawn .stk-rows { display: none; }
-.stkpop .stk-svg:empty { display: none; }
-.stkpop .stk-svg { overflow: auto; }
-.stkpop .stk-layer { position: relative; display: grid; grid-template-columns: 8em 1fr; align-items: start; gap: var(--spectrum-spacing-200); }
-.stkpop .stk-ln { padding-top: var(--spectrum-spacing-100); color: var(--faint); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); text-transform: uppercase; letter-spacing: 0.04em; }
-.stkpop .stk-parts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-200); }
-.stkpop .stk-part { --layer: var(--faint); position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 7em; max-width: 14em;
-  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);
-  border-left: var(--spectrum-border-width-400) solid var(--layer); border-radius: var(--s2-radius); font-size: var(--spectrum-font-size-100);
-  transition: opacity var(--s2-ease), border-color var(--s2-ease); }
-.stkpop .stk-part:focus-visible { outline: var(--s2-focus); }
-.stkpop .stk-part b { font-weight: var(--spectrum-bold-font-weight); }
-.stkpop .stk-part small { color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.4; }
-.stkpop .stk-part small code { font-size: var(--spectrum-font-size-50); }
-.stkpop .stk-draw.lit .stk-part { opacity: 0.45; }
-.stkpop .stk-draw.lit .stk-part.on { opacity: 1; border-color: var(--accent); border-left-color: var(--layer); }
-.stkpop .stk-layer[data-layer="edge"] .stk-part { --layer: var(--cyan); }
-.stkpop .stk-layer[data-layer="site"] .stk-part { --layer: var(--accent); }
-.stkpop .stk-layer[data-layer="content"] .stk-part { --layer: var(--lime); }
-.stkpop .stk-layer[data-layer="code"] .stk-part { --layer: var(--slate); }
-.stkpop .stk-layer[data-layer="commerce"] .stk-part { --layer: var(--orange); }
-.stkpop .stk-layer[data-layer="martech"] .stk-part { --layer: var(--purple); }
-.stkpop .stk-layer[data-layer="identity"] .stk-part { --layer: var(--pink); }
-.stk-draw.lit .fmc .fmc-edge, .stk-draw.lit .fmc .fmc-arrow, .stk-draw.lit .fmc .fmc-channel, .stk-draw.lit .fmc .fmc-node[data-part] { opacity: 0.3; }
-.stk-draw.lit .fmc .fmc-node.on, .stk-draw.lit .fmc .fmc-node[data-part].on, .stk-draw.lit .fmc .fmc-edge.on, .stk-draw.lit .fmc .fmc-arrow.on { opacity: 1; }
-.stk-draw.lit .fmc .fmc-edge.on { stroke: var(--accent); }
-.stk-draw.lit .fmc .fmc-arrow.on { fill: var(--accent); }
-.stk-draw.lit .fmc .fmc-node.on .fmc-shape { stroke: var(--accent); }
-.stkpop .stk-cap { min-height: calc(var(--spectrum-font-size-75) * 1.5); color: var(--mute); font-size: var(--spectrum-font-size-75); line-height: 1.5; }
-.stkpop .stk-cap b { color: var(--ink); font-weight: var(--spectrum-bold-font-weight); }
-.stkpop .stk-more { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); }
-.stkpop .stk-mh { margin-right: var(--spectrum-spacing-75); color: var(--faint); }
-.stkpop .stk-chip { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--s2-radius); color: var(--mute); }
 .stkpop.guess .stk-part { background: var(--col); }
 .stkpop .stk-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
   border-top: var(--spectrum-border-width-100) solid var(--line); color: var(--faint); font-size: var(--spectrum-font-size-75); }
 .stkpop .stk-foot a { margin-left: auto; color: var(--link); }
-@media (max-width: 640px) { .stkpop .stk-layer { grid-template-columns: 1fr; gap: var(--spectrum-spacing-75); } }
 /* The tour (ui/tour.js): S2's coach marks, one after the other, each beside what it is about,
    with S2's coach indicator around that: a ring in its shape, 2px away, that pulses (but for
    those who ask for less motion). Both are placed by the script, in the top layer. */
