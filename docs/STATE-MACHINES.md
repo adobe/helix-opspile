@@ -203,6 +203,22 @@ merge.
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status
 = 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.
 
+**Request thread.** waiting → decided, and for a conflict → gone (src/requestthreads.js). What a
+request is in the admin team's inbox follows from its own row (a channel, membership, portal or
+merge request: its `status`) or, for the kinds without one, from what they are now (a bot's `ours`,
+an account's `person`, a conflict's `kept`, or whether it is a conflict still); nothing here is a
+state of its own but two tables. `request_threads` (migration 0100) has a row for each request of
+those kinds from the first listing that found it waiting (`opened_at`, its thread's start, as such a
+request has no time of its own; one decided before that has none, and starts at its decision); a
+conflict the listing no longer finds is closed (`closed_at`), and kept with its title as a resolved
+thread, and one found again is open again from then on. A listing where a kind's list failed closes
+nothing, so a failure is not taken for a settlement. `request_log` is the decision log, only ever
+added to: the notes, and the decisions taken from the thread of a kind without a row to say them;
+a kind with a row shows the row's decision, so one taken elsewhere (a manager withdraws it, an
+assignment answers it) shows too. A decision is taken by the request's admin route, as the person,
+only when the request still offers it (the action is looked up in what it offers now), so a request
+decided meanwhile refuses it as the route does (`WHERE status = 'open'`).
+
 **Membership request.** open → confirmed (added, or member: on the team already), declined or
 withdrawn (`member_requests`, migration 0096; `src/memberrequests.js`). One open request per team and
 address (a partial unique index). Confirming claims it first (`WHERE status = 'open'`), then adds the
@@ -211,8 +227,8 @@ meanwhile the reopened one is closed as withdrawn instead, so the newer stands (
 Adding the person on the team's page confirms their open requests (`member`).
 
 **Adobe's bot.** undecided → Adobe's ⇄ external (`identities.ours`: NULL, 1, 0; `src/ourbots.js`).
-While undecided, a bot that posted is a request under Requests (`unreviewedCount`); the answer
-closes it. Only the admin page writes it, never back to NULL, and the identity's refresh (`getIdentity`) leaves
+While undecided, a bot that posted is an open request, a thread of the admin team's inbox
+(`unreviewedCount`); the answer resolves it. Only the admin team writes it, from that thread, never back to NULL, and the identity's refresh (`getIdentity`) leaves
 it out of its upsert. The bot's messages are not rewritten: a message's frontmatter keeps the side it
 was written with, and the thread view follows the flag over it once it is decided (`accountAuthor` in
 `src/api.js`); `messages.staff` is set to match on every change.
@@ -235,10 +251,10 @@ the thread view.
 unlinked (`identities.staff`, `person`, `linked_by`, `linked_at`; `src/lookup.js`,
 `src/accountlinks.js`). The Teams lookup says it is staff (`isHostAdmin`: a member, not a guest,
 of the host tenant, its user name `owner_…`) on every refresh; the migration said so of the ones
-seen before. Linking is the admin team's, under Requests, and only of an account that is staff
-by itself and that no mail address links, to a staff person; the refresh keeps a link
-(`linked_at` set: `person` is not looked up by mail address) and only the admin page takes it
-back (all three NULL). A change of side or person rewrites `messages.person`, `staff` and, from
+seen before. Linking is the admin team's, in the account's thread of its inbox, and only of an
+account that is staff by itself and that no mail address links, to a staff person; the refresh
+keeps a link (`linked_at` set: `person` is not looked up by mail address) and only the admin team
+takes it back (all three NULL). A change of side or person rewrites `messages.person`, `staff` and, from
 the admin page, `author` of its messages, and `last_staff` and `last_author` of the threads they
 are in (`relabelAccount`); their frontmatter keeps what they were written with, which
 `accountAuthor` replaces in the thread view, until a replay writes them again.

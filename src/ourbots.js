@@ -21,10 +21,12 @@
  * team also gives a bot the name and picture the inbox shows (`display_name`, `display_avatar`,
  * migration 0081), where the platform's say nothing to people (a Teams app has no picture).
  *
- * The admin page has no list of bots of its own: they are under Requests. A bot nobody said
- * anything of yet (`ours` NULL) that has posted is a request there, until an admin says it is
- * Adobe's or external; the others are listed below the requests. A bot may also only post
- * alerts (`alerts`, migration 0090): the threads it starts are alerts (src/alertbots.js).
+ * The admin page has no list of bots of its own: each is a thread of the admin team's inbox
+ * (src/requestthreads.js), with the other requests. A bot nobody said anything of yet (`ours`
+ * NULL) that has posted waits there, open, until an admin says it is Adobe's or external; the
+ * others are resolved threads there, where what was said of them can be changed. A bot may also
+ * only post alerts (`alerts`, migration 0090): the threads it starts are alerts
+ * (src/alertbots.js).
  */
 
 import { json } from './http.js';
@@ -115,7 +117,8 @@ export async function listBots(env) {
 
 /**
  * How many bots are waiting for an admin to say whose they are: nobody did (`ours` NULL), and they
- * posted (a bot only mentioned changes nothing in the inbox). They are requests, under Requests.
+ * posted (a bot only mentioned changes nothing in the inbox). They are requests, open threads of
+ * the admin team's inbox.
  */
 export async function unreviewedCount(env) {
   const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM identities i
@@ -225,9 +228,9 @@ async function refileStarted(env, key) {
  * bot `key` (its identity key, the messages' `author_key`).
  *
  * `ours`: whether it is Adobe's (true) or external (false); a bot nobody said either of is a
- * request under Requests. Its messages in D1 follow at once (`messages.staff`, the thread
- * list's participants); the thread view reads the account for those written before
- * (src/api.js, accountAuthor), and the ones it writes from now on say so themselves.
+ * request, an open thread of the admin team's inbox. Its messages in D1 follow at once
+ * (`messages.staff`, the thread list's participants); the thread view reads the account for those
+ * written before (src/api.js, accountAuthor), and the ones it writes from now on say so themselves.
  *
  * `alerts`: whether it only posts alerts. The threads it started are re-filed as alerts (or as
  * conversations again, where their channel is one), and so are the ones it starts from now on

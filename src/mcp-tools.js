@@ -1173,7 +1173,7 @@ export const TOOLS = [
     name: 'list_tech_conflicts',
     title: 'List conflicts between the teams\' technologies',
     admin: true,
-    description: 'Admin team only. The conflicts between the teams\' technologies (their catalogs under products/ of their knowledge bases, and the rows saved in D1), as the admin team\'s Requests lists them: `diverging`, one id two teams define otherwise (`fields` says which; each team\'s is asked in its channels), and `name`, a name or alias two ids share (`uses` says which team has it on which id, as name or alias). Each has a `key` for resolve_tech_conflict, and `kept` when an admin kept it as it is.',
+    description: 'Admin team only. The conflicts between the teams\' technologies (their catalogs under products/ of their knowledge bases, and the rows saved in D1), as the admin team\'s inbox has them, a thread each: `diverging`, one id two teams define otherwise (`fields` says which; each team\'s is asked in its channels), and `name`, a name or alias two ids share (`uses` says which team has it on which id, as name or alias). Each has a `key` for resolve_tech_conflict, and `kept` when an admin kept it as it is.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     run: listConflictsTool,

@@ -106,7 +106,7 @@ no rule matches are filed under `_unassigned`. A **manual assignment** of one ch
 rule too: its `channel_id`, priority 10. A **follow rule** (target `follow`) files nothing: it
 shares every channel it matches with its team (see "Shared channels"). Two teams' rules that
 match the same channel are a **rule conflict** (`src/ruleconflicts.js`), which the admin team
-settles under Requests: either team files the channels both match, the other rule's pattern
+settles in its inbox, where it is a thread ("Requests as threads"): either team files the channels both match, the other rule's pattern
 leaves the winner's out (`^(?!winner)loser`), and the other team may follow them (a follow rule
 of `^(?=winner)loser`); or the conflict is kept as meant. Manual assignments are never in a
 conflict: they settle one for a channel, so a channel one of them decides is in none.
@@ -239,21 +239,21 @@ merged org's, for a dream or a person to reconcile). The merged org leaves the l
 bases); its knowledge base stays in Artifacts. Undoing a merge (on the kept org's page) moves its
 channels back and gives it its row again; what moved with it stays. Anyone on a team who sees one of
 the two (the customers its teams own) sees the pair too and asks the admin team for the merge (`POST
-/api/admin/org-merge-requests`), which waits under Requests until the admin team merges or declines
-it; the admin team can also say two orgs are not the same, which takes the pair off everyone else's
+/api/admin/org-merge-requests`), which waits in the admin team's inbox, a thread there ("Requests as
+threads"), until the admin team merges or declines it; the admin team can also say two orgs are not the same, which takes the pair off everyone else's
 list until somebody asks for its merge.
 
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
-(an agent that provisions access, say) would show on the customer's side of a thread. The admin
-pages' **Requests** (`src/ourbots.js`) list every bot opspile knows (`identities` of kind `bot`:
-written when one posts or is mentioned, a Slack bot or Teams app the first time it posts,
-`botIdentity` in `src/lookup.js`), with its messages and where it posted last (a bot's page previews its latest three, each
-with a link to its thread), and the admin team
-says which are Adobe's and which are external (`identities.ours`: 1, 0, or NULL while nobody
-said; with who said it and when). A bot that posted and that nobody said either of is a request
-there, under "Bots to review", and counts on Requests in the header until an admin answers it
-(`unreviewedCount`); the others are listed below the requests, with the bots only mentioned
-(`/inbox/admin?tab=requests&request=bot:<key>`); there is no page of bots. An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
+(an agent that provisions access, say) would show on the customer's side of a thread. Every bot
+opspile knows that posted, or that somebody said whose it is (`identities` of kind `bot`: written
+when one posts or is mentioned, a Slack bot or Teams app the first time it posts, `botIdentity` in
+`src/lookup.js`; `src/ourbots.js`), is a thread of the admin team's inbox ("Requests as threads"),
+which says how much it posted and where, and quotes its latest three messages, each with a link to
+its thread; there the admin team says which are Adobe's and which are external (`identities.ours`:
+1, 0, or NULL while nobody said; with who said it and when). A bot that posted and that nobody said
+either of waits there, open, and counts on Inbox in the header until an admin answers it
+(`unreviewedCount`); the others are resolved threads, where what was said can be changed. There is
+no page of bots. An Adobe bot is staff (`toAuthor`): the inbox shows it on Adobe's side, as a colleague, its
 messages in D1 follow at once (`messages.staff`), and so do the ones written before in the thread
 view (`accountAuthor` in `src/api.js`, since their frontmatter says what was so then). Looking the
 account up again keeps the say. Its messages stay a bot's: they are not counted (a bot does not
@@ -262,7 +262,7 @@ answer the customer, `last_staff`), and the agents fence them as every bot's
 
 **Adobe's admin accounts.** The Teams tenant that hosts the teams has admin accounts of its own
 (`owner_` and initials, "People", below), staff by themselves, but nothing in Graph says who uses
-one: their name is the initials. Under Requests, after the bots, the admin page lists them
+one: their name is the initials. Each is a thread of the admin team's inbox too, with the bots
 (`GET /api/admin/accounts`, `src/accountlinks.js`), and the admin team gives each the mail address
 of the Adobe person whose it is (`PUT /api/admin/accounts`): the account is linked to that person
 (`identities.person`, with `linked_by` and `linked_at`, migration 0097), and so shows with their
@@ -273,8 +273,8 @@ the thread view (`accountAuthor`). Only an account that is staff by itself and t
 address links is linked, and only to a staff person, so no customer's account becomes Adobe's.
 Looking the account up again keeps the link; giving no address takes it back.
 
-**Alert bots.** A bot may also only post alerts (`identities.alerts`, migration 0090, set on its
-page under Requests, whatever its side): a thread it starts is an alert (`threads.kind =
+**Alert bots.** A bot may also only post alerts (`identities.alerts`, migration 0090, set in its
+thread of the admin team's inbox, whatever its side): a thread it starts is an alert (`threads.kind =
 'alert'`), also in a channel the rules make a conversation, so a channel can hold people's
 conversations and a monitoring bot's alerts both (`src/alertbots.js`). Only the root decides: a
 person's reply to an alert leaves it an alert, and the bot's reply in a person's thread leaves that
@@ -375,9 +375,9 @@ the team (`member_suggestion_dismissals`, migration 0095), and so does taking so
 page has the same channel search the admin team adds channels with (every channel, by name,
 Teams team, customer or id), and picking one sends a request, "add this channel to this team",
 with an optional note (`channel_requests`, migration 0028; one open request per channel and
-team). The admin team sees the open ones under **Requests** in the admin pages, their number on
-Requests in every page's header. Opening one runs the manual assignment as a dry run
-and says what confirming would do: re-file the channel under the team (and which threads move),
+team). The admin team sees each in its inbox, a thread ("Requests as threads"), the number of the
+open ones on Inbox in every page's header. **Confirm** there runs the manual assignment as a dry
+run first and says what it would do: re-file the channel under the team (and which threads move),
 or share it with the team when another team holds it. **Confirm** then makes that assignment,
 exactly as adding the channel on the team's page does, and records who confirmed it and what it
 did; **Decline** takes an optional reason. The manager sees each request on their team's page:
@@ -394,7 +394,7 @@ with `list_teams`, and `request_channel_reassignment` asks for it, for the perso
 sidebar message, with their reason. Such a request asks for a **move** (`move`, migration 0071):
 confirmed, the channel is filed under the team even when another team holds it, instead of being
 shared with it (with `share`, the agent asks for the usual request instead). It names the thread
-whose sidebar it came from (`thread`), which the request's page links to. The agent files one only
+whose sidebar it came from (`thread`), which the request's thread links to. The agent files one only
 while it answers a sidebar message, never on the thread's messages, which customers write.
 
 **Membership requests.** The agent asks for people as well: asked in its sidebar to add someone to
@@ -404,7 +404,7 @@ and `request_team_membership` files a request (`member_requests`, migration 0096
 message, with their reason and the person: their mail address as written, or the one person the
 inbox knows by exactly that name, the author when neither is given. Only staff addresses
 (`STAFF_DOMAINS`) are asked for, nobody already on the team, and one request per team and address
-is open at a time. An admin decides it under **Requests**, or one of that team's managers on the
+is open at a time. An admin decides it in the admin team's inbox, or one of that team's managers on the
 team's page (**People asked for**): **Confirm** adds the person as adding them on the team's page
 does (a member, a manager in a self-managed team; the sign-in allow list follows), **Decline** takes
 an optional reason. Confirming closes the request first, and a failed addition opens it again; adding
@@ -413,8 +413,37 @@ files one only while it answers a sidebar message, never on the thread's message
 `request_membership`, which asks a platform's admin bot to add people to the channel itself.
 
 **Portal requests.** Customers ask as well, for a channel of their own in the customer portal:
-the admin team opens one for them under Requests, and a team's managers on their team's page
-when the team follows a technology the customer picked. See [Customer portal](#customer-portal).
+the admin team opens one for them from its thread in the admin team's inbox, and a team's managers
+on their team's page when the team follows a technology the customer picked. See [Customer
+portal](#customer-portal).
+
+**Requests as threads.** What waits for the admin team is a thread of its inbox
+(`src/requestthreads.js`, `GET /api/requests`), not a page of the admin pages: a channel request,
+a membership request, a customer in the portal, a merge of customers, a bot or an admin account
+nobody said whose it is, a conflict between the teams' technologies or their rules. Its key is
+`request:<kind>:<id>` (`src/requestkeys.js`: the row's id, a bot's or an account's identity key,
+a conflict's key), and the inbox lists it in the admin team's view only, with the team's own
+threads, under a "customer" of its kind (Channel requests, Bots, Rule conflicts, …), of kind
+`request`, waiting on us while it is open and resolved once it is decided; the decided ones stay
+(the latest hundred of each kind). Its thread is in no channel and nothing of it is posted: the
+request as whoever asked said it (or, for a bot, an account or a conflict, as the inbox sees it),
+what the admin team writes about it, and what was decided. What they write is the request's
+**decision log** (`POST /api/requests/note`, `request_log`, migration 0100), the reply box's place;
+under the messages, the card of what can be decided now, each action with what it does, its fields
+and, where it can be tried, what it would change (Confirm's dry run, a merge's, a rule conflict's
+side winning). Deciding (`POST /api/requests/resolve`) runs the route of `/api/admin/*` the admin
+pages ran, as the person deciding, so the checks, the claim of a request and its outcome are
+src/admin.js's; only what the request offers then can be run. A request's own row says what was
+decided and by whom (a channel, a membership, a portal or a merge request), also when it was
+decided elsewhere (withdrawn by a manager, confirmed on a team's page, answered by an assignment);
+what is decided of a bot, an account or a conflict, which have no such row, goes into the log. The
+kinds without a time of their own are kept in `request_threads` from when they are first seen
+waiting, and a conflict that is gone (settled, or its rules changed) stays there with its title,
+a resolved thread with its log (docs/STATE-MACHINES.md, "Request thread"). Read state is the
+watermarks of the keys, read in the admin team's room as a thread is; a change of a request is
+announced there (`{ type: 'request' }`), and the inboxes load the requests again. Old addresses of
+the Requests page (`/inbox/admin?tab=requests&request=…`) open the request's thread. Nothing of
+this goes to the agents, the labels or the search.
 
 Channel names and authors are not in the events, so the normalizer looks them up
 (`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a
@@ -891,7 +920,8 @@ filter when there are many; in a customer's they are all there is, so they are s
 
 Every page has the same header (`ui/header.js`, `ui/header.css`): a switch between **Inbox**,
 **Teams** and **Customers** (the sections of `/inbox/admin`, each team and customer with its
-agent) for every member of a team, and for the admin team **Requests** too (with the bots),
+agent) for every member of a team, the admin team's requests being threads of its inbox
+("Requests as threads", the number of the open ones on **Inbox**),
 **Topics** (`/inbox/topics`, [below](#topic-maps)) and **COGS** (`/inbox/cogs`, [below](#cogs)).
 Each opens as it was left in that browser tab: the header keeps every page's address
 (sessionStorage) whenever it changes, so **Inbox** comes back with its team, filters, sort,
@@ -1423,8 +1453,8 @@ and an unchanged thread is never labeled twice):
   rewrote (`route: 'catalog'`, `action: 'move'`), so one nobody meant can be traced. Files (a
   stack drawing's Tech) and labels from before are read through the map (src/catalog.js
   `techMoves`), and their technologies keep a name.
-  **Conflicts** between the teams' technologies are the admin team's to settle, under
-  **Requests** (counted with the other requests) and with the MCP server's `list_tech_conflicts`
+  **Conflicts** between the teams' technologies are the admin team's to settle, in their threads
+  of its inbox ("Requests as threads", counted with the other requests) and with the MCP server's `list_tech_conflicts`
   and `resolve_tech_conflict` (src/techconflicts.js). They are computed from `tech_stack` each
   time: an id two teams define otherwise (`diverging`: name, description, layer, product, or on
   in one and off in another; each team's is asked in its channels, so it may be meant; a team
@@ -3465,8 +3495,9 @@ lobbies when it refreshes the list, which names the ids each technology had (`mo
 **Portal requests.** A lobby that asked reaches the inbox as a `lobby` event, a snapshot of it
 (what it picked, its note, its people), again with every change. The normalizer keeps the
 latest as one row per lobby (`portal_requests`, `src/portalrequests.js`; an event older than
-the row's `seq` changes nothing, so a replay does not either). The admin team sees them under
-**Requests** in the admin pages, with the channel requests, and counted with them in the header.
+the row's `seq` changes nothing, so a replay does not either). The admin team sees each as a
+thread of its inbox ("Requests as threads"), with the channel requests, and counted with them in
+the header.
 A request names the teams that **follow** a technology the lobby picked (`team_follows`): their
 managers see it on their team's page.
 

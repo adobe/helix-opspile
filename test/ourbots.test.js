@@ -249,7 +249,7 @@ describe('Adobe\'s bots', () => {
     ]);
   });
 
-  it('wait under Requests until an admin says whose they are, if they posted', async () => {
+  it('wait in the admin team\'s inbox until an admin says whose they are, if they posted', async () => {
     const e = env();
     const open = async () => (await call(e, ADA, 'GET', '/api/admin/requests?count=1')).body.open;
     // The two that posted; the one only mentioned changes nothing in the inbox.

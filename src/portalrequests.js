@@ -13,6 +13,7 @@
 import { slug as toSlug } from './rules.js';
 import { resolveTech, techMoves } from './catalog.js';
 import { MAX_TECH_ID } from './techid.js';
+import { announceRequest } from './requestkeys.js';
 
 /**
  * Portal requests (migration 0074): what a customer's lobby in the customer portal asks for.
@@ -20,12 +21,12 @@ import { MAX_TECH_ID } from './techid.js';
  * and asked for a channel. The portal tells how the lobby is now with every change (a `lobby`
  * event, src/normalize.js); `recordLobby` keeps the latest as one row per lobby.
  *
- * The admin team decides them under Requests in the admin pages: it opens a channel (names
- * it, files it under a team and a customer, shares it with more teams, and writes the welcome
- * message), or declines with a reason the customer reads. A team's managers see the lobbies
- * that picked a technology their team follows (`team_follows`), on their team's page, and
- * open a channel for their team. This module keeps the rows; src/admin.js routes them and
- * opens the channel.
+ * The admin team decides them in its inbox, where each is a thread (src/requestthreads.js): it
+ * opens a channel (names it, files it under a team and a customer, shares it with more teams, and
+ * writes the welcome message), or declines with a reason the customer reads. A team's managers see
+ * the lobbies that picked a technology their team follows (`team_follows`), on their team's page,
+ * and open a channel for their team. This module keeps the rows; src/admin.js routes them and opens
+ * the channel.
  *
  * Status: `open` (waiting), `opened` (it has a channel), `declined`. The portal's lobby says
  * the same in its words (`requested`, `open`, `declined`), and its events move the row: a
@@ -93,6 +94,10 @@ export async function recordLobby(env, lobby) {
       status,
       clean(lobby.logo, 64).replace(/[^a-z0-9]/gi, '') || null,
     ).run();
+  // The admin team's inbox has it as a thread (src/requestthreads.js).
+  if (meta.changes) {
+    await announceRequest(env);
+  }
   return { result: meta.changes ? 'lobby' : 'unchanged', status };
 }
 

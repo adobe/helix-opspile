@@ -584,6 +584,7 @@ describe('inbox page', () => {
       noteEvent: () => {},
       screenTeams: () => ['helix'],
       heardRead,
+      heardRequest: () => {},
     });
     listen('helix', 1);
     const send = (ev) => sockets[0].onmessage({ data: JSON.stringify(ev) });
@@ -680,6 +681,52 @@ describe('inbox page', () => {
     assert.equal(pageUrl('2026-01-01|k'), '/api/inbox?team=helix&before=2026-01-01%7Ck&limit=300');
   });
 
+  it('lists the admin team\'s requests in its inbox, as they are now, with its threads', async () => {
+    const state = { team: 'admin', data: null, scores: new Map() };
+    const pages = [
+      { team: 'admin', threads: [{ thread: 'a' }, { thread: 'b' }], page: { next: null } },
+      { team: 'admin', threads: [{ thread: 'a' }], page: { next: null } },
+    ];
+    const asked = [
+      [{ thread: 'request:channel:1' }, { thread: 'request:bot:slack:T:B1' }],
+      [{ thread: 'request:channel:1' }],
+    ];
+    let shown = true;
+    const { loadInbox } = piece('const BACKFILL = 1000;', '\nlet paging = null;', 'loadInbox', {
+      state,
+      personal: () => false,
+      scopeKey: () => 'admin',
+      scopeOf: (d) => d.team,
+      get: async () => pages.shift(),
+      syncSockets: () => {},
+      checkBells: () => {},
+      mergeProfiles: () => {},
+      renderUser: () => {},
+      renderFollowMenu: () => {},
+      coParticipants: () => new Map(),
+      inPass: (f) => f(),
+      smartScore: () => 0,
+      render: () => {},
+      backfill: () => {},
+      keepReads: () => {},
+      mergeStacks: (a, b) => ({ ...a, ...b }),
+      requestsShown: () => shown,
+      loadRequests: async () => asked.shift(),
+      isRequestKey: (k) => k.startsWith('request:'),
+    });
+    const keys = () => state.data.threads.map((t) => t.thread);
+    await loadInbox();
+    assert.deepEqual(keys(), ['a', 'b', 'request:channel:1', 'request:bot:slack:T:B1']);
+    // The older entries stay, but a request that is not listed any more goes.
+    await loadInbox();
+    assert.deepEqual(keys(), ['a', 'b', 'request:channel:1']);
+    // Another team's inbox has none.
+    shown = false;
+    pages.push({ team: 'admin', threads: [{ thread: 'a' }], page: { next: null } });
+    await loadInbox();
+    assert.deepEqual(keys(), ['a', 'b']);
+  });
+
   describe('a thread folded into a group (re-threading)', () => {
     const entry = (thread, members = [thread]) => ({
       thread, members: members.map((m) => ({ thread: m })),
@@ -707,6 +754,9 @@ describe('inbox page', () => {
         backfill: () => {},
         keepReads: () => {},
         mergeStacks: (a, b) => ({ ...a, ...b }),
+        // Not the admin team's inbox: no requests (see "the admin team's requests").
+        requestsShown: () => false,
+        isRequestKey: () => false,
       });
       return { state, keys: () => state.data.threads.map((t) => t.thread), ...fns };
     }
@@ -745,6 +795,7 @@ describe('inbox page', () => {
         stalePools: () => {},
         screenTeams: () => ['helix'],
         heardRead: () => {},
+        heardRequest: () => {},
         foldInto,
         splitFrom,
       });

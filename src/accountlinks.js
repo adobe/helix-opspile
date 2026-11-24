@@ -11,14 +11,14 @@
  */
 
 /**
- * Adobe's accounts that no mail address names a person for, and whose they are (migration
- * 0097): the Teams tenant that hosts the teams has admin accounts of its own (src/lookup.js,
+ * Adobe's accounts that no mail address names a person for, and whose they are (migration 0097):
+ * the Teams tenant that hosts the teams has admin accounts of its own (src/lookup.js,
  * `isHostAdmin`), one for each of a few Adobe people, named by their initials and mailed at the
- * tenant's own domain. They count as staff by themselves (`identities.staff`), but who uses one
- * is hard to tell from the outside, so the admin team says it, under Requests on the admin page:
- * the account is linked to that Adobe person (`identities.person`, with `linked_by` and
- * `linked_at`), and shows as them, with their name, the messages it wrote before too
- * (`relabelAccount`). Looking the account up again keeps the link.
+ * tenant's own domain. They count as staff by themselves (`identities.staff`), but who uses one is
+ * hard to tell from the outside, so the admin team says it, in the account's thread in its inbox
+ * (src/requestthreads.js): the account is linked to that Adobe person (`identities.person`, with
+ * `linked_by` and `linked_at`), and shows as them, with their name, the messages it wrote before
+ * too (`relabelAccount`). Looking the account up again keeps the link.
  *
  * Only an account that is staff by itself is linked, and only to a staff person: a customer's
  * account is never made Adobe's here, nor an Adobe account a customer's.

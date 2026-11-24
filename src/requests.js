@@ -12,6 +12,7 @@
 
 import { json } from './http.js';
 import { PLATFORMS } from './platforms.js';
+import { announceRequest } from './requestkeys.js';
 
 /**
  * Channel assignment requests (migration 0028). A team manager does not assign channels: they
@@ -177,6 +178,7 @@ export async function createRequest(env, me, body, { move = false, thread = null
   console.log(JSON.stringify({
     route: 'admin', request: 'created', by: me.id, id: row.id, team, move, via: thread ? 'agent' : 'page',
   }));
+  await announceRequest(env, 'channel', row.id);
   return json({ ok: true, request: await getRequest(env, row.id) });
 }
 

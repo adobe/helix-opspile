@@ -1,0 +1,1154 @@
+/*
+ * Copyright 2026 Adobe. All rights reserved.
+ * This file is licensed to you under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License. You may obtain a copy
+ * of the License at https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under
+ * the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR REPRESENTATIONS
+ * OF ANY KIND, either express or implied. See the License for the specific language
+ * governing permissions and limitations under the License.
+ */
+
+import { admin, channelLabel } from './admin.js';
+import { json } from './http.js';
+import { listAccounts } from './accountlinks.js';
+import { isStaffDomain } from './lookup.js';
+import { getMemberRequest, listMemberRequests } from './memberrequests.js';
+import { getMergeRequest, listMergeRequests } from './orgmerge.js';
+import { getBot, listBots } from './ourbots.js';
+import { getPortalRequest, listPortalRequests } from './portalrequests.js';
+import { portalBound } from './portalsource.js';
+import { announceRequest, parseRequestKey, requestKey } from './requestkeys.js';
+import { getRequest, listRequests } from './requests.js';
+import { ADMIN_TEAM, isAdmin } from './review.js';
+import { ruleConflicts } from './ruleconflicts.js';
+import { techConflicts } from './techconflicts.js';
+import { advanceWatermark, readState } from './threads.js';
+
+/**
+ * The admin team's requests as threads of its inbox. What waits for the admin team (a channel a
+ * team asked for, a person to add to a team, a customer in the portal, a merge of customers, a
+ * bot nobody said whose it is, an admin account nobody linked, a conflict between technologies
+ * or between team rules) is an inbox entry there, keyed `request:<kind>:<id>`
+ * (src/requestkeys.js), and decided ones stay as resolved entries. Its thread is the request,
+ * as whoever asked said it, then what the admin team writes about it (`note`s, its decision
+ * log, `request_log`, migration 0100), and what was decided; the thread view offers what can be
+ * decided (`actions`), and deciding runs the same `/api/admin/*` route the admin pages did, as
+ * the person deciding, so the checks and the outcome are those of src/admin.js.
+ *
+ * Nothing here is a platform's: the threads are in no channel, nobody posts anywhere, and no
+ * agent, label or draft is theirs. Their read state is the watermarks of their keys, as a
+ * thread's.
+ *
+ * A request keeps its own row (`channel_requests`, …): its time and its decision are that row's.
+ * The kinds without a row that says when they were asked or what was decided (bots, accounts,
+ * conflicts) are kept in `request_threads` from when they are first seen waiting, and what is
+ * decided from the thread is in the log; a conflict that is gone (settled, or its rules changed)
+ * stays as a resolved thread with its title then.
+ */
+
+/** What the inbox names each kind, in the entry's place of a customer. */
+export const KIND_NAMES = {
+  channel: 'Channel requests',
+  member: 'Membership requests',
+  portal: 'Portal customers',
+  merge: 'Customer merges',
+  bot: 'Bots',
+  account: 'Admin accounts',
+  tech: 'Technology conflicts',
+  rule: 'Rule conflicts',
+};
+/** The kinds without a row that says when they waited from: `request_threads` does. */
+const TRACKED = new Set(['bot', 'account', 'tech', 'rule']);
+/** The kinds that are worked out each time, and gone once settled. */
+const COMPUTED = new Set(['tech', 'rule']);
+/** The kinds whose decisions are only in the log: a bot's, an account's, a conflict's. */
+const LOGGED = TRACKED;
+const MAX_NOTE = 4000;
+const MAX_FIELD = 8000;
+/** How many of each kind's decided requests the inbox lists (the open ones are all there). */
+const LIMIT = 100;
+/** How many channels of a rule conflict its thread names. */
+const SHOWN_CHANNELS = 10;
+
+const clean = (v, n = 200) => String(v ?? '').trim().slice(0, n);
+const now = () => new Date().toISOString();
+const latest = (...xs) => xs.flat().filter(Boolean).sort().pop() || null;
+
+/** `s` as text in markdown: what would be markup is escaped. */
+const md = (s) => String(s ?? '').replace(/[\\`*_[\]<>~|]/g, '\\$&');
+/** `s` as code in markdown: inside, nothing is markup, and a backtick needs a longer fence. */
+const code = (s) => {
+  const t = String(s ?? '').replace(/\n/g, ' ');
+  const fence = '`'.repeat(Math.max(0, ...(t.match(/`+/g) || []).map((x) => x.length)) + 1);
+  return /^`|`$/.test(t) ? `${fence} ${t} ${fence}` : `${fence}${t}${fence}`;
+};
+/** A quote of `s` (a note, a reason), line by line. */
+const quote = (s) => String(s || '').split('\n').map((l) => `> ${md(l)}`).join('\n');
+const who = (p) => (p && (p.name || p.email)) || 'someone';
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const PLATFORM = {
+  slack: 'Slack', teams: 'Teams', discord: 'Discord', portal: 'Portal',
+};
+const platformOf = (c) => PLATFORM[c.source] || c.source;
+const chan = (c) => channelLabel({
+  source: c.source, name: c.name, group_name: c.groupName, channel_id: c.channelId,
+});
+/** A team's possessive: "Edge ops'", "Forms team's". */
+const poss = (name) => (/s$/i.test(name) ? `${name}'` : `${name}'s`);
+
+/** The names the threads show: teams' and orgs', by slug. */
+async function names(env) {
+  const [teams, orgs] = await Promise.all([
+    env.DB.prepare('SELECT slug, name FROM teams').all(),
+    env.DB.prepare('SELECT slug, name FROM orgs').all(),
+  ]);
+  const t = new Map((teams.results || []).map((r) => [r.slug, r.name || r.slug]));
+  const o = new Map((orgs.results || []).map((r) => [r.slug, r.name || r.slug]));
+  return {
+    teams: [...t].map(([slug, name]) => ({ slug, name }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    team: (slug) => t.get(slug) || slug || 'no team',
+    org: (slug) => (!slug || slug.startsWith('_') ? 'no customer' : o.get(slug) || slug),
+  };
+}
+
+/** What a dry run of re-filing says, as a list: each channel, its threads, from where to where. */
+function movesText(moves, n) {
+  return moves.slice(0, 20).map((m) => {
+    const threads = (m.from || []).reduce((k, f) => k + (f.threads || 0), 0);
+    const from = [...new Set((m.from || []).map((f) => n.team(f.team)))].join(', ');
+    return `- ${md(chan(m.channel))}: ${plural(threads, 'thread')} from ${md(from)} to ${md(n.team(m.to.team))} / ${md(n.org(m.to.org))}`;
+  }).join('\n') + (moves.length > 20 ? `\n- and ${moves.length - 20} more` : '');
+}
+
+// ---- the kinds -------------------------------------------------------------------------------
+//
+// Each kind says of one of its requests (`r`, as its module lists it, `n` the names):
+// `title`, `open` (whether it waits), `status` (a word for where it stands), `askedAt` and
+// `askedBy`, `body` (the request, as its first message says it, markdown), `decidedAt`,
+// `decidedBy` and `decision` (what was decided, markdown, when its row says so), and `actions`
+// (what can be decided now). An action is `{ id, label, tone?, hint?, ask?, preview?, fields?,
+// off? }` for the thread view, with `run(values, dryRun)` (the admin route it takes: `{ method,
+// path, body }`), `done(answer, values)` (what came of it, markdown) and `previewed(answer)`
+// (what a dry run says, markdown) here.
+
+const reasonField = (label) => ({
+  name: 'reason', label, type: 'text', max: 500,
+});
+const noteField = {
+  name: 'note', label: 'Why it is meant (optional)', type: 'text', max: 300,
+};
+
+const CHANNEL_DONE = {
+  moved: (r, n) => `filed under ${md(n.team(r.team))}; its threads are re-filed`,
+  shared: (r, n) => `shared with ${md(n.team(r.team))}; it stays filed under ${md(n.team(r.channel.team))}`,
+  assigned: (r, n) => `assigned to ${md(n.team(r.team))}; nothing to move yet`,
+};
+
+/** What a decided request's row says of it: by whom, and what came of it. */
+function rowDecision(r, did = '') {
+  const word = {
+    confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged',
+  }[r.status] || r.status;
+  const reason = r.reason ? `: ${md(r.reason)}` : '';
+  return `**${word}** by ${md(who(r.decidedBy))}${did ? `: ${did}` : reason}`;
+}
+
+const channelKind = {
+  list: (env) => listRequests(env, { limit: LIMIT }),
+  get: (env, id) => getRequest(env, id),
+  id: (r) => r.id,
+  describe(r, n) {
+    const c = r.channel;
+    const name = chan(c);
+    const team = n.team(r.team);
+    const org = c.org && !c.org.startsWith('_') ? (c.orgName || n.org(c.org)) : '';
+    const asks = r.move
+      ? `move **${md(name)}** to **${md(team)}**: filed under it${c.team && c.team !== r.team ? ` instead of ${md(n.team(c.team))}` : ''}`
+      : `add **${md(name)}** to **${md(team)}**'s inbox`;
+    const facts = [
+      `- ${platformOf(c)} · ${code(c.channelId)}`,
+      `- Now ${c.team ? `filed under **${md(n.team(c.team))}**` : 'no threads yet'}${org ? ` · customer **${md(org)}**` : ''} · ${plural(c.threads, 'thread')}`,
+      `- For [${md(team)}](/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}&view=manage)`,
+      r.thread ? `- Asked in [the sidebar of a thread](/inbox?team=${encodeURIComponent(c.team || r.team)}&t=${encodeURIComponent(r.thread)}) of this channel, through its agent` : '',
+    ].filter(Boolean).join('\n');
+    const open = r.status === 'open';
+    return {
+      title: `${r.move ? 'Move' : 'Add'} ${name} ${r.move ? 'to' : '→'} ${team}`,
+      open,
+      status: open ? 'waiting' : r.status,
+      askedAt: r.requestedAt,
+      askedBy: r.requestedBy,
+      body: `Asks to ${asks}.${r.note ? `\n\n${quote(r.note)}` : ''}\n\n${facts}`,
+      decidedAt: open ? null : r.decidedAt,
+      decidedBy: r.decidedBy,
+      decision: open ? null : rowDecision(r, r.status === 'confirmed' && CHANNEL_DONE[r.outcome] ? CHANNEL_DONE[r.outcome](r, n) : ''),
+      actions: open ? [
+        {
+          id: 'confirm',
+          label: 'Confirm',
+          tone: 'accent',
+          preview: true,
+          hint: 'Assigns the channel to the team, as adding it on the team\'s page does.',
+          run: (v, dryRun) => ({ method: 'POST', path: 'requests/confirm', body: { id: r.id, dryRun } }),
+          previewed(a) {
+            if (a.shared) {
+              return `Shares ${md(name)} with ${md(team)}: it stays filed under ${md(n.team(a.shared.from))} (its folders, knowledge base and agents) and is in ${md(poss(team))} inbox too. Nothing moves.`;
+            }
+            if (!(a.moves || []).length) {
+              return `Files ${md(name)} under ${md(team)} by hand (a channel-id rule with priority 10). It has no threads here yet, so nothing moves now.`;
+            }
+            return `Files ${md(name)} under ${md(team)} by hand (a channel-id rule with priority 10), and re-files:\n\n${movesText(a.moves, n)}`;
+          },
+          done: (a) => (a.shared
+            ? `${md(name)} is in ${md(poss(team))} inbox too, and stays filed under ${md(n.team(a.shared.from))}.`
+            : `${md(name)} is filed under ${md(team)}${(a.moves || []).length ? '; its threads are re-filed' : ''}.`),
+        },
+        {
+          id: 'decline',
+          label: 'Decline',
+          tone: 'negative',
+          fields: [reasonField('Reason, for whoever asked (optional)')],
+          run: (v) => ({ method: 'POST', path: 'requests/decline', body: { id: r.id, reason: v.reason || undefined } }),
+          done: () => `Declined ${md(name)} for ${md(team)}.`,
+        },
+      ] : [],
+    };
+  },
+};
+
+const memberKind = {
+  list: (env) => listMemberRequests(env, { limit: LIMIT }),
+  get: (env, id) => getMemberRequest(env, id),
+  id: (r) => r.id,
+  describe(r, n) {
+    const p = r.person;
+    const name = p.name || p.email;
+    const team = n.team(r.team);
+    const open = r.status === 'open';
+    const facts = [
+      `- ${md(p.email)}${p.id ? '' : ' · new to the inbox'}`,
+      `- Now ${p.teams.length ? `on ${md(p.teams.map(n.team).join(', '))}` : 'on no team'}`,
+      `- For [${md(team)}](/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}&view=manage)`,
+      r.thread ? `- Asked in [the sidebar of a thread](/inbox?t=${encodeURIComponent(r.thread)}), through its agent` : '',
+    ].filter(Boolean).join('\n');
+    const did = { added: `added to ${md(team)}`, member: `on ${md(team)} already` }[r.outcome] || '';
+    return {
+      title: `${name} → ${team}`,
+      open,
+      status: open ? 'waiting' : r.status,
+      askedAt: r.requestedAt,
+      askedBy: r.requestedBy,
+      body: `Asks to add **${md(name)}** to **${md(team)}**.${r.note ? `\n\n${quote(r.note)}` : ''}\n\n${facts}`,
+      decidedAt: open ? null : r.decidedAt,
+      decidedBy: r.decidedBy,
+      decision: open ? null : rowDecision(r, r.status === 'confirmed' ? did : ''),
+      actions: open ? [
+        {
+          id: 'confirm',
+          label: 'Confirm',
+          tone: 'accent',
+          hint: `Adds ${md(name)} to ${md(team)} as a member (a manager, when the team is self-managed), as adding them on the team's page does: they see its inbox.`,
+          run: () => ({ method: 'POST', path: 'member-requests/confirm', body: { id: r.id } }),
+          done: (a) => `${md(name)} is on ${md(team)}${a.request?.outcome === 'member' ? ' (already was)' : ''}.`,
+        },
+        {
+          id: 'decline',
+          label: 'Decline',
+          tone: 'negative',
+          fields: [reasonField('Reason, for whoever asked (optional)')],
+          run: (v) => ({ method: 'POST', path: 'member-requests/decline', body: { id: r.id, reason: v.reason || undefined } }),
+          done: () => `Declined ${md(name)} for ${md(team)}.`,
+        },
+      ] : [],
+    };
+  },
+};
+
+/** The message a new portal channel starts with, until whoever opens it writes their own. */
+const welcomeText = (r, team) => `Welcome to Adobe Enterprise Support, ${r.company || r.domain}! This is your channel with the ${team} team. Start a new thread for each question, and we answer you here.`;
+
+const portalKind = {
+  list: (env) => listPortalRequests(env, { limit: LIMIT }),
+  get: (env, id) => getPortalRequest(env, id),
+  id: (r) => r.id,
+  describe(r, n, { portalBound: bound = false } = {}) {
+    const company = r.company || r.domain;
+    const open = r.status === 'open';
+    const techName = new Map(r.tech.map((t) => [t.tech, t.name]));
+    const follows = new Map(r.teams.map((t) => [t.team, t]));
+    const c = r.channel;
+    const facts = [
+      `- ${md(r.domain)} · ${md(r.requestedBy.email || '')}`,
+      `- Uses ${r.tech.length ? r.tech.map((t) => `**${md(t.name)}**`).join(', ') : 'nothing they picked'}`,
+      `- Followed by ${r.teams.length ? r.teams.map((t) => `${md(t.name)} (${md(t.tech.map((id) => techName.get(id) || id).join(', '))})`).join(', ') : 'no team: none follows these'}`,
+      `- People: ${r.members.map((m) => `${md(m.name || m.email)}${m.joined ? '' : ' (invited)'}`).join(', ') || 'none yet'}`,
+      c ? `- Channel filed under **${md(n.team(c.team))}** · customer **${md(n.org(c.org))}**` : '',
+    ].filter(Boolean).join('\n');
+    // The teams it may go to, those that follow what the customer picked first.
+    const teams = [...n.teams].filter((t) => t.slug !== ADMIN_TEAM || follows.has(t.slug))
+      .sort((a, b) => Number(follows.has(b.slug)) - Number(follows.has(a.slug)));
+    const first = teams[0]?.slug || '';
+    let openOff = teams.length ? null : 'There is no team to file it under.';
+    if (!bound) {
+      openOff = 'The customer portal is not connected to this inbox yet (PORTAL_WORKER): no channel can be opened from here.';
+    }
+    const why = (slug) => (follows.has(slug) ? ` (follows ${follows.get(slug).tech.map((id) => techName.get(id) || id).join(', ')})` : '');
+    const actions = [];
+    if (r.status !== 'declined') {
+      actions.push({
+        id: 'open',
+        label: c ? 'Open another channel' : 'Open a channel',
+        tone: 'accent',
+        off: openOff,
+        hint: 'The portal makes the channel, with everyone of the customer\'s lobby in it. It is filed under the team and the customer by hand (a channel-id rule with priority 10 each), and is in the other teams\' inboxes too. The welcome message is posted as you: the channel\'s first thread.',
+        fields: [
+          {
+            name: 'name', label: 'Channel name', type: 'text', max: 80, required: true, value: c ? '' : r.suggest.name,
+          },
+          {
+            name: 'org', label: `Customer${r.suggest.known ? `: ${r.suggest.orgName || r.suggest.org}` : ' (new)'}`, type: 'text', max: 63, required: true, value: c ? c.org : r.suggest.org,
+          },
+          {
+            name: 'team',
+            label: 'Team',
+            type: 'select',
+            value: first,
+            options: teams.map((t) => ({ value: t.slug, label: `${t.name}${why(t.slug)}` })),
+          },
+          {
+            name: 'share',
+            label: 'Also in the inbox of',
+            type: 'checks',
+            value: [],
+            options: teams.map((t) => ({ value: t.slug, label: t.name })),
+          },
+          {
+            name: 'welcome',
+            label: 'Welcome message, posted as you',
+            type: 'textarea',
+            max: MAX_FIELD,
+            value: first ? welcomeText(r, n.team(first)) : '',
+            // It names the team, until it is written by hand.
+            by: { field: 'team', values: Object.fromEntries(teams.map((t) => [t.slug, welcomeText(r, t.name)])) },
+          },
+        ],
+        run: (v) => ({
+          method: 'POST',
+          path: 'portal/open',
+          body: {
+            id: r.id,
+            team: v.team,
+            name: v.name,
+            org: v.org,
+            share: (v.share || []).filter((t) => t !== v.team),
+            welcome: v.welcome,
+          },
+        }),
+        done(a) {
+          const also = (a.shared || []).length ? `, and in the inbox of ${md(a.shared.map(n.team).join(', '))}` : '';
+          const said = a.welcome && a.welcome.error ? `; the welcome message was not posted (${md(a.welcome.error)})` : '';
+          return `Opened #${md(a.channel?.name || '')} for ${md(company)}, filed under ${md(n.team(a.channel?.team))}${also}${said}.`;
+        },
+      });
+    }
+    if (open) {
+      actions.push({
+        id: 'decline',
+        label: 'Decline',
+        tone: 'negative',
+        fields: [reasonField('Reason, for the customer (optional)')],
+        run: (v) => ({ method: 'POST', path: 'portal/decline', body: { id: r.id, reason: v.reason || undefined } }),
+        done: () => `Declined ${md(company)}.`,
+      });
+    }
+    return {
+      title: `${company} asks for a channel`,
+      open,
+      status: open ? 'waiting' : r.status,
+      askedAt: r.requestedAt,
+      askedBy: { ...r.requestedBy, customer: true },
+      body: `Asks for a channel in the customer portal.${r.note ? `\n\n${quote(r.note)}` : ''}\n\n${facts}`,
+      decidedAt: open ? null : r.decidedAt,
+      decidedBy: r.decidedBy,
+      decision: open ? null : rowDecision(r, r.status === 'opened' && c ? `filed under ${md(n.team(c.team))}` : ''),
+      actions,
+    };
+  },
+};
+
+const pair = (a, b) => `pair:${a < b ? `${a}:${b}` : `${b}:${a}`}`;
+
+const mergeKind = {
+  list: (env, me) => listMergeRequests(env, me, { limit: LIMIT }),
+  get: (env, id) => getMergeRequest(env, id),
+  id: (r) => r.id,
+  describe(r, n) {
+    const from = n.org(r.from);
+    const into = n.org(r.into);
+    const open = r.status === 'open';
+    return {
+      title: `Merge ${from} into ${into}`,
+      open,
+      status: open ? 'waiting' : r.status,
+      askedAt: r.requestedAt,
+      askedBy: r.requestedBy,
+      body: `Asks to merge **${md(from)}** ${code(r.from)} into **${md(into)}** ${code(r.into)}: one company, filed under the one from then on.${r.note ? `\n\n${quote(r.note)}` : ''}\n\n- [The two side by side](/inbox/admin?tab=orgs&org=${encodeURIComponent(pair(r.from, r.into))})`,
+      decidedAt: open ? null : r.decidedAt,
+      decidedBy: r.decidedBy,
+      decision: open ? null : rowDecision(r),
+      actions: open ? [
+        {
+          id: 'merge',
+          label: `Merge ${from} into ${into}`,
+          tone: 'accent',
+          preview: true,
+          ask: `Merge ${from} into ${into}?`,
+          hint: `${md(from)} is filed under ${md(into)} from then on: its channels, its knowledge base's entries and its agents' set-up too. Undo on ${md(poss(into))} page moves its channels back.`,
+          run: (v, dryRun) => ({ method: 'POST', path: 'org-merge', body: { from: r.from, into: r.into, dryRun } }),
+          previewed: (a) => ((a.moves || []).length
+            ? `Moves ${plural(a.moves.length, 'channel')}:\n\n${movesText(a.moves, n)}`
+            : 'No channel moves.') + (a.kb && a.kb.entries ? `\n\nCopies what of the ${plural(a.kb.entries, 'entry', 'entries')} of its knowledge base ${md(poss(into))} has not.` : ''),
+          done: (a) => `Merged ${md(from)} into ${md(into)}${(a.moves || []).length ? `; ${plural(a.moves.length, 'channel')} re-filed` : ''}.`,
+        },
+        {
+          id: 'decline',
+          label: 'Decline',
+          tone: 'negative',
+          fields: [reasonField('Reason, for whoever asked (optional)')],
+          run: (v) => ({ method: 'POST', path: 'org-merge-requests/decline', body: { id: r.id, reason: v.reason || undefined } }),
+          done: () => `Declined the merge of ${md(from)} into ${md(into)}.`,
+        },
+      ] : [],
+    };
+  },
+};
+
+const botName = (b) => b.displayName || b.name || b.handle || b.id;
+
+const botKind = {
+  async list(env) {
+    const { bots } = await (await listBots(env)).json();
+    // A bot only mentioned changes nothing in the inbox: listed once somebody said whose it is.
+    return bots.filter((b) => b.messages > 0 || b.ours !== null);
+  },
+  async get(env, key) {
+    const res = await getBot(env, key);
+    if (!res.ok) {
+      return null;
+    }
+    const { bot, recent } = await res.json();
+    return { ...bot, recent };
+  },
+  id: (b) => b.key,
+  describe(b, n) {
+    const name = botName(b);
+    const open = b.ours === null && b.messages > 0;
+    const where = b.channel && (b.source === 'teams' ? [b.group, b.channel].filter(Boolean).join(' › ') : `#${b.channel}`);
+    const recent = (b.recent || []).map((m) => {
+      const ch = m.channel && (b.source === 'teams' ? [m.group, m.channel].filter(Boolean).join(' › ') : `#${m.channel}`);
+      return `${quote(m.preview || '(no text)')}\n>\n> — ${ch ? `${md(ch)}, ` : ''}[open the thread](/inbox?team=${encodeURIComponent(m.team)}&t=${encodeURIComponent(m.thread)})`;
+    }).join('\n\n');
+    const facts = [
+      `- ${b.messages ? `${plural(b.messages, 'message')} in ${plural(b.threads, 'thread')}` : 'Mentioned only'}${where ? `, the latest in ${md(where)}${b.org ? ` (${md(n.org(b.org))})` : ''}` : ''}`,
+      b.handle && b.handle !== b.name ? `- Mentioned as @${md(b.handle)}` : '',
+      `- ${code(b.id)}`,
+      b.alerts ? '- Only posts alerts: the threads it starts are alerts' : '',
+    ].filter(Boolean).join('\n');
+    const said = b.ours === null ? null
+      : `**${b.ours ? 'Adobe\'s' : 'External'}**, said ${md(b.oursBy || 'an admin')}`;
+    const ours = (value) => ({
+      id: value ? 'ours' : 'external',
+      label: value ? 'Adobe\'s' : 'External',
+      tone: value ? 'accent' : undefined,
+      pressed: b.ours === value,
+      hint: value ? 'Its messages show on Adobe\'s side, as your colleagues\' do, the ones it wrote before too. They stay a bot\'s: not an answer to the customer, and the agents read them as every bot\'s.'
+        : 'Its messages show on the customer\'s side.',
+      run: () => ({ method: 'PUT', path: 'bots', body: { key: b.key, ours: value } }),
+      done: () => (value ? `${md(name)} is Adobe's.` : `${md(name)} is external.`),
+    });
+    return {
+      title: name,
+      open,
+      status: open ? 'waiting' : ({ true: 'adobe', false: 'external' })[b.ours] || 'mentioned',
+      askedAt: null,
+      askedBy: null,
+      body: `A ${PLATFORM[b.source] || b.source} bot. Whose is it, Adobe's or external? Bots have no mail address, which is how the inbox tells Adobe people from customers, so the admin team says it.\n\n${facts}${recent ? `\n\nIts latest messages:\n\n${recent}` : ''}`,
+      decidedAt: b.oursAt,
+      decidedBy: b.oursBy ? { email: b.oursBy } : null,
+      decision: said,
+      actions: [
+        ours(true),
+        ours(false),
+        {
+          id: 'alerts',
+          label: b.alerts ? 'Posts more than alerts' : 'Only posts alerts',
+          hint: b.alerts ? 'The threads it starts are conversations again, where their channel is one.'
+            : 'The threads it starts are alerts, also in a channel of conversations: counted, not unread, and no agent works them.',
+          run: () => ({ method: 'PUT', path: 'bots', body: { key: b.key, alerts: !b.alerts } }),
+          done: (a) => `${md(name)} ${b.alerts ? 'posts more than alerts' : 'only posts alerts'} now${a.refile ? ': re-filing the threads it started' : ''}.`,
+        },
+        {
+          id: 'look',
+          label: 'Name and picture',
+          hint: `The inbox shows these instead of the ones from ${PLATFORM[b.source] || b.source}, on the messages it wrote before too; left empty, the platform's. The picture is the https URL of an image.`,
+          fields: [
+            {
+              name: 'name', label: 'Name', type: 'text', max: 80, value: b.displayName || '',
+            },
+            {
+              name: 'avatar', label: 'Picture', type: 'text', max: 500, value: b.displayAvatar || '',
+            },
+          ],
+          run: (v) => ({
+            method: 'PUT', path: 'bots', body: { key: b.key, name: v.name || null, avatar: v.avatar || null },
+          }),
+          done: (a) => `${md(name)} shows as ${md(botName(a.bot || b))}${a.bot?.displayAvatar ? ', with its picture' : ''}.`,
+        },
+      ],
+    };
+  },
+};
+
+const accountKind = {
+  async list(env) {
+    return (await (await listAccounts(env)).json()).accounts;
+  },
+  async get(env, key) {
+    return (await this.list(env)).find((a) => a.key === key) || null;
+  },
+  id: (a) => a.key,
+  describe(a) {
+    const name = a.name || a.email || a.id;
+    const open = !a.person;
+    const person = a.person && (a.person.name || a.person.email);
+    return {
+      title: `${name}, admin account`,
+      open,
+      status: open ? 'waiting' : 'linked',
+      askedAt: null,
+      askedBy: null,
+      body: `An admin account of the Teams tenant that hosts the teams: Adobe's, so its messages show on Adobe's side, but it is named by initials, and nothing in Teams says whose it is. Whose is it?\n\n- ${code(a.email || a.id)}\n- ${a.messages ? plural(a.messages, 'message') : 'No messages yet'}`,
+      decidedAt: a.linkedAt,
+      decidedBy: a.linkedBy ? { email: a.linkedBy } : null,
+      decision: person ? `**Linked to ${md(person)}**, said ${md(a.linkedBy || 'an admin')}` : null,
+      actions: [
+        {
+          id: 'link',
+          label: person ? 'Someone else\'s' : 'Link',
+          tone: person ? undefined : 'accent',
+          hint: 'The inbox then shows it as them, with their name and picture, the messages it wrote before too.',
+          fields: [{
+            name: 'email', label: 'The mail address of the colleague who uses it', type: 'email', max: 200, required: true,
+          }],
+          run: (v) => ({ method: 'PUT', path: 'accounts', body: { key: a.key, email: v.email } }),
+          done: (r) => `${md(name)} is ${md(r.account?.person?.name || r.account?.person?.email || 'theirs')}'s.`,
+        },
+        ...(person ? [{
+          id: 'unlink',
+          label: 'Nobody\'s',
+          run: () => ({ method: 'PUT', path: 'accounts', body: { key: a.key, email: null } }),
+          done: () => `${md(name)} is nobody's.`,
+        }] : []),
+      ],
+    };
+  },
+};
+
+const FIELD_NAMES = {
+  name: 'name', description: 'what Clef is asked', layer: 'layer', product: 'product', enabled: 'on or off',
+};
+const techTitle = (c) => (c.kind === 'diverging' ? `${c.tech}: ${c.fields.map((x) => FIELD_NAMES[x] || x).join(', ')}`
+  : `"${c.name}": ${c.techs.join(', ')}`);
+const keptDecision = (c) => (c.kept ? `**Kept as it is**, said ${md(c.kept.by)}${c.kept.note ? `: ${md(c.kept.note)}` : ''}` : null);
+
+const techKind = {
+  list: (env) => techConflicts(env),
+  async get(env, key) {
+    return (await techConflicts(env)).find((c) => c.key === key) || null;
+  },
+  id: (c) => c.key,
+  describe(c, n) {
+    const what = c.kind === 'diverging'
+      ? `${plural(c.definitions.length, 'team')} define ${code(c.tech)} otherwise (${md(c.fields.map((x) => FIELD_NAMES[x] || x).join(', '))}). Each team's is what Clef asks in its channels. Keep it if that is meant, or use one of them everywhere.`
+      : `"${md(c.name)}" is a name or alias of ${c.techs.map((t) => `${code(t)}`).join(' and ')}: a thread that names it matches either. Take it off the aliases of one, merge them into one technology, or keep it.`;
+    const defs = c.definitions.map((d) => `- **${md(d.name)}** ${code(d.tech)}, ${md(poss(n.team(d.team)))}${d.enabled ? '' : ' (turned off)'}: ${md(d.description)}${d.product ? ` · product ${md(d.product)}` : ''}${d.layer ? ` · layer ${md(d.layer)}` : ''}${d.aliases.length ? ` · also called ${md(d.aliases.join(', '))}` : ''}${d.path ? ` · [${md(d.path)}](/inbox/admin?tab=teams&team=${encodeURIComponent(d.team)}&view=kb&path=${encodeURIComponent(d.path)})` : ''}`).join('\n');
+    const settle = (id, label, body, done, extra = {}) => ({
+      id,
+      label,
+      run: (v) => ({ method: 'POST', path: 'conflicts', body: { key: c.key, ...body, ...v } }),
+      done: () => done,
+      ...extra,
+    });
+    const k = c.kind === 'name' ? c.key.slice('name:'.length) : null;
+    const norm = (a) => a.toLowerCase().replace(/[^a-z0-9.+#@]+/g, ' ').trim();
+    const actions = [];
+    if (!c.kept) {
+      actions.push(settle('keep', 'Keep as it is', { action: 'keep' }, 'Kept as it is.', { fields: [noteField] }));
+    }
+    for (const d of c.definitions) {
+      const team = n.team(d.team);
+      if (c.kind === 'diverging') {
+        actions.push(settle(`use:${d.team}`, `Use ${poss(team)} everywhere`, { action: 'use', team: d.team }, `${md(c.tech)} is ${md(poss(team))} everywhere.`, {
+          tone: 'accent', ask: `Use ${poss(team)} ${c.tech} everywhere?`, hint: 'The other teams\' files and rows of it are deleted.',
+        }));
+      }
+      if (k && d.aliases.some((a) => norm(a) === k)) {
+        actions.push(settle(`unalias:${d.team}:${d.tech}`, `Take "${c.name}" off ${poss(team)} ${d.tech}`, { action: 'unalias', team: d.team, tech: d.tech }, `"${md(c.name)}" is not an alias of ${md(d.tech)} any more.`));
+      }
+      if (c.kind === 'name' && d.path) {
+        for (const t of c.techs.filter((x) => x !== d.tech)) {
+          actions.push(settle(`merge:${t}:${d.tech}`, `Merge ${t} into ${d.tech}`, { action: 'merge', from: t, into: d.tech }, `Merged ${md(t)} into ${md(d.tech)}.`, {
+            ask: `Merge ${t} into ${d.tech}?`, hint: `Every file of ${md(t)} goes, and what was labeled, followed or detected as ${md(t)} becomes ${md(d.tech)}, for good.`,
+          }));
+        }
+      }
+      actions.push(settle(`delete:${d.team}:${d.tech}`, `Delete ${poss(team)} ${d.tech}`, { action: 'delete', team: d.team, tech: d.tech }, `Deleted ${md(poss(team))} ${md(d.tech)}.`, {
+        tone: 'negative', ask: `Delete ${poss(team)} ${d.tech}?`, hint: 'Its file (or row) goes; Clef asks the others\' where they are.',
+      }));
+    }
+    // Two actions of one id (a team defines a name twice) would be one: the first stays.
+    const seen = new Set();
+    return {
+      title: techTitle(c),
+      open: !c.kept,
+      status: c.kept ? 'kept' : 'waiting',
+      askedAt: null,
+      askedBy: null,
+      body: `${what}\n\n${defs}\n\nSettling it writes the teams' catalog files as you (or the rows saved in D1). A merge also rewrites the labels, follows, rules and lobbies that name the technology that goes: that cannot be undone by reverting the file.`,
+      decidedAt: c.kept ? c.kept.at : null,
+      decidedBy: c.kept ? { email: c.kept.by } : null,
+      decision: keptDecision(c),
+      actions: actions.filter((a) => !seen.has(a.id) && seen.add(a.id)),
+    };
+  },
+};
+
+const FIELD_LABELS = {
+  name: 'channel name', group_name: 'Teams team', channel_id: 'channel id', shared_team: 'Slack Connect team', org: 'customer',
+};
+const ruleText = (x, n) => {
+  const r = x.rules[0];
+  return `${md(poss(n.team(x.team)))} rule (${md(FIELD_LABELS[r.field] || r.field)} ${code(r.pattern)}${r.source ? `, ${md(r.source)} only` : ''}, priority ${r.priority})`;
+};
+
+const ruleKind = {
+  list: (env) => ruleConflicts(env),
+  async get(env, key) {
+    return (await ruleConflicts(env)).find((c) => c.key === key) || null;
+  },
+  id: (c) => c.key,
+  describe(c, n) {
+    const count = plural(c.channels.length, 'channel');
+    const wins = [[c.b, c.b.wins], [c.a, c.a.wins]].filter(([, k]) => k)
+      .map(([x, k]) => `${n.team(x.team)} ${k === c.channels.length ? 'files them' : `files ${k}`}`).join(', ') || 'another rule files them';
+    const channels = c.channels.slice(0, SHOWN_CHANNELS).map((ch) => `- ${md(chan(ch))} (${platformOf(ch)}), filed under ${md(n.team(ch.winner))}`).join('\n')
+      + (c.channels.length > SHOWN_CHANNELS ? `\n- and ${c.channels.length - SHOWN_CHANNELS} more` : '');
+    const neither = !c.win.a.ok && !c.win.b.ok;
+    const win = (side) => {
+      const w = c.win[side];
+      const winner = c[side];
+      const loser = c[side === 'a' ? 'b' : 'a'];
+      const wn = n.team(winner.team);
+      const ln = n.team(loser.team);
+      const rule = w.empty
+        ? `${md(poss(ln))} rule matches no other channel: it goes${w.follow ? ', or becomes the follow rule' : ''}.`
+        : `${md(poss(ln))} rule leaves ${md(poss(wn))} out: its pattern becomes ${code(w.pattern)}.`;
+      return {
+        id: `win:${side}`,
+        label: `${wn} wins`,
+        tone: 'accent',
+        preview: true,
+        ask: `${wn} wins?`,
+        hint: `${md(wn)} files the channels both match. ${rule}`,
+        fields: w.follow ? [{
+          name: 'follow', label: `${ln} follows them: they are in ${poss(ln)} inbox too`, type: 'check', value: true,
+        }] : [],
+        run: (v, dryRun) => ({
+          method: 'POST',
+          path: 'rule-conflicts',
+          body: {
+            key: c.key, fingerprint: c.fingerprint, action: 'win', side, follow: Boolean(w.follow && v.follow), dryRun,
+          },
+        }),
+        previewed(a) {
+          const moves = a.moves || [];
+          const list = a.follows || [];
+          return `${moves.length ? `Moves ${plural(moves.length, 'channel')}:\n\n${movesText(moves, n)}` : 'No channel moves.'}${list.length ? `\n\n${md(ln)} follows ${plural(list.length, 'channel')}.` : ''}`;
+        },
+        done: (a, v) => `${md(wn)} files them${w.follow && v.follow ? `, ${md(ln)} follows them` : ''}.${(a.moves || []).length ? ` Re-filing ${plural(a.moves.length, 'channel')}.` : ''}`,
+      };
+    };
+    const actions = [];
+    if (!c.kept) {
+      actions.push({
+        id: 'keep',
+        label: 'Keep as it is',
+        fields: [noteField],
+        run: (v) => ({
+          method: 'POST',
+          path: 'rule-conflicts',
+          body: {
+            key: c.key, fingerprint: c.fingerprint, action: 'keep', note: v.note || undefined,
+          },
+        }),
+        done: () => 'Kept as it is.',
+      });
+    }
+    actions.push(...['a', 'b'].filter((s) => c.win[s].ok).map(win));
+    return {
+      title: `${n.team(c.a.team)} and ${n.team(c.b.team)}: rules overlap`,
+      open: !c.kept,
+      status: c.kept ? 'kept' : 'waiting',
+      askedAt: null,
+      askedBy: null,
+      body: `${ruleText(c.a, n)} and ${ruleText(c.b, n)} both match ${count}. The lowest priority decides: now ${md(wins)}.${neither ? `\n\nNeither can win by a change of its pattern: ${md(c.win.a.why)}. Change the rules on the teams' pages, or keep it as it is.` : ''}\n\n${channels}\n\nSettling it changes the rules as you, and re-files the channels it moves, as a change on a team's page does. Channels assigned by hand are in no conflict: the assignment decides them.`,
+      decidedAt: c.kept ? c.kept.at : null,
+      decidedBy: c.kept ? { email: c.kept.by } : null,
+      decision: keptDecision(c),
+      actions,
+    };
+  },
+};
+
+const KIND = {
+  channel: channelKind,
+  member: memberKind,
+  portal: portalKind,
+  merge: mergeKind,
+  bot: botKind,
+  account: accountKind,
+  tech: techKind,
+  rule: ruleKind,
+};
+
+// ---- the log and the times ---------------------------------------------------------------------
+
+/** The log of `keys` (null: of every request), oldest first, by key. */
+async function logOf(env, keys = null) {
+  const { results } = await env.DB.prepare(`SELECT id, request, type, body, person, author_name,
+      author_email, at FROM request_log
+    WHERE ${keys ? 'request IN (SELECT value FROM json_each(?1))' : "request >= 'request:' AND request < 'request;'"}
+    ORDER BY at, id`).bind(...(keys ? [JSON.stringify(keys)] : [])).all();
+  const by = new Map();
+  for (const r of results || []) {
+    by.set(r.request, [...(by.get(r.request) || []), r]);
+  }
+  return by;
+}
+
+/**
+ * The kinds without a time of their own, as `request_threads` has them, after noting what the
+ * listing found (`found`: `{ key, kind, d }`, every tracked kind's): when each was first seen
+ * waiting, and the conflicts that are gone since (`closed_at`), unless the listing is not
+ * `complete` (a kind's list failed). A conflict waiting again is open again, from then on.
+ * Writes only what changed.
+ */
+async function track(env, found, { complete = true } = {}) {
+  const { results } = await env.DB.prepare('SELECT * FROM request_threads').all();
+  const rows = new Map((results || []).map((r) => [r.request, r]));
+  const at = now();
+  const writes = [];
+  const seen = new Set();
+  for (const { key, d } of found) {
+    seen.add(key);
+    const row = rows.get(key);
+    if (!row && d.open) {
+      writes.push(env.DB.prepare(`INSERT OR IGNORE INTO request_threads (request, title, opened_at)
+        VALUES (?, ?, ?)`).bind(key, d.title, at));
+      rows.set(key, {
+        request: key, title: d.title, opened_at: at, closed_at: null,
+      });
+    } else if (row && (row.closed_at || row.title !== d.title)) {
+      writes.push(env.DB.prepare(`UPDATE request_threads SET title = ?, closed_at = NULL,
+          opened_at = CASE WHEN closed_at IS NULL THEN opened_at ELSE ? END WHERE request = ?`)
+        .bind(d.title, at, key));
+      rows.set(key, {
+        ...row, title: d.title, closed_at: null, opened_at: row.closed_at ? at : row.opened_at,
+      });
+    }
+  }
+  for (const row of complete ? rows.values() : []) {
+    const parsed = parseRequestKey(row.request);
+    if (parsed && COMPUTED.has(parsed.kind) && !seen.has(row.request) && !row.closed_at) {
+      writes.push(env.DB.prepare(`UPDATE request_threads SET closed_at = ?
+        WHERE request = ? AND closed_at IS NULL`).bind(at, row.request));
+      row.closed_at = at;
+    }
+  }
+  if (writes.length) {
+    await env.DB.batch(writes);
+  }
+  return rows;
+}
+
+// ---- threads -----------------------------------------------------------------------------------
+
+/** A request's messages: the request, its decision as its row says it, and the log. */
+function messagesOf(key, d, log, {
+  staff, me, tracked, gone = false,
+}) {
+  const author = (p, extra = {}) => ({
+    name: who(p), kind: 'person', staff: !p?.customer && staff(p?.email), ...extra,
+  });
+  const out = [];
+  const asked = d.askedAt || tracked?.opened_at || d.decidedAt || (log[0] && log[0].at) || now();
+  out.push({
+    thread: key,
+    id: 'request',
+    at: asked,
+    source: 'request',
+    author: d.askedBy ? author(d.askedBy) : { name: 'Enterprise Support', kind: 'app', staff: true },
+    // The inbox's own, with its icon (src/icons.js).
+    avatar: d.askedBy ? null : '/icon.svg',
+    body: d.body,
+    reactions: [],
+  });
+  // The row's decision, unless the log has the decisions (a bot's, an account's, a conflict's,
+  // decided here since the log began).
+  const logged = log.some((x) => x.type === 'decision');
+  if (d.decision && d.decidedAt && !logged) {
+    out.push({
+      thread: key, id: 'decision', at: d.decidedAt, source: 'request', author: { kind: 'system', name: '' }, body: d.decision, reactions: [],
+    });
+  }
+  for (const x of log) {
+    const decision = x.type === 'decision';
+    out.push({
+      thread: key,
+      id: `log-${x.id}`,
+      at: x.at,
+      source: 'request',
+      author: decision ? { kind: 'system', name: '' } : {
+        name: x.author_name || x.author_email || 'someone', kind: 'person', staff: true,
+      },
+      body: decision ? `**${md(x.author_name || x.author_email || 'Someone')}**: ${x.body}` : x.body,
+      mine: !decision && x.person === me.id,
+      person: x.person,
+      reactions: [],
+    });
+  }
+  if (gone) {
+    out.push({
+      thread: key, id: 'gone', at: tracked.closed_at, source: 'request', author: { kind: 'system', name: '' }, body: 'No longer a conflict: settled, or its rules or definitions changed.', reactions: [],
+    });
+  }
+  // The request first, whatever the times say (a decision recorded before it was asked).
+  const [first, ...rest] = out;
+  return [first, ...rest.sort((a, b) => String(a.at).localeCompare(String(b.at)))];
+}
+
+/** Whether a mail address is Adobe's. */
+const staffOf = (env) => (email) => Boolean(email) && isStaffDomain(env, email);
+
+/** An inbox entry of request `key`, as src/api.js `inbox` shapes a thread's. */
+function entryOf(key, kind, d, messages) {
+  const shown = messages.filter((m) => m.author.kind !== 'system');
+  const last = messages[messages.length - 1];
+  const lastSaid = shown[shown.length - 1];
+  const at = latest(messages.map((m) => m.at));
+  const people = [];
+  for (const m of shown) {
+    if (!people.some((p) => p.name === m.author.name) && people.length < 5) {
+      people.push({
+        name: m.author.name, staff: Boolean(m.author.staff), avatar: m.avatar || null, key: null,
+      });
+    }
+  }
+  return {
+    thread: key,
+    source: 'request',
+    org: `_request-${kind}`,
+    org_name: KIND_NAMES[kind],
+    org_type: null,
+    org_icon: null,
+    team: ADMIN_TEAM,
+    kind: 'channel',
+    channel_name: KIND_NAMES[kind],
+    title: d.title,
+    root_at: messages[0].at,
+    last_at: at,
+    any_at: at,
+    last_author: last.author.kind === 'system' ? '' : last.author.name,
+    last_staff: 1,
+    // As plain as the platforms' previews are: without the escapes of `md`.
+    last_text: (last.author.kind === 'system' ? last : lastSaid || last).body
+      .replace(/\\([\\`*_[\]<>~|])/g, '$1').slice(0, 300),
+    messages: messages.length,
+    imported: 0,
+    root_known: 1,
+    logical_thread: null,
+    permalink: null,
+    label: {
+      label_kind: 'request', urgency: 1, next_actor: d.open ? 'us' : null, resolved_p: d.open ? 0 : 1, topics: [],
+    },
+    participants: people,
+    staffPosted: true,
+    customerDomain: null,
+    reactions: [],
+    tech: [],
+    posters: [...new Set(messages.map((m) => m.person).filter(Boolean))],
+    mentioned: [],
+    signals: [],
+    resolution: { verdict: d.open ? 'open' : 'resolved', state: d.open ? 'open' : 'resolved' },
+    waiting_on: d.open ? 'us' : 'nobody',
+    draft: null,
+    members: [{ thread: key, last_at: at, any_at: at }],
+    request: { kind, status: d.status, open: d.open },
+  };
+}
+
+/** The watermarks of the requests' threads: everyone's who is staff or on the admin team. */
+async function marksOf(env, keys) {
+  if (!keys.length) {
+    return [];
+  }
+  const { results } = await env.DB.prepare(`SELECT w.person, w.thread, w.read_at, p.staff,
+      EXISTS (SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?1) AS in_team
+    FROM watermarks w JOIN people p ON p.id = w.person
+    WHERE w.thread >= 'request:' AND w.thread < 'request;'
+      AND w.thread IN (SELECT value FROM json_each(?2))`).bind(ADMIN_TEAM, JSON.stringify(keys)).all();
+  return results || [];
+}
+
+/** A gone conflict's `d`, from what `request_threads` kept of it. */
+const goneOf = (row) => ({
+  title: row.title,
+  open: false,
+  status: 'gone',
+  askedAt: row.opened_at,
+  askedBy: null,
+  body: `**${md(row.title)}**`,
+  decidedAt: row.closed_at,
+  decision: null,
+  actions: [],
+});
+
+/**
+ * GET /api/requests: the admin team's requests as entries of its inbox (`threads`, shaped as
+ * src/api.js `inbox` shapes a thread's, with `request: { kind, status, open }`), every one that
+ * waits and the latest decided of each kind, with the viewer's read state.
+ */
+export async function requestEntries(env, me) {
+  const n = await names(env);
+  const bound = portalBound(env);
+  const lists = await Promise.all(Object.entries(KIND).map(async ([kind, k]) => {
+    try {
+      return (await k.list(env, me)).map((r) => ({ kind, id: k.id(r), r }));
+    } catch (e) {
+      console.error(JSON.stringify({ route: 'requests', kind, error: e.message }));
+      return null;
+    }
+  }));
+  const items = lists.flat().filter(Boolean).map((x) => ({
+    ...x, key: requestKey(x.kind, x.id), d: KIND[x.kind].describe(x.r, n, { portalBound: bound }),
+  }));
+  // A list that failed leaves its conflicts where they were: not gone.
+  const complete = lists.every(Boolean);
+  const tracked = await track(env, items.filter((x) => TRACKED.has(x.kind)), { complete });
+  const shown = new Set(items.map((x) => x.key));
+  const gone = [...tracked.values()].filter((row) => row.closed_at && !shown.has(row.request))
+    .map((row) => ({
+      ...parseRequestKey(row.request), key: row.request, d: goneOf(row), gone: true,
+    }))
+    .filter((x) => x.kind);
+  const all = [...items, ...gone];
+  const log = await logOf(env);
+  const staff = staffOf(env);
+  const entries = all.map((x) => entryOf(x.key, x.kind, x.d, messagesOf(
+    x.key,
+    x.d,
+    log.get(x.key) || [],
+    {
+      staff, me, tracked: tracked.get(x.key), gone: x.gone,
+    },
+  )));
+  const marks = await marksOf(env, entries.map((e) => e.thread));
+  return { threads: readState(entries, marks, [], me.id) };
+}
+
+/** `{ kind, id, key, r, d }` of request `key` as it is now, or null. */
+async function findRequest(env, me, key) {
+  const parsed = parseRequestKey(key);
+  if (!parsed) {
+    return null;
+  }
+  const k = KIND[parsed.kind];
+  const r = await k.get(env, parsed.id, me);
+  const n = await names(env);
+  if (r) {
+    return {
+      ...parsed, key, r, n, d: k.describe(r, n, { portalBound: portalBound(env) }),
+    };
+  }
+  const row = await env.DB.prepare('SELECT * FROM request_threads WHERE request = ?').bind(key).first();
+  if (row && COMPUTED.has(parsed.kind)) {
+    return {
+      ...parsed,
+      key,
+      r: null,
+      n,
+      d: goneOf({ ...row, closed_at: row.closed_at || now() }),
+      gone: true,
+      tracked: row,
+    };
+  }
+  return null;
+}
+
+/** An action as the thread view gets it: what it shows, not how it runs. */
+const shownAction = (a) => Object.fromEntries(Object.entries(a)
+  .filter(([, v]) => typeof v !== 'function'));
+
+/**
+ * GET /api/thread?thread=request:…: request `key` as a thread (`thread`, `messages`, the
+ * watermarks, `request` with its `actions`), for the admin team; null when there is none.
+ */
+export async function requestThread(env, me, key) {
+  const x = await findRequest(env, me, key);
+  if (!x) {
+    return null;
+  }
+  const [logs, tracked] = await Promise.all([
+    logOf(env, [key]),
+    x.tracked ? x.tracked : env.DB.prepare('SELECT * FROM request_threads WHERE request = ?').bind(key).first(),
+  ]);
+  const messages = messagesOf(key, x.d, logs.get(key) || [], {
+    staff: staffOf(env), me, tracked, gone: x.gone,
+  });
+  const entry = entryOf(key, x.kind, x.d, messages);
+  const { results: marks } = await env.DB.prepare(`SELECT w.person, w.read_at FROM watermarks w
+    WHERE w.thread = ?`).bind(key).all();
+  return {
+    thread: entry,
+    members: [],
+    messages,
+    watermarks: (marks || []).map((w) => ({ ...w, thread: key })),
+    request: {
+      kind: x.kind,
+      kindName: KIND_NAMES[x.kind],
+      status: x.d.status,
+      open: x.d.open,
+      actions: x.d.actions.map(shownAction),
+    },
+    can_work: true,
+    can_post: true,
+  };
+}
+
+/** The values of `fields` from `given`, as each field takes them. */
+function valuesOf(fields = [], given = {}) {
+  const out = {};
+  for (const f of fields) {
+    const v = given ? given[f.name] : undefined;
+    const options = new Set((f.options || []).map((o) => o.value));
+    if (f.type === 'check') {
+      out[f.name] = v === undefined ? Boolean(f.value) : Boolean(v);
+    } else if (f.type === 'checks') {
+      out[f.name] = (Array.isArray(v) ? v : []).map(String).filter((x) => options.has(x));
+    } else if (f.type === 'select') {
+      out[f.name] = options.has(String(v)) ? String(v) : f.value;
+    } else {
+      out[f.name] = clean(v, f.max || 200);
+    }
+  }
+  return out;
+}
+
+/** Writes `body` to request `key`'s log, as `me`. */
+async function logEntry(env, me, key, type, body) {
+  const at = now();
+  await env.DB.prepare(`INSERT INTO request_log (request, type, body, person, author_name,
+      author_email, at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(key, type, body, me.id || null, me.name || null, me.email || null, at).run();
+  return at;
+}
+
+const announce = (env, key) => {
+  const parsed = parseRequestKey(key);
+  return parsed ? announceRequest(env, parsed.kind, parsed.id) : null;
+};
+
+/**
+ * POST /api/requests/note `{ key, text }`: what `me` writes in request `key`'s thread, its
+ * decision log; it is read by them up to it. Answers with the thread as it is now.
+ */
+export async function addNote(env, me, body) {
+  const key = clean(body && body.key, 600);
+  const text = clean(body && body.text, MAX_NOTE);
+  if (!text) {
+    return json({ error: 'write something' }, 400);
+  }
+  const x = await findRequest(env, me, key);
+  if (!x) {
+    return json({ error: 'no such request' }, 404);
+  }
+  const at = await logEntry(env, me, key, 'note', text);
+  await advanceWatermark(env.DB, me.id, key, at, 'post');
+  console.log(JSON.stringify({ route: 'requests', note: x.kind, by: me.id }));
+  await announce(env, key);
+  return json({ ok: true, thread: await requestThread(env, me, key) });
+}
+
+/**
+ * POST /api/requests/resolve `{ key, action, values?, dryRun? }`: decides request `key` as `me`,
+ * by one of the actions its thread offers now (`action`, its id), with the values of its fields:
+ * the admin route the action takes runs as `me` (src/admin.js). `dryRun` asks what it would do,
+ * where the action can be tried (`preview`): `{ ok, preview }`, markdown. Decided, `{ ok, done,
+ * thread }`; refused, `{ error, thread }` with the route's status.
+ */
+export async function resolveRequest(env, me, body) {
+  const key = clean(body && body.key, 600);
+  const x = await findRequest(env, me, key);
+  if (!x) {
+    return json({ error: 'no such request: it may be settled already' }, 404);
+  }
+  const action = x.d.actions.find((a) => a.id === clean(body.action, 600));
+  if (!action) {
+    return json({ error: 'that cannot be decided now: look at the request again', thread: await requestThread(env, me, key) }, 409);
+  }
+  if (action.off) {
+    return json({ error: action.off }, 409);
+  }
+  const dryRun = Boolean(body.dryRun);
+  if (dryRun && !action.preview) {
+    return json({ error: 'this cannot be tried first' }, 400);
+  }
+  const values = valuesOf(action.fields, body.values || {});
+  const missing = (action.fields || []).find((f) => f.required && !values[f.name]);
+  if (missing) {
+    return json({ error: `give the ${missing.label.toLowerCase()}` }, 400);
+  }
+  const call = action.run(values, dryRun || undefined);
+  const url = new URL(`https://opspile.internal/api/admin/${call.path}`);
+  const res = await admin(new Request(url, {
+    method: call.method,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(call.body),
+  }), env, url, me);
+  const answer = await res.json().catch(() => ({}));
+  if (dryRun) {
+    return res.ok ? json({ ok: true, preview: action.previewed(answer) })
+      : json({ error: answer.error || `could not try it (${res.status})` }, res.status);
+  }
+  if (!res.ok) {
+    await announce(env, key);
+    return json({
+      error: answer.error || `failed (${res.status})`, thread: await requestThread(env, me, key),
+    }, res.status);
+  }
+  const done = action.done(answer, values);
+  if (LOGGED.has(x.kind)) {
+    await logEntry(env, me, key, 'decision', done);
+  }
+  console.log(JSON.stringify({
+    route: 'requests', resolved: x.kind, action: action.id.split(':')[0], by: me.id,
+  }));
+  await announce(env, key);
+  return json({ ok: true, done, thread: await requestThread(env, me, key) });
+}
+
+/** Whether `me` may see the requests' threads and decide them: the admin team. */
+export const mayDecide = (me) => isAdmin(me);
