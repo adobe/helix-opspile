@@ -11,7 +11,8 @@
  */
 
 /*
- * Topics: the topic map (src/topicmap.js) for every member of an ops team, over GET /api/topics
+ * Topics: the topic map (src/topicmap.js) for every internal user (on an ops team, or `staff`
+ * on none, who find what to follow here), over GET /api/topics
  * (src/topicsapi.js), with the areas (src/areas.js) the teams author and what the viewer follows:
  * a Follow on a person, customer, area or product puts its threads in their personal view, and
  * the admin team and team managers add, rename, describe and delete areas in the panel. What
@@ -469,7 +470,7 @@ function follows(f) {
   return (state.follows.by?.[f.kind] || []).map(String).includes(String(f.target));
 }
 
-const followButton = (f, label, { strong = false } = {}) => (f && state.me.teams?.length
+const followButton = (f, label, { strong = false } = {}) => (f && (state.me.teams?.length || state.me.staff)
   ? `<button class="follow${strong && !follows(f) ? ' primary' : ''}" data-follow="${esc(f.kind)}" data-target="${esc(f.target)}" aria-pressed="${follows(f)}"
       title="${follows(f) ? `Stop following ${esc(label)}: its threads leave your personal view` : `Follow ${esc(label)}: its threads are in your personal view`}">${follows(f) ? 'Unfollow' : 'Follow'}</button>`
   : '');
@@ -687,8 +688,7 @@ function renderBar() {
   const m = map();
   $('bar').hidden = !m && !state.available;
   const teams = m ? [...new Set(m.threads.map((t) => t.team))].sort() : [];
-  const teamName = (slug) => state.me.teams?.find((t) => t.slug === slug)?.name || slug;
-  $('team').innerHTML = `<option value="">All teams</option>${teams.map((t) => `<option value="${esc(t)}"${t === state.q.team ? ' selected' : ''}>${esc(teamName(t))}</option>`).join('')}`;
+  $('team').innerHTML = `<option value="">All teams</option>${teams.map((t) => `<option value="${esc(t)}"${t === state.q.team ? ' selected' : ''}>${esc(teamLabel(t))}</option>`).join('')}`;
   $('team').disabled = !m;
   $('types').innerHTML = TYPES.map((t) => `<button data-type="${t.id}" aria-pressed="${!state.q.hide.includes(t.id)}" title="${esc(t.title)}"${m ? '' : ' disabled'}>
     <span class="dot" data-type="${t.id}"></span>${esc(t.label)}</button>`).join('');
@@ -928,8 +928,8 @@ function wire() {
   state.me = me;
   Header.user(me, Header.role(me));
   Header.init(me);
-  if (!me.teams?.length) {
-    $('body').innerHTML = `<div class="empty">The topic map is for the members of the ops teams. <a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;
+  if (!me.teams?.length && !me.staff) {
+    $('body').innerHTML = `<div class="empty">The topic map is for Adobe's people. <a href="${esc(Header.href('inbox'))}">Back to the inbox</a></div>`;
     return;
   }
   TrendView.setEsc(esc);

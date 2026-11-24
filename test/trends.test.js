@@ -266,7 +266,7 @@ describe('trends: the topics, the threads and the matches (src/trends.js)', () =
     assert.ok(queries.length >= 12 && queries.every((q) => q.filter.type === 'thread' && q.filter.at.$gte));
   });
 
-  it('is for the members of an ops team', async () => {
+  it('is for every internal user', async () => {
     const { env } = await world([...threads.slice(0, 30), threads.find((t) => t.org === 'us')], { orgs: ORGS });
     const call = async (me, method, path) => {
       const url = new URL(`https://opspile.example${path}`);
@@ -276,7 +276,9 @@ describe('trends: the topics, the threads and the matches (src/trends.js)', () =
     const member = {
       id: 3, email: 'mo@staff.example', name: 'Mo', teams: [{ slug: 'edge', role: 'member' }],
     };
-    assert.equal((await call({ ...member, teams: [] }, 'GET', '/api/topics/trends')).status, 403);
+    // Not someone on no team who is not Adobe's; staff on none, yes.
+    assert.equal((await call({ ...member, email: 'x@partner.example', teams: [] }, 'GET', '/api/topics/trends')).status, 403);
+    assert.equal((await call({ ...member, staff: true, teams: [] }, 'GET', '/api/topics/trends')).status, 200);
     const r = await call(member, 'GET', '/api/topics/trends');
     assert.equal(r.status, 200);
     assert.equal(r.body.map, null);

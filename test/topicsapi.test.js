@@ -50,11 +50,18 @@ describe('the Topics page', { skip: !hasGit() && 'git is not installed' }, () =>
           VALUES ('kb-team-${t}', 'team', '${t}', 'r', '2026-11-20T00:00:00Z')`);
       }
       const e = { DB, ARTIFACTS: srv.artifacts, STAFF_DOMAINS: 'staff.example' };
-      // Someone on no ops team (signed in from SIGNIN_DOMAINS) does not.
+      // Someone on no ops team from SIGNIN_DOMAINS who is not staff does not.
       const outsider = {
-        id: 9, email: 'x@staff.example', name: 'X', teams: [],
+        id: 9, email: 'x@partner.example', name: 'X', teams: [],
       };
       assert.equal((await call(e, outsider, 'GET', '/api/topics')).status, 403);
+      // Staff on no team do, to find what to follow, and may change nothing.
+      const insiders = [{ ...outsider, email: 'x@staff.example' }, { ...outsider, staff: true }];
+      for (const seen of await Promise.all(insiders.map((p) => call(e, p, 'GET', '/api/topics')))) {
+        assert.equal(seen.status, 200);
+        assert.deepEqual(seen.body.may, { areas: [], rebuild: false });
+      }
+      assert.equal((await call(e, insiders[0], 'POST', '/api/topics')).status, 403);
       // A member sees it, and may change nothing.
       let r = await call(e, as(MEMBER), 'GET', '/api/topics');
       assert.equal(r.status, 200);

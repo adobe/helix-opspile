@@ -198,7 +198,7 @@ const handlers = {
       });
     }
     if (pathname === '/inbox/topics') {
-      // The topic map (admin team; the API checks), under /inbox like the others.
+      // The topic map (every internal user; the API checks), under /inbox like the others.
       return new Response(TOPICS_PAGE, {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       });

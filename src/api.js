@@ -173,8 +173,8 @@ async function participants(env, keys) {
  * first), or null.
  */
 async function personWhere(env, column, value) {
-  const { results } = await env.DB.prepare(`SELECT p.id, p.name, p.email, t.slug, t.name AS team,
-      m.role
+  const { results } = await env.DB.prepare(`SELECT p.id, p.name, p.email, p.staff, t.slug,
+      t.name AS team, m.role
     FROM people p LEFT JOIN team_members m ON m.person = p.id LEFT JOIN teams t ON t.slug = m.team
     WHERE p.${column === 'id' ? 'id' : 'email'} = ? ORDER BY t.slug`).bind(value).all();
   if (!results || !results.length) {
@@ -187,6 +187,8 @@ async function personWhere(env, column, value) {
     id,
     name,
     email,
+    // Adobe's (marked staff in D1, or a mail domain of STAFF_DOMAINS), on a team or not.
+    staff: Boolean(results[0].staff) || isStaffDomain(env, email),
     teams,
     admin: teams.some((t) => t.slug === 'admin'),
     // Teams whose members and knowledge base this person manages (see migration 0018).
@@ -279,6 +281,13 @@ async function followsOf(env, me) {
   // `me` the technologies, as before; `by` the customers, people and areas.
   return { me: mine, teams, by };
 }
+
+/**
+ * Whether the viewer is internal: a member of an ops team, or staff signed in on none (from
+ * SIGNIN_DOMAINS). Not someone signed in from a SIGNIN_DOMAINS domain that is not Adobe's.
+ */
+const internal = (env, me) => (me.teams || []).length > 0
+  || Boolean(me.staff) || isStaffDomain(env, me.email);
 
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
 const inTeam = (me, teams) => memberOf(me)(teams);
@@ -1198,19 +1207,20 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     }
     return json({ error: 'GET or PUT' }, 405);
   }
-  // The Topics page's trends (src/trends.js), for every member of an ops team, as the map.
+  // The Topics page's trends (src/trends.js), for every internal user, as the map.
   if (url.pathname.startsWith('/api/topics/trends')) {
-    if (!(me.teams || []).length) {
-      return json({ error: 'trends are for the members of the ops teams' }, 403);
+    if (!internal(env, me)) {
+      return json({ error: 'trends are for Adobe\'s people' }, 403);
     }
     return trendsApi(env, me, request, url);
   }
-  // The Topics page, for every member of an ops team (src/topicsapi.js).
+  // The Topics page, for every internal user (src/topicsapi.js).
   if (url.pathname === '/api/topics') {
-    // Every team's threads, customers and people: for the members of an ops team, not someone
-    // signed in from SIGNIN_DOMAINS on none, whose inbox is their personal view only.
-    if (!(me.teams || []).length) {
-      return json({ error: 'the topic map is for the members of the ops teams' }, 403);
+    // Every team's topics, customers and people: for every internal user, on an ops team or
+    // not, to find what to follow; not for someone signed in from SIGNIN_DOMAINS who is not
+    // Adobe's. Changing areas and rebuilding the map stay the admin team's and managers'.
+    if (!internal(env, me)) {
+      return json({ error: 'the topic map is for Adobe\'s people' }, 403);
     }
     if (request.method === 'GET') {
       return topicsPage(env, me, await followsOf(env, me));
