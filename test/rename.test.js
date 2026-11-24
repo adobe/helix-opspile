@@ -373,4 +373,83 @@ describe('a renamed channel', () => {
     assert.equal(renamed, false);
     assert.equal(e.DB.sqlite.prepare('SELECT name FROM channels').get().name, 'aem-globex');
   });
+  it('moves a channel one job at a time, so the last rule change files it', async () => {
+    const e = env();
+    await ingest(e, {
+      [KEY('1.1')]: message('1.1'),
+      [KEY('1.2')]: message('1.2', { thread_ts: '1.1' }),
+      [KEY('2.1')]: message('2.1'),
+    });
+    setName(e, 'aem-acme', '2026-01-01T00:00:00Z');
+    const waits = [];
+    e.NORMALIZE.send = async (body, options) => {
+      e.queued.push(body);
+      if (options && options.delaySeconds) {
+        waits.push(options.delaySeconds);
+      }
+    };
+    const job = () => ({
+      source: 'slack',
+      tenant: 'E1',
+      channelId: 'C0TEST1',
+      threads: filed(e).map((t) => [t.thread, t.path]),
+    });
+    // The first job is held in the middle of its move.
+    const { list } = e.CHANNELS;
+    let release;
+    let held;
+    const holding = new Promise((resolve) => {
+      held = resolve;
+    });
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    e.CHANNELS.list = async (...args) => {
+      held();
+      await gate;
+      return list.apply(e.CHANNELS, args);
+    };
+    const first = quiet(() => refile(e, job()));
+    await holding;
+    // Meanwhile the channel is assigned to another team, and its job finds the first one moving.
+    e.DB.sqlite.prepare(`INSERT INTO rules (id, target, priority, source, field, pattern, value)
+      VALUES (3, 'team', 10, NULL, 'channel_id', '^C0TEST1$', 'edge')`).run();
+    e.queued.length = 0;
+    const second = await quiet(() => refile(e, job()));
+    assert.equal(second.result, 'waiting');
+    assert.deepEqual(waits, [30]);
+    assert.equal(e.queued.filter((b) => b.refile).length, 1);
+    release();
+    e.CHANNELS.list = list;
+    assert.equal((await first).team, 'helix');
+    // Once the first is done, the second runs with the rules as they are now.
+    await drainRefiles(e);
+    assert.deepEqual(filed(e).map((t) => [t.org, t.team, t.path]), [
+      ['acme', 'edge', 'channels/acme/edge/slack-C0TEST1/1.1/'],
+      ['acme', 'edge', 'channels/acme/edge/slack-C0TEST1/2.1/'],
+    ]);
+    assert.deepEqual(files(e), [
+      'channels/acme/edge/slack-C0TEST1/1.1/1.1.md',
+      'channels/acme/edge/slack-C0TEST1/1.1/1.2.md',
+      'channels/acme/edge/slack-C0TEST1/2.1/2.1.md',
+    ]);
+    const lease = e.DB.sqlite.prepare('SELECT refile_by, refile_until FROM channels').get();
+    assert.deepEqual({ ...lease }, { refile_by: null, refile_until: null });
+  });
+
+  it('takes the lease of a job that died once it has run out', async () => {
+    const e = env();
+    await ingest(e, { [KEY('1.1')]: message('1.1') });
+    setName(e, 'aem-acme', '2026-01-01T00:00:00Z');
+    const job = {
+      source: 'slack', tenant: 'E1', channelId: 'C0TEST1', threads: filed(e).map((t) => [t.thread, t.path]),
+    };
+    const lease = (until) => e.DB.sqlite
+      .prepare("UPDATE channels SET refile_by = 'dead', refile_until = ?").run(until);
+    lease(new Date(Date.now() + 60000).toISOString());
+    assert.equal((await quiet(() => refile(e, job))).result, 'waiting');
+    lease(new Date(Date.now() - 1000).toISOString());
+    assert.equal((await quiet(() => refile(e, job))).result, 'refiled');
+    assert.deepEqual(filed(e).map((t) => [t.org, t.team]), [['acme', 'helix']]);
+  });
 });
