@@ -1266,11 +1266,14 @@ describe('inbox page', () => {
     assert.equal(renders, 1);
   });
 
-  it('lets go of the threads read meanwhile only after five minutes away', () => {
-    let now = 0;
+  it('lets go of the threads read meanwhile, and reloads, only after five minutes away', () => {
+    // Not 0, which is "not away".
+    let now = 1;
     let focused = true;
     let timer = null;
     let forgets = 0;
+    let probes = 0;
+    const changed = new Set();
     const on = {};
     const { awayOrBack } = piece('// Away from the inbox', 'document.addEventListener(\'visibilitychange\'', 'awayOrBack', {
       hidden: () => false,
@@ -1295,8 +1298,13 @@ describe('inbox page', () => {
         return false;
       },
       render: () => {},
+      probeSockets: () => { probes += 1; },
+      changed,
+      GAP: 'gap',
+      state: { data: null },
     });
-    // Another window for a minute, and back: nothing is let go of.
+    // Another window for a minute, and back: nothing is let go of, nor reloaded; the sockets
+    // are asked whether they are still there.
     focused = false;
     on.blur();
     now = 60 * 1000;
@@ -1304,6 +1312,11 @@ describe('inbox page', () => {
     on.focus();
     assert.equal(timer, null);
     assert.equal(forgets, 0);
+    assert.equal(probes, 1);
+    assert.deepEqual([...changed], []);
+    // Focus again without having left: not asked again.
+    on.focus();
+    assert.equal(probes, 1);
     // Away for longer: let go of while away, and again when back (for a timer that was late).
     focused = false;
     on.blur();
@@ -1314,6 +1327,9 @@ describe('inbox page', () => {
     focused = true;
     awayOrBack();
     assert.equal(forgets, 4);
+    // And reloads, whatever was heard meanwhile: a socket may have lost it.
+    assert.equal(probes, 2);
+    assert.deepEqual([...changed], ['gap']);
   });
 
   it('outlines neighboring picked values as one, with no edge between them', () => {

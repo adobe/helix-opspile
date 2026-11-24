@@ -27,6 +27,7 @@ export default [
         ...recommended.languageOptions.globals,
         ...globals.serviceworker,
         WebSocketPair: 'readonly',
+        WebSocketRequestResponsePair: 'readonly',
       },
     },
     rules: {

@@ -2531,7 +2531,7 @@ function fakeLive(req, socket, team) {
   const drop = () => sockets.get(team)?.delete(conn);
   socket.on('close', drop);
   socket.on('error', drop);
-  readFrames(socket, (data) => handleClientMessage(team, data));
+  readFrames(socket, (data) => (data === 'ping' ? conn.send('pong') : handleClientMessage(team, data)));
 }
 
 /**
@@ -2555,7 +2555,12 @@ function relayLive(req, socket, team, b) {
   };
   socket.on('close', () => upstream.close());
   socket.on('error', () => upstream.close());
-  readFrames(socket, () => {});
+  // The room answers `ping` (src/room.js); here the relay does, as reads are not passed on.
+  readFrames(socket, (data) => {
+    if (data === 'ping') {
+      socket.write(frame('pong'));
+    }
+  });
 }
 
 function upgrade(req, socket, url) {

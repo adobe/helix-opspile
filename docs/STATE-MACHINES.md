@@ -822,10 +822,17 @@ request by its id.
 ## In the page
 
 **Socket.** connecting → open → reconnecting → banner (`listen`, `ui/inbox.js`). A socket that comes
-back has missed what its room said, so the inbox and the open thread reload.
+back has missed what its room said, so the inbox and the open thread reload. Open → asked → open,
+or replaced (`probeSockets`, `ws.probe`): when the inbox is back on screen, or the network or a
+frozen tab is, each open socket sends `ping`, which the room's runtime answers with `pong`
+(`src/room.js`, without waking it). One that has not answered after `PROBE_MS` is gone without the
+browser knowing (a computer that slept): it is dropped and connected again, which reloads as any
+socket that comes back. Reads go over HTTP while a socket is asked.
 
 **Background catch-up.** live ↔ collecting changes (`changed`, `reload`). A hidden tab notes what
-changed and reloads when it is shown.
+changed and reloads when it is shown. Back after `AWAY_MS` (tab hidden or window not focused), or
+from a frozen tab (`resume`), it reloads whether or not anything was noted (`GAP`), since what the
+rooms said meanwhile may never have arrived.
 
 **Thread list.** fresh → held in place → re-sorted (`state.list`). While `listKey` is the same, the
 rows stay where they are. Unread only lets go of the read threads it holds once the inbox has been
