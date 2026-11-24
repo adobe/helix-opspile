@@ -64,6 +64,7 @@ import { pruneDraftUndo } from './draftevents.js';
 import { sweepBackfills } from './backfill.js';
 import { pruneExpertEvents } from './expertevents.js';
 import { prunePostKeys } from './postkeys.js';
+import { pruneTranslations } from './translate.js';
 
 /** The one Discord poller object (src/poller.js). */
 const poller = (env) => env.DISCORD.get(env.DISCORD.idFromName('poller'));
@@ -375,6 +376,9 @@ const handlers = {
     ctx.waitUntil(prunePostKeys(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', postKeys: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', postKeys: 'error', error: e.message }))));
+    ctx.waitUntil(pruneTranslations(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', translations: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', translations: 'error', error: e.message }))));
     ctx.waitUntil(pruneExpertEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', expertEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', expertEvents: 'error', error: e.message }))));

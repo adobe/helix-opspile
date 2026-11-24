@@ -22,6 +22,7 @@ import { threadAreaStatements, threadTechStatements } from './follows.js';
 import { resolveTech, techMoves } from './catalog.js';
 import { questionKeys } from './techid.js';
 import { areaNames, areasFor } from './areas.js';
+import { LANGUAGE_QUESTION, languageOf } from './translate.js';
 
 /**
  * Thread labels (Clef, a decision model) and facts (the teams' extraction rules, plus Clairic,
@@ -710,8 +711,15 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
 
   const state = stateOf(thread, messages, rx.by);
   const [clef, clairic, title] = await Promise.all([
-    // The topics on their own, so the tech stack's entries do not move their answers.
-    askClef(env, state, { ...QUESTIONS, ...areaQuestions(areas) }, techQuestions(tech)),
+    // The topics on their own, so the tech stack's entries do not move their answers, and the
+    // language on its own too (src/translate.js), so that it moves none.
+    askClef(
+      env,
+      state,
+      { ...QUESTIONS, ...areaQuestions(areas) },
+      techQuestions(tech),
+      LANGUAGE_QUESTION,
+    ),
     env.AI.run(CLAIRIC, {
       model: 'clairic', state, fields: FIELDS, reference_date: now.toISOString().slice(0, 10),
     }),
@@ -727,6 +735,7 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
   const [nextActor, nextActorP] = choice('next_actor');
   const [kind, kindP] = choice('kind');
   const topics = topicsOf(a, areas);
+  const language = languageOf(a);
   const shown = techOf(tech, a, found.tech);
   // Of what it shows, what it is about: a second call, only for those (src/label.js aboutOf).
   const asked = tech.filter((t) => shown[t.tech] !== undefined);
@@ -748,13 +757,14 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
     env.DB.prepare('SELECT area FROM thread_areas WHERE thread = ?').bind(key).all(),
   ]);
   const label = env.DB.prepare(`INSERT INTO labels (thread, next_actor, next_actor_p, kind, kind_p,
-      urgency, resolved_p, labeled_through, model, labeled_at, title, topics, tech, about)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      urgency, resolved_p, labeled_through, model, labeled_at, title, topics, tech, about,
+      language, language_p)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (thread) DO UPDATE SET next_actor = excluded.next_actor,
       next_actor_p = excluded.next_actor_p, kind = excluded.kind, kind_p = excluded.kind_p,
       urgency = excluded.urgency, resolved_p = excluded.resolved_p, topics = excluded.topics,
-      tech = excluded.tech, about = excluded.about,
-      labeled_through = excluded.labeled_through, model = excluded.model,
+      tech = excluded.tech, about = excluded.about, language = excluded.language,
+      language_p = excluded.language_p, labeled_through = excluded.labeled_through, model = excluded.model,
       labeled_at = excluded.labeled_at, title = COALESCE(excluded.title, labels.title)`)
     .bind(
       key,
@@ -771,6 +781,8 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
       topics ? JSON.stringify(topics) : null,
       JSON.stringify(shown),
       about ? JSON.stringify(about) : null,
+      language.language,
+      language.p,
     );
   // The label and what the thread shows by index (`thread_tech`) at once.
   await env.DB.batch([label, ...threadTechStatements(env.DB, key, shown, about || {}),
@@ -786,6 +798,7 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
     next_actor: nextActor,
     kind,
     topics: topics ? Object.keys(topics) : [],
+    language: language.language,
     facts: loose.length,
     title: Boolean(title),
     // From the history import (src/history.js): nobody is told (src/normalizer.js).

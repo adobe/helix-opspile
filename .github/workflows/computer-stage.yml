@@ -114,6 +114,7 @@ on:
       - 'src/threads.js'
       - 'src/toolrequests.js'
       - 'src/topicindex.js'
+      - 'src/translate.js'
       - 'src/ui-markdown.js'
       - 'src/vectors.js'
   workflow_dispatch:
