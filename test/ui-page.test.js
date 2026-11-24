@@ -1258,6 +1258,52 @@ describe('inbox page', () => {
     assert.match(rows, /title="\$\{esc\(\(f\.hint && f\.hint\[v\]\) \|\| label\)\}/);
   });
 
+  it('counts what is unread still on the filter cards in unread only, the rows staying put', () => {
+    // Unread only keeps the threads the list has shown, read ones too (keptUnread): a row's count
+    // went down only on the next reload, not as you stepped through the list reading them.
+    const state = {
+      unread: true, sel: {}, not: {}, list: { held: new Set() },
+    };
+    let threads = [];
+    const kept = (t) => t.unread || state.list.held.has(t.thread);
+    const { facetRows } = piece('function facetRows', 'const cardFacets', 'facetRows', {
+      state,
+      listed: () => threads,
+      passes: (t) => !state.unread || kept(t),
+      unreadNow: (t) => t.unread,
+      valuesOf: (f, t) => [f.value(t)],
+      youCount: (t) => (t.unread ? t.you || 0 : 0),
+      youTitle: (n) => `${n}`,
+      statusOf: () => 'quiet',
+      rowLabel: (f, v) => v,
+      notButton: () => '',
+      bar: () => '',
+      esc: (s) => s,
+    });
+    const customer = { id: 'customer', value: (t) => t.org };
+    const counts = () => [...facetRows(customer).matchAll(/data-v="([^"]+)"[\s\S]*?<span class="n">(\d+)<\/span>/g)]
+      .map((m) => `${m[1]}=${m[2]}`);
+    const t = (thread, org, more = {}) => ({
+      thread, org, unread: true, ...more,
+    });
+    threads = [t('a1', 'acme'), t('a2', 'acme'), t('a3', 'acme'), t('g1', 'globex'), t('g2', 'globex')];
+    state.list.held = new Set(threads.map((x) => x.thread));
+    assert.deepEqual(counts(), ['acme=3', 'globex=2']);
+    // You read two of acme's: its count goes down, and it stays above globex until the list
+    // lets go of them.
+    threads[0].unread = false;
+    threads[1].unread = false;
+    assert.deepEqual(counts(), ['acme=1', 'globex=2']);
+    threads[2].unread = false;
+    assert.deepEqual(counts(), ['acme=0', 'globex=2']);
+    // After a while away (forgetRead), the list lets go of them, and so does the card.
+    state.list.held = new Set(['g1', 'g2']);
+    assert.deepEqual(counts(), ['globex=2']);
+    // Without unread only, a card counts every thread, read or not.
+    state.unread = false;
+    assert.deepEqual(counts(), ['acme=3', 'globex=2']);
+  });
+
   it('looks at the list again as time passes, while it is on screen', () => {
     let tick = null;
     let every = 0;

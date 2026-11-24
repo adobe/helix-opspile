@@ -849,7 +849,9 @@ rooms said meanwhile may never have arrived.
 **Thread list.** fresh → held in place → re-sorted (`state.list`). While `listKey` is the same, the
 rows stay where they are. Unread only lets go of the read threads it holds once the inbox has been
 away (tab hidden or window not focused) for `AWAY_MS` (`forgetRead`, `away`): never the open thread,
-and not after a shorter look elsewhere.
+and not after a shorter look elsewhere. The filter cards hold the same rows, in the same order, but
+count what is unread now (`unreadNow`, `facetRows`): a read thread the list still holds is not
+counted, so a row's count goes down as you read, without its row moving.
 
 **Customer column.** placed → held → let go (`state.column`, `columnPlace` and `forgetColumn` in
 `ui/inbox.js`). The simple personal view's customers go by their place: the highest they have had

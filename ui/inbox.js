@@ -1275,12 +1275,19 @@ const rowLabel = (f, v) => (f.labelFn && f.labelFn(v)) || (f.label && f.label[v]
 function facetRows(f) {
   const all = listed();
   const pool = all.filter((t) => passes(t, f.id));
+  // Unread only keeps the threads the list has shown, read ones too (keptUnread). A row of them
+  // stays where it is (`held`, its order) while you read, as the list's rows do, but its count
+  // is of what is unread still: it goes down as you step through them, not on the next reload.
+  const held = new Map();
   const counts = new Map();
   const mix = new Map(); // value -> { red, yellow, green, none }
   const unread = new Set(); // values with threads the viewer has not read
   const mentions = new Map(); // value -> messages for the viewer they have not read (youCount)
   for (const t of pool) {
+    const counted = !state.unread || unreadNow(t);
     for (const v of valuesOf(f, t)) {
+      held.set(v, (held.get(v) || 0) + 1);
+      if (!counted) continue;
       counts.set(v, (counts.get(v) || 0) + 1);
       if (t.unread) unread.add(v);
       const you = youCount(t);
@@ -1290,18 +1297,19 @@ function facetRows(f) {
       mix.set(v, m);
     }
   }
-  if (f.multi) counts.delete('(none)');
-  for (const v of state.sel[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
-  for (const v of state.not[f.id] || []) if (!counts.has(v)) counts.set(v, 0);
-  let rows = [...counts];
+  if (f.multi) held.delete('(none)');
+  for (const v of state.sel[f.id] || []) if (!held.has(v)) held.set(v, 0);
+  for (const v of state.not[f.id] || []) if (!held.has(v)) held.set(v, 0);
+  let rows = [...held];
   const order = typeof f.order === 'function' ? f.order() : f.order;
-  if (f.multi) for (const v of order || []) if (!counts.has(v)) counts.set(v, 0);
+  if (f.multi) for (const v of order || []) if (!held.has(v)) held.set(v, 0);
   rows.sort((a, b) => (order ? (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99) : b[1] - a[1]));
   const on = state.sel[f.id] || new Set();
   const off = state.not[f.id] || new Set();
   // Past the limit, the values picked or excluded stay, so they can be clicked off again.
   if (f.limit) rows = rows.filter(([v], i) => i < f.limit || on.has(v) || off.has(v));
   if (f.group) rows.sort((a, b) => f.groups.indexOf(f.group(a[0])) - f.groups.indexOf(f.group(b[0])));
+  rows = rows.map(([v]) => [v, counts.get(v) || 0]);
   const max = Math.max(1, ...rows.map((r) => r[1]));
   let group = null;
   return rows.map(([v, n]) => {
@@ -2386,10 +2394,15 @@ function newList(key = null, open = null) {
   };
 }
 /**
- * Whether unread only keeps `t`: unread, with an answer in its sidebar you have not seen (the
- * purple badge), shown by the list already, or open when the list was opened.
+ * Whether `t` is unread only's now: unread, or with an answer in its sidebar you have not seen
+ * (the purple badge). What the filter cards count in unread only (facetRows).
  */
-const keptUnread = (t) => t.unread || sideCount(t) > 0 || state.list.held.has(t.thread) || t.thread === state.list.open;
+const unreadNow = (t) => t.unread || sideCount(t) > 0;
+/**
+ * Whether unread only keeps `t`: unread now, shown by the list already, or open when the list was
+ * opened.
+ */
+const keptUnread = (t) => unreadNow(t) || state.list.held.has(t.thread) || t.thread === state.list.open;
 const setsKey = (o) => Object.entries(o).filter(([, s]) => s?.size).map(([id, s]) => [id, [...s].sort()])
   .sort((a, b) => a[0].localeCompare(b[0]));
 const listKey = () => JSON.stringify([scopeOf(state.data), state.data.as || null, state.unread,
