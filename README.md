@@ -573,7 +573,7 @@ case-insensitive regular expression and `value` may use `$1`. For example
 A rule of target `follow` files nothing: every follow rule that matches a channel shares it with
 its team (`value`), unless the channel is filed under that team, as a share by hand does
 (`src/followrules.js` writes them to `channel_teams`, after every rule change and on the cron).
-A follow rule may also have the field `org` (migration 0095): it matches the org the other rules
+A follow rule may also have the field `org` (migration 0097): it matches the org the other rules
 file a channel under (`^acme$`), so the team follows that customer, every channel of it, now and
 later. Its managers and the admin team follow a customer, or no more, on its page in Customers
 (`PUT /api/admin/org-follows`).

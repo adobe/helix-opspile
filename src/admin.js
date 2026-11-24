@@ -43,7 +43,12 @@ import {
   recordOutcome,
   reopenRequest, settleMoved, settleRequests,
 } from './requests.js';
+import {
+  claimMemberRequest, closeMemberRequest, getMemberRequest, listMemberRequests, memberOpenCount,
+  recordMemberOutcome, reopenMemberRequest, settleMemberRequests,
+} from './memberrequests.js';
 import { classifyChannels, clefOf, suggestionsFor } from './suggest.js';
+import { dismissMember, memberSuggestions, suggestsMembers } from './membersuggest.js';
 import { unassignedSuggestions } from './orgassign.js';
 import {
   dismissGroup, teamGroup, teamGroups, wizardRules,
@@ -82,10 +87,16 @@ import {
  *   holds it; a channel another team holds is shared with the new one instead.
  *
  * Team managers (migration 0018) use the same API for the teams they manage, and only for
- * their members: they see those teams, add and remove people, and promote or demote them.
+ * their members: they see those teams, add and remove people, and promote or demote them, and
+ * see who is likely on the team and is not yet (`member-suggestions`, src/membersuggest.js), to
+ * add or dismiss.
  * They also search every channel, and ask the admin team to assign one to their team (a
  * request, migration 0028, src/requests.js); the admin team confirms the request, which runs
  * the same assignment it makes by hand, or declines it. Everything else is for the admin team.
+ *
+ * Thread agents ask for people to be added to a team (a membership request, migration 0096,
+ * src/memberrequests.js), for whoever asked them in a sidebar: an admin or one of the team's
+ * managers confirms one, which adds the person as the team's page does, or declines it.
  *
  * Customers ask too, from the customer portal (src/portalrequests.js): a lobby there asks for
  * a channel. The admin team opens one (`portal/open`: the portal makes the channel, and it is
@@ -731,12 +742,14 @@ async function requestList(env, me, { status, count }) {
   // And the bots nobody said whose they are (src/ourbots.js), the admin team's too.
   const bots = isAdmin(me) ? await unreviewedCount(env) : 0;
   const open = await openCount(env, teams) + await portalOpenCount(env, teams)
+    + await memberOpenCount(env, teams)
     + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length + merges + bots;
   if (count) {
     return json({ open });
   }
   return json({
     requests: await listRequests(env, { teams, status: ['open', 'decided'].includes(status) ? status : null }),
+    memberRequests: await listMemberRequests(env, { teams, limit: 50 }),
     portal: await listPortalRequests(env, { teams }),
     portalBound: portalBound(env),
     conflicts,
@@ -1118,6 +1131,7 @@ async function listTeams(env, me) {
   // the customers waiting in the portal, theirs to open a channel for.
   const scope = everything ? null : managedTeams(me);
   const requests = await openCount(env, scope) + await portalOpenCount(env, scope)
+    + await memberOpenCount(env, scope)
     + (everything ? await openConflictCount(env)
       + (await ruleConflicts(env, { kept: false })).length + await openMergeCount(env)
       + await unreviewedCount(env) : 0);
@@ -1144,6 +1158,8 @@ async function team(env, slug, me) {
     channels: await channelList(env, rules, { team: slug }),
     // What the team's managers asked the admin team for, and what came of it.
     requests: t ? await listRequests(env, { teams: [slug], limit: 50 }) : [],
+    // The people asked for on the team (thread agents, for whoever asked them), and the answers.
+    memberRequests: t ? await listMemberRequests(env, { teams: [slug], limit: 50 }) : [],
     // The customers in the portal who picked a technology the team follows.
     portal: t ? await listPortalRequests(env, { teams: [slug], limit: 50 }) : [],
     portalBound: portalBound(env),
@@ -1307,6 +1323,8 @@ async function addMember(env, body) {
   // Identities with this email belong to the person from now on.
   await env.DB.prepare('UPDATE identities SET person = ? WHERE email = ? AND person IS NULL')
     .bind(person.id, email).run();
+  // On the team now: no dismissal of them from its suggestions stays behind.
+  await dismissMember(env, teamSlug, email, { dismiss: false });
   return json({ ok: true, person: { ...person, role: member.role } });
 }
 
@@ -1469,9 +1487,54 @@ async function removeMember(env, me, body) {
       return bad('the admin team keeps at least one member');
     }
   }
+  const who = await env.DB.prepare(`SELECT p.email FROM team_members m JOIN people p ON p.id = m.person
+    WHERE m.team = ? AND m.person = ?`).bind(teamSlug, person).first();
   const { meta } = await env.DB.prepare('DELETE FROM team_members WHERE team = ? AND person = ?')
     .bind(teamSlug, person).run();
-  return meta.changes ? json({ ok: true, self: person === me.id }) : json({ error: 'not a member' }, 404);
+  if (!meta.changes) {
+    return json({ error: 'not a member' }, 404);
+  }
+  // Taken off the team: not suggested to it again (src/membersuggest.js) until someone says so.
+  if (who && who.email && suggestsMembers(teamSlug)) {
+    await dismissMember(env, teamSlug, who.email, { by: me.email || String(me.id), why: 'removed' })
+      .catch((e) => console.error(JSON.stringify({ route: 'admin', dismissal: 'not recorded', error: e.message })));
+  }
+  return json({ ok: true, self: person === me.id });
+}
+
+/**
+ * GET /api/admin/member-suggestions?team=: the people likely on the team who are not yet, for its
+ * managers and the admin team to add (src/membersuggest.js). Not for the admin team, which holds
+ * every channel no rule files.
+ */
+async function suggestedMembers(env, slug) {
+  if (!suggestsMembers(slug)) {
+    return bad('the admin team holds every channel no rule files: nobody is suggested for it');
+  }
+  if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
+    return json({ error: 'no such team' }, 404);
+  }
+  return json(await memberSuggestions(env, slug));
+}
+
+/**
+ * POST /api/admin/member-suggestions/dismiss `{ team, email }`: not suggested to the team again;
+ * DELETE suggests them again.
+ */
+async function dismissSuggestedMember(env, me, body, dismiss) {
+  const slug = clean(body.team);
+  const email = clean(body.email).toLowerCase();
+  if (!suggestsMembers(slug) || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return bad('give the team and the person\'s email address');
+  }
+  if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
+    return json({ error: 'no such team' }, 404);
+  }
+  const changed = await dismissMember(env, slug, email, { by: me.email || String(me.id), dismiss });
+  console.log(JSON.stringify({
+    route: 'admin', memberSuggestion: dismiss ? 'dismissed' : 'restored', team: slug, by: me.id,
+  }));
+  return json({ ok: true, changed });
 }
 
 // ---- orgs -------------------------------------------------------------------------------
@@ -1699,6 +1762,101 @@ async function withAccessSync(env, why, pending) {
   return json({ ...body, access }, res.status);
 }
 
+// ---- membership requests ----------------------------------------------------------------
+
+/**
+ * An open membership request that `me` may decide (an admin, or a manager of its team), or the
+ * answer that says why not.
+ */
+async function openMemberRequest(env, me, id) {
+  const r = await getMemberRequest(env, id);
+  if (!r) {
+    return { error: json({ error: 'no such request' }, 404) };
+  }
+  if (!managesTeam(me, r.team)) {
+    return { error: json({ error: 'you do not manage this team' }, 403) };
+  }
+  if (r.status !== 'open') {
+    return { error: json({ error: `this request is ${r.status} already`, request: r }, 409) };
+  }
+  return { request: r };
+}
+
+/** Whether the person of a request is on its team. */
+async function onTeam(env, { team: slug, person }) {
+  return Boolean(await env.DB.prepare(`SELECT 1 FROM team_members m JOIN people p ON p.id = m.person
+    WHERE m.team = ? AND p.email = ?`).bind(slug, person.email).first());
+}
+
+/**
+ * POST /api/admin/member-requests/confirm `{ id }`: an admin or one of the team's managers grants
+ * a membership request (src/memberrequests.js). The person is added as on the team's page (a
+ * member, a manager in a self-managed team), and the sign-in allow list follows; the request is
+ * confirmed with who confirmed it, `added`, or `member` when they were on the team already.
+ */
+async function confirmMemberRequest(env, me, body) {
+  const { request, error } = await openMemberRequest(env, me, body.id);
+  if (error) {
+    return error;
+  }
+  // Claimed first: whoever closes it decides. A failed addition opens it again.
+  if (!await claimMemberRequest(env, me, request.id)) {
+    return json({
+      error: 'decided meanwhile', closed: false, request: await getMemberRequest(env, request.id),
+    }, 409);
+  }
+  const was = request.person.member;
+  let res;
+  try {
+    res = await withAccessSync(env, 'member added', addMember(env, {
+      team: request.team, email: request.person.email, name: request.person.name,
+    }));
+  } catch (e) {
+    if (await onTeam(env, request)) {
+      await recordMemberOutcome(env, request.id, 'added');
+    } else {
+      await reopenMemberRequest(env, request.id);
+    }
+    throw e;
+  }
+  const answer = await res.json();
+  if (!res.ok) {
+    return json({ ...answer, request: await reopenMemberRequest(env, request.id) }, res.status);
+  }
+  console.log(JSON.stringify({
+    route: 'admin', memberRequest: 'confirmed', by: me.id, id: request.id, team: request.team,
+  }));
+  return json({
+    ...answer,
+    closed: true,
+    request: await recordMemberOutcome(env, request.id, was ? 'member' : 'added'),
+  });
+}
+
+/**
+ * POST /api/admin/member-requests/decline `{ id, reason? }`: an admin or one of the team's
+ * managers turns a membership request down.
+ */
+async function declineMemberRequest(env, me, body) {
+  const { request, error } = await openMemberRequest(env, me, body.id);
+  if (error) {
+    return error;
+  }
+  const closed = await closeMemberRequest(env, me, request.id, {
+    status: 'declined', reason: clean(body.reason, 500) || null,
+  });
+  return closed.closed ? json({ ok: true, ...closed }) : json({ error: 'decided meanwhile', ...closed }, 409);
+}
+
+/** POST /api/admin/members, answering the open membership requests for the person with it. */
+async function addMemberSettling(env, me, body) {
+  const res = await addMember(env, body);
+  if (res.ok) {
+    await settleMemberRequests(env, me, { team: body.team, email: body.email });
+  }
+  return res;
+}
+
 /**
  * The routes of `/api/admin/*` for every member of an ops team, not only the admin team and
  * team managers: the duplicate customers they see, asking for a merge (src/orgmerge.js), and the
@@ -1720,9 +1878,13 @@ export async function admin(request, env, url, me) {
   const teamOf = m === 'GET' ? q('team') || q('slug') : clean(body.team);
   const forManagers = ['GET teams', 'GET team', 'GET people', 'POST members', 'DELETE members', 'PUT members',
     'GET channels', 'GET requests', 'POST requests', 'DELETE requests', 'PUT follows',
-    'POST portal/open', 'POST swap', 'PUT org-follows', 'POST release', 'DELETE share'];
-  // Every manager may search channels; the requests they see are their teams' (`requests`).
-  const anyTeam = ['GET teams', 'GET channels', 'GET requests'];
+    'POST portal/open', 'POST swap', 'PUT org-follows', 'POST release', 'DELETE share',
+    'GET member-suggestions', 'POST member-suggestions/dismiss', 'DELETE member-suggestions/dismiss',
+    'POST member-requests/confirm', 'POST member-requests/decline'];
+  // Every manager may search channels; the requests they see are their teams' (`requests`), and
+  // a membership request is decided by its own team's managers (`openMemberRequest`).
+  const anyTeam = ['GET teams', 'GET channels', 'GET requests', 'POST member-requests/confirm',
+    'POST member-requests/decline'];
   // Duplicate customers: anyone on a team sees those of the customers it owns, and asks for a
   // merge (src/orgmerge.js checks which).
   if (!isAdmin(me) && !STAFF_ROUTES.includes(route)) {
@@ -1739,9 +1901,12 @@ export async function admin(request, env, url, me) {
     case 'PUT teams': return updateTeam(env, body);
     case 'DELETE teams': return withAccessSync(env, 'team deleted', deleteTeam(env, body));
     case 'GET team': return team(env, q('slug'), me);
-    case 'POST members': return withAccessSync(env, 'member added', addMember(env, body));
+    case 'POST members': return withAccessSync(env, 'member added', addMemberSettling(env, me, body));
     case 'PUT members': return setRole(env, body);
     case 'GET people': return people(env, clean(url.searchParams.get('q')), q('team'));
+    case 'GET member-suggestions': return suggestedMembers(env, q('team'));
+    case 'POST member-suggestions/dismiss': return dismissSuggestedMember(env, me, body, true);
+    case 'DELETE member-suggestions/dismiss': return dismissSuggestedMember(env, me, body, false);
     case 'GET team-groups': return json(await teamGroups(env));
     case 'POST team-wizard': return teamWizard(env, me, body);
     case 'POST team-wizard/dismiss': return await dismissGroup(env, clean(body.prefix).toLowerCase(), me.email || String(me.id))
@@ -1766,6 +1931,8 @@ export async function admin(request, env, url, me) {
     case 'DELETE requests': return withdrawRequest(env, me, body);
     case 'POST requests/confirm': return confirmRequest(env, me, body);
     case 'POST requests/decline': return declineRequest(env, me, body);
+    case 'POST member-requests/confirm': return confirmMemberRequest(env, me, body);
+    case 'POST member-requests/decline': return declineMemberRequest(env, me, body);
     case 'POST portal/open': return openPortal(env, me, body);
     case 'POST portal/decline': return declinePortal(env, me, body);
     case 'POST conflicts': return settleConflict(env, me, body);
