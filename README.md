@@ -133,6 +133,8 @@ Nothing below is committed; set it on the Worker.
 | `ACCESS_ACCOUNT_ID`, `ACCESS_APP_ID`, `ACCESS_POLICY_ID` | var | Optional: the Cloudflare account, Access application and allow policy of `/inbox` and `/api`. With them, the policy's email list follows the ops teams (staff members only), after every membership change and on the cron |
 | `ACCESS_API_TOKEN` | secret | API token with *Access: Apps and Policies Write*, for that sync. Required when `ACCESS_APP_ID` is set. With *Access: Audit Logs Read* too, the COGS rollup counts the account's Access seats (`ACCESS_ACCOUNT_ID`; see "COGS") |
 | `SIGNIN_DOMAINS` | var | Optional, comma-separated mail domains (usually the staff domains): **no-team mode**. Anyone with an email there may sign in without being on an ops team, and has the personal view (see "Inbox and Access"). The sync above adds an email-domain include for each to the policy (and never takes one off: remove it in Access after unsetting this) |
+| `FEEDBACK_REPO` | var | Optional: the GitHub repository (`owner/name`) the agents' `send_feedback` files issues in (label `agent-feedback`), for the people who build opspile to work on the next day. With `FEEDBACK_GITHUB_TOKEN`; without both, agents have no `send_feedback`. It may be public: the feedback never names the case, and only a private repository's issues link to the thread. See "Thread agents" |
+| `FEEDBACK_GITHUB_TOKEN` | secret | A fine-grained GitHub token with *Issues: Read and write* on `FEEDBACK_REPO` only, which files the feedback. Required when `FEEDBACK_REPO` is set. A repository secret: CI's deploy uploads it with the version |
 | `MS_CLIENT_ID` | var | Application (client) id of the Entra app |
 | `SLACK_CLIENT_ID` | var | Client id of the opspile Slack app |
 | `SLACK_JOIN_TEAMS` | var | Optional, comma-separated Slack workspace (team) ids: the app joins every public channel there by itself, a new one when it is created and the rest on the cron (40 a run). Needs the bot scope `channels:join` and the `channel_created` and `channel_unarchive` events. Private channels still need an invite; channels the rules mark `ignore` are left out |
@@ -390,6 +392,13 @@ GitHub repositories the agents may read are rows in `agent_repos`, data like the
 (`scope` is `all`, `team` or `org`). The cron mirrors them into Artifacts within 20 minutes.
 `GET /diag/agent?name=<thread key>` shows what an agent is doing (and its MCP servers); the
 admin team sees everything it did with the MCP tool `get_thread_trace`.
+
+**Feedback.** With `FEEDBACK_REPO` and `FEEDBACK_GITHUB_TOKEN` set, agents have
+`send_feedback`: what would make their work better (a tool that failed or misled them, something
+they needed, instructions that did not fit, or what someone asked them in the sidebar to pass
+on) becomes an issue labelled `agent-feedback` in that repository, or a comment on an open one,
+to work on the next day. Nothing of the case goes there (see ARCHITECTURE, "Thread agents"); its
+thread is in D1: `SELECT thread FROM agent_feedback WHERE id = '<fb_… from the issue>'`.
 
 **MCP servers.** Each ops team and each customer can have MCP servers for its agents, added on
 the team's or the customer's page (Teams or Customers, **Tools and MCP servers**; whoever may

@@ -357,6 +357,15 @@ before the mark moves, and a schedule whose `mark` is not the wake-up's is stale
 Due, it leaves the list before the agent is told, so it wakes it once; an agent turned off since
 drops it unsaid. At most five wait.
 
+**Agent feedback.** kept → filed, or given up (`agent_feedback`, `src/agent/feedback.js`). The
+row is written before GitHub is asked, with that try counted in `attempts`; `filed_at` (and the
+issue it went to) is written last, after the issue or comment exists. A failed try keeps its
+`error` and the row stays open: the cron (`sweepFeedback`) tries again the rows over five minutes
+old, each claimed first by the `attempts` it read (`WHERE attempts = ?`), up to five tries and
+for a week; after that it stays kept, unfiled. A row given an `issue` that is no longer an open
+feedback issue when it is filed becomes a new issue instead. A crash between the issue and
+`filed_at` files it twice; the footer's `fb_…` says which.
+
 **Agent turn.** working → done or failed. Worked out from the transcript (`src/agent/turn.js`). A turn
 that stopped half way with no run pending counts as failed after 15 minutes. A finished one is kept
 in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thread`: written a moment
