@@ -17,7 +17,7 @@ import { render } from '../src/channels.js';
 import { refile } from '../src/refile.js';
 import { messageVectorId, threadVectorId, vectorizeThread } from '../src/vectors.js';
 import {
-  MIN_SIMILAR, QUERY_PREFIX, snippet, terms, vectorFilters,
+  MIN_SIMILAR, QUERY_PREFIX, snippet, terms, textFilters, TEXT_IN, VECTOR_IN, vectorFilters,
 } from '../src/search.js';
 import { d1 } from './d1.js';
 import { fakeBucket, quiet } from './fakes.js';
@@ -163,6 +163,31 @@ describe('search: words and snippets', () => {
     assert.ok(filters.length > 2);
     assert.deepEqual(filters.slice(1).flatMap((f) => f.channel.$in), channels);
     filters.forEach((f) => assert.ok(JSON.stringify(f).length <= 2048));
+  });
+
+  it('asks the vectors for at most 100 values in an $in, however short they are', () => {
+    // Short values fit many more than 100 into 2 KB; Vectorize refuses such a filter.
+    const channels = Array.from({ length: 250 }, (_, i) => `c${i}`);
+    const teams = Array.from({ length: 120 }, (_, i) => `t${i}`);
+    const filters = vectorFilters(teams, channels);
+    filters.map((f) => (f.team && f.team.$in) || (f.channel && f.channel.$in) || [f.team])
+      .forEach((values) => assert.ok(values.length <= VECTOR_IN));
+    assert.deepEqual(filters.filter((f) => f.team).flatMap((f) => f.team.$in || [f.team]), teams);
+    assert.deepEqual(filters.filter((f) => f.channel).flatMap((f) => f.channel.$in), channels);
+    assert.equal(VECTOR_IN, 100);
+  });
+
+  it('asks the full text for at most 40 values in an $in', () => {
+    assert.deepEqual(textFilters(['helix'], []), [{ team: 'helix' }]);
+    assert.deepEqual(textFilters(['helix', 'edge'], ['a']), [
+      { team: { $in: ['helix', 'edge'] } }, { channel: { $in: ['a'] } },
+    ]);
+    // 41 shared channels: AI Search refuses one $in of them.
+    const tags = Array.from({ length: 41 }, (_, i) => `tag${i}`);
+    const filters = textFilters(['helix'], tags);
+    assert.deepEqual(filters.map((f) => (f.channel ? f.channel.$in.length : 0)), [0, 40, 1]);
+    assert.deepEqual(filters.slice(1).flatMap((f) => f.channel.$in), tags);
+    assert.equal(TEXT_IN, 40);
   });
 });
 
