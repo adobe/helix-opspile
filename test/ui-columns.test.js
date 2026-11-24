@@ -70,7 +70,7 @@ describe('wide screens', () => {
   });
 
   it('flows the filters into 2, 3 and 4 columns, as many as their width has room for', () => {
-    assert.match(PAGES['inbox.html'], /<section id="filters" aria-label="Filters"><div id="facets"><\/div><\/section>/);
+    assert.match(PAGES['inbox.html'], /<section id="filters" aria-label="Filters"><div class="offview up" id="offview-up"><\/div><div id="facets"><\/div><div class="offview down" id="offview-down"><\/div><\/section>/);
     assert.match(js, /const box = \$\('facets'\);/);
     assert.doesNotMatch(js, /\$\('filters'\)\.(innerHTML|children|__html)/);
     assert.match(css, /#facets \{ display: contents; \}/);

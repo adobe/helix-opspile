@@ -291,6 +291,27 @@ main.rail #filters .fr .lab { max-width: 0; transition: opacity var(--spectrum-a
 @media (prefers-reduced-motion: reduce) {
   main.rail #filters, main.rail #filters *, main.rail.railopen #filters * { transition: none !important; }
 }
+/*
+ * Filters set out of view (syncOffView in ui/inbox.js): a hint at the column's top or bottom
+ * edge. Its box is empty and keeps to that edge as the column scrolls (sticky), its gap to the
+ * cards taken back; the hint hangs off it over the cards, so showing it moves nothing. Folded to
+ * the rail it is its arrow and how many, as wide as the rail; it slides out with the cards.
+ */
+.offview { position: sticky; z-index: 2; height: 0px; display: flex; pointer-events: none; }
+.offview.up { top: 0px; align-items: flex-start; margin-bottom: calc(-1 * var(--spectrum-spacing-200)); }
+.offview.down { bottom: 0px; align-items: flex-end; margin-top: calc(-1 * var(--spectrum-spacing-200)); }
+.offview > button { pointer-events: auto; display: inline-flex; align-items: center; flex: none; min-width: 0px; }
+.offview > .ov-go { flex: 0 1 auto; }
+.offview .ov-say { min-width: 0px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.offview .ov-n { display: none; }
+main.rail .offview { padding-inline-start: var(--spectrum-spacing-75); }
+main.rail .offview > .ov-go { width: calc(var(--rail) - var(--spectrum-spacing-75) * 2); justify-content: center; }
+main.rail .offview :is(.ov-say, .ov-more), main.rail .offview > .ov-x { display: none; }
+main.rail .offview .ov-n { display: inline; }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .offview > .ov-go { width: auto; justify-content: flex-start; }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .offview :is(.ov-say, .ov-more) { display: inline; }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .offview > .ov-x { display: inline-flex; }
+:is(main.rail #filters:hover, main.rail.railopen #filters, main.rail #filters:has(:focus-visible)) .offview .ov-n { display: none; }
 
 .t.enter { animation: push-in var(--spectrum-animation-duration-700) ease-out; overflow: hidden; }
 /* How the rows move while the list changes under them (moveRows in ui/inbox.js): a row slides
@@ -1677,6 +1698,33 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 }
 .spectrum .fr .bar { height: var(--spectrum-progress-bar-thickness-medium); border-radius: calc(var(--spectrum-progress-bar-thickness-medium) / 2); }
 .spectrum .fr .bar.stack { gap: var(--spectrum-border-width-100); }
+/* A hint of filters set out of view: a picked row's look (its tint and its outline), raised
+   over the cards it hangs over, and the \00D7 that clears them joined to it, as a split button. */
+.spectrum .offview > button {
+  gap: var(--spectrum-text-to-visual-75);
+  min-height: var(--spectrum-component-height-75);
+  margin: 0px;
+  margin-block: var(--spectrum-spacing-75);
+  padding: 0px var(--spectrum-spacing-100);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-blue-900);
+  background: var(--s2-row-sel);
+  box-shadow: var(--s2-elevated);
+  font-size: var(--spectrum-font-size-75);
+  color: var(--spectrum-neutral-content-color-default);
+  cursor: pointer;
+  transition: background-color var(--s2-ease);
+}
+.spectrum .offview > button:hover { background: var(--s2-row-sel-hover); }
+.spectrum .offview > .ov-go { border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .offview > .ov-go:has(+ .ov-x) { border-start-end-radius: 0px; border-end-end-radius: 0px; }
+.spectrum .offview > .ov-x { border-inline-start: 0; border-start-end-radius: var(--spectrum-corner-radius-100); border-end-end-radius: var(--spectrum-corner-radius-100);
+  padding: 0px var(--spectrum-spacing-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .offview > .ov-x:hover { color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .offview .s2-chevron.up { rotate: 180deg; }
+.spectrum .offview .ov-say b { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .offview .ov-out { text-decoration: line-through; }
+.spectrum .offview :is(.ov-n, .ov-more) { font-variant-numeric: tabular-nums; font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .offview .ov-more { color: var(--spectrum-neutral-subdued-content-color-default); }
 /* Unread mentions of you: S2's NotificationBadge (accent, white figures, a pill). */
 .spectrum .fr .men, .spectrum #threads .count .filt b {
   min-width: var(--spectrum-component-height-50);
