@@ -124,25 +124,24 @@ globalThis.CustomerView = (() => {
     const partner = m.partner ? `<span class="tag tv-partner" title="${esc(`Of ${m.partner}, a partner`)}">${esc(m.partner)}</span>` : '';
     // Drawn as a team's members are, and the inbox's profile card (ui/person.js): an area is
     // `tag:<id>` on the Topics page, a technology `product:tech:<id>`, a person `person:<id>`.
-    const knows = [
-      m.areas.length ? `<dt>Asks about</dt><dd>${m.areas.map((a) => chip(a.name, a.threads, { href: ctx.topicHref(`tag:${a.id}`) })).join('')}</dd>` : '',
-      m.tech.length ? `<dt>Products</dt><dd>${m.tech.map((t) => chip(t.name, t.threads, { cls: 'tech', href: ctx.topicHref(`product:tech:${t.id}`) })).join('')}</dd>` : '',
-    ].join('');
-    // Their profile in its knowledge base (their Contact) under who they are, as a team member's
-    // is on the team's; a Contact without a description is a link at the card's foot.
+    // Their profile in its knowledge base (their Contact), as a team member's is on the team's; a
+    // Contact without a description is a link at the card's foot.
     const href = m.profile && ctx.kbHref(m.profile.path);
     const profile = m.profile ? Person.profile([{
       team: p.org.slug, teamName: nameOf(p), description: m.profile.description, href,
     }]) : '';
-    const keys = href && !m.profile.description ? `<dl class="ps-keys"><dt>Contact</dt><dd><a class="tv-contact" href="${esc(href)}" title="Their Contact in the knowledge base">In the knowledge base</a></dd></dl>` : '';
-    const name = link(m.id ? ctx.topicHref(`person:${m.id}`) : null, esc(m.name || 'Someone'), { title: m.id ? 'Their topics and products on the Topics page' : '' });
-    return `<article class="tv-person ps-card">
-      <header>${face(m.name, m.avatar, 'big')}<div class="who"><b>${name}</b>${partner}${m.title ? `<span class="sub">${esc(m.title)}</span>` : ''}</div></header>
-      ${profile}
-      ${Person.freq(m.name, m, p.weeks.length)}
-      ${knows ? `<dl class="ps-knows">${knows}</dl>` : '<p class="sub tv-none">Nothing Clef tagged in their threads yet.</p>'}
-      ${keys}
-    </article>`;
+    const foot = href && !m.profile.description ? `<dl class="ps-keys"><dt>Contact</dt><dd><a class="tv-contact" href="${esc(href)}" title="Their Contact in the knowledge base">In the knowledge base</a></dd></dl>` : '';
+    return Person.card(m, {
+      face: face(m.name, m.avatar, 'big'),
+      name: link(m.id ? ctx.topicHref(`person:${m.id}`) : null, esc(m.name || 'Someone'), { title: m.id ? 'Their topics and products on the Topics page' : '' }),
+      badge: partner,
+      title: m.title,
+      weeks: p.weeks.length,
+      label: 'Asks about',
+      profile,
+      foot,
+      ctx,
+    });
   }
 
   // ---- a vendor's ----------------------------------------------------------------------------

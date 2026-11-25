@@ -101,10 +101,12 @@ describe('a customer\'s overview, drawn', () => {
     assert.match(card, /<a href="\/inbox\/topics\?sel=tag%3Acdn" class="ps-chip"[^>]*>Caching<\/a>/);
     assert.match(card, /<a href="\/inbox\/topics\?sel=product%3Atech%3Afastly" class="ps-chip tech"/);
     assert.match(card, /<b><a href="\/inbox\/topics\?sel=person%3A5"[^>]*>Sam &lt;Reyes&gt;<\/a><\/b>/);
-    // Their profile (their Contact in its knowledge base) under who they are, as a team member's.
+    // Their profile (their Contact in its knowledge base) after what every card has, as a team
+    // member's.
     assert.match(card, /<div class="ps-profile">\s*<p>Owns the &lt;launch&gt; date\.<\/p><a href="\/kb\/contacts\/sam-reyes\.md" class="ps-src"[^>]*>Profile on ACME<\/a><\/div>/);
-    assert.ok(card.indexOf('ps-profile') < card.indexOf('ps-freq'));
+    assert.ok(card.indexOf('ps-freq') < card.indexOf('ps-profile'));
     assert.ok(!card.includes('ps-keys'));
+    assert.match(card, /<dt>Asks about<\/dt>/);
   });
 
   it('marks a partner\'s person, and leaves a name without a person unlinked', () => {
