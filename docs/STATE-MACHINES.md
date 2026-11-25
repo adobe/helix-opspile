@@ -370,6 +370,14 @@ for a week; after that it stays kept, unfiled. A row given an `issue` that is no
 feedback issue when it is filed becomes a new issue instead. A crash between the issue and
 `filed_at` files it twice; the footer's `fb_…` says which.
 
+**Computer's browser session.** none → made → ended (`browser-session` in the agent's storage,
+`browserHost` in `src/agent/browser.js`). The first CDP connection of a computer's program makes
+a Chromium session on Browser Run and keeps its id; every later one connects to it, after an
+eviction too. Browser Run ends it ten minutes after its last connection, which nobody is told:
+the next connection it refuses forgets the id and makes another, once, and a second refusal
+fails the connection. Connections at once share one making (the promise is set before anything
+is awaited). A new image ends it (`DELETE`, and the id goes).
+
 **Agent turn.** working → done or failed. Worked out from the transcript (`src/agent/turn.js`). A turn
 that stopped half way with no run pending counts as failed after 15 minutes. A finished one is kept
 in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thread`: written a moment

@@ -165,7 +165,8 @@ Nothing below is committed; set it on the Worker.
 | `PORTAL` | service | Optional: the `PortalPlatform` entrypoint of the [customer portal](#customer-portal)'s Worker, on the same account; the deploy binds it when `PORTAL_WORKER` names the Worker (`helix-opspile-portal`). With it the inbox posts, edits, reacts, uploads files and opens channels in the portal, and shows the files and pictures the portal keeps; without it, portal threads have no reply box |
 | `MEMBERSHIP_SLACK_CHANNEL` | var | Optional: the Slack channel where membership requests are posted for the relay (its #general) |
 | `MEMBERSHIP_SLACK_BOT` | var | Optional: the relay's bot user id, which those posts mention |
-| `BROWSER_RUN_TOKEN` | secret | Account API token with *Browser Run Write* only, for the global `browser` MCP server (Cloudflare's hosted Browser Run one). Required when `AGENT_MODEL` is set |
+| `BROWSER_RUN_TOKEN` | secret | Account API token with *Browser Run Write* only, for the global `browser` MCP server (Cloudflare's hosted Browser Run one) and the computers' browser (the `browser` image: `playwright-cli` over CDP to Browser Run, `src/agent/browser.js`). Required when `AGENT_MODEL` is set |
+| `BROWSER_RUN_ACCOUNT` | var | Optional: the account of that token, for the computers' browser; the deploy fills in `CLOUDFLARE_ACCOUNT_ID`. Without either, the `browser` image has no browser (its programs are answered 503) |
 | `FLUFFYJAWS_ISSUER` | var | Optional: FluffyJaws' Okta authorization server (its issuer, `https://<okta org>/oauth2/<server id>`), for the global `fluffyjaws` MCP server. Without it the server is not set up |
 | `FLUFFYJAWS_CLIENT_ID` | var | Optional: opspile's Okta client there, a native (public) OIDC app with authorization code, PKCE and refresh tokens, whose sign-in redirect URI is `<PUBLIC_ORIGIN>/api/kb/mcp/oauth/callback`; it asks for `openid profile email offline_access`. With it, a member of the admin team **connects** FluffyJaws in the editor, and the agents act as them there |
 | `FLUFFYJAWS_SERVICE_CLIENT_ID` | var | Optional: a FluffyJaws service app instead (an Okta service app registered with FluffyJaws, client credentials, scope `fluffyjaws`). With `FLUFFYJAWS_SERVICE_SECRET` it wins over the connected person: agents call FluffyJaws as `X-FluffyJaws-End-User: automation` |
@@ -910,6 +911,15 @@ curl localhost:8788 -d '{"command":"sleep 9","timeout":2}'
 curl localhost:8788/uploads -d '{"a.log":"line 1\nERROR boom\n"}'   # the thread's uploads
 curl localhost:8788/shell -d '{}'                                     # what the agent is told
 curl 'localhost:8788?thread=other' -d '{"command":"ls"}'              # another agent
+```
+
+The `browser` image's browser is Browser Run's, so it needs a token: put `BROWSER_RUN_TOKEN`
+(*Browser Run Write*) and `BROWSER_RUN_ACCOUNT` into `scripts/dev-computer/.dev.vars` (not
+committed). Without them `playwright-cli` runs, and finds no browser (503):
+
+```sh
+curl localhost:8788 -d '{"image":"browser","timeout":60,"command":"playwright-cli open https://www.aem.live/ && playwright-cli snapshot | head"}'
+curl localhost:8788 -d '{"image":"browser","command":"playwright-cli resize 390 844; playwright-cli screenshot --filename=m.png"}'
 ```
 
 Use it for a new version of `@ai-ecoverse/slicc-kernel`, or for a new image, layer or program

@@ -49,6 +49,7 @@ import {
 import {
   CURL_HOME, CURLRC, gatewayFetch, imageFor, imageSpec, KERNEL_ENV,
 } from './kernel.js';
+import { browserConfigured, browserHost, hasBrowser } from './browser.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { forward } from './secrets.js';
@@ -347,6 +348,7 @@ export class ThreadAgent extends Agent {
     this.computerReady = false;
     this.booting = undefined;
     this.imageInfo = null;
+    await this.endBrowser();
     if (kernel) {
       kernel.terminate();
     }
@@ -390,6 +392,47 @@ export class ThreadAgent extends Agent {
       this.computerReady = true;
     }
     return ws;
+  }
+
+  /**
+   * The browser of the computer (src/agent/browser.js): Browser Run, with its session's id in
+   * this object's storage, so that a computer evicted meanwhile finds its tabs again.
+   */
+  browserHost() {
+    const { storage } = this.ctx;
+    return browserHost(this.env, {
+      store: {
+        get: () => storage.get('browser-session'),
+        put: (id) => storage.put('browser-session', id),
+        delete: () => storage.delete('browser-session'),
+      },
+    });
+  }
+
+  /**
+   * Serves the kernel's CDP (`SLICC_CDP_URL`, ws://127.0.0.1:9222) from Browser Run, for an
+   * image with the browser's programs (`hasBrowser`) where this deployment has Browser Run
+   * (`browserConfigured`): through a client of its own, attached for as long as the kernel
+   * runs. Without it, the programs are told no browser is attached (503).
+   */
+  async serveBrowser(kernel, image) {
+    if (!browserConfigured(this.env) || !hasBrowser(image)) {
+      return;
+    }
+    const host = this.browserHost();
+    const client = await attachKernel(await kernel.connect(), { locks: null });
+    await client.serveCdp((request) => host.hook(request));
+    this.cdp = { host, client };
+  }
+
+  /** Ends the computer's browser, with its kernel: the session and the client that served it. */
+  async endBrowser() {
+    const { cdp } = this;
+    this.cdp = null;
+    if (cdp) {
+      await cdp.client.close().catch(() => {});
+      await cdp.host.close().catch(() => {});
+    }
   }
 
   /** The answer to a request of the kernel's programs: the gateway's (src/agent/secrets.js). */
@@ -460,7 +503,9 @@ export class ThreadAgent extends Agent {
           imageSpec(image, IMAGE_ROOT),
           imageDriver(this.env.IMAGES, tree),
         ));
+        await this.serveBrowser(kernel, image);
       } catch (e) {
+        await this.endBrowser();
         kernel.terminate();
         throw e;
       }
@@ -469,6 +514,7 @@ export class ThreadAgent extends Agent {
         kernel: 'booted',
         image: image.name,
         layers: image.layers.length,
+        browser: Boolean(this.cdp),
         ms: Date.now() - started,
       }));
       return kernel;

@@ -659,6 +659,10 @@ describe('the agent\'s switchable tools', () => {
     const github = await guide(shellOf(images[2]));
     assert.match(github, /, qjs, dot \(Graphviz\), gh\. curl reaches the internet;/);
     assert.match(github, /gh \(GitHub CLI\) reads GitHub: .* It needs \$GH_TOKEN, a secret the team keeps for api\.github\.com: without it gh does not run .* Use it to read: creating, commenting on or merging anything on GitHub is for people\./);
+    const browser = await guide(shellOf(images.find((i) => i.name === 'browser')));
+    assert.match(browser, /, playwright-cli\. curl reaches the internet;/);
+    assert.match(browser, / playwright-cli drives a browser, Chromium on Cloudflare Browser Run, signed in nowhere\. Each command is a process of its own, and the browser keeps its tabs/);
+    assert.doesNotMatch(base, /playwright-cli/);
     const data = await guide(shellOf(images[1]));
     assert.match(data, /curl, dig, host, nslookup, openssl, git, qjs, dot \(Graphviz\), sqlite3, strings\. curl reaches the internet;/);
     for (const text of [base, data]) {
