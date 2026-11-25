@@ -87,7 +87,8 @@ describe('the computer\'s browser (Browser Run over CDP)', () => {
       put: async (id) => kept.set('id', id),
       delete: async () => kept.delete('id'),
     };
-    const host = browserHost(ENV, { fetch: run.fetch, store });
+    const used = [];
+    const host = browserHost(ENV, { fetch: run.fetch, store, used: (ms) => used.push(ms) });
     const [a, b] = await quiet(() => Promise.all([host.hook({}), host.hook({ runtime: 'chromium' })]));
     assert.equal(run.sessions, 1);
     assert.equal(kept.get('id'), 's1');
@@ -99,6 +100,12 @@ describe('the computer\'s browser (Browser Run over CDP)', () => {
     assert.ok(run.sockets.every((s) => s.accepted));
     assert.ok(a !== b);
     assert.equal(await host.session(), 's1');
+    // How long each held the browser is counted, once, however it ends.
+    a.close();
+    run.sockets[1].emit('close', { code: 1000, reason: 'done' });
+    a.close();
+    assert.equal(used.length, 2);
+    assert.ok(used.every((ms) => ms >= 0));
 
     // Another object (an evicted one) finds the session in the store.
     const again = browserHost(ENV, { fetch: run.fetch, store });

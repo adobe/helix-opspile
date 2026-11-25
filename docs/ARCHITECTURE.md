@@ -2986,12 +2986,15 @@ where the deployment has `BROWSER_RUN_TOKEN` (*Browser Run Write*) and an accoun
 
 - **How it connects.** The kernel serves CDP to its programs at `SLICC_CDP_URL`
   (`ws://127.0.0.1:9222/devtools/browser/<id>`, and `/json/version`), the port the wasm
-  `playwright-cli` dials. Each connection goes to the hook of a client the agent's object
-  attaches when the kernel boots (`serveBrowser`: `client.serveCdp`), which opens a WebSocket of
+  `playwright-cli` dials. Each connection goes to the kernel's `cdp` hook, which the agent's
+  object gives it when it boots an image with the programs (`browserFor`), and which opens a WebSocket of
   the Worker's to `wss://api.cloudflare.com/client/v4/accounts/<account>/browser-run/devtools/browser…`
   with the token in its `Authorization`, and relays the messages both ways. The token never enters
   the computer. An image without the programs, or a deployment without Browser Run, serves none:
-  the programs are answered 503, no CDP host.
+  the programs are answered 503, no CDP host; a hook that fails (Browser Run refused, a
+  `--runtime` there is none of) is answered 502 with why, and a connection Browser Run closes
+  is closed (1011) with its reason. How long each connection held the browser is counted for
+  COGS as Browser Run's `browser_ms`, as the MCP server's calls are.
 - **One Chromium per computer.** Every `playwright-cli` command is a process and a connection of
   its own, and a new connection to `/devtools/browser` would be a new browser. So the first one
   makes a session (`POST …/devtools/browser?keep_alive=600000`) and every connection is to
@@ -3046,7 +3049,9 @@ choice before each delivery, as it follows its tools (`syncTools`; docs/STATE-MA
     (openssl), `js` (qjs), `git`, `formats` (yq, html2markdown, file), `data` (sqlite3,
     strings) and `browser` (playwright-cli, `@ai-ecoverse/slicc-cdp`, without its curlwright; below,
     "The computer's browser"). `base` is the first eight, and
-    `data` is `from: 'base'` with `data`, `browser` with `browser`. A package's other files a program needs are named
+    `data` is `from: 'base'` with `data`, and `github` with `github`. Each of the three has an
+    image with the browser too, its own layers and `browser` on top: `browser` (from `base`),
+    `data-browser` and `github-browser`. They replace the global `browser` MCP server. A package's other files a program needs are named
     in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's
     magic; openssl's `etc/ssl`, its configuration and Mozilla's roots).
     An image names what the agent is told it has (`tools`), and the build fails if that names

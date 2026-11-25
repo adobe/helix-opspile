@@ -434,6 +434,8 @@ export class ThreadAgent extends Agent {
   browserHost() {
     const { storage } = this.ctx;
     return browserHost(this.env, {
+      // Browser Run's time, for COGS (src/cogs/meter.js), as the browser MCP server's is.
+      used: (ms) => this.env.meter?.add('browser_run', 'browser_ms', '', ms),
       store: {
         get: () => storage.get('browser-session'),
         put: (id) => storage.put('browser-session', id),
@@ -443,27 +445,25 @@ export class ThreadAgent extends Agent {
   }
 
   /**
-   * Serves the kernel's CDP (`SLICC_CDP_URL`, ws://127.0.0.1:9222) from Browser Run, for an
-   * image with the browser's programs (`hasBrowser`) where this deployment has Browser Run
-   * (`browserConfigured`): through a client of its own, attached for as long as the kernel
-   * runs. Without it, the programs are told no browser is attached (503).
+   * The CDP host of the kernel about to boot (its `cdp` option: `SLICC_CDP_URL`,
+   * ws://127.0.0.1:9222) from Browser Run, for an image with the browser's programs
+   * (`hasBrowser`) where this deployment has Browser Run (`browserConfigured`); else none, and
+   * the programs are told no browser is attached (503). A host that fails answers them 502.
    */
-  async serveBrowser(kernel, image) {
+  browserFor(image) {
     if (!browserConfigured(this.env) || !hasBrowser(image)) {
-      return;
+      return {};
     }
     const host = this.browserHost();
-    const client = await attachKernel(await kernel.connect(), { locks: null });
-    await client.serveCdp((request) => host.hook(request));
-    this.cdp = { host, client };
+    this.cdp = { host };
+    return { cdp: (request) => host.hook(request) };
   }
 
-  /** Ends the computer's browser, with its kernel: the session and the client that served it. */
+  /** Ends the computer's browser, with its kernel: its Chromium session. */
   async endBrowser() {
     const { cdp } = this;
     this.cdp = null;
     if (cdp) {
-      await cdp.client.close().catch(() => {});
       await cdp.host.close().catch(() => {});
     }
   }
@@ -504,6 +504,8 @@ export class ThreadAgent extends Agent {
         sql: storage.sql,
         sqlite: { transaction: (fn) => storage.transactionSync(fn) },
         commands: { append: [IMAGE_COMMANDS] },
+        // The browser, for an image with playwright-cli (src/agent/browser.js).
+        ...this.browserFor(image),
         // curl's configuration (CURL_HOME), and tar's options.
         env: KERNEL_ENV,
         // How much of a Dynamic Worker's 128 MB the kernel fills with processes: by default
@@ -536,7 +538,6 @@ export class ThreadAgent extends Agent {
           imageSpec(image, IMAGE_ROOT),
           imageDriver(this.env.IMAGES, tree),
         ));
-        await this.serveBrowser(kernel, image);
       } catch (e) {
         await this.endBrowser();
         kernel.terminate();

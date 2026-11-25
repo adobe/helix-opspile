@@ -14,9 +14,10 @@
  * The browser of an agent's computer: Cloudflare Browser Run, over the Chrome DevTools
  * Protocol. The kernel serves CDP to its programs at `ws://127.0.0.1:9222` (`SLICC_CDP_URL`),
  * where `playwright-cli` (@ai-ecoverse/slicc-cdp, the `browser` layer of
- * scripts/computer-images.mjs) find it, and hands every connection to the hook of an attached
- * client (`serveCdp`, src/agent/agent.js). The hook here opens a WebSocket of the Worker's to
- * Browser Run with BROWSER_RUN_TOKEN, which never enters the computer.
+ * scripts/computer-images.mjs) find it, and hands every connection to its `cdp` hook
+ * (`browserFor`, src/agent/agent.js). The hook here opens a WebSocket of the Worker's to Browser
+ * Run with BROWSER_RUN_TOKEN, which never enters the computer. How long each connection held the
+ * browser is counted for COGS (`used`: Browser Run's `browser_ms`).
  *
  * Chromium is the default: one browser session per computer, made with the first connection
  * (`POST …/devtools/browser`, kept alive KEEP_ALIVE_MS after the last one), so that each
@@ -54,9 +55,17 @@ const toText = (data) => (typeof data === 'string' ? data : new TextDecoder().de
  * A Worker's WebSocket as the kernel's CdpConnection: `send`, `onmessage`, `onclose`, `close`.
  * What arrives before the kernel set `onmessage` waits for it.
  */
-export function cdpConnection(ws) {
+export function cdpConnection(ws, { ended: done = () => {} } = {}) {
   let onmessage = null;
   let closed = false;
+  const opened = Date.now();
+  let counted = false;
+  const count = () => {
+    if (!counted) {
+      counted = true;
+      done(Date.now() - opened);
+    }
+  };
   const waiting = [];
   const conn = {
     send(message) {
@@ -75,6 +84,7 @@ export function cdpConnection(ws) {
     },
     onclose: null,
     close() {
+      count();
       if (!closed) {
         closed = true;
         try {
@@ -94,6 +104,7 @@ export function cdpConnection(ws) {
     }
   });
   const ended = (reason) => {
+    count();
     const first = !closed;
     closed = true;
     if (first || conn.onclose) {
@@ -109,12 +120,13 @@ export function cdpConnection(ws) {
 /**
  * The CDP host of a computer: `{ hook, close, session }`. `hook` is the kernel's `CdpHook`;
  * `close` ends the Chromium session (a terminated kernel's), and `session` says which it is.
- * `fetch` is the Worker's (a test's fake). `store` (`get`, `put`, `delete`: the agent's
+ * `fetch` is the Worker's (a test's fake); `used(ms)` is told how long each connection held the
+ * browser. `store` (`get`, `put`, `delete`: the agent's
  * storage) keeps the session's id, so that the computer finds its tabs again after its object
  * was evicted, while the session lives.
  */
 export function browserHost(env, {
-  fetch = globalThis.fetch, keepAlive = KEEP_ALIVE_MS, store = null,
+  fetch = globalThis.fetch, keepAlive = KEEP_ALIVE_MS, store = null, used = () => {},
 } = {}) {
   const root = `${API}/${browserAccount(env)}/browser-run/devtools/browser`;
   const auth = { authorization: `Bearer ${env.BROWSER_RUN_TOKEN}` };
@@ -139,7 +151,7 @@ export function browserHost(env, {
       throw await failure(res, 'refused the connection');
     }
     res.webSocket.accept();
-    return cdpConnection(res.webSocket);
+    return cdpConnection(res.webSocket, { ended: used });
   }
 
   async function acquire() {
