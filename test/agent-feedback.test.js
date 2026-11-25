@@ -33,8 +33,9 @@ const REPO = 'example-owner/example-repo';
 
 function env(vars = {}) {
   const DB = d1({ people: [BO], teams: [{ slug: 'helix', name: 'Helix ops' }] });
-  DB.sqlite.exec(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author)
-      VALUES ('slack', 'E1', 'C1', '1.1', '${KEY}', '2026-10-22T00:00:00Z', 'Wile Coyote');
+  DB.sqlite.exec(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author, counted)
+      VALUES ('slack', 'E1', 'C1', '1.1', '${KEY}', '2026-10-22T00:00:00Z', 'Wile Coyote', 1),
+        ('slack', 'E1', 'C1', '1.2', '${KEY}', '2026-10-22T00:01:00Z', 'Deploy Watcher', 0);
     INSERT INTO sidebar_messages (id, thread, role, person, body, at)
       VALUES ('sb_1', '${KEY}', 'person', 2, 'tell them the search is slow', '2026-10-22T01:00:00Z')`);
   return {
@@ -196,6 +197,13 @@ describe('agent: send_feedback', () => {
       [{ text: 'see https://docs.example/page' }, /an address of a site/],
       [{ text: 'the user U0123ABCD9 could not be found' }, /a Slack id/],
       [{ title: 'read_thread fails on slack:E9:C9:2.2' }, /a thread key|\(a name from the case\)/],
+      [{ text: 'Wile asked me to look' }, /"Wile" \(a name from the case\)/],
+      [{ text: 'Builder said the search is slow' }, /"Builder" \(a name from the case\)/],
+      [{ text: 'what the Rockets team set up' }, /"Rockets" \(a name from the case\)/],
+      [{ text: 'their site customer-site.ai is down' }, /"customer-site\.ai" \(a host name\)/],
+      [{ text: 'the page main--site--owner.aem.live fails' }, /"main--site--owner\.aem\.live" \(a host name\)/],
+      [{ text: 'message 456789012345678901 could not be read' }, /a Discord id/],
+      [{ text: 'message 1792584999.000900 could not be read' }, /a Slack message id/],
     ];
     for (const [args, why] of tries) {
       // eslint-disable-next-line no-await-in-loop
@@ -206,6 +214,10 @@ describe('agent: send_feedback', () => {
     }
     assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
     assert.equal(leak('Adobe Experience Manager', ['adobe-internal']), null);
+    // Files, the platforms' own hosts, a bot's name word by word and common words pass.
+    const fine = 'stack.md and src/agent/tools.js, Node.js, api.github.com and aem.live; a Deploy'
+      + ' step, the coyote in lower case, e.g. a will, and 1.2.3';
+    assert.equal(leak(fine, { names: ['Deploy Watcher'], parts: ['Wile', 'Coyote', 'Will'] }), null);
   });
 
   it('refuses a bad kind, title or text, and more than three a thread a day', async () => {

@@ -43,6 +43,7 @@ const SWEEP_BATCH = 10;
 const VISIBILITY_TTL_MS = 60 * 60 * 1000;
 const MAX_LISTED = 30;
 const DAY_MS = 24 * 3600 * 1000;
+const TIMEOUT_MS = 10 * 1000;
 
 const API = 'https://api.github.com';
 const REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
@@ -67,6 +68,8 @@ export function feedbackConfigured(env) {
 async function github(env, path, { method = 'GET', body } = {}) {
   const res = await fetch(`${API}/repos/${env.FEEDBACK_REPO}${path}`, {
     method,
+    // In the agent's turn: a GitHub that hangs must not hold it. What fails is kept for the cron.
+    signal: AbortSignal.timeout(TIMEOUT_MS),
     headers: {
       accept: 'application/vnd.github+json',
       authorization: `Bearer ${env.FEEDBACK_GITHUB_TOKEN}`,
@@ -127,49 +130,108 @@ export function openFeedbackText(list) {
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const words = (s) => new RegExp(`(^|[^\\p{L}\\p{N}])${escape(s)}($|[^\\p{L}\\p{N}])`, 'iu');
 
-// What gives a case away whatever its words: addresses, links and the platforms' ids.
+// What gives a case away whatever its words: addresses and the platforms' ids. Host names are
+// checked on their own (`HOST`).
 const PATTERNS = [
   [/[^\s@<>()]+@[^\s@<>()]+\.[a-z]{2,}/i, 'an email address'],
-  [/\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|net|org|io|live|page|site|cloud|de|co|uk)\b/i, 'an address of a site'],
+  [/\bhttps?:\/\/|\bwww\./i, 'an address of a site'],
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, 'an id (a GUID)'],
   [/\b19:[^\s]+@thread\./i, 'a Teams id'],
   [/\b[CDGUTWE](?=[A-Z0-9]*\d)[A-Z0-9]{8,12}\b/, 'a Slack id'],
+  [/\b\d{10}\.\d{6}\b/, 'a Slack message id'],
+  [/\b\d{17,20}\b/, 'a Discord id'],
   [/\b(?:slack|teams|discord|portal):[^\s]+/i, 'a thread key'],
 ];
 
+// A host name: labels joined by dots, the last one of letters. Any ending: a customer's site is
+// as likely on .fr or .ai as on .com.
+const HOST = /(?<![\p{L}\p{N}_-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}(?![\p{L}\p{N}_-])/giu;
+// What looks like a host but is a file (`stack.md`, `tools.js`, `Node.js`).
+const FILE_ENDINGS = new Set(['md', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'json', 'dot', 'html',
+  'htm', 'css', 'yml', 'yaml', 'toml', 'txt', 'csv', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'svg',
+  'webp', 'xml', 'sh', 'py', 'sql', 'zip', 'docx', 'xlsx', 'pptx', 'log', 'env', 'har', 'wasm']);
+// The public hosts of the tools and platforms themselves, never a customer's.
+const KNOWN_HOSTS = new Set(['github.com', 'api.github.com', 'api.githubcopilot.com',
+  'raw.githubusercontent.com', 'adobe.com', 'experience.adobe.com', 'aem.live', 'aem.page',
+  'hlx.live', 'hlx.page', 'slack.com', 'api.slack.com', 'discord.com', 'microsoft.com',
+  'graph.microsoft.com', 'teams.microsoft.com', 'login.microsoftonline.com', 'cloudflare.com',
+  'api.cloudflare.com', 'workers.dev', 'amazonaws.com', 'npmjs.com', 'example.com']);
+
+/** The first host name in the text that is not a file's or a known public one, if any. */
+export function hostIn(textValue) {
+  for (const [match] of String(textValue || '').matchAll(HOST)) {
+    const host = match.toLowerCase();
+    if (!FILE_ENDINGS.has(host.split('.').pop()) && !KNOWN_HOSTS.has(host)) {
+      return host;
+    }
+  }
+  return null;
+}
+
+// Words of a name that say nothing of whose it is ("Acme Support": "Support").
+const COMMON = new Set(['the', 'and', 'for', 'team', 'support', 'admin', 'bot', 'app', 'ops',
+  'adobe', 'inc', 'ltd', 'llc', 'gmbh', 'corp', 'group', 'company', 'service', 'services', 'cloud',
+  'experience', 'manager', 'microsoft', 'slack', 'teams', 'discord', 'github', 'global',
+  'international', 'digital', 'solutions', 'systems', 'partner', 'customer', 'external']);
+
+/** The words of a name that may stand for it alone: a first name, a last name, "Acme". */
+const partsOf = (name) => String(name || '').split(/\s+/)
+  .map((w) => w.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, ''))
+  .filter((w) => w.length >= 3 && /^\p{Lu}/u.test(w) && !COMMON.has(w.toLowerCase()));
+
 /**
  * The names of the case that may not go into the feedback: the customer's, the channel's, the
- * thread's people (who wrote in it) and who asked in the sidebar.
+ * thread's people (who wrote in it) and who asked in the sidebar. `names` are refused whole, in
+ * any case; `parts`, a person's or the customer's name word by word ("Dana" of "Dana Ops"), as
+ * they are written, capitalized.
  */
 export async function caseNames(env, t, asker) {
   const names = [t.channelName, t.channelId, t.tenant, t.key];
+  const people = [];
   // Adobe's own name is no secret: an internal channel's org is not the case's.
   if (t.orgType !== 'internal') {
     names.push(t.org, t.orgName);
+    people.push(t.orgName);
   }
   if (asker) {
     names.push(asker.name, asker.email);
+    people.push(asker.name);
   }
   const threads = [...new Set([t.key, ...(t.threads || [])].filter(Boolean))];
   if (threads.length) {
-    const { results } = await env.DB.prepare(`SELECT DISTINCT author FROM messages
-      WHERE thread IN (${threads.map(() => '?').join(', ')}) AND author IS NOT NULL`)
+    const { results } = await env.DB.prepare(`SELECT author, MAX(counted) AS person FROM messages
+      WHERE thread IN (${threads.map(() => '?').join(', ')}) AND author IS NOT NULL
+      GROUP BY author`)
       .bind(...threads).all().catch(() => ({ results: [] }));
     names.push(...results.map((r) => r.author));
+    // A bot's name word by word would refuse "GitHub"; a person's is theirs.
+    people.push(...results.filter((r) => r.person).map((r) => r.author));
   }
-  return [...new Set(names.map((n) => String(n || '').trim()).filter((n) => n.length >= 3))];
+  const clean = (list) => [...new Set(list.map((n) => String(n || '').trim()).filter((n) => n.length >= 3))];
+  return { names: clean(names), parts: clean(people.flatMap(partsOf)) };
 }
 
-/** What the text gives away of the case, in a few words; null when nothing. */
+const wordsExact = (s) => new RegExp(`(^|[^\\p{L}\\p{N}])${escape(s)}($|[^\\p{L}\\p{N}])`, 'u');
+
+/**
+ * What the text gives away of the case, in a few words; null when nothing. `names` as
+ * `caseNames` gives them (or a list of names, refused whole).
+ */
 export function leak(textValue, names) {
   const s = String(textValue || '');
+  const { names: whole = [], parts = [] } = Array.isArray(names) ? { names } : (names || {});
   // The longest first, so that it names the whole name ("Acme Rockets", not "acme").
-  const named = [...names].sort((a, b) => b.length - a.length).find((n) => words(n).test(s));
+  const named = [...whole].sort((a, b) => b.length - a.length).find((n) => words(n).test(s))
+    || parts.find((n) => wordsExact(n).test(s));
   if (named) {
     return `"${named}" (a name from the case)`;
   }
   const hit = PATTERNS.find(([re]) => re.test(s));
-  return hit ? hit[1] : null;
+  if (hit) {
+    return hit[1];
+  }
+  const host = hostIn(s);
+  return host ? `"${host}" (a host name)` : null;
 }
 
 const footer = (row, { link }) => {
