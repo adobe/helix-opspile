@@ -40,6 +40,7 @@ import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
 import { dream, dreamOf, dreamState } from './dream.js';
 import { setWakeup, wakeupDue } from './wakeups.js';
+import { removeWatch, setWatch, watchUpdate } from './watches.js';
 import { armCompact, compactIdle } from './idlecompact.js';
 import {
   COMPUTER_CWD, computerEnv, ensureCwd, KERNEL_OUTPUT_DIR, readComputerFile,
@@ -208,6 +209,11 @@ export class ThreadAgent extends Agent {
           schedule: (when, callback, payload) => this.schedule(when, callback, payload),
           // wakeup_after and wakeup_after_idle (src/agent/wakeups.js).
           wakeup: (kind, args) => setWakeup(this, kind, args),
+          // watch_related and unwatch_related (src/agent/watches.js), through this context.
+          watch: {
+            set: (args) => setWatch(agent, args),
+            remove: (args) => removeWatch(agent, args),
+          },
           // What the computer's shell is and has, for the agent's prompt.
           shell: () => this.shellInfo(),
           // A file of the computer, for the tools that take one (src/agent/computer.js).
@@ -720,6 +726,12 @@ export class ThreadAgent extends Agent {
   async wakeupDue(payload) {
     this.meterModel();
     return wakeupDue(this, payload);
+  }
+
+  /** Something the agent watches changed (src/agent/watches.js). */
+  async watchUpdate(update) {
+    this.meterModel();
+    return watchUpdate(this, update);
   }
 
   /** A turn ended: compact after an idle hour, in the compaction experiment (idlecompact.js). */

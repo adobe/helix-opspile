@@ -37,6 +37,8 @@ const DOING = {
   request_codemode: 'Asking the team to run a script',
   wakeup_after: 'Setting itself a reminder',
   wakeup_after_idle: 'Setting itself a reminder',
+  watch_related: 'Watching what the thread waits on',
+  unwatch_related: 'No longer watching something',
 };
 
 /** What a tool call is doing, in a few words. */

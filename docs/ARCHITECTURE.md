@@ -2396,6 +2396,43 @@ too (`src/agent/wakeups.js`). Each wakes it once, at least a minute and at most 
 five wait at a time at most; the prompt asks for one whenever it says it will come back to
 something.
 
+**Watching what the thread waits on.** A thread often waits on something elsewhere: a vendor's
+case, another team's thread, a GitHub issue or pull request. Someone tells the agent so in the
+sidebar (or the thread links it), and the agent watches it with `watch_related` (`agent_watches`,
+migration 0104; `src/agent/watches.js` for the agent's side, `src/watches.js` for the Worker's),
+with `why`, what exactly its thread waits on there, in its own words. Each change wakes it with an
+update, as an input of its own, with `why` given back:
+
+- a **thread** of the inbox, by its key, its opspile inbox link or a link to one of its messages
+  (Slack, Teams, Discord; one in a channel the agent may not read only where a person asked for it
+  in the sidebar, else it is "not found", as one that does not exist): a minute after a new message in it (a `{ watched }` queue job; a burst is
+  one update), every message after the watch's `seen` but the system's and Adobe's own bots', so
+  that two agents that watch each other's threads do not wake each other with their posts. The
+  update says how many came, from which side and when, and names the authors and the tool to read
+  them with (`read_thread`, `read_any_thread`) only where the agent may read that thread with its
+  tools; another customer's, without `any_thread`, is a count and nothing more. The agent reads
+  the messages itself, as any it reads.
+- a **GitHub issue or pull request**, by its URL, only of an account the opspile GitHub App reads
+  for the agent's channel (its `github` server on there, asked again before every poll and again
+  before the agent is told: one whose channel lost it ends, and the agent hears only that; one
+  whose access could not be checked, D1 or GitHub not answering, is kept and asked again later). A cron
+  of its own (`*/5 * * * *`, `pollWatches`) polls each when it is due (`poll_after`), with the
+  installation's token. A poll is one conditional request (`If-None-Match`): an unchanged item is
+  a 304, which GitHub does not count against the rate limit; only a changed one asks for its pull
+  request, comments and reviews. A quiet item is polled slower (a twelfth of how long it has been
+  quiet, from 4 minutes to an hour), a failing one backs off (doubling, up to six hours), and all
+  four times slower while the installation has less than a tenth of its requests left. Once GitHub
+  limits an installation (a 429, a 403 with no requests left or a `retry-after`), none of its
+  watches is asked until it says. The update says what changed (its state, merged, out of draft,
+  its title, new comments and reviews and by whom), not what a comment says: the agent reads it
+  with the github MCP server, which hides strangers' text.
+
+`seen` moves before the agent is told, and only from what the job read (`WHERE seen = ?`), so two
+jobs of a burst wake it once. A watch ends with `unwatch_related`, or after 30 days (`days`, at most
+90; the agent is told it ran out). Ten at a time per thread. The prompt asks it to say what an
+update means for its thread in the draft or its note, and never to post only because the other one
+changed.
+
 **In the inbox.** The open thread shows the agent's **latest turn** under its last message,
 on the Adobe side, as "Opspile Agent" with opspile's icon: while it works, a spinner and what
 it is doing (reading the thread, checking a web page, updating the draft…); once done, its
@@ -2588,6 +2625,7 @@ written by people outside its control.
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
 | `wakeup_after`, `wakeup_after_idle` | a thread's agent only: wakes it up once with a message it writes to itself, at a time (a duration or an ISO time) or once the thread has been quiet for a while (see "When it runs") |
+| `watch_related`, `unwatch_related` | a thread's agent only, always: watches another thread of the inbox or a GitHub issue or pull request its thread waits on, and is woken with an update whenever it changes; without `url`, lists its watches (see "Watching what the thread waits on") |
 | `draw_stack` | the customer's stack drawing, `stack.md` of kb-org (see "Stack drawing"), whole: a summary, parts by layer and the flows between them. One that exists is drawn again only from its `base` |
 | `send_feedback` | only where `FEEDBACK_REPO` and `FEEDBACK_GITHUB_TOKEN` are set: feedback to the people who build opspile, about opspile itself (a tool that failed or misled, something the agent needed, instructions that did not fit, or what a person asked it in the sidebar to pass on), as a GitHub issue labelled `agent-feedback` in that repository, or a comment on an open one about the same thing (`issue`); without `title`, the open ones (`src/agent/feedback.js`). The repository may be public, so the text is refused when it names the case: the customer, the channel, a person of the thread or who asked (by their whole name, or a word of it as it is written: a first name), an email address, a link, a host name on any ending (but files', `stack.md`, and the platforms' and tools' own, `api.github.com`), or a Slack, Teams, Discord or thread id; the thread, the team and who asked stay in `agent_feedback` (migration 0101), and only a private repository's issue links to the thread. Kept before it is filed; the cron files what GitHub did not take. Three a thread and forty in all a day |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
