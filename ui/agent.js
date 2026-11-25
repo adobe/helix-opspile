@@ -1384,11 +1384,11 @@ function bindExtraction() {
 
 // ---- global MCP servers ---------------------------------------------------------------
 //
-// opspile's own servers (src/agent/globals.js): the browser (Cloudflare Browser Run), GitHub
-// (read-only, as the opspile GitHub App), FluffyJaws (as the person the admin team connected,
-// or a service app) and Slack channel management (the slack-automation relay; the admin team
-// switches it, on Slack channels only). Set up once; on or off for a team here (new teams start with the browser and
-// GitHub on), or for one channel (a channel's switch wins over its team's).
+// opspile's own servers (src/agent/globals.js): GitHub (read-only, as the opspile GitHub App),
+// FluffyJaws (as the person the admin team connected, or a service app) and Slack channel
+// management (the slack-automation relay; the admin team switches it, on Slack channels only).
+// Set up once; on or off for a team here (new teams start with GitHub on), or for one channel
+// (a channel's switch wins over its team's). The browser is the computer's (its image).
 
 const toolTags = (tools) => tools.map((t) => `<span class="src" title="${esc(t.description || '')}${t.readOnly ? ' (read-only)' : ''}">${esc(t.name)}</span>`).join('');
 
@@ -1582,7 +1582,7 @@ function renderMcp(shownNote) {
     a script outputs reaches the model). Adding or changing a server connects to it and lists its tools. The admin team and the managers of ${b.kind === 'team' ? b.name : 'its ops teams'} manage them${mayEdit() ? '' : '; you see them read-only'}.`;
   const editing = state.editing && list ? list.find((x) => x.id === state.editing) : null;
   const globals = state.globals || [];
-  const globalNote = b.kind === 'team' ? `Built-in, set up once for every team: on or off for ${b.name}, or for one of its channels. New teams start with the browser and GitHub on.`
+  const globalNote = b.kind === 'team' ? `Built-in, set up once for every team: on or off for ${b.name}, or for one of its channels. New teams start with GitHub on.`
     : `Built-in, set up once for every team: turned on for a whole team on its page in Teams, or here for one of ${b.name}'s channels.`;
   holdList(() => {
     $('editor').innerHTML = `<div class="bar">${up('files', 'Files')}<span class="heading">Tools and MCP servers for ${esc(whose)}</span></div>
