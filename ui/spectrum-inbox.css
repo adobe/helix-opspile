@@ -1204,6 +1204,8 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .bashbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .bashbar .why { margin: 0; overflow-wrap: anywhere; }
 .bashbar .cmd { margin: 0; max-height: 20vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A script's tools of the inbox, under it: what it may call as whoever runs it, a row of names. */
+.bashbar .tools { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--spectrum-spacing-75); min-width: 0; }
 /* Decided: one line, how it stands and then the command, as far as it fits. */
 .bashbar .br:not(.pending) { flex-direction: row; align-items: baseline; gap: var(--spectrum-spacing-200); }
 .bashbar .br:not(.pending) .head { flex: 0 1 auto; max-width: 70%; }
@@ -2758,6 +2760,14 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 }
 .spectrum .bashbar .br:not(.pending) .cmd { padding: 0px; color: inherit; background: none; }
 .spectrum .bashbar code { padding: 0px; font: inherit; background: none; }
+.spectrum .bashbar .tools code {
+  padding: 0 var(--spectrum-spacing-75);
+  font-family: var(--s2-code);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--s2-hover);
+  border-radius: var(--spectrum-corner-radius-100);
+}
 .spectrum .bashbar .var .nm code { font-family: var(--s2-code); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .bashbar .kept { color: var(--spectrum-positive-visual-color); }
 .spectrum .bashbar .var input {

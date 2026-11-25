@@ -450,8 +450,9 @@ older manifest goes on reading its layers after an upload. A running kernel keep
 booted with until it boots again.
 
 **Command request.** pending → running → done, timeout or failed; pending → denied or expired
-(`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). The agent asks
-(`request_bash`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
+(`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). A script request
+(`kind: 'codemode'`, `request_codemode`, `src/agent/scriptrequest.js`) is one too, with the same
+lifecycle. The agent asks (`request_bash`, `request_codemode`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
 transition is `WHERE status = …`, so of two clicks, or a click at the deadline, one wins and the
 other is told who did. The deadline's schedule is armed before the request is stored (a deadline
 with no request does nothing), and a request past its deadline reads as expired before the schedule
@@ -464,7 +465,11 @@ took its whole timeout: the shell says it stopped a run no other way, and a comm
 124 by itself. The kernel's shell says it with the signal that ended bash (143, or 137), under the
 same condition. `told_at` is written last, after the agent was
 told how the request ended; one that ended untold (the agent's storage failed) is told at its
-deadline, without what the command printed, which is kept nowhere.
+deadline, without what the command printed, which is kept nowhere. A script runs as the person
+who clicked only while that click's request lasts: each of its tool calls goes back to the Worker
+that serves it, so the object claims it, runs it and tells the agent before it answers; one whose
+object or click went away under it is lost, as a command whose object restarted, and the watchdog
+settles it as failed. A script that threw is `done`, with its `error`, as a nonzero exit is.
 
 **Tool request.** pending → granted → revoked; pending → denied (`tool_requests.status`,
 `src/toolrequests.js`, `src/agent/toolrequest.js`, `decideTool` in `src/agent/stub.js`). The agent

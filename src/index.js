@@ -35,7 +35,7 @@ import { countEntries } from './kbadmin.js';
 import { syncConcepts } from './kbindex.js';
 import { syncCatalogs } from './catalogsync.js';
 import { syncOrgStacks } from './orgstacks.js';
-import { mcp } from './mcp.js';
+import { inboxCall, mcp } from './mcp.js';
 import { refreshGlobalTools } from './mcpadmin.js';
 import { oauth, pruneOauth } from './oauth.js';
 import { consume } from './normalizer.js';
@@ -242,6 +242,8 @@ const handlers = {
     }
     const apiResponse = await api(request, env, url, {
       waitUntil: ctx && ((p) => ctx.waitUntil(p)),
+      // The inbox's tools, for a script an agent asked a person to run (src/agent/stub.js).
+      inboxTools: inboxCall,
     });
     if (apiResponse) {
       return apiResponse;

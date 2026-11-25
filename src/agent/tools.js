@@ -35,6 +35,8 @@ import { readThreadFile } from './files.js';
 import { MAX_RAW, readRawMessage } from './rawmessage.js';
 import { toolsFor } from './agenttools.js';
 import { requestBash } from './bashrequest.js';
+import { requestScript, SCRIPT_GUIDE } from './scriptrequest.js';
+import { SCRIPT_TOOL_NAMES } from '../scripttools.js';
 import { requestableFor, requestableText, requestTool } from './toolrequest.js';
 import {
   DEFAULT_TIMEOUT, MAX_ENV, MAX_OPEN, MAX_TIMEOUT,
@@ -683,7 +685,31 @@ export function opspileExtension(ctx) {
     sections.push(section('team-membership', () => TEAM_MEMBERSHIP));
     sections.push(section('tool-requests', () => TOOL_REQUESTS));
     sections.push(section('wakeups', () => WAKEUPS));
+    sections.push(section('script-requests', () => SCRIPT_GUIDE));
     tools.push(
+      defineTool({
+        name: 'request_codemode',
+        description: 'Ask a person on the team to run a code mode script as themselves, with their permissions in the inbox: it calls the inbox\'s tools you name (search_threads, get_thread, …) as they would, and sees what they see, every thread of their teams, where you see only this channel. They see it under your thread, with your reason, and run or deny it. It answers at once; you are told later, in a message of its own, what the script output, or that it was denied, threw, timed out or expired.',
+        parameters: Type.Object({
+          code: Type.String({ description: 'The script: an async function body, as for codemode. `await tools.<name>(args)` resolves to what the tool returns; output what you need with text(), console.log() or return' }),
+          tools: Type.Array(Type.Union(SCRIPT_TOOL_NAMES.map((n) => Type.Literal(n))), { minItems: 1, description: 'The inbox\'s tools the script calls: it gets only these' }),
+          reason: Type.String({ description: 'For the person who decides: what it looks for and what you need it for, in a sentence or two (up to 500 characters)' }),
+          timeout: Type.Optional(Type.Number({ description: `How long the script may run, in seconds (default ${DEFAULT_TIMEOUT}, at most ${MAX_TIMEOUT})` })),
+          deadline: Type.Optional(Type.String({ description: 'Until when a person may run it: a duration from now (30m, 4h, 2d) or an ISO 8601 time. Default 24h, at most 7d. After it the request is closed' })),
+        }),
+        executionMode: 'sequential',
+        async execute(args) {
+          if (!ctx.schedule) {
+            return fail('request_codemode is not available here.');
+          }
+          const res = await requestScript(ctx, args);
+          if (res.error) {
+            return fail(res.error);
+          }
+          const r = res.request;
+          return text(`requested (request ${r.id}): the team sees the script under the thread, calling ${r.tools.join(', ')} as whoever runs it, until ${r.deadline}. Nothing ran yet. You will be told what it output in a message of its own: do not wait, and say in your note what you asked for and why.`);
+        },
+      }),
       defineTool({
         name: 'request_tool',
         description: 'Only while you answer a sidebar message: without `tool`, the tools and MCP servers your channel does not have that you could ask for; with `tool` and `reason`, asks for one. Anyone on the team grants it to this thread for a day, or denies it, in the sidebar; you are told in a sidebar message of theirs. Nothing changes until then.',

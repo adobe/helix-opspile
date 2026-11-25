@@ -677,9 +677,11 @@ describe('the inbox and a command request', () => {
     assert.deepEqual(first, {
       id: request.id,
       thread: THREAD,
+      kind: 'bash',
       command: 'echo "token $API_TOKEN"',
       reason: 'Lists the open tickets of the customer, which needs your token.',
       env: [{ name: 'API_TOKEN', description: 'Your API token' }],
+      tools: [],
       timeout: 60,
       deadline: request.deadline,
       status: 'pending',

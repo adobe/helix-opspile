@@ -2566,6 +2566,7 @@ written by people outside its control.
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
 | `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
+| `request_codemode` | a thread's agent only: asks a person on the team to run a code mode script as themselves, calling the inbox's read-only tools it names (`search_threads`, `list_threads`, `get_thread`, `get_message`, `get_knowledge`, `whoami`) with that person's permissions; it answers at once, and the agent is told later what the script output (see "Scripts a person runs") |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
 | `wakeup_after`, `wakeup_after_idle` | a thread's agent only: wakes it up once with a message it writes to itself, at a time (a duration or an ISO time) or once the thread has been quiet for a while (see "When it runs") |
@@ -3103,6 +3104,41 @@ gateway fills in, so that a person's own token works with any host and any tool.
 not stop: the command itself can write a value to a file, which the agent can read afterwards,
 send it to any host, or print it encoded. The person who runs the command is the check, as with
 a command a colleague asks them to run: the card shows it whole, and says so.
+
+**Scripts a person runs.** Every thread's agent, with a computer or not, has `request_codemode`
+(`src/agent/scriptrequest.js`; the record is a command's, `bash_requests`, with `kind: 'codemode'`
+and `tools`, migration 0102): the agent asks a person on the team to run a code mode script **as
+themselves**, with their permissions in the inbox. The agent's own tools see its channel; a
+person sees every thread of their teams and the knowledge bases they may read. So when what the
+agent needs is in the inbox but out of its reach (a thread in another channel that someone links,
+whether another team answered the same question), it writes a script that calls the inbox's tools
+it names, `await tools.search_threads({ query })`, and gives its reason; the person reads it and
+runs it, or denies it. The tools are those of the inbox's MCP server (`src/mcp-tools.js`), by the
+same names, that only read and that every person has: `search_threads`, `list_threads`,
+`get_thread`, `get_message`, `get_knowledge` and `whoami` (`SCRIPT_TOOLS`, `src/scripttools.js`,
+which declares them for the agent's prompt without importing the inbox's API; a test keeps the two
+alike). A script resolves a call to the tool's `data`, and a failed one throws. Nothing that
+writes, posts or is the admin team's is among them. The deadline, the limit of 5 waiting, the
+timeout (60 seconds unless it says, 180 at most), the denial, the expiry and the watchdog are a
+command's.
+
+The card (`bashCard`, **Script**) shows the script, highlighted as JavaScript, the reason, the
+tools it calls ("Calls as you, reading what you may read"), **Deny** and **Run as me**. Run goes
+to `POST /api/bash/run` as for a command: the Worker that serves the click hands the agent's
+object (`runScript`) a function, over RPC, that runs one of the request's tools as the person who
+clicked (`inboxCall` in `src/mcp.js`, which the Worker passes to the API as `inboxTools`, so that
+`src/api.js` does not import the MCP tools). The object runs the script in a QuickJS sandbox of
+its own whose only tools are the ones the request names, on its thread as its own code mode
+(`scriptSandbox`), and each call goes back to the Worker; the Worker also refuses a tool the
+request does not name. Nothing of the person's session reaches the object, only the calls'
+results, which are what they may read. The function is good only while the call lasts, so `run`
+answers once the script has ended and the agent was told (200, not 202). A script that threw is
+`done` with its `error`, as a command that exits with an error; a sandbox that failed is
+`failed`. The agent is told what the script output (`text()`, `console.*`) and returned, 30,000
+characters of each at most, which tools it called how often, and that what it read is the
+person's to see, not the channel's: never to put another customer's threads, names or details
+into this thread's draft or posts, and to tell someone who asked in the sidebar with
+`sidebar_followup`.
 
 The shell reads a file whole, in one isolate: above about 30 MB `grep` no longer finds it, and
 `jq` runs out of memory on a large one. So files over 30 MB stay out (200 MB a thread), and

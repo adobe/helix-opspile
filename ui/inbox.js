@@ -6310,6 +6310,9 @@ async function discardDraft(key) {
 // ---------------------------------------------------------------- command requests
 // The thread's agent can ask a person to run a command on its computer (its request_bash,
 // src/agent/bashrequest.js): what needs a credential it does not have, or a person's go-ahead.
+// Or a script to run as themselves (its request_codemode, src/agent/scriptrequest.js, `kind:
+// 'codemode'`): one that calls the inbox's tools it names with the person's permissions, to read
+// what the agent cannot (another channel's thread), shown with the tools it calls and Run as me.
 // Each request is a card between the reply box and the draft's line: the command, the agent's
 // reason, a field for every variable it asked for, and Run and Deny. What is filled in goes to
 // the Worker with Run, for that one run; the agent is told what the command printed, never a
@@ -6394,6 +6397,13 @@ const bashBusy = new Set();
 const bashEarlier = new Set();
 
 const BASH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><path d="M4.6 6.3l2 1.7-2 1.7M8.4 9.9h3"/></svg>';
+const SCRIPT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 4L1.8 8l3.4 4M10.8 4l3.4 4-3.4 4M9.2 2.8L6.8 13.2"/></svg>';
+const isScript = (r) => r.kind === 'codemode';
+/** What a request is called in a few words: a command, or a script. */
+const askNoun = (list) => {
+  if (list.every(isScript)) return 'script';
+  return list.some(isScript) ? 'request' : 'command';
+};
 /** How long from now until `iso`: "under a minute", "25m", "23h", "3d". */
 function timeLeft(iso, now = Date.now()) {
   const s = (Date.parse(iso) - now) / 1000;
@@ -6410,6 +6420,7 @@ function timeLeft(iso, now = Date.now()) {
 function bashState(r) {
   const who = r.by?.id === viewerId() ? 'you' : (r.by?.name || 'a colleague');
   const by = ` · by ${who} · ${ago(r.finished_at)}`;
+  if (isScript(r)) return scriptState(r, who, by);
   const told = 'The agent was told what the command printed.';
   if (r.status === 'running') return { text: `Running, started by ${who}`, hint: 'On the agent\'s computer. The agent is told what it prints.' };
   if (r.status === 'done') return { text: `Ran, exit code ${r.exit_code}`, rest: by, bad: r.exit_code !== 0, hint: told };
@@ -6418,6 +6429,21 @@ function bashState(r) {
   if (r.status === 'denied') return { text: `Denied by ${who}`, rest: ` · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
   return { text: `Expired at ${clock(r.deadline)}: nobody ran it`, hint: 'It did not run. The agent was told.' };
 }
+/** How a script request that is no longer waiting stands, as bashState says it of a command. */
+function scriptState(r, who, by) {
+  const told = 'The agent was told what the script output.';
+  if (r.status === 'running') return { text: `Running as ${who}`, hint: 'In the agent\'s code mode, calling the inbox as them. The agent is told what it outputs.' };
+  if (r.status === 'done' && r.error) return { text: `Ran, and threw: ${r.error}`, rest: by, bad: true, hint: told };
+  if (r.status === 'done') return { text: 'Ran', rest: by, hint: told };
+  if (r.status === 'timeout') return { text: `Stopped after ${r.timeout} s, its timeout`, rest: by, bad: true, hint: told };
+  if (r.status === 'failed') return { text: `Did not run to its end: ${r.error || 'the sandbox failed'}`, rest: by, bad: true, hint: 'The agent was told.' };
+  if (r.status === 'denied') return { text: `Denied by ${who}`, rest: ` · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
+  return { text: `Expired at ${clock(r.deadline)}: nobody ran it`, hint: 'It did not run. The agent was told.' };
+}
+
+/** The inbox's tools a script calls as whoever runs it, as a row of their names. */
+const scriptTools = (r) => `<div class="tools"><span class="ds">Calls as ${r.status === 'pending' ? 'you' : 'them'}, reading what ${r.status === 'pending' ? 'you' : 'they'} may read:</span>${r.tools.map((t) => `<code>${esc(t)}</code>`).join('')}</div>`;
+
 /**
  * A request's card. Waiting, and `decide` (the viewer may run it): a form with a field for each
  * variable (`kept`: the names a remembered value fills), Run and Deny, disabled while `busy`.
@@ -6428,24 +6454,33 @@ function bashState(r) {
 function bashCard(r, {
   decide = false, busy = false, kept = [], earlier = 0, all = false, why = null,
 } = {}) {
-  const head = (line) => `<div class="head"><span class="what">${BASH_ICON}Command</span><code class="id" title="This request's id: the agent names it in its notes">${esc(r.id)}</code><span class="by">${line}</span></div>`;
+  const script = isScript(r);
+  const head = (line) => `<div class="head"><span class="what">${script ? `${SCRIPT_ICON}Script` : `${BASH_ICON}Command`}</span><code class="id" title="This request's id: the agent names it in its notes">${esc(r.id)}</code><span class="by">${line}</span></div>`;
   if (r.status !== 'pending') {
     const spin = r.status === 'running' ? '<i class="spin"></i>' : '';
     const {
       text, rest = '', bad, hint,
     } = bashState(r);
-    const more = earlier ? `<button type="button" class="more" data-bash="earlier" aria-expanded="${all}" title="${all ? 'Show only the latest command that ended' : 'Show the commands that ended before this one, within the hour'}">${all ? 'Hide earlier' : `${earlier} earlier`}</button>` : '';
+    const more = earlier ? `<button type="button" class="more" data-bash="earlier" aria-expanded="${all}" title="${all ? 'Show only the latest request that ended' : 'Show the requests that ended before this one, within the hour'}">${all ? 'Hide earlier' : `${earlier} earlier`}</button>` : '';
     return `<div class="br ${esc(r.status)}" data-id="${esc(r.id)}">${head(`${spin}<span class="st${bad ? ' bad' : ''}" title="${esc(hint)}">${esc(text)}</span>${esc(rest)}`)}<pre class="cmd"><code>${esc(r.command)}</code></pre>${more}</div>`;
   }
-  // To be read before it is run: highlighted as the shell command it is, once that has loaded.
-  const lit = highlightCode(r.command, 'bash');
-  const command = `<pre class="cmd${lit ? ' hl' : ''}"><code>${lit ?? esc(r.command)}</code></pre>`;
+  // To be read before it is run: highlighted as the shell command or the script it is, once
+  // that has loaded.
+  const lit = highlightCode(r.command, script ? 'javascript' : 'bash');
+  const command = `<pre class="cmd${lit ? ' hl' : ''}"><code>${lit ?? esc(r.command)}</code></pre>${script ? scriptTools(r) : ''}`;
   const asked = `the agent asks · ${ago(r.created_at)} · <span title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can run it">open for ${timeLeft(r.deadline)}</span>`;
   const reason = `<p class="why">${esc(r.reason)}</p>`;
   // `why` you may not run it, when it is not that you view as someone else: under the command.
   const whyNot = why ? `<div class="foot"><span class="note">${esc(why)}</span></div>` : '';
   if (!decide) return `<div class="br pending" data-id="${esc(r.id)}">${head(asked)}${reason}${command}${whyNot}</div>`;
   const off = busy ? ' disabled' : '';
+  if (script) {
+    const note = `Runs in the agent's code mode as you, for up to ${r.timeout} s. The agent gets what it outputs.`;
+    const hint = 'Each of those tools reads the inbox as you do: other channels, teams and customers too, what you may see. Nothing else of yours reaches the agent. Read the script before you run it: what it outputs is what the agent reads.';
+    const spin = busy ? '<i class="spin"></i>' : '';
+    return `<form class="br pending" data-id="${esc(r.id)}" autocomplete="off">${head(asked)}${reason}${command}
+      <div class="foot"><span class="note" title="${esc(hint)}">${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>${spin}Run as me</button></span></div></form>`;
+  }
   const vars = r.env.map((v) => {
     const has = kept.includes(v.name);
     const forget = has ? `<button type="button" class="forget" data-bash="forget" data-name="${esc(v.name)}" title="Forget the value of ${esc(v.name)} remembered on this device"${off}>Forget</button>` : '';
@@ -6549,9 +6584,11 @@ function linesChips(requests = [], draft = null) {
   const count = (status) => requests.filter((r) => r.status === status).length;
   const n = (k, what) => `${k} ${what}${k === 1 ? '' : 's'}`;
   const chips = [];
-  if (count('pending')) chips.push({ kind: 'cmd ask', icon: BASH_ICON, text: `${n(count('pending'), 'command')} to decide` });
-  else if (count('running')) chips.push({ kind: 'cmd', icon: BASH_ICON, text: `${n(count('running'), 'command')} running` });
-  else if (requests.length) chips.push({ kind: 'cmd', icon: BASH_ICON, text: n(requests.length, 'past command') });
+  const of = (status) => requests.filter((r) => r.status === status);
+  const icon = (list) => (list.every(isScript) ? SCRIPT_ICON : BASH_ICON);
+  if (count('pending')) chips.push({ kind: 'cmd ask', icon: icon(of('pending')), text: `${n(count('pending'), askNoun(of('pending')))} to decide` });
+  else if (count('running')) chips.push({ kind: 'cmd', icon: icon(of('running')), text: `${n(count('running'), askNoun(of('running')))} running` });
+  else if (requests.length) chips.push({ kind: 'cmd', icon: icon(requests), text: n(requests.length, `past ${askNoun(requests)}`) });
   if (draft) chips.push({ kind: 'draft', icon: DRAFT_ICONS.draft, text: `Draft by ${draftBy(draft)}` });
   return chips;
 }
@@ -6674,10 +6711,14 @@ function setCachedBash(key, r) {
   renderBashBar(key);
 }
 
-/** Run: sends what is in the fields of `form` with the request; the agent's computer runs it. */
+/**
+ * Run: sends what is in the fields of `form` with the request; the agent's computer runs it. A
+ * script runs as the viewer, and the inbox answers once it has ended.
+ */
 async function runBash(key, id, form) {
   const r = state.cache.get(key)?.data?.bash_requests?.find((x) => x.id === id);
   if (!r || bashBusy.has(id)) return;
+  const what = isScript(r) ? 'script' : 'command';
   const values = Object.fromEntries(r.env.map((v) => [v.name, form.elements[v.name].value]));
   const remember = Boolean(form.elements.remember?.checked);
   bashBusy.add(id);
@@ -6687,7 +6728,7 @@ async function runBash(key, id, form) {
   // No answer, or the Worker failed: that does not say the command did not start.
   if (!res || res.status >= 500) {
     renderBashBar(key);
-    toast('The inbox did not answer, so the command may be running all the same. The card says how it stands.');
+    toast(`The inbox did not answer, so the ${what} may be running all the same. The card says how it stands.`);
     reloadSoon(key);
     return;
   }

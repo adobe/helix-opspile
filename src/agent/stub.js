@@ -274,6 +274,24 @@ export async function tellDiscarded(env, me, key, result) {
 }
 
 /**
+ * Run, on a script request (src/agent/scriptrequest.js): the agent's object runs the script,
+ * and each tool it calls comes back here, over RPC (`call`), to run as `me`, with their
+ * permissions: `inboxTools(env, me)` (src/mcp.js, `inboxCall`), only the tools the request
+ * names. The object answers once the script has ended, so this does too, with 200.
+ */
+async function runScriptAs(env, me, request, by, inboxTools) {
+  if (!inboxTools) {
+    return json({ error: 'scripts are not configured' }, 503);
+  }
+  const asMe = inboxTools(env, me);
+  const call = async (name, args) => (request.tools.includes(name)
+    ? asMe(name, args) : { error: `${name} is not one of the tools this script may call` });
+  const agent = await agentStub(env, request.thread);
+  const { status, ...rest } = await agent.runScript({ id: request.id, by, call });
+  return json(rest, status || 200);
+}
+
+/**
  * POST /api/bash/run `{ thread, id, env }` and POST /api/bash/deny `{ thread, id }`: a person
  * runs, with the values they filled in for its variables (`env`: `{ NAME: value }`), or denies
  * a command the thread's agent asked for (src/agent/bashrequest.js). Only who may work the
@@ -281,9 +299,10 @@ export async function tellDiscarded(env, me, key, result) {
  * still be run, and the run itself, on its computer; `run` answers 202 once the command has
  * started, and the inbox hears how it ended through the team's room. The values go to the
  * agent's object and from there to the shell, and are neither kept nor logged. Who only sees
- * the thread (`seeing`, `maySee`) is told whose it is, with a 403.
+ * the thread (`seeing`, `maySee`) is told whose it is, with a 403. A script request runs as the
+ * person who clicks (`runScriptAs`), with the inbox's tools `inboxTools` gives.
  */
-export async function decideBash(env, me, body, inTeam, { run, seeing = null }) {
+export async function decideBash(env, me, body, inTeam, { run, seeing = null, inboxTools = null }) {
   if (!env.AGENTS) {
     return json({ error: 'agents are not configured' }, 503);
   }
@@ -299,6 +318,9 @@ export async function decideBash(env, me, body, inTeam, { run, seeing = null }) 
     return json({ error: 'not found' }, 404);
   }
   const by = { id: me.id, name: me.name || me.email || 'staff' };
+  if (run && request.kind === 'codemode') {
+    return runScriptAs(env, me, request, by, inboxTools);
+  }
   const agent = await agentStub(env, request.thread);
   const res = run
     ? await agent.runBash({ id: request.id, values: body.env || {}, by })

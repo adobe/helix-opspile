@@ -250,6 +250,52 @@ describe('a command request\'s card', () => {
   });
 });
 
+describe('a script request\'s card', () => {
+  const script = {
+    ...request,
+    id: 'r2',
+    kind: 'codemode',
+    command: 'const r = await tools.search_threads({ query: "<cards>" });\nreturn r.threads.length;',
+    env: [],
+    tools: ['search_threads', 'get_thread'],
+  };
+
+  it('is the script, the tools it calls as you, Deny and Run as me, with no fields', () => {
+    const html = bashCard(script, { decide: true });
+    assert.match(html, /^<form class="br pending" data-id="r2" autocomplete="off">/);
+    assert.match(html, /Script<\/span><code class="id" title="[^"]+">r2<\/code>/);
+    assert.ok(html.includes('<pre class="cmd"><code>const r = await tools.search_threads({ query: &quot;&lt;cards&gt;&quot; });\nreturn r.threads.length;</code></pre>'));
+    assert.match(html, /<div class="tools"><span class="ds">Calls as you, reading what you may read:<\/span><code>search_threads<\/code><code>get_thread<\/code><\/div>/);
+    assert.doesNotMatch(html, /<input/);
+    assert.match(html, /Runs in the agent's code mode as you, for up to 60 s\. The agent gets what it outputs\./);
+    assert.match(html, /<button type="button" class="deny" data-bash="deny">Deny<\/button><button type="submit" class="run" data-bash="run">Run as me<\/button>/);
+    // Running as you: the buttons wait, the one you clicked with a spinner.
+    assert.match(bashCard(script, { decide: true, busy: true }), /class="run" data-bash="run" disabled><i class="spin"><\/i>Run as me/);
+    // For who cannot decide: what it calls, and no buttons.
+    const seen = bashCard(script, { why: 'Only Platform ops can run it.' });
+    assert.match(seen, /<code>get_thread<\/code>/);
+    assert.doesNotMatch(seen, /data-bash="run"/);
+  });
+
+  it('highlights a waiting script as JavaScript', () => {
+    lit.loaded = true;
+    try {
+      assert.match(bashCard(script, { decide: true }), /<pre class="cmd hl"><code><span class="hl-function" data-lang="javascript">const<\/span>/);
+    } finally {
+      lit.loaded = false;
+    }
+  });
+
+  it('says how a decided script stands: ran, threw, as whom', () => {
+    const ended = (r) => bashCard({ ...script, finished_at: '2026-11-05T10:05:00Z', ...r });
+    assert.match(ended({ status: 'running', by: { id: 2, name: 'Bo' } }), /<i class="spin"><\/i><span class="st" title="[^"]+">Running as Bo<\/span>/);
+    assert.match(ended({ status: 'done', by: { id: 1, name: 'Ada' } }), /<span class="st" title="The agent was told what the script output\.">Ran<\/span> · by you · 9m/);
+    assert.match(ended({ status: 'done', error: 'Not found', by: { id: 1 } }), /<span class="st bad" [^>]+>Ran, and threw: Not found<\/span>/);
+    assert.match(ended({ status: 'failed', error: 'the agent restarted while it ran' }), /<span class="st bad" [^>]+>Did not run to its end: the agent restarted while it ran<\/span>/);
+    assert.match(ended({ status: 'denied', by: { id: 2, name: 'Bo' } }), />Denied by Bo</);
+  });
+});
+
 describe('values remembered on this device', () => {
   /** IndexedDB as far as the vault goes: one database with object stores of keys. */
   function fakeIndexedDb() {
