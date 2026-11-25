@@ -434,6 +434,26 @@ the person on the team's page answers their open requests. As with channel reque
 files one only while it answers a sidebar message, never on the thread's messages. It is not
 `request_membership`, which asks a platform's admin bot to add people to the channel itself.
 
+**Questions.** The agent asks people too, for what it cannot find: when neither the knowledge
+bases nor the thread say something only a colleague knows (above all, how a staff-only change that
+someone made by hand in the thread is done, and kb-team has no runbook for it), `ask_teammate` asks
+one colleague up to three short questions, each with the agent's best guess and the other likely
+answers as choices, for a runbook, a reply or a fact (`questions`, migration 0104, `src/questions.js`,
+`src/agent/question.js`). Only staff on one of the teams whose inbox has the thread are asked (they
+can open it), never the person the agent is answering in the sidebar, one open question per person and
+thread and two per thread at a time; one waits three days. Unlike the requests above, it is theirs,
+not the admin team's: a thread of their inbox ("Requests as threads", kind `question`, **Questions
+for you**), in their personal view and in the inbox of the first of the thread's teams they are on,
+with the agent's purple badge (as its unseen answers in a sidebar have) until they answer, and a
+purple number of its own beside **Inbox** in the header, which opens them (the blue one stays the
+admin team's requests). A personal listing has none of the admin team's kinds, and leaves what
+`request_threads` tracks of them alone. Its card answers instead of deciding: **Answer** (a choice for each
+guess, preset to it, and the person's own words), **Ask someone else** (whom) or **I don't know**.
+The agent is told as an input of its own, trusted as the person's, with what it asked the answer for
+(write the runbook, update the draft, file the fact) and, when it asked while answering someone in the
+sidebar, to tell them with `sidebar_followup`. Nothing reaches the customer, and a question can be
+asked in any turn: it changes nothing.
+
 **Portal requests.** Customers ask as well, for a channel of their own in the customer portal:
 the admin team opens one for them from its thread in the admin team's inbox, and a team's managers
 on their team's page when the team follows a technology the customer picked. See [Customer
@@ -2634,6 +2654,7 @@ written by people outside its control.
 | `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for another channel (with `org_threads` the customer's, and of it the customer's threads only), by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `channel_assignment`, `list_teams`, `request_channel_reassignment`, `request_team_membership` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"), which the admin team decides; or a membership request: add its author, or someone they name, to an ops team (see "Membership requests"), which an admin or that team's managers decide |
+| `ask_teammate` | a question to one colleague on the thread's teams, with its best guess at each of up to three questions, for a runbook, a reply or a fact; they answer it in their inbox, and the agent is told in an input of its own (see "Questions") |
 | `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
 | `sidebar_followup` | tells the person who asked something in the sidebar (`message`, its `sb_…` id) what has happened since, from a later turn on the thread's messages (`addSidebarFollowup` in `src/sidebar.js`): a new answer of the agent's to them, under their question; refused while it answers a sidebar message, for a message it did not answer yet, over a week old, or followed up three times |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
