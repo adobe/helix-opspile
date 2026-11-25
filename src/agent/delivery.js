@@ -124,6 +124,11 @@ async function tell(agent, { retry }) {
     return { result: 'skip', reason: 'no agent for this thread' };
   }
   const entry = await entryMessages(env, t.key);
+  // A root folded into the entry since its target was read (src/rethread.js) is one of its
+  // threads now: the tools' next look at the target reads it again, so they find its messages.
+  if (entry && entry.threads.some((k) => !(t.threads || []).includes(k)) && agent.forgetTarget) {
+    agent.forgetTarget();
+  }
   const mark = await storage.get('mark');
   const unseen = (entry ? entry.messages : []).filter((m) => !mark || markOf(m) > mark);
   // Its own posts (post_message) come back as messages; it is not told about them.

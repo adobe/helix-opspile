@@ -2053,7 +2053,7 @@ export function agentToolsExtension(ctx, tools) {
       parameters: Type.Object({
         action: Type.Union([Type.Literal('add'), Type.Literal('remove')]),
         emails: Type.Array(Type.String(), { description: 'Each person\'s email address, as the thread gives it' }),
-        message: Type.String({ description: 'The id of the message that asked for it, as your thread shows it ("message <id>")' }),
+        message: Type.String({ description: 'The id of the message that asked for it, as read_thread shows it after the word "message" (a link to it works too)' }),
       }),
       executionMode: 'sequential',
       async execute(args) {
