@@ -1568,6 +1568,7 @@ function filterCards() {
   if (old.length !== cards.length || old.some((c) => c.__html === undefined)) {
     setHtml(box, cards.join(''));
     [...box.children].forEach((c, i) => { c.__html = cards[i]; });
+    pinColumns();
     return;
   }
   cards.forEach((html, i) => {
@@ -1577,6 +1578,99 @@ function filterCards() {
     old[i].replaceWith(node);
     keepFavicons(old[i], node);
   });
+  pinColumns();
+}
+
+// ---------------------------------------------------------------- the filters' columns
+/*
+ * Where the filters flow into columns (ui/spectrum-inbox.css, "Wide screens"), the browser
+ * balances them anew on every change: a card a few rows longer than it was (the older pages
+ * coming in after a reload, a new thread) moves a whole card into the next column, and every
+ * card after it with it. So the page says where each column starts (`.card.cb`, a forced column
+ * break): at the cuts that balance the cards best (bestCuts), unless the cuts it has are no more
+ * than COLUMN_SLACK rows taller than those. While the inbox loads its older pages, it keeps the
+ * cuts it has: the ones it had when it was last loaded, kept per inbox, number of columns and
+ * cards in localStorage (`opspile.facetcols`), so that a reload starts as it ended.
+ */
+const FACET_COLS_KEY = 'opspile.facetcols';
+const COLUMN_SLACK = 4;
+/** How tall the tallest column is, with `heights` cut into columns before each index of `cuts`. */
+function tallest(heights, cuts) {
+  let most = 0;
+  [0, ...cuts].forEach((from, i) => {
+    const to = i < cuts.length ? cuts[i] : heights.length;
+    most = Math.max(most, heights.slice(from, to).reduce((a, b) => a + b, 0));
+  });
+  return most;
+}
+/** The cuts of `heights` into `n` columns (or one per card, if fewer) that make the tallest least. */
+function bestCuts(heights, n) {
+  const k = Math.min(n, heights.length) - 1;
+  let best = null;
+  let bestH = Infinity;
+  const walk = (cuts, from) => {
+    if (cuts.length === k) {
+      const h = tallest(heights, cuts);
+      if (h < bestH) { best = cuts; bestH = h; }
+      return;
+    }
+    for (let i = from; i <= heights.length - (k - cuts.length); i += 1) walk([...cuts, i], i + 1);
+  };
+  walk([], 1);
+  return best || [];
+}
+/**
+ * The cuts to use for cards `heights` in `n` columns: `had` (the cuts there were) if it still
+ * fits them and `keep` says so, or if it makes the tallest column no more than `slack` taller
+ * than the best cuts do; the best cuts otherwise.
+ */
+function pickCuts(heights, n, had, { keep = false, slack = 0 } = {}) {
+  const best = bestCuts(heights, n);
+  const fits = Array.isArray(had) && had.length === best.length
+    && had.every((c, i) => Number.isInteger(c) && c > (i ? had[i - 1] : 0) && c < heights.length);
+  if (fits && (keep || tallest(heights, had) <= tallest(heights, best) + slack)) return had;
+  return best;
+}
+const storedFacetCols = () => { try { return JSON.parse(localStorage.getItem(FACET_COLS_KEY) || '{}'); } catch { return {}; } };
+let facetCols = { key: null, cuts: null };
+/** Sets where each column of filters starts (`.cb`), as pickCuts says, where they are columns. */
+function pinColumns() {
+  const box = $('facets');
+  const cards = [...box.children];
+  const cs = getComputedStyle(box);
+  const width = parseFloat(cs.columnWidth);
+  let n = 1;
+  if (cs.display === 'block' && width > 0) {
+    const gap = parseFloat(cs.columnGap) || 0;
+    const inner = box.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    n = Math.max(1, Math.floor((inner + gap) / (width + gap)));
+  }
+  let cuts = [];
+  if (n > 1 && cards.length > 1) {
+    // A card's gap below it is one row (--fr-h): every card's is the same.
+    const rowH = parseFloat(getComputedStyle(cards[0]).marginBottom) || 0;
+    const heights = cards.map((c) => c.offsetHeight + rowH);
+    const key = `${scopeKey()}|${n}|${cards.map((c) => c.dataset.f).join(',')}`;
+    const stored = storedFacetCols();
+    const had = facetCols.key === key ? facetCols.cuts : stored[key];
+    const loading = !state.data || Boolean(state.data.page?.next && state.data.threads.length < BACKFILL);
+    cuts = pickCuts(heights, n, had, { keep: loading, slack: COLUMN_SLACK * rowH });
+    facetCols = { key, cuts };
+    if (!loading && String(stored[key]) !== String(cuts)) {
+      try { localStorage.setItem(FACET_COLS_KEY, JSON.stringify({ ...stored, [key]: cuts })); } catch { /* storage is off */ }
+    }
+  }
+  cards.forEach((c, i) => { if (c.classList.contains('cb') !== cuts.includes(i)) c.classList.toggle('cb'); });
+}
+/** A wider or narrower filter column may hold another number of columns: cut them again. */
+function wirePinColumns() {
+  let was = null;
+  new ResizeObserver(() => {
+    const w = $('facets').clientWidth;
+    if (w === was) return;
+    was = w;
+    if (!simple()) pinColumns();
+  }).observe($('facets'));
 }
 
 // ---------------------------------------------------------------- filters out of view
@@ -11163,6 +11257,7 @@ async function start() {
   // Shift-click excludes: it should not select the labels it passes over.
   $('filters').addEventListener('mousedown', (e) => { if (e.shiftKey && e.target.closest('.fr')) e.preventDefault(); });
   wireOffView();
+  wirePinColumns();
   // A row under the pointer is about to be opened: fetch it first.
   $('threads').addEventListener('pointerover', (e) => {
     const t = e.target.closest('.t');

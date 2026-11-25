@@ -690,7 +690,9 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 /* ==== Wide screens: the bands, and the columns you size =======================================
    Three bands past a desktop's screen: ultrawide from 2400px (a 2560px screen), megawide from
    3200px (3440px) and hyperwide from 4800px (5120px). In each the filters flow into one more
-   column (2, 3, 4: `#facets`, in reading order, balanced, a group never split), the list takes
+   column (2, 3, 4: `#facets`, in reading order, balanced, a group never split; where a column
+   starts is the page's, `.card.cb`, so a card does not jump columns as its rows change: "the
+   filters' columns" in ui/inbox.js), the list takes
    a smaller share of what is left (30%, 26%, 22%), as its rows need no more, and the sidebar may
    grow wider, so the thread keeps most of the room. Each column of filters is a little wider
    than the one column is (--facet-w), as there is room, so fewer labels are cut short. The simple personal view keeps one column
@@ -707,6 +709,7 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 @media (min-width: 1100px) {
   main:not(.rail):not(.simple) #facets { display: block; columns: auto var(--facet-w); column-gap: var(--facet-gap); }
   main:not(.rail):not(.simple) #facets > .card { break-inside: avoid; margin-bottom: var(--fr-h); }
+  main:not(.rail):not(.simple) #facets > .card.cb { break-before: column; }
 }
 @media (min-width: 2400px) {
   main:not(.simple) { --filters-w: calc(var(--facet-w) * 2 + var(--facet-gap) + var(--spectrum-spacing-300) + var(--frame-gap)); }
