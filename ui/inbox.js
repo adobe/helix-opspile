@@ -5828,10 +5828,37 @@ const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); 
 const sourceLink = (u, label, cls = '', attrs = '') => `<a${cls ? ` class="${cls}"` : ''} href="${esc(u)}" target="_blank" rel="noopener noreferrer"${attrs}>${label}</a>`;
 
 /** The line of a draft's sources, or nothing. */
-function sourcesLine(d) {
-  if (!d.sources?.length) return '';
+function sourcesLine(d, thread = '') {
+  const files = draftFilesLine(d, thread);
+  if (!d.sources?.length) return files ? `<span class="srcs">${files}</span>` : '';
   const links = d.sources.map((s, i) => sourceLink(s.url, esc(s.title || hostOf(s.url)), 'src', ` data-source="${i}" title="${esc(s.url)}"`));
-  return `<span class="srcs"><span class="lb" title="For checking the draft. Only your team sees them: they are not sent.">Sources</span>${links.join('')}</span>`;
+  return `<span class="srcs">${files}<span class="lb" title="For checking the draft. Only your team sees them: they are not sent.">Sources</span>${links.join('')}</span>`;
+}
+
+// The draft's pictures (src/draftfiles.js), such as a screenshot the agent took: they go with it
+// when it is sent, as you or as the bot, and into the tray when you take it into the reply box.
+const draftFileUrl = (thread, f) => `/api/draft/file?thread=${encodeURIComponent(thread)}&id=${encodeURIComponent(f.id)}`;
+
+/** The draft's pictures on its line: each opens in a new tab. */
+function draftFilesLine(d, thread) {
+  if (!d.files?.length || !thread) return '';
+  const pics = d.files.map((f) => `<a class="dfile" href="${esc(draftFileUrl(thread, f))}" target="_blank" rel="noopener" title="${esc(`${f.name} · ${fileSize(f.size)}`)}"><img src="${esc(draftFileUrl(thread, f))}" alt="${esc(f.name)}" loading="lazy"></a>`);
+  return `<span class="lb" title="They go with the draft when it is sent: the customer sees them.">Sent with it</span>${pics.join('')}`;
+}
+
+/** The draft's pictures as files, to send or put in the tray; null when one could not be had. */
+async function draftFiles(key, d) {
+  if (!d?.files?.length) return [];
+  try {
+    return await Promise.all(d.files.map(async (f) => {
+      const res = await fetch(draftFileUrl(key, f), { credentials: 'same-origin', redirect: 'manual' });
+      if (!res.ok) throw new Error(res.status === 404 ? `${f.name} is gone (a draft keeps its files for 30 days)` : `${f.name} could not be had (${res.status})`);
+      return new File([await res.blob()], f.name, { type: f.type });
+    }));
+  } catch (e) {
+    toast(`Nothing was sent: ${e.message}.`);
+    return null;
+  }
 }
 
 function sourceView(key, url) {
@@ -6032,7 +6059,7 @@ function draftLine(d, {
   if (asBot) sends.push(`<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot"${draftPartLabels('bot')}>${DRAFT_ICONS.bot}<span>Send as bot</span></button>`);
   if (asMe) sends.push(`<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you"${draftPartLabels('me')}>${DRAFT_ICONS.me}<span>Send as me</span></button>`);
   return `<div class="dl"><div class="head"><span class="pen">${DRAFT_ICONS.draft}Draft</span><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span></div>
-      <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d)}
+      <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d, thread)}
       <span class="tools">${tools.join('')}</span>${sends.length ? `<span class="sends">${sends.join('')}</span>` : ''}</div>`;
 }
 
@@ -6243,6 +6270,30 @@ function adoptDraft(key) {
   box.focus();
   box.setSelectionRange(c.text.length, c.text.length);
   box.scrollTop = box.scrollHeight;
+  trayDraftFiles(key, d);
+}
+
+/**
+ * The draft's pictures into the tray, as files you attached: they go with the reply. Each knows
+ * the draft's file it is (`draftFile`), so one already there is not added again, and a save from
+ * the box keeps on the draft only those still in the tray (`trayedDraftFiles`).
+ */
+async function trayDraftFiles(key, d) {
+  const there = new Set((state.attachments.get(key) || []).map((a) => a.file.draftFile).filter(Boolean));
+  const wanted = (d.files || []).filter((f) => !there.has(f.id));
+  (state.trayed ||= new Map()).set(key, d.updated_at);
+  if (!wanted.length) return;
+  const files = await draftFiles(key, { ...d, files: wanted });
+  const thread = state.cache.get(key)?.data?.thread;
+  if (!files?.length || !thread) return;
+  files.forEach((file, i) => { file.draftFile = wanted[i].id; });
+  addFiles(key, thread, files);
+}
+
+/** The ids of the draft's files in the box's tray, once the box took the draft's in; else undefined. */
+function trayedDraftFiles(key) {
+  if (!state.trayed?.has(key)) return undefined;
+  return (state.attachments.get(key) || []).map((a) => a.file.draftFile).filter(Boolean);
 }
 
 /**
@@ -6253,12 +6304,28 @@ async function sendDraft(key, asApp, part = null) {
   const data = state.cache.get(key)?.data;
   const d = data?.draft;
   if (!d) return;
-  const out = part ? { body: part.body, mentions: part.mentions, updated_at: d.updated_at } : d;
+  const out = part ? { body: part.body, mentions: part.mentions, updated_at: d.updated_at } : { ...d };
   $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   if (part) getSelection()?.removeAllRanges();
+  // Its pictures go with it, a part of it too, if the channel takes them.
+  const files = await draftFiles(key, d);
+  if (!files) {
+    renderDraftBar(key, true);
+    return;
+  }
+  if (files.length) {
+    const rule = asApp ? (state.me.attach?.app?.[data.thread?.source] || NO_RULE) : attachRule(data.thread);
+    const problem = attachProblem(rule, files);
+    if (problem) {
+      attachRefused(rule, `Nothing was sent: ${problem}`);
+      renderDraftBar(key, true);
+      return;
+    }
+    out.attached = files.map((file) => ({ file, url: URL.createObjectURL(file) }));
+  }
   if (asApp) {
     const sendIt = async (again = false) => {
-      const sent = await sendAsApp(key, out.body, out.updated_at, { mentions: out.mentions || [], again });
+      const sent = await sendAsApp(key, out.body, out.updated_at, { mentions: out.mentions || [], files, again });
       if (sent.unsure) toast(`It may have been sent: ${sent.error}.`, { label: 'Send again', run: () => sendIt(true) });
       else toast(sent.error ? `Nothing was sent: ${sent.error}.` : ['Sent as the bot.', sent.invited].filter(Boolean).join(' '), null, { stay: sent.missed });
     };
@@ -6339,6 +6406,7 @@ function adoptPart(key, part) {
   box.focus();
   box.setSelectionRange(text.length, text.length);
   box.scrollTop = box.scrollHeight;
+  trayDraftFiles(key, d);
 }
 
 /** The draft as the inbox list shows it, without fetching the inbox again. */
@@ -6363,8 +6431,10 @@ function setCachedDraft(key, d) {
 async function saveDraft(key, text, base, { fromBox = false, sources } = {}) {
   if (state.data?.me?.readonly || !text.trim()) return { error: 'nothing to save' };
   const c = state.composers.get(key) || { text, from: '', base: null };
+  // From the box that took the draft's pictures in: those still in its tray stay on the draft.
+  const files = fromBox ? trayedDraftFiles(key) : undefined;
   const res = await request('PUT', '/api/draft', {
-    thread: key, text, mentions: mentionsIn(key, text), sources, base: base === undefined ? c.base : base,
+    thread: key, text, mentions: mentionsIn(key, text), sources, base: base === undefined ? c.base : base, ...(files ? { files } : {}),
   });
   if (res.status === 409 && res.data.draft) {
     // A colleague saved (or changed) it meanwhile: show theirs, and offer to overwrite it.
@@ -7185,8 +7255,8 @@ async function deliver(p) {
 async function send(key, thread, draft = null) {
   const box = $('reply');
   const body = (draft ? draft.body : box.value).trim();
-  // The files in the tray go with the reply box, not with a draft sent from its line.
-  const attached = draft ? [] : state.attachments.get(key) || [];
+  // The files in the tray go with the reply box; a draft sent from its line takes its own.
+  const attached = draft ? draft.attached || [] : state.attachments.get(key) || [];
   state.sendError = null;
   if (!body && !attached.length) return false;
   closeMentions();
@@ -7202,7 +7272,7 @@ async function send(key, thread, draft = null) {
   // from its line leaves the box alone, unless the box holds that draft).
   // The files go with it (`uploads`), and show in its bubble (`files`) until it arrives.
   const files = attached.map((a) => ({ name: a.file.name, type: a.file.type, url: a.url }));
-  if (attached.length) {
+  if (attached.length && !draft) {
     state.attachments.delete(key);
     renderTray(key);
   }
@@ -7211,7 +7281,14 @@ async function send(key, thread, draft = null) {
     growReply(box);
     state.composers.set(key, { text: '', from: '', base: null });
     mention.picked.delete(key);
+    // The draft's pictures the box took in went with it from its line.
+    if (draft && state.trayed?.has(key)) {
+      state.attachments.delete(key);
+      renderTray(key);
+    }
   }
+  // The box's tray no longer holds the draft's pictures: it sent them, or the draft went.
+  state.trayed?.delete(key);
   sendSeq += 1;
   const p = {
     thread: key, body, mentions, kinds, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, key: crypto.randomUUID(), source: thread.source, status: 'sending', ...ownLook(key, thread.source),
@@ -8053,7 +8130,7 @@ function named(f) {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} at ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}`;
-  return new File([f], `Screenshot ${stamp}.${ext}`, { type: f.type, lastModified: f.lastModified });
+  return Object.assign(new File([f], `Screenshot ${stamp}.${ext}`, { type: f.type, lastModified: f.lastModified }), f.draftFile ? { draftFile: f.draftFile } : {});
 }
 
 /** Explains why nothing can be attached, with a way to connect again where that helps. */

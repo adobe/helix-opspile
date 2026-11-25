@@ -1191,6 +1191,11 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 /* The draft's sources: on their own row of its line, only ever in the inbox. */
 .draftbar .srcs { grid-area: srcs; display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; }
 .draftbar .srcs .lb { cursor: help; }
+/* The draft's pictures (a screenshot the agent took), before its sources: they go with it. */
+.draftbar .dfile { flex: none; display: block; width: var(--spectrum-spacing-800); height: var(--spectrum-spacing-800); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-600); overflow: hidden; background: var(--card); }
+.draftbar .dfile img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.draftbar .dfile:hover, .draftbar .dfile:focus-visible { border-color: var(--accent); }
+.draftbar .dfile + .lb { margin-inline-start: var(--spectrum-spacing-200); }
 .draftbar .src { max-width: calc(var(--spectrum-spacing-100) * 30); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
  text-decoration: none; }
 .draftbar .src:hover, .draftbar .src:focus-visible { border-color: var(--accent); }
