@@ -678,6 +678,8 @@ describe('the agent\'s switchable tools', () => {
       // The rest is the same computer: its uploads, and the commands a person runs.
       assert.match(text, /uploads\/ in that directory is read-only/);
       assert.match(text, /request_bash asks a person on the team/);
+      // A link posted in the thread for Adobe to see opens, with its password, but only to look.
+      assert.match(text, /Never send anything from the thread, the knowledge bases or your files to a site that is not the customer's or Adobe's, .* The one exception is a link a person posted in the thread for Adobe to see, .* you may open it with curl or the browser exactly as they posted it, nothing added, and give that site the password or access code they posted for it, in a command too\. .* do not refuse or ask the team first\. There, only look: do not sign in with an account, sign up, .* never repeat the password in your note, the draft or the knowledge bases\./);
     }
     // An image without jq says so, and what to read JSON with instead.
     const plain = await guide(async () => ({

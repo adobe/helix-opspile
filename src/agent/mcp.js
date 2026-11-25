@@ -233,7 +233,7 @@ export function mcpSection(catalog) {
     return `- mcp__${s.ns} (${whose(s)}): ${s.description || s.name}. ${s.tools.length} tool${s.tools.length === 1 ? '' : 's'}${sample ? `: ${sample}${s.tools.length > 12 ? ', …' : ''}` : ''}`;
   });
   const global = catalog.servers.some((s) => s.scope === 'global')
-    ? '\nThe global servers are opspile\'s own, for every team: never type customer data into a website, or put it into a URL, that is not the customer\'s own or Adobe\'s, and do not sign in, submit forms or change anything on a website unless the staff instructions say so.'
+    ? '\nThe global servers are opspile\'s own, for every team.'
     : '';
   const guides = catalog.servers.filter((s) => !s.error && s.guide).map((s) => s.guide);
   return `MCP servers staff connected for your team and customer. Reach them only from a codemode script: \`await tools.mcp__<server>__<tool>(args)\` resolves to the MCP result \`{ content, structuredContent?, isError? }\`. \`describeNamespace("mcp__<server>")\` lists a server's tools with their declarations, \`searchTools(query)\` finds tools. Filter results in the script; only what it outputs reaches you.

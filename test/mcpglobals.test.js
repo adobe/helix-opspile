@@ -335,7 +335,9 @@ describe('global MCP servers in thread agents', () => {
     assert.equal(server.ns, 'github');
     assert.match(server.instructions, /opspile GitHub App is installed on/);
     assert.match(mcpSection(catalog), /mcp__github \(global, opspile's own\)/);
-    assert.match(mcpSection(catalog), /never type customer data into a website/);
+    assert.match(mcpSection(catalog), /The global servers are opspile's own, for every team\./);
+    // None of them is a website: a browser's rules are the computer's (src/agent/tools.js).
+    assert.doesNotMatch(mcpSection(catalog), /website|submit forms/);
 
     // Turned off for the channel: the next catalog has no server.
     await call(e, admin, 'PUT', '/api/kb/mcp/global', { server: 'github', channel: 'C1', enabled: false });

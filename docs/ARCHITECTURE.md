@@ -2754,8 +2754,7 @@ and the customer's, as `mcp__github`, `mcp__fluffyjaws`, `mcp__slack_channels`
 (a server with `platforms` only in threads on one of them); its id there is `global:<key>`. Their
 tools are those the last check found (`mcp_global_tools`), so an agent does not ask a
 server or mint a token just to list them; the editor's **Check** and the cron, once a day,
-ask again. The prompt says that these are opspile's own, and that customer data does not go
-into websites or URLs that are not the customer's or Adobe's; a server with a `guide` adds its
+ask again. The prompt says that these are opspile's own; a server with a `guide` adds its
 own rules there (the `mcp-servers` section), next to the instructions `describeNamespace` shows.
 Only these definitions can give a connection its own `fetch`, which is how one reaches a service
 binding (`connect()` in `src/agent/mcpclient.js`): a team's or a customer's server is a row of
@@ -3007,7 +3006,10 @@ kernel, with the programs of the team's image (below, "The computer's shell"), a
 with network access through the gateway's `forward` (no filter; see "Computer secrets"
 below), and no npm, node or python. What curl fetches is untrusted, like
 customer messages; nothing stops an agent from sending what it read, so the prompt says not to
-send anything to sites that are not the customer's or Adobe's. The
+send anything to sites that are not the customer's or Adobe's. The one exception is a link a
+person posted in the thread for Adobe to see (a whiteboard or slides on a third-party tool): the
+agent opens it as posted, nothing added, and types in the password posted for it, but only looks
+there (no account, no sign-up, nothing submitted past the gate). The
 bridge is an `ExecutionEnv` for pi-durable whose `exec` is `workspace.runtime.exec`; pi's file
 tools are not installed, so the rest of the environment answers `not_supported`.
 
