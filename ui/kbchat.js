@@ -218,7 +218,10 @@ globalThis.KbChat = (() => {
       // Resting a moment before letting go is no flick.
       const flick = e.timeStamp - lt > 100 ? 0 : v;
       const shown = Math.abs(flick) > PULL_FLICK ? flick < 0 : motion.p > 0.5;
-      if (shown) open(); else close();
+      // Let go where it was (open, pulled part of the way in): it settles back, all of it.
+      if (shown && motion.to === 1) move(1);
+      else if (shown) open();
+      else close();
     };
     tab.onpointerup = done;
     tab.onpointercancel = done;
@@ -550,7 +553,7 @@ globalThis.KbChat = (() => {
     panel.hidden = false;
     state.since = Date.now();
     render({ focus });
-    if (!was) move(1, { animate });
+    if (!was || motion.p !== 1) move(1, { animate });
     load({ chat: state.chat });
   }
 
