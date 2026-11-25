@@ -657,7 +657,7 @@ describe('the images this repository builds', () => {
       assert.match(devDependencies[name] || '', /^\d/, `${name} is pinned to one version`);
     }
     const built = await build();
-    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data', 'github', 'graphviz']);
+    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data', 'github', 'browser', 'graphviz']);
     assert.ok(IMAGES.every((i) => isImageName(i.name) && i.title && i.description));
     const [base, data] = built.images;
     assert.equal(base.v, 2);
@@ -730,6 +730,11 @@ describe('the images this repository builds', () => {
       .every((c) => commandsOf(base).includes(c)));
     assert.ok(['sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
       && !commandsOf(base).includes(c)));
+    // playwright-cli and curlwright, WASI programs, in the Browser image only.
+    const browser = built.images.find((i) => i.name === 'browser');
+    assert.deepEqual(browser.layers.slice(0, base.layers.length), base.layers);
+    assert.ok(['playwright-cli', 'curlwright'].every((c) => commandsOf(browser).includes(c)
+      && !commandsOf(base).includes(c)));
     await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, sqlite3' }] }), /tells the agent of sqlite3/);
     await assert.rejects(build({ images: [{ ...IMAGES[0], layers: ['gpu'] }] }), /has a layer gpu, which there is none of/);
 
@@ -745,8 +750,9 @@ describe('the images this repository builds', () => {
     const tree = await imageTree(bucket, await readImage(bucket, 'data'));
     const { handlers } = imageDriver(bucket, tree);
     const packages = await handlers.readdir('/node_modules/@ai-ecoverse');
-    // Every package but gh's, which is in the GitHub image only.
-    assert.equal(packages.length, Object.values(LAYERS).flat().length - LAYERS.github.length);
+    // Every package but gh's and the browser's, which are in the GitHub and Browser images only.
+    assert.equal(packages.length, Object.values(LAYERS).flat().length - LAYERS.github.length
+      - LAYERS.browser.length);
     const fh = await handlers.open('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm', {});
     assert.deepEqual([...await handlers.read(fh, 0, 4)], [0, 0x61, 0x73, 0x6d]);
     const { size } = await handlers.getattr('/node_modules/@ai-ecoverse/wasm-bash/bin/bash.wasm');
@@ -776,8 +782,8 @@ describe('the images this repository builds', () => {
     const kinds = keys.map((k) => k.split('/')[0]);
     assert.deepEqual([...new Set(kinds)], ['blobs', 'layers', 'images']);
     assert.equal(keys.at(-1), 'images/index.json');
-    assert.deepEqual(keys.slice(-5, -1), ['images/base.json', 'images/data.json', 'images/github.json', 'images/graphviz.json']);
-    assert.equal(kinds.filter((k) => k === 'layers').length, 11);
+    assert.deepEqual(keys.slice(-6, -1), ['images/base.json', 'images/data.json', 'images/github.json', 'images/browser.json', 'images/graphviz.json']);
+    assert.equal(kinds.filter((k) => k === 'layers').length, 12);
     assert.deepEqual(JSON.parse(objects.at(-1).body), indexOf(built.images));
     // An empty bucket lacks them all, and one that fails to answer too.
     assert.equal((await missingFrom(objects, async () => null)).length, objects.length);

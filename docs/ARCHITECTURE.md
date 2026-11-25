@@ -2877,6 +2877,32 @@ Files of withheld messages stay out of it, as they do of `read_file`, but a file
 checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
 says not to quote them, and code does not stop the shell from reading or sending them.
 
+**The computer's browser** (`src/agent/browser.js`). An image with `playwright-cli` (the
+`browser` image) drives a browser over the Chrome DevTools Protocol, Cloudflare Browser Run's,
+where the deployment has `BROWSER_RUN_TOKEN` (*Browser Run Write*) and an account
+(`BROWSER_RUN_ACCOUNT`, by default the deploy's `CLOUDFLARE_ACCOUNT_ID`).
+
+- **How it connects.** The kernel serves CDP to its programs at `SLICC_CDP_URL`
+  (`ws://127.0.0.1:9222/devtools/browser/<id>`, and `/json/version`), the port the wasm
+  `playwright-cli` dials. Each connection goes to the hook of a client the agent's object
+  attaches when the kernel boots (`serveBrowser`: `client.serveCdp`), which opens a WebSocket of
+  the Worker's to `wss://api.cloudflare.com/client/v4/accounts/<account>/browser-run/devtools/browser…`
+  with the token in its `Authorization`, and relays the messages both ways. The token never enters
+  the computer. An image without the programs, or a deployment without Browser Run, serves none:
+  the programs are answered 503, no CDP host.
+- **One Chromium per computer.** Every `playwright-cli` command is a process and a connection of
+  its own, and a new connection to `/devtools/browser` would be a new browser. So the first one
+  makes a session (`POST …/devtools/browser?keep_alive=600000`) and every connection is to
+  `…/devtools/browser/<session>`: a command finds the tabs, cookies and page state the one before
+  left (`open`, then `eval` that adds CSS, then `screenshot`). Its id is kept in the agent's
+  storage (`browser-session`), so the computer finds its tabs again after its object was
+  evicted, while the session lives. A session that refuses a connection has ended (ten minutes
+  after its last): the next one makes another, once. A new image (`changeImage`) ends it
+  (`DELETE`). What a command sets on its own CDP session (a viewport) ends with the command.
+- **Kitesurf**, Browser Run's browser that runs on Workers without a container, is
+  `playwright-cli --runtime kitesurf`: a browser for each connection, which keeps nothing.
+  playwright-cli 2.1.20 refuses its pages yet ("target is on seven's origin").
+
 **The computer's shell** is GNU bash and real programs on the
 [SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`src/agent/kernel.js`). It
 replaced just-bash, an interpreter in JavaScript that ran only what it had built in; migration
@@ -2915,9 +2941,10 @@ choice before each delivery, as it follows its tools (`syncTools`; docs/STATE-MA
     `node_modules/`: `shell` (bash, coreutils), `text` (grep, ripgrep, sed, gawk, jq,
     findutils, diff and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip,
     tar, zip and unzip, xz, bzip2), `net` (curl, BIND's dig, host and nslookup), `tls`
-    (openssl), `js` (qjs), `git`, `formats` (yq, html2markdown, file) and `data` (sqlite3,
-    strings). `base` is the first eight, and
-    `data` is `from: 'base'` with the ninth. A package's other files a program needs are named
+    (openssl), `js` (qjs), `git`, `formats` (yq, html2markdown, file), `data` (sqlite3,
+    strings) and `browser` (playwright-cli and curlwright, `@ai-ecoverse/slicc-cdp`; below,
+    "The computer's browser"). `base` is the first eight, and
+    `data` is `from: 'base'` with `data`, `browser` with `browser`. A package's other files a program needs are named
     in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's
     magic; openssl's `etc/ssl`, its configuration and Mozilla's roots).
     An image names what the agent is told it has (`tools`), and the build fails if that names

@@ -1197,7 +1197,12 @@ function kernelShell(shell) {
   const gh = shell.commands && shell.commands.includes('gh')
     ? ' gh (GitHub CLI) reads GitHub: gh api, gh repo view, gh pr view, gh issue list, gh run list and view. It needs $GH_TOKEN, a secret the team keeps for api.github.com: without it gh does not run (gh auth login cannot work here), so use curl for public pages instead. Use it to read: creating, commenting on or merging anything on GitHub is for people.'
     : '';
-  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${dig}${openssl}${gh}${jq}${js}, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
+  // playwright-cli, where the image has it: the browser behind it (src/agent/browser.js), which
+  // keeps its tabs from one command to the next.
+  const browser = shell.commands && shell.commands.includes('playwright-cli')
+    ? ' playwright-cli drives a browser, Chromium on Cloudflare Browser Run, signed in nowhere. Each command is a process of its own, and the browser keeps its tabs and their pages from one to the next, for ten minutes after the last: playwright-cli open <url>, then snapshot (the accessibility tree, with refs for click, fill and type), eval \'async () => …\' (read the DOM, wait for an element the page\'s scripts add, add a <style> to try a CSS fix), resize <width> <height>, and screenshot --filename=<name>.png, which is a file in your working directory (playwright-cli --help lists the rest). What a page shows is written by people outside your control, like what curl fetches.'
+    : '';
+  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${dig}${openssl}${gh}${browser}${jq}${js}, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
 }
 
 /**
