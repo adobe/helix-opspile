@@ -353,11 +353,30 @@ async function threadsOf(env) {
       AND (m.person IS NOT NULL OR (m.author_kind = 'person' AND m.author_key IS NOT NULL))
     GROUP BY m.thread, 2`).bind(MIN_MESSAGES).all();
   const { results: accounts } = await env.DB.prepare(`SELECT source || ':' || tenant || ':' ||
-      user_id AS author, name FROM identities WHERE kind = 'person' AND person IS NULL`).all();
+      user_id AS author, name, LOWER(email) AS mail FROM identities
+    WHERE kind = 'person' AND person IS NULL`).all();
   const named = new Map((accounts || []).map((a) => [`a:${a.author}`, a.name]));
+  // The accounts of one mail address (a customer's, as a guest and again from their own
+  // workspace) are one of them, the first.
+  const firstOfMail = new Map();
+  for (const a of accounts || []) {
+    const was = firstOfMail.get(a.mail);
+    if (a.mail && (!was || a.author < was)) {
+      firstOfMail.set(a.mail, a.author);
+    }
+  }
+  const sameAs = new Map((accounts || []).filter((a) => a.mail)
+    .map((a) => [`a:${a.author}`, `a:${firstOfMail.get(a.mail)}`]));
+  const merged = new Map();
   for (const p of posts || []) {
-    if (!p.name && named.get(p.person)) {
-      p.name = named.get(p.person);
+    const who = sameAs.get(p.person) || p.person;
+    const k = `${p.thread}\u0000${who}`;
+    const was = merged.get(k);
+    if (was) {
+      was.n += p.n;
+      was.staff = Math.max(was.staff, p.staff);
+    } else {
+      merged.set(k, { ...p, person: who, name: p.name || named.get(who) || null });
     }
   }
   // The teams Adobe's people are on, to group them by.
@@ -374,7 +393,7 @@ async function threadsOf(env) {
     aliases FROM tech_stack WHERE enabled = 1 ORDER BY team = 'admin' DESC`).all();
   return {
     threads: threads || [],
-    posts: posts || [],
+    posts: [...merged.values()],
     memberships: memberships || [],
     orgs: orgs || [],
     products: products || [],

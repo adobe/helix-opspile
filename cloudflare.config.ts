@@ -93,12 +93,14 @@ const CLICKHOUSE_VARS = ['CLICKHOUSE_URL', 'CLICKHOUSE_DATABASE', 'CLICKHOUSE_US
 // WEB_SEARCH_PROVIDER (webiq, ceramic, linkup or exa; default webiq where the secret
 // WEBIQ_API_KEY is set, else ceramic) and WEB_SEARCH_GATEWAY (default AGENT_GATEWAY, for all but
 // webiq): the agents' web_search (src/agent/websearch.js).
+// BROWSER_RUN_ACCOUNT (default: the Worker's account): where the computers' browser runs, with
+// BROWSER_RUN_TOKEN (src/agent/browser.js).
 // FEEDBACK_REPO (`owner/name`), with the secret FEEDBACK_GITHUB_TOKEN: the repository the
 // agents' send_feedback files its issues in (src/agent/feedback.js); off without both.
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL', 'TEAMS_APP_ID', 'TEAMS_BOT_SERVICE_URL',
-  'WEB_SEARCH_PROVIDER', 'WEB_SEARCH_GATEWAY', 'FEEDBACK_REPO',
+  'WEB_SEARCH_PROVIDER', 'WEB_SEARCH_GATEWAY', 'FEEDBACK_REPO', 'BROWSER_RUN_ACCOUNT',
 ] as const;
 
 // Membership requests, optional (the agents' request_membership tool, src/agent/membership.js):
@@ -249,6 +251,9 @@ function vars(deployed: boolean) {
   const values: Record<string, string | undefined> = {
     ...process.env,
     AI_GATEWAY_ACCOUNT: process.env.AI_GATEWAY_ACCOUNT
+      || (process.env.AGENT_MODEL ? process.env.CLOUDFLARE_ACCOUNT_ID : undefined),
+    // The computers' browser (src/agent/browser.js) runs in the Worker's account too.
+    BROWSER_RUN_ACCOUNT: process.env.BROWSER_RUN_ACCOUNT
       || (process.env.AGENT_MODEL ? process.env.CLOUDFLARE_ACCOUNT_ID : undefined),
   };
   return Object.fromEntries(

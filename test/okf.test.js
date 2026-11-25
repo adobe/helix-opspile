@@ -193,6 +193,28 @@ describe('knowledge base writes', () => {
     const missing = await commitChanges(fs, [{ path: 'issues/a.md', delete: true }], OPTS);
     assert.match(missing.conflict, /does not exist/);
   });
+
+  // A file rewritten within the second of the checkout, at the same size, has the stats git
+  // recorded for it: unless its inode changed, git took it for unchanged and left it out.
+  it('commits a rewrite of the same size, made within the same second', async () => {
+    const fs = await emptyRepo();
+    const committed = async (path) => {
+      const oid = await git.resolveRef({ fs, dir: '/kb', ref: 'HEAD' });
+      const { blob } = await git.readBlob({
+        fs, dir: '/kb', oid, filepath: path,
+      });
+      return new TextDecoder().decode(blob);
+    };
+    await commitChanges(fs, [{ path: 'issues/a.md', content: CONCEPT }, { path: 'issues/b.md', content: CONCEPT }], OPTS);
+    // "2 concepts" to "3 concepts": the root index keeps its size.
+    await commitChanges(fs, [{ path: 'issues/c.md', content: CONCEPT }], OPTS);
+    assert.match(await committed('index.md'), /\[issues\]\(issues\/\) - 3 concepts$/m);
+    // An edit that keeps the size is committed, not reported unchanged.
+    const base = (await git.hashBlob({ object: await fs.promises.readFile('/kb/issues/a.md') })).oid;
+    const r = await commitChanges(fs, [{ path: 'issues/a.md', content: CONCEPT.replace('minute', 'mINUTE'), base }], OPTS);
+    assert.ok(r.commit);
+    assert.match(await committed('issues/a.md'), /mINUTE/);
+  });
 });
 
 describe('knowledge base writes over git', { skip: !hasGit() && 'git is not installed' }, () => {

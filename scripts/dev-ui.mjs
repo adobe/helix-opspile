@@ -108,6 +108,7 @@ import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { areaFile, compileAreas, isArea } from '../src/areas.js';
 import { topicsPage } from '../src/topicsapi.js';
 import { teamDirectory, teamProfile } from '../src/teamprofile.js';
+import { teamVendors } from '../src/vendors.js';
 import { orgDirectory, orgProfile } from '../src/orgprofile.js';
 import { personCard } from '../src/person.js';
 import { weeksTo } from '../src/trends.js';
@@ -1743,6 +1744,11 @@ async function api(req, res, url) {
     const r = await teamProfile(adminApi.env, topicsViewer(), url.searchParams.get('team'));
     return json(res, r.error ? { error: r.error } : r, r.error ? r.status || 400 : 200);
   }
+  // A team's vendors (src/vendors.js), the same way: Initech's half year (dev-ui-vendor.mjs).
+  if (url.pathname === '/api/teams/vendors') {
+    const r = await teamVendors(adminApi.env, topicsViewer(), url.searchParams.get('team'));
+    return json(res, r.error ? { error: r.error } : r, r.error ? r.status || 400 : 200);
+  }
   // A customer's overview (src/orgprofile.js), the same way: the customers' half year of
   // made-up posts (dev-ui-team.mjs, dev-ui-customer.mjs).
   if (url.pathname === '/api/customers') {
@@ -2108,6 +2114,16 @@ async function api(req, res, url) {
       }));
     return json(res, { platform: entry.row.source, experts });
   }
+  if (url.pathname === '/api/draft/file') {
+    // As src/draftfiles.js: a picture of the thread's draft.
+    const d = drafts.get(url.searchParams.get('thread'));
+    const id = url.searchParams.get('id');
+    const f = d && (d.files || []).some((x) => x.id === id) && store.uploads.get(id);
+    if (!f) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    return res.writeHead(200, { 'content-type': f.type, 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'" }).end(Buffer.from(f.bytes));
+  }
   if (url.pathname === '/api/draft/source') {
     // As src/sources.js would answer about each fixture's source; a Slack message as
     // src/messagelinks.js does, the message the store has.
@@ -2271,7 +2287,7 @@ async function api(req, res, url) {
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
     // As src/drafts.js: `base` is the version the text was written from.
     const {
-      thread: key, text: body, mentions = [], sources, base = null,
+      thread: key, text: body, mentions = [], sources, files: keep, base = null,
     } = await readJson(req);
     const entry = store.threads.get(key);
     if (!entry || !inTeam(entry.row.team)) {
@@ -2307,6 +2323,8 @@ async function api(req, res, url) {
       body,
       mentions,
       sources: sources ?? current?.sources ?? [],
+      // As src/draftfiles.js: the ids it keeps, or all of them.
+      files: (current?.files || []).filter((f) => !keep || keep.includes(f.id)),
       by: { id: ME, name: me.name },
       created_at: current ? current.created_at : at,
       updated_at: at,

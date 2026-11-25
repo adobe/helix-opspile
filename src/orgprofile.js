@@ -23,7 +23,7 @@
  *   - its **people** (and the partners' in its threads), each with a picture, their title, how
  *     much they posted, what they ask about (Clef's areas and technologies of their threads, the
  *     ones that set them apart from the rest of them first), and their Contact in its knowledge
- *     base where it has one;
+ *     base where it has one; the accounts of one mail address are one person;
  *   - **Adobe's people** in its threads, with their teams, and the **teams** that work it: whose
  *     people post there, the teams its channels are filed under or shared with, and those that
  *     follow it;
@@ -31,6 +31,10 @@
  *     those Clef sees in its threads, and the parts of its stack drawing;
  *   - its **knowledge base**: its entries by type, listed for whoever may read it
  *     (src/kbaccess.js), counted for everyone else; and whether it has a stack drawing.
+ *
+ * A vendor's (`orgs.type` 'vendor') is the other way round: how soon it answers what Adobe starts
+ * (`answers.by` 'them'), and `vendor`, its cases, status posts and the customers on its products
+ * (src/vendors.js), whose lists are filtered per viewer.
  *
  * "Its threads" are the channel conversations filed under it, active in the window. Names,
  * numbers, pictures and titles only: no message text, and no mail address, leaves the Worker. A
@@ -45,7 +49,9 @@ import { LAYERS, STACK_PATH } from './stack.js';
 import { partnerOf } from './profiles.js';
 import { personSlug } from './agent/okf.js';
 import { mailDomains } from './orgmerge.js';
+import { activeSince } from './listactivity.js';
 import { AVATAR, NAME, TITLE } from './personsql.js';
+import { VENDOR, vendorForViewer, vendorNumbers } from './vendors.js';
 import {
   byWeek, CACHE_MS, CATALOG_TYPES, distinctive, MAX_ENTRIES, techNames, UNASSIGNED, WEEK, WEEKS,
   zeros,
@@ -167,7 +173,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     return null;
   }
   const [threadWeeks, threadTech, threadAreas, authors, tags, firsts, channelRows, shares, follows,
-    concepts, base, stackRow, partnerRows, domains] = await Promise.all([
+    concepts, base, stackRow, partnerRows, domains, threadsBy] = await Promise.all([
     // Its threads, week by week: what was said in each, how much of it by Adobe; the chart, the
     // channels, the areas and the technologies are counted from these (a thread by its rowid).
     q(`WITH ${SCOPE} SELECT h.rowid AS id, h.team, h.source || ':' || h.tenant || ':' || h.channel_id AS channel,
@@ -184,6 +190,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     q(`WITH ${SCOPE}, ${AUTHORS}
       SELECT a.key, a.staff, a.week, a.n, a.threads, a.last, i.person, i.kind,
         COALESCE(i.display_name, i.name) AS name,
+        LOWER(COALESCE(p.email, i.email)) AS mail,
         LOWER(SUBSTR(COALESCE(p.email, i.email), INSTR(COALESCE(p.email, i.email), '@') + 1)) AS domain
       FROM a LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +a.key
         LEFT JOIN people p ON p.id = i.person`),
@@ -196,16 +203,18 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
         JOIN thread_areas a ON a.thread = mine.thread GROUP BY 1, 3
       UNION ALL SELECT mine.key, 'tech', x.tech, SUM(mine.n), COUNT(*) FROM mine
         JOIN thread_tech x ON x.thread = mine.thread GROUP BY 1, 3`),
-    // The threads its people started in the window, and Adobe's first post after their first.
+    // The threads started in the window, and the other side's first post after the first one:
+    // Adobe's in those its people started, theirs in those Adobe started (a vendor's answer).
     q(`WITH ${SCOPE}, f AS (SELECT scope.thread,
           (SELECT m.staff FROM messages m WHERE m.thread = scope.thread AND m.counted = 1
             AND m.deleted = 0 ORDER BY m.at LIMIT 1) AS staff,
           (SELECT MIN(m.at) FROM messages m WHERE m.thread = scope.thread AND m.counted = 1
             AND m.deleted = 0) AS first
         FROM scope JOIN threads h ON h.thread = scope.thread WHERE h.root_at >= ?2)
-      SELECT f.first, (SELECT MIN(m.at) FROM messages m WHERE m.thread = f.thread AND m.staff = 1
-          AND m.counted = 1 AND m.deleted = 0 AND m.at > f.first) AS answered
-      FROM f WHERE f.staff = 0`),
+      SELECT f.first, f.staff, (SELECT MIN(m.at) FROM messages m WHERE m.thread = f.thread
+          AND m.staff = 1 - f.staff AND m.counted = 1 AND m.deleted = 0 AND m.at > f.first)
+          AS answered
+      FROM f WHERE f.staff IS NOT NULL`),
     // Its channels, whichever team they are filed under (a re-filing not done yet: both).
     all(`SELECT h.source, h.tenant, h.channel_id, h.source || ':' || h.tenant || ':' || h.channel_id AS channel,
         h.team, COALESCE(c.name, MAX(h.channel_name)) AS name, c.archived_at, COUNT(*) AS threads,
@@ -226,6 +235,10 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     db.prepare('SELECT parts FROM org_stacks WHERE org = ?').bind(slug).first(),
     all('SELECT domain, name FROM partner_domains'),
     mailDomains(env, slug),
+    // The threads each of its people's accounts posted in, to count a person's threads once.
+    q(`WITH ${SCOPE} SELECT DISTINCT g.author_key AS key, g.thread
+      FROM scope JOIN messages g ON g.thread = scope.thread AND g.at >= ?2
+      WHERE g.staff = 0 AND g.deleted = 0 AND g.counted = 1 AND g.author_key IS NOT NULL`),
   ]);
   const at = new Map(weeks.map((w, i) => [w, i]));
   const partners = new Map(partnerRows.map((p) => [String(p.domain).toLowerCase(), p.name]));
@@ -257,9 +270,22 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     return out;
   };
 
-  // Who posted: a person's accounts count as one, an account without a person as its own; no
-  // workflow or bot account.
-  const whoOf = (r) => (r.person ? `p:${r.person}` : `a:${r.key}`);
+  // Who posted: a person's accounts count as one, and so do the accounts of one mail address
+  // without a person (a customer's, as a guest and again from their own workspace), as the
+  // first of them; any other account as its own; no workflow or bot account.
+  const firstOfMail = new Map();
+  for (const r of authors) {
+    const was = firstOfMail.get(r.mail);
+    if (!r.person && r.mail && (!was || r.key < was)) {
+      firstOfMail.set(r.mail, r.key);
+    }
+  }
+  const whoOf = (r) => {
+    if (r.person) {
+      return `p:${r.person}`;
+    }
+    return `a:${(r.mail && firstOfMail.get(r.mail)) || r.key}`;
+  };
   const people = (staff) => byWeek(
     authors.filter((r) => Boolean(r.staff) === staff && (r.kind || 'person') === 'person')
       .map((r) => ({ ...r, who: whoOf(r) })),
@@ -267,7 +293,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     weeks,
     (r, e) => {
       e.person = r.person ?? null;
-      e.name = e.name || r.name || null;
+      e.name = (`a:${r.key}` === r.who && r.name) || e.name || r.name || null;
       e.threads = (e.threads || 0) + r.threads;
       e.keys = (e.keys || new Set()).add(r.key);
       e.domain = e.domain || r.domain || null;
@@ -297,6 +323,11 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     for (const k of e.keys) {
       keyWho.set(k, w);
     }
+  }
+  const threadsOf = new Map();
+  for (const r of threadsBy.filter((x) => keyWho.has(x.key))) {
+    const w = keyWho.get(r.key);
+    threadsOf.set(w, (threadsOf.get(w) || new Set()).add(r.thread));
   }
   const merge = (kind) => {
     const by = new Map();
@@ -498,7 +529,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
       title: (p && p.title) || null,
       partner: partner ? partner.name : null,
       messages: e.n,
-      threads: e.threads,
+      threads: (threadsOf.get(w) || new Set()).size,
       weekly: e.weekly,
       last: e.last,
       areas: (areasOf.get(w) || [])
@@ -568,7 +599,10 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
   };
 
   // How soon Adobe answers what its people start: the wait for Adobe's first post, in minutes.
-  const waits = firsts.filter((f) => f.answered)
+  // A vendor is the other way round: how soon it answers what Adobe starts.
+  const vendor = row && row.type === VENDOR;
+  const asked = firsts.filter((f) => Boolean(Number(f.staff)) === vendor);
+  const waits = asked.filter((f) => f.answered)
     .map((f) => (Date.parse(f.answered) - Date.parse(f.first)) / 60000);
 
   // The knowledge base: its entries by type, the catalog and its people's Contacts apart.
@@ -596,10 +630,13 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     breakdowns,
     threadCount: weeksOf.size,
     answers: {
-      asked: firsts.length,
+      by: vendor ? 'them' : 'adobe',
+      asked: asked.length,
       answered: waits.length,
       median: median(waits),
     },
+    // A vendor's cases, status posts and the customers' threads of its products (src/vendors.js).
+    ...(vendor ? { vendor: await vendorNumbers(env, slug, weeks) } : {}),
     people: topTheirs.map(personOut),
     peopleCount: theirs.length,
     partnerCount: theirs.filter(([, e]) => partnerOf(e.domain, partners)).length,
@@ -671,6 +708,7 @@ export async function orgProfile(env, me, slug, { now = new Date() } = {}) {
       })),
       drawing: readable && numbers.kb.drawing,
     },
+    ...(numbers.vendor ? { vendor: vendorForViewer(me, numbers.vendor) } : {}),
     may: { read: readable },
   };
 }
@@ -686,12 +724,13 @@ export async function orgDirectory(env) {
       (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug AND t.kind = 'channel')
         AS channels,
       (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug) AS threads,
+      (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug AND t.last_at >= ?2) AS recent,
       (SELECT MAX(COALESCE(last_at, any_at)) FROM threads t WHERE t.org = s.slug) AS latest
     FROM (SELECT slug FROM orgs UNION SELECT DISTINCT org FROM threads
       UNION SELECT slug FROM knowledge_bases WHERE kind = 'org') s
     LEFT JOIN orgs o ON o.slug = s.slug
-    WHERE s.slug != ? AND s.slug NOT IN (SELECT slug FROM org_merges)
-    ORDER BY COALESCE(o.name, s.slug)`).bind(UNASSIGNED).all();
+    WHERE s.slug != ?1 AND s.slug NOT IN (SELECT slug FROM org_merges)
+    ORDER BY COALESCE(o.name, s.slug)`).bind(UNASSIGNED, activeSince()).all();
   // Its usual mail domain, whose favicon it is shown with when it has no icon (as Customers').
   const domains = await mailDomains(env);
   return (results || []).map((o) => ({ ...o, domain: (domains.get(o.slug) || [])[0] || null }));

@@ -127,6 +127,12 @@ export const LAYERS = {
   diagrams: [
     { name: '@ai-ecoverse/wasm-graphviz' },
   ],
+  // playwright-cli (@ai-ecoverse/slicc-cdp): it drives a browser over CDP at SLICC_CDP_URL,
+  // which the agent's object serves from Cloudflare Browser Run (src/agent/browser.js) for an
+  // image that has it. Not its curlwright.
+  browser: [
+    { name: '@ai-ecoverse/slicc-cdp', commands: ['playwright-cli'] },
+  ],
   data: [
     { name: '@ai-ecoverse/wasm-sqlite3' },
     { name: '@ai-ecoverse/wasm-binutils', commands: ['strings'] },
@@ -171,6 +177,17 @@ export const IMAGES = [
       + ' workflow runs. Give the team a GH_TOKEN secret for github.com.',
     tools: `${BASE_TOOLS}, gh`,
     layers: ['github'],
+  },
+  // Not in Base: a browser session costs by the hour, and playwright-cli.wasm is 6.5 MB.
+  {
+    name: 'browser',
+    from: 'base',
+    title: 'Browser',
+    description: 'Base, with a browser (Chromium on Cloudflare Browser Run) and playwright-cli'
+      + ' to drive it: open a page, wait for its scripts, read its accessibility tree, run'
+      + ' JavaScript or add CSS in it, click and type, and take screenshots at any viewport.',
+    tools: `${BASE_TOOLS}, playwright-cli`,
+    layers: ['browser'],
   },
   // The renderer Worker's (src/graphviz/worker.js): dot alone, no shell. Not offered to teams
   // (`internal`: not in the index the knowledge-base editor lists).

@@ -152,7 +152,9 @@ describe('a customer\'s overview', () => {
     assert.equal(sum(p.activity.messages), 12);
     assert.equal(sum(p.activity.staff), 6);
     // a1 and a2 were started by its people, answered in 2 h and in 30 min; a3 by Adobe.
-    assert.deepEqual(p.answers, { asked: 2, answered: 2, median: 75 });
+    assert.deepEqual(p.answers, {
+      by: 'adobe', asked: 2, answered: 2, median: 75,
+    });
   });
 
   it('has its people, Adobe\'s and the teams that work it', async () => {
@@ -188,6 +190,37 @@ describe('a customer\'s overview', () => {
       ['edge', 4, 2, 1, 0, false],
       ['forms', 2, 2, 1, 1, true],
     ]);
+  });
+
+  it('counts a customer\'s accounts of one mail address as one of them', async () => {
+    const e = seed();
+    const db = e.DB.sqlite;
+    db.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, person, fetched_at, email,
+        guest) VALUES
+      ('slack', 'T', 'G9', 'person', 'Lu Wen', NULL, '${day(0)}', 'Lu.Wen@acme.example', 1),
+      ('slack', 'T', 'H9', 'person', 'Lu', NULL, '${day(0)}', 'lu.wen@acme.example', 0),
+      ('slack', 'T', 'J9', 'person', 'Jo Other', NULL, '${day(0)}', NULL, 0)`);
+    const msg = db.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at,
+      person, staff, counted, deleted, author_key) VALUES ('slack', 'T', 'C1', ?, ?, ?, NULL, 0,
+      1, 0, ?)`);
+    msg.run('lu1', 't:a1', hour(230), 'slack:T:H9');
+    msg.run('lu2', 't:a2', hour(70), 'slack:T:G9');
+    msg.run('lu3', 't:a2', hour(69), 'slack:T:G9');
+    msg.run('lu4', 't:a2', hour(68), 'slack:T:H9');
+    msg.run('jo1', 't:a1', hour(229), 'slack:T:J9');
+    const p = await orgNumbers(e, 'acme', { now: NOW });
+    assert.deepEqual(p.people.map((x) => [x.id, x.name, x.messages, x.threads]), [
+      [null, 'Lu Wen', 4, 2],
+      [5, 'Sam Reyes', 3, 2],
+      [6, 'Kim Lee', 2, 2],
+      [null, 'Jo Other', 1, 1],
+      [7, 'Pat Partner', 1, 1],
+    ]);
+    assert.equal(p.peopleCount, 5);
+    assert.deepEqual(p.people[0].areas.map((a) => a.name), ['Caching and delivery']);
+    const lu = p.breakdowns.people.find((x) => x.name === 'Lu Wen');
+    assert.deepEqual([lu.id, lu.n], ['a:slack:T:G9', 4]);
+    assert.ok(!JSON.stringify(p).toLowerCase().includes('lu.wen@'));
   });
 
   it('has what its threads are about, its channels and its technologies', async () => {

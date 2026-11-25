@@ -236,6 +236,14 @@ describe('waitingOn', () => {
     );
   });
 
+  it('in a vendor\'s thread, waits on the vendor whatever the label calls them', () => {
+    const v = (lastStaff, nextActor) => ({ ...t(lastStaff, nextActor), org_type: 'vendor' });
+    assert.deepEqual(
+      [v(1, 'customer'), v(1, 'vendor'), v(0, 'us'), v(1, 'us'), v(0, 'nobody'), v(0)].map(waitingOn),
+      ['vendor', 'vendor', 'us', 'nobody', 'nobody', 'us'],
+    );
+  });
+
   it('without a label, waits on us when the customer posted last', () => {
     assert.deepEqual([t(0), t(1), t(0, null)].map(waitingOn), ['us', 'nobody', 'us']);
   });

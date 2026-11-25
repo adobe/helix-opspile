@@ -101,10 +101,12 @@ describe('a customer\'s overview, drawn', () => {
     assert.match(card, /<a href="\/inbox\/topics\?sel=tag%3Acdn" class="ps-chip"[^>]*>Caching<\/a>/);
     assert.match(card, /<a href="\/inbox\/topics\?sel=product%3Atech%3Afastly" class="ps-chip tech"/);
     assert.match(card, /<b><a href="\/inbox\/topics\?sel=person%3A5"[^>]*>Sam &lt;Reyes&gt;<\/a><\/b>/);
-    // Their profile (their Contact in its knowledge base) under who they are, as a team member's.
+    // Their profile (their Contact in its knowledge base) after what every card has, as a team
+    // member's.
     assert.match(card, /<div class="ps-profile">\s*<p>Owns the &lt;launch&gt; date\.<\/p><a href="\/kb\/contacts\/sam-reyes\.md" class="ps-src"[^>]*>Profile on ACME<\/a><\/div>/);
-    assert.ok(card.indexOf('ps-profile') < card.indexOf('ps-freq'));
+    assert.ok(card.indexOf('ps-freq') < card.indexOf('ps-profile'));
     assert.ok(!card.includes('ps-keys'));
+    assert.match(card, /<dt>Asks about<\/dt>/);
   });
 
   it('marks a partner\'s person, and leaves a name without a person unlinked', () => {
@@ -131,5 +133,74 @@ describe('a customer\'s overview, drawn', () => {
     const week = html.slice(html.indexOf('data-week="1"'), html.indexOf('</g>', html.indexOf('data-week="1"')));
     assert.deepEqual([...week.matchAll(/data-series="(\w+)"/g)].map((m) => m[1]), ['theirs', 'adobe']);
     assert.match(html, /<li data-part="1"[^>]*><span class="dot" data-series="adobe"><\/span><span class="nm">Adobe<\/span><span class="sub">4<\/span><\/li>/);
+  });
+});
+
+describe('a vendor\'s overview, drawn', () => {
+  const thread = (over) => ({
+    thread: 't:1', org: 'cdnco', title: 'Purge <leaves> stale objects', channel: 'cdnco-support', urgency: 'high', kind: 'incident', waiting: 'vendor', third: false, last: '2026-11-24T00:00:00Z', team: 'edge', shared: [], inbox: '/inbox?team=edge&t=t%3A1', ...over,
+  });
+  const vendor = {
+    ...profile,
+    org: {
+      ...profile.org, slug: 'cdnco', name: 'CDN Co', type: 'vendor',
+    },
+    answers: {
+      by: 'them', asked: 3, answered: 2, median: 90,
+    },
+    vendor: {
+      cases: {
+        open: 2, them: 1, us: 1, list: [thread(), thread({ thread: 't:2', title: 'Send logs', waiting: 'us' })], hidden: 1,
+      },
+      status: {
+        total: 1,
+        weekly: [0, 1],
+        list: [{
+          thread: 't:s', title: 'Maintenance in FRA', at: '2026-11-23T00:00:00Z', inbox: '/inbox?team=edge&t=t%3As',
+        }],
+        hidden: 0,
+      },
+      dependents: {
+        threads: 4,
+        customerCount: 1,
+        customers: [{
+          slug: 'acme', name: 'ACME', type: 'customer', icon: null, threads: 4, waiting: 1, last: '2026-11-24T00:00:00Z',
+        }],
+        products: [{ tech: 'cdnco/cdn', name: 'CDN Co CDN', threads: 4 }],
+        waiting: 1,
+        list: [thread({
+          thread: 't:c', org: 'acme', title: 'Stale pages', third: true, inbox: '/inbox?team=edge&t=t%3Ac',
+        })],
+        hidden: 0,
+      },
+    },
+  };
+  const vctx = { ...ctx, orgHref: (slug) => `/org/${slug}`, orgIcon: () => '' };
+
+  it('counts its cases and how soon it answers, the other way round', () => {
+    const html = CustomerView.html(vendor, vctx);
+    assert.match(html, /<b>2<\/b><span>open cases<\/span><small>1 waiting on them, 1 on Adobe<\/small>/);
+    assert.match(html, /title="How long its first answer took in the threads Adobe started[^"]*"><b>1\.5 h<\/b><span>first answer<\/span><small>typically; 2 of the 3 cases Adobe opened<\/small>/);
+    assert.match(html, /<h2 id="tvAreas">What the cases are about<\/h2>/);
+  });
+
+  it('lists its open cases, status posts and the customers on its products, titles escaped', () => {
+    const html = CustomerView.html(vendor, vctx);
+    const cases = html.slice(html.indexOf('id="cvCases"'), html.indexOf('id="cvStatus"'));
+    assert.match(cases, /<a href="\/inbox\?team=edge&amp;t=t%3A1" title="Open it in the inbox">Purge &lt;leaves&gt; stale objects<\/a><span class="sub">#cdnco-support · high urgency · incident · [^<]+<\/span><\/span><span class="tag tv-them"[^>]*>Waiting on them<\/span>/);
+    assert.match(cases, /<span class="tag tv-us"[^>]*>Waiting on Adobe<\/span>/);
+    assert.match(cases, /And 1 more thread in channels of teams you are not on\./);
+    assert.match(html, /Maintenance in FRA/);
+    assert.match(html, /<a href="\/org\/acme">ACME<\/a>/);
+    assert.match(html, /<span class="tag tv-them"[^>]*>1 waits on a third party<\/span>/);
+    const third = html.slice(html.indexOf('id="cvThird"'));
+    assert.match(third, /<span class="sub">ACME · #cdnco-support/);
+    assert.match(third, /<span class="tag tv-them"[^>]*>Waiting on a third party<\/span>/);
+  });
+
+  it('is a customer\'s for a customer', () => {
+    const html = CustomerView.html(profile, ctx);
+    assert.ok(!html.includes('id="cvCases"'));
+    assert.match(html, /How long Adobe&#39;s first post took/);
   });
 });

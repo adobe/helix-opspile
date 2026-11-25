@@ -1097,7 +1097,7 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   `src/room.js`). Someone on no team (no-team mode, `SIGNIN_DOMAINS`) has only this view.
   A **team's** view
   (`team=<slug>`) puts what needs you most first and has every facet card. First comes the
-  status (unseen and critical, unseen and hot, you, waiting too long, customer silent, team on it,
+  status (unseen and critical, unseen and hot, you, waiting too long, they went silent, team on it,
   the rest); within a status, the score of `ui/rank.js`, boosted trees over what the inbox knows
   of a thread (how long ago, who is waited on, urgency, resolved, kind, …) learned from Clef's
   pairwise judgements of production threads, from what people open in the list and from which
@@ -1266,12 +1266,15 @@ The inbox sorts every thread into one pile, most pressing first: **critical** (c
 urgency, nobody at Adobe has seen it), **hot** (high urgency, unseen by Adobe), **you** (you
 posted or were mentioned, and the customer spoke last or you were mentioned), **waiting**
 (waiting on us longer than 15 min / 1 h / 3 h for critical / high / normal), **silent**
-(waiting on the customer or vendor longer than 30 min / 1 h / 1 day: follow up or close; for
-normal and low urgency, Saturdays and Sundays in the viewer's time zone do not count),
-**team** (your team is in it and all is well) and **quiet**. Who a thread waits on is Clef's
-`next_actor`, except that a thread where Adobe posted last never waits on us (the label can
+(waiting on the customer or a vendor longer than 30 min / 1 h / 1 day: follow up, chase the
+vendor, or close; for normal and low urgency, Saturdays and Sundays in the viewer's time zone do
+not count), **team** (your team is in it and all is well) and **quiet**. Who a thread waits on is
+Clef's `next_actor`, except that a thread where Adobe posted last never waits on us (the label can
 be stale or wrong), and an unlabeled thread waits on us when the customer posted last; the
-API sends it as `waiting_on`. Admins can look at the inbox as another person, read-only.
+API sends it as `waiting_on` (`us`, `customer`, `vendor`, `nobody`), and the inbox's Waiting on
+card has Us, Customer, Vendor and Nobody. In a vendor's thread (see "Vendors") the other side is
+the vendor: one that waits on someone outside Adobe waits on the vendor, whatever its label
+calls them. Admins can look at the inbox as another person, read-only.
 
 ### Attention
 
@@ -1347,7 +1350,9 @@ and an unchanged thread is never labeled twice):
   kind of thread it is (`incident`, `security`, `question`, `request`, `access`, `people`,
   `meeting`, `other`; alerts are `alert` without asking), urgency (0–3) and whether it is
   resolved. The state it reads is the thread as text, with every author marked as Adobe staff
-  or customer. `access` is about permissions and getting into tools; people joining, leaving,
+  or customer. A vendor's thread is asked the other way round (`VENDOR_QUESTIONS`, see
+  "Vendors"): its authors outside Adobe are the vendor's, and who acts next is `us`, `vendor` or
+  `nobody`. `access` is about permissions and getting into tools; people joining, leaving,
   being introduced or away are `people`; scheduling and sharing a call's notes are `meeting`.
 - In the same call, Clef answers a yes/no question per **area** (a topic, in the code and the
   inbox's Topic filter). Areas are authored: each is a file at `areas/<id>.md` of a team's
@@ -1566,7 +1571,8 @@ twice its share of all the map's threads). The lift keeps what is
   messages), the customers', partners' and vendors' people who posted (`customers`: by
   `people.id` where they are a person of D1, else, as every customer's person in production, by
   their platform account, `a:<author_key>`, named as `identities` has it, and not followed from
-  the page; bots are nobody), who each
+  the page; the accounts of one mail address are one, the first of them: a customer's guest
+  account and the one of their own workspace, on Slack Connect; bots are nobody), who each
   person is to group them by (`peopleOf`: Adobe's by the team they are on whose threads they
   posted in most, or none when they are on no team, the others by the customer of most of their threads), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
   and the **products**: the technologies Clef says the thread is about (`thread_tech.about`), or,
@@ -2390,7 +2396,7 @@ something.
 **Watching what the thread waits on.** A thread often waits on something elsewhere: a vendor's
 case, another team's thread, a GitHub issue or pull request. Someone tells the agent so in the
 sidebar (or the thread links it), and the agent watches it with `watch_related` (`agent_watches`,
-migration 0103; `src/agent/watches.js` for the agent's side, `src/watches.js` for the Worker's),
+migration 0104; `src/agent/watches.js` for the agent's side, `src/watches.js` for the Worker's),
 with `why`, what exactly its thread waits on there, in its own words. Each change wakes it with an
 update, as an input of its own, with `why` given back:
 
@@ -2603,11 +2609,12 @@ written by people outside its control.
 | `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
 | `sidebar_followup` | tells the person who asked something in the sidebar (`message`, its `sb_…` id) what has happened since, from a later turn on the thread's messages (`addSidebarFollowup` in `src/sidebar.js`): a new answer of the agent's to them, under their question; refused while it answers a sidebar message, for a message it did not answer yet, over a week old, or followed up three times |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
-| `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `update_draft` holds a draft's length against the replies staff write (`src/agent/draftlength.js`, log-normal over characters): beyond one standard deviation (42 to 480 characters) it saves with a warning, beyond two (12 to 1625) it saves nothing and says why. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
-| `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app. As no person reads it first, it refuses a reply longer than one standard deviation of staff replies (480 characters, `src/agent/draftlength.js`), which goes into the draft instead, and takes a short one |
+| `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `update_draft` holds a draft's length against the replies staff write (`src/agent/draftlength.js`, log-normal over characters): beyond one standard deviation (42 to 480 characters) it saves with a warning, beyond two (12 to 1625) it saves nothing and says why. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. With the `computer`, `update_draft`'s `files` attaches pictures from it (a screenshot `playwright-cli` took): PNG, JPEG, GIF or WebP by their bytes, up to 5 MB and four a draft, kept in `FILES` under `drafts/<id>` for 30 days and named in `drafts.files` (migration 0103, `src/draftfiles.js`). Given, they replace the draft's; left out, they stay, as when a person edits the text. The draft line shows them ("Sent with it", `GET /api/draft/file`, served inline under `default-src 'none'`), and they go with it as the reply's files, as a person's own, whether it is sent from the line (as you or as the bot) or taken into the reply box (into its tray), under the channel's rule (src/attach.js). Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
+| `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app. As no person reads it first, it refuses a reply longer than one standard deviation of staff replies (480 characters, `src/agent/draftlength.js`), which goes into the draft instead, and takes a short one. With the `computer`, `files` posts pictures from it with the reply, where the channel takes them (`appRule`) |
 | `request_membership` | only where it is turned on (see "Agent tools"): asks the platform's admin bot to add people to the channel, or remove them, for the author of a message of the thread that asked; the bot's admins approve |
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
+| `view_image` | with the `computer`: a picture in its working directory (`/workspace`), PNG, JPEG, GIF or WebP by its bytes, up to 3.75 MB and 8000 pixels a side, as an image the model sees: a screenshot it took, before it attaches it (`readComputerFile`, `src/agent/computer.js`) |
 | `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
 | `request_codemode` | a thread's agent only: asks a person on the team to run a code mode script as themselves, calling the inbox's read-only tools it names (`search_threads`, `list_threads`, `get_thread`, `get_message`, `get_knowledge`, `whoami`) with that person's permissions; it answers at once, and the agent is told later what the script output (see "Scripts a person runs") |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
@@ -2918,6 +2925,32 @@ Files of withheld messages stay out of it, as they do of `read_file`, but a file
 checked for prompt injection here, and a raw HAR holds its recorder's credentials: the prompt
 says not to quote them, and code does not stop the shell from reading or sending them.
 
+**The computer's browser** (`src/agent/browser.js`). An image with `playwright-cli` (the
+`browser` image) drives a browser over the Chrome DevTools Protocol, Cloudflare Browser Run's,
+where the deployment has `BROWSER_RUN_TOKEN` (*Browser Run Write*) and an account
+(`BROWSER_RUN_ACCOUNT`, by default the deploy's `CLOUDFLARE_ACCOUNT_ID`).
+
+- **How it connects.** The kernel serves CDP to its programs at `SLICC_CDP_URL`
+  (`ws://127.0.0.1:9222/devtools/browser/<id>`, and `/json/version`), the port the wasm
+  `playwright-cli` dials. Each connection goes to the hook of a client the agent's object
+  attaches when the kernel boots (`serveBrowser`: `client.serveCdp`), which opens a WebSocket of
+  the Worker's to `wss://api.cloudflare.com/client/v4/accounts/<account>/browser-run/devtools/browser…`
+  with the token in its `Authorization`, and relays the messages both ways. The token never enters
+  the computer. An image without the programs, or a deployment without Browser Run, serves none:
+  the programs are answered 503, no CDP host.
+- **One Chromium per computer.** Every `playwright-cli` command is a process and a connection of
+  its own, and a new connection to `/devtools/browser` would be a new browser. So the first one
+  makes a session (`POST …/devtools/browser?keep_alive=600000`) and every connection is to
+  `…/devtools/browser/<session>`: a command finds the tabs, cookies and page state the one before
+  left (`open`, then `eval` that adds CSS, then `screenshot`). Its id is kept in the agent's
+  storage (`browser-session`), so the computer finds its tabs again after its object was
+  evicted, while the session lives. A session that refuses a connection has ended (ten minutes
+  after its last): the next one makes another, once. A new image (`changeImage`) ends it
+  (`DELETE`). What a command sets on its own CDP session (a viewport) ends with the command.
+- **Kitesurf**, Browser Run's browser that runs on Workers without a container, is
+  `playwright-cli --runtime kitesurf`: a browser for each connection, which keeps nothing.
+  playwright-cli 2.1.20 refuses its pages yet ("target is on seven's origin").
+
 **The computer's shell** is GNU bash and real programs on the
 [SLICC kernel](https://github.com/ai-ecoverse/slicc-kernel) (`src/agent/kernel.js`). It
 replaced just-bash, an interpreter in JavaScript that ran only what it had built in; migration
@@ -2956,9 +2989,10 @@ choice before each delivery, as it follows its tools (`syncTools`; docs/STATE-MA
     `node_modules/`: `shell` (bash, coreutils), `text` (grep, ripgrep, sed, gawk, jq,
     findutils, diff and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip,
     tar, zip and unzip, xz, bzip2), `net` (curl, BIND's dig, host and nslookup), `tls`
-    (openssl), `js` (qjs), `git`, `formats` (yq, html2markdown, file) and `data` (sqlite3,
-    strings). `base` is the first eight, and
-    `data` is `from: 'base'` with the ninth. A package's other files a program needs are named
+    (openssl), `js` (qjs), `git`, `formats` (yq, html2markdown, file), `data` (sqlite3,
+    strings) and `browser` (playwright-cli, `@ai-ecoverse/slicc-cdp`, without its curlwright; below,
+    "The computer's browser"). `base` is the first eight, and
+    `data` is `from: 'base'` with `data`, `browser` with `browser`. A package's other files a program needs are named
     in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's
     magic; openssl's `etc/ssl`, its configuration and Mozilla's roots).
     An image names what the agent is told it has (`tools`), and the build fails if that names
@@ -3619,6 +3653,51 @@ Names, numbers, pictures and titles only: no message text and no mail address. T
 customer's numbers cost under a tenth of a second of D1, and are kept five minutes per isolate.
 `GET /api/customers` lists every customer for Adobe's people on no team, who do not get
 `/api/admin/orgs`.
+
+### Vendors
+
+An org of type `vendor` (`orgs.type`) is a company whose products or services Adobe uses: a CDN,
+an observability or a translation service, a model provider. In its channels Adobe is the
+customer: the team asks, and the vendor answers, investigates and fixes. So:
+
+- **Clef** reads a vendor's thread with its header saying so (`Vendor: <slug> (Adobe is its customer
+  here)`) and its people as the vendor's, and is asked `VENDOR_QUESTIONS` (src/label.js): who acts
+  next is Adobe (reply, test, send logs, decide) or the vendor (answer, investigate, fix,
+  escalate), urgency counts production impact at Adobe or its customers, and a ✅ by Adobe staff
+  says it is resolved. The same questions in the same order: the topics were measured with a
+  customer's. Its thread agent is told so too.
+- **Who it waits on** (`waitingOn`, src/threads.js) is the vendor, `vendor`, whenever it waits on
+  someone outside Adobe: labels from before say `customer`, and need no relabel. The inbox's
+  status pile for one that waits too long is the silent one, its hint "chase them".
+- Its **status posts** (a status page's bot, its newsletters) are alerts when an admin says their
+  bot only posts alerts (`identities.alerts`, src/alertbots.js): nobody is waited on in them.
+- Its **page** in Customers is the customer overview the other way round (`vendorNumbers`,
+  src/vendors.js; ui/customer.js): its numbers are its open cases (its conversations of the window
+  that are not resolved and wait on the vendor or on Adobe), how soon it **answers** what Adobe
+  starts (the median wait from Adobe's first message to its first post; `answers.by` is `them`),
+  its status posts and the customers on its products; then its open cases and its latest status
+  posts, the customers whose threads of the window show one of its products (a technology whose
+  catalog id is its slug or under it: `fastly/cdn` is Fastly's, as `products/<vendor>/` names
+  it, src/catalog.js), by how many, and those of their threads that Clef says wait on a third
+  party. The rest is a customer's.
+- A team's **Vendors** section in Teams (`view=vendors`, `GET /api/teams/vendors?team=`,
+  `teamVendors`; `TeamView.vendors` in ui/team.js), everyone's as the overview: the vendors the
+  team files a channel of, shares or follows one of, whose threads its members posted in, or whose
+  products its customers' threads show, each with its open cases, how soon it answers and whether
+  its channels are in the team's inbox; a vendor's whose are not has a Follow for the team's
+  managers and the admin team (`PUT /api/admin/org-follows`, a follow rule: every channel of it
+  shared with the team). Above them what waits on a vendor in the team's inbox (the vendors' cases,
+  and its customers' threads that wait on a third party), and the vendors' cases that wait on
+  Adobe.
+
+Who files a vendor's channel is the team that owns what Adobe uses it for: the one that is paged
+when it breaks, or that builds the integration; the others follow it. A vendor Adobe is buying or
+trying has a champion rather than a team: they follow it themselves. The counts on these pages are
+everyone's at Adobe; a thread's title and its link only for whoever works it, on the team it is
+filed under or one it is shared with (`visible`, src/vendors.js), so the lists say how many more
+there are. Every conversation of the window that may wait on someone is read for the cases, however
+many newer ones are resolved. A team's vendors are kept five minutes per isolate, as its overview,
+and forgotten when a team starts or stops following one.
 
 ## Customer portal
 

@@ -14,6 +14,7 @@
  * - the technologies: Tabs (quiet, compact) over a list per layer of a stack; a followed one a
  *   Badge in the accent color.
  * - the knowledge base: a grid of Cards, one per type of entry, with its count and its entries.
+ * - a vendor's cases and a team's vendors: ListViews of rows, who has a thread's next move a Badge.
  */
 
 /* ==== The layout ================================================================================ */
@@ -61,19 +62,41 @@
   .ov .cv-hero .tv-stats { grid-template-columns: repeat(auto-fit, minmax(14em, 1fr)); gap: 0 var(--spectrum-spacing-400); }
 }
 
-/* The people: a grid of cards, the quiet ones in a row after them. */
+/* The people: a grid of cards, the quiet ones in a row after them. Every card is the same size,
+   with the same six parts in the same order (ui/person.js `card`), so that a part is where it is
+   on the next card: who they are, how often they post in its corner (the line over the rate,
+   how much and when last under them), two lines of tags for the areas and the technologies each,
+   their profile's first two lines, and the foot at the bottom. */
 .ov .tv-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 21em), 1fr)); gap: var(--spectrum-spacing-300); }
-.ov .tv-person { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); min-width: 0; }
-.ov .tv-person > header { display: flex; align-items: center; gap: var(--spectrum-spacing-200); min-width: 0; height: auto; padding: 0; }
-.ov .tv-person .who { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-50) var(--spectrum-spacing-100); min-width: 0; }
-.ov .tv-person .who b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ov .tv-person .who .sub { flex-basis: 100%; }
-/* What they know: each label over its tags, which wrap across the card's whole width; their key
-   customers at the card's foot, so they are level across a row of cards. */
+.ov .tv-person { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto auto auto auto 1fr auto; column-gap: var(--spectrum-spacing-200); min-width: 0;
+  grid-template-areas: "face name spark" "face title rate" "n n last" "areas areas areas" "tech tech tech" "prof prof prof" "foot foot foot"; }
+.ov .tv-person :is(header, .who, .ps-s-act, .ps-freq, .ps-freq > div) { display: contents; }
+.ov .tv-person .ps-av { grid-area: face; }
+.ov .tv-person .ps-nm { display: flex; grid-area: name; align-self: end; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; }
+.ov .tv-person .ps-nm b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A title's line is there without one, so that a name is never lower on one card than the next. */
+.ov .tv-person .ps-ttl { grid-area: title; min-height: 1lh; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov .tv-person .ps-spark { grid-area: spark; align-self: end; justify-self: end; width: calc(var(--spectrum-spacing-900) - var(--spectrum-spacing-100)); height: var(--spectrum-spacing-400); }
+.ov .tv-person .ps-freq b { grid-area: rate; justify-self: end; }
+.ov .tv-person .ps-freq :is(.ps-n, .ps-last) { margin-top: var(--spectrum-spacing-200); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov .tv-person .ps-n { grid-area: n; }
+.ov .tv-person .ps-last { grid-area: last; justify-self: end; }
+.ov .tv-person .ps-s-areas { grid-area: areas; }
+.ov .tv-person .ps-s-tech { grid-area: tech; }
+.ov .tv-person .ps-s-prof { grid-area: prof; }
+.ov .tv-person .ps-s-foot { grid-area: foot; }
+.ov .tv-person > :is(.ps-s-areas, .ps-s-prof):not(:empty) { margin-top: var(--spectrum-spacing-300); }
+.ov .tv-person > .ps-s-tech:not(:empty) { margin-top: var(--spectrum-spacing-200); }
+.ov .tv-person > .ps-s-foot:not(:empty) { margin-top: var(--spectrum-spacing-200); }
+/* Two lines of tags under their label, there even when one is enough: the first three and a
+   count of the rest. Key customers on one line. */
+.ov .tv-person .ps-knows dd { --ps-two: calc(2 * (1lh + 2 * var(--spectrum-spacing-50)) + var(--spectrum-spacing-75)); align-content: flex-start; height: var(--ps-two); margin: 0; overflow: hidden; font-size: var(--spectrum-font-size-75); }
+.ov .tv-person .ps-keys dd { flex-wrap: nowrap; overflow: hidden; margin: 0; }
+.ov .tv-person .ps-org { flex: 0 1 auto; min-width: 0; }
+.ov .tv-person .ps-more { flex: none; }
+.ov .tv-person .ps-profile p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.ov .tv-person .ps-noprof { margin: 0; }
 .ov .tv-quiet { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin-top: var(--spectrum-spacing-300); }
-/* Key customers (or a customer's person's Contact) at a card's foot, level across a row of cards
-   (ui/person.js draws the rest). */
-.ov .tv-person .ps-keys { margin-top: auto; }
 .ov .tv-q { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-100); }
 
 /* Avatars: a circle, the initials under the picture. */
@@ -118,7 +141,29 @@
 .ov .tv-kbtype li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ov .tv-drawing { margin-top: var(--spectrum-spacing-500); }
 
+/* A list of threads (a vendor's cases, what waits on a vendor): its title over where it is, who
+   has the next move at the right. */
+.ov .tv-threads { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.ov .tv-threads li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--spectrum-spacing-50) var(--spectrum-spacing-200); padding: var(--spectrum-spacing-100); }
+.ov .tv-threads .tv-name { display: flex; flex-direction: column; min-width: 0; }
+.ov .tv-threads .tv-name > :first-child, .ov .tv-threads .tv-name > .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov .cv-status { display: flex; align-items: center; gap: var(--spectrum-spacing-200); margin-bottom: var(--spectrum-spacing-200); }
+
+/* A team's vendors: a favicon, the name over how the team meets it, its answer and Follow at the
+   right; its open cases under the name. */
+.ov .tv-vendors { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.ov .tv-vendors li { display: grid; grid-template-columns: auto minmax(0, 1fr) 7em 7em; grid-template-areas: "lead name answer act" ". cases cases cases";
+  align-items: center; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-300); padding: var(--spectrum-spacing-100); }
+.ov .tv-vendors li > .ico { grid-area: lead; }
+.ov .tv-vendors .tv-name { grid-area: name; display: flex; flex-direction: column; min-width: 0; }
+.ov .tv-vendors .tv-name > a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov .tv-vendors .tv-cases { grid-area: cases; display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); }
+.ov .tv-vendors .tv-answer { grid-area: answer; display: flex; flex-direction: column; align-items: flex-end; }
+.ov .tv-vendors .tv-act { grid-area: act; display: flex; justify-content: flex-end; }
+
 @media (max-width: 699px) {
+  .ov .tv-vendors li { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "lead name act" ". answer answer" ". cases cases"; }
+  .ov .tv-vendors .tv-answer { align-items: flex-start; }
   .ov .tv-rank li { grid-template-columns: 1.5em auto minmax(0, 1fr) 5em; grid-template-areas: "i lead name meter" ". . tail tail"; }
   .ov .tv-rank .ps-spark { display: none; }
   .ov .tv-layer li { grid-template-columns: minmax(0, 1fr) 5em; }
@@ -188,7 +233,7 @@
 .spectrum .ov .tv-person .who a { color: inherit; text-decoration: none; }
 .spectrum .ov .tv-person .who a:hover { color: var(--link); text-decoration: underline; }
 .spectrum .ov .tv-person .who b { color: var(--spectrum-heading-color); font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .ov .tv-none { margin: 0; }
+.spectrum .ov .ps-more { color: var(--spectrum-neutral-subdued-content-color-default); background: none; box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--spectrum-gray-300); cursor: default; }
 .spectrum .ov .tag.tv-manager { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-indigo-subtle-background-color-default); border-color: transparent; }
 .spectrum .ov .tag.tv-partner { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-seafoam-subtle-background-color-default); border-color: transparent; }
 .spectrum .ov .tv-more { margin: var(--spectrum-spacing-300) 0 0; }
@@ -235,6 +280,19 @@
 .spectrum .ov .tv-layer h3 { padding-bottom: var(--spectrum-spacing-75); border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
 .spectrum .ov .tv-layer .tv-name a { color: var(--link); text-decoration: none; }
 .spectrum .ov .tv-layer .tv-name a:hover { text-decoration: underline; }
+
+/* The lists of threads and of vendors: rows that light under the pointer; who has the next move
+   a Badge, the vendor's in purple (as the inbox's "they went silent"), Adobe's in red (as "waiting
+   too long"). */
+.spectrum .ov :is(.tv-threads, .tv-vendors) li { border-radius: var(--s2-radius); }
+.spectrum .ov :is(.tv-threads, .tv-vendors) li:hover { background: var(--spectrum-gray-100); }
+.spectrum .ov :is(.tv-threads, .tv-vendors) .tv-name a { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-medium-font-weight); text-decoration: none; }
+.spectrum .ov :is(.tv-threads, .tv-vendors) .tv-name a:hover { color: var(--link); text-decoration: underline; }
+.spectrum .ov .tv-vendors .tv-name a { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .ov .tv-vendors .tv-answer b { color: var(--spectrum-heading-color); font-weight: var(--spectrum-bold-font-weight); font-variant-numeric: tabular-nums; }
+.spectrum .ov .tag.tv-them { flex: none; color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-purple-subtle-background-color-default); border-color: transparent; }
+.spectrum .ov .tag.tv-us { flex: none; color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); border-color: transparent; }
+.spectrum .ov .ps-spark.status polyline { stroke: var(--spectrum-purple-visual-color); }
 
 /* The knowledge base's tiles, on layer 2. */
 .spectrum .ov .tv-kbtype { padding: var(--spectrum-spacing-300); background: var(--card); border-radius: var(--spectrum-corner-radius-large-default); box-shadow: var(--content-shadow); }

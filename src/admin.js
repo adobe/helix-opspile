@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { activeSince } from './listactivity.js';
 import { cogsReport } from './cogs/report.js';
 import { rollupCogs } from './cogs/rollup.js';
 import { buildTopicMap, latestTopicMap } from './topicmap.js';
@@ -69,6 +70,7 @@ import {
   getPortalRequest, listPortalRequests, portalOpenCount, recordDeclined, recordOpened,
   reopenDeclined,
 } from './portalrequests.js';
+import { resetTeamVendors } from './vendors.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -1126,8 +1128,10 @@ async function listTeams(env, me) {
       (SELECT COUNT(DISTINCT th.channel_id) FROM threads th WHERE th.team = t.slug
         AND ${LIVE('th')}) AS channels,
       (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug) AS threads,
+      (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug AND th.last_at >= ?1) AS recent,
+      (SELECT MAX(th.last_at) FROM threads th WHERE th.team = t.slug) AS latest,
       (SELECT COUNT(*) FROM channel_teams s WHERE s.team = t.slug) AS shared
-    FROM teams t ORDER BY t.name`);
+    FROM teams t ORDER BY t.name`, activeSince());
   const everything = isAdmin(me);
   const teams = all.filter((t) => everything || managedTeams(me).includes(t.slug))
     .map((t) => ({ ...t, self_managed: Boolean(t.self_managed) }));
@@ -1569,12 +1573,13 @@ async function listOrgs(env) {
       (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug AND ${LIVE('t')})
         AS channels,
       (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug) AS threads,
+      (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug AND t.last_at >= ?2) AS recent,
       (SELECT MAX(COALESCE(last_at, any_at)) FROM threads t WHERE t.org = s.slug) AS latest
     FROM (SELECT slug FROM orgs UNION SELECT DISTINCT org FROM threads
       UNION SELECT slug FROM knowledge_bases WHERE kind = 'org') s
     LEFT JOIN orgs o ON o.slug = s.slug
-    WHERE s.slug != ? AND s.slug NOT IN (SELECT slug FROM org_merges)
-    ORDER BY COALESCE(o.name, s.slug)`, UNASSIGNED);
+    WHERE s.slug != ?1 AND s.slug NOT IN (SELECT slug FROM org_merges)
+    ORDER BY COALESCE(o.name, s.slug)`, UNASSIGNED, activeSince());
   const domains = await mailDomains(env);
   for (const o of list) {
     o.domain = (domains.get(o.slug) || [])[0] || null;
@@ -1974,7 +1979,12 @@ async function adminRoute(request, env, url, me) {
     case 'PUT orgs': return saveOrg(env, body, false);
     case 'DELETE orgs': return deleteOrg(env, body);
     case 'GET org': return org(env, q('slug'), me);
-    case 'PUT org-follows': return followOrg(env, me, body);
+    case 'PUT org-follows': {
+      // A team's Vendors section says whom it follows (src/vendors.js): not the kept answer.
+      const res = await followOrg(env, me, body);
+      resetTeamVendors();
+      return res;
+    }
     case 'POST release': return releaseChannel(env, me, body);
     case 'GET org-duplicates': return orgDuplicates(env, me, { pair: q('pair'), fresh: Boolean(q('fresh')) });
     case 'POST org-duplicates/dismiss': return dismissPair(env, me, body);

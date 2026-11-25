@@ -196,6 +196,44 @@ export const QUESTIONS = {
 };
 
 /**
+ * What Clef is asked of a vendor's thread (`orgs.type` 'vendor'): a company whose product or
+ * service Adobe uses, so Adobe is the customer there, and the vendor answers, investigates and
+ * fixes. The same questions in the same order, but who acts next is Adobe or the vendor
+ * (`next_actor` 'vendor', which the inbox shows as waiting on the vendor), and urgency and
+ * resolution are Adobe's as the vendor's customer. The topics were measured with QUESTIONS
+ * (TOPIC_MIN): a vendor's threads are few, and asked this way they read the right way round.
+ */
+export const VENDOR_QUESTIONS = {
+  ...QUESTIONS,
+  next_actor: {
+    type: 'choice',
+    instructions: 'Who has to act next in this thread between Adobe staff and a vendor whose product'
+      + ' or service Adobe uses? Here Adobe is the customer, and the vendor answers, investigates'
+      + ' and fixes.',
+    criteria: {
+      us: 'Adobe staff: reply to the vendor, test or confirm a fix, send logs or information, decide, or close the case',
+      vendor: 'The vendor: answer, investigate, fix, escalate, quote, or follow up on what Adobe asked',
+      nobody: 'Nothing is pending: resolved, acknowledged, FYI, an announcement or social',
+    },
+  },
+  urgency: {
+    ...QUESTIONS.urgency,
+    criteria: [
+      ...QUESTIONS.urgency.criteria.slice(0, 3),
+      'Critical: production impact at Adobe or its customers right now',
+    ],
+  },
+  resolved: {
+    type: 'noul',
+    instructions: 'Has the issue or request in this thread been resolved or closed? A ✅ or ✔️'
+      + ' reaction by Adobe staff (or a 👍 by Adobe staff on the vendor\'s answer) confirms it is.',
+  },
+};
+
+/** The questions of a thread of an org of `type` (`orgs.type`; none is a customer). */
+export const questionsFor = (type) => (type === 'vendor' ? VENDOR_QUESTIONS : QUESTIONS);
+
+/**
  * The Clef questions about a channel's tech stack (src/extract.js techFor), each by the hash of
  * its id (src/techid.js `questionKeys`): a catalog path is no key. `techOf` maps them back.
  */
@@ -307,12 +345,16 @@ export const FIELDS = {
   go_live: { type: 'date', instructions: 'Planned go-live or launch date' },
 };
 
-function who(m) {
+/**
+ * Who posted `m`, for the models: Adobe staff, else the side of the thread they are on, the
+ * customer, or (`side` 'vendor') the vendor.
+ */
+function who(m, side = 'customer') {
   const a = m.author || {};
   if (a.kind !== 'person') {
     return `${a.name || a.kind || 'bot'} (${a.kind || 'bot'})`;
   }
-  return `${a.name || 'someone'} (${a.staff ? 'Adobe staff' : `customer${a.org ? `, ${a.org}` : ''}`})`;
+  return `${a.name || 'someone'} (${a.staff ? 'Adobe staff' : `${side}${a.org ? `, ${a.org}` : ''}`})`;
 }
 
 // Reaction names as the models should see them (Slack names; Teams sends characters).
@@ -342,32 +384,34 @@ const reactionChar = (e) => {
   return REACTION_CHAR[name] || (/^\p{Extended_Pictographic}/u.test(name) ? name : `:${name}:`);
 };
 
-/** One line per message with reactions: who reacted with what (customer or Adobe). */
-function reactionLine(list) {
+/** One line per message with reactions: who reacted with what (Adobe, or the `side`). */
+function reactionLine(list, side = 'customer') {
   if (!list || !list.length) {
     return '';
   }
   return `\nReactions: ${list.map((r) => `${reactionChar(r.emoji)} by ${r.name || 'someone'}`
-    + ` (${r.staff ? 'Adobe staff' : 'customer'})`).join(', ')}`;
+    + ` (${r.staff ? 'Adobe staff' : side})`).join(', ')}`;
 }
 
 /**
  * The thread as text for the models: a header, then one block per message, with the
- * reactions it got (`reactions`: message id → `{ emoji, name, staff }[]`).
+ * reactions it got (`reactions`: message id → `{ emoji, name, staff }[]`). A vendor's thread
+ * (`thread.org_type` 'vendor') says so: the people outside Adobe in it are the vendor's.
  */
 export function stateOf(thread, messages, reactions = new Map()) {
   const live = messages.filter((m) => !m.deletedAt);
   const shown = live.length > MAX_MESSAGES
     ? [live[0], ...live.slice(-(MAX_MESSAGES - 1))]
     : live;
+  const side = thread.org_type === 'vendor' ? 'vendor' : 'customer';
   const header = [
     `Channel: ${thread.channel_name || thread.channel_id} on ${platformName(thread.source)}`,
-    `Customer: ${thread.org}`,
+    side === 'vendor' ? `Vendor: ${thread.org} (Adobe is its customer here)` : `Customer: ${thread.org}`,
     thread.root_at ? null : 'The first message of this thread is missing.',
   ].filter(Boolean).join('\n');
   const body = shown.map((m) => {
     const text = String(m.body || '').slice(0, MAX_BODY);
-    return `[${m.at}] ${who(m)}:\n${text}${reactionLine(reactions.get(String(m.id)))}`;
+    return `[${m.at}] ${who(m, side)}:\n${text}${reactionLine(reactions.get(String(m.id)), side)}`;
   }).join('\n\n');
   return `${header}\n\n${body}`;
 }
@@ -701,22 +745,25 @@ export async function labelThread(env, key, now = new Date(), { force = false } 
     return { result: 'skip', reason: 'no messages' };
   }
 
-  const [rules, tech, moves, areas] = await Promise.all([
+  const [rules, tech, moves, areas, org] = await Promise.all([
     rulesFor(env, thread.team), techFor(env, thread.team), techMoves(env), areasToAsk(env),
+    env.DB.prepare('SELECT type FROM orgs WHERE slug = ?').bind(thread.org).first(),
   ]);
+  const orgType = (org && org.type) || 'customer';
   const found = await extract(env, rules, thread, messages);
   // A script may still detect a technology by an id it had (src/catalog.js).
   found.tech = [...new Set(found.tech.map((id) => resolveTech(id, moves)))];
   await replaceFacts(env.DB, key, 'rule', found.facts);
 
-  const state = stateOf(thread, messages, rx.by);
+  const state = stateOf({ ...thread, org_type: orgType }, messages, rx.by);
   const [clef, clairic, title] = await Promise.all([
     // The topics on their own, so the tech stack's entries do not move their answers, and the
-    // language on its own too (src/translate.js), so that it moves none.
+    // language on its own too (src/translate.js), so that it moves none. A vendor's thread is
+    // asked the other way round (VENDOR_QUESTIONS).
     askClef(
       env,
       state,
-      { ...QUESTIONS, ...areaQuestions(areas) },
+      { ...questionsFor(orgType), ...areaQuestions(areas) },
       techQuestions(tech),
       LANGUAGE_QUESTION,
     ),

@@ -21,7 +21,7 @@ import { resolveAnyThread } from './history.js';
 import { modelProblem } from './model.js';
 
 /**
- * What a thread agent watches (watch_related, unwatch_related; `agent_watches`, migration 0103):
+ * What a thread agent watches (watch_related, unwatch_related; `agent_watches`, migration 0104):
  * another thread of the inbox, by its key or a link (an opspile inbox address, a Slack, Teams or
  * Discord message link), or a GitHub issue or pull request the opspile GitHub App reads. A change
  * of the watched one wakes the watching agent with an update, as an input of its own: what its

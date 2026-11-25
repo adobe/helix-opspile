@@ -257,6 +257,14 @@ export const CHECKS = [
     command: "sqlite3 :memory: 'select 6 * 7' && printf \"\\0\\0hello\\0\" | strings",
     match: /^42\nhello\n$/,
   },
+  // The browser layer's playwright-cli starts, and the kernel's CDP is at SLICC_CDP_URL: 200
+  // with Browser Run behind it (src/agent/browser.js, BROWSER_RUN_TOKEN), 503 without.
+  {
+    name: 'browser: playwright-cli starts, and the kernel serves CDP',
+    image: 'browser',
+    command: 'playwright-cli --help | head -1; dirname "$SLICC_CDP_URL"; curl -s -o /dev/null -w "%{http_code}\\n" http://127.0.0.1:9222/json/version',
+    match: /^playwright-cli - run playwright mcp commands from terminal\nws:\/\/127\.0\.0\.1:9222\/devtools\/browser\n(200|503)\n$/,
+  },
   ...uploadChecks(),
   // Graphviz's dot (the diagrams layer), in Base.
   {

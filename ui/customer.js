@@ -31,6 +31,11 @@
  *   Clef sees in its threads, which the tabs above them pick. Then its knowledge base by type,
  *   and its stack drawing where it has one.
  *
+ * A vendor's (`p.vendor`, src/vendors.js) is the other way round: Adobe is its customer. Its
+ * numbers are its open cases and how soon it answers what Adobe starts; under them its open cases
+ * and its status posts, then the customers whose threads show its products, and those of their
+ * threads that wait on a third party. Titles only of the threads the viewer works.
+ *
  * Everything in it is a name, a number or a picture, written escaped.
  */
 globalThis.CustomerView = (() => {
@@ -80,7 +85,26 @@ globalThis.CustomerView = (() => {
   /** `p`'s name, as the page shows it: the one the admin team gave it, else its slug. */
   const nameOf = (p) => p.org.name || p.org.slug;
 
+  /** A vendor's numbers: its cases, how soon it answers, what of the customers' depends on it. */
+  function vendorStats(p) {
+    const total = sum(p.activity.messages);
+    const ours = sum(p.activity.staff);
+    const a = p.answers;
+    const { cases: c, status, dependents: d } = p.vendor;
+    const answered = a.asked ? `${a.answered} of the ${plural(a.asked, 'case')} Adobe opened` : 'no case opened in these weeks';
+    return Overview.stats([
+      [c.open, c.open === 1 ? 'open case' : 'open cases', `${c.them} waiting on them, ${c.us} on Adobe`],
+      [Overview.wait(a.median), 'first answer', a.answered ? `typically; ${answered}` : answered,
+        'How long its first answer took in the threads Adobe started, the middle of them'],
+      [total, total === 1 ? 'message' : 'messages', total ? `${Math.round((100 * ours) / total)}% by Adobe` : ''],
+      [status.total, status.total === 1 ? 'status post' : 'status posts', `in the last ${p.weeks.length} weeks`],
+      [d.customerCount, d.customerCount === 1 ? 'customer' : 'customers', `use its products, in ${plural(d.threads, 'thread')}`],
+      [p.staffCount, p.staffCount === 1 ? 'person from Adobe' : 'people from Adobe', `on ${plural(p.teamCount, 'team')}`],
+    ]);
+  }
+
   function stats(p) {
+    if (p.vendor) return vendorStats(p);
     const total = sum(p.activity.messages);
     const ours = sum(p.activity.staff);
     const threads = sum(p.activity.threads);
@@ -100,25 +124,68 @@ globalThis.CustomerView = (() => {
     const partner = m.partner ? `<span class="tag tv-partner" title="${esc(`Of ${m.partner}, a partner`)}">${esc(m.partner)}</span>` : '';
     // Drawn as a team's members are, and the inbox's profile card (ui/person.js): an area is
     // `tag:<id>` on the Topics page, a technology `product:tech:<id>`, a person `person:<id>`.
-    const knows = [
-      m.areas.length ? `<dt>Asks about</dt><dd>${m.areas.map((a) => chip(a.name, a.threads, { href: ctx.topicHref(`tag:${a.id}`) })).join('')}</dd>` : '',
-      m.tech.length ? `<dt>Products</dt><dd>${m.tech.map((t) => chip(t.name, t.threads, { cls: 'tech', href: ctx.topicHref(`product:tech:${t.id}`) })).join('')}</dd>` : '',
-    ].join('');
-    // Their profile in its knowledge base (their Contact) under who they are, as a team member's
-    // is on the team's; a Contact without a description is a link at the card's foot.
+    // Their profile in its knowledge base (their Contact), as a team member's is on the team's; a
+    // Contact without a description is a link at the card's foot.
     const href = m.profile && ctx.kbHref(m.profile.path);
     const profile = m.profile ? Person.profile([{
       team: p.org.slug, teamName: nameOf(p), description: m.profile.description, href,
     }]) : '';
-    const keys = href && !m.profile.description ? `<dl class="ps-keys"><dt>Contact</dt><dd><a class="tv-contact" href="${esc(href)}" title="Their Contact in the knowledge base">In the knowledge base</a></dd></dl>` : '';
-    const name = link(m.id ? ctx.topicHref(`person:${m.id}`) : null, esc(m.name || 'Someone'), { title: m.id ? 'Their topics and products on the Topics page' : '' });
-    return `<article class="tv-person ps-card">
-      <header>${face(m.name, m.avatar, 'big')}<div class="who"><b>${name}</b>${partner}${m.title ? `<span class="sub">${esc(m.title)}</span>` : ''}</div></header>
-      ${profile}
-      ${Person.freq(m.name, m, p.weeks.length)}
-      ${knows ? `<dl class="ps-knows">${knows}</dl>` : '<p class="sub tv-none">Nothing Clef tagged in their threads yet.</p>'}
-      ${keys}
-    </article>`;
+    const foot = href && !m.profile.description ? `<dl class="ps-keys"><dt>Contact</dt><dd><a class="tv-contact" href="${esc(href)}" title="Their Contact in the knowledge base">In the knowledge base</a></dd></dl>` : '';
+    return Person.card(m, {
+      face: face(m.name, m.avatar, 'big'),
+      name: link(m.id ? ctx.topicHref(`person:${m.id}`) : null, esc(m.name || 'Someone'), { title: m.id ? 'Their topics and products on the Topics page' : '' }),
+      badge: partner,
+      title: m.title,
+      weeks: p.weeks.length,
+      label: 'Asks about',
+      profile,
+      foot,
+      ctx,
+    });
+  }
+
+  // ---- a vendor's ----------------------------------------------------------------------------
+
+  function cases(p) {
+    const c = p.vendor.cases;
+    return `<section class="tv-sec" aria-labelledby="cvCases"><h2 id="cvCases">Open cases <span class="sub">${esc(`${c.them} waiting on them, ${c.us} on Adobe`)}</span></h2>
+      ${Overview.threads(c.list, { hidden: c.hidden, empty: `Nothing is open with ${nameOf(p)}.` })}
+      <p class="hint">Its threads of these weeks that are not resolved and wait on someone, the latest first. Adobe is the customer here: a case waits on them until they answer, investigate or fix.</p></section>`;
+  }
+
+  function statusPosts(p) {
+    const s = p.vendor.status;
+    const rows = s.list.map((x) => ({ ...x, last: x.at }));
+    return `<section class="tv-sec" aria-labelledby="cvStatus"><h2 id="cvStatus">Status posts <span class="sub">${esc(plural(s.total, 'post'))}</span></h2>
+      ${s.total ? `<div class="cv-status">${spark(s.weekly, { cls: 'status', label: 'status posts, week by week' })}<span class="sub">week by week, the last ${p.weeks.length} weeks</span></div>` : ''}
+      ${Overview.threads(rows, { hidden: s.hidden, empty: 'No status post in these weeks.' })}
+      <p class="hint">What its status page and its bots post in its channels (maintenance, incidents), as alerts: nobody needs to answer them.</p></section>`;
+  }
+
+  function dependents(p, ctx) {
+    const d = p.vendor.dependents;
+    const rows = d.customers.map((c) => ({
+      n: c.threads,
+      count: plural(c.threads, 'thread'),
+      lead: ctx.orgIcon(c.slug, c.icon),
+      name: link(ctx.orgHref(c.slug), esc(c.name || c.slug)),
+      sub: esc([c.type !== 'customer' ? c.type : '', c.last ? ago(c.last) : ''].filter(Boolean).join(' · ')),
+      tail: c.waiting ? `<span class="tag tv-them" title="Its threads of these that wait on a third party">${esc(plural(c.waiting, 'waits', 'wait'))} on a third party</span>` : '',
+    }));
+    const products = d.products.length ? `<p class="sub">${d.products.map((t) => chip(t.name, t.threads, { cls: 'tech', href: ctx.topicHref(`product:tech:${t.tech}`) })).join('')}</p>` : '';
+    return `<section class="tv-sec" aria-labelledby="cvDepends"><h2 id="cvDepends">Customers on its products <span class="sub">${d.customers.length < d.customerCount ? `${d.customers.length} of ${d.customerCount}` : esc(plural(d.customerCount, 'customer'))}</span></h2>
+      ${products}
+      ${rows.length ? ranked(rows, p.weeks.length) : `<div class="empty">No customer's thread shows a product of ${esc(nameOf(p))} in these weeks.</div>`}
+      <p class="hint">The customers whose threads of these weeks Clef sees one of its products in (its catalog entries, products/${esc(p.org.slug)}/), by how many.</p></section>`;
+  }
+
+  function thirdParty(p) {
+    const d = p.vendor.dependents;
+    return `<section class="tv-sec" aria-labelledby="cvThird"><h2 id="cvThird">Customers waiting on a third party <span class="sub">${esc(plural(d.waiting, 'thread'))}</span></h2>
+      ${Overview.threads(d.list, {
+    hidden: d.hidden, withOrg: true, orgName: (slug) => d.customers.find((c) => c.slug === slug)?.name || slug, empty: 'None of them waits on a third party.',
+  })}
+      <p class="hint">Customers' threads that show its products and that Clef says wait on someone who is neither Adobe nor the customer: maybe ${esc(nameOf(p))}, maybe a partner.</p></section>`;
   }
 
   function people(p, ctx) {
@@ -133,6 +200,7 @@ globalThis.CustomerView = (() => {
     const rows = p.staff.map((c) => ({
       n: c.messages,
       lead: face(c.name, c.avatar),
+      tint: Person.tintOf(c.name),
       name: `<b>${esc(c.name || 'Someone')}</b>`,
       sub: [c.title ? esc(c.title) : '', c.last ? esc(`last ${ago(c.last)}`) : ''].filter(Boolean).join(' · '),
       weekly: c.weekly,
@@ -167,7 +235,7 @@ globalThis.CustomerView = (() => {
       name: esc(a.name),
       weekly: a.weekly,
     }));
-    return `<section class="tv-sec" aria-labelledby="tvAreas"><h2 id="tvAreas">What they ask about</h2>
+    return `<section class="tv-sec" aria-labelledby="tvAreas"><h2 id="tvAreas">${p.vendor ? 'What the cases are about' : 'What they ask about'}</h2>
       ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">Clef has not tagged its threads of these weeks yet.</div>'}
       <p class="hint">Clef's areas of its threads, by how many of them are about one; the line is what was said in them week by week.</p></section>`;
   }
@@ -226,7 +294,8 @@ globalThis.CustomerView = (() => {
   /**
    * The overview of profile `p` (GET /api/customers/profile), as HTML. `ctx` links and names
    * what is elsewhere: `teamHref(slug)`, `teamName(slug)`, `kbHref(path)`, null where the
-   * viewer may not open the knowledge base, and `topicHref(id)`, a node of the Topics page.
+   * viewer may not open the knowledge base, `topicHref(id)`, a node of the Topics page, and for a
+   * vendor's `orgHref(slug)` and `orgIcon(slug, icon)` (HTML), another customer's page and icon.
    */
   function html(p, ctx) {
     const shown = {
@@ -235,6 +304,8 @@ globalThis.CustomerView = (() => {
     };
     return `<div class="tv">
       <section class="tv-sec tv-hero cv-hero" aria-labelledby="cvActivity">${stats(p)}${activity(p)}</section>
+      ${p.vendor ? `<div class="tv-two">${cases(p)}${statusPosts(p)}</div>
+      <div class="tv-two">${dependents(p, ctx)}${thirdParty(p)}</div>` : ''}
       ${people(p, ctx)}
       <div class="tv-two">${staff(p, ctx)}${teams(p, ctx)}</div>
       <div class="tv-two">${areas(p)}${channels(shown)}</div>

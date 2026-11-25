@@ -787,11 +787,21 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     if (draft) {
       const p = draft.by === 'agent' ? AGENT : byKey.get(draft.by);
       const at = new Date(now - draft.ago * MIN).toISOString();
+      // Its pictures (src/draftfiles.js), served at /api/draft/file as the uploads are. The
+      // fixtures' are SVG, which a real draft never has (only PNG, JPEG, GIF and WebP).
+      const pictures = (draft.files || []).map(([name, bytes]) => {
+        const id = `df_${String(uploads.size + 1).padStart(8, '0')}-0000-4000-8000-000000000000`;
+        uploads.set(id, { name, type: 'image/svg+xml', bytes });
+        return {
+          id, name, type: 'image/svg+xml', size: bytes.length,
+        };
+      });
       drafts.set(key, {
         thread: key,
         body: draft.body,
         mentions: draft.mentions || [],
         sources: draft.sources || [],
+        files: pictures,
         by: { id: p.id, name: p.name },
         created_at: at,
         updated_at: at,
@@ -1120,6 +1130,21 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     ],
     label: {
       kind: 'incident', next_actor: 'us', urgency: 0.9, resolved_p: 0.05, topics: ['cdn'],
+    },
+  });
+
+  // A case Adobe opened with Initech, a vendor: Initech asked for headers, Dana sent them a day
+  // and a half ago, and it has said nothing since. It waits on the vendor, too long: chase them.
+  seed({
+    ch: CHANNELS.initech,
+    messages: [
+      ['dana', 60 * 40, 'Our purge of `/products` did not clear the Frankfurt edge. Can you check what happened there?'],
+      ['jonas', 60 * 38, 'Looking into it. Can you send the response headers of a stale hit?'],
+      ['dana', 60 * 36, 'Here they are: `x-cache: HIT`, `age: 5402`, served by the FRA edge after the purge returned 200.'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'incident', next_actor: 'vendor', urgency: 1.2, resolved_p: 0.1, topics: ['cdn'],
     },
   });
 
@@ -1626,6 +1651,30 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
       by: 'agent',
       ago: 30,
       body: 'Tom gave you access to staging: the new rule set is there, on `waf-staging`.',
+    },
+  });
+
+  // The agent's draft with a screenshot it took on its computer (the browser image): it shows on
+  // the draft's line, and goes with the reply when it is sent.
+  seed({
+    ch: CHANNELS.edgeQ,
+    messages: [
+      ['lena', 70, 'On phones the sticky banner\'s background stops at the container: is that our CSS or yours?'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 0.5, resolved_p: 0.1,
+    },
+    draft: {
+      by: 'agent',
+      ago: 20,
+      body: 'It is the banner block\'s CSS: its background is set on the inner wrapper, which is capped at '
+        + 'the container width. Moving it to `.banner` itself fixes it; the screenshot shows the page at '
+        + '390 pixels with that change.',
+      files: [
+        ['banner-390.png', screenshot('Banner at 390 px, with the fix', '#0ea5e9', [110, 110, 110, 110, 110], 390, 640)],
+        ['banner-1280.png', screenshot('Banner at 1280 px', '#0ea5e9', [80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80], 1280, 720)],
+      ],
     },
   });
 

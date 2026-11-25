@@ -845,6 +845,27 @@ header .note { white-space: nowrap; }
 .spectrum .ps-spark .area { fill: var(--spectrum-gray-100); }
 .spectrum .ps-freq .ps-spark polyline { stroke: var(--spectrum-indigo-visual-color); }
 .spectrum .ps-freq .ps-spark .area { fill: var(--spectrum-indigo-subtle-background-color-default); }
+/* A line in its person's or customer's color (`data-tint`, ui/person.js's TINTS and ui/overview.js's
+   tintIcons): their initials' hue, or the Spectrum 2 color nearest their favicon's. */
+.spectrum .ps-spark[data-tint] polyline { stroke: var(--tint); }
+.spectrum .ps-spark[data-tint] .area { fill: var(--tint-area); }
+.ps-spark[data-tint="red"] { --tint: var(--spectrum-red-visual-color); --tint-area: var(--spectrum-red-subtle-background-color-default); }
+.ps-spark[data-tint="orange"] { --tint: var(--spectrum-orange-visual-color); --tint-area: var(--spectrum-orange-subtle-background-color-default); }
+.ps-spark[data-tint="yellow"] { --tint: var(--spectrum-yellow-visual-color); --tint-area: var(--spectrum-yellow-subtle-background-color-default); }
+.ps-spark[data-tint="chartreuse"] { --tint: var(--spectrum-chartreuse-visual-color); --tint-area: var(--spectrum-chartreuse-subtle-background-color-default); }
+.ps-spark[data-tint="celery"] { --tint: var(--spectrum-celery-visual-color); --tint-area: var(--spectrum-celery-subtle-background-color-default); }
+.ps-spark[data-tint="green"] { --tint: var(--spectrum-green-visual-color); --tint-area: var(--spectrum-green-subtle-background-color-default); }
+.ps-spark[data-tint="seafoam"] { --tint: var(--spectrum-seafoam-visual-color); --tint-area: var(--spectrum-seafoam-subtle-background-color-default); }
+.ps-spark[data-tint="cyan"] { --tint: var(--spectrum-cyan-visual-color); --tint-area: var(--spectrum-cyan-subtle-background-color-default); }
+.ps-spark[data-tint="turquoise"] { --tint: var(--spectrum-turquoise-visual-color); --tint-area: var(--spectrum-turquoise-subtle-background-color-default); }
+.ps-spark[data-tint="blue"] { --tint: var(--spectrum-blue-visual-color); --tint-area: var(--spectrum-blue-subtle-background-color-default); }
+.ps-spark[data-tint="indigo"] { --tint: var(--spectrum-indigo-visual-color); --tint-area: var(--spectrum-indigo-subtle-background-color-default); }
+.ps-spark[data-tint="purple"] { --tint: var(--spectrum-purple-visual-color); --tint-area: var(--spectrum-purple-subtle-background-color-default); }
+.ps-spark[data-tint="fuchsia"] { --tint: var(--spectrum-fuchsia-visual-color); --tint-area: var(--spectrum-fuchsia-subtle-background-color-default); }
+.ps-spark[data-tint="magenta"] { --tint: var(--spectrum-magenta-visual-color); --tint-area: var(--spectrum-magenta-subtle-background-color-default); }
+.ps-spark[data-tint="pink"] { --tint: var(--spectrum-pink-visual-color); --tint-area: var(--spectrum-pink-subtle-background-color-default); }
+.ps-spark[data-tint="cinnamon"] { --tint: var(--spectrum-cinnamon-visual-color); --tint-area: var(--spectrum-cinnamon-subtle-background-color-default); }
+.ps-spark[data-tint="brown"] { --tint: var(--spectrum-brown-visual-color); --tint-area: var(--spectrum-brown-subtle-background-color-default); }
 /* What they know, and for whom: each label over its tags, which wrap across the card. */
 .ps-knows, .ps-keys { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); margin: 0; }
 .ps-knows dd, .ps-keys dd { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0 0 var(--spectrum-spacing-100); }
@@ -942,3 +963,158 @@ header .note { white-space: nowrap; }
 .stk .stk-mh { margin-right: var(--spectrum-spacing-75); color: var(--faint); }
 .stk .stk-chip { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--s2-radius); color: var(--mute); }
 @media (max-width: 640px) { .stk .stk-layer { grid-template-columns: 1fr; gap: var(--spectrum-spacing-75); } }
+
+/* ==== The sidebar (ui/sidenav.js): Teams', Customers' and Topics' =============================
+   Spectrum 2's side navigation on the frame's layer: a SearchField with the add button on top,
+   the rows under it, which scroll, and a footer with the filter on its left and the sort on its
+   right. Every row is one line, as tall as a control: a visual, the name, a quiet number. */
+.sidenav { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.sidenav .navtop { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-75); padding-bottom: var(--spectrum-spacing-200); }
+.sidenav .navtop .s2-search { flex: 1; }
+.sidenav .navlist {
+  flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  display: flex; flex-direction: column; gap: var(--spectrum-side-navigation-item-to-item);
+  margin: 0 calc(-1 * var(--spectrum-spacing-100)); padding: var(--spectrum-border-width-200) var(--spectrum-spacing-100) var(--spectrum-spacing-300);
+}
+.sidenav :is(.navsub, .navtree) { display: flex; flex-direction: column; gap: var(--spectrum-side-navigation-item-to-item); margin: 0; padding: 0; list-style: none; }
+.sidenav .navfoot {
+  flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-75);
+  min-height: calc(var(--s2-ctl) + var(--spectrum-spacing-200));
+  border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+}
+.sidenav .navfoot .fill { flex: 1; }
+/* A section's header: SideNav's, small, medium weight, subdued; the gap above it is the rows'. */
+.sidenav .navhead {
+  margin: calc(var(--spectrum-side-navigation-item-to-header) - var(--spectrum-side-navigation-item-to-item)) 0 calc(var(--spectrum-side-navigation-header-to-item) - var(--spectrum-side-navigation-item-to-item));
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-medium-font-weight);
+  line-height: var(--spectrum-line-height-100);
+}
+.sidenav .navlist > .navhead:first-child { margin-top: 0; }
+/* A row: a button, or a tree's item with its fold and its button (`.pick`). */
+.sidenav .navrow {
+  flex: none; display: flex; align-items: center; gap: var(--spectrum-text-to-visual-100);
+  width: 100%; height: var(--s2-ctl); min-width: 0; margin: 0;
+  padding: 0 var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-content-color-default);
+  font-size: var(--spectrum-font-size-100);
+  line-height: var(--spectrum-line-height-100);
+  text-align: start; white-space: nowrap;
+  background: transparent; border: 0;
+  border-radius: var(--spectrum-corner-radius-100);
+  cursor: pointer;
+  transition: background-color var(--s2-ease);
+}
+.sidenav .navrow:hover { background: var(--s2-hover); color: var(--spectrum-neutral-content-color-hover); }
+.sidenav .navrow:focus-visible, .sidenav .navrow > button:focus-visible { outline: var(--s2-focus); outline-offset: calc(-1 * var(--spectrum-focus-indicator-thickness)); }
+/* The one open: SideNav's selected item, a gray fill and the name in bold. */
+.sidenav .navrow.on, .sidenav .navrow.on:hover { background: var(--spectrum-gray-200); }
+.sidenav .navrow.on .nm { font-weight: var(--spectrum-bold-font-weight); }
+.sidenav .navrow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sidenav .navrow .nm i { color: var(--spectrum-neutral-subdued-content-color-default); }
+.sidenav .navrow .nm .sep { color: var(--spectrum-neutral-subdued-content-color-default); }
+.sidenav .navrow .n {
+  flex: none; min-width: 3ch; text-align: end;
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+  font-variant-numeric: tabular-nums;
+}
+.sidenav .navrow.on .n { color: var(--spectrum-neutral-content-color-default); }
+.sidenav .navrow > .pick {
+  flex: 1; display: flex; align-items: center; gap: var(--spectrum-text-to-visual-100);
+  min-width: 0; height: 100%; margin: 0; padding: 0;
+  color: inherit; font: inherit; text-align: start;
+  background: none; border: 0; border-radius: 0; cursor: pointer;
+}
+.sidenav .navrow > .pick:hover { background: none; }
+/* Its visual: an icon, a letter on a gray square, or a color, all of one size. */
+.sidenav .navrow :is(.ico, .navtile) { flex: none; width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); border-radius: var(--spectrum-corner-radius-75); }
+.sidenav .navrow .ico { object-fit: contain; }
+.sidenav .navrow .ico.none { background: var(--spectrum-gray-200); }
+.sidenav .navrow .ico + .ico { margin-inline-start: calc(-1 * var(--spectrum-spacing-200)); box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--frame); }
+.sidenav .navtile {
+  display: inline-grid; place-items: center;
+  color: var(--spectrum-gray-700); background: var(--spectrum-gray-200);
+  font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-bold-font-weight); line-height: 1;
+}
+/* What waits for someone: Disclosure's chevron, the label, a Badge with how many. */
+.sidenav .chev {
+  flex: none; width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75);
+  background: var(--spectrum-neutral-subdued-content-color-default);
+  mask: var(--s2-icon-chevron) center / contain no-repeat;
+  rotate: -90deg; transition: rotate var(--s2-ease);
+}
+.sidenav :is([aria-expanded="true"] > .chev, .chev[aria-expanded="true"]) { rotate: 0deg; }
+.sidenav .chev.none { visibility: hidden; }
+.sidenav button.chev { padding: 0; border: 0; border-radius: var(--spectrum-corner-radius-75); cursor: pointer; }
+.sidenav button.chev:hover { background: var(--spectrum-neutral-content-color-default); }
+.sidenav .navbadge {
+  flex: none; display: inline-grid; place-items: center;
+  min-width: var(--spectrum-component-height-50); height: var(--spectrum-component-height-50);
+  padding: 0 var(--spectrum-spacing-75);
+  color: var(--spectrum-black); background: var(--spectrum-notice-background-color-default);
+  border-radius: var(--spectrum-component-height-50);
+  font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-bold-font-weight);
+  font-variant-numeric: tabular-nums;
+}
+.sidenav .navsub .navrow { padding-inline-start: calc(var(--spectrum-component-edge-to-text-100) + var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-100)); }
+.sidenav .navrow.d1 { padding-inline-start: calc(var(--spectrum-component-edge-to-text-100) + var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-100)); }
+.sidenav .navsub .navsub .navrow { padding-inline-start: calc(var(--spectrum-component-edge-to-text-100) + 2 * (var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-100))); }
+.sidenav .navnote, .sidenav .navempty {
+  padding: var(--spectrum-spacing-75) var(--spectrum-component-edge-to-text-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75);
+}
+/* The footer's buttons and the add button: quiet ActionButtons, the footer's small. */
+.sidenav .navbtn {
+  display: inline-flex; align-items: center; gap: var(--spectrum-text-to-visual-75);
+  min-width: 0; height: var(--spectrum-component-height-75); padding: 0 var(--spectrum-spacing-100);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-medium-font-weight);
+  background: transparent; border: 0; border-radius: var(--spectrum-corner-radius-100);
+}
+.sidenav .navbtn > span { overflow: hidden; text-overflow: ellipsis; }
+.sidenav .navbtn:hover { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
+.sidenav .navbtn.on { color: var(--spectrum-accent-content-color-default); }
+.sidenav .navbtn svg { flex: none; width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.sidenav .navadd {
+  flex: none; display: inline-grid; place-items: center;
+  width: var(--s2-ctl); height: var(--s2-ctl); padding: 0;
+  background: transparent; border: 0; border-radius: var(--s2-radius);
+}
+.sidenav .navadd:hover { background: var(--s2-hover); }
+.sidenav .navadd svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+/* The footer's menus: a Popover with a Menu of radio and checkbox items. */
+.navmenu {
+  position: fixed; inset: auto; margin: 0;
+  min-width: calc(var(--spectrum-spacing-100) * 26); max-width: calc(100vw - var(--spectrum-spacing-200));
+  padding: var(--spectrum-spacing-75);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+}
+.navmenu .navmgroup + .navmgroup { margin-top: var(--spectrum-spacing-75); padding-top: var(--spectrum-spacing-75); border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.navmenu .navmhead {
+  padding: var(--spectrum-spacing-75) var(--spectrum-component-edge-to-text-100) var(--spectrum-spacing-50);
+  color: var(--spectrum-neutral-subdued-content-color-default);
+  font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight);
+}
+.navmenu .navmitem {
+  display: flex; align-items: center; gap: var(--spectrum-text-to-visual-100);
+  width: 100%; min-height: var(--s2-ctl); padding: 0 var(--spectrum-component-edge-to-text-100);
+  font-size: var(--spectrum-font-size-100); text-align: start; white-space: nowrap;
+  background: none; border: 0; border-radius: var(--spectrum-corner-radius-100);
+}
+.navmenu .navmitem:hover, .navmenu .navmitem:focus-visible { background: var(--s2-down); }
+.navmenu .navmitem:focus-visible { outline: var(--s2-focus); outline-offset: calc(-1 * var(--spectrum-focus-indicator-thickness)); }
+.navmenu .navmitem .ck { flex: none; width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.navmenu .navmitem[aria-checked="true"] .ck { background: var(--spectrum-accent-content-color-default); mask: var(--s2-icon-checkmark) center / contain no-repeat; }
+.navmenu .navmitem .lb { flex: 1; }
+.navmenu .navmitem .dt { padding-inline-start: var(--spectrum-spacing-300); color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+@media (forced-colors: active) {
+  .sidenav .chev, .navmenu .navmitem[aria-checked="true"] .ck { background: CanvasText; }
+}

@@ -51,6 +51,7 @@ on:
       - 'src/discord.js'
       - 'src/dot.js'
       - 'src/draftevents.js'
+      - 'src/draftfiles.js'
       - 'src/drafts.js'
       - 'src/emoji.js'
       - 'src/emojinames.js'

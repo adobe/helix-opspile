@@ -116,6 +116,7 @@ function load() {
     checked: (t) => t.resolution?.verdict === 'resolved',
     resolvedOf: (t) => t.resolution?.verdict || 'open',
     STATUS_HINT: { quiet: 'Quiet', team: 'Team on it' },
+    statusHint: (t, status) => ({ quiet: 'Quiet', team: 'Team on it' })[status],
     urgencyOf: () => 'low',
     kindOf: () => 'question',
     KIND_ICON: { question: 'help', other: 'comment' },

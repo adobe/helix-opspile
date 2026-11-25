@@ -322,9 +322,15 @@ function cardPerson(person) {
     orgIcon: (slug, icon) => (icon ? favImg(icon) : ''),
   };
   // A few of each: the card is small; their team's overview has the rest.
-  const { knows, keys } = Person.work(w, ctx, { most: 3 });
+  const { knows, keys } = Person.work(w, ctx, { most: 3, more: true });
   return `<div class="ps-part">${profile}${w.messages ? Person.freq(person.name, w, w.weeks) : ''}${knows}${keys}</div>`;
 }
+
+/**
+ * Where an Adobe person's part will be while the knowledge bases are asked: as tall as it about
+ * is, so that the card does not grow under the pointer, or jump above the name, once it comes.
+ */
+const CARD_WAIT = '<div class="ps-part ps-wait" aria-hidden="true"><span class="ps-w-act"></span><span></span><span></span></div>';
 
 function cardHtml(p, ctx, found) {
   // An Adobe person as their team's overview shows them: the best of their accounts' name,
@@ -355,7 +361,7 @@ function cardHtml(p, ctx, found) {
     ${rows.length ? `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : ''}
     ${other ? `<div class="note">Not the usual customer domain in this channel (${esc(ctx.customerDomain)}).</div>` : ''}
     ${p.local ? '<div class="note">No account details known yet.</div>' : ''}
-    ${cardPerson(person)}
+    ${found?.pending && rel === 'adobe' ? CARD_WAIT : cardPerson(person)}
     ${cardKb(found)}
     ${mayAskAbout(ctx.thread, p) ? `<button type="button" class="ask-about" data-ask-about title="Ask in the sidebar: only your team sees it, nothing is posted">${SIDE_ICON}What should I know about ${esc(p.name)}?</button>` : ''}`;
 }
@@ -916,7 +922,9 @@ const STATUS_ICON = {
 };
 const RESOLVED_ICON = { open: 'circle', resolved: 'checkmark-circle', '(none)': 'cancel' };
 const DRAFT_ICON = { mine: 'edit', team: 'user-edit', none: 'edit-no' };
-const WAITING_ICON = { Us: 'call-center', Customer: 'clock', Nobody: 'pause-circle' };
+const WAITING_ICON = {
+  Us: 'call-center', Customer: 'clock', Vendor: 'clock', Nobody: 'pause-circle',
+};
 const TYPE_ICON = { conversation: 'chat', alert: 'bell', request: 'hand' };
 const PLATFORM_SITE = { Slack: 'slack.com', Teams: 'teams.microsoft.com', Discord: 'discord.com', Portal: 'adobe.com' };
 // What a thread is: a conversation, an alert, or one of the admin team's requests (in its inbox
@@ -948,15 +956,23 @@ function inPass(fn) {
   try { return fn(); } finally { pass = null; }
 }
 /**
- * Us, Customer (customer or vendor), Nobody. The API works it out (`waitingOn` in
- * src/threads.js): Clef's label, except that a thread where Adobe posted last never waits on
- * us, and without a label, a thread waits on us when the customer posted last.
+ * Us, Customer, Vendor, Nobody. The API works it out (`waitingOn` in src/threads.js): Clef's
+ * label, except that a thread where Adobe posted last never waits on us, and without a label, a
+ * thread waits on us when the customer posted last. Vendor is a vendor's thread that waits on
+ * the vendor (Adobe is its customer there), or a customer's that waits on a third party.
  */
 const waitingOn = (t) => {
   const n = t.waiting_on;
   if (n === 'us') return 'Us';
-  if (n === 'customer' || n === 'vendor') return 'Customer';
+  if (n === 'customer') return 'Customer';
+  if (n === 'vendor') return 'Vendor';
   return 'Nobody';
+};
+const WAITING_HINT = {
+  Us: 'Adobe has the next move',
+  Customer: 'The customer has the next move',
+  Vendor: 'A vendor has the next move: in a vendor\'s channel the vendor, where Adobe is the customer; in a customer\'s, a partner, agency or vendor who is neither Adobe nor the customer',
+  Nobody: 'Nothing is pending',
 };
 
 // How long a thread may wait before it turns yellow, by urgency.
@@ -1044,24 +1060,29 @@ function computeStatus(t) {
     && (!WEEKDAYS_ONLY.has(u) || waitedFor(since, now) > limit);
   const on = waitingOn(t);
   if (!alert && !checked(t) && on === 'Us' && late(WAIT_US[u])) return 'waiting';
-  if (!alert && !checked(t) && on === 'Customer' && late(WAIT_THEM[u])) return 'silent';
+  if (!alert && !checked(t) && (on === 'Customer' || on === 'Vendor') && late(WAIT_THEM[u])) return 'silent';
   const team = teamIds();
   if ((t.posters || []).some((p) => team.has(p)) && !t.mentionedMe) return 'team';
   return 'quiet';
 }
 const STATUS_ORDER = ['critical', 'hot', 'you', 'waiting', 'silent', 'team', 'quiet'];
 const STATUS_LABEL = {
-  critical: 'Critical, unseen', hot: 'Hot, unseen', you: 'You', waiting: 'Waiting too long', silent: 'Customer silent', team: 'Team on it', quiet: 'Everything else',
+  critical: 'Critical, unseen', hot: 'Hot, unseen', you: 'You', waiting: 'Waiting too long', silent: 'They went silent', team: 'Team on it', quiet: 'Everything else',
 };
 const STATUS_HINT = {
   critical: 'Critical urgency and nobody at Adobe has seen it',
   hot: 'High urgency and nobody at Adobe has seen it',
   you: 'You posted, were mentioned or put 👀 on it, and the customer spoke last or you were mentioned (not once resolved with ✅); or a colleague asked for help with 🛟',
   waiting: 'Waiting on us for too long (15 min critical, 1 h high, 3 h normal, weekends not counted for normal), and Adobe did not post last',
-  silent: 'Waiting on the customer or vendor for too long (30 min critical, 1 h high, 1 day normal, weekends not counted for normal): follow up or close',
+  silent: 'Waiting on the customer or a vendor for too long (30 min critical, 1 h high, 1 day normal, weekends not counted for normal): follow up, chase the vendor, or close',
   team: 'Your team is in it (or a colleague put 👀 on it), you were not mentioned, all is well',
   quiet: 'Everything else',
 };
+
+/** What a thread's status means for it: a vendor's silence is the vendor's to break. */
+const statusHint = (t, status) => (status === 'silent' && waitingOn(t) === 'Vendor'
+  ? 'Waiting on the vendor for too long (30 min critical, 1 h high, 1 day normal, weekends not counted for normal): chase them, or close'
+  : STATUS_HINT[status]);
 
 /** Who a thread involves, from the viewer's point of view. */
 function involvement(t) {
@@ -1183,8 +1204,8 @@ const FACETS = [
     face: (v) => tile(vocabName('topics', v)) },
   { id: 'tech', title: 'Tech stack', value: techOf, multi: true, labelFn: (v) => vocabName('tech', v), limit: 12,
     face: (v) => tile(vocabName('tech', v)) },
-  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'], glyph: (v) => WAITING_ICON[v],
-    color: colorOf({ Us: 'c-red', Customer: 'c-silent' }) },
+  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Vendor', 'Nobody'], hint: WAITING_HINT,
+    glyph: (v) => WAITING_ICON[v], color: colorOf({ Us: 'c-red', Customer: 'c-silent', Vendor: 'c-silent' }) },
   { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel, color: involvesColor,
     face: involvesFace,
     order: () => ['me', ...Object.keys(state.data?.teams || {}).map((s) => `team:${s}`),
@@ -1845,7 +1866,7 @@ function statusMark(t, status) {
   }
   if (isResolved(t)) behind.push({ cls: 'ok', say: 'Resolved', icon: 'checkmark-circle' });
   if (ourMove(t)) behind.push({ cls: 'us', say: 'Our move', icon: 'call-center' });
-  const front = `${cap(k)}${t.unread ? ', unread' : ''} · ${STATUS_HINT[status]}`;
+  const front = `${cap(k)}${t.unread ? ', unread' : ''} · ${statusHint(t, status)}`;
   const say = [front, ...behind.map((x) => x.say)].join(' · ');
   const chips = behind.map((x) => `<span class="mi ${x.cls}" title="${esc(x.hint || x.say)}">${wf(x.icon)}</span>`).join('');
   return `<span class="mks"><span class="mk" role="img" aria-label="${esc(say)}"><span class="mi k s-${status}${t.unread ? ' ring' : ''}" title="${esc(front)}">${wf(KIND_ICON[k] || KIND_ICON.other, t.unread)}</span>${chips}</span></span>`;
@@ -5813,10 +5834,37 @@ const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); 
 const sourceLink = (u, label, cls = '', attrs = '') => `<a${cls ? ` class="${cls}"` : ''} href="${esc(u)}" target="_blank" rel="noopener noreferrer"${attrs}>${label}</a>`;
 
 /** The line of a draft's sources, or nothing. */
-function sourcesLine(d) {
-  if (!d.sources?.length) return '';
+function sourcesLine(d, thread = '') {
+  const files = draftFilesLine(d, thread);
+  if (!d.sources?.length) return files ? `<span class="srcs">${files}</span>` : '';
   const links = d.sources.map((s, i) => sourceLink(s.url, esc(s.title || hostOf(s.url)), 'src', ` data-source="${i}" title="${esc(s.url)}"`));
-  return `<span class="srcs"><span class="lb" title="For checking the draft. Only your team sees them: they are not sent.">Sources</span>${links.join('')}</span>`;
+  return `<span class="srcs">${files}<span class="lb" title="For checking the draft. Only your team sees them: they are not sent.">Sources</span>${links.join('')}</span>`;
+}
+
+// The draft's pictures (src/draftfiles.js), such as a screenshot the agent took: they go with it
+// when it is sent, as you or as the bot, and into the tray when you take it into the reply box.
+const draftFileUrl = (thread, f) => `/api/draft/file?thread=${encodeURIComponent(thread)}&id=${encodeURIComponent(f.id)}`;
+
+/** The draft's pictures on its line: each opens in a new tab. */
+function draftFilesLine(d, thread) {
+  if (!d.files?.length || !thread) return '';
+  const pics = d.files.map((f) => `<a class="dfile" href="${esc(draftFileUrl(thread, f))}" target="_blank" rel="noopener" title="${esc(`${f.name} · ${fileSize(f.size)}`)}"><img src="${esc(draftFileUrl(thread, f))}" alt="${esc(f.name)}" loading="lazy"></a>`);
+  return `<span class="lb" title="They go with the draft when it is sent: the customer sees them.">Sent with it</span>${pics.join('')}`;
+}
+
+/** The draft's pictures as files, to send or put in the tray; null when one could not be had. */
+async function draftFiles(key, d) {
+  if (!d?.files?.length) return [];
+  try {
+    return await Promise.all(d.files.map(async (f) => {
+      const res = await fetch(draftFileUrl(key, f), { credentials: 'same-origin', redirect: 'manual' });
+      if (!res.ok) throw new Error(res.status === 404 ? `${f.name} is gone (a draft keeps its files for 30 days)` : `${f.name} could not be had (${res.status})`);
+      return new File([await res.blob()], f.name, { type: f.type });
+    }));
+  } catch (e) {
+    toast(`Nothing was sent: ${e.message}.`);
+    return null;
+  }
 }
 
 function sourceView(key, url) {
@@ -6017,7 +6065,7 @@ function draftLine(d, {
   if (asBot) sends.push(`<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot"${draftPartLabels('bot')}>${DRAFT_ICONS.bot}<span>Send as bot</span></button>`);
   if (asMe) sends.push(`<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you"${draftPartLabels('me')}>${DRAFT_ICONS.me}<span>Send as me</span></button>`);
   return `<div class="dl"><div class="head"><span class="pen">${DRAFT_ICONS.draft}Draft</span><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span></div>
-      <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d)}
+      <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d, thread)}
       <span class="tools">${tools.join('')}</span>${sends.length ? `<span class="sends">${sends.join('')}</span>` : ''}</div>`;
 }
 
@@ -6228,6 +6276,30 @@ function adoptDraft(key) {
   box.focus();
   box.setSelectionRange(c.text.length, c.text.length);
   box.scrollTop = box.scrollHeight;
+  trayDraftFiles(key, d);
+}
+
+/**
+ * The draft's pictures into the tray, as files you attached: they go with the reply. Each knows
+ * the draft's file it is (`draftFile`), so one already there is not added again, and a save from
+ * the box keeps on the draft only those still in the tray (`trayedDraftFiles`).
+ */
+async function trayDraftFiles(key, d) {
+  const there = new Set((state.attachments.get(key) || []).map((a) => a.file.draftFile).filter(Boolean));
+  const wanted = (d.files || []).filter((f) => !there.has(f.id));
+  (state.trayed ||= new Map()).set(key, d.updated_at);
+  if (!wanted.length) return;
+  const files = await draftFiles(key, { ...d, files: wanted });
+  const thread = state.cache.get(key)?.data?.thread;
+  if (!files?.length || !thread) return;
+  files.forEach((file, i) => { file.draftFile = wanted[i].id; });
+  addFiles(key, thread, files);
+}
+
+/** The ids of the draft's files in the box's tray, once the box took the draft's in; else undefined. */
+function trayedDraftFiles(key) {
+  if (!state.trayed?.has(key)) return undefined;
+  return (state.attachments.get(key) || []).map((a) => a.file.draftFile).filter(Boolean);
 }
 
 /**
@@ -6238,12 +6310,28 @@ async function sendDraft(key, asApp, part = null) {
   const data = state.cache.get(key)?.data;
   const d = data?.draft;
   if (!d) return;
-  const out = part ? { body: part.body, mentions: part.mentions, updated_at: d.updated_at } : d;
+  const out = part ? { body: part.body, mentions: part.mentions, updated_at: d.updated_at } : { ...d };
   $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   if (part) getSelection()?.removeAllRanges();
+  // Its pictures go with it, a part of it too, if the channel takes them.
+  const files = await draftFiles(key, d);
+  if (!files) {
+    renderDraftBar(key, true);
+    return;
+  }
+  if (files.length) {
+    const rule = asApp ? (state.me.attach?.app?.[data.thread?.source] || NO_RULE) : attachRule(data.thread);
+    const problem = attachProblem(rule, files);
+    if (problem) {
+      attachRefused(rule, `Nothing was sent: ${problem}`);
+      renderDraftBar(key, true);
+      return;
+    }
+    out.attached = files.map((file) => ({ file, url: URL.createObjectURL(file) }));
+  }
   if (asApp) {
     const sendIt = async (again = false) => {
-      const sent = await sendAsApp(key, out.body, out.updated_at, { mentions: out.mentions || [], again });
+      const sent = await sendAsApp(key, out.body, out.updated_at, { mentions: out.mentions || [], files, again });
       if (sent.unsure) toast(`It may have been sent: ${sent.error}.`, { label: 'Send again', run: () => sendIt(true) });
       else toast(sent.error ? `Nothing was sent: ${sent.error}.` : ['Sent as the bot.', sent.invited].filter(Boolean).join(' '), null, { stay: sent.missed });
     };
@@ -6324,6 +6412,7 @@ function adoptPart(key, part) {
   box.focus();
   box.setSelectionRange(text.length, text.length);
   box.scrollTop = box.scrollHeight;
+  trayDraftFiles(key, d);
 }
 
 /** The draft as the inbox list shows it, without fetching the inbox again. */
@@ -6348,8 +6437,10 @@ function setCachedDraft(key, d) {
 async function saveDraft(key, text, base, { fromBox = false, sources } = {}) {
   if (state.data?.me?.readonly || !text.trim()) return { error: 'nothing to save' };
   const c = state.composers.get(key) || { text, from: '', base: null };
+  // From the box that took the draft's pictures in: those still in its tray stay on the draft.
+  const files = fromBox ? trayedDraftFiles(key) : undefined;
   const res = await request('PUT', '/api/draft', {
-    thread: key, text, mentions: mentionsIn(key, text), sources, base: base === undefined ? c.base : base,
+    thread: key, text, mentions: mentionsIn(key, text), sources, base: base === undefined ? c.base : base, ...(files ? { files } : {}),
   });
   if (res.status === 409 && res.data.draft) {
     // A colleague saved (or changed) it meanwhile: show theirs, and offer to overwrite it.
@@ -7170,8 +7261,8 @@ async function deliver(p) {
 async function send(key, thread, draft = null) {
   const box = $('reply');
   const body = (draft ? draft.body : box.value).trim();
-  // The files in the tray go with the reply box, not with a draft sent from its line.
-  const attached = draft ? [] : state.attachments.get(key) || [];
+  // The files in the tray go with the reply box; a draft sent from its line takes its own.
+  const attached = draft ? draft.attached || [] : state.attachments.get(key) || [];
   state.sendError = null;
   if (!body && !attached.length) return false;
   closeMentions();
@@ -7187,7 +7278,7 @@ async function send(key, thread, draft = null) {
   // from its line leaves the box alone, unless the box holds that draft).
   // The files go with it (`uploads`), and show in its bubble (`files`) until it arrives.
   const files = attached.map((a) => ({ name: a.file.name, type: a.file.type, url: a.url }));
-  if (attached.length) {
+  if (attached.length && !draft) {
     state.attachments.delete(key);
     renderTray(key);
   }
@@ -7196,7 +7287,14 @@ async function send(key, thread, draft = null) {
     growReply(box);
     state.composers.set(key, { text: '', from: '', base: null });
     mention.picked.delete(key);
+    // The draft's pictures the box took in went with it from its line.
+    if (draft && state.trayed?.has(key)) {
+      state.attachments.delete(key);
+      renderTray(key);
+    }
   }
+  // The box's tray no longer holds the draft's pictures: it sent them, or the draft went.
+  state.trayed?.delete(key);
   sendSeq += 1;
   const p = {
     thread: key, body, mentions, kinds, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, key: crypto.randomUUID(), source: thread.source, status: 'sending', ...ownLook(key, thread.source),
@@ -8038,7 +8136,7 @@ function named(f) {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} at ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}`;
-  return new File([f], `Screenshot ${stamp}.${ext}`, { type: f.type, lastModified: f.lastModified });
+  return Object.assign(new File([f], `Screenshot ${stamp}.${ext}`, { type: f.type, lastModified: f.lastModified }), f.draftFile ? { draftFile: f.draftFile } : {});
 }
 
 /** Explains why nothing can be attached, with a way to connect again where that helps. */
@@ -9106,7 +9204,7 @@ async function reloadChanged() {
   if (state.open && state.open !== early && touched(state.open)) openThread(state.open, { live: true });
 }
 const STATUS_TICK_MS = 60 * 1000;
-// A thread's status depends on the time too (waiting too long, customer silent), and nothing
+// A thread's status depends on the time too (waiting too long, they went silent), and nothing
 // announces that: the list is looked at again every minute while it is on screen.
 setInterval(() => { if (!hidden() && state.data) render(); }, STATUS_TICK_MS);
 // Away from the inbox (its tab hidden, or another window in front) for AWAY_MS, unread only lets go
@@ -11720,7 +11818,7 @@ const FILTER_ARGS = {
 const VOCAB_ARGS = { topic: 'topics', tech: 'tech' };
 const FILTER_VALUES = {
   status: STATUS_ORDER, type: ['conversation', 'alert', 'request'], platform: ['slack', 'teams', 'discord', 'portal'], resolved: ['open', 'resolved'],
-  waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_ICON),
+  waiting_on: ['us', 'customer', 'vendor', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_ICON),
   draft: ['mine', 'team', 'none'],
 };
 const cap = (v) => v[0].toUpperCase() + v.slice(1);
@@ -11816,7 +11914,7 @@ function fillReply(text) {
 
 // filter_threads' filters, which it also takes in `exclude`.
 const FILTER_PROPS = {
-  status: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.status }, description: 'critical/hot: urgent and unseen by Adobe; you: needs the viewer; waiting: waits on us too long; silent: customer silent too long' },
+  status: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.status }, description: 'critical/hot: urgent and unseen by Adobe; you: needs the viewer; waiting: waits on us too long; silent: the customer or a vendor silent too long' },
   waiting_on: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.waiting_on }, description: 'Who has the next move' },
   urgency: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.urgency } },
   kind: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.kind } },
