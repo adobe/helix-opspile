@@ -50,8 +50,13 @@ export const MAX_CASES = 20;
 export const MAX_STATUS = 8;
 export const MAX_DEPENDENTS = 10;
 export const MAX_WAITING = 25;
-/** The vendor threads a page reads at most, the latest first: their open ones are among them. */
-const MAX_READ = 200;
+/**
+ * The threads asked about at once (`entriesOf`): every conversation of the window is read, in
+ * chunks, so an old open case behind many newer resolved ones still counts.
+ */
+const CHUNK = 200;
+/** SQL: a conversation of thread `h` that may wait on someone (src/threads.js waitingOn). */
+const MAY_WAIT = (h) => `${h}.imported = 0 AND ${h}.last_staff IS NOT NULL`;
 
 const URGENCY = ['low', 'normal', 'high', 'critical'];
 const urgencyName = (u) => (u == null ? 'low' : URGENCY[Math.min(3, Math.max(0, Math.round(u)))]);
@@ -100,13 +105,8 @@ export function forViewer(me, rows, most = Infinity) {
   return { list: list.slice(0, most).map(shown(me)), hidden: rows.length - list.length };
 }
 
-/**
- * What the inbox shows of thread rows (`thread`, `kind`, `last_staff`, `last_at`, `any_at`,
- * `imported`, `org_type`, `title`): their label with the agent's answers and the reviews, who
- * they wait on (src/threads.js waitingOn), whether they are resolved (a staff ✅, else Clef), their
- * urgency, kind and title. A Map by thread.
- */
-export async function entriesOf(env, rows) {
+/** `entriesOf`, for at most CHUNK rows. */
+async function entriesOfChunk(env, rows) {
   const keys = [...new Set(rows.map((r) => r.thread))];
   if (!keys.length) {
     return new Map();
@@ -144,6 +144,23 @@ export async function entriesOf(env, rows) {
       kind: (label && label.kind) || null,
       title: (label && label.title) || r.title || null,
     });
+  }
+  return out;
+}
+
+/**
+ * What the inbox shows of thread rows (`thread`, `kind`, `last_staff`, `last_at`, `any_at`,
+ * `imported`, `org_type`, `title`): their label with the agent's answers and the reviews, who
+ * they wait on (src/threads.js waitingOn), whether they are resolved (a staff ✅, else Clef), their
+ * urgency, kind and title. A Map by thread.
+ */
+export async function entriesOf(env, rows) {
+  const out = new Map();
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    // eslint-disable-next-line no-await-in-loop
+    for (const [k, v] of await entriesOfChunk(env, rows.slice(i, i + CHUNK))) {
+      out.set(k, v);
+    }
   }
   return out;
 }
@@ -245,7 +262,7 @@ export async function vendorNumbers(env, slug, weeks) {
     threads, alertWeeks, alerts, [total], orgCounts, techCounts, waitingRows,
   ] = await Promise.all([
     all(`SELECT ${ROW} FROM threads h WHERE h.org = ?1 AND h.kind = 'channel' AND h.last_at >= ?2
-      ORDER BY h.last_at DESC LIMIT ${MAX_READ}`, slug, since),
+      AND ${MAY_WAIT('h')} ORDER BY h.last_at DESC`, slug, since),
     all(`SELECT ${WEEK('h.root_at')} AS week, COUNT(*) AS n FROM threads h
       WHERE h.org = ?1 AND h.kind = 'alert' AND h.root_at >= ?2 GROUP BY 1`, slug, since),
     all(`SELECT h.thread, h.source, h.channel_id, h.team, h.channel_name,
@@ -264,8 +281,8 @@ export async function vendorNumbers(env, slug, weeks) {
     ),
     // Those that Clef says wait on a third party: only those are read further.
     all(`SELECT DISTINCT ${ROW} ${DEPENDS} AND EXISTS (SELECT 1 FROM labels l
-        WHERE l.thread = h.thread AND l.next_actor = 'vendor')
-      ORDER BY h.last_at DESC LIMIT ${MAX_READ}`, slug, since, TECH_MIN),
+        WHERE l.thread = h.thread AND l.next_actor = 'vendor') AND ${MAY_WAIT('h')}
+      ORDER BY h.last_at DESC`, slug, since, TECH_MIN),
   ]);
   const at = new Map(weeks.map((w, i) => [w, i]));
   const weekly = zeros(weeks.length);
@@ -318,7 +335,7 @@ export async function vendorNumbers(env, slug, weeks) {
       open: open.length,
       them: open.filter((r) => r.waiting === 'vendor').length,
       us: open.filter((r) => r.waiting === 'us').length,
-      list: open.slice(0, MAX_READ),
+      list: open,
     },
     status: {
       total: weekly.reduce((s, v) => s + v, 0),
@@ -406,8 +423,8 @@ export async function teamVendorNumbers(env, team, { now = new Date() } = {}) {
     all(`SELECT ${ROW}, o.type AS org_type FROM threads h JOIN labels l ON l.thread = h.thread
         LEFT JOIN orgs o ON o.slug = h.org
       WHERE l.next_actor = 'vendor' AND h.kind = 'channel' AND h.last_at >= ?2
-        AND COALESCE(o.type, 'customer') != ?3 AND ${inTeam('h')}
-      ORDER BY h.last_at DESC LIMIT ${MAX_READ}`, team, since, VENDOR),
+        AND COALESCE(o.type, 'customer') != ?3 AND ${inTeam('h')} AND ${MAY_WAIT('h')}
+      ORDER BY h.last_at DESC`, team, since, VENDOR),
   ]);
   const shareRows = await all(`SELECT s.source, s.channel_id, s.team FROM channel_teams s
     WHERE (s.source, s.channel_id) IN (SELECT h.source, h.channel_id FROM threads h
@@ -443,7 +460,7 @@ export async function teamVendorNumbers(env, team, { now = new Date() } = {}) {
   // Their conversations of the weeks: their cases.
   const threads = slugs.length ? await all(`SELECT ${ROW} FROM threads h
     WHERE h.org IN (SELECT value FROM json_each(?1)) AND h.kind = 'channel' AND h.last_at >= ?2
-    ORDER BY h.last_at DESC LIMIT ${MAX_READ}`, JSON.stringify(slugs), since) : [];
+      AND ${MAY_WAIT('h')} ORDER BY h.last_at DESC`, JSON.stringify(slugs), since) : [];
   const [entries, answers, shares] = await Promise.all([
     entriesOf(env, [
       ...threads.map((r) => ({ ...r, org_type: VENDOR })),
@@ -541,7 +558,10 @@ export async function teamVendors(env, me, slug, { now = new Date() } = {}) {
   };
 }
 
-/** Clears the kept numbers (tests). */
+/**
+ * Clears the kept numbers: a team began or stopped following a vendor (PUT
+ * /api/admin/org-follows), so its Vendors section says so at once, in this isolate; tests.
+ */
 export function resetTeamVendors() {
   cache = new WeakMap();
 }

@@ -162,6 +162,40 @@ describe('a vendor\'s page', () => {
   });
 });
 
+/** `n` resolved conversations of CDN Co, all newer than its open cases (v1, v2). */
+function resolvedAhead(e, n) {
+  const db = e.DB.sqlite;
+  const thread = db.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org,
+    team, kind, title, path, root_at, last_at, any_at, last_staff, messages, updated_at)
+    VALUES (?, 'slack', 'T', 'C1', ?, 'cdnco', 'edge', 'channel', 'Done', 'p/', ?, ?, ?, 1, 2, ?)`);
+  const label = db.prepare(`INSERT INTO labels (thread, next_actor, kind, urgency, resolved_p,
+    labeled_through, model, labeled_at) VALUES (?, 'nobody', 'question', 1, 0.95, ?, 'clef', ?)`);
+  for (let i = 0; i < n; i += 1) {
+    const at = new Date(NOW.getTime() - (28 - i / 100) * 3600000).toISOString();
+    thread.run(`t:r${i}`, `r${i}`, at, at, at, at);
+    label.run(`t:r${i}`, at, at);
+  }
+}
+
+describe('a vendor\'s open cases behind many resolved ones', () => {
+  beforeEach(() => {
+    resetOrgProfiles();
+    resetTeamVendors();
+  });
+
+  it('are all counted and listed, on its page and the team\'s', async () => {
+    const e = seed();
+    resolvedAhead(e, 250);
+    const v = await vendorNumbers(e, 'cdnco', weeksTo(NOW, 26));
+    assert.deepEqual([v.cases.open, v.cases.them, v.cases.us], [2, 1, 1]);
+    assert.deepEqual(v.cases.list.map((c) => c.thread), ['t:v2', 't:v1']);
+    const t = await teamVendorNumbers(e, 'edge', { now: NOW });
+    assert.deepEqual(t.vendors[0].cases, { open: 2, them: 1, us: 1 });
+    assert.deepEqual(t.waiting.map((w) => w.thread), ['t:c1', 't:v1']);
+    assert.deepEqual(t.ours.map((w) => w.thread), ['t:v2']);
+  });
+});
+
 describe('a team\'s vendors', () => {
   beforeEach(() => resetTeamVendors());
 
@@ -205,6 +239,20 @@ describe('a team\'s vendors', () => {
     assert.equal(dee.body.waitingHidden, 1);
     assert.equal(dee.body.may.follow, false);
     assert.equal((await call(env, as(ADA), '/api/teams/vendors?team=nope')).status, 404);
+  });
+
+  it('says at once that the team follows a vendor, though its answer is kept', async () => {
+    const env = seed();
+    const admin = as({ ...ADA, teams: ['admin', 'edge'] });
+    const before = await call(env, admin, '/api/teams/vendors?team=forms');
+    assert.deepEqual(before.body.vendors.map((v) => v.follows), [true]);
+    const url = new URL('https://opspile.example/api/admin/org-follows');
+    const res = await api(new Request(url, {
+      method: 'PUT', body: JSON.stringify({ team: 'forms', org: 'cdnco', follow: false }), headers: { 'content-type': 'application/json' },
+    }), env, url, { viewer: admin });
+    assert.equal(res.status, 200);
+    const after = await call(env, admin, '/api/teams/vendors?team=forms');
+    assert.deepEqual(after.body.vendors.map((v) => v.follows), [false]);
   });
 
   it('keeps a list to what a viewer works', () => {

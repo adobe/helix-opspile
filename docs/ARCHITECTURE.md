@@ -3629,7 +3629,9 @@ when it breaks, or that builds the integration; the others follow it. A vendor A
 trying has a champion rather than a team: they follow it themselves. The counts on these pages are
 everyone's at Adobe; a thread's title and its link only for whoever works it, on the team it is
 filed under or one it is shared with (`visible`, src/vendors.js), so the lists say how many more
-there are. A team's vendors are kept five minutes per isolate, as its overview.
+there are. Every conversation of the window that may wait on someone is read for the cases, however
+many newer ones are resolved. A team's vendors are kept five minutes per isolate, as its overview,
+and forgotten when a team starts or stops following one.
 
 ## Customer portal
 
