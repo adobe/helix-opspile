@@ -82,7 +82,10 @@ function env() {
     CHANNELS: fakeBucket(),
     STAFF_DOMAINS: 'staff.example',
     SLACK_BOT_TOKEN: 'made-up',
-    BROWSER_RUN_TOKEN: 'made-up',
+    // The global fluffyjaws server, as a FluffyJaws service app: one agents may ask for.
+    FLUFFYJAWS_ISSUER: 'https://okta.example/oauth2/made-up',
+    FLUFFYJAWS_SERVICE_CLIENT_ID: 'made-up',
+    FLUFFYJAWS_SERVICE_SECRET: 'made-up',
     AGENT_CHANNELS: 'C1',
     AI_GATEWAY_ACCOUNT: 'acct',
     AGENT_GATEWAY: 'gw',
@@ -140,7 +143,7 @@ describe('what an agent may ask for', () => {
     // Off, and working here: posting (a Slack bot), extraction rules, membership needs the
     // admin bots, the computer a Worker Loader, web search Workers AI; read any thread is the
     // admin team's, as is slack_channels. Resolving and labeling need nothing.
-    assert.deepEqual(ids, ['post_message', 'extraction_rules', 'org_threads', 'resolve', 'label', 'mcp:2', 'mcp:global:browser']);
+    assert.deepEqual(ids, ['post_message', 'extraction_rules', 'org_threads', 'resolve', 'label', 'mcp:2', 'mcp:global:fluffyjaws']);
     e.DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by,
       changed_at) VALUES ('extraction_rules', 'team', 'helix', 1, 'Ada', 't')`);
     assert.ok(!(await requestableFor(e, TARGET)).some((x) => x.id === 'extraction_rules'));
@@ -161,7 +164,7 @@ describe('what an agent may ask for', () => {
     assert.deepEqual(e.notified.map((n) => n.type), ['sidebar']);
     const again = await ask(e, { tool: 'mcp:2' });
     assert.match(again.error, new RegExp(`Request ${request.id} asks for MCP server logs already`));
-    for (const tool of ['post_message', 'extraction_rules', 'mcp:global:browser']) {
+    for (const tool of ['post_message', 'extraction_rules', 'mcp:global:fluffyjaws']) {
       // eslint-disable-next-line no-await-in-loop
       assert.ok((await ask(e, { tool })).request);
     }
@@ -180,7 +183,7 @@ describe('a person decides on a tool request', () => {
     const { env: e, calls } = bound(env());
     const { request: tool } = await ask(e, { tool: 'extraction_rules' });
     const { request: server } = await ask(e, { tool: 'mcp:2' });
-    const { request: global } = await ask(e, { tool: 'mcp:global:browser' });
+    const { request: global } = await ask(e, { tool: 'mcp:global:fluffyjaws' });
     assert.deepEqual(await toolsFor(e, TARGET), []);
     assert.deepEqual((await serversFor(e, TARGET)).map((s) => s.id), [1]);
     assert.equal(await serverWithHeaders(e, 2, { channelId: 'C1', thread: THREAD }), null);
@@ -211,7 +214,7 @@ describe('a person decides on a tool request', () => {
     await call(e, ADA, '/api/agent/tools/grant', { thread: THREAD, id: server.id });
     await call(e, ADA, '/api/agent/tools/grant', { thread: THREAD, id: global.id });
     // The team's by name, then the global ones.
-    assert.deepEqual((await serversFor(e, TARGET)).map((s) => s.id), [2, 1, 'global:browser']);
+    assert.deepEqual((await serversFor(e, TARGET)).map((s) => s.id), [2, 1, 'global:fluffyjaws']);
     assert.equal((await serverWithHeaders(e, 2, { channelId: 'C1', thread: THREAD })).name, 'logs');
     assert.equal(await serverWithHeaders(e, 2, { channelId: 'C1', thread: 'slack:E1:C1:2.2' }), null);
     // Nothing more to ask for of those.

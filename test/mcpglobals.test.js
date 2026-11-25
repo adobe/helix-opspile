@@ -19,7 +19,7 @@ import { api } from '../src/api.js';
 import { refreshGlobalTools } from '../src/mcpadmin.js';
 import { AgentMcp, CATALOG_TTL_MS, mcpSection } from '../src/agent/mcp.js';
 import { serversFor, serverWithHeaders } from '../src/agent/mcpclient.js';
-import { BROWSER_MCP_URL, GITHUB_MCP_URL } from '../src/agent/globals.js';
+import { GITHUB_MCP_URL, GLOBAL_SERVERS } from '../src/agent/globals.js';
 import {
   appJwt, appManifest, forgetGithub, manifestAction, pkcs8Pem,
 } from '../src/github.js';
@@ -47,36 +47,8 @@ const asMe = (p, roles = {}) => ({ ...p, teams: p.teams.map((slug) => ({ slug, r
 const admin = asMe(ADA);
 const manager = asMe(BO, { helix: 'manager' });
 
-// Cloudflare's Browser Run MCP server, and GitHub's MCP server, in memory.
-const BROWSER_TOKEN = 'made-up-browser-run-token';
-const BROWSER_MCP = fakeMcpServers([{
-  url: BROWSER_MCP_URL,
-  name: 'cloudflare-browser-mcp-server',
-  token: BROWSER_TOKEN,
-  tools: [
-    {
-      name: 'get_url_markdown',
-      description: 'Fetches the webpage content and converts it into Markdown format',
-      inputSchema: { type: 'object', properties: { url: { type: 'string' } } },
-      readOnly: true,
-      run: ({ url }) => `# ${url}\n\nHello.`,
-    },
-    {
-      name: 'get_url_screenshot',
-      description: 'Captures a screenshot of the webpage',
-      inputSchema: { type: 'object', properties: { url: { type: 'string' } } },
-      readOnly: true,
-      run: () => ({ content: [{ type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }] }),
-    },
-    {
-      name: 'kill_browser_session',
-      description: 'Closes a Browser Run session',
-      inputSchema: { type: 'object', properties: { sessionId: { type: 'string' } } },
-      run: () => 'killed',
-    },
-  ],
-}]);
-let browserRequests = 0;
+// GitHub's MCP server, in memory.
+let githubMcpRequests = 0;
 const GITHUB_MCP = fakeMcpServers([{
   url: GITHUB_MCP_URL,
   name: 'github',
@@ -142,11 +114,8 @@ before(() => {
     if (request.url.startsWith('https://api.github.com/')) {
       return githubApi(request);
     }
-    if (BROWSER_MCP.handles(request.url)) {
-      browserRequests += 1;
-      return BROWSER_MCP.fetch(request);
-    }
     if (GITHUB_MCP.handles(request.url)) {
+      githubMcpRequests += 1;
       GITHUB.mcpHeaders.push(Object.fromEntries(request.headers));
       return GITHUB_MCP.fetch(request);
     }
@@ -163,7 +132,7 @@ beforeEach(() => {
   GITHUB.mcpHeaders.length = 0;
 });
 
-function env({ browser = true } = {}) {
+function env() {
   const DB = d1({
     people: [ADA, BO],
     teams: [{ slug: 'admin', name: 'Admin' }, { slug: 'helix', name: 'Helix ops' }, { slug: 'edge', name: 'Edge ops' }],
@@ -183,7 +152,6 @@ function env({ browser = true } = {}) {
     DB,
     TOKEN_KEY: KEY,
     PUBLIC_ORIGIN: 'https://opspile.example',
-    ...(browser ? { BROWSER_RUN_TOKEN: BROWSER_TOKEN } : {}),
   };
 }
 
@@ -277,36 +245,37 @@ describe('global MCP servers in the knowledge-base editor', () => {
     const e = env();
     const listed = await call(e, manager, 'GET', '/api/kb/mcp?repo=kb-team-helix');
     assert.equal(listed.status, 200);
-    const [browser, github] = listed.body.globals;
-    assert.equal(browser.server, 'browser');
-    assert.equal(browser.available, true);
-    assert.deepEqual(browser.team, { enabled: false });
+    const [github] = listed.body.globals;
+    // Cloudflare's browser MCP server is gone: the computers have one (src/agent/browser.js).
+    assert.ok(!GLOBAL_SERVERS.some((g) => g.server === 'browser'));
+    assert.ok(!listed.body.globals.some((g) => g.server === 'browser'));
+    assert.equal(github.server, 'github');
+    assert.deepEqual(github.team, { enabled: false });
     assert.equal(github.available, false);
     assert.match(github.problem, /no GitHub App/);
     assert.equal(github.github, undefined, 'the app is the admin team\'s business');
     const asAdmin = await call(e, admin, 'GET', '/api/kb/mcp?repo=kb-team-helix');
-    assert.equal(asAdmin.body.globals[1].github.app, null);
+    assert.equal(asAdmin.body.globals[0].github.app, null);
     assert.equal((await call(e, admin, 'GET', '/api/kb/mcp?repo=kb-org-acme')).body.globals[0].team, null);
-    const noBrowser = await call(env({ browser: false }), admin, 'GET', '/api/kb/mcp?repo=kb-team-helix');
-    assert.match(noBrowser.body.globals[0].problem, /BROWSER_RUN_TOKEN/);
   });
 
   it('switch per team and per channel, for the admin team and the team\'s managers', async () => {
     const e = env();
+    await withApp(e, { allowed: true });
     const put = (me, body) => call(e, me, 'PUT', '/api/kb/mcp/global', body);
-    assert.equal((await put(manager, { server: 'browser', team: 'edge', enabled: true })).status, 404);
-    assert.equal((await put(manager, { server: 'browser', channel: 'C3', enabled: true })).status, 404);
+    assert.equal((await put(manager, { server: 'github', team: 'edge', enabled: true })).status, 404);
+    assert.equal((await put(manager, { server: 'github', channel: 'C3', enabled: true })).status, 404);
     assert.equal((await put(manager, { server: 'nope', team: 'helix', enabled: true })).status, 400);
-    assert.equal((await put(manager, { server: 'browser', team: 'helix', enabled: 'yes' })).status, 400);
-    assert.equal((await put(manager, { server: 'browser', team: 'helix', enabled: null })).status, 400);
+    assert.equal((await put(manager, { server: 'github', team: 'helix', enabled: 'yes' })).status, 400);
+    assert.equal((await put(manager, { server: 'github', team: 'helix', enabled: null })).status, 400);
 
-    const on = await put(manager, { server: 'browser', team: 'helix', enabled: true });
+    const on = await put(manager, { server: 'github', team: 'helix', enabled: true });
     assert.equal(on.status, 200);
     assert.equal(on.body.switch.enabled, true);
     assert.equal(on.body.switch.by, 'Bo');
-    const off = await put(manager, { server: 'browser', channel: 'C2', enabled: false });
+    const off = await put(manager, { server: 'github', channel: 'C2', enabled: false });
     assert.equal(off.status, 200);
-    assert.equal((await put(admin, { server: 'browser', channel: 'C3', enabled: true })).status, 200);
+    assert.equal((await put(admin, { server: 'github', channel: 'C3', enabled: true })).status, 200);
 
     const helix = (await call(e, manager, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.globals[0];
     assert.equal(helix.team.enabled, true);
@@ -316,26 +285,25 @@ describe('global MCP servers in the knowledge-base editor', () => {
 
     // An agent in C1 follows the team; C2 is switched off; C3 is on though edge is not.
     const names = async (target) => (await serversFor(e, target)).map((s) => s.id);
-    assert.deepEqual(await names({ team: 'helix', channelId: 'C1' }), ['global:browser']);
+    assert.deepEqual(await names({ team: 'helix', channelId: 'C1' }), ['global:github:41']);
     assert.deepEqual(await names({ team: 'helix', channelId: 'C2' }), []);
-    assert.deepEqual(await names({ team: 'edge', channelId: 'C3' }), ['global:browser']);
+    assert.deepEqual(await names({ team: 'edge', channelId: 'C3' }), ['global:github:41']);
     assert.deepEqual(await names({ team: 'edge', channelId: 'C9' }), []);
 
     // Back to the team's switch.
-    const reset = await put(manager, { server: 'browser', channel: 'C2', enabled: null });
+    const reset = await put(manager, { server: 'github', channel: 'C2', enabled: null });
     assert.equal(reset.body.switch, null);
-    assert.deepEqual(await names({ team: 'helix', channelId: 'C2' }), ['global:browser']);
+    assert.deepEqual(await names({ team: 'helix', channelId: 'C2' }), ['global:github:41']);
   });
 
-  it('checks the browser, and keeps the tools for the agents but the session ones', async () => {
+  it('checks a server, and keeps its tools for the agents', async () => {
     const e = env();
-    const checked = await call(e, manager, 'POST', '/api/kb/mcp/global/check', { server: 'browser', repo: 'kb-team-helix' });
-    assert.equal(checked.status, 200, JSON.stringify(checked.body));
-    assert.deepEqual(checked.body.checked, [{
-      name: 'browser', tools: 3, error: null, server: { name: 'cloudflare-browser-mcp-server', version: '1.0.0' },
-    }]);
-    assert.deepEqual(checked.body.global.instances[0].tools.map((t) => t.name), ['get_url_markdown', 'get_url_screenshot']);
     assert.equal((await call(e, manager, 'POST', '/api/kb/mcp/global/check', { server: 'github' })).status, 409);
+    await withApp(e, { allowed: true });
+    const checked = await call(e, manager, 'POST', '/api/kb/mcp/global/check', { server: 'github', repo: 'kb-team-helix' });
+    assert.equal(checked.status, 200, JSON.stringify(checked.body));
+    assert.deepEqual(checked.body.checked.map((c) => [c.name, c.tools, c.error]), [['github', 1, null]]);
+    assert.deepEqual(checked.body.global.instances[0].tools.map((t) => t.name), ['get_file_contents']);
   });
 });
 
@@ -344,37 +312,33 @@ describe('global MCP servers in the cron', () => {
     const e = env();
     await withApp(e, { allowed: true });
     const first = await quiet(() => refreshGlobalTools(e));
-    assert.deepEqual(first, { browser: ['browser: 3 tools'], github: ['github: 1 tools'] });
+    assert.deepEqual(first, { github: ['github: 1 tools'] });
     assert.deepEqual(await refreshGlobalTools(e), {}, 'fresh: nothing to do');
     const later = await refreshGlobalTools(e, { now: Date.now() + 2 * 86400_000 });
-    assert.deepEqual(Object.keys(later), ['browser', 'github']);
+    assert.deepEqual(Object.keys(later), ['github']);
   });
 });
 
 describe('global MCP servers in thread agents', () => {
-  it('read web pages through Browser Run, from the tools the check found', async () => {
+  it('are told the rules of the global servers, from the tools the check found', async () => {
     const e = env();
-    await call(e, admin, 'POST', '/api/kb/mcp/global/check', { server: 'browser' });
-    await call(e, admin, 'PUT', '/api/kb/mcp/global', { server: 'browser', team: 'helix', enabled: true });
-    browserRequests = 0;
-    const mcp = new AgentMcp(e, memoryStorage());
+    await withApp(e, { allowed: true });
+    await call(e, admin, 'POST', '/api/kb/mcp/global/check', { server: 'github' });
+    await call(e, admin, 'PUT', '/api/kb/mcp/global', { server: 'github', team: 'helix', enabled: true });
+    githubMcpRequests = 0;
+    const mcp = new AgentMcp(e, memoryStorage(), { agent: 'slack:E1:C1:1.0' });
     const { changed, catalog } = await mcp.refresh({ team: 'helix', org: 'acme', channelId: 'C1' });
     assert.equal(changed, true);
-    assert.equal(browserRequests, 0, 'not asked only to list the tools');
+    assert.equal(githubMcpRequests, 0, 'not asked only to list the tools');
     const [server] = catalog.servers;
     assert.equal(server.scope, 'global');
-    assert.equal(server.ns, 'browser');
-    assert.deepEqual(server.tools.map((t) => t.name), ['get_url_markdown', 'get_url_screenshot']);
-    assert.match(server.instructions, /loads the page anew/);
-    assert.match(mcpSection(catalog), /mcp__browser \(global, opspile's own\)/);
+    assert.equal(server.ns, 'github');
+    assert.match(server.instructions, /opspile GitHub App is installed on/);
+    assert.match(mcpSection(catalog), /mcp__github \(global, opspile's own\)/);
     assert.match(mcpSection(catalog), /never type customer data into a website/);
-    assert.ok(!JSON.stringify(catalog).includes(BROWSER_TOKEN), 'no token in the catalog');
 
-    const res = await mcp.call(server, 'get_url_markdown', { url: 'https://www.acme.example/' });
-    assert.equal(res.content[0].text, '# https://www.acme.example/\n\nHello.');
-
-    // Turned off for the channel: the next catalog has no browser.
-    await call(e, admin, 'PUT', '/api/kb/mcp/global', { server: 'browser', channel: 'C1', enabled: false });
+    // Turned off for the channel: the next catalog has no server.
+    await call(e, admin, 'PUT', '/api/kb/mcp/global', { server: 'github', channel: 'C1', enabled: false });
     const off = await mcp.refresh({ team: 'helix', org: 'acme', channelId: 'C1' });
     assert.equal(off.changed, true);
     assert.deepEqual(off.catalog.servers, []);
@@ -385,12 +349,12 @@ describe('global MCP servers in thread agents', () => {
     await withApp(e);
     await call(e, admin, 'PUT', '/api/kb/mcp/global', { server: 'github', team: 'helix', enabled: true });
     // Installed, but not allowed yet: no server, and no token.
-    const waiting = (await call(e, admin, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.globals[1];
+    const waiting = (await call(e, admin, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.globals[0];
     assert.equal(waiting.available, false);
     assert.match(waiting.problem, /installed on acme-labs, but the admin team has not allowed/);
     assert.equal(waiting.github.installations[0].approved, false);
     // Team managers get the installation link, but not where it is installed.
-    const asManager = (await call(e, manager, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.globals[1];
+    const asManager = (await call(e, manager, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.globals[0];
     assert.deepEqual(asManager.github, {
       app: {
         slug: 'opspile-test',
@@ -408,7 +372,7 @@ describe('global MCP servers in thread agents', () => {
     assert.equal(allowed.status, 200);
     assert.equal(allowed.body.installations[0].approvedBy, 'ada@staff.example');
 
-    const listed = (await call(e, admin, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.globals[1];
+    const listed = (await call(e, admin, 'GET', '/api/kb/mcp?repo=kb-team-helix')).body.globals[0];
     assert.equal(listed.available, true);
     assert.deepEqual(listed.instances.map((i) => [i.key, i.name, i.account]), [['github:41', 'github', 'acme-labs']]);
     assert.equal(listed.github.app.installUrl, 'https://github.com/apps/opspile-test/installations/new');

@@ -124,7 +124,7 @@ describe('admin: teams and members', () => {
       tool, scope: 'team', target: 'search', enabled: 1, changed_by: 'Ada',
     })));
     assert.deepEqual(rowsOf(`SELECT server, scope, target, enabled, changed_by
-      FROM mcp_global_switches ORDER BY server`), ['browser', 'github'].map((server) => ({
+      FROM mcp_global_switches ORDER BY server`), ['github'].map((server) => ({
       server, scope: 'team', target: 'search', enabled: 1, changed_by: 'Ada',
     })));
     assert.equal((await call(e, ADA, 'PUT', '/api/admin/teams', { slug: 'search', name: 'Search' })).status, 200);

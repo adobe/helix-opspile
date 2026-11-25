@@ -953,7 +953,7 @@ channels at once): on, every channel of the team that nobody switched has an age
 channels it gets later too. A new team starts with it on (the admin team's name for it in
 `changed_by`), and with the [agent tools](#agent-tools) `computer`, `extraction_rules`,
 `web_search`, `resolve` and `label` and
-the [global servers](#global-mcp-servers) `browser` and `github` on for the team (those marked
+the [global server](#global-mcp-servers) `github` on for the team (those marked
 `newTeams`; `fluffyjaws`, which acts as a person, is not); the teams from before that have them as they had them, and deleting a team
 deletes them. A channel nobody switched has an agent when its team's default or
 `AGENT_CHANNELS`, the deployment's default, turns it on. Alert channels have no
@@ -2738,12 +2738,12 @@ refresh tokens that expire unused (opspile's own after 30 days) stay alive. opsp
 ### Global MCP servers
 
 Some servers are not a team's or a customer's but opspile's own, built in
-(`src/agent/globals.js`) and set up once: **`browser`**, **`github`**, **`fluffyjaws`** and
+(`src/agent/globals.js`) and set up once: **`github`**, **`fluffyjaws`** and
 **`slack_channels`**. A
-new team starts with the first two on; otherwise they are off until the admin team or a team's managers turn one on (one marked `admins`, `slack_channels`, the admin team only), for an ops team or for a single channel
+new team starts with the first on; otherwise they are off until the admin team or a team's managers turn one on (one marked `admins`, `slack_channels`, the admin team only), for an ops team or for a single channel
 (`mcp_global_switches`; a channel's switch wins over its team's, and a channel without one
 follows its team). An agent gets those on for its thread's team or channel, next to the team's
-and the customer's, as `mcp__browser`, `mcp__github`, `mcp__fluffyjaws`, `mcp__slack_channels`
+and the customer's, as `mcp__github`, `mcp__fluffyjaws`, `mcp__slack_channels`
 (a server with `platforms` only in threads on one of them); its id there is `global:<key>`. Their
 tools are those the last check found (`mcp_global_tools`), so an agent does not ask a
 server or mint a token just to list them; the editor's **Check** and the cron, once a day,
@@ -2754,14 +2754,9 @@ Only these definitions can give a connection its own `fetch`, which is how one r
 binding (`connect()` in `src/agent/mcpclient.js`): a team's or a customer's server is a row of
 `mcp_servers`, and its requests go to its URL on the internet, whatever it says.
 
-**`browser`: Cloudflare Browser Run.** Cloudflare's own hosted
-[Browser Run MCP server](https://github.com/cloudflare/mcp-server-cloudflare/tree/main/apps/browser-rendering)
-(`https://browser.mcp.cloudflare.com/mcp`), with an account API token that may only use Browser
-Run (`BROWSER_RUN_TOKEN`, *Browser Run Write*; account-scoped, so the server finds the account
-itself). Its tools load a page in Browser Run's Chrome and return it as markdown or HTML, a
-screenshot, a PDF, its links, elements by CSS selector or JSON extracted from it, or crawl a
-site. Each call loads the page anew, signed in nowhere: there is no session to click through.
-The tools that list and kill the account's browser sessions are left out of what agents get.
+There was a global **`browser`** server, Cloudflare's hosted Browser Run MCP server, until the
+computers had a browser of their own ("The computer's browser", below): migration 0106 deleted
+its switches and checked tools. Tool requests that named it (`global:browser`) are history.
 
 **`github`: GitHub's MCP server, read-only, as the opspile GitHub App.** The server is GitHub's
 hosted one, at `https://api.githubcopilot.com/mcp/readonly` with `X-MCP-Readonly` and
@@ -3038,7 +3033,7 @@ where the deployment has `BROWSER_RUN_TOKEN` (*Browser Run Write*) and an accoun
   the programs are answered 503, no CDP host; a hook that fails (Browser Run refused, a
   `--runtime` there is none of) is answered 502 with why, and a connection Browser Run closes
   is closed (1011) with its reason. How long each connection held the browser is counted for
-  COGS as Browser Run's `browser_ms`, as the MCP server's calls are.
+  COGS as Browser Run's `browser_ms`.
 - **One Chromium per computer.** Every `playwright-cli` command is a process and a connection of
   its own, and a new connection to `/devtools/browser` would be a new browser. So the first one
   makes a session (`POST …/devtools/browser?keep_alive=600000`) and every connection is to
@@ -3095,7 +3090,7 @@ choice before each delivery, as it follows its tools (`syncTools`; docs/STATE-MA
     "The computer's browser"). `base` is the first eight, and
     `data` is `from: 'base'` with `data`, and `github` with `github`. Each of the three has an
     image with the browser too, its own layers and `browser` on top: `browser` (from `base`),
-    `data-browser` and `github-browser`. They replace the global `browser` MCP server. A package's other files a program needs are named
+    `data-browser` and `github-browser`. They replaced the global `browser` MCP server. A package's other files a program needs are named
     in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's
     magic; openssl's `etc/ssl`, its configuration and Mozilla's roots).
     An image names what the agent is told it has (`tools`), and the build fails if that names
@@ -3394,7 +3389,7 @@ checked with the switch before each read, and a channel opspile has no details o
 Neither says that nobody outside is in the channel (guests are not recorded), so the org's type
 alone does not turn it on. The prompt asks the agent to keep other customers' details out of the
 knowledge bases and out of what it posts; that and the channel's other tools are not restricted
-by code: what it read can reach them, `bash` and the `browser` server included.
+by code: what it read can reach them, `bash` and its browser included.
 
 **`membership`.** Customers and colleagues ask in a thread for someone to be added to the
 channel, and on each platform the admins have a bot for that: admin-bot (teams-admin-agent) on
@@ -3421,7 +3416,7 @@ Cloudflare account; a named entrypoint answers no HTTP, so no secret is shared:
 
 Nobody is added until it is approved, and the prompt says not to tell anyone otherwise.
 
-**`web_search`.** The agent has a browser (the global `browser` MCP server) and a computer, but
+**`web_search`.** The agent has a computer, with a browser in an image that has one, but
 nothing that finds a page it has no address for. With this tool it searches the public web
 (`src/agent/websearch.js`), with the deployment's provider (`WEB_SEARCH_PROVIDER`): Microsoft
 Web IQ's Web Search REST API (`webiq`, the default where the secret `WEBIQ_API_KEY` is set,
@@ -3432,7 +3427,7 @@ search source and the rendering of results (numbered: title, address, a descript
 characters; Web IQ's passages, which answer the query, to 1,500) are the Agents SDK's
 `agents/websearch`, which imports nothing of `cloudflare:workers`; Web IQ's source
 (`createWebIQSearch`) answers in the SDK's shape, so both read the same to the agent. It answers with up to 10 results, not pages: the prompt
-has the agent read a page (browser or curl) before relying on it, and give `update_draft` only
+has the agent read a page (playwright-cli or curl on its computer) before relying on it, and give `update_draft` only
 pages it read as sources. A query leaves Adobe, so the prompt has it write general queries in the
 product's words, never the customer's name, people, hosts, ids or the thread's words, and the
 Worker logs a search's team, provider, result count or error, never its query. A failed search
@@ -3472,8 +3467,8 @@ operations per bucket, queue operations (three per 64 KB of a message: write, re
 AI tokens per model (the model's `usage`, else a quarter of the characters it was given),
 Vectorize dimensions queried and written, AI Search queries (full-text or semantic) and the tokens
 it ingests; and one Workers request per invocation (a queue batch's shared by its jobs). Code adds
-what no binding shows: an agent's Bedrock tokens and the time its global browser server's calls
-take. Whom the work was for is the scope's subject: a request's `thread` parameter, a queue job's
+what no binding shows: an agent's Bedrock tokens and the time its computer's browser
+connections take. Whom the work was for is the scope's subject: a request's `thread` parameter, a queue job's
 thread, a raw event's channel once it is filed (`processKey` names the customer and team its rules
 gave), an agent's thread (or `kb:<team>:<org>`), a room's team; else nobody, *shared*. At the end
 of the invocation (a request's after its `waitUntil` work too; a Durable Object's 15 seconds after
