@@ -80,6 +80,10 @@ import { notifyRoom } from '../notify.js';
 import { addSidebarFollowup } from '../sidebar.js';
 import { teamsOf } from '../shares.js';
 import { queueExport } from '../clickhouse.js';
+import {
+  FEEDBACK, feedbackConfigured, KINDS, MAX_BODY, MAX_TITLE, openFeedback, openFeedbackText,
+  PER_THREAD, sendFeedback,
+} from './feedback.js';
 
 /**
  * The thread agent's extension: what it is told (sections) and what it can do (tools). It
@@ -87,6 +91,8 @@ import { queueExport } from '../clickhouse.js';
  * bases and the listed GitHub repositories, writes the two knowledge bases, updates its
  * thread's shared draft (or discards one it saved) and suggests colleagues to pull in
  * (src/experts.js). It cannot post, react or resolve: a person reads the draft and sends it.
+ * Where FEEDBACK_REPO is set, it tells the people who build opspile what would make its work
+ * better, as GitHub issues (send_feedback, src/agent/feedback.js).
  * Unless the team turned them on (agentToolsExtension, src/agent/agenttools.js): then it may
  * post and react itself, or has a shell, or searches the web (src/agent/websearch.js), or
  * resolves and labels its thread in the inbox (src/agentlabels.js); in an internal channel, it
@@ -332,6 +338,47 @@ function wakeupTools(ctx) {
       execute: (args) => set('idle', args),
     }),
   ];
+}
+
+/** send_feedback (src/agent/feedback.js): what would make the agent's work better, to GitHub. */
+function feedbackTool(ctx, by) {
+  const { env } = ctx;
+  return defineTool({
+    name: 'send_feedback',
+    description: `Tell the people who build opspile about opspile itself, as a GitHub issue they work on the next day: a tool that failed or misled you, something you needed and did not have, instructions that did not fit, or what a person on the team asked you in the sidebar to pass on. Without \`title\`, lists the open feedback issues; with \`issue\`, adds yours to one of them. Anyone may read it: never name the customer, the channel, a person, a site, an address, an id or message text (it is refused). At most ${PER_THREAD} a thread a day.`,
+    parameters: Type.Object({
+      title: Type.Optional(Type.String({ description: `What it is about, in a line (up to ${MAX_TITLE} characters): "git_grep finds nothing in a mirrored repository". Leave it out to list the open feedback issues` })),
+      text: Type.Optional(Type.String({ description: `The feedback, in Markdown, in English (up to ${MAX_BODY} characters): what you tried, what happened, what you expected or needed, and why it matters to the team, in general terms` })),
+      kind: Type.Optional(Type.Union(KINDS.map((k) => Type.Literal(k)), { description: 'bug: a tool failed or answered wrong; missing: a tool, permission or information you needed; instructions: your instructions contradicted each other or did not fit; idea: anything else' })),
+      tool: Type.Optional(Type.String({ description: 'The tool or MCP server it is about, if one (git_read, mcp:global:browser)' })),
+      issue: Type.Optional(Type.Integer({ description: 'An open feedback issue about the same thing, by its number from the list: yours becomes a comment on it' })),
+    }),
+    executionMode: 'sequential',
+    async execute(args = {}) {
+      if (!args.title) {
+        try {
+          return text(openFeedbackText(await openFeedback(env)));
+        } catch (e) {
+          return fail(`The open feedback issues could not be read (${e.message}). Give yours with a title all the same.`);
+        }
+      }
+      const t = await ctx.target();
+      const id = t.key && ctx.sidebarMessage ? await ctx.sidebarMessage() : null;
+      const asker = id ? await sidebarAuthor(env, t.key, id) : null;
+      const res = await sendFeedback(env, t, args, { asker, model: by() });
+      if (res.refused) {
+        return fail(`Nothing was sent: ${res.refused}.`);
+      }
+      console.log(JSON.stringify({
+        route: 'agent', action: 'feedback', id: res.row.id, kind: res.row.kind, team: t.team, filed: Boolean(res.filed),
+      }));
+      if (!res.filed) {
+        return text(`Kept (feedback ${res.row.id}), but GitHub did not take it yet (${res.error}): it is filed later, by itself. Say in your note what you reported.`);
+      }
+      const where = res.filed.comment ? `added to issue #${res.filed.number} (${res.filed.comment})` : `filed as issue #${res.filed.number} (${res.filed.url})`;
+      return text(`Sent (feedback ${res.row.id}): ${where}. Say in your note what you reported.`);
+    },
+  });
 }
 
 /**
@@ -1098,6 +1145,11 @@ export function opspileExtension(ctx) {
         },
       }),
     );
+  }
+
+  if (feedbackConfigured(env)) {
+    sections.push(section('feedback', () => FEEDBACK));
+    tools.push(feedbackTool(ctx, by));
   }
 
   return defineExtension({ name: 'opspile', sections, tools });

@@ -16,6 +16,7 @@ import { rollupCogs } from './cogs/rollup.js';
 import { syncAccessQuietly } from './accesssync.js';
 import { clientDocumentResponse, keepOAuthAlive } from './agent/mcpoauth.js';
 import { refreshMirrors } from './agent/repos.js';
+import { sweepFeedback } from './agent/feedback.js';
 import { agentStub } from './agent/stub.js';
 import { api, personByEmail } from './api.js';
 import { syncInstalledBots } from './bots.js';
@@ -264,8 +265,9 @@ const handlers = {
  * in the latest message's text of threads indexed before it was kept, delete the thread list's
  * picks older than RANK_EVENTS_DAYS (src/rankevents.js) and the proposals kept for an Undo of a
  * discarded draft past its time (src/draftevents.js), and enqueue the threads whose klickhaus rows
- * are behind; fit the expert finder's mention model once a day and build the Topics page's map
- * once a week; and roll up what the days used, for COGS.
+ * are behind; file the agents' feedback GitHub did not take yet (src/agent/feedback.js); fit the
+ * expert finder's mention model once a day and build the Topics page's map once a week; and roll
+ * up what the days used, for COGS.
  */
   async scheduled(controller, env, ctx) {
     // What the days cost so far, for the COGS dashboard (src/cogs/rollup.js).
@@ -382,6 +384,10 @@ const handlers = {
     ctx.waitUntil(pruneExpertEvents(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', expertEvents: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', expertEvents: 'error', error: e.message }))));
+    // The agents' feedback that GitHub did not take when they gave it (src/agent/feedback.js).
+    ctx.waitUntil(sweepFeedback(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', feedback: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', feedback: 'error', error: e.message }))));
     // The klickhaus export (CLICKHOUSE_*): the threads that changed since, and the backfill.
     ctx.waitUntil(sweepExports(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', exports: r })))

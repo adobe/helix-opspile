@@ -98,6 +98,9 @@ jobs:
       FLUFFYJAWS_ISSUER: ${{ secrets.FLUFFYJAWS_ISSUER }}
       FLUFFYJAWS_CLIENT_ID: ${{ secrets.FLUFFYJAWS_CLIENT_ID }}
       FLUFFYJAWS_SERVICE_CLIENT_ID: ${{ secrets.FLUFFYJAWS_SERVICE_CLIENT_ID }}
+      # The agents' send_feedback (optional; off while FEEDBACK_REPO is empty;
+      # src/agent/feedback.js): the repository its issues go to, `owner/name`.
+      FEEDBACK_REPO: ${{ secrets.FEEDBACK_REPO }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -124,11 +127,13 @@ jobs:
         env:
           # The agents' web_search on Microsoft Web IQ (optional).
           WEBIQ_API_KEY: ${{ secrets.WEBIQ_API_KEY }}
+          # The token the agents' feedback is filed with (optional, with FEEDBACK_REPO).
+          FEEDBACK_GITHUB_TOKEN: ${{ secrets.FEEDBACK_GITHUB_TOKEN }}
         run: |
           secrets="$RUNNER_TEMP/worker-secrets.json"
           node -e '
             const out = {};
-            for (const name of ["WEBIQ_API_KEY"]) if (process.env[name]) out[name] = process.env[name];
+            for (const name of ["WEBIQ_API_KEY", "FEEDBACK_GITHUB_TOKEN"]) if (process.env[name]) out[name] = process.env[name];
             require("fs").writeFileSync(process.argv[1], JSON.stringify(out), { mode: 0o600 });
           ' "$secrets"
           npx cf deploy --mode prod --message "ci ${GITHUB_SHA::7}" --secrets-file "$secrets"

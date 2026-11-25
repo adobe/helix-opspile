@@ -93,10 +93,12 @@ const CLICKHOUSE_VARS = ['CLICKHOUSE_URL', 'CLICKHOUSE_DATABASE', 'CLICKHOUSE_US
 // WEB_SEARCH_PROVIDER (webiq, ceramic, linkup or exa; default webiq where the secret
 // WEBIQ_API_KEY is set, else ceramic) and WEB_SEARCH_GATEWAY (default AGENT_GATEWAY, for all but
 // webiq): the agents' web_search (src/agent/websearch.js).
+// FEEDBACK_REPO (`owner/name`), with the secret FEEDBACK_GITHUB_TOKEN: the repository the
+// agents' send_feedback files its issues in (src/agent/feedback.js); off without both.
 const AGENT_VARS = [
   'AGENT_MODEL', 'AGENT_CHANNELS', 'AGENT_GATEWAY', 'AGENT_REGION', 'AI_GATEWAY_ACCOUNT',
   'AGENT_ANTHROPIC_BETA', 'AGENT_BASE_URL', 'TEAMS_APP_ID', 'TEAMS_BOT_SERVICE_URL',
-  'WEB_SEARCH_PROVIDER', 'WEB_SEARCH_GATEWAY',
+  'WEB_SEARCH_PROVIDER', 'WEB_SEARCH_GATEWAY', 'FEEDBACK_REPO',
 ] as const;
 
 // Membership requests, optional (the agents' request_membership tool, src/agent/membership.js):
@@ -158,6 +160,10 @@ const SECRETS = [
   // where it is set at deploy, or WEB_SEARCH_PROVIDER=webiq has `cf` check it exists.
   ...(process.env.WEBIQ_API_KEY || process.env.WEB_SEARCH_PROVIDER === 'webiq'
     ? ['WEBIQ_API_KEY'] : []),
+  // The agents' feedback (send_feedback): a fine-grained token with Issues: read and write on
+  // FEEDBACK_REPO. A repository secret, uploaded with the version like WEBIQ_API_KEY; declared
+  // where FEEDBACK_REPO is set.
+  ...(process.env.FEEDBACK_REPO ? ['FEEDBACK_GITHUB_TOKEN'] : []),
   // Access sync: required only where it is configured.
   ...(process.env.ACCESS_APP_ID ? ['ACCESS_API_TOKEN'] : []),
   // Discord: the bot's token where the poller is on, the app's secret where people connect.
