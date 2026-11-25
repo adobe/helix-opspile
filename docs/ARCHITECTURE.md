@@ -2526,10 +2526,15 @@ panel has room beside the thread, a purple **tab** on the thread's right edge do
 for the many who hide the agent's note): a click opens or closes the panel, and pulled, the panel
 comes out of the edge with it, or goes back in, open or gone by where it is let go or which way it
 was flicked. Open, the tab is on the panel's edge. It wiggles once when the thread's agent sets to
-work or is done, and has a dot while an answer to you waits in the sidebar. Each run
-of sidebar messages is one line between the thread's messages where it happened ("Lena Berg had
-a sidebar conversation with Thread Agent · 4 messages · not posted"), for everyone who sees the
-thread in the inbox. Where the conversation itself shows depends on the room (`ui/inbox.js`,
+work or is done, and has a dot while an answer to you waits in the sidebar. Each sidebar
+conversation is one line between the thread's messages where it was last talked in ("Lena Berg
+and you had a sidebar conversation with Thread Agent · 4 messages · not posted"), for everyone who
+sees the thread in the inbox. It is everyone's who talks to the agent there: one starts it,
+another joins, and it goes on past the thread's messages in between. It ends only where the
+thread's messages come between and the next person's message comes more than four hours after
+the one before (`sideConversations`), or where the agent follows up after the thread moved on,
+which has a line of its own ("Thread Agent followed up with you in the sidebar"). Where the
+conversation itself shows depends on the room (`ui/inbox.js`,
 "the sidebar"):
 
 - **Beside the thread**, where the list, the thread and a panel fit side by side: 1180px from

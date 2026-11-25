@@ -1554,9 +1554,9 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
     label: {
       kind: 'incident', next_actor: 'us', urgency: 1.1, resolved_p: 0.2, topics: ['publishing'],
     },
-    // Lena asked the thread's agent in the sidebar, before Sam's rewrite came in: folded in the
-    // thread, between Dana's question and Sam's answer. Dana asked it after that: a second
-    // conversation, under the thread. A wide screen shows both in the panel beside the thread.
+    // Lena asked the thread's agent in the sidebar, before Sam's rewrite came in; Dana joined the
+    // conversation after it: one line, Lena's and hers, under the thread, where it was last
+    // talked in. A wide screen shows it in the panel beside the thread.
     sidebar: [
       ['lena', 84, 'Have we seen `content.Source` 503s after a config push before?'],
       ['lena', 83.8, `These are the paths that failed:\n\n${WIDE_TABLE}\n\nAttachments:\n- [${LONG_NAME}.log](${upload(`${LONG_NAME}.log`, 'text/plain', new TextEncoder().encode('10:02:11 503 /en/index\n'))})`],

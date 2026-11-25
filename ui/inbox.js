@@ -4135,9 +4135,11 @@ function headWhat(title, chan) {
 // history, and never to Slack, Teams or Discord; the agent answers there, and cannot post,
 // react or ask the admin bots while it does. You enter it by the agent's icon: its avatar on
 // its note, the button with it beside the reply box, Continue on an earlier sidebar
-// conversation, or `a`. Each run of sidebar messages is one line between the thread's messages
-// where it happened ("Lena Berg had a sidebar conversation with Thread Agent"), for everyone who
-// sees the thread in the inbox. Where the conversation itself shows depends on the room:
+// conversation, or `a`. Each conversation in the sidebar is one line between the thread's messages
+// where it was last talked in ("Lena Berg and you had a sidebar conversation with Thread Agent"),
+// for everyone who sees the thread in the inbox: whoever joins it, and whatever the thread says
+// meanwhile, until a long pause (sideConversations). Where the conversation itself shows depends
+// on the room:
 // - beside the thread, where the screen is wide enough (`side.wide`, syncSideRoom): a panel
 //   (`#side`, placeSidePanel) with every conversation of the thread and a box of its own, so
 //   the thread keeps its reply box. A line in the thread opens the panel at its conversation.
@@ -4248,6 +4250,44 @@ function sideList(key) {
     });
   }
   return list.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+}
+
+// A pause this long between two sidebar messages, with the thread's messages in it, ends a
+// conversation: the next one is a line of its own.
+const SIDE_PAUSE = 4 * 60 * 60 * 1000;
+
+/**
+ * The sidebar's conversations (`sidebar`, oldest first) between the thread's messages, whose
+ * times are `ats` in order: `{ run, last, trailing, at }`, oldest first, each shown before the
+ * thread's message `at` (after them all: `trailing`), the one after its latest message. A
+ * conversation is everyone's who talks to the agent there, so it goes on past the thread's
+ * messages: one person starts it, another joins. It ends only where the thread's messages come
+ * between, with a long pause (SIDE_PAUSE) before the next person's message, or before the agent's
+ * follow-up (src/sidebar.js addSidebarFollowup), which it tells on a line of its own. The agent's
+ * answer goes with what it answers. `last`: the one with the latest message.
+ */
+function sideConversations(sidebar, ats) {
+  // Before which of the thread's messages each sidebar message comes, as they are walked.
+  const before = [];
+  let si = 0;
+  ats.forEach((at, i) => {
+    while (si < sidebar.length && sidebar[si].at < at) { before.push(i); si += 1; }
+  });
+  while (before.length < sidebar.length) before.push(ats.length);
+  const convs = [];
+  sidebar.forEach((m, i) => {
+    const conv = convs.at(-1);
+    const between = i > 0 && before[i] > before[i - 1];
+    const paused = Date.parse(m.at) - Date.parse(sidebar[i - 1]?.at) > SIDE_PAUSE;
+    const followup = m.role === 'agent' && String(m.id).includes(':followup:');
+    const asked = m.role === 'agent' && !followup;
+    if (conv && (!between || asked || (m.role === 'person' && !paused))) conv.run.push(m);
+    else convs.push({ run: [m] });
+    convs.at(-1).at = before[i];
+  });
+  return convs.map((c, i) => ({
+    run: c.run, last: i === convs.length - 1, trailing: c.at === ats.length, at: c.at,
+  }));
 }
 
 /** "Lena Berg", "You", "Lena Berg and you": who talked to the agent in `run`. */
@@ -5390,24 +5430,27 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // A message's markup waits for the next one: the avatar goes beside the last of a run.
   let last = null;
   let headed = null;
-  // The sidebar's messages, each run of them where it happened, folded (sideGroup); the panel
+  // The sidebar's conversations, each where it was last talked in, folded (sideGroup); the panel
   // beside the thread has them all (placeSidePanel).
-  const sidebar = sideList(key);
-  const runs = [];
-  let si = 0;
-  const sideUntil = (at) => {
-    const run = [];
-    while (si < sidebar.length && (at === null || sidebar[si].at < at)) { run.push(sidebar[si]); si += 1; }
-    const where = { run, last: si === sidebar.length, trailing: at === null };
-    if (run.length) runs.push(where);
+  const runs = sideConversations(sideList(key), shown.map((m) => m.at));
+  let ci = 0;
+  const sideUntil = (i) => {
+    let any = false;
+    while (ci < runs.length && runs[ci].at === i) {
+      items.push({ html: sideGroup(key, runs[ci].run, runs[ci]) });
+      ci += 1;
+      any = true;
+    }
     // After the thread's latest message (and the agent's note), in sidebar mode in the thread
     // with nothing said yet: the place where the conversation will show.
-    if (!run.length && (at !== null || !sideInline(key))) return;
-    items.push({ html: sideGroup(key, run, where) });
-    prev = null;
+    if (!any && i === shown.length && sideInline(key)) {
+      items.push({ html: sideGroup(key, [], { last: true, trailing: true }) });
+      any = true;
+    }
+    if (any) prev = null;
   };
   shown.forEach((m, i) => {
-    sideUntil(m.at);
+    sideUntil(i);
     if (gaps.has(m.thread) && (!i || m.thread !== shown[i - 1].thread)) { items.push(leftOut(gaps.get(m.thread))); gaps.delete(m.thread); }
     if (dayLabel(m.at) !== day) { day = dayLabel(m.at); items.push({ html: `<div class="day"><span>${esc(day)}</span></div>` }); prev = null; }
     if (group && prev && prev.thread !== m.thread) { items.push({ html: `<div class="post"><span>new post · ${timeTag(m.at)}</span></div>` }); prev = null; }
@@ -5431,7 +5474,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const agentHtml = agentItem(key);
   if (agentHtml) items.push({ html: agentHtml });
   // What was said in the sidebar since the thread's latest message: below the agent's note.
-  sideUntil(null);
+  sideUntil(shown.length);
   // Line 1: where it is and what it is about; line 2: its tech stack, links and whom the agent
   // suggests.
   const chan = thread.channel_name ? channelTitle(thread.source, thread.channel_name, thread.channel_group) : '';
