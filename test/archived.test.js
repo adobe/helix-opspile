@@ -48,9 +48,11 @@ const row = (e, id) => ({ ...e.DB.sqlite.prepare('SELECT * FROM channels WHERE c
 describe('archived channels', () => {
   const realFetch = globalThis.fetch;
   let archived;
+  let gone;
   let asked;
   beforeEach(() => {
     archived = new Set();
+    gone = new Map([['CGONE', 'channel_not_found']]);
     asked = [];
     resetSlackDomains();
     globalThis.fetch = async (url) => {
@@ -58,8 +60,8 @@ describe('archived channels', () => {
       if (u.pathname === '/api/conversations.info') {
         const id = u.searchParams.get('channel');
         asked.push(id);
-        if (id === 'CGONE') {
-          return Response.json({ ok: false, error: 'channel_not_found' });
+        if (gone.has(id)) {
+          return Response.json({ ok: false, error: gone.get(id) });
         }
         return Response.json({
           ok: true,
@@ -160,11 +162,45 @@ describe('archived channels', () => {
     assert.deepEqual(r, { checked: 2, more: false });
     assert.deepEqual(asked, ['CGONE', 'C1']);
     assert.equal(row(e, 'C1').archived_at, new Date(NOW).toISOString());
-    // Not found: asked again in a week, not on every run.
+    // Not found: gone, so archived, and asked again in a week, not on every run.
     assert.equal(row(e, 'CGONE').checked_at, new Date(NOW).toISOString());
-    assert.equal(row(e, 'CGONE').archived_at, null);
+    assert.equal(row(e, 'CGONE').archived_at, new Date(NOW).toISOString());
     const next = await quiet(() => sweepChannels(e, { now: NOW + DAY }));
     assert.deepEqual(next, { checked: 0, more: false });
+  });
+
+  it('are the Slack channels the app can no longer read, until a lookup finds them again', async () => {
+    const e = env();
+    channel(e, 'CX');
+    channel(e, 'CY');
+    channel(e, 'CZ');
+    gone.set('CX', 'channel_not_found');
+    // A disconnected Slack Connect channel, the other org's side, in a workspace not granted.
+    gone.set('CY', 'team_access_not_granted');
+    gone.set('CZ', 'ratelimited');
+    const ref = (id) => ({
+      source: 'slack', tenant: 'E1', channelId: id, refresh: true,
+    });
+    await quiet(() => Promise.all(['CX', 'CY', 'CZ'].map((id) => getChannel(e, ref(id), NOW))));
+    assert.deepEqual(['CX', 'CY', 'CZ'].map((id) => row(e, id).archived_at), [
+      new Date(NOW).toISOString(), new Date(NOW).toISOString(), null]);
+    // Kept from the first lookup that found it gone.
+    await quiet(() => getChannel(e, ref('CX'), NOW + DAY));
+    assert.equal(row(e, 'CX').archived_at, new Date(NOW).toISOString());
+    gone.delete('CX');
+    await getChannel(e, ref('CX'), NOW + DAY);
+    assert.equal(row(e, 'CX').archived_at, null);
+  });
+
+  it('are not gone for a message\'s lookup, whatever Slack says', async () => {
+    const e = env();
+    channel(e, 'CX', { fetchedAt: '2026-11-01T00:00:00Z' });
+    gone.set('CX', 'channel_not_found');
+    await quiet(() => getChannel(e, {
+      source: 'slack', tenant: 'E1', channelId: 'CX', at: '2026-11-20T11:00:00Z',
+    }, NOW));
+    assert.deepEqual(asked, ['CX']);
+    assert.equal(row(e, 'CX').archived_at, null);
   });
 
   it('are not on the admin pages', async () => {

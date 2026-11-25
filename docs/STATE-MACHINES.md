@@ -803,13 +803,15 @@ time.
 
 **Channel archive.** live → archived → restored, i.e. live (`channels.archived_at`, `src/lookup.js`
 `getChannel`). Only a lookup writes it, from what the platform says now (Slack `is_archived`, Teams
-`isArchived` of the channel or its team), so a replay cannot set it back; `archived_at` is when a
-lookup first saw it, not when it happened. What asks: a notice of an archive or a restore (Slack's
+`isArchived` of the channel or its team; a Slack channel the app can no longer read at all,
+`channel_not_found` or `team_access_not_granted`, as a disconnected Slack Connect channel is, counts
+as archived, except in a message's lookup, since a channel that sends messages is there), so a
+replay cannot set it back; `archived_at` is when a lookup first saw it, not when it happened. What asks: a notice of an archive or a restore (Slack's
 `channel_archive` and `channel_unarchive` messages, Teams' team notices) looks the channel up at
 once; a message from after `archived_at` does too, since an archived channel gets none; and
 `sweepChannels` (`src/channelsweep.js`) looks up every channel not looked up for a week, 25 a cron
 run, writing `checked_at` after each try, answered or not, so one the platform no longer shows
-does not stay at the head. A Teams team seen archived archives all its channels' rows; one seen
+does not stay at the head (a sweep's lookup that finds it again restores it). A Teams team seen archived archives all its channels' rows; one seen
 restored does not restore them (a channel can be archived on its own), their own lookups do. The
 admin pages and Clef leave archived channels out.
 
