@@ -41,6 +41,9 @@ const DOING = {
   unwatch_related: 'No longer watching something',
 };
 
+/** What a command of the computer is doing, when it says more than "Working". */
+const commandDoing = (command) => (/\bplaywright-cli\b/.test(command) ? 'Checking a web page' : null);
+
 /** What a tool call is doing, in a few words. */
 function doing({ name, arguments: args }) {
   if (DOING[name]) {
@@ -48,6 +51,9 @@ function doing({ name, arguments: args }) {
   }
   if (/^git_/.test(name)) {
     return 'Looking things up in the knowledge bases and repositories';
+  }
+  if (name === 'bash') {
+    return commandDoing(String((args && args.command) || '')) || 'Working';
   }
   if (name !== 'codemode') {
     return 'Working';

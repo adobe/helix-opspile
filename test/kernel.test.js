@@ -657,7 +657,7 @@ describe('the images this repository builds', () => {
       assert.match(devDependencies[name] || '', /^\d/, `${name} is pinned to one version`);
     }
     const built = await build();
-    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data', 'github', 'browser', 'graphviz']);
+    assert.deepEqual(built.images.map((i) => i.name), ['base', 'data', 'github', 'browser', 'data-browser', 'github-browser', 'graphviz']);
     assert.ok(IMAGES.every((i) => isImageName(i.name) && i.title && i.description));
     const [base, data] = built.images;
     assert.equal(base.v, 2);
@@ -735,6 +735,13 @@ describe('the images this repository builds', () => {
     assert.deepEqual(browser.layers.slice(0, base.layers.length), base.layers);
     assert.ok(commandsOf(browser).includes('playwright-cli') && !commandsOf(base).includes('playwright-cli'));
     assert.ok(!commandsOf(browser).includes('curlwright'));
+    // Data and GitHub with it too: their own layers, then the browser's.
+    for (const [name, from] of [['data-browser', data], ['github-browser', github]]) {
+      const plus = built.images.find((i) => i.name === name);
+      assert.deepEqual(plus.layers.slice(0, -1), from.layers);
+      assert.equal(plus.layers.at(-1).name, 'browser');
+      assert.deepEqual(commandsOf(plus), [...commandsOf(from), 'playwright-cli'].sort());
+    }
     assert.deepEqual(
       built.layers.get('browser').layer.files.map((f) => f.path.split('/').slice(-2).join('/')),
       ['bin/playwright-cli.wasm', 'slicc-cdp/package.json'],
@@ -786,7 +793,7 @@ describe('the images this repository builds', () => {
     const kinds = keys.map((k) => k.split('/')[0]);
     assert.deepEqual([...new Set(kinds)], ['blobs', 'layers', 'images']);
     assert.equal(keys.at(-1), 'images/index.json');
-    assert.deepEqual(keys.slice(-6, -1), ['images/base.json', 'images/data.json', 'images/github.json', 'images/browser.json', 'images/graphviz.json']);
+    assert.deepEqual(keys.slice(-8, -1), ['images/base.json', 'images/data.json', 'images/github.json', 'images/browser.json', 'images/data-browser.json', 'images/github-browser.json', 'images/graphviz.json']);
     assert.equal(kinds.filter((k) => k === 'layers').length, 12);
     assert.deepEqual(JSON.parse(objects.at(-1).body), indexOf(built.images));
     // An empty bucket lacks them all, and one that fails to answer too.

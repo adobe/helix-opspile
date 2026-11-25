@@ -43,6 +43,7 @@
   "devDependencies": {
     "@adobe/eslint-config-helix": "^3.0.33",
     "@ai-ecoverse/slicc-cdp": "2.1.20",
+    "@ai-ecoverse/slicc-kernel": "1.192.0",
     "@ai-ecoverse/wasi-gh": "2.102.0-3",
     "@ai-ecoverse/wasi-html-to-markdown": "2.5.2-1",
     "@ai-ecoverse/wasi-quickjs": "0.18.0-1",
@@ -85,7 +86,6 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "@ai-ecoverse/slicc-kernel": "1.189.2",
     "@ai-ecoverse/wasm-tls-engine": "4.2.0-12",
     "@cloudflare/computer": "0.8.0",
     "@codemirror/commands": "6.11.1",

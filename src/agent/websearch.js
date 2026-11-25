@@ -29,9 +29,10 @@ import { createAIWebSearch, renderWebSearchResults, WebSearchError } from 'agent
  *
  * WEB_SEARCH_PROVIDER chooses; without it, `webiq` where WEBIQ_API_KEY is set, else `ceramic`.
  *
- * It finds pages, not all their text: the agent reads them with the global browser MCP server or
- * its computer. A query leaves Adobe for the provider, so the prompt keeps the customer out of
- * it (`WEB_SEARCH` in src/agent/tools.js).
+ * It finds pages, not all their text: the agent reads them on its computer (playwright-cli in
+ * an image with the browser, curl) or with the global browser MCP server. A query leaves Adobe
+ * for the provider, so the prompt keeps the customer out of it (`WEB_SEARCH` in
+ * src/agent/tools.js).
  * https://learn.microsoft.com/web-iq/reference/web-search
  * https://developers.cloudflare.com/web-search/
  */

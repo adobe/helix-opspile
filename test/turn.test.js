@@ -75,6 +75,16 @@ describe('the agent\'s latest turn', () => {
       { state: latestTurn(running).state, text: latestTurn(running).text },
       { state: 'working', text: 'Checking a web page' },
     );
+    // playwright-cli on its computer, too; any other command is work.
+    for (const [command, text] of [['playwright-cli open https://example.com', 'Checking a web page'], ['ls', 'Working']]) {
+      // eslint-disable-next-line no-await-in-loop
+      const shell = await transcript(['new message'], [
+        () => fauxAssistantMessage([fauxToolCall('bash', { command })], { stopReason: 'toolUse' }),
+        () => fauxAssistantMessage('Done.'),
+      ]);
+      const cut = shell.slice(0, shell.findIndex((e) => e.kind === 'pi.tool-result'));
+      assert.equal(latestTurn(cut).text, text);
+    }
     const started = entries.slice(0, entries.findIndex((e) => e.kind === 'pi.user') + 1);
     assert.equal(latestTurn(started).text, 'Reading the new messages');
     assert.equal(latestTurn(entries, { busy: true }).state, 'working', 'a run is pending');

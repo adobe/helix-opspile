@@ -178,15 +178,34 @@ export const IMAGES = [
     tools: `${BASE_TOOLS}, gh`,
     layers: ['github'],
   },
-  // Not in Base: a browser session costs by the hour, and playwright-cli.wasm is 6.5 MB.
+  // The images with a browser: each of the three above with the browser layer (playwright-cli,
+  // driving Chromium on Cloudflare Browser Run, src/agent/browser.js). Not in them: a session
+  // costs by the hour, and playwright-cli.wasm is 6.5 MB.
   {
     name: 'browser',
     from: 'base',
-    title: 'Browser',
+    title: 'Base + browser',
     description: 'Base, with a browser (Chromium on Cloudflare Browser Run) and playwright-cli'
       + ' to drive it: open a page, wait for its scripts, read its accessibility tree, run'
       + ' JavaScript or add CSS in it, click and type, and take screenshots at any viewport.',
     tools: `${BASE_TOOLS}, playwright-cli`,
+    layers: ['browser'],
+  },
+  {
+    name: 'data-browser',
+    from: 'data',
+    title: 'Data + browser',
+    description: 'Data (Base with sqlite3 and strings), with the browser and playwright-cli.',
+    tools: `${BASE_TOOLS}, sqlite3, strings, playwright-cli`,
+    layers: ['browser'],
+  },
+  {
+    name: 'github-browser',
+    from: 'github',
+    title: 'GitHub + browser',
+    description: 'GitHub (Base with gh), with the browser and playwright-cli. Give the team a'
+      + ' GH_TOKEN secret for github.com.',
+    tools: `${BASE_TOOLS}, gh, playwright-cli`,
     layers: ['browser'],
   },
   // The renderer Worker's (src/graphviz/worker.js): dot alone, no shell. Not offered to teams
