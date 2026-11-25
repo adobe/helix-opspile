@@ -199,10 +199,21 @@ describe('the agent\'s screenshots', () => {
     })).json();
     assert.deepEqual(off.draft.files, []);
 
+    // Discarded and undone (the same text saved again within a minute): its pictures come back.
+    const again = await (await call(e, 'PUT', '/api/draft', {
+      thread: ROOT, text, base: off.draft.updated_at, files: [],
+    })).json();
+    await quiet(() => run('update_draft', { text, base: again.draft.updated_at, files: ['shot.png'] }));
+    const pictured = (await (await call(e, 'GET', `/api/draft?thread=${encodeURIComponent(ROOT)}`)).json()).draft;
+    assert.equal((await call(e, 'DELETE', '/api/draft', { thread: ROOT, base: pictured.updated_at })).status, 200);
+    const undone = await (await call(e, 'PUT', '/api/draft', { thread: ROOT, text, base: null })).json();
+    assert.deepEqual(undone.draft.files, pictured.files);
+
     // Only pictures, from the working directory; nothing is saved otherwise.
-    assert.match((await run('update_draft', { text, base: off.draft.updated_at, files: ['page.svg'] })).text, /^Nothing was saved: \/workspace\/page\.svg is not a PNG/);
-    assert.match((await run('update_draft', { text, base: off.draft.updated_at, files: ['/etc/passwd'] })).text, /^Nothing was saved: \/etc\/passwd is not a file of your working directory/);
-    assert.match((await tools(e, null)('update_draft', { text, base: off.draft.updated_at, files: ['shot.png'] })).text, /^Nothing was saved: you have no computer/);
+    const base = undone.draft.updated_at;
+    assert.match((await run('update_draft', { text, base, files: ['page.svg'] })).text, /^Nothing was saved: \/workspace\/page\.svg is not a PNG/);
+    assert.match((await run('update_draft', { text, base, files: ['/etc/passwd'] })).text, /^Nothing was saved: \/etc\/passwd is not a file of your working directory/);
+    assert.match((await tools(e, null)('update_draft', { text, base, files: ['shot.png'] })).text, /^Nothing was saved: you have no computer/);
   });
 
   it('go with a post, where the channel takes them', async () => {

@@ -226,7 +226,10 @@ export async function saveDraft(env, me, request, inTeam, { added = [] } = {}) {
       error: 'This draft was discarded or sent meanwhile', conflict: true, draft: null,
     }, 409);
   }
-  const pictures = savedFiles(current?.files || [], keep, added);
+  // Undo of a discard saves the same text again: the draft goes on as the one it was, its
+  // pictures too.
+  const undone = current ? null : await undoneDiscard(env, me, e.keys, body);
+  const pictures = savedFiles(current?.files || undone?.files || [], keep, added);
   if (pictures.error) {
     return json({ error: pictures.error }, 400);
   }
@@ -234,8 +237,6 @@ export async function saveDraft(env, me, request, inTeam, { added = [] } = {}) {
   const picked = JSON.stringify(cleanMentions(mentions));
   const cited = JSON.stringify(given ? given.sources : (current?.sources || []));
   const attached = JSON.stringify(pictures.files);
-  // Undo of a discard saves the same text again: the draft goes on as the one it was.
-  const undone = current ? null : await undoneDiscard(env, me, e.keys, body);
   // Who saved the first version, and the latest text they saved: what is sent is compared with it.
   const origin = undone?.origin ?? current?.origin ?? me.id;
   const created = undone?.draft || current?.created_at || version;
@@ -315,6 +316,8 @@ export async function discardDraft(env, me, request, inTeam, { sent = null } = {
       origin: current.origin,
       changed: sent ? changeOf(proposed ?? current.body, sent.text) : null,
       hash: sent ? null : await textHash(current.body),
+      // A discard keeps its pictures for an Undo.
+      files: sent ? null : current.files,
     });
     if (!sent && proposed != null && proposed !== current.body) {
       await keepForUndo(env, e, current.created_at, proposed);

@@ -411,6 +411,39 @@ describe('draft line', () => {
     assert.deepEqual(refused, ['Nothing was sent: Up to 0 files per message.']);
   });
 
+  it('takes its pictures into the tray once, and a save from the box keeps those still there', async () => {
+    const d = {
+      ...draft,
+      files: [{
+        id: 'df_1', name: 'a.png', type: 'image/png', size: 9,
+      }, {
+        id: 'df_2', name: 'b.png', type: 'image/png', size: 9,
+      }],
+    };
+    const state = { cache: new Map([['k', { data: { draft: d, thread: { source: 'slack' } } }]]), attachments: new Map() };
+    const fetched = [];
+    const { trayDraftFiles, trayedDraftFiles } = piece('/**\n * The draft\'s pictures into the tray', '/**\n * Sends the draft as it is', 'trayDraftFiles, trayedDraftFiles', {
+      state,
+      draftFiles: async (k, x) => {
+        fetched.push(x.files.map((f) => f.id));
+        return x.files.map((f) => ({ name: f.name }));
+      },
+      addFiles: (k, thread, files) => state.attachments.set(k, [
+        ...(state.attachments.get(k) || []), ...files.map((file) => ({ file })),
+      ]),
+    });
+    assert.equal(trayedDraftFiles('k'), undefined);
+    await trayDraftFiles('k', d);
+    await trayDraftFiles('k', { ...d, updated_at: 'later' });
+    assert.deepEqual(fetched, [['df_1', 'df_2']]);
+    assert.deepEqual(trayedDraftFiles('k'), ['df_1', 'df_2']);
+    // Taken off the tray with ×: the save leaves it off the draft.
+    state.attachments.set('k', state.attachments.get('k').slice(1));
+    assert.deepEqual(trayedDraftFiles('k'), ['df_2']);
+    await trayDraftFiles('k', d);
+    assert.deepEqual(fetched, [['df_1', 'df_2'], ['df_1']]);
+  });
+
   it('labels its buttons for the part selected, and back for all of it', () => {
     const span = { textContent: 'Send as me' };
     const attrs = { 'aria-label': null };

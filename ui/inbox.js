@@ -6258,14 +6258,27 @@ function adoptDraft(key) {
   trayDraftFiles(key, d);
 }
 
-/** The draft's pictures into the tray, as files you attached, once: they go with the reply. */
+/**
+ * The draft's pictures into the tray, as files you attached: they go with the reply. Each knows
+ * the draft's file it is (`draftFile`), so one already there is not added again, and a save from
+ * the box keeps on the draft only those still in the tray (`trayedDraftFiles`).
+ */
 async function trayDraftFiles(key, d) {
-  if (!d.files?.length || state.trayed?.get(key) === d.updated_at) return;
-  const files = await draftFiles(key, d);
+  const there = new Set((state.attachments.get(key) || []).map((a) => a.file.draftFile).filter(Boolean));
+  const wanted = (d.files || []).filter((f) => !there.has(f.id));
+  (state.trayed ||= new Map()).set(key, d.updated_at);
+  if (!wanted.length) return;
+  const files = await draftFiles(key, { ...d, files: wanted });
   const thread = state.cache.get(key)?.data?.thread;
   if (!files?.length || !thread) return;
-  (state.trayed ||= new Map()).set(key, d.updated_at);
+  files.forEach((file, i) => { file.draftFile = wanted[i].id; });
   addFiles(key, thread, files);
+}
+
+/** The ids of the draft's files in the box's tray, once the box took the draft's in; else undefined. */
+function trayedDraftFiles(key) {
+  if (!state.trayed?.has(key)) return undefined;
+  return (state.attachments.get(key) || []).map((a) => a.file.draftFile).filter(Boolean);
 }
 
 /**
@@ -6403,8 +6416,10 @@ function setCachedDraft(key, d) {
 async function saveDraft(key, text, base, { fromBox = false, sources } = {}) {
   if (state.data?.me?.readonly || !text.trim()) return { error: 'nothing to save' };
   const c = state.composers.get(key) || { text, from: '', base: null };
+  // From the box that took the draft's pictures in: those still in its tray stay on the draft.
+  const files = fromBox ? trayedDraftFiles(key) : undefined;
   const res = await request('PUT', '/api/draft', {
-    thread: key, text, mentions: mentionsIn(key, text), sources, base: base === undefined ? c.base : base,
+    thread: key, text, mentions: mentionsIn(key, text), sources, base: base === undefined ? c.base : base, ...(files ? { files } : {}),
   });
   if (res.status === 409 && res.data.draft) {
     // A colleague saved (or changed) it meanwhile: show theirs, and offer to overwrite it.
@@ -7252,12 +7267,13 @@ async function send(key, thread, draft = null) {
     state.composers.set(key, { text: '', from: '', base: null });
     mention.picked.delete(key);
     // The draft's pictures the box took in went with it from its line.
-    if (draft && state.trayed?.get(key) === base) {
+    if (draft && state.trayed?.has(key)) {
       state.attachments.delete(key);
       renderTray(key);
     }
   }
-  if (draft) state.trayed?.delete(key);
+  // The box's tray no longer holds the draft's pictures: it sent them, or the draft went.
+  state.trayed?.delete(key);
   sendSeq += 1;
   const p = {
     thread: key, body, mentions, kinds, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, key: crypto.randomUUID(), source: thread.source, status: 'sending', ...ownLook(key, thread.source),
@@ -8099,7 +8115,7 @@ function named(f) {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} at ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}`;
-  return new File([f], `Screenshot ${stamp}.${ext}`, { type: f.type, lastModified: f.lastModified });
+  return Object.assign(new File([f], `Screenshot ${stamp}.${ext}`, { type: f.type, lastModified: f.lastModified }), f.draftFile ? { draftFile: f.draftFile } : {});
 }
 
 /** Explains why nothing can be attached, with a way to connect again where that helps. */

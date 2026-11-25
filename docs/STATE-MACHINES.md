@@ -283,8 +283,11 @@ A picture is put into `FILES` (`drafts/<id>`) before the save that names it, so 
 names one that is not there; a save that fails leaves it unnamed, and the bucket's 30-day rule
 deletes it. A save keeps the files it does not name (`files` left out) or the ones it lists by id,
 and the agent's replace them. Nothing deletes a file when its draft is sent or discarded: the rule
-does, so an Undo finds them, and a draft over 30 days old names files that are gone (the inbox says
-so, and sends nothing). Sent, they go as the reply's own files, checked against the channel's rule
+does. A discard keeps the draft's files on its event (`draft_events.files`), and its Undo gives
+them back with the text. A draft over 30 days old names files that are gone (the inbox says so,
+and sends nothing). Taken into the reply box, they are in its tray, each knowing its id
+(`draftFile`): taking the draft in again adds only those not there, and a save from the box
+keeps on the draft only those still in the tray. Sent, they go as the reply's own files, checked against the channel's rule
 then.
 
 **Offer to let the agent post.** not asked → asked → switched on, or declined (`src/postoffer.js`,
