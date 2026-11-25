@@ -54,6 +54,7 @@ function load(listStacks = {}) {
     state,
     esc,
     ...stack,
+    ...piece('/** Whether `org` is a customer of its own', '/** What GET /api/customers/profile', 'cardOrg, orgHref, withOrg', { esc }),
     customerName: (org) => ({ acme: 'ACME' }[org] || org),
     orgName: (t) => t.org_name || t.org,
     headTech: () => ({
@@ -93,5 +94,14 @@ describe('the thread header\'s stack drawing', () => {
     assert.equal(page.stackButton(thread('_unknown', PARTS)), '');
     assert.equal(page.stackButton(thread(null)), '');
     assert.match(page.techMenu(thread('acme', [])), /<button type="button" class="hmi stk-open" data-stack="acme"><span>ACME's stack drawing<\/span><\/button>/);
+  });
+
+  it('leads to the customer\'s profile in Customers at the dropdown\'s foot, not for threads of none', () => {
+    const page = load();
+    const menu = page.techMenu(thread('acme', PARTS));
+    assert.match(menu, /<div class="hms"><a class="hmi foot" href="\/inbox\/admin\?tab=orgs&amp;org=acme" title="ACME&#39;s overview in Customers[^"]*"><span>ACME's profile<\/span><small>Customers<\/small><\/a><\/div><\/menu>$/);
+    assert.doesNotMatch(page.techMenu(thread('_unassigned', PARTS)), /class="hmi foot"/);
+    // Opening the dropdown focuses its first link, not the one at its foot.
+    assert.match(html, /\.hmpop a\.hmi:not\(\.foot\)`\)\?\.focus\(\)/);
   });
 });

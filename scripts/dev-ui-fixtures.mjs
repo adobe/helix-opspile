@@ -612,8 +612,10 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       return SYSTEM;
     }
     const p = byKey.get(key);
+    // A customer's org is their mail domain, as src/lookup.js `toAuthor` has it: the badge on
+    // their picture, which shows their customer's card.
     return {
-      kind: 'person', name: p.name, org: p.org || null, staff: p.staff,
+      kind: 'person', name: p.name, org: p.staff ? null : (p.email || '').split('@')[1] || null, staff: p.staff,
     };
   };
 
