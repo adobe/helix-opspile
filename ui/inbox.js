@@ -31,6 +31,9 @@ const state = {
   jump: null,
   // The message being edited in place: { id: '<thread>|<message id>', key, text, as }.
   editing: null,
+  // Your reply ↑ asked to edit while it was on its way (`editLast`), opened to edit once it is
+  // back from the platform (`openThread`): { key, id: its `state.sending` id, until }.
+  editArriving: null,
   // Edits saved and not back from the platform yet, by message: { body, sentAt, saving }.
   edits: new Map(),
   // Reactions made here and not back from the platform yet, shown as made (`openThread`): by
@@ -5339,6 +5342,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // until it arrives, which settles it, or the person decides. They are kept in localStorage
   // meanwhile (`saveSending`), so a reload does not lose them.
   const settled = new Set();
+  let arrived = null;
   state.sending = state.sending.filter((p) => {
     if (p.status === 'sending' || p.status === 'failed') return true;
     if (p.status !== 'unknown' && sendLate(p) && (!p.postedId || Date.now() - p.sentAt >= SEND_KEEP_MS)) return false;
@@ -5349,6 +5353,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
       : x.author?.name === p.author.name && Date.parse(x.at) >= since
         && looseText(p.files?.length ? withoutAttachments(x.body) : x.body) === looseText(p.body)));
     if (m) settled.add(`${m.thread}|${m.id}`);
+    if (m && state.editArriving?.id === p.id) arrived = m;
     return !m;
   });
   saveSending();
@@ -5572,6 +5577,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   renderDraftBar(key);
   renderBashBar(key);
   if (searchEntry(key) && (switching || !live)) markRead(t);
+  if (arrived) editArrived(key, arrived);
 }
 
 // ---------------------------------------------------------------- the admin team's requests
@@ -11600,10 +11606,20 @@ function reactLast() {
 
 /**
  * ↑ in an empty reply box, as in Slack: your last message in the thread, to edit; without one
- * (or with ⌥), the last message, in focus.
+ * (or with ⌥), the last message, in focus. A reply of yours still on its way (sent here, not
+ * back from the platform yet, some seconds) is the last one: it opens to edit once it is back,
+ * since the platform has to have it first, and the one before it is not what was asked for.
  */
 function editLast(key, { focus = false } = {}) {
   const m = !focus && [...(state.cache.get(key)?.data?.messages || [])].reverse().find(canEdit);
+  const going = !focus && state.sending.filter((p) => p.thread === key
+    && ['sending', 'sent', 'delivered'].includes(p.status) && !sendLate(p)
+    && (!m || Date.parse(p.at) >= Date.parse(m.at))).at(-1);
+  if (going) {
+    state.editArriving = { key, id: going.id, until: Date.now() + SEND_ARRIVE_MS };
+    toast('Your reply is on its way: it opens to edit once it is back.');
+    return true;
+  }
   if (!m) {
     const last = paneMessages().at(-1);
     if (last) focusMessage(last);
@@ -11613,6 +11629,26 @@ function editLast(key, { focus = false } = {}) {
   $('reply')?.blur();
   startEdit(`${m.thread}|${m.id}`);
   return true;
+}
+
+/**
+ * The reply ↑ asked to edit on its way (`editLast`), back as message `m`: to edit, unless
+ * something else is going on by now (another thread, an edit, typing, or a minute later).
+ */
+function editArrived(key, m) {
+  const ask = state.editArriving;
+  state.editArriving = null;
+  if (!ask || ask.key !== key || Date.now() > ask.until || state.open !== key || state.editing) return;
+  const box = $('reply');
+  const active = document.activeElement;
+  if (box?.value || (active && active !== box && active !== document.body)) return;
+  if (!canEdit(m)) return;
+  // After the drawing that settled it, which is still running.
+  setTimeout(() => {
+    if (state.open !== key || state.editing || $('reply')?.value) return;
+    $('reply')?.blur();
+    startEdit(`${m.thread}|${m.id}`);
+  });
 }
 
 /**
