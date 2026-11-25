@@ -211,7 +211,7 @@ One open request per pair, either way round (checked before the insert). Every c
 **Request thread.** waiting → decided, and for a conflict → gone (src/requestthreads.js). What a
 request is in the admin team's inbox follows from its own row (a channel, membership, portal or
 merge request: its `status`) or, for the kinds without one, from what they are now (a bot's `ours`,
-an account's `person`, a conflict's `kept`, or whether it is a conflict still); nothing here is a
+an account's `person`, a pair of accounts' `account_pairs` row, a conflict's `kept`, or whether it is a conflict still); nothing here is a
 state of its own but two tables. `request_threads` (migration 0100) has a row for each request of
 those kinds from the first listing that found it waiting (`opened_at`, its thread's start, as such a
 request has no time of its own; one decided before that has none, and starts at its decision); a
