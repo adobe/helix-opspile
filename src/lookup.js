@@ -58,10 +58,18 @@ export async function slackApi(env, method, params) {
   });
   const data = await res.json();
   if (!data.ok) {
-    throw new Error(`slack ${method}: ${data.error}`);
+    throw Object.assign(new Error(`slack ${method}: ${data.error}`), { code: data.error });
   }
   return data;
 }
+
+/**
+ * What Slack answers `conversations.info` for a channel the app can no longer read at all: one
+ * deleted, one it was removed from, the other org's side of a Slack Connect channel that was
+ * disconnected (Adobe's side lives on under a new id), and one in a workspace the app is no
+ * longer granted. No message comes from such a channel, so it is recorded as archived.
+ */
+const SLACK_GONE = new Set(['channel_not_found', 'team_access_not_granted']);
 
 async function graphJson(env, path) {
   const graph = await cachedGraph(env);
@@ -248,7 +256,8 @@ const classifiedChanged = (row, next) => CLASSIFIED
  *
  * `refresh` asks the platform even when the row is fresh (a notice of a rename or an archive), and
  * `at` (when the message it is looked up for was sent) does when the row has the channel archived
- * before then. A lookup records whether the channel is archived (`archived_at`). When
+ * before then. A lookup records whether the channel is archived (`archived_at`), or gone from
+ * Slack (`SLACK_GONE`), which counts as archived. When
  * the lookup changed what the rules read, `onChange(before, after)` (the channel as `toChannel`
  * gives it) runs before the row is written: `followChange` (src/refile.js) queues its threads'
  * moves there. The row is the guard, so it comes last; when `onChange` fails, so does this, with
@@ -287,8 +296,16 @@ export async function getChannel(env, {
     }
   } catch (e) {
     console.warn(JSON.stringify({
-      route: 'normalize', lookup: 'channel', source, error: e.message,
+      route: 'normalize', lookup: 'channel', source, channel: channelId, error: e.message,
     }));
+    // Gone, as the platform says: archived from now, as a lookup records an archive, and restored
+    // by the first lookup that finds it again. Not for a message's lookup, though: a channel the
+    // inbox gets messages from is there, whatever the lookup says.
+    if (row && !at && source === 'slack' && SLACK_GONE.has(e.code)) {
+      await env.DB.prepare(`UPDATE channels SET archived_at = COALESCE(archived_at, ?)
+        WHERE source = ? AND tenant = ? AND channel_id = ?`)
+        .bind(new Date(now).toISOString(), source, tenant, channelId).run();
+    }
     return toChannel(row, source, channelId);
   }
   if (onChange && row && classifiedChanged(row, f)) {
