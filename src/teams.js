@@ -10,37 +10,20 @@
  * governing permissions and limitations under the License.
  */
 
-// messageKey lives in raw.js (the catch-up and backfill use it too); kept exported here.
+// messageKey (the catch-up and backfill use it too) and parseResource (the normalizer reads a
+// deletion's notification with it) live in raw.js; parseResource is kept exported here.
 import { cachedGraph } from './graph.js';
 import { text } from './http.js';
 import { handleLifecycle } from './subscription.js';
 import {
-  dayPath, messageKey, putRaw, segment, sha256, writeRaw,
+  dayPath, messageKey, parseResource, putRaw, segment, sha256, writeRaw,
 } from './raw.js';
+
+export { parseResource };
 
 // How long one step of storing a notification may take before it is logged as slow: Graph
 // cancels a notification it has had no answer to within a few seconds, and retries it later.
 const SLOW_STEP_MS = 1500;
-
-const RESOURCE = /^\/?teams\('([^']+)'\)\/channels\('([^']+)'\)\/messages\('([^']+)'\)(?:\/replies\('([^']+)'\))?$/;
-
-/**
- * Parses a channel-message resource path from a change notification, for example
- * `teams('…')/channels('…')/messages('…')` or `…/messages('…')/replies('…')`.
- */
-export function parseResource(resource) {
-  const m = RESOURCE.exec(resource || '');
-  if (!m) {
-    return null;
-  }
-  const [, teamId, channelId, rootId, replyId] = m;
-  const reply = replyId ? `/replies/${encodeURIComponent(replyId)}` : '';
-  const path = `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}`
-    + `/messages/${encodeURIComponent(rootId)}${reply}`;
-  return {
-    teamId, channelId, rootId, messageId: replyId || rootId, path,
-  };
-}
 
 /**
  * Pile-1 key of one notification:
@@ -60,8 +43,8 @@ export async function notificationKey(tenantId, item, json, received, lifecycle)
 
 /**
  * Fetches the message a notification points to and stores it next to the notification.
- * A message that is gone (404) leaves only the notification; the deletion is then
- * known from its `changeType`.
+ * A message that is gone (404, as a deleted channel message is) leaves only the notification:
+ * the normalizer files a `deleted` one as the message's tombstone (`normalizeTeams`).
  */
 export async function fetchAndStore(env, tenantId, item, notification) {
   const res = parseResource(item.resource);

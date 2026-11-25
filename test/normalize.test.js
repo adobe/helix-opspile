@@ -379,6 +379,66 @@ describe('normalize (teams)', () => {
     assert.deepEqual(bot.message.authorRef, { kind: 'bot', name: 'Alerts' });
   });
 
+  describe('a deleted message\'s notification', () => {
+    const NKEY = 'teams/tenant-1/team-1/19:c@thread.tacv2/2026/10/21/notification-ab.json';
+    const RES = "teams('team-1')/channels('19:c@thread.tacv2')/messages('1792584000000')";
+    const note = (extra = {}) => ({
+      subscriptionId: 'sub-1',
+      changeType: 'deleted',
+      tenantId: 'tenant-1',
+      resource: `${RES}/replies('1792584060000')`,
+      resourceData: { id: '1792584060000', '@odata.type': '#Microsoft.Graph.chatMessage' },
+      ...extra,
+    });
+
+    it('is the tombstone of the reply it names', () => {
+      const { op, message } = normalize(NKEY, note(), { receivedAt: '2026-10-21T12:05:00.000Z' });
+      assert.equal(op, 'delete');
+      assert.deepEqual(message, {
+        source: 'teams',
+        tenant: 'tenant-1',
+        channelId: '19:c@thread.tacv2',
+        groupId: 'team-1',
+        rootId: '1792584000000',
+        id: '1792584060000',
+        thread: 'teams:tenant-1:team-1:19:c@thread.tacv2:1792584000000',
+        // The id is the time Teams created the message.
+        at: '2026-10-21T12:01:00.000Z',
+        version: '999999999999999',
+        deletedAt: '2026-10-21T12:05:00.000Z',
+        authorRef: { kind: 'system', name: 'Microsoft Teams' },
+        format: 'text',
+        text: '',
+        raw: NKEY,
+      });
+      // Newer than any version of the message Graph returned before.
+      assert.ok(message.version > normalize(TKEY, msg()).message.version);
+    });
+
+    it('is the tombstone of a root message, as of the day it came without its metadata', () => {
+      const { op, message } = normalize(NKEY, note({ resource: RES }));
+      assert.equal(op, 'delete');
+      assert.equal(message.id, '1792584000000');
+      assert.equal(message.rootId, '1792584000000');
+      assert.equal(message.deletedAt, '2026-10-21T00:00:00.000Z');
+    });
+
+    it('keeps the thread a fetched copy of the message has', () => {
+      const fetched = normalize(TKEY, msg());
+      const { message } = normalize(NKEY, note());
+      for (const field of ['tenant', 'channelId', 'groupId', 'rootId', 'id', 'thread']) {
+        assert.equal(message[field], fetched.message[field], field);
+      }
+    });
+
+    it('leaves new and edited messages to their fetched copies, and other resources alone', () => {
+      assert.equal(normalize(NKEY, note({ changeType: 'created' })).op, 'skip');
+      assert.equal(normalize(NKEY, note({ changeType: 'updated' })).op, 'skip');
+      assert.equal(normalize(NKEY, note({ resource: "chats('x')/messages('1')" })).op, 'skip');
+      assert.equal(normalize(NKEY, null).op, 'skip');
+    });
+  });
+
   it('keeps a bot author\'s id, but not a webhook\'s', () => {
     const bot = normalize(TKEY, msg({
       from: { application: { id: 'b-1', displayName: 'helper-agent', applicationIdentityType: 'bot' } },

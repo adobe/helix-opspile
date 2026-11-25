@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
+import { normalize } from '../src/normalize.js';
 import { parseResource, teamsNotify } from '../src/teams.js';
 import { fakeCtx, fakeEnv, quiet } from './fakes.js';
 
@@ -196,13 +197,19 @@ describe('teamsNotify', () => {
     assert.equal(env.objects.size, 0);
   });
 
-  it('keeps only the notification when the message is gone', async () => {
+  it('keeps only the notification when the message is gone, which the normalizer files as its tombstone', async () => {
     const env = fakeEnv(VARS);
     const ctx = fakeCtx();
     const { request, url } = notifyRequest([item({ changeType: 'deleted', resource: resource('gone') })]);
     await quiet(() => teamsNotify(request, url, env, ctx));
     await quiet(() => ctx.settle());
     assert.equal(env.objects.size, 1);
+    const [[key, { body, options }]] = [...env.objects];
+    assert.deepEqual(env.queued, [{ key }]);
+    const op = normalize(key, JSON.parse(body), options.customMetadata);
+    assert.equal(op.op, 'delete');
+    assert.deepEqual([op.message.rootId, op.message.id], [ROOT, 'gone']);
+    assert.equal(op.message.deletedAt, options.customMetadata.receivedAt);
   });
 
   it('stores lifecycle notifications and renews instead of fetching', async () => {

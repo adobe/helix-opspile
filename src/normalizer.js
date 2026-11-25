@@ -413,7 +413,7 @@ export async function processKey(env, key, cache = {}) {
   // Slack Connect files arrive as stubs: what files.info says about them, kept in pile 1.
   // Teams files are copied into pile 1, and the images among them shown inline.
   const payload = await withSlackFiles(env, key, JSON.parse(await obj.text()));
-  const op = normalize(key, await withTeamsFiles(env, key, payload));
+  const op = normalize(key, await withTeamsFiles(env, key, payload), obj.customMetadata || {});
   if (op.op === 'skip') {
     return { key, result: 'skip', reason: op.reason };
   }
