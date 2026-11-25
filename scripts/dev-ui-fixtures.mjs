@@ -698,7 +698,8 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
    * env?, timeout?, open?, status?, by?, exit?, ended? }]`: asked `ago` minutes ago, open for
    * `open` more minutes; `status` (and `by`, a person key) for one that was decided `ended`
    * minutes ago (2, unless it says). `kind: 'codemode'` and `tools` make one a script to run as
-   * the person (src/agent/scriptrequest.js), `command` its code.
+   * the person (src/agent/scriptrequest.js), `command` its code. `asked`: the index in `sidebar`
+   * of the message the agent answered when it asked, which shows it in that conversation.
    * `sidebar`: what someone on the team said to the thread's agent in the inbox's sidebar, and
    * its answers, `[who, minutesAgo, body]`, `who` a person key or 'agent' (src/sidebar.js); an
    * answer `[..., { unseen: true }]` its asker has not seen yet (the purple badge).
@@ -867,6 +868,7 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
           reason: b.reason,
           env: b.env || [],
           tools: b.tools || [],
+          sidebar: b.asked === undefined ? null : (sidebars.get(key) || [])[b.asked].id,
           timeout: b.timeout || 60,
           deadline: new Date(now + (b.open ?? 23 * 60) * MIN).toISOString(),
           status: b.status || 'pending',
@@ -1272,10 +1274,11 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     reads: { dana: 'latest' },
     sidebar: [
       ['dana', 20, 'Is this already answered in another recent thread?'],
-      ['agent', 19, 'Not in this channel: none of its threads has it. Tom points at the ops channel, which I cannot read, so I asked to run a script as you that searches your inbox for it. It shows under the thread.'],
+      ['agent', 19, 'Not in this channel: none of its threads has it. Tom points at the ops channel, which I cannot read, so I asked to run a script as you that searches your inbox for it: here it is, for you to read and run.'],
     ],
     bash: [{
       ago: 19,
+      asked: 0,
       kind: 'codemode',
       tools: ['search_threads', 'get_thread'],
       command: `const { threads } = await tools.search_threads({ query: 'article missing from blog cards', limit: 5 });

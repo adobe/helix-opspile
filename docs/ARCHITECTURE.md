@@ -3140,6 +3140,16 @@ person's to see, not the channel's: never to put another customer's threads, nam
 into this thread's draft or posts, and to tell someone who asked in the sidebar with
 `sidebar_followup`.
 
+**Requests asked in the sidebar.** A command or a script the agent asks for while it answers a
+sidebar message keeps that message's id (`bash_requests.sidebar`, migration 0102, as a tool
+request's), and is part of that conversation: while the conversation shows, in the panel beside
+the thread on a wide screen or unfolded in the thread on a narrower one, its cards are there,
+under the agent's answer (`bashSideCards` in `ui/inbox.js`, next to `toolCards`), and not in the
+bar under the reply box. While it does not show (the panel closed, the conversation folded), the
+bar has them as before, with "the agent asks **in the sidebar**", a link that opens the
+conversation at them. The agent is told, with how it ended, to tell the message's author with
+`sidebar_followup`, as its note does not reach them.
+
 The shell reads a file whole, in one isolate: above about 30 MB `grep` no longer finds it, and
 `jq` runs out of memory on a large one. So files over 30 MB stay out (200 MB a thread), and
 `INDEX.txt` says which. A HAR also gets `<name>.requests.ndjson` (`src/har.js`): one line per

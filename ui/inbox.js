@@ -4034,8 +4034,8 @@ async function decideToolRequest(key, id, act) {
 }
 
 /**
- * What a run of sidebar messages shows, one element each: its messages, each with the tools the
- * agent asked for in answer to it, then the agent working on its answer, or that it answers once
+ * What a run of sidebar messages shows, one element each: its messages, each with the tools, the
+ * commands and the scripts the agent asked for in answer to it, then the agent working on its answer, or that it answers once
  * it is done (`last`: the thread's latest run).
  */
 function sideRun(key, run, last) {
@@ -4044,7 +4044,7 @@ function sideRun(key, run, last) {
   const doing = working ? [`<div class="sm agent working" aria-live="polite"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
     <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble"><span class="spin" aria-hidden="true"></span>${esc(state.agents.get(key).side.text)}…</div></div></div>`] : [];
   const queued = waiting ? [`<div class="sc-wait">${AGENT_NAME} answers once it is done with what it is doing.</div>`] : [];
-  return [...run.flatMap((m) => [sideMessage(key, m), ...toolCards(key, run, m)]), ...doing, ...queued];
+  return [...run.flatMap((m) => [sideMessage(key, m), ...toolCards(key, run, m), ...bashSideCards(key, run, m)]), ...doing, ...queued];
 }
 
 /**
@@ -4093,6 +4093,19 @@ function sideGroup(key, run, { last, trailing }) {
     </button>${body}</div>`;
 }
 
+/**
+ * Whether conversation `where` (`{ run, trailing }`, as openThread found it) of thread `key`
+ * shows now: in the panel beside the thread, or unfolded in it.
+ */
+const sideRunShown = (key, { run, trailing }) => sidePaneled(key)
+  || (!side.wide && (side.open.has(run[0].id) || (trailing && sideInline(key))));
+
+/** The conversation of the open thread `key` that has sidebar message `id`, as last drawn. */
+function sideRunOf(key, id) {
+  const runs = side.runs?.key === key ? side.runs.runs : [];
+  return (id && runs.find(({ run }) => run.some((m) => m.id === id))) || null;
+}
+
 /** Whether `m` is the agent's answer to you that you have not seen (the purple badge). */
 const unseenByMe = (m) => m.role === 'agent' && m.unseen && m.to === state.me?.id && !sideSeen.has(m.id);
 
@@ -4104,9 +4117,7 @@ const unseenByMe = (m) => m.role === 'agent' && m.unseen && m.to === state.me?.i
  */
 function seeSide(key, runs) {
   if (hidden() || state.as || state.data?.me?.readonly) return;
-  const shows = ({ run, trailing }) => sidePaneled(key)
-    || (!side.wide && (side.open.has(run[0].id) || (trailing && sideInline(key))));
-  const ids = runs.filter(shows).flatMap(({ run }) => run.filter(unseenByMe).map((m) => m.id));
+  const ids = runs.filter((where) => sideRunShown(key, where)).flatMap(({ run }) => run.filter(unseenByMe).map((m) => m.id));
   if (!ids.length) return;
   for (const id of ids) sideSeen.add(id);
   request('POST', '/api/agent/sidebar/seen', { thread: key, ids }).then((res) => {
@@ -6319,6 +6330,10 @@ async function discardDraft(key) {
 // value. A request that ended stays for an hour, on one line, saying how; of several, only the
 // latest shows, with the earlier ones a click away, so that an agent that tries a few times does
 // not fill the pane with what it tried.
+// A request the agent made while it answered a sidebar message (`sidebar`) is part of that
+// conversation: while the conversation shows (in the panel beside the thread, or unfolded in it)
+// its cards are there, under the agent's answer (`bashSideCards`), and not in the bar; while it
+// does not, the bar has them, saying so, with a link that opens the conversation.
 
 // What a person fills in can be remembered on this device, by variable name: encrypted
 // (AES-GCM) in localStorage, with a key made here that cannot be exported, kept in IndexedDB.
@@ -6452,7 +6467,7 @@ const scriptTools = (r) => `<div class="tools"><span class="ds">Calls as ${r.sta
  * Every card has the request's id, which is how the agent names it in its notes.
  */
 function bashCard(r, {
-  decide = false, busy = false, kept = [], earlier = 0, all = false, why = null,
+  decide = false, busy = false, kept = [], earlier = 0, all = false, why = null, side: run = null,
 } = {}) {
   const script = isScript(r);
   const head = (line) => `<div class="head"><span class="what">${script ? `${SCRIPT_ICON}Script` : `${BASH_ICON}Command`}</span><code class="id" title="This request's id: the agent names it in its notes">${esc(r.id)}</code><span class="by">${line}</span></div>`;
@@ -6468,7 +6483,9 @@ function bashCard(r, {
   // that has loaded.
   const lit = highlightCode(r.command, script ? 'javascript' : 'bash');
   const command = `<pre class="cmd${lit ? ' hl' : ''}"><code>${lit ?? esc(r.command)}</code></pre>${script ? scriptTools(r) : ''}`;
-  const asked = `the agent asks · ${ago(r.created_at)} · <span title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can run it">open for ${timeLeft(r.deadline)}</span>`;
+  // In the bar, asked in a sidebar conversation that does not show: a link that opens it.
+  const where = run ? ` <button type="button" class="toside" data-side-toggle="${esc(run)}" title="Show the sidebar conversation the agent asked this in">in the sidebar</button>` : '';
+  const asked = `the agent asks${where} · ${ago(r.created_at)} · <span title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can run it">open for ${timeLeft(r.deadline)}</span>`;
   const reason = `<p class="why">${esc(r.reason)}</p>`;
   // `why` you may not run it, when it is not that you view as someone else: under the command.
   const whyNot = why ? `<div class="foot"><span class="note">${esc(why)}</span></div>` : '';
@@ -6494,6 +6511,64 @@ function bashCard(r, {
       <div class="foot"><span class="note" title="${esc(hint)}">${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>Run</button></span></div></form>`;
 }
 
+/** What bashCard is told about the viewer of thread `key`, for each request. */
+function bashOptions(key) {
+  const readonly = Boolean(state.data?.me?.readonly);
+  const decide = !readonly && canWork(key);
+  const why = readonly || decide ? null : onlyTeam('run it');
+  return (r) => ({
+    decide, why, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)),
+  });
+}
+
+/** Whether request `r` of thread `key` shows in the sidebar conversation it was asked in, now. */
+function onSide(key, r) {
+  const where = r.sidebar && sideRunOf(key, r.sidebar);
+  return Boolean(where) && sideRunShown(key, where);
+}
+
+/** The requests of thread `key` that the bar under the reply box shows: those not in the sidebar. */
+const barRequests = (key) => (state.cache.get(key)?.data?.bash_requests || []).filter((r) => !onSide(key, r));
+
+/**
+ * The cards of the requests the agent made in answer to sidebar message `m` of `run`, in one
+ * box: under its answer, or under the message itself while there is none yet (as toolCards).
+ */
+function bashSideCards(key, run, m) {
+  const list = state.cache.get(key)?.data?.bash_requests || [];
+  let asked = null;
+  if (m.role === 'agent') asked = m.reply_to;
+  else if (!run.some((x) => x.reply_to === m.id)) asked = m.id;
+  const mine = asked ? list.filter((r) => r.sidebar === asked) : [];
+  if (!mine.length) return [];
+  const options = bashOptions(key);
+  const cards = mine.map((r) => bashCard(r, r.status === 'pending' || r.status === 'running' ? options(r) : {}));
+  return [`<div class="bashbar sidebash" data-asked="${esc(asked)}">${cards.join('')}</div>`];
+}
+
+/**
+ * The requests of thread `key` drawn again where they are: in the bar, and in the sidebar where
+ * one of them shows there (the thread is drawn again from what is known, as for a tool request).
+ */
+function renderAsks(key) {
+  const list = state.cache.get(key)?.data?.bash_requests || [];
+  if (list.some((r) => onSide(key, r))) showSide(key); else renderBashBar(key);
+}
+
+/** What was typed into a request's fields, or is remembered, back in them: where it is not. */
+function fillBashForm(form) {
+  const typed = bashTyped.get(form.dataset.id) || {};
+  const fields = [...form.querySelectorAll('.var input')];
+  for (const input of fields) {
+    const value = typed[input.name] ?? vault.values.get(input.name) ?? '';
+    if (input.value !== value) input.value = value;
+  }
+  // Ticked as it was left, or because a remembered value is in it.
+  const remember = form.elements.remember;
+  const ticked = typed.remember ?? fields.some((i) => vault.values.has(i.name));
+  if (remember && remember.checked !== ticked) remember.checked = ticked;
+}
+
 /**
  * The cards of a thread's requests (`list`, as the thread has them), as the bar shows them:
  * those that ended first, in one box, a line each, only the latest unless `all`; then those
@@ -6515,13 +6590,14 @@ function renderBashBar(key) {
   // Not cached: the thread is being fetched again (its room said a request changed), and the
   // cards stay as they are until it is here.
   if (!el || !hit || state.open !== key) return;
-  const list = hit.data?.bash_requests || [];
-  const readonly = Boolean(state.data?.me?.readonly);
-  const decide = !readonly && canWork(key);
-  const why = readonly || decide ? null : onlyTeam('run it');
+  // The cards in the sidebar's conversations have what was typed in them too.
+  for (const form of document.querySelectorAll('.sidebash form.br')) fillBashForm(form);
+  const all = hit.data?.bash_requests || [];
+  const list = barRequests(key);
+  const options = bashOptions(key);
   const html = bashCards(list, {
     all: bashEarlier.has(key),
-    options: (r) => ({ decide, why, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)) }),
+    options: (r) => ({ ...options(r), side: r.sidebar ? sideRunOf(key, r.sidebar)?.run[0].id : null }),
   });
   if (el.__html !== html) {
     // A change in the open thread's cards grows, folds or resizes them (on a phone they are in
@@ -6533,20 +6609,13 @@ function renderBashBar(key) {
       apply: () => { if (list.length) el.innerHTML = html; },
       done: () => { el.innerHTML = ''; },
     });
-    for (const form of el.querySelectorAll('form.br')) {
-      const typed = bashTyped.get(form.dataset.id) || {};
-      const fields = [...form.querySelectorAll('.var input')];
-      for (const input of fields) input.value = typed[input.name] ?? vault.values.get(input.name) ?? '';
-      // Ticked as it was left, or because a remembered value is in it.
-      const remember = form.elements.remember;
-      if (remember) remember.checked = typed.remember ?? fields.some((i) => vault.values.has(i.name));
-    }
+    for (const form of el.querySelectorAll('form.br')) fillBashForm(form);
   }
   el.__key = key;
   if (!el.__wired) wireBashBar(el);
   // The remembered values are read once, the first time a card has a field for one.
-  if (decide && !vault.loaded && list.some((r) => r.status === 'pending' && r.env.length)) {
-    vaultLoad().then(() => { if (vault.values.size) renderBashBar(el.__key); });
+  if (options({ env: [] }).decide && !vault.loaded && all.some((r) => r.status === 'pending' && r.env.length)) {
+    vaultLoad().then(() => { if (vault.values.size) renderAsks(el.__key); });
   }
   renderLines(key);
 }
@@ -6608,7 +6677,7 @@ function renderLines(key) {
   const hit = state.cache.get(key);
   // Not cached: the thread is being fetched again, and the drawer stays as it is until then.
   if (!tab || !el || !hit || state.open !== key) return;
-  const chips = linesChips(hit.data?.bash_requests, lineDraft(key));
+  const chips = linesChips(barRequests(key), lineDraft(key));
   // Another thread's, or nothing left in it: closed.
   if (linesDrawer.key !== key || !chips.length) linesDrawer.key = null;
   const open = linesDrawer.key === key;
@@ -6652,6 +6721,8 @@ function wireLines(tab, el) {
     if (e.target === el || e.target.closest('[data-lines="close"]')) { setLines(el.__key, false, { back: true }); return; }
     // Taking the draft into the reply box and sending it happen in the thread.
     if (e.target.closest('[data-draft="edit"], [data-draft="me"], [data-draft="bot"]')) setLines(el.__key, false);
+    // So does showing the sidebar conversation a request was asked in.
+    if (e.target.closest('[data-side-toggle]')) setLines(el.__key, false);
   });
   el.addEventListener('keydown', (e) => {
     if (linesDrawer.key !== el.__key) return;
@@ -6673,33 +6744,46 @@ function wireLines(tab, el) {
 
 function wireBashBar(el) {
   el.__wired = true;
+  wireBash(el, () => el.__key);
+}
+
+/**
+ * What is typed into the request cards under `root`, and their buttons, for thread `keyOf()`:
+ * the bar's, and those in the sidebar's conversations (`sidebash`, in the thread and in the panel
+ * beside it), which leave the bar's to the bar.
+ */
+function wireBash(root, keyOf, { side: inSide = false } = {}) {
   const idOf = (node) => node.closest('[data-id]')?.dataset.id;
-  el.addEventListener('input', (e) => {
+  const ours = (node) => !inSide || Boolean(node.closest('.sidebash'));
+  root.addEventListener('input', (e) => {
     const id = idOf(e.target);
-    if (!id || !e.target.name) return;
+    if (!ours(e.target) || !id || !e.target.name) return;
     const typed = bashTyped.get(id) || {};
     typed[e.target.name] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
     bashTyped.set(id, typed);
   });
-  el.addEventListener('submit', (e) => {
+  root.addEventListener('submit', (e) => {
+    if (!ours(e.target) || !e.target.matches('form.br')) return;
     e.preventDefault();
-    runBash(el.__key, idOf(e.target), e.target);
+    runBash(keyOf(), idOf(e.target), e.target);
   });
-  el.addEventListener('click', (e) => {
+  root.addEventListener('click', (e) => {
     const b = e.target.closest('[data-bash]');
-    if (!b || b.disabled) return;
-    if (b.dataset.bash === 'deny') denyBash(el.__key, idOf(b));
+    if (!b || b.disabled || !ours(b)) return;
+    const key = keyOf();
+    if (b.dataset.bash === 'deny') denyBash(key, idOf(b));
     if (b.dataset.bash === 'earlier') {
-      if (bashEarlier.has(el.__key)) bashEarlier.delete(el.__key); else bashEarlier.add(el.__key);
-      renderBashBar(el.__key);
-      el.querySelector('.more')?.focus();
+      if (bashEarlier.has(key)) bashEarlier.delete(key); else bashEarlier.add(key);
+      renderBashBar(key);
+      root.querySelector('.more')?.focus();
     }
     if (b.dataset.bash === 'forget') {
       vaultForget(b.dataset.name);
       // The field is emptied with it, unless something else was typed there.
       for (const typed of bashTyped.values()) delete typed[b.dataset.name];
-      el.__html = undefined;
-      renderBashBar(el.__key);
+      const shown = $('bashbar');
+      if (shown) shown.__html = undefined;
+      renderAsks(key);
     }
   });
 }
@@ -6708,7 +6792,7 @@ function wireBashBar(el) {
 function setCachedBash(key, r) {
   const hit = state.cache.get(key);
   if (hit && r) hit.data = { ...hit.data, bash_requests: (hit.data.bash_requests || []).map((x) => (x.id === r.id ? r : x)) };
-  renderBashBar(key);
+  renderAsks(key);
 }
 
 /**
@@ -6722,12 +6806,12 @@ async function runBash(key, id, form) {
   const values = Object.fromEntries(r.env.map((v) => [v.name, form.elements[v.name].value]));
   const remember = Boolean(form.elements.remember?.checked);
   bashBusy.add(id);
-  renderBashBar(key);
+  renderAsks(key);
   const res = await request('POST', '/api/bash/run', { thread: key, id, env: values }).catch(() => null);
   bashBusy.delete(id);
   // No answer, or the Worker failed: that does not say the command did not start.
   if (!res || res.status >= 500) {
-    renderBashBar(key);
+    renderAsks(key);
     toast(`The inbox did not answer, so the ${what} may be running all the same. The card says how it stands.`);
     reloadSoon(key);
     return;
@@ -6745,7 +6829,7 @@ async function runBash(key, id, form) {
 async function denyBash(key, id) {
   if (bashBusy.has(id)) return;
   bashBusy.add(id);
-  renderBashBar(key);
+  renderAsks(key);
   const res = await request('POST', '/api/bash/deny', { thread: key, id }).catch((e) => ({ ok: false, data: { error: e.message } }));
   bashBusy.delete(id);
   if (res.ok) bashTyped.delete(id);
@@ -10419,6 +10503,8 @@ function wireSideRoom() {
   moved.observe($('pane'));
   $('pane').addEventListener('scroll', queueJoin, { capture: true, passive: true });
   $('pane').addEventListener('load', queueJoin, true);
+  // The requests the agent made in a conversation, under its answer there.
+  wireBash(panel, () => panel.__key, { side: true });
   panel.onclick = (e) => {
     if (e.target.closest('[data-side-exit]')) { exitSide(); return; }
     const tool = e.target.closest('[data-tool-act]');
@@ -11256,6 +11342,8 @@ async function start() {
   // Another thread (or the new conversation) fades in; a live update of the same one does not
   // (ui/app.js). Where the pane slides in over the list (phones), the slide is the motion.
   Swap.watch($('pane'), () => (state.compose ? 'compose' : state.open), { skip: () => TAKING_TURNS.matches });
+  // The requests the agent made in a sidebar conversation unfolded in the thread.
+  wireBash($('pane'), () => state.open, { side: true });
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
     const tra = e.target.closest('[data-tr]');
@@ -11273,12 +11361,15 @@ async function start() {
     const fold = e.target.closest('[data-side-toggle]');
     if (fold && fold.getAttribute('aria-disabled') !== 'true') {
       const id = fold.dataset.sideToggle;
+      // From a request's card in the bar: its conversation opens, with the card in it.
+      const fromBar = Boolean(fold.closest('#bashbar'));
       // The line joined to the open panel is part of it: picked, the panel goes back into it.
       if (side.wide && sidePaneled(state.open) && side.joined === id) { exitSide(); return; }
       // Beside the thread where there is room; else unfolded where it is.
       if (side.wide) { enterSide(state.open, { at: id }); return; }
-      if (side.open.has(id)) side.open.delete(id); else side.open.add(id);
-      showSide(state.open);
+      if (side.open.has(id) && !fromBar) side.open.delete(id); else side.open.add(id);
+      await showSide(state.open);
+      if (fromBar) $('pane').querySelector(`.sidechat[data-side="${CSS.escape(id)}"] .sidebash`)?.scrollIntoView({ block: 'center', behavior: REDUCED_MOTION.matches ? 'auto' : 'smooth' });
       return;
     }
     if (e.target.closest('[data-rechannel]')) { setChannel(null); return; }

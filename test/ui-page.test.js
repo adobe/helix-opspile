@@ -1120,6 +1120,8 @@ describe('inbox page', () => {
         clock: () => '10:00 AM',
         timeTag: () => '<time>10:00 AM</time>',
         dayLabel: () => 'Today',
+        // The commands and scripts the agent asked for there (test/ui-bashline.test.js).
+        bashSideCards: () => [],
       };
       const globals = {
         ...base,

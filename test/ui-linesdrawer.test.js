@@ -149,7 +149,7 @@ describe('the drawer', () => {
     assert.match(render, /if \(linesDrawer\.key !== key \|\| !chips\.length\) linesDrawer\.key = null;/);
     // From what the thread has, not from what the lines happen to show: a draft on its way is
     // not on its line, and so not in the tab.
-    assert.match(render, /linesChips\(hit\.data\?\.bash_requests, lineDraft\(key\)\)/);
+    assert.match(render, /linesChips\(barRequests\(key\), lineDraft\(key\)\)/);
     // A modal dialog only while it is open.
     assert.match(render, /const dialog = \{ role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'lines-title' \};/);
     assert.match(render, /if \(open\) sheet\.setAttribute\(name, value\); else sheet\.removeAttribute\(name\);/);

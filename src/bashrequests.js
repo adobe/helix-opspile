@@ -211,6 +211,9 @@ const shape = (r, now) => ({
   reason: r.reason,
   env: listOf(r.env),
   tools: listOf(r.tools),
+  // The sidebar message the agent answered when it asked, or null: the inbox shows the request
+  // in that conversation.
+  sidebar: r.sidebar || null,
   timeout: r.timeout,
   deadline: r.deadline,
   status: r.status === 'pending' && r.deadline <= now.toISOString() ? 'expired' : r.status,
@@ -257,12 +260,13 @@ export async function openCount(env, thread, now = new Date()) {
 }
 
 /**
- * Stores a new request of `thread` (`request` from cleanRequest, or cleanScript) under `id`:
- * pending.
+ * Stores a new request of `thread` (`request` from cleanRequest, or cleanScript, with the
+ * `sidebar` message it was asked in answer to, if one) under `id`: pending.
  */
 export async function insertRequest(env, id, thread, request, now = new Date()) {
   await env.DB.prepare(`INSERT INTO bash_requests (id, thread, kind, command, reason, env, tools,
-      timeout, deadline, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
+      timeout, deadline, sidebar, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
     .bind(
       id,
       thread,
@@ -273,6 +277,7 @@ export async function insertRequest(env, id, thread, request, now = new Date()) 
       JSON.stringify(request.tools || []),
       request.timeout,
       request.deadline,
+      request.sidebar || null,
       now.toISOString(),
     ).run();
   return requestOf(env, id, now);
@@ -324,6 +329,14 @@ export async function markTold(env, id, now = new Date()) {
 }
 
 export const isOpen = (request) => OPEN.includes(request.status);
+
+/**
+ * What the agent is told of a request it asked for in answer to a sidebar message: whom to tell
+ * what came of it, and how; nothing for one it asked for otherwise.
+ */
+export const sidebarNote = (request) => (request.sidebar
+  ? `\n\nYou asked for it while you answered sidebar message ${request.sidebar}: tell its author what came of it with sidebar_followup (message ${request.sidebar}), not in your note, which does not reach them.`
+  : '');
 
 /** Tells the inboxes of the thread's teams that its requests changed. */
 export async function announceRequests(env, thread) {

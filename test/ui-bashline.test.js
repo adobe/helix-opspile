@@ -159,7 +159,7 @@ describe('a command request\'s card', () => {
     assert.doesNotMatch(bashCards([{ ...request, id: 'p' }]), /class="hist"/);
     assert.equal(bashCards([]), '');
     // The page keeps which threads show theirs, and the button switches it.
-    assert.match(js, /if \(b\.dataset\.bash === 'earlier'\) \{\n\s+if \(bashEarlier\.has\(el\.__key\)\) bashEarlier\.delete\(el\.__key\); else bashEarlier\.add\(el\.__key\);/);
+    assert.match(js, /if \(b\.dataset\.bash === 'earlier'\) \{\n\s+if \(bashEarlier\.has\(key\)\) bashEarlier\.delete\(key\); else bashEarlier\.add\(key\);/);
   });
 
   it('highlights a waiting command as shell, once the highlighter has loaded', () => {
@@ -293,6 +293,63 @@ describe('a script request\'s card', () => {
     assert.match(ended({ status: 'done', error: 'Not found', by: { id: 1 } }), /<span class="st bad" [^>]+>Ran, and threw: Not found<\/span>/);
     assert.match(ended({ status: 'failed', error: 'the agent restarted while it ran' }), /<span class="st bad" [^>]+>Did not run to its end: the agent restarted while it ran<\/span>/);
     assert.match(ended({ status: 'denied', by: { id: 2, name: 'Bo' } }), />Denied by Bo</);
+  });
+});
+
+describe('a request the agent made in a sidebar conversation', () => {
+  // The open thread `t`, its requests, and the conversations as openThread last found them.
+  const asks = [
+    { ...request, id: 'a1', sidebar: 'sb1' },
+    {
+      ...request, id: 'a2', sidebar: 'sb1', status: 'denied', by: { id: 2, name: 'Bo' }, finished_at: '2026-11-05T10:05:00Z',
+    },
+    { ...request, id: 'a3', sidebar: null },
+  ];
+  const runs = [{ run: [{ id: 'sb1', role: 'person' }, { id: 'sb1:answer', role: 'agent', reply_to: 'sb1' }], trailing: false }];
+  const page = (shown) => piece('const BASH_ICON', '/** The requests of the open thread', 'bashSideCards, barRequests, bashCards, bashOptions', {
+    esc,
+    ago: () => '9m',
+    clock: () => '14:00',
+    viewerId: () => 1,
+    highlightCode: () => null,
+    state: { data: { me: {} }, cache: new Map([['t', { data: { bash_requests: asks } }]]) },
+    canWork: () => true,
+    onlyTeam: (what) => `Only the team can ${what}.`,
+    bashBusy: new Set(),
+    vault: { values: new Map() },
+    sideRunOf: (key, id) => runs.find(({ run }) => run.some((m) => m.id === id)) || null,
+    sideRunShown: () => shown,
+  });
+
+  it('is in that conversation, under the answer, and not in the bar, while it shows', () => {
+    const { bashSideCards, barRequests } = page(true);
+    const [run] = runs;
+    // Under the answer; not under the question it answers.
+    assert.deepEqual(bashSideCards('t', run.run, run.run[0]), []);
+    const [html] = bashSideCards('t', run.run, run.run[1]);
+    assert.match(html, /^<div class="bashbar sidebash" data-asked="sb1"><form class="br pending" data-id="a1"[^]*Run<\/button><\/span><\/div><\/form><div class="br denied" data-id="a2">/);
+    assert.deepEqual(barRequests('t').map((r) => r.id), ['a3']);
+  });
+
+  it('is under the question while the answer is still to come', () => {
+    const { bashSideCards } = page(true);
+    const asked = [{ id: 'sb1', role: 'person' }];
+    assert.match(bashSideCards('t', asked, asked[0])[0], /data-asked="sb1"/);
+  });
+
+  it('is in the bar while the conversation does not show, with a link that opens it', () => {
+    const { barRequests, bashCards: bar, bashOptions } = page(false);
+    assert.deepEqual(barRequests('t').map((r) => r.id), ['a1', 'a2', 'a3']);
+    const options = bashOptions('t');
+    const html = bar(barRequests('t'), { options: (r) => ({ ...options(r), side: r.sidebar ? 'sb1' : null }) });
+    assert.match(html, /data-id="a1"[^]*the agent asks <button type="button" class="toside" data-side-toggle="sb1" title="[^"]+">in the sidebar<\/button> · 9m/);
+    assert.equal(html.match(/data-side-toggle/g).length, 1);
+  });
+
+  it('is wired where it shows: the thread and the panel beside it leave the bar\'s to the bar', () => {
+    assert.match(js, /wireBash\(panel, \(\) => panel\.__key, \{ side: true \}\);/);
+    assert.match(js, /wireBash\(\$\('pane'\), \(\) => state\.open, \{ side: true \}\);/);
+    assert.match(js, /const ours = \(node\) => !inSide \|\| Boolean\(node\.closest\('\.sidebash'\)\);/);
   });
 });
 

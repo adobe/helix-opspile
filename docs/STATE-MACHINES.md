@@ -470,6 +470,8 @@ who clicked only while that click's request lasts: each of its tool calls goes b
 that serves it, so the object claims it, runs it and tells the agent before it answers; one whose
 object or click went away under it is lost, as a command whose object restarted, and the watchdog
 settles it as failed. A script that threw is `done`, with its `error`, as a nonzero exit is.
+`sidebar`, the sidebar message a request was asked in answer to, is written with it and never
+changes: where the inbox shows it follows from whether that conversation shows, not from state.
 
 **Tool request.** pending → granted → revoked; pending → denied (`tool_requests.status`,
 `src/toolrequests.js`, `src/agent/toolrequest.js`, `decideTool` in `src/agent/stub.js`). The agent

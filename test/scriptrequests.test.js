@@ -21,7 +21,7 @@ import { describe, it } from 'node:test';
 import { CodemodeSandbox } from '@earendil-works/pi-codemode';
 import { api } from '../src/api.js';
 import {
-  bashDeadline, bashWatchdog, denyBash, runBash, runScript, WATCHDOG_SECONDS,
+  bashDeadline, bashWatchdog, denyBash, requestBash, runBash, runScript, WATCHDOG_SECONDS,
 } from '../src/agent/bashrequest.js';
 import { requestScript, SCRIPT_GUIDE, scriptOutcomeText } from '../src/agent/scriptrequest.js';
 import { opspileExtension } from '../src/agent/tools.js';
@@ -221,6 +221,24 @@ describe('a script request', () => {
     assert.match(refused.output[0].text, /not kb_write\. Nothing was requested\.$/);
   });
 
+  it('keeps the sidebar message it was asked in answer to, and says whom to tell', async () => {
+    const e = env({ LOADER: {} });
+    e.DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by,
+      changed_at) VALUES ('computer', 'team', 'helix', 1, 'Ada', '2026-10-21T10:00:00Z')`);
+    const agent = { ...fakeAgent(e), sidebarMessage: async () => 'sb_1' };
+    const { request } = await ask(agent);
+    assert.equal(request.sidebar, 'sb_1');
+    // A command too, asked in the same turn.
+    const cmd = await quiet(() => requestBash(agent, { command: 'ls', reason: 'why' }));
+    assert.equal(cmd.error || cmd.request.sidebar, 'sb_1');
+    await quiet(() => denyBash(agent, { id: request.id, by: ada }));
+    assert.match(told(agent)[0], /do not ask for the same script again\..*\n\nYou asked for it while you answered sidebar message sb_1: tell its author what came of it with sidebar_followup \(message sb_1\), not in your note, which does not reach them\.$/s);
+    // Asked otherwise: no sidebar, nothing said of one.
+    const { request: plain } = await ask(fakeAgent(e));
+    assert.equal(plain.sidebar, null);
+    assert.doesNotMatch(scriptOutcomeText(plain, { status: 'denied' }), /sidebar/);
+  });
+
   it('counts with the commands towards what may wait at a time', async () => {
     const e = env();
     const agent = fakeAgent(e);
@@ -263,7 +281,7 @@ return { found: r.threads.length, seen };`,
     assert.match(input, new RegExp(`^Ada \\(Adobe staff\\) ran the script you asked for with request_codemode \\(request ${request.id}\\) as themselves, with their permissions in the inbox\\. It returned after \\d+\\.\\d s\\. It called search_threads ×1\\.`));
     assert.match(input, /<script>\nconst r = await tools\.search_threads/);
     assert.match(input, /<output>\nBlog cards miss an article\nCards sort by date\n<\/output>\n<returned>\n\{\n {2}"found": 2,\n {2}"seen": "tools\.get_thread does not exist\. Available: search_threads\. .*"\n\}\n<\/returned>/);
-    assert.match(input, /never put another customer's threads, names or details into this thread's draft or posts\. If you asked for it to answer someone in the sidebar, tell them with sidebar_followup\.$/);
+    assert.match(input, /never put another customer's threads, names or details into this thread's draft or posts\.$/);
 
     // Once: a colleague is told who was first; it is no command to run either.
     const again = await runScript(agent, { id: request.id, by: { id: 2, name: 'Bo' }, call });

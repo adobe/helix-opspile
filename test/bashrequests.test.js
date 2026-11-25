@@ -682,6 +682,7 @@ describe('the inbox and a command request', () => {
       reason: 'Lists the open tickets of the customer, which needs your token.',
       env: [{ name: 'API_TOKEN', description: 'Your API token' }],
       tools: [],
+      sidebar: null,
       timeout: 60,
       deadline: request.deadline,
       status: 'pending',
