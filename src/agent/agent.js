@@ -33,7 +33,7 @@ import { armModel, armTags, cacheRetention } from '../experiments.js';
 import { pinnedArm } from './arms.js';
 import { toolsFor } from './agenttools.js';
 import {
-  bashDeadline, bashWatchdog, denyBash, runBash,
+  bashDeadline, bashWatchdog, denyBash, runBash, runScript,
 } from './bashrequest.js';
 import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
@@ -49,6 +49,7 @@ import {
 import {
   CURL_HOME, CURLRC, gatewayFetch, imageFor, imageSpec, KERNEL_ENV,
 } from './kernel.js';
+import { browserConfigured, browserHost, hasBrowser } from './browser.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { forward } from './secrets.js';
@@ -77,7 +78,8 @@ import { latestTurn } from './turn.js';
  * without any (`idle`, a schedule), about knowledge staff share (`seed`, in a session of its own
  * when staff chose the knowledge base: src/agent/seed.js), about a draft of its that a person
  * discarded (`discarded`), about how a command it asked a person to run ended (`runBash`,
- * `denyBash` and their schedules: src/agent/bashrequest.js), and what a person on the team says
+ * `denyBash` and their schedules: src/agent/bashrequest.js), and a script it asked a person to
+ * run as themselves (`runScript`, src/agent/scriptrequest.js), and what a person on the team says
  * to it in the inbox's sidebar (`sidebar`, src/agent/sidebar.js), which it answers there, and
  * never in the channel.
  *
@@ -194,7 +196,7 @@ export class ThreadAgent extends Agent {
           pinned: (session) => seedPin(this, session),
           // Which dream a session is, if one (src/agent/dream.js).
           dreamOf: (session) => dreamOf(this, session),
-          // For request_bash: the deadline of what it asks for.
+          // For request_bash and request_codemode: the deadline of what it asks for.
           schedule: (when, callback, payload) => this.schedule(when, callback, payload),
           // wakeup_after and wakeup_after_idle (src/agent/wakeups.js).
           wakeup: (kind, args) => setWakeup(this, kind, args),
@@ -346,6 +348,7 @@ export class ThreadAgent extends Agent {
     this.computerReady = false;
     this.booting = undefined;
     this.imageInfo = null;
+    await this.endBrowser();
     if (kernel) {
       kernel.terminate();
     }
@@ -389,6 +392,47 @@ export class ThreadAgent extends Agent {
       this.computerReady = true;
     }
     return ws;
+  }
+
+  /**
+   * The browser of the computer (src/agent/browser.js): Browser Run, with its session's id in
+   * this object's storage, so that a computer evicted meanwhile finds its tabs again.
+   */
+  browserHost() {
+    const { storage } = this.ctx;
+    return browserHost(this.env, {
+      store: {
+        get: () => storage.get('browser-session'),
+        put: (id) => storage.put('browser-session', id),
+        delete: () => storage.delete('browser-session'),
+      },
+    });
+  }
+
+  /**
+   * Serves the kernel's CDP (`SLICC_CDP_URL`, ws://127.0.0.1:9222) from Browser Run, for an
+   * image with the browser's programs (`hasBrowser`) where this deployment has Browser Run
+   * (`browserConfigured`): through a client of its own, attached for as long as the kernel
+   * runs. Without it, the programs are told no browser is attached (503).
+   */
+  async serveBrowser(kernel, image) {
+    if (!browserConfigured(this.env) || !hasBrowser(image)) {
+      return;
+    }
+    const host = this.browserHost();
+    const client = await attachKernel(await kernel.connect(), { locks: null });
+    await client.serveCdp((request) => host.hook(request));
+    this.cdp = { host, client };
+  }
+
+  /** Ends the computer's browser, with its kernel: the session and the client that served it. */
+  async endBrowser() {
+    const { cdp } = this;
+    this.cdp = null;
+    if (cdp) {
+      await cdp.client.close().catch(() => {});
+      await cdp.host.close().catch(() => {});
+    }
   }
 
   /** The answer to a request of the kernel's programs: the gateway's (src/agent/secrets.js). */
@@ -459,7 +503,9 @@ export class ThreadAgent extends Agent {
           imageSpec(image, IMAGE_ROOT),
           imageDriver(this.env.IMAGES, tree),
         ));
+        await this.serveBrowser(kernel, image);
       } catch (e) {
+        await this.endBrowser();
         kernel.terminate();
         throw e;
       }
@@ -468,6 +514,7 @@ export class ThreadAgent extends Agent {
         kernel: 'booted',
         image: image.name,
         layers: image.layers.length,
+        browser: Boolean(this.cdp),
         ms: Date.now() - started,
       }));
       return kernel;
@@ -715,7 +762,28 @@ export class ThreadAgent extends Agent {
     return runBash(this, request);
   }
 
-  /** A person denies a command the agent asked for. */
+  /**
+   * A person runs a script the agent asked for as themselves (src/agent/scriptrequest.js):
+   * `call` runs an inbox tool as them, in the Worker, for as long as this call lasts.
+   */
+  async runScript(request) {
+    return runScript(this, request);
+  }
+
+  /**
+   * The sandbox of one script a person runs, with only the `tools` it may call: on this
+   * object's thread, as the agent's own code mode, up to the same interrupt budget.
+   */
+  // eslint-disable-next-line class-methods-use-this
+  scriptSandbox(tools) {
+    return createInlineCodemodeSandbox({
+      tools,
+      timeoutMs: SCRIPT_TIMEOUT_MS,
+      interruptBudget: SCRIPT_INTERRUPT_BUDGET,
+    });
+  }
+
+  /** A person denies a command, or a script, the agent asked for. */
   async denyBash(request) {
     return denyBash(this, request);
   }

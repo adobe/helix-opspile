@@ -56,6 +56,8 @@ const state = {
   // Every ops team (GET /api/teams): the list of the teams you do not manage.
   directory: [],
   requests: [], openRequests: 0, names: {}, noIcon: false,
+  // The Customers list's filter (its footer): one type of org, or all of them.
+  orgType: '',
   // The people thread agents asked to be added to a team (src/memberrequests.js), on team pages.
   memberRequests: [],
   // The customers waiting in the customer portal, and whether it is connected to this inbox.
@@ -65,7 +67,7 @@ const state = {
   groups: [], dismissedGroups: [], groupCoverage: null,
   // The pairs of orgs that may be one (GET /api/admin/org-duplicates), whether the list shows the
   // less likely ones too, and the merges asked for (the admin team's, threads of its inbox).
-  dups: null, dupsMore: false, orgMerges: [],
+  dups: null, orgMerges: [],
   // The channels no rule files under an org (GET /api/admin/orgs `unassigned`): how many.
   orgsUnassigned: null,
 };
@@ -365,6 +367,7 @@ function wanted(url) {
   const legacy = Boolean(q.get('repo') || q.get('path'));
   let section = SECTIONS.includes(view) ? view : null;
   if (view === 'manage') section = 'own';
+  if (view === 'vendors' && tab === 'teams') section = 'vendors';
   if (view === 'file' || (!section && legacy)) section = 'kb';
   // Back from an MCP server's sign-in (src/mcpadmin.js): said once, on the servers' section.
   let flash = null;
@@ -484,14 +487,6 @@ async function loadGroups() {
   }
 }
 
-function wireFilter() {
-  $('filter').oninput = (e) => {
-    state.filter = e.target.value;
-    renderList();
-  };
-  for (const el of $('list').querySelectorAll('[data-sel]')) el.onclick = () => pickRow(el.dataset.sel);
-}
-
 /** A row of the list picked: what the agent has open is saved first, or you stay. */
 async function pickRow(sel) {
   if (await Agent.leave()) select(sel);
@@ -527,158 +522,240 @@ function listError(text) {
   if ($('listStatus')) $('listStatus').textContent = text;
 }
 
+// ---- the list on the left: the sidebar (ui/sidenav.js) ---------------------------------
+//
+// One line a row, ranked by activity (the threads with a person's message in the last 30
+// days, `recent`) unless the sort menu in its footer asks for names in order. What waits for the
+// admin team (the channels with no org or no team, the likely duplicates, the suggested teams)
+// is at the top; then yours (the teams you are on or manage, the customers you follow), then the
+// others. A customer's type and whether it has an icon are the footer's filter; the rest of what
+// a row has to say is its title, and its page.
+
+/** How busy a row is, as its title says it. */
+const activityTitle = (x) => (x.recent === undefined || x.recent === null ? ''
+  : `${x.recent} ${x.recent === 1 ? 'thread' : 'threads'} active in the last 30 days${x.latest ? `, the last message ${ago(x.latest)}` : ''}`);
+/** What a row says of itself, on one line, as its title. */
+const rowTitle = (...parts) => parts.filter(Boolean).join(' · ');
+/** A list in the sidebar's order (ui/sidenav.js, `rank`). */
+const ranked = (list, name) => SideNav.rank(list, SideNav.sortOf(state.tab), {
+  activity: (x) => x.recent, latest: (x) => x.latest, name,
+});
+const orgName = (o) => o.name || o.slug;
+
 /** Whether you follow customer `slug` yourself (ui/follow.js): its threads in your personal view. */
 const followsOrg = (slug) => Follow.follows('org', slug);
 
-/**
- * An org's row in the Customers list: its icon, name, type and channels, and whether you follow
- * or muted it (but under "Customers you follow", which says so).
- */
-const orgRow = (o, { tags = true } = {}) => `
-      <div class="row${state.sel === o.slug ? ' on' : ''}" data-sel="${esc(o.slug)}">
-        ${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
-        ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
-        ${tags && followsOrg(o.slug) ? '<span class="tag" title="You follow it: its threads are in your personal view">Following</span>' : ''}
-        ${tags && Follow.muted('org', o.slug) ? '<span class="tag" title="You muted it: its threads are back in your personal view once you post in one of them">Muted</span>' : ''}
-        <span class="sub">${channelCount(o.channels)}</span></div>`;
-const followedRow = (o) => orgRow(o, { tags: false });
+/** An org's row in the Customers list: its icon, its name, how busy it is. */
+const orgRow = (o) => SideNav.row({
+  sel: o.slug,
+  on: state.sel === o.slug,
+  lead: ico(o.icon, o.domain),
+  label: orgName(o),
+  title: rowTitle(
+    o.name ? `${o.name} (${o.slug})` : o.slug,
+    o.type !== 'customer' && o.type,
+    o.channels !== undefined && channelCount(o.channels),
+    followsOrg(o.slug) && 'you follow it',
+    Follow.muted('org', o.slug) && 'you muted it',
+    o.base && Agent.activity(o.base),
+    activityTitle(o),
+  ),
+  count: o.recent ?? '',
+  countTitle: activityTitle(o),
+});
 
-/** A team's row that you do not manage: its people, its agent, its entries. */
+/** A team's row: its letter, its name, how busy it is. */
 function teamRow(t) {
   const b = baseOf('teams', t.slug);
+  const people = t.members !== undefined ? peopleCount(t.members) : '';
+  const chans = t.channels !== undefined ? `${channelCount(t.channels)}${t.shared ? ` + ${t.shared} shared` : ''}` : '';
   const agents = b && b.agents ? `agent in ${channelCount(b.agents)}` : '';
-  const people = t.members !== undefined ? `${t.members} ${t.members === 1 ? 'person' : 'people'}` : '';
-  const mine = (state.me.teams || []).some((x) => x.slug === t.slug) ? 'yours' : '';
-  return `<div class="row two${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}" title="${esc(t.name)} (${esc(t.slug)})">
-        <span class="name">${esc(t.name)}</span>
-        <span class="sub">${esc([mine, people, agents, b && Agent.activity(b), t.slug].filter(Boolean).join(' · '))}</span></div>`;
+  return SideNav.row({
+    sel: t.slug,
+    on: state.sel === t.slug,
+    lead: SideNav.tile(t.name),
+    label: t.name,
+    title: rowTitle(
+      `${t.name} (${t.slug})`,
+      t.self_managed && 'self-managed',
+      people,
+      chans,
+      agents,
+      b && Agent.activity(b),
+      activityTitle(t),
+    ),
+    count: t.recent ?? '',
+    countTitle: activityTitle(t),
+  });
 }
 
-/** A knowledge base's row (a team's or a customer's you do not manage): its agent, its entries. */
-function baseRow(b) {
-  const agents = b.agents ? `agent in ${channelCount(b.agents)}` : '';
-  // A customer by the name the admin team gave it.
-  const name = (b.kind === 'org' && state.orgs.find((o) => o.slug === b.slug)?.name) || b.name;
-  return `<div class="row two${state.sel === b.slug ? ' on' : ''}" data-sel="${esc(b.slug)}" title="${esc(name)} (${esc(b.slug)})">
-        <span class="name">${esc(name)}</span>
-        <span class="sub">${esc([agents, Agent.activity(b), name !== b.slug && b.slug].filter(Boolean).join(' · '))}</span></div>`;
+/** A section of rows under its header, or what it says when nothing matches. */
+const navSection = (title, rows, { empty = '', hint = '' } = {}) => (rows.length || empty
+  ? `<h2 class="navhead"${hint ? ` title="${esc(hint)}"` : ''}>${esc(title)}</h2>${rows.join('') || `<div class="navempty">${esc(empty)}</div>`}` : '');
+
+/** The sidebar's frame, once per tab: its search field and add button stay as you type. */
+function listFrame() {
+  const el = $('list');
+  if ($('navList') && el.dataset.tab === state.tab) return;
+  el.dataset.tab = state.tab;
+  el.classList.add('sidenav');
+  const search = state.tab === 'teams'
+    ? `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter teams" value="${esc(state.filter)}"></label>`
+    : `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter customers" value="${esc(state.filter)}"></label>`;
+  const add = state.me.admin ? SideNav.add(state.tab === 'teams' ? 'New team' : 'New org') : '';
+  el.innerHTML = `<div class="navtop">${search}${add}</div><div class="navlist" id="navList"></div><div id="navFoot"></div>`;
+  if ($('navAdd')) $('navAdd').onclick = () => newForm($('navAdd'));
+  $('filter').oninput = (e) => {
+    state.filter = e.target.value;
+    renderList();
+  };
+}
+
+const ORG_TYPE_LABEL = {
+  customer: 'Customers', partner: 'Partners', vendor: 'Vendors', internal: 'Internal',
+};
+const orgTypeLabel = (t) => ORG_TYPE_LABEL[t] || `${t[0].toUpperCase()}${t.slice(1)}`;
+/** The org types there are, as the filter offers them. */
+const orgTypes = () => [...new Set([...state.types, ...state.orgs.map((o) => o.type)])].filter(Boolean);
+
+/** The Customers footer's filter: a type, and (the admin team's) only those without an icon. */
+function orgFilter(button) {
+  const groups = [{
+    title: 'Type',
+    items: [{ id: 'type:', label: 'All types', checked: !state.orgType },
+      ...orgTypes().map((t) => ({
+        id: `type:${t}`, label: orgTypeLabel(t), detail: String(state.orgs.filter((o) => o.type === t).length), checked: state.orgType === t,
+      }))],
+  }];
+  if (state.me.admin) {
+    groups.push({
+      items: [{
+        id: 'noicon', label: 'Without an icon', detail: String(state.orgs.filter(iconless).length), checked: state.noIcon, check: true,
+      }],
+    });
+  }
+  SideNav.menu(button, groups, (id) => {
+    if (id === 'noicon') state.noIcon = !state.noIcon;
+    else state.orgType = id.slice('type:'.length);
+    renderList();
+  });
 }
 
 function drawList() {
+  listFrame();
   const f = state.filter.toLowerCase();
-  const matches = (b) => !f || `${b.name} ${b.slug}`.toLowerCase().includes(f);
+  const matches = (x) => !f || `${x.name || ''} ${x.slug}`.toLowerCase().includes(f);
+  let body;
+  let foot;
   if (state.tab === 'teams') {
-    // The teams you do not manage: their overview, and their agents read-only.
-    const managed = new Set(state.teams.map((t) => t.slug));
+    // Every team: the directory's (everyone's, with how busy each is), with what the admin API
+    // says of those you manage; you see the overview of the others, and their agents read-only.
+    const managed = new Map(state.teams.map((t) => [t.slug, t]));
     const listed = state.directory.length ? state.directory
       : state.bases.filter((b) => b.kind === 'team').map((b) => ({ slug: b.slug, name: b.name }));
-    const others = state.me.admin ? [] : listed.filter((t) => !managed.has(t.slug) && matches(t));
-    const rows = state.teams.filter((t) => !f || `${t.name} ${t.slug}`.toLowerCase().includes(f)).map((t) => `
-      <div class="row two${state.sel === t.slug ? ' on' : ''}" data-sel="${esc(t.slug)}" title="${esc(t.name)} (${esc(t.slug)})">
-        <span class="name">${esc(t.name)}</span>
-        <span class="sub">${t.self_managed ? '<span title="Every member is a team manager">Self-managed</span> · ' : ''}${t.members} ${t.members === 1 ? 'person' : 'people'} · ${channelCount(t.channels)}${t.shared ? ` + ${t.shared} shared` : ''} · ${esc(t.slug)}</span></div>`).join('');
-    const un = state.unassigned && state.unassigned.channels ? `<div class="row two${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}">
-        <span class="name"><i>Unassigned</i></span><span class="sub">${channelCount(state.unassigned.channels)}</span></div>` : '';
-    const yours = state.me.admin || state.me.manages?.length
-      ? `<h2>${state.me.admin ? 'Ops teams' : 'Teams you manage'}</h2>${rows || '<div class="empty">No teams.</div>'}${un}` : '';
-    const theirs = others.length || !yours ? `<h2>${yours ? 'Other teams' : 'Ops teams'}</h2>${others.map(teamRow).join('') || '<div class="empty">No teams.</div>'}` : '';
-    const groups = state.me.admin ? groupList(f) : '';
-    $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter teams" value="${esc(state.filter)}"></label>
-      ${yours}${groups}${theirs}
-      ${state.me.admin ? `<h2>New team</h2><form class="form" id="newTeam"><label class="fld grow"><span>Name</span><input id="ntName" required></label>
-        <label class="fld"><span>Slug</span><input id="ntSlug" pattern="[a-z0-9][a-z0-9-]*" required></label><button class="primary">Create</button></form>` : ''}
-      <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
-    if (!state.me.admin) {
-      wireFilter();
-      return;
+    const all = [...listed.map((t) => ({ ...t, ...managed.get(t.slug) })),
+      ...state.teams.filter((t) => !listed.some((x) => x.slug === t.slug))].filter(matches);
+    const mine = new Set([...(state.me.teams || []).map((t) => t.slug), ...(state.me.manages || [])]);
+    const yours = ranked(all.filter((t) => mine.has(t.slug)), (t) => t.name);
+    const others = ranked(all.filter((t) => !mine.has(t.slug)), (t) => t.name);
+    const un = state.unassigned && state.unassigned.channels && (!f || 'unassigned'.includes(f))
+      ? SideNav.todo({
+        sel: UNASSIGNED, on: state.sel === UNASSIGNED, label: 'Unassigned channels', count: state.unassigned.channels, title: 'The channels no rule files under a team',
+      }) : '';
+    body = `${un}${state.me.admin ? groupList(f) : ''}
+      ${navSection('Your teams', yours.map(teamRow))}
+      ${navSection(yours.length ? 'Other teams' : 'Teams', others.map(teamRow), { empty: f ? 'Nothing matches.' : (yours.length ? '' : 'No teams.') })}`;
+    foot = SideNav.foot('teams');
+  } else {
+    const shown = (o) => matches(o) && (!state.orgType || o.type === state.orgType) && (!state.noIcon || iconless(o));
+    const orgs = state.orgs.filter(shown);
+    const followed = ranked(orgs.filter((o) => followsOrg(o.slug)), orgName);
+    let middle = '';
+    let rest = orgs.filter((o) => !followsOrg(o.slug));
+    if (!state.me.admin && onATeam()) {
+      // The customers your teams own (their agents, which their managers change).
+      const ours = state.bases.filter((b) => b.kind === 'org' && !followsOrg(b.slug))
+        .map((b) => ({ ...(state.orgs.find((o) => o.slug === b.slug) || { slug: b.slug, name: b.name, type: 'customer' }), base: b }))
+        .filter(shown);
+      const slugs = new Set(ours.map((o) => o.slug));
+      rest = rest.filter((o) => !slugs.has(o.slug));
+      middle = navSection('Your teams\' customers', ranked(ours, orgName).map(orgRow), {
+        hint: 'The customers with a channel filed under or shared with one of your teams, once their thread agents started a knowledge base',
+      });
     }
+    const un = state.me.admin && state.orgsUnassigned && state.orgsUnassigned.channels && (!f || 'unassigned'.includes(f))
+      ? SideNav.todo({
+        sel: UNASSIGNED, on: state.sel === UNASSIGNED, label: 'Unassigned channels', count: state.orgsUnassigned.channels, title: 'The channels no rule files under an org',
+      }) : '';
+    const yours = followed.length || middle;
+    body = `${un}${onATeam() ? dupSection(f) : ''}
+      ${navSection('Following', followed.map(orgRow))}${middle}
+      ${navSection(yours ? 'Other customers' : 'Customers', ranked(rest, orgName).map(orgRow), { empty: f || state.orgType || state.noIcon ? 'Nothing matches.' : (yours ? '' : 'No customer yet.') })}`;
+    const label = [state.orgType ? orgTypeLabel(state.orgType) : 'All types', state.noIcon && 'no icon'].filter(Boolean).join(', ');
+    foot = SideNav.foot('orgs', { filter: { label, on: Boolean(state.orgType || state.noIcon) } });
+  }
+  SideNav.fill($('navList'), body);
+  $('navFoot').outerHTML = `<div id="navFoot">${foot}</div>`;
+  const redraw = () => renderList();
+  SideNav.wire($('list'), redraw);
+  if ($('list').querySelector('[data-nav-filter]')) $('list').querySelector('[data-nav-filter]').onclick = (e) => orgFilter(e.currentTarget);
+  for (const el of $('navList').querySelectorAll('[data-sel]')) el.onclick = () => pickRow(el.dataset.sel);
+}
+
+/**
+ * The admin team's form for a new team or a new org, in a Popover under the add button: what
+ * it was made with goes back into it when it could not be.
+ */
+function newForm(button) {
+  const el = openPop(button);
+  if (!el) return;
+  el.classList.add('newpop');
+  if (state.tab === 'teams') {
+    el.innerHTML = `<form class="form" id="newTeam"><p class="what">New team</p><label class="fld grow"><span>Name</span><input id="ntName" required></label>
+        <label class="fld"><span>Slug</span><input id="ntSlug" pattern="[a-z0-9][a-z0-9-]*" required></label><button class="primary">Create</button></form>
+      <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
     $('ntName').oninput = () => { if (!$('ntSlug').dataset.touched) $('ntSlug').value = $('ntName').value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); };
     $('ntSlug').oninput = () => { $('ntSlug').dataset.touched = '1'; };
     $('newTeam').onsubmit = async (e) => {
       e.preventDefault();
       const body = { slug: $('ntSlug').value, name: $('ntName').value };
-      // Emptied at once, for the next team; back in the fields if it could not be created.
-      $('ntSlug').value = '';
-      $('ntName').value = '';
-      delete $('ntSlug').dataset.touched;
       const r = await call('/api/admin/teams', 'POST', body);
       if (!r.ok) {
         listError(`${body.name}: ${r.body.error || `failed (${r.status})`}`);
-        if ($('ntName') && !$('ntName').value) {
-          $('ntName').value = body.name;
-          $('ntSlug').value = body.slug;
-          $('ntSlug').dataset.touched = '1';
-        }
         return;
       }
       state.listError = '';
+      el.hidePopover();
       state.teams.push({
-        ...r.body.team, members: 0, rules: 0, channels: 0, threads: 0,
+        ...r.body.team, members: 0, rules: 0, channels: 0, threads: 0, recent: 0,
       });
       state.teams.sort((x, y) => x.name.localeCompare(y.name));
       select(r.body.team.slug);
     };
-  } else if (!state.me.admin && !onATeam()) {
-    // Adobe's people on no team: the customers they follow, then every other one, to see its
-    // overview.
-    const orgMatch = (o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f);
-    const followed = state.orgs.filter((o) => followsOrg(o.slug) && orgMatch(o));
-    const rest = state.orgs.filter((o) => orgMatch(o) && !followsOrg(o.slug));
-    $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter customers" value="${esc(state.filter)}"></label>
-      ${followed.length ? `<h2>Customers you follow</h2>${followed.map(followedRow).join('')}` : ''}
-      <h2>${followed.length ? 'Every other customer' : 'Customers'}</h2>${rest.map((o) => orgRow(o)).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No customer yet.'}</div>`}`;
-  } else if (!state.me.admin) {
-    // The customers you follow, then those your teams own (their agents, which their managers
-    // change), then every other one: to follow it, or ask for its channels.
-    const orgMatch = (o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f);
-    const followed = state.orgs.filter((o) => followsOrg(o.slug) && orgMatch(o));
-    const kb = state.bases.filter((b) => b.kind === 'org' && matches(b) && !followsOrg(b.slug))
-      .sort((x, y) => x.name.localeCompare(y.name));
-    const ours = new Set(kb.map((b) => b.slug));
-    const rest = state.orgs.filter((o) => orgMatch(o) && !ours.has(o.slug) && !followsOrg(o.slug));
-    $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter customers" value="${esc(state.filter)}"></label>
-      ${dupSection(f)}${followed.length ? `<h2>Customers you follow</h2>${followed.map(followedRow).join('')}` : ''}
-      <h2>Customers of your teams</h2>${kb.map(baseRow).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No customer of your teams has a knowledge base yet.'}</div>`}
-      <p class="hint">The customers with a channel filed under or shared with one of your teams, once their thread agents started a knowledge base.</p>
-      ${rest.length ? `<h2>Every other customer</h2>${rest.map((o) => orgRow(o)).join('')}` : ''}`;
-    wireDups();
   } else {
-    const rows = state.orgs.filter((o) => (!f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f))
-      && (!state.noIcon || iconless(o))).map((o) => orgRow(o)).join('');
-    // The channels without an org, to be given one (see "unassigned channels").
-    const un = state.orgsUnassigned && state.orgsUnassigned.channels && (!f || 'unassigned'.includes(f))
-      ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}"><span class="ico none"></span>
-        <span class="name"><i>Unassigned</i></span><span class="sub">${channelCount(state.orgsUnassigned.channels)}</span></div>` : '';
-    $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter orgs" value="${esc(state.filter)}"></label>
-      ${dupSection(f)}${state.dups && state.dups.pairs.length ? '<h2>Every org</h2>' : ''}
-      <label class="only"><input type="checkbox" id="noIcon"${state.noIcon ? ' checked' : ''}> Only the ${state.orgs.filter(iconless).length} without an icon</label>
-      ${un}${rows || (un ? '' : '<div class="empty">Nothing matches.</div>')}
-      <h2>New org</h2><form class="form" id="newOrg"><label class="fld grow"><span>Display name</span><input id="noName" required></label>
-        <select id="noType">${state.types.map((t) => `<option>${t}</option>`).join('')}</select><button class="primary">Create</button></form>
+    el.innerHTML = `<form class="form" id="newOrg"><p class="what">New org</p><label class="fld grow"><span>Display name</span><input id="noName" required></label>
+        <label class="fld"><span>Type</span><select id="noType">${state.types.map((t) => `<option>${t}</option>`).join('')}</select></label><button class="primary">Create</button></form>
       <p class="hint">Channels are filed under an org by the rules (<code>aem-&lt;slug&gt;</code>) or a manual assignment.</p>
       <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
-    wireDups();
-    $('noIcon').onchange = (e) => {
-      state.noIcon = e.target.checked;
-      renderList();
-    };
     $('newOrg').onsubmit = async (e) => {
       e.preventDefault();
       const body = { name: $('noName').value, type: $('noType').value };
-      $('noName').value = '';
       const r = await call('/api/admin/orgs', 'POST', body);
       if (!r.ok) {
         listError(`${body.name}: ${r.body.error || `failed (${r.status})`}`);
-        if ($('noName') && !$('noName').value) $('noName').value = body.name;
         return;
       }
       state.listError = '';
-      state.orgs.push({ ...r.body.org, channels: 0, threads: 0 });
+      el.hidePopover();
+      state.orgs.push({
+        ...r.body.org, channels: 0, threads: 0, recent: 0,
+      });
       state.orgs.sort((x, y) => (x.name || x.slug).localeCompare(y.name || y.slug));
       select(r.body.org.slug);
     };
   }
-  wireFilter();
+  placePop(el, button);
+  el.querySelector('input').focus();
 }
 
 /**
@@ -764,6 +841,8 @@ function sectionsOf(tab, slug) {
     // A team's and a customer's overview, everyone's (ui/team.js, ui/customer.js); then what
     // changes them.
     ...(slug !== UNASSIGNED ? ['overview'] : []),
+    // A team's vendors, everyone's too (ui/team.js `TeamView.vendors`).
+    ...(tab === 'teams' && slug !== UNASSIGNED ? ['vendors'] : []),
     ...(own ? ['own'] : []),
     ...(b ? ['agents', 'mcp', ...(b.kind === 'team' ? ['extraction'] : []), 'kb', 'history'] : []),
   ];
@@ -773,11 +852,14 @@ function sectionsOf(tab, slug) {
 function sectionTabs() {
   const b = baseOf(state.tab, state.sel);
   const tags = b ? Agent.tags(b.repo) : {};
-  const label = { overview: 'Overview', own: 'Manage', ...SECTION_LABEL };
+  const label = {
+    overview: 'Overview', vendors: 'Vendors', own: 'Manage', ...SECTION_LABEL,
+  };
   const orgTitle = state.me.admin ? 'Its name, icon, type, channels and who follows it' : 'Its channels and who follows it';
   const title = {
     overview: state.tab === 'teams' ? 'Its people, customers, collaborators, technologies and knowledge base'
       : 'Its people, Adobe\'s people and teams on it, what it asks about, its channels, technologies and knowledge base',
+    vendors: 'The vendors it works with: their cases, how soon they answer, and what waits on them',
     own: state.tab === 'teams' ? 'Its members, rules, channels and technologies: for its managers and the admin team' : orgTitle,
     ...SECTION_TITLE,
   };
@@ -829,9 +911,10 @@ function showPicked({ channel = null, flash = null, fresh = false } = {}) {
       <div class="empty">${tab === 'teams' ? 'This team has no knowledge base yet.' : 'None of your teams works with this customer, or its agents have not started a knowledge base yet.'}</div>`;
     return;
   }
-  if (section === 'overview' || section === 'own') {
+  if (section === 'overview' || section === 'own' || section === 'vendors') {
     let shown;
-    if (section === 'overview' && tab === 'teams') shown = showOverview(sel);
+    if (section === 'vendors') shown = showVendors(sel);
+    else if (section === 'overview' && tab === 'teams') shown = showOverview(sel);
     else if (section === 'overview') shown = showOrgOverview(sel);
     else if (tab === 'teams') shown = showTeam(sel);
     else shown = showOrg(sel);
@@ -856,6 +939,8 @@ const READS = {
   overview: (tab, sel) => (tab === 'teams' ? `/api/teams/profile?team=${encodeURIComponent(sel)}`
     : `/api/customers/profile?org=${encodeURIComponent(sel)}`),
   own: (tab, sel) => `/api/admin/${tab === 'teams' ? 'team' : 'org'}?slug=${encodeURIComponent(sel)}`,
+  // A team's Vendors section (src/vendors.js).
+  vendors: (tab, sel) => `/api/teams/vendors?team=${encodeURIComponent(sel)}`,
 };
 /** The people suggested for a team, which its Manage section shows (not the admin team's). */
 const suggestPath = (slug) => `/api/admin/member-suggestions?team=${encodeURIComponent(slug)}`;
@@ -875,6 +960,8 @@ function warm(tab, sel, section, { agent = false } = {}) {
     cached(READS.overview(tab, sel)).then((r) => {
       if (r.ok && (tab === 'teams' ? r.body.kb?.stack : r.body.kb?.drawing)) cached(stackPath(tab, sel));
     });
+  } else if (s === 'vendors') {
+    cached(READS.vendors(tab, sel));
   } else if (s === 'own') {
     cached(READS.own(tab, sel));
     if (tab === 'teams' && sel !== 'admin' && sel !== UNASSIGNED) cached(suggestPath(sel));
@@ -2071,6 +2158,54 @@ async function showOverview(slug) {
   if (p.kb?.stack) drawTeamStack(slug, current);
 }
 
+// ---- a team's vendors -----------------------------------------------------------------------
+//
+// The second section of a team's page, everyone's: the vendors it works with and what waits on
+// them, from GET /api/teams/vendors (src/vendors.js), which ui/team.js draws (`TeamView.vendors`).
+// Its managers and the admin team follow a vendor whose channels are not in its inbox yet (PUT
+// /api/admin/org-follows, as on the vendor's page in Customers).
+
+async function showVendors(slug) {
+  const current = loadingPage();
+  const r = await cached(READS.vendors('teams', slug));
+  if (!current()) return;
+  state.view = { target: 'vendors', value: slug };
+  const title = (name) => `<div class="title">${backButton()}<h1 class="fill">${esc(name)}</h1><span class="sub mono">${esc(slug)}</span></div>`;
+  if (!r.ok) {
+    $('detail').innerHTML = `${title(teamLabel(slug))}${sectionsNav()}<div class="empty">${esc(r.body.error || 'Could not load.')}</div>`;
+    tabInView();
+    return;
+  }
+  const p = r.body;
+  const ctx = {
+    orgHref: (org) => address({ tab: 'orgs', sel: org, section: 'overview' }),
+    orgName: (org, name) => name || orgLabel(org),
+    orgIcon: (org, icon) => {
+      const o = state.orgs.find((x) => x.slug === org);
+      return ico(icon || o?.icon || null, o?.domain || null);
+    },
+  };
+  const draw = () => {
+    $('overview').innerHTML = TeamView.vendors(p, ctx);
+    // The team follows a vendor as Follow's chevron does it (ui/follow.js): PUT /api/follows
+    // with the team, said with Undo; `followChanged` draws the section again from the server.
+    for (const b of $('overview').querySelectorAll('[data-follow]')) {
+      const org = b.dataset.follow;
+      b.onclick = () => hold(b, `orgfollow:${slug}:${org}`, async () => {
+        if (!await Follow.toggle('org', org, orgLabel(org), slug)) return;
+        const v = p.vendors.find((x) => x.slug === org);
+        if (v) Object.assign(v, { follows: true, inInbox: true });
+      }).then(() => { if (state.view?.target === 'vendors' && state.view.value === slug && $('overview')) draw(); });
+    }
+  };
+  $('detail').innerHTML = `${title(p.team.name)}${sectionsNav()}
+    <div class="status" id="status"></div>
+    <div class="ov" id="overview"></div>`;
+  showStatus();
+  tabInView();
+  draw();
+}
+
 async function showTeam(slug) {
   const current = loadingPage();
   const r = await cached(READS.own('teams', slug));
@@ -2204,16 +2339,36 @@ function groupList(f) {
   const match = (g) => !f || `${g.prefix} ${g.name}`.toLowerCase().includes(f);
   const row = (g) => {
     const checked = g.people.filter((p) => p.suggested).length;
-    const fits = g.team ? ` · likely ${esc(teamLabel(g.team.slug))}` : '';
-    return `<div class="row two${state.sel === `${GROUP}${g.prefix}` ? ' on' : ''}" data-sel="${esc(GROUP + g.prefix)}" title="Channels starting with ${esc(g.prefix)}">
-      <span class="name"><span class="mono">${esc(g.prefix)}</span>…</span>
-      <span class="sub">${channelCount(g.size)} · ${checked ? peopleCount(checked) : 'nobody in most of them'}${fits}</span></div>`;
+    const fits = g.team ? `likely ${teamLabel(g.team.slug)}` : '';
+    return SideNav.row({
+      sel: GROUP + g.prefix,
+      on: state.sel === `${GROUP}${g.prefix}`,
+      labelHtml: `<span class="mono">${esc(g.prefix)}</span>…`,
+      title: rowTitle(
+        `Channels starting with ${g.prefix}`,
+        channelCount(g.size),
+        checked ? peopleCount(checked) : 'nobody in most of them',
+        fits,
+      ),
+      count: g.size,
+      countTitle: channelCount(g.size),
+    });
   };
   const offered = state.groups.filter(match);
   const dismissed = state.dismissedGroups.filter(match);
   if (!offered.length && !dismissed.length) return '';
-  return `<h2>Suggested teams</h2>${offered.map(row).join('') || '<div class="empty">None now.</div>'}
-    ${dismissed.length ? `<details class="dismissed"${dismissed.some((g) => state.sel === `${GROUP}${g.prefix}`) ? ' open' : ''}><summary class="sub">${dismissed.length} dismissed</summary>${dismissed.map(row).join('')}</details>` : ''}`;
+  const holds = (list) => list.some((g) => state.sel === `${GROUP}${g.prefix}`);
+  const more = dismissed.length ? SideNav.group({
+    key: 'teams:groups:dismissed', label: `${dismissed.length} dismissed`, body: dismissed.map(row).join(''), holds: holds(dismissed),
+  }) : '';
+  return SideNav.group({
+    key: 'teams:groups',
+    label: 'Suggested teams',
+    count: offered.length,
+    title: 'Groups of the admin team\'s channels that look like a team of their own',
+    body: `${offered.map(row).join('') || '<div class="navempty">None now.</div>'}${more}`,
+    holds: Boolean(f) || holds(offered) || holds(dismissed),
+  });
 }
 
 const slugFrom = (name) => name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -2830,6 +2985,12 @@ async function showOrgOverview(slug) {
     kbHref: (path) => (base && p.kb?.readable ? address({ section: 'kb', path }) : null),
     // A node of the Topics page, picked, as a team's overview links them.
     topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
+    // A vendor's page lists the customers of its products.
+    orgHref: (org) => address({ tab: 'orgs', sel: org, section: 'overview' }),
+    orgIcon: (org, icon) => {
+      const o = state.orgs.find((x) => x.slug === org);
+      return ico(icon || o?.icon || null, o?.domain || null);
+    },
   };
   const name = p.org.name || p.org.slug;
   const inbox = orgInbox(slug, p.teams);
@@ -3046,6 +3207,11 @@ async function followChanged(change) {
   if (change.kind === 'org') renderList();
   const v = state.view;
   if (!change.team || !v) return;
+  // A team's Vendors section, which says whom it follows (an Undo there too).
+  if (v.target === 'vendors' && v.value === change.team && change.kind === 'org') {
+    showVendors(change.team);
+    return;
+  }
   if (v.target === 'org' && v.value === change.id) {
     const now = await call(READS.own('orgs', change.id));
     if (v !== state.view || !now.ok) return;
@@ -3374,10 +3540,16 @@ function dupRow(p) {
   const asked = openAsks(p).length;
   const said = p.p === null ? 'Clef has not said yet' : `${pct(p.p)} one, says Clef`;
   const why = [`${p.a}, ${p.b}`, said, asked ? 'merge asked for' : '', p.dismissed ? 'not the same' : ''].filter(Boolean).join(' · ');
-  return `<div class="row two dup${state.sel === pairSel(p.a, p.b) ? ' on' : ''}" data-sel="${esc(pairSel(p.a, p.b))}"
-      title="${esc(`${dupName(p.a)} (${p.a}) and ${dupName(p.b)} (${p.b})`)}">
-    <span class="name">${ico(orgs[p.a].icon, orgs[p.a].domain)}${ico(orgs[p.b].icon, orgs[p.b].domain)}<span>${esc(dupName(p.a))} <span class="sep">and</span> ${esc(dupName(p.b))}</span></span>
-    <span class="sub">${esc(why)}</span></div>`;
+  return SideNav.row({
+    sel: pairSel(p.a, p.b),
+    on: state.sel === pairSel(p.a, p.b),
+    cls: 'dup',
+    lead: `${ico(orgs[p.a].icon, orgs[p.a].domain)}${ico(orgs[p.b].icon, orgs[p.b].domain)}`,
+    labelHtml: `${esc(dupName(p.a))} <span class="sep">and</span> ${esc(dupName(p.b))}`,
+    title: `${dupName(p.a)} (${p.a}) and ${dupName(p.b)} (${p.b}) · ${why}`,
+    count: asked ? 'asked' : (p.p === null ? '' : pct(p.p)),
+    countTitle: said,
+  });
 }
 
 /** The pairs at the top of the list (filtered as the list is), the less likely ones folded. */
@@ -3388,14 +3560,19 @@ function dupSection(f) {
   const top = d.pairs.filter((p) => likelyPair(p) && match(p));
   const rest = d.pairs.filter((p) => !likelyPair(p) && match(p));
   if (!top.length && !rest.length && !d.unchecked) return '';
-  const checking = d.unchecked ? `<div class="sub pad">Clef is looking at ${d.unchecked} more…</div>` : '';
-  const open = state.dupsMore || rest.some((p) => state.sel === pairSel(p.a, p.b));
-  return `<h2>Likely duplicates</h2>${top.map(dupRow).join('') || `<div class="empty pad">${f ? 'Nothing matches.' : 'None for now.'}</div>`}
-    ${checking}${rest.length ? `<details class="dismissed" id="dupMore"${open ? ' open' : ''}><summary class="sub">${rest.length} less likely</summary>${rest.map(dupRow).join('')}</details>` : ''}`;
-}
-
-function wireDups() {
-  if ($('dupMore')) $('dupMore').ontoggle = (e) => { state.dupsMore = e.target.open; };
+  const checking = d.unchecked ? `<div class="navnote">Clef is looking at ${d.unchecked} more…</div>` : '';
+  const holds = (list) => list.some((p) => state.sel === pairSel(p.a, p.b));
+  const more = rest.length ? SideNav.group({
+    key: 'orgs:dups:more', label: `${rest.length} less likely`, body: rest.map(dupRow).join(''), holds: holds(rest),
+  }) : '';
+  return SideNav.group({
+    key: 'orgs:dups',
+    label: 'Likely duplicates',
+    count: top.length,
+    title: 'Two orgs that may be one, as Clef sees them: merge them, or say they are not',
+    body: `${top.map(dupRow).join('') || `<div class="navempty">${f ? 'Nothing matches.' : 'None for now.'}</div>`}${checking}${more}`,
+    holds: (Boolean(f) && (top.length + rest.length) > 0) || holds(top) || holds(rest),
+  });
 }
 
 /** The org a pair keeps when nobody said: the one asked for, else the busier, else the named. */

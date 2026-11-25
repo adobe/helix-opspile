@@ -375,6 +375,14 @@ for a week; after that it stays kept, unfiled. A row given an `issue` that is no
 feedback issue when it is filed becomes a new issue instead. A crash between the issue and
 `filed_at` files it twice; the footer's `fb_…` says which.
 
+**Computer's browser session.** none → made → ended (`browser-session` in the agent's storage,
+`browserHost` in `src/agent/browser.js`). The first CDP connection of a computer's program makes
+a Chromium session on Browser Run and keeps its id; every later one connects to it, after an
+eviction too. Browser Run ends it ten minutes after its last connection, which nobody is told:
+the next connection it refuses forgets the id and makes another, once, and a second refusal
+fails the connection. Connections at once share one making (the promise is set before anything
+is awaited). A new image ends it (`DELETE`, and the id goes).
+
 **Agent turn.** working → done or failed. Worked out from the transcript (`src/agent/turn.js`). A turn
 that stopped half way with no run pending counts as failed after 15 minutes. A finished one is kept
 in D1 (`agent_turns`, one row per entry, `src/agent/kept.js`) for `GET /api/thread`: written a moment
@@ -459,8 +467,9 @@ older manifest goes on reading its layers after an upload. A running kernel keep
 booted with until it boots again.
 
 **Command request.** pending → running → done, timeout or failed; pending → denied or expired
-(`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). The agent asks
-(`request_bash`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
+(`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). A script request
+(`kind: 'codemode'`, `request_codemode`, `src/agent/scriptrequest.js`) is one too, with the same
+lifecycle. The agent asks (`request_bash`, `request_codemode`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
 transition is `WHERE status = …`, so of two clicks, or a click at the deadline, one wins and the
 other is told who did. The deadline's schedule is armed before the request is stored (a deadline
 with no request does nothing), and a request past its deadline reads as expired before the schedule
@@ -473,7 +482,13 @@ took its whole timeout: the shell says it stopped a run no other way, and a comm
 124 by itself. The kernel's shell says it with the signal that ended bash (143, or 137), under the
 same condition. `told_at` is written last, after the agent was
 told how the request ended; one that ended untold (the agent's storage failed) is told at its
-deadline, without what the command printed, which is kept nowhere.
+deadline, without what the command printed, which is kept nowhere. A script runs as the person
+who clicked only while that click's request lasts: each of its tool calls goes back to the Worker
+that serves it, so the object claims it, runs it and tells the agent before it answers; one whose
+object or click went away under it is lost, as a command whose object restarted, and the watchdog
+settles it as failed. A script that threw is `done`, with its `error`, as a nonzero exit is.
+`sidebar`, the sidebar message a request was asked in answer to, is written with it and never
+changes: where the inbox shows it follows from whether that conversation shows, not from state.
 
 **Tool request.** pending → granted → revoked; pending → denied (`tool_requests.status`,
 `src/toolrequests.js`, `src/agent/toolrequest.js`, `decideTool` in `src/agent/stub.js`). The agent

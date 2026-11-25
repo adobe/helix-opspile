@@ -106,6 +106,8 @@ export default [
         CustomerView: 'readonly',
         // A person's parts, as both people cards draw them, ui/person.js (the inbox, Teams).
         Person: 'readonly',
+        // The sidebar of Teams, Customers and Topics, ui/sidenav.js.
+        SideNav: 'readonly',
         // Content swaps that fade in, ui/app.js.
         Swap: 'readonly',
         // Links to the app opened in it, installed, ui/app.js.

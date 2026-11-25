@@ -32,6 +32,10 @@
  *   - its **knowledge base**: its entries by type, listed for whoever may read it
  *     (src/kbaccess.js), counted for everyone else; and whether it has a stack drawing.
  *
+ * A vendor's (`orgs.type` 'vendor') is the other way round: how soon it answers what Adobe starts
+ * (`answers.by` 'them'), and `vendor`, its cases, status posts and the customers on its products
+ * (src/vendors.js), whose lists are filtered per viewer.
+ *
  * "Its threads" are the channel conversations filed under it, active in the window. Names,
  * numbers, pictures and titles only: no message text, and no mail address, leaves the Worker. A
  * customer's numbers are kept CACHE_MS per isolate.
@@ -45,7 +49,9 @@ import { LAYERS, STACK_PATH } from './stack.js';
 import { partnerOf } from './profiles.js';
 import { personSlug } from './agent/okf.js';
 import { mailDomains } from './orgmerge.js';
+import { activeSince } from './listactivity.js';
 import { AVATAR, NAME, TITLE } from './personsql.js';
+import { VENDOR, vendorForViewer, vendorNumbers } from './vendors.js';
 import {
   byWeek, CACHE_MS, CATALOG_TYPES, distinctive, MAX_ENTRIES, techNames, UNASSIGNED, WEEK, WEEKS,
   zeros,
@@ -196,16 +202,18 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
         JOIN thread_areas a ON a.thread = mine.thread GROUP BY 1, 3
       UNION ALL SELECT mine.key, 'tech', x.tech, SUM(mine.n), COUNT(*) FROM mine
         JOIN thread_tech x ON x.thread = mine.thread GROUP BY 1, 3`),
-    // The threads its people started in the window, and Adobe's first post after their first.
+    // The threads started in the window, and the other side's first post after the first one:
+    // Adobe's in those its people started, theirs in those Adobe started (a vendor's answer).
     q(`WITH ${SCOPE}, f AS (SELECT scope.thread,
           (SELECT m.staff FROM messages m WHERE m.thread = scope.thread AND m.counted = 1
             AND m.deleted = 0 ORDER BY m.at LIMIT 1) AS staff,
           (SELECT MIN(m.at) FROM messages m WHERE m.thread = scope.thread AND m.counted = 1
             AND m.deleted = 0) AS first
         FROM scope JOIN threads h ON h.thread = scope.thread WHERE h.root_at >= ?2)
-      SELECT f.first, (SELECT MIN(m.at) FROM messages m WHERE m.thread = f.thread AND m.staff = 1
-          AND m.counted = 1 AND m.deleted = 0 AND m.at > f.first) AS answered
-      FROM f WHERE f.staff = 0`),
+      SELECT f.first, f.staff, (SELECT MIN(m.at) FROM messages m WHERE m.thread = f.thread
+          AND m.staff = 1 - f.staff AND m.counted = 1 AND m.deleted = 0 AND m.at > f.first)
+          AS answered
+      FROM f WHERE f.staff IS NOT NULL`),
     // Its channels, whichever team they are filed under (a re-filing not done yet: both).
     all(`SELECT h.source, h.tenant, h.channel_id, h.source || ':' || h.tenant || ':' || h.channel_id AS channel,
         h.team, COALESCE(c.name, MAX(h.channel_name)) AS name, c.archived_at, COUNT(*) AS threads,
@@ -568,7 +576,10 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
   };
 
   // How soon Adobe answers what its people start: the wait for Adobe's first post, in minutes.
-  const waits = firsts.filter((f) => f.answered)
+  // A vendor is the other way round: how soon it answers what Adobe starts.
+  const vendor = row && row.type === VENDOR;
+  const asked = firsts.filter((f) => Boolean(Number(f.staff)) === vendor);
+  const waits = asked.filter((f) => f.answered)
     .map((f) => (Date.parse(f.answered) - Date.parse(f.first)) / 60000);
 
   // The knowledge base: its entries by type, the catalog and its people's Contacts apart.
@@ -596,10 +607,13 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     breakdowns,
     threadCount: weeksOf.size,
     answers: {
-      asked: firsts.length,
+      by: vendor ? 'them' : 'adobe',
+      asked: asked.length,
       answered: waits.length,
       median: median(waits),
     },
+    // A vendor's cases, status posts and the customers' threads of its products (src/vendors.js).
+    ...(vendor ? { vendor: await vendorNumbers(env, slug, weeks) } : {}),
     people: topTheirs.map(personOut),
     peopleCount: theirs.length,
     partnerCount: theirs.filter(([, e]) => partnerOf(e.domain, partners)).length,
@@ -671,6 +685,7 @@ export async function orgProfile(env, me, slug, { now = new Date() } = {}) {
       })),
       drawing: readable && numbers.kb.drawing,
     },
+    ...(numbers.vendor ? { vendor: vendorForViewer(me, numbers.vendor) } : {}),
     may: { read: readable },
   };
 }
@@ -686,12 +701,13 @@ export async function orgDirectory(env) {
       (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug AND t.kind = 'channel')
         AS channels,
       (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug) AS threads,
+      (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug AND t.last_at >= ?2) AS recent,
       (SELECT MAX(COALESCE(last_at, any_at)) FROM threads t WHERE t.org = s.slug) AS latest
     FROM (SELECT slug FROM orgs UNION SELECT DISTINCT org FROM threads
       UNION SELECT slug FROM knowledge_bases WHERE kind = 'org') s
     LEFT JOIN orgs o ON o.slug = s.slug
-    WHERE s.slug != ? AND s.slug NOT IN (SELECT slug FROM org_merges)
-    ORDER BY COALESCE(o.name, s.slug)`).bind(UNASSIGNED).all();
+    WHERE s.slug != ?1 AND s.slug NOT IN (SELECT slug FROM org_merges)
+    ORDER BY COALESCE(o.name, s.slug)`).bind(UNASSIGNED, activeSince()).all();
   // Its usual mail domain, whose favicon it is shown with when it has no icon (as Customers').
   const domains = await mailDomains(env);
   return (results || []).map((o) => ({ ...o, domain: (domains.get(o.slug) || [])[0] || null }));

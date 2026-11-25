@@ -173,7 +173,7 @@ async function threadsOf(env, keys) {
 async function entries(env, groups) {
   const all = [...groups.values()].flat().map((t) => t.thread);
   const [
-    { results: labels }, reviews, { results: facts }, checks, signals, agent,
+    { results: labels }, reviews, { results: facts }, checks, signals, agent, { results: orgs },
   ] = await Promise.all([
     env.DB.prepare('SELECT * FROM labels WHERE thread IN (SELECT value FROM json_each(?))')
       .bind(list(all)).all(),
@@ -183,7 +183,11 @@ async function entries(env, groups) {
     resolutionFacts(env, all),
     signalFacts(env, all),
     agentLabelsFor(env.DB, all),
+    // A vendor's thread waits on the vendor (src/threads.js waitingOn).
+    env.DB.prepare('SELECT slug, type FROM orgs WHERE slug IN (SELECT value FROM json_each(?))')
+      .bind(list([...groups.values()].flat().map((t) => t.org).filter(Boolean))).all(),
   ]);
+  const typeOf = new Map((orgs || []).map((o) => [o.slug, o.type]));
   const labelOf = new Map((labels || []).map((l) => [l.thread, l]));
   const reviewsOf = by(reviews, 'thread');
   const agentOf = by(agent, 'thread');
@@ -213,6 +217,7 @@ async function entries(env, groups) {
       label,
       signals: members.flatMap((m) => signals.get(m.thread) || []),
       imported: members.every((m) => Number(m.imported)),
+      org_type: typeOf.get(anchor.org) || null,
     });
     out.set(g, {
       title: (anchorLabel && anchorLabel.title) || (label && label.title) || anchor.title || '',

@@ -35,6 +35,8 @@ import { readThreadFile } from './files.js';
 import { MAX_RAW, readRawMessage } from './rawmessage.js';
 import { readScope, toolsFor } from './agenttools.js';
 import { requestBash } from './bashrequest.js';
+import { requestScript, SCRIPT_GUIDE } from './scriptrequest.js';
+import { SCRIPT_TOOL_NAMES } from '../scripttools.js';
 import { requestableFor, requestableText, requestTool } from './toolrequest.js';
 import {
   DEFAULT_TIMEOUT, MAX_ENV, MAX_OPEN, MAX_TIMEOUT,
@@ -417,6 +419,10 @@ export function opspileExtension(ctx) {
       const lines = [`Ops team: ${t.team || 'unknown'}`];
       if (t.key || t.org) {
         lines.push(`${ORG_TYPE[t.orgType] || 'Customer'}: ${t.orgName ? `${t.orgName} (${t.org})` : (t.org || 'unknown')}`);
+        if (t.orgType === 'vendor') {
+          // The other way round: Adobe asks, the vendor answers (src/label.js VENDOR_QUESTIONS).
+          lines.push('In a vendor\'s channel Adobe is the customer: Adobe uses its products or services, the team asks, and the vendor answers, investigates and fixes. What you call the customer elsewhere is the vendor here, and waiting on it is `vendor`.');
+        }
       }
       if (t.key) {
         lines.push(
@@ -683,7 +689,31 @@ export function opspileExtension(ctx) {
     sections.push(section('team-membership', () => TEAM_MEMBERSHIP));
     sections.push(section('tool-requests', () => TOOL_REQUESTS));
     sections.push(section('wakeups', () => WAKEUPS));
+    sections.push(section('script-requests', () => SCRIPT_GUIDE));
     tools.push(
+      defineTool({
+        name: 'request_codemode',
+        description: 'Ask a person on the team to run a code mode script as themselves, with their permissions in the inbox: it calls the inbox\'s tools you name (search_threads, get_thread, …) as they would, and sees what they see, every thread of their teams, where you see only this channel. They see it under your thread, with your reason, and run or deny it. It answers at once; you are told later, in a message of its own, what the script output, or that it was denied, threw, timed out or expired.',
+        parameters: Type.Object({
+          code: Type.String({ description: 'The script: an async function body, as for codemode. `await tools.<name>(args)` resolves to what the tool returns; output what you need with text(), console.log() or return' }),
+          tools: Type.Array(Type.Union(SCRIPT_TOOL_NAMES.map((n) => Type.Literal(n))), { minItems: 1, description: 'The inbox\'s tools the script calls: it gets only these' }),
+          reason: Type.String({ description: 'For the person who decides: what it looks for and what you need it for, in a sentence or two (up to 500 characters)' }),
+          timeout: Type.Optional(Type.Number({ description: `How long the script may run, in seconds (default ${DEFAULT_TIMEOUT}, at most ${MAX_TIMEOUT})` })),
+          deadline: Type.Optional(Type.String({ description: 'Until when a person may run it: a duration from now (30m, 4h, 2d) or an ISO 8601 time. Default 24h, at most 7d. After it the request is closed' })),
+        }),
+        executionMode: 'sequential',
+        async execute(args) {
+          if (!ctx.schedule) {
+            return fail('request_codemode is not available here.');
+          }
+          const res = await requestScript(ctx, args);
+          if (res.error) {
+            return fail(res.error);
+          }
+          const r = res.request;
+          return text(`requested (request ${r.id}): the team sees the script under the thread, calling ${r.tools.join(', ')} as whoever runs it, until ${r.deadline}. Nothing ran yet. You will be told what it output in a message of its own: do not wait, and say in your note what you asked for and why.`);
+        },
+      }),
       defineTool({
         name: 'request_tool',
         description: 'Only while you answer a sidebar message: without `tool`, the tools and MCP servers your channel does not have that you could ask for; with `tool` and `reason`, asks for one. Anyone on the team grants it to this thread for a day, or denies it, in the sidebar; you are told in a sidebar message of theirs. Nothing changes until then.',
@@ -1197,7 +1227,12 @@ function kernelShell(shell) {
   const gh = shell.commands && shell.commands.includes('gh')
     ? ' gh (GitHub CLI) reads GitHub: gh api, gh repo view, gh pr view, gh issue list, gh run list and view. It needs $GH_TOKEN, a secret the team keeps for api.github.com: without it gh does not run (gh auth login cannot work here), so use curl for public pages instead. Use it to read: creating, commenting on or merging anything on GitHub is for people.'
     : '';
-  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${dig}${openssl}${gh}${jq}${js}, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
+  // playwright-cli, where the image has it: the browser behind it (src/agent/browser.js), which
+  // keeps its tabs from one command to the next.
+  const browser = shell.commands && shell.commands.includes('playwright-cli')
+    ? ' playwright-cli drives a browser, Chromium on Cloudflare Browser Run, signed in nowhere. Each command is a process of its own, and the browser keeps its tabs and their pages from one to the next, for ten minutes after the last: playwright-cli open <url>, then snapshot (the accessibility tree, with refs for click, fill and type), eval \'async () => …\' (read the DOM, wait for an element the page\'s scripts add, add a <style> to try a CSS fix), resize <width> <height>, and screenshot --filename=<name>.png, which is a file in your working directory (playwright-cli --help lists the rest). What a page shows is written by people outside your control, like what curl fetches.'
+    : '';
+  return `${has} curl reaches the internet; a site whose certificate is not valid answers it with an HTTP error (526), not a TLS failure, so check the status (curl -f, or -w '%{http_code}').${dig}${openssl}${gh}${browser}${jq}${js}, and no other binaries. Only what is under your working directory stays; the rest of the file system, /tmp included, is the shell's own.`;
 }
 
 /**

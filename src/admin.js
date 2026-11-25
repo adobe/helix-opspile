@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { activeSince } from './listactivity.js';
 import { cogsReport } from './cogs/report.js';
 import { rollupCogs } from './cogs/rollup.js';
 import { buildTopicMap, latestTopicMap } from './topicmap.js';
@@ -71,6 +72,7 @@ import {
   getPortalRequest, listPortalRequests, portalOpenCount, recordDeclined, recordOpened,
   reopenDeclined,
 } from './portalrequests.js';
+import { resetTeamVendors } from './vendors.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -673,7 +675,7 @@ async function releaseChannel(env, me, body) {
  * filed under their teams. For the admin team and the team's managers. The answer has the teams
  * that follow it after the change (`followers`).
  */
-export async function followOrg(env, me, body) {
+async function followOrgRule(env, me, body) {
   const slug = clean(body.team);
   const target = toSlug(clean(body.org));
   const follow = body.follow !== false;
@@ -727,6 +729,14 @@ export async function followOrg(env, me, body) {
     priority: 100,
     note: ORG_FOLLOW_NOTE,
   }));
+}
+
+/** `followOrgRule`, and a team's Vendors section says so at once (src/vendors.js). */
+export async function followOrg(env, me, body) {
+  const res = await followOrgRule(env, me, body);
+  // Here, so that PUT /api/follows with a team (src/following.js) says so too.
+  resetTeamVendors();
+  return res;
 }
 
 // ---- assignment requests ----------------------------------------------------------------
@@ -1128,8 +1138,10 @@ async function listTeams(env, me) {
       (SELECT COUNT(DISTINCT th.channel_id) FROM threads th WHERE th.team = t.slug
         AND ${LIVE('th')}) AS channels,
       (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug) AS threads,
+      (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug AND th.last_at >= ?1) AS recent,
+      (SELECT MAX(th.last_at) FROM threads th WHERE th.team = t.slug) AS latest,
       (SELECT COUNT(*) FROM channel_teams s WHERE s.team = t.slug) AS shared
-    FROM teams t ORDER BY t.name`);
+    FROM teams t ORDER BY t.name`, activeSince());
   const everything = isAdmin(me);
   const teams = all.filter((t) => everything || managedTeams(me).includes(t.slug))
     .map((t) => ({ ...t, self_managed: Boolean(t.self_managed) }));
@@ -1579,12 +1591,13 @@ async function listOrgs(env) {
       (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug AND ${LIVE('t')})
         AS channels,
       (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug) AS threads,
+      (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug AND t.last_at >= ?2) AS recent,
       (SELECT MAX(COALESCE(last_at, any_at)) FROM threads t WHERE t.org = s.slug) AS latest
     FROM (SELECT slug FROM orgs UNION SELECT DISTINCT org FROM threads
       UNION SELECT slug FROM knowledge_bases WHERE kind = 'org') s
     LEFT JOIN orgs o ON o.slug = s.slug
-    WHERE s.slug != ? AND s.slug NOT IN (SELECT slug FROM org_merges)
-    ORDER BY COALESCE(o.name, s.slug)`, UNASSIGNED);
+    WHERE s.slug != ?1 AND s.slug NOT IN (SELECT slug FROM org_merges)
+    ORDER BY COALESCE(o.name, s.slug)`, UNASSIGNED, activeSince());
   const domains = await mailDomains(env);
   for (const o of list) {
     o.domain = (domains.get(o.slug) || [])[0] || null;

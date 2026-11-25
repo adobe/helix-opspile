@@ -108,6 +108,7 @@ import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { areaFile, compileAreas, isArea } from '../src/areas.js';
 import { topicsPage } from '../src/topicsapi.js';
 import { teamDirectory, teamProfile } from '../src/teamprofile.js';
+import { teamVendors } from '../src/vendors.js';
 import { orgDirectory, orgProfile } from '../src/orgprofile.js';
 import { personCard } from '../src/person.js';
 import { weeksTo } from '../src/trends.js';
@@ -1796,6 +1797,11 @@ async function api(req, res, url) {
     const r = await teamProfile(adminApi.env, topicsViewer(), url.searchParams.get('team'));
     return json(res, r.error ? { error: r.error } : r, r.error ? r.status || 400 : 200);
   }
+  // A team's vendors (src/vendors.js), the same way: Initech's half year (dev-ui-vendor.mjs).
+  if (url.pathname === '/api/teams/vendors') {
+    const r = await teamVendors(adminApi.env, topicsViewer(), url.searchParams.get('team'));
+    return json(res, r.error ? { error: r.error } : r, r.error ? r.status || 400 : 200);
+  }
   // A customer's overview (src/orgprofile.js), the same way: the customers' half year of
   // made-up posts (dev-ui-team.mjs, dev-ui-customer.mjs).
   if (url.pathname === '/api/customers') {
@@ -2152,7 +2158,8 @@ async function api(req, res, url) {
   const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);
   if (bash && req.method === 'POST') {
     // As src/agent/bashrequest.js: run answers once the command has started; it ends a few
-    // seconds later, and the room says so each time. The values are not kept, or printed.
+    // seconds later, and the room says so each time. The values are not kept, or printed. A
+    // script (`kind: 'codemode'`) answers once it has ended.
     const { thread: key, id, env: values = {} } = await readJson(req);
     const entry = store.threads.get(key);
     if (entry && !inTeam(entry.row.team) && maySee(entry)) {
@@ -2175,6 +2182,17 @@ async function api(req, res, url) {
     Object.assign(request, { by: { id: ME, name: me.name }, decided_at: at });
     if (bash[1] === 'deny') {
       Object.assign(request, { status: 'denied', finished_at: at });
+    } else if (request.kind === 'codemode') {
+      // As src/agent/stub.js: a script runs as you, and the answer comes once it has ended.
+      request.status = 'running';
+      broadcast(entry.row.team, { type: 'bash', thread: key });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 3000);
+      });
+      Object.assign(request, { status: 'done', finished_at: new Date().toISOString() });
+      console.log(`script ${id} on ${key}: ran`);
+      broadcast(entry.row.team, { type: 'bash', thread: key });
+      return json(res, { ok: true, request });
     } else {
       request.status = 'running';
       setTimeout(() => {

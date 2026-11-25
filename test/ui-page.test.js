@@ -1120,6 +1120,8 @@ describe('inbox page', () => {
         clock: () => '10:00 AM',
         timeTag: () => '<time>10:00 AM</time>',
         dayLabel: () => 'Today',
+        // The commands and scripts the agent asked for there (test/ui-bashline.test.js).
+        bashSideCards: () => [],
       };
       const globals = {
         ...base,
@@ -1704,6 +1706,8 @@ describe('inbox page', () => {
       assert.equal(computeStatus(t({ on: 'Customer', last: at(6, 10) })), 'quiet');
       Date.now = () => at(9, 11);
       assert.equal(computeStatus(t({ on: 'Customer', last: at(6, 10) })), 'silent');
+      // A vendor that has not answered for as long has gone silent too: chase it.
+      assert.equal(computeStatus(t({ on: 'Vendor', last: at(6, 10) })), 'silent');
     } finally {
       Date.now = real;
     }

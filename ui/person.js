@@ -18,7 +18,8 @@
  *
  * - `face`: their picture over their initials, on the hue of their name (`data-hue`), which shows
  *   while the picture loads or when it fails (Gravatar's 404);
- * - `freq`: how often they post, a line of their weeks beside it;
+ * - `freq`: how often they post, a line of their weeks beside it, in the color of their hue
+ *   (`tintOf`, as the overviews' rankings draw a person's line);
  * - `work`: what sets them apart, Clef's areas and technologies of their threads, each a link to
  *   it on the Topics page, and the customers they post for the most;
  * - `profile`: their profile on their team, the description of their Contact in its knowledge
@@ -37,6 +38,12 @@ globalThis.Person = (() => {
     for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
     return h % COLORS;
   };
+  /**
+   * The Spectrum 2 color of each hue (ui/spectrum.css colors `.av[data-hue]` by them), as the
+   * name a sparkline is tinted with (`data-tint`): a person's line is in their initials' color.
+   */
+  const TINTS = ['cinnamon', 'seafoam', 'purple', 'magenta', 'blue', 'green', 'brown', 'cyan'];
+  const tintOf = (name) => TINTS[hueOf(name || '?')];
   const initials = (name) => String(name || '?').replace(/\(.*?\)/g, '').split(/[\s,]+/).filter(Boolean)
     .map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const plural = (n, one, many = `${one}s`) => `${Number(n).toLocaleString('en')} ${n === 1 ? one : many}`;
@@ -68,19 +75,21 @@ globalThis.Person = (() => {
    */
   const face = (name, url, { cls = '', attrs = ' aria-hidden="true"' } = {}) => `<span class="av ps-av${cls ? ` ${cls}` : ''}" data-hue="${hueOf(name || '?')}"${attrs}>${esc(initials(name))}${url ? `<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</span>`;
 
-  /** A line of `values` (one a week), its area under it; `cls` colors it. */
-  function spark(values, { cls = '', w = 96, h = 24, label = '' } = {}) {
+  /** A line of `values` (one a week), its area under it; `cls` or `tint` (a color's name) colors it. */
+  function spark(values, {
+    cls = '', w = 96, h = 24, label = '', tint = '',
+  } = {}) {
     const m = Math.max(...values, 1);
     const n = values.length;
     const x = (i) => ((i * w) / Math.max(1, n - 1)).toFixed(1);
     const y = (v) => (h - 1 - ((h - 3) * v) / m).toFixed(1);
     const pts = values.map((v, i) => `${x(i)},${y(v)}`).join(' ');
-    return `<svg class="ps-spark${cls ? ` ${cls}` : ''}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"${label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"'}>`
+    return `<svg class="ps-spark${cls ? ` ${cls}` : ''}"${tint ? ` data-tint="${esc(tint)}"` : ''} viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"${label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"'}>`
       + `<polygon class="area" points="0,${h} ${pts} ${w},${h}"></polygon><polyline points="${pts}"></polyline></svg>`;
   }
 
-  /** How often they post: `w` is `{ messages, threads, weekly, last }`, over `weeks` weeks. */
-  const freq = (name, w, weeks = w.weekly.length) => `<div class="ps-freq">${spark(w.weekly, { label: `${name || 'Their'} messages, week by week` })}<div><b>${esc(often(w.messages, weeks))}</b><span class="sub">${esc(plural(w.messages, 'message'))} in ${esc(plural(w.threads, 'thread'))}${w.last ? ` · last ${esc(ago(w.last))}` : ''}</span></div></div>`;
+  /** How often they post: `w` is `{ messages, threads, weekly, last }`, over `weeks` weeks; the line in their color. */
+  const freq = (name, w, weeks = w.weekly.length) => `<div class="ps-freq">${spark(w.weekly, { label: `${name || 'Their'} messages, week by week`, tint: tintOf(name) })}<div><b>${esc(often(w.messages, weeks))}</b><span class="sub">${esc(plural(w.messages, 'message'))} in ${esc(plural(w.threads, 'thread'))}${w.last ? ` · last ${esc(ago(w.last))}` : ''}</span></div></div>`;
 
   /** A tag of theirs, linked to it on the Topics page where there is one (`href`). */
   const chip = (name, threads, { cls = '', href = null } = {}) => link(href, esc(name), {
@@ -116,6 +125,6 @@ globalThis.Person = (() => {
       <p>${esc(x.description)}</p>${link(x.href, esc(`Profile on ${x.teamName || x.team}`), { cls: 'ps-src', title: x.href ? 'Their Contact in the team\'s knowledge base' : '' })}</div>`).join('');
 
   return {
-    esc, hueOf, initials, plural, ago, often, link, face, spark, freq, chip, work, profile,
+    esc, hueOf, tintOf, initials, plural, ago, often, link, face, spark, freq, chip, work, profile,
   };
 })();

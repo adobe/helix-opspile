@@ -3,10 +3,11 @@
  * this adds to. Only Spectrum 2 tokens (see ui/spectrum.css).
  *
  * What each part is in Spectrum 2 (https://s2.spectrum.corp.adobe.com):
- * - the page: layer 1 under the header, the graph and the panel cards on layer 2.
+ * - the page: layer 1 under the header, the graph and the panel cards on layer 2; the sidebar
+ *   on the left is every list page's (ui/spectrum.css, "the sidebar").
  * - the filters: a toolbar of one size: a Picker (the team), the kinds shown as toggle
- *   ActionButtons with their swatch (a legend that filters), a Picker (the shared threads), a
- *   SearchField with suggestions (find), and the build's date beside an ActionButton (Rebuild).
+ *   ActionButtons with their swatch (a legend that filters), and the build's date beside an
+ *   ActionButton (Rebuild); the SearchField that finds is the sidebar's.
  * - the graph: the page's own SVG, a node per person, topic, tag or customer in Spectrum 2's
  *   categorical palette (s2Categorical16: indigo, seafoam, orange, magenta, celery), the lines
  *   neutral, a product not in the tech stack a hollow ring of its color;
@@ -17,16 +18,19 @@
  */
 
 /* ==== The page's layout ========================================================================
-   Where everything is: the toolbar on top, the graph beside its panel under it, as tall as what
-   is left of the window. Its look, in Spectrum 2's components, follows below. */
+   Where everything is: the sidebar on the left (ui/sidenav.js, as Teams' and Customers'), and
+   beside it the toolbar on top, the graph beside its panel under it, as tall as what is left of
+   the window. Its look, in Spectrum 2's components, follows below. */
 :root { --safe-bottom: env(safe-area-inset-bottom, 0px); }
 :root.keyboard { --safe-bottom: 0px; }
 button { white-space: nowrap; }
 button:disabled { opacity: .45; cursor: default; }
 
 /* The header is every page's (ui/spectrum.css). */
-main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
-  padding: 0 calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) calc(var(--spectrum-spacing-300) + var(--safe-bottom)); }
+main { flex: 1; min-height: 0; display: grid; grid-template-columns: calc(var(--spectrum-spacing-100) * 34) minmax(0, 1fr); overflow: hidden;
+  padding: 0 calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) 0px 0px; }
+main > .sidenav { padding: var(--spectrum-spacing-200) var(--frame-gap) var(--safe-bottom) var(--spectrum-spacing-300); }
+main > .page { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding-bottom: calc(var(--spectrum-spacing-300) + var(--safe-bottom)); }
 #body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .empty { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-100); }
 
@@ -37,7 +41,6 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: 
 /* The kinds wrap where the bar is narrower than they are (a phone), so none is cut off. */
 .bar .legend { flex-wrap: wrap; }
 .bar .spacer { flex: 1; }
-.bar input.search { width: calc(var(--spectrum-spacing-100) * 24); }
 
 .split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 52); }
 .graph { position: relative; min-height: 0; overflow: hidden; }
@@ -94,25 +97,20 @@ tr.pick { cursor: pointer; }
 .tlegend li { display: flex; align-items: center; }
 .swatch { display: inline-block; flex: none; }
 .tip .row { display: flex; align-items: center; }
-/* The trees of the panel: a row a node, its fold first, a child under its group. */
-ul.tree { list-style: none; margin: 0; padding: 0; }
-ul.tree li.tr { display: flex; align-items: center; }
-ul.tree .chev { flex: none; }
-ul.tree .pickr { flex: 1; min-width: 0; }
-.panel ul.tree .pickr { grid-template-columns: auto minmax(0, 1fr) auto auto calc(var(--spectrum-spacing-100) * 4); }
-/* A row without a badge keeps its column empty: its line and share line up with the others'. */
-.panel ul.tree .pickr .spark { grid-column: 4; }
-.panel ul.tree .pickr .n { grid-column: 5; }
 .spark { display: block; width: calc(var(--spectrum-spacing-100) * 8); height: var(--spectrum-spacing-300); }
 p.trend { display: flex; align-items: center; }
 
 @media (max-width: 999px) {
-  main { overflow: auto; }
+  /* One column: the toolbar, the map and its panel, then the sidebar under them. */
+  main { display: flex; flex-direction: column; overflow: auto; padding: 0 calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)); }
+  main > .sidenav { order: 2; flex: none; height: calc(var(--spectrum-spacing-100) * 60); padding: var(--spectrum-spacing-300) 0px var(--safe-bottom); }
+  main > .page { flex: none; }
   .split { grid-template-columns: minmax(0, 1fr); grid-template-rows: calc(var(--spectrum-spacing-100) * 60) auto; }
   .panel { overflow: visible; }
 }
 @media (max-width: 699px) {
   main { padding: 0 var(--spectrum-spacing-200) calc(var(--spectrum-spacing-500) + var(--safe-bottom)); }
+  main > .page { padding-bottom: 0px; }
   /* The page scrolls down, not sideways: a table's headings and names wrap to fit. */
   main { overflow-x: hidden; }
   th, td > button.link { white-space: normal; text-align: left; }
@@ -375,32 +373,15 @@ p.trend { display: flex; align-items: center; }
 .spectrum .tlegend button.x { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .tlegend button.clear { color: var(--spectrum-accent-content-color-default); }
 .spectrum .tip .row { gap: var(--spectrum-spacing-75); }
-.spectrum .panel .seg { display: inline-flex; margin-top: var(--spectrum-spacing-200); }
 .spectrum .panel section h3 .swatch { margin-right: var(--spectrum-spacing-75); }
-/* A disclosure: its chevron down when open, pointing at the row when folded. */
-.spectrum ul.tree .chev {
-  width: var(--spectrum-component-height-75);
-  height: var(--spectrum-component-height-75);
-  min-height: 0;
-  padding: 0;
-  background: transparent;
-  border: 0;
-}
-.spectrum ul.tree button.chev::before {
-  content: "";
-  display: block;
-  width: var(--spectrum-workflow-icon-size-75);
-  height: var(--spectrum-workflow-icon-size-75);
-  margin: auto;
-  background: var(--spectrum-neutral-subdued-content-color-default);
-  mask: var(--s2-icon-chevron) center / contain no-repeat;
-  transform: rotate(-90deg);
-  transition: transform var(--s2-ease);
-}
-.spectrum ul.tree button.chev[aria-expanded="true"]::before { transform: none; }
-.spectrum ul.tree button.chev:hover:not(:disabled) { background: var(--spectrum-gray-100); }
-.spectrum ul.tree li.d1 { padding-left: var(--spectrum-spacing-300); }
-.spectrum ul.tree .pickr .nm .sub { font-size: var(--spectrum-font-size-75); }
+/* The sidebar's rows (ui/spectrum.css has the sidebar): a kind's dot, what is in a group or what
+   it is in, subdued, and a trend's arrow, positive up and negative down, neutral from a peak. */
+.spectrum .sidenav .dot { margin: 0 var(--spectrum-spacing-50); }
+.spectrum .sidenav .nm .sub { font-size: var(--spectrum-font-size-75); }
+.spectrum .sidenav .trend { flex: none; font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .sidenav .trend.up { color: var(--spectrum-positive-visual-color); }
+.spectrum .sidenav .trend.down { color: var(--spectrum-negative-visual-color); }
+.spectrum .sidenav .trend.peak { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .badge {
   padding: 0 var(--spectrum-spacing-75);
   border-radius: var(--spectrum-corner-radius-100);

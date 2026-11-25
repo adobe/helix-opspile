@@ -35,6 +35,7 @@
 
 import { ADMIN_TEAM, managesTeam } from './review.js';
 import { underlying } from './d1batch.js';
+import { activeSince } from './listactivity.js';
 import { mayRead } from './kbaccess.js';
 import { weeksTo } from './trends.js';
 import { LAYERS, STACK_PATH } from './stack.js';
@@ -513,8 +514,10 @@ export async function teamProfile(env, me, slug, { now = new Date() } = {}) {
 /** GET /api/teams: every ops team, `[{ slug, name, members, self_managed }]`, by name. */
 export async function teamDirectory(env) {
   const { results } = await env.DB.prepare(`SELECT t.slug, t.name, t.self_managed,
-      (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug) AS members
-    FROM teams t ORDER BY t.name`).all();
+      (SELECT COUNT(*) FROM team_members m WHERE m.team = t.slug) AS members,
+      (SELECT COUNT(*) FROM threads th WHERE th.team = t.slug AND th.last_at >= ?) AS recent,
+      (SELECT MAX(th.last_at) FROM threads th WHERE th.team = t.slug) AS latest
+    FROM teams t ORDER BY t.name`).bind(activeSince()).all();
   return (results || []).map((t) => ({ ...t, self_managed: Boolean(t.self_managed) }));
 }
 

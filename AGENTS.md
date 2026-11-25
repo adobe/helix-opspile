@@ -43,6 +43,11 @@ code and docs, is the decision model that labels threads and channels.
 - The header is every page's too: its styles in `ui/spectrum.css` and `ui/header.js`, the global
   `Header`: the switch between the pages, which keeps where each page was left in the browser
   tab, and you with your menu. Change it there, not in a page.
+- **The sidebar of Teams, Customers and Topics is one** (`ui/sidenav.js`, the global `SideNav`;
+  its styles "the sidebar" in `ui/spectrum.css`): one-line rows of one height, ranked by activity
+  (`recent`, the threads active in the last 30 days, `src/listactivity.js`) unless its footer's
+  sort asks for names, its filter on the footer's left, and what waits for someone a group at
+  the top. `ui/admin.js` and `ui/topics.js` draw their rows with it: change it there.
 - **The pages are Spectrum 2** (README, "Spectrum 2"), and their styles are all in
   `ui/spectrum.css` (every page's: the base, the header, the shared look) and
   `ui/spectrum-<page>.css` (the page's layout, then its look), which the pages link. A page
@@ -163,6 +168,12 @@ code and docs, is the decision model that labels threads and channels.
   org it went into (`mergedOrg` in src/rules.js). Get the rules from `loadRules`, never from
   `SELECT * FROM rules`, or a merged org comes back. The duplicate search, the merge and its
   requests are src/orgmerge.js.
+
+- **A vendor's threads are the other way round** (an org of type `vendor`): Adobe is the customer
+  there. Clef is asked `VENDOR_QUESTIONS` (src/label.js), `waitingOn` (src/threads.js) says
+  `vendor` for what waits on the other side whatever the label says, and src/vendors.js is a
+  vendor's page and a team's Vendors section, whose thread titles go only to those who work the
+  thread (`visible`). docs/ARCHITECTURE.md, "Vendors".
 
 - **Most lifecycles here are implicit:** a nullable timestamp, a watermark, whether a row exists.
   [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md) lists them, with the rules they follow. Read the
