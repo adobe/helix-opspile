@@ -19,7 +19,8 @@
  * Customers, for their overviews, and Topics for Adobe's people on none, `staff` from /api/me,
  * to find what to follow), and
  * COGS (what the inbox costs) too for the admin team, whose requests (channels and people asked
- * for, customers in the portal, bots, conflicts) are threads of its inbox, their number on Inbox;
+ * for, customers in the portal, bots, conflicts) are threads of its inbox, their number on Inbox
+ * (a click on the number opens them: the admin team's inbox, on its open requests, `REQUESTS`);
  * and Stats, klickhaus' statistics of all threads in a new tab,
  * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
@@ -46,12 +47,14 @@ window.Header = (() => {
     { id: 'stats', label: 'Stats', href: null, title: 'Statistics of all threads, every team\'s, in klickhaus (opens in a new tab)', external: true },
   ];
   const KEY = 'opspile.page.';
+  /** The admin team's open requests: its inbox, filtered to them (ui/inbox.js, the Type card). */
+  const REQUESTS = '/inbox?team=admin&filters=1&f.type=request&f.resolved=open';
   const CHEV = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
   const $ = (id) => document.getElementById(id);
   const phone = matchMedia('(max-width: 699px)');
   const opts = {
-    prefer: {}, fallback: {}, go: null, stats: null,
+    prefer: {}, fallback: {}, go: null, open: null, stats: null,
   };
   let shut = 0;
 
@@ -189,11 +192,18 @@ window.Header = (() => {
     }
   }
 
-  /** The pages you may open, once the page knows who you are (`me` from /api/me). */
-  function init(me, { prefer = {}, fallback = {}, go = null, count = true } = {}) {
+  /**
+   * The pages you may open, once the page knows who you are (`me` from /api/me). `go` opens
+   * another page (`id`, its address) for the page on screen; `open`, an address of the page on
+   * screen, in it (the inbox: the open requests, from the number on Inbox).
+   */
+  function init(me, {
+    prefer = {}, fallback = {}, go = null, open = null, count = true,
+  } = {}) {
     Object.assign(opts.prefer, prefer);
     Object.assign(opts.fallback, fallback);
     opts.go = go;
+    opts.open = open;
     opts.stats = me.stats?.url || null;
     const own = PAGES.filter((p) => !p.external);
     let shown = [];
@@ -233,8 +243,9 @@ window.Header = (() => {
     for (const el of document.querySelectorAll('[data-page="inbox"] .count:not(.total)')) {
       el.textContent = String(n);
       el.hidden = !n;
-      el.closest('a').title = n ? `${n} request${n === 1 ? '' : 's'} wait${n === 1 ? 's' : ''} for the admin team, in its inbox`
-        : PAGES.find((p) => p.id === 'inbox').title;
+      const waits = `${n} request${n === 1 ? '' : 's'} wait${n === 1 ? 's' : ''} for the admin team`;
+      el.title = `${waits}: click to see ${n === 1 ? 'it' : 'them'}`;
+      el.closest('a').title = n ? `${waits}, in its inbox` : PAGES.find((p) => p.id === 'inbox').title;
     }
     sync();
   }
@@ -283,6 +294,16 @@ window.Header = (() => {
       return;
     }
     const menu = $('pagemenu');
+    // The number on Inbox: the open requests, wherever you are (on a phone, the one on the page
+    // you are on, `.total`, opens the menu, where Inbox has its own).
+    if (a.dataset.page === 'inbox' && e.target.closest('.count:not(.total)') && Number($('pages').dataset.count)) {
+      e.preventDefault();
+      if (menu?.matches(':popover-open')) menu.hidePopover();
+      if (pageOf(location.href) === 'inbox' && opts.open) opts.open(REQUESTS);
+      else if (opts.go) opts.go('inbox', REQUESTS);
+      else location.assign(REQUESTS);
+      return;
+    }
     if (a.hasAttribute('aria-current')) {
       e.preventDefault();
       if (a.closest('#pages') && phone.matches && Date.now() - shut > 300) {
@@ -315,6 +336,6 @@ window.Header = (() => {
   sync();
 
   return {
-    init, sync, setCount, user, role, remember, href, pageOf, stats, scheme,
+    init, sync, setCount, user, role, remember, href, pageOf, stats, scheme, REQUESTS,
   };
 })();

@@ -77,6 +77,16 @@ export async function listAccounts(env) {
 }
 
 /**
+ * How many of the host tenant's admin accounts nobody said whose they are: each is a request,
+ * an open thread of the admin team's inbox (src/requestthreads.js), counted on Inbox.
+ */
+export async function unlinkedCount(env) {
+  const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM identities i
+    WHERE i.kind = 'person' AND i.staff = 1 AND i.person IS NULL AND i.source = 'teams'`).first();
+  return r ? r.n : 0;
+}
+
+/**
  * PUT /api/admin/accounts `{ key, email }`: account `key` is the Adobe person's with mail address
  * `email` (a staff person, or one of STAFF_DOMAINS, who gets a `people` row then); `email` null
  * takes the link back. Its messages follow at once (`relabelAccount`): their person, and their

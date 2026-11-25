@@ -218,6 +218,14 @@ describe('the host tenant\'s admin accounts', () => {
     ]);
   });
 
+  it('wait for the admin team, counted on Inbox, until somebody says whose they are', async () => {
+    const e = env();
+    const open = async () => (await call(e, ADA, 'GET', '/api/admin/requests?count=1')).body.open;
+    assert.equal(await open(), 1);
+    await quiet(() => call(e, ADA, 'PUT', '/api/admin/accounts', { key: OWNER, email: 'bo@staff.example' }));
+    assert.equal(await open(), 0);
+  });
+
   it('are linked by the admin team to the Adobe person who uses one, and shown as them', async () => {
     const e = env();
     const put = (body, who = ADA) => quiet(() => call(e, who, 'PUT', '/api/admin/accounts', body));

@@ -917,8 +917,14 @@ const STATUS_ICON = {
 const RESOLVED_ICON = { open: 'circle', resolved: 'checkmark-circle', '(none)': 'cancel' };
 const DRAFT_ICON = { mine: 'edit', team: 'user-edit', none: 'edit-no' };
 const WAITING_ICON = { Us: 'call-center', Customer: 'clock', Nobody: 'pause-circle' };
-const TYPE_ICON = { conversation: 'chat', alert: 'bell' };
+const TYPE_ICON = { conversation: 'chat', alert: 'bell', request: 'hand' };
 const PLATFORM_SITE = { Slack: 'slack.com', Teams: 'teams.microsoft.com', Discord: 'discord.com', Portal: 'adobe.com' };
+// What a thread is: a conversation, an alert, or one of the admin team's requests (in its inbox
+// only), which the number on Inbox in the header opens (ui/header.js, `REQUESTS`).
+const typeOf = (t) => {
+  if (isRequestKey(t.thread)) return 'request';
+  return t.kind === 'alert' ? 'alert' : 'conversation';
+};
 const kindOf = (t) => (t.kind === 'alert' ? 'alert' : (t.label?.label_kind && t.label.label_kind !== 'other' ? t.label.label_kind : 'other'));
 // A staff ✅ on the root decides (until a customer writes again), else Clef does.
 const resolvedOf = (t) => t.resolution?.verdict
@@ -1184,9 +1190,9 @@ const FACETS = [
     order: () => ['me', ...Object.keys(state.data?.teams || {}).map((s) => `team:${s}`),
       ...(state.coPeople || []).map((p) => `person:${p}`)
         .sort((x, y) => PERSON_KINDS.indexOf(personKind(x.slice(7))) - PERSON_KINDS.indexOf(personKind(y.slice(7))))] },
-  { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
-    label: { conversation: 'Conversations', alert: 'Alerts' }, glyph: (v) => TYPE_ICON[v],
-    color: colorOf({ conversation: 'c-blue', alert: 'c-crimson' }) },
+  { id: 'type', title: 'Type', value: typeOf, order: ['conversation', 'alert', 'request'],
+    label: { conversation: 'Conversations', alert: 'Alerts', request: 'Admin requests' }, glyph: (v) => TYPE_ICON[v],
+    color: colorOf({ conversation: 'c-blue', alert: 'c-crimson', request: 'c-pink' }) },
   { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams', 'Discord', 'Portal'],
     icon: (v) => PLATFORM_SITE[v],
     color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams', Discord: 'c-discord', Portal: 'c-portal' }) },
@@ -11490,6 +11496,8 @@ async function start() {
       orgs: () => (customerOnScreen() ? `/inbox/admin?tab=orgs&org=${encodeURIComponent(customerOnScreen())}` : null),
       stats: () => Header.stats({ org: customerOnScreen(), team: personal() ? null : state.team }),
     },
+    // The number on Inbox, clicked: the open requests, in this tab.
+    open: openInbox,
     count: !state.as,
   });
   if (state.me.admin) {
@@ -11579,7 +11587,7 @@ const FILTER_ARGS = {
 // Filters whose values are ids the API names (src/label.js vocab): checked against them.
 const VOCAB_ARGS = { topic: 'topics', tech: 'tech' };
 const FILTER_VALUES = {
-  status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams', 'discord', 'portal'], resolved: ['open', 'resolved'],
+  status: STATUS_ORDER, type: ['conversation', 'alert', 'request'], platform: ['slack', 'teams', 'discord', 'portal'], resolved: ['open', 'resolved'],
   waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_ICON),
   draft: ['mine', 'team', 'none'],
 };
@@ -11681,7 +11689,7 @@ const FILTER_PROPS = {
   urgency: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.urgency } },
   kind: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.kind } },
   resolved: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.resolved } },
-  type: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.type }, description: 'Conversations with customers, or automated alerts' },
+  type: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.type }, description: 'Conversations with customers, automated alerts, or the admin team\'s requests (in its inbox)' },
   platform: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.platform } },
   draft: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.draft }, description: 'Threads with a shared draft reply saved last by the viewer (mine) or a colleague (team), or without one (none)' },
   topic: { type: 'array', items: { type: 'string' }, description: 'What threads are about (cdn, auth, performance, …), as get_inbox_state counts them' },

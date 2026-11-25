@@ -429,7 +429,10 @@ nobody said whose it is, a conflict between the teams' technologies or their rul
 a conflict's key), and the inbox lists it in the admin team's view only, with the team's own
 threads, under a "customer" of its kind (Channel requests, Bots, Rule conflicts, …), of kind
 `request`, waiting on us while it is open and resolved once it is decided; the decided ones stay
-(the latest hundred of each kind). Its thread is in no channel and nothing of it is posted: the
+(the latest hundred of each kind). Their own type on the Type card, **Admin requests** (`f.type=request`,
+beside Conversations and Alerts), filters to them. The number on Inbox in every page's header counts
+the open ones of every kind (`GET /api/admin/requests?count=1`), and a click on it opens them: the
+admin team's inbox, on Admin requests that are unresolved (`REQUESTS` in `ui/header.js`). Its thread is in no channel and nothing of it is posted: the
 request as whoever asked said it (or, for a bot, an account or a conflict, as the inbox sees it),
 what the admin team writes about it, and what was decided. What they write is the request's
 **decision log** (`POST /api/requests/note`, `request_log`, migration 0100), the reply box's place;
