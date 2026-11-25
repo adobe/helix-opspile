@@ -20,6 +20,10 @@
  *   channel of the customer's is filed under or shared with the team, src/shares.js), and the
  *   managers of those teams change it;
  * - the admin team looks at and changes all of them.
+ *
+ * Its files, but `systemprompt.md` (the agents' instructions, `mayEdit`'s), are written by more
+ * (`mayWrite`): everyone on the team, a team's for its own, the owning teams' for a customer's,
+ * in the editor and through its agent's sidebar (src/kbchat.js), where whoever looks may talk.
  */
 
 import { isAdmin, managedTeams, managesTeam } from './review.js';
@@ -38,6 +42,19 @@ export async function mayEdit(env, me, { kind, slug }) {
   return kind === 'team' ? managesTeam(me, slug) : ownsCustomer(env, managedTeams(me), slug);
 }
 
+/**
+ * Whether `me` may write the files of the knowledge base of `kind`/`slug` (not its
+ * `systemprompt.md`, see `mayEdit`): the admin team, a team's members and managers, and the
+ * members of the teams that own a customer.
+ */
+export async function mayWrite(env, me, { kind, slug }) {
+  if (isAdmin(me)) {
+    return true;
+  }
+  return kind === 'team' ? teamsOf(me).includes(slug) || managesTeam(me, slug)
+    : ownsCustomer(env, teamsOf(me), slug);
+}
+
 /** Whether `me` may look at the knowledge base (or the servers) of `kind`/`slug`. */
 export async function mayRead(env, me, { kind, slug }) {
   if (isAdmin(me)) {
@@ -47,12 +64,12 @@ export async function mayRead(env, me, { kind, slug }) {
 }
 
 /**
- * Both, for many knowledge bases at once: `{ read(base), edit(base) }`, answered without a
- * query each (the customers `me`'s teams own are read once).
+ * All three, for many knowledge bases at once: `{ read(base), edit(base), write(base) }`,
+ * answered without a query each (the customers `me`'s teams own are read once).
  */
 export async function access(env, me) {
   if (isAdmin(me)) {
-    return { read: () => true, edit: () => true };
+    return { read: () => true, edit: () => true, write: () => true };
   }
   const managed = managedTeams(me);
   const [owned, ownedManaged] = await Promise.all([
@@ -62,5 +79,7 @@ export async function access(env, me) {
   return {
     read: (b) => (b.kind === 'team' ? inAnyTeam(me) : owned.has(b.slug)),
     edit: (b) => (b.kind === 'team' ? managesTeam(me, b.slug) : ownedManaged.has(b.slug)),
+    write: (b) => (b.kind === 'team' ? teamsOf(me).includes(b.slug) || managesTeam(me, b.slug)
+      : owned.has(b.slug)),
   };
 }

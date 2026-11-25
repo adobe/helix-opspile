@@ -135,6 +135,74 @@ const SYSTEM = {
 export const AGENT = { id: 900, name: 'opspile agent' };
 
 /**
+ * The knowledge base's sidebar (ui/kbchat.js) of kb-team-platform, as GET /api/kb/chat answers:
+ * a conversation of yours, the agent's answer with what it changed, and an earlier one.
+ */
+export function kbChats(now = Date.now()) {
+  const at = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
+  const ask = 'sb_00000000-0000-4000-8000-000000000001';
+  return {
+    'kb-team-platform': [
+      {
+        chat: 'kc_00000000-0000-4000-8000-000000000001',
+        // What the agent asked to have run, a token of yours in it (request_bash).
+        bash: [{
+          id: 'b0000000cdn1',
+          chat: 'kc_00000000-0000-4000-8000-000000000001',
+          command: 'curl -s -H "Fastly-Key: $FASTLY_TOKEN" "https://api.fastly.com/service/$SERVICE/version/active" | jq \'{number, updated_at}\'',
+          reason: 'To see when the shared service\'s configuration last changed: two threads say the purge delay was fixed in October, a later one that it is back.',
+          env: [{ name: 'FASTLY_TOKEN', description: 'A read-only Fastly API token of yours' }, { name: 'SERVICE', description: 'The shared service\'s id' }],
+          timeout: 60,
+          deadline: at(-60 * 24),
+          status: 'pending',
+          created_at: at(8),
+          by: null,
+        }],
+        messages: [
+          {
+            id: ask,
+            role: 'person',
+            state: 'done',
+            reply_to: null,
+            at: at(12),
+            body: 'We keep answering questions about CDN purges taking long. Is that in the knowledge base? If not, add it.',
+          },
+          {
+            id: `${ask}:answer`,
+            role: 'agent',
+            state: 'done',
+            reply_to: ask,
+            at: at(9),
+            body: 'It was not: `issues/` had nothing on purges, and `playbooks/cdn-purge.md` only covers purging by URL.\n\nI read the **6 threads** of the last two months that ask about it ([the latest](https://example.slack.com/archives/C1/p1)), and wrote:\n\n- `issues/cdn-purge-delay.md` (new): purges by surrogate key take up to 10 minutes on the shared CDN; what to tell the customer, and when to escalate. Sources: 4 threads.\n- `playbooks/cdn-purge.md`: a section on purging by key, linked to the issue.\n\nTwo threads said the delay was fixed in October, and a later one says it is back, so I kept it as a known issue rather than *resolved*.',
+          },
+        ],
+      },
+      {
+        chat: 'kc_00000000-0000-4000-8000-000000000002',
+        messages: [
+          {
+            id: 'sb_00000000-0000-4000-8000-000000000002',
+            role: 'person',
+            state: 'done',
+            reply_to: null,
+            at: at(60 * 26),
+            body: 'Who on the team knows the most about forms?',
+          },
+          {
+            id: 'sb_00000000-0000-4000-8000-000000000002:answer',
+            role: 'agent',
+            state: 'done',
+            reply_to: 'sb_00000000-0000-4000-8000-000000000002',
+            at: at(60 * 26 - 2),
+            body: 'Lena Berg: her profile (`contacts/lena-berg.md`) lists forms, and she answered 9 of the 12 forms threads this quarter.',
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
  * The made-up model of the preview's translations (GET /api/translate, scripts/dev-ui.mjs): the
  * Japanese thread's messages in English. Anything else in Japanese is marked, not translated.
  */
@@ -544,8 +612,10 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       return SYSTEM;
     }
     const p = byKey.get(key);
+    // A customer's org is their mail domain, as src/lookup.js `toAuthor` has it: the badge on
+    // their picture, which shows their customer's card.
     return {
-      kind: 'person', name: p.name, org: p.org || null, staff: p.staff,
+      kind: 'person', name: p.name, org: p.staff ? null : (p.email || '').split('@')[1] || null, staff: p.staff,
     };
   };
 
@@ -787,11 +857,21 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     if (draft) {
       const p = draft.by === 'agent' ? AGENT : byKey.get(draft.by);
       const at = new Date(now - draft.ago * MIN).toISOString();
+      // Its pictures (src/draftfiles.js), served at /api/draft/file as the uploads are. The
+      // fixtures' are SVG, which a real draft never has (only PNG, JPEG, GIF and WebP).
+      const pictures = (draft.files || []).map(([name, bytes]) => {
+        const id = `df_${String(uploads.size + 1).padStart(8, '0')}-0000-4000-8000-000000000000`;
+        uploads.set(id, { name, type: 'image/svg+xml', bytes });
+        return {
+          id, name, type: 'image/svg+xml', size: bytes.length,
+        };
+      });
       drafts.set(key, {
         thread: key,
         body: draft.body,
         mentions: draft.mentions || [],
         sources: draft.sources || [],
+        files: pictures,
         by: { id: p.id, name: p.name },
         created_at: at,
         updated_at: at,
@@ -1641,6 +1721,30 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
       by: 'agent',
       ago: 30,
       body: 'Tom gave you access to staging: the new rule set is there, on `waf-staging`.',
+    },
+  });
+
+  // The agent's draft with a screenshot it took on its computer (the browser image): it shows on
+  // the draft's line, and goes with the reply when it is sent.
+  seed({
+    ch: CHANNELS.edgeQ,
+    messages: [
+      ['lena', 70, 'On phones the sticky banner\'s background stops at the container: is that our CSS or yours?'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 0.5, resolved_p: 0.1,
+    },
+    draft: {
+      by: 'agent',
+      ago: 20,
+      body: 'It is the banner block\'s CSS: its background is set on the inner wrapper, which is capped at '
+        + 'the container width. Moving it to `.banner` itself fixes it; the screenshot shows the page at '
+        + '390 pixels with that change.',
+      files: [
+        ['banner-390.png', screenshot('Banner at 390 px, with the fix', '#0ea5e9', [110, 110, 110, 110, 110], 390, 640)],
+        ['banner-1280.png', screenshot('Banner at 1280 px', '#0ea5e9', [80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80, 80], 1280, 720)],
+      ],
     },
   });
 

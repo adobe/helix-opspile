@@ -13,7 +13,7 @@
 import {
   AGENT_EMAIL, ENTRY_ROW, entryFields, entryOf,
 } from '../drafts.js';
-import { requestOf } from '../bashrequests.js';
+import { chatRequests, requestOf } from '../bashrequests.js';
 import { json } from '../http.js';
 import { managesTeam } from '../review.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
@@ -25,6 +25,10 @@ import {
   denyToolRequest, grantToolRequest, revokeToolRequest, toolRequestOf,
 } from '../toolrequests.js';
 import { denyText, grantText } from './toolrequest.js';
+import {
+  addChatMessage, chatAgentName, chatId, chatMessageId, chatMessages, chatsOf, dropChatMessage,
+  isChatOf, latestChat, MAX_CHAT, waiting,
+} from '../kbchat.js';
 import { switchedOn } from './enabled.js';
 import { liveTurn } from './kept.js';
 
@@ -224,6 +228,137 @@ export async function talkToAgent(env, me, body, canSee) {
   }
   await notifyRoom(env, t.entry.teams, { type: 'sidebar', thread: t.entry.key });
   return json({ message }, 202);
+}
+
+/**
+ * GET /api/kb/chat?repo=&chat=: the conversation of `me` in the sidebar of knowledge base `base`
+ * (`{ repo, kind, slug }`, src/kbchat.js), for whoever may read it (the caller checked): `chat`,
+ * the one they ask for or the one they talked in last (null before the first), its `messages`,
+ * the commands its agent asked them to run there (`bash`, src/bashrequests.js), their earlier
+ * conversations (`chats`), whether they may talk there (`may`: this deployment has agents, and
+ * they are not viewing as someone else) and have it changed (`write`, src/kbaccess.js
+ * `mayWrite`), and, while the latest message waits for its answer, what the agent is doing
+ * (`working`, asked of the agent, which keeps the answers it finished first). Only their own: a
+ * conversation of anyone else is none.
+ */
+export async function kbChatView(env, me, base, { chat = null, write = false } = {}) {
+  const talks = Boolean(env.AGENTS && !me.readonly);
+  const out = {
+    repo: base.repo,
+    may: talks,
+    write: Boolean(talks && write),
+    chat: null,
+    messages: [],
+    bash: [],
+    chats: [],
+    working: null,
+  };
+  if (!talks || !me.id) {
+    return json(out);
+  }
+  const asked = chat && await isChatOf(env, base.repo, me.id, chat) ? chat : null;
+  const [current, chats] = await Promise.all([
+    asked || latestChat(env, base.repo, me.id),
+    chatsOf(env, base.repo, me.id),
+  ]);
+  let messages = await chatMessages(env, base.repo, me.id, current);
+  let working = null;
+  if (waiting(messages)) {
+    const state = await agentStub(env, chatAgentName(base))
+      .then((agent) => agent.chatState({ chat: current }))
+      .catch((e) => ({ working: 'Working', error: e.message }));
+    working = state.working || null;
+    // An answer the agent kept as it was asked.
+    messages = await chatMessages(env, base.repo, me.id, current);
+    if (!waiting(messages)) {
+      working = null;
+    }
+  }
+  return json({
+    ...out, chat: current, messages, bash: await chatRequests(env, current), chats, working,
+  });
+}
+
+/**
+ * POST /api/kb/chat/bash `{ repo, chat, id, run, env? }`: `me` runs (`run: true`, with the values
+ * it asks for, `env`) or denies a command the knowledge-base agent of `base` asked for in their
+ * conversation `chat` (request_bash, src/agent/bashrequest.js). Only their own conversation, and
+ * only who may write the knowledge base (the caller checked). Answers as the inbox's does:
+ * `202` (ran) or `200` (denied) with the request.
+ */
+export async function decideKbChatBash(env, me, base, body = {}) {
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  if (me.readonly) {
+    return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  const name = chatAgentName(base);
+  const request = await requestOf(env, body.id);
+  if (!request || !request.chat || request.chat !== body.chat || request.thread !== name
+    || !await isChatOf(env, base.repo, me.id, body.chat)) {
+    return json({ error: 'not found' }, 404);
+  }
+  const by = { id: me.id, name: me.name || me.email || 'staff' };
+  const agent = await agentStub(env, name);
+  const run = body.run === true;
+  const res = run
+    ? await agent.runBash({ id: request.id, values: body.env || {}, by })
+    : await agent.denyBash({ id: request.id, by });
+  const { status, ...rest } = res;
+  return json(rest, status || (run ? 202 : 200));
+}
+
+/**
+ * POST /api/kb/chat `{ repo, text, chat?, fresh? }`: `me` talks to the knowledge-base agent of
+ * `base` in its sidebar (src/kbchat.js), in their conversation `chat`, else the one they talked
+ * in last, or a new one (`fresh`, or their first). The message goes into the conversation and
+ * into the agent's session of it, and nowhere else. Whoever may read the knowledge base (the
+ * caller checked); `write`, whether they may have it changed (src/kbaccess.js `mayWrite`), which
+ * the agent is told with the message. Answers 202 with the conversation and the message.
+ */
+export async function talkInKbChat(env, me, base, body, { write = false } = {}) {
+  const text = String((body && body.text) || '').trim();
+  if (!text || text.length > MAX_CHAT) {
+    return json({ error: `write what to ask the agent (up to ${MAX_CHAT} characters)` }, 400);
+  }
+  if (me.readonly) {
+    return json({ error: 'read-only while viewing as someone else' }, 403);
+  }
+  if (!env.AGENTS) {
+    return json({ error: 'agents are not configured' }, 503);
+  }
+  let chat = null;
+  if (body.fresh) {
+    chat = chatId();
+  } else if (body.chat) {
+    if (!await isChatOf(env, base.repo, me.id, body.chat)) {
+      return json({ error: 'no such conversation' }, 404);
+    }
+    chat = body.chat;
+  } else {
+    chat = (await latestChat(env, base.repo, me.id)) || chatId();
+  }
+  const by = me.name || me.email || 'staff';
+  // Written first: the agent's answer is kept only for a message the conversation has.
+  const message = await addChatMessage(env, {
+    id: chatMessageId(), repo: base.repo, chat, person: me.id, text,
+  });
+  const res = await agentStub(env, chatAgentName(base)).then((agent) => agent.chat({
+    id: message.id,
+    chat,
+    by,
+    person: me.id,
+    write: Boolean(write),
+    text,
+    kb: base.kind,
+    repo: base.repo,
+  })).catch((e) => ({ error: e.message }));
+  if (res.error) {
+    await dropChatMessage(env, message.id);
+    return json({ error: res.error }, 503);
+  }
+  return json({ chat, message }, 202);
 }
 
 /**

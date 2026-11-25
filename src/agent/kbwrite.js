@@ -51,6 +51,24 @@ const enc = new TextEncoder();
 export const kindOf = (artifact) => (/^kb-(org|team)-/.exec(String(artifact)) || [])[1] || null;
 
 /**
+ * Whether `path` names a file of a knowledge base as it is: relative, with no empty, `.` or `..`
+ * segment and no backslash. Anything else could name another file than the one checked
+ * (`./systemprompt.md` is `systemprompt.md`), so every change is refused that is not.
+ */
+export const isCanonicalPath = (path) => {
+  const p = String(path ?? '');
+  return Boolean(p) && !p.includes('\\') && p.split('/').every((s) => s && s !== '.' && s !== '..');
+};
+
+/**
+ * Who may change file `path` of a knowledge base: `manager` (the admin team and the team's
+ * managers: its agent instructions, `systemprompt.md`, and its Clef areas, `areas/`), or
+ * `member` (everyone on its team, src/kbaccess.js `mayWrite`) for every other file.
+ */
+export const pathOwner = (path) => (path === SYSTEM_PROMPT || String(path).startsWith(`${AREAS}/`)
+  ? 'manager' : 'member');
+
+/**
  * Checks a change set before anything is cloned; returns an error message or null. Only
  * `staff` writes (the admin team, in the knowledge-base editor) may touch `systemprompt.md`.
  * The agents' concepts (not `staff`) of a knowledge base of `kind` go where their type goes
@@ -65,6 +83,9 @@ export function checkChanges(changes, { staff = false, kind = null } = {}) {
   }
   const seen = new Set();
   for (const c of changes) {
+    if (!isCanonicalPath(c.path)) {
+      return `${c.path || '(no path)'}: give the file's path as it is, without ./, ../ or //`;
+    }
     if (seen.has(c.path)) {
       return `${c.path} appears twice`;
     }

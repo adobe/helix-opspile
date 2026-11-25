@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 
+import { filesOf } from './draftfiles.js';
+
 /**
  * What became of the shared drafts (`draft_events`, migration 0058), for the COGS dashboard
  * (src/cogs/report.js): how many of the agents' drafts were sent, as they were or edited, how many
@@ -70,14 +72,14 @@ export async function textHash(text) {
  */
 export async function recordDraftEvent(env, entry, {
   action, draft = '', version = null, how = null, person = null, origin = null,
-  changed = null, hash = null,
+  changed = null, hash = null, files = null,
 }, now = new Date()) {
   try {
     await env.DB.prepare(`INSERT INTO draft_events (thread, draft, version, action, how, person,
-        by_agent, origin, origin_agent, changed, hash, org, team, at)
+        by_agent, origin, origin_agent, changed, hash, org, team, at, files)
       VALUES (?, ?, ?, ?, ?, ?,
         COALESCE((SELECT email = ? FROM people WHERE id = ?), 0), ?,
-        (SELECT email = ? FROM people WHERE id = ?), ?, ?, ?, ?, ?)`)
+        (SELECT email = ? FROM people WHERE id = ?), ?, ?, ?, ?, ?, ?)`)
       .bind(
         entry.key,
         draft || '',
@@ -95,6 +97,7 @@ export async function recordDraftEvent(env, entry, {
         entry.org || '',
         entry.team || '',
         now.toISOString(),
+        files && files.length ? JSON.stringify(files) : null,
       )
       .run();
   } catch (e) {
@@ -105,12 +108,12 @@ export async function recordDraftEvent(env, entry, {
 /**
  * The discard a save of `text` by `me` on the entry's `keys` undoes, if it is one: the same
  * text, discarded by the same person within UNDO_SECONDS. Its event is deleted, since the draft
- * came back, and returned (`draft`, `origin`, and `origin_body` when keepForUndo kept one), so
- * the draft goes on as the one it was.
+ * came back, and returned (`draft`, `origin`, its `files`, and `origin_body` when keepForUndo
+ * kept one), so the draft goes on as the one it was.
  */
 export async function undoneDiscard(env, me, keys, text, now = Date.now()) {
   try {
-    const ev = await env.DB.prepare(`SELECT id, thread, draft, origin FROM draft_events
+    const ev = await env.DB.prepare(`SELECT id, thread, draft, origin, files FROM draft_events
       WHERE thread IN (SELECT value FROM json_each(?)) AND action = 'discarded' AND person = ?
         AND hash = ? AND at >= ? ORDER BY at DESC LIMIT 1`)
       .bind(
@@ -126,7 +129,8 @@ export async function undoneDiscard(env, me, keys, text, now = Date.now()) {
     await env.DB.prepare('DELETE FROM draft_events WHERE id = ?').bind(ev.id).run();
     const kept = await env.DB.prepare(`DELETE FROM draft_undo WHERE thread = ? AND draft = ?
       RETURNING origin_body`).bind(ev.thread, ev.draft).first();
-    return { ...ev, origin_body: kept ? kept.origin_body : null };
+    // Its files, which the bucket keeps for 30 days whatever happens to the draft.
+    return { ...ev, files: filesOf(ev.files), origin_body: kept ? kept.origin_body : null };
   } catch (e) {
     console.log(JSON.stringify({ route: 'draft', action: 'undo', error: e.message }));
     return null;

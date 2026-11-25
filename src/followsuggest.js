@@ -123,7 +123,7 @@ async function teamsByTech(env) {
   return out;
 }
 
-/** The names of the teams that follow each area (migration 0103): `Map<area, [name]>`. */
+/** The names of the teams that follow each area (migration 0105): `Map<area, [name]>`. */
 async function teamsByArea(env) {
   const { results } = await env.DB.prepare(`SELECT f.target AS area, COALESCE(t.name, f.team) AS name
     FROM team_follows_by f LEFT JOIN teams t ON t.slug = f.team WHERE f.kind = 'area'

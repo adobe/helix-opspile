@@ -1181,6 +1181,11 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 /* The draft's sources: on their own row of its line, only ever in the inbox. */
 .draftbar .srcs { grid-area: srcs; display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); min-width: 0; }
 .draftbar .srcs .lb { cursor: help; }
+/* The draft's pictures (a screenshot the agent took), before its sources: they go with it. */
+.draftbar .dfile { flex: none; display: block; width: var(--spectrum-spacing-800); height: var(--spectrum-spacing-800); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-600); overflow: hidden; background: var(--card); }
+.draftbar .dfile img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.draftbar .dfile:hover, .draftbar .dfile:focus-visible { border-color: var(--accent); }
+.draftbar .dfile + .lb { margin-inline-start: var(--spectrum-spacing-200); }
 .draftbar .src { max-width: calc(var(--spectrum-spacing-100) * 30); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
  text-decoration: none; }
 .draftbar .src:hover, .draftbar .src:focus-visible { border-color: var(--accent); }
@@ -1468,6 +1473,20 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .pcard .ps-part dd { display: flex; flex-wrap: wrap; align-items: center; overflow-wrap: normal; }
 .pcard .ps-part .ps-keys { padding-top: 0; border-top: 0; }
 .pcard .ps-part .ps-spark { width: calc(var(--spectrum-spacing-1000) - var(--spectrum-spacing-300)); height: var(--spectrum-spacing-400); }
+/* While the knowledge bases are asked, an Adobe person's part is there already, in grey. */
+.pcard .ps-wait span { display: block; height: var(--spectrum-spacing-400); border-radius: var(--spectrum-corner-radius-small-size-medium); background: var(--spectrum-gray-100); }
+.pcard .ps-wait .ps-w-act { height: var(--spectrum-spacing-600); }
+.pcard .ps-wait span:last-child { width: 60%; }
+/* The same Adobe person whoever it is: how often first, the rate and when last on a line, two
+   lines of tags each (the first three, and a count of the rest), the profile's first three lines
+   last, so that what every card has is where it is on the next one's. */
+.pcard .ps-part > .ps-profile { order: 1; }
+.pcard .ps-part .ps-profile p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.pcard .ps-freq > div { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--spectrum-spacing-100); align-items: baseline; }
+.pcard .ps-freq .ps-n { grid-column: 1 / -1; grid-row: 2; }
+.pcard .ps-freq .ps-last::before { content: "· "; }
+.pcard .ps-part .ps-knows dd { --ps-two: calc(2 * (1lh + 2 * var(--spectrum-spacing-50)) + var(--spectrum-spacing-75)); align-content: flex-start; height: var(--ps-two); overflow: hidden; font-size: var(--spectrum-font-size-75); }
+.pcard .ps-part .ps-more { flex: none; color: var(--mute); background: none; box-shadow: inset 0 0 0 var(--spectrum-border-width-100) var(--line); }
 .pcard dd .teams .tag { margin-left: var(--spectrum-spacing-50); }
 .pcard .ask-about { display: flex; align-items: center; gap: var(--spectrum-spacing-75); width: 100%; margin-top: var(--spectrum-spacing-200); font: inherit; text-align: left; cursor: pointer; }
 .pcard .ask-about .bubble-ico { position: static; flex: none; padding: 0; }
@@ -2655,6 +2674,38 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .pcard .ask-about:hover { background: var(--spectrum-purple-subtle-background-color-default); }
 .spectrum .pcard .ask-about:focus-visible { outline: var(--s2-focus); }
 .spectrum .pcard .ask-about .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+/* A customer's card: the person's, its logo a large square Avatar, its type the Badge in its
+   filter's color, the people in it a row of small Avatars, and at its foot an accent Button to
+   its overview beside secondary outline ones. */
+/* Over the filters, also where they are a drawer over the page (narrow screens). */
+.pcard.ocard { z-index: 31; }
+.pcard .oc-logo { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); }
+.spectrum .pcard .oc-logo > *, .spectrum .pcard .oc-logo .av { border-radius: var(--spectrum-corner-radius-200); }
+.spectrum .pcard .oc-logo .av { font-size: var(--spectrum-font-size-200); }
+.spectrum .pcard .rel.vendor { background: var(--spectrum-cyan-background-color-default); }
+.pcard .oc-here { margin-top: var(--spectrum-spacing-100); }
+.pcard .oc-faces { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50); }
+.pcard .oc-faces .ps-av { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); font-size: var(--spectrum-font-size-50); border-radius: 50%; }
+.pcard .oc-faces .ps-av img { width: 100%; height: 100%; border-radius: 50%; }
+.pcard .oc-rows dd { flex-wrap: wrap; }
+.spectrum .pcard .oc-more { color: var(--spectrum-neutral-subdued-content-color-default); margin-left: var(--spectrum-spacing-50); }
+.pcard .oc-acts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-300); }
+.spectrum .pcard .oc-act {
+  display: inline-flex; align-items: center; min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  background: none; color: var(--spectrum-neutral-content-color-default);
+  font: inherit; font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight);
+  text-decoration: none; cursor: pointer; white-space: nowrap;
+}
+.spectrum .pcard .oc-act:hover { background: var(--spectrum-gray-100); }
+.spectrum .pcard .oc-act.primary { border-color: transparent; background: var(--spectrum-accent-background-color-default); color: var(--spectrum-white); }
+.spectrum .pcard .oc-act.primary:hover { background: var(--spectrum-accent-background-color-hover); }
+.spectrum .pcard .oc-act:focus-visible { outline: var(--s2-focus); }
+/* What shows a customer's card is pointed at as a person's name is. */
+.spectrum :is(.t .cust, .ph .src, .msg .face .badge-ico)[data-org] { cursor: pointer; }
+.spectrum .t .cust[data-org]:focus-visible { outline: var(--s2-focus); border-radius: var(--spectrum-corner-radius-75); }
 /* A picture in a thread is a button: a click asks the agent about them. */
 .spectrum .feed .face .av[data-p] { cursor: pointer; }
 /* A source of the draft beside it: the header plain, the quote S2's quiet blockquote. */

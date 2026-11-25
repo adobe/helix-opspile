@@ -83,7 +83,7 @@ const followedEntries = (techs) => `SELECT COALESCE(x.logical_thread, x.thread)
 const inFollowed = (alias, techs) => `(${alias}.thread IN (${followedEntries(techs)})
     OR ${alias}.logical_thread IN (${followedEntries(techs)}))`;
 
-/** What a team follows besides technologies (migration 0103); customers are follow rules. */
+/** What a team follows besides technologies (migration 0105); customers are follow rules. */
 export const TEAM_FOLLOW_KINDS = ['area'];
 
 /** SQL: the entries Clef puts in one of the areas `areas` selects (SQL that selects area ids). */
@@ -471,7 +471,7 @@ export async function setPersonFollow(env, { person, tech, follow }) {
 
 /**
  * What team `team` follows besides technologies: `[{ kind, target, added_by, added_at }]`, areas
- * (migration 0103). Its customers are follow rules (src/admin.js `followOrg`).
+ * (migration 0105). Its customers are follow rules (src/admin.js `followOrg`).
  */
 export async function teamFollowsBy(env, team) {
   const { results } = await env.DB.prepare(`SELECT kind, target, added_by, added_at

@@ -70,7 +70,7 @@ export async function listedRepos(env, { team, org }) {
  * team's is shared: `share` (the channel) or `follow` (the thread).
  */
 async function otherTeamKbs(env, {
-  team, source, channelId, follows = [],
+  team, source, channelId, follows = [], owners = [],
 }) {
   if (!env.DB) {
     return [];
@@ -83,9 +83,15 @@ async function otherTeamKbs(env, {
     WHERE t.slug != ?
     ORDER BY via IS NULL, via DESC, t.slug`)
     .bind(JSON.stringify(follows || []), source || '', String(channelId || ''), team || '').all();
-  return (results || []).filter((r) => repoName('team', r.slug)).map((r) => ({
-    slug: r.slug, name: r.name || r.slug, shared: Boolean(r.via), via: r.via || null,
+  const own = new Set(owners || []);
+  const out = (results || []).filter((r) => repoName('team', r.slug)).map((r) => ({
+    slug: r.slug,
+    name: r.name || r.slug,
+    shared: Boolean(r.via),
+    // A customer's own agent (`kb::<org>`) reads the teams that own it first: read only.
+    via: r.via || (own.has(r.slug) ? 'owner' : null),
   }));
+  return [...out.filter((r) => r.via === 'owner'), ...out.filter((r) => r.via !== 'owner')];
 }
 
 /**
@@ -95,7 +101,7 @@ async function otherTeamKbs(env, {
  * with (`scope` `own` or `shared`); the other teams' it only reads (`scope` `other`).
  */
 export async function accessibleRepos(env, {
-  team, org, source, channelId, follows,
+  team, org, source, channelId, follows, owners,
 }) {
   const repos = [];
   const teamKb = repoName('team', team);
@@ -111,7 +117,7 @@ export async function accessibleRepos(env, {
     });
   }
   for (const t of await otherTeamKbs(env, {
-    team, source, channelId, follows,
+    team, source, channelId, follows, owners,
   })) {
     const artifact = repoName('team', t.slug);
     repos.push({
@@ -124,6 +130,7 @@ export async function accessibleRepos(env, {
       what: {
         share: `knowledge base of the ops team ${t.slug} (${t.name}), which your channel is shared with`,
         follow: `knowledge base of the ops team ${t.slug} (${t.name}), which follows a technology your thread shows`,
+        owner: `knowledge base of the ops team ${t.slug} (${t.name}), which works with this customer`,
       }[t.via] || `knowledge base of the ops team ${t.slug} (${t.name})`,
       via: t.via,
     });

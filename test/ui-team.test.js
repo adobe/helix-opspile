@@ -78,10 +78,41 @@ describe('a team\'s overview, drawn', () => {
     // Expertise and products, then the key customers at the foot.
     assert.ok(card.indexOf('class="ps-knows"') < card.indexOf('class="ps-keys"'));
     assert.match(card, /<dl class="ps-keys"><dt>Key customers<\/dt><dd><a href="\/org\/acme" class="ps-org"[^>]*>/);
-    assert.ok(card.trimEnd().endsWith('</dd></dl>'));
-    // Her profile on the team, under who she is, as the inbox's card has it (ui/person.js).
+    assert.ok(card.trimEnd().endsWith('</dd></dl></div>'));
+    // Her profile on the team, after what every card has, as on the inbox's card (ui/person.js).
     assert.match(card, /<div class="ps-profile">\s*<p>Runs the &lt;CDN&gt; setups\.<\/p><a href="\/kb\/contacts\/ada-ops\.md" class="ps-src"[^>]*>Profile on Edge ops<\/a><\/div>/);
-    assert.ok(card.indexOf('ps-profile') < card.indexOf('ps-freq'));
+    assert.ok(card.indexOf('ps-freq') < card.indexOf('ps-profile'));
+  });
+
+  it('draws every card in the same parts, in the same order, whatever is missing', () => {
+    const parts = (card) => [...card.matchAll(/<div class="ps-s (ps-s-[a-z]+)">/g)].map((m) => m[1]);
+    const order = ['ps-s-act', 'ps-s-areas', 'ps-s-tech', 'ps-s-prof', 'ps-s-foot'];
+    const full = Person.card({
+      name: 'Ada',
+      messages: 9,
+      threads: 3,
+      weekly: [4, 5],
+      last: null,
+      areas: ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, name: id.toUpperCase(), threads: 1 })),
+      tech: [],
+    }, {
+      face: '', name: 'Ada', weeks: 2, ctx,
+    });
+    assert.deepEqual(parts(full), order);
+    // The first three tags, and a count of the rest that names them.
+    assert.equal((full.match(/class="ps-chip"/g) || []).length, 3);
+    assert.match(full, /<span class="ps-chip ps-more" title="Also D, E">\+2<\/span>/);
+    // No technologies, no profile, no title: each says so where it would be.
+    assert.match(full, /<dt>Products<\/dt><dd><span class="sub">None yet<\/span><\/dd>/);
+    assert.match(full, /class="sub ps-noprof">No profile in the knowledge base yet\./);
+    assert.match(full, /<span class="sub ps-ttl"><\/span>/);
+    assert.match(full, /<span class="sub ps-last">none lately<\/span>/);
+    const bare = Person.card({
+      name: 'Bo', messages: 1, threads: 1, weekly: [1], areas: [], tech: [],
+    }, {
+      face: '', name: 'Bo', weeks: 1, ctx,
+    });
+    assert.deepEqual(parts(bare), order);
   });
 
   it('leaves a tag unlinked where there is nowhere to go', () => {

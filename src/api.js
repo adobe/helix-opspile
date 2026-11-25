@@ -23,7 +23,7 @@ import { keptTurn } from './agent/kept.js';
 import { sidebarFor, unseenAnswers } from './sidebar.js';
 import { toolRequestsFor } from './toolrequests.js';
 import {
-  discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, saveDraft,
+  discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, getDraftFile, saveDraft,
 } from './drafts.js';
 import { requestsFor } from './bashrequests.js';
 import { teamsBotIcon } from './bots.js';
@@ -1459,6 +1459,9 @@ async function route(request, env, url, {
     }
     return res;
   }
+  if (url.pathname === '/api/draft/file' && request.method === 'GET') {
+    return getDraftFile(env, url.searchParams.get('thread'), url.searchParams.get('id'), seeing);
+  }
   if (url.pathname === '/api/draft/source' && request.method === 'GET') {
     return draftSource(env, url.searchParams.get('thread'), url.searchParams.get('url'), seeing, {
       own: url.hostname,
@@ -1709,8 +1712,10 @@ async function route(request, env, url, {
   }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
     // The members of a team look at its knowledge base and agents; changing them is for the
-    // admin team and team managers (and src/kbadmin.js checks whose).
-    if (request.method !== 'GET' && !isManager(me)) {
+    // admin team and team managers (and src/kbadmin.js checks whose). Its files are everyone's
+    // on the team, and its agent's sidebar whoever's who looks (src/kbaccess.js `mayWrite`).
+    const open = ['/api/kb/file', '/api/kb/chat', '/api/kb/chat/bash'].includes(url.pathname);
+    if (request.method !== 'GET' && !open && !isManager(me)) {
       return json({ error: 'changing the agents is for the admin team and team managers' }, 403);
     }
     return (await kbAdmin(request, env, url, me)) || json({ error: 'not found' }, 404);

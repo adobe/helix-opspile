@@ -295,7 +295,9 @@ export default defineConfig(({ mode }) => {
         BrowserBox: workerExports.durableObject({ state: 'deleted' }),
       },
       triggers: deployed
-        ? [triggers.scheduled({ schedule: '*/20 * * * *' }), ...consumers(mode)]
+        // Every five minutes too, for the GitHub items thread agents watch alone (src/index.js).
+        ? [triggers.scheduled({ schedule: '*/20 * * * *' }), triggers.scheduled({ schedule: '*/5 * * * *' }),
+          ...consumers(mode)]
         : [],
       env: {
         ...vars(deployed),

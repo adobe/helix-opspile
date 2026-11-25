@@ -364,6 +364,27 @@ describe('topic map: building', () => {
     assert.deepEqual(latest.map, map);
   });
 
+  it('counts a customer\'s accounts of one mail address as one of them', async () => {
+    const env = await setup();
+    env.DB.sqlite.exec(`UPDATE identities SET email = 'Dee@acme.example' WHERE user_id = 'U9';
+      INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at, email)
+        VALUES ('slack', 'E1', 'W9', 'person', 'Dee D', '2026-10-01T00:00:00Z', 'dee@acme.example');
+      INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, author_key,
+        author_kind) VALUES
+        ('slack', 'E1', 'C1', 'w9a', 'slack:E1:C1:0.1', '2026-10-21T00:00:00Z', 0, 1, 'slack:E1:W9', 'person'),
+        ('slack', 'E1', 'C1', 'w9b', 'slack:E1:C1:0.2', '2026-10-21T00:00:00Z', 0, 1, 'slack:E1:W9', 'person')`);
+    const { map } = await buildTopicMap(env, { now: NOW, by: 'Ada' });
+    assert.deepEqual(map.people, {
+      1: 'Ada', 2: 'Bo', 3: 'Cy', 'a:slack:E1:U9': 'Dee',
+    });
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.1').customers, {
+      3: 1, 'a:slack:E1:U9': 2,
+    });
+    assert.deepEqual(map.threads.find((t) => t.key === 'slack:E1:C1:0.2').customers, {
+      3: 1, 'a:slack:E1:U9': 1,
+    });
+  });
+
   it('finds an area\'s topics, and dissolves one that is one customer\'s, team\'s or product\'s', () => {
     // Two directions in one area: one shared by three customers, the other one customer's.
     const X = [];

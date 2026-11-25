@@ -47,6 +47,10 @@ describe('system prompts', () => {
     assert.equal(checkChanges(change, { staff: true }), null);
     assert.match(checkChanges([{ path: 'systemprompt.md', content: 'x'.repeat(17 * 1024) }], { staff: true }), /at most 16 KB/);
     assert.equal(checkChanges([{ path: 'systemprompt.md', delete: true }], { staff: true }), null);
+    // Only a path as it is: none that names a file another way, a delete neither.
+    for (const path of ['./systemprompt.md', 'x/../systemprompt.md', 'a//b.md', '', 'a\\b.md']) {
+      assert.match(checkChanges([{ path, delete: true }]), /without \.\/, \.\.\/ or \/\//, path);
+    }
   });
 });
 
@@ -123,9 +127,27 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
         // eslint-disable-next-line no-await-in-loop
         assert.equal((await call(env, MEMBER, 'GET', `/api/kb/mcp?repo=${repo}`)).status, 404);
       }
-      // Nothing changes.
+      // Its files are theirs to write, as their team's: what is wrong here is the content.
+      const own = await call(env, MEMBER, 'PUT', '/api/kb/file', { repo: 'kb-team-helix', path: 'a.md', content: 'x' });
+      assert.equal(own.status, 400);
+      // But its instructions and its areas, however their path is written: a path is taken as
+      // it is, so `./systemprompt.md` is refused rather than checked as another file.
+      for (const [method, path] of [['PUT', 'areas/cdn.md'], ['DELETE', 'areas/cdn.md'],
+        ['DELETE', 'systemprompt.md']]) {
+        // eslint-disable-next-line no-await-in-loop
+        const r = await call(env, MEMBER, method, '/api/kb/file', { repo: 'kb-team-helix', path, content: 'x' });
+        assert.equal(r.status, 403, `${method} ${path}`);
+      }
+      for (const path of ['./systemprompt.md', 'a/../systemprompt.md', 'areas//cdn.md', 'a\\b.md', '.']) {
+        for (const method of ['PUT', 'DELETE']) {
+          // eslint-disable-next-line no-await-in-loop
+          const r = await call(env, MEMBER, method, '/api/kb/file', { repo: 'kb-team-helix', path, content: 'x' });
+          assert.equal(r.status, 400, `${method} ${path}`);
+        }
+      }
+      // Nothing else changes: its instructions, its agents, tools and servers.
       for (const [path, body] of [
-        ['/api/kb/file', { repo: 'kb-team-helix', path: 'a.md', content: 'x' }],
+        ['/api/kb/file', { repo: 'kb-team-helix', path: 'systemprompt.md', content: 'x' }],
         ['/api/kb/agent', { team: 'helix', enabled: true }],
         ['/api/kb/tools', { tool: 'computer', team: 'helix', enabled: true }],
         ['/api/kb/mcp', { repo: 'kb-team-helix', name: 'x', url: 'https://x.example/mcp' }],
@@ -194,17 +216,22 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
         ]);
       }
 
-      // The members only read it.
+      // The members of its teams write its files, as themselves; its instructions and servers
+      // are the managers'.
       for (const me of [MEMBER, EDGE]) {
         for (const [method, path, body] of [
-          ['PUT', '/api/kb/file', { repo: 'kb-org-acme', path: 'a.md', content: concept('A') }],
-          ['DELETE', '/api/kb/file', { repo: 'kb-org-acme', path: 'index.md' }],
+          ['PUT', '/api/kb/file', { repo: 'kb-org-acme', path: 'systemprompt.md', content: 'Be brief.' }],
           ['POST', '/api/kb/mcp', { repo: 'kb-org-acme', name: 'x', url: 'https://x.example/mcp' }],
         ]) {
           // eslint-disable-next-line no-await-in-loop
           assert.equal((await call(env, me, method, path, body)).status, 403, `${method} ${path}`);
         }
       }
+      const member = await put(EDGE, 'notes/member.md', concept('A member\'s'));
+      assert.equal(member.status, 200);
+      assert.equal((await call(env, MEMBER, 'DELETE', '/api/kb/file', {
+        repo: 'kb-org-acme', path: 'notes/member.md', base: (await member.json()).hash,
+      })).status, 200);
       // The managers of helix (acme's channel is filed under it) and of edge (shared with it)
       // change it, as themselves.
       let res = await put(HELIX_MANAGER, 'sites/www.md', concept('www'));
@@ -218,6 +245,7 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       const { commits } = await (await call(env, HELIX_MANAGER, 'GET', '/api/kb/log?repo=kb-org-acme')).json();
       assert.deepEqual(commits.map((c) => [c.message, c.author]), [
         ['Delete sites/www.md', 'Bo'], ['Update sites/www.md', 'Bo'], ['Update sites/www.md', 'Bo'],
+        ['Delete notes/member.md', 'Bo'], ['Update notes/member.md', 'Bo'],
       ]);
       // Not the managers of a team that does not own the customer, nor through an ignored channel.
       assert.equal((await put(CDN_MANAGER, 'a.md', concept('A'))).status, 404);

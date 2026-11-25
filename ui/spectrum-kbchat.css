@@ -1,0 +1,198 @@
+/*
+ * The knowledge base's sidebar (ui/kbchat.js), on a team's or a customer's page (ui/admin.html),
+ * in Spectrum 2's look: purple, as the inbox's sidebar is, Spectrum's color for what is neither
+ * the customer's nor posted. Only Spectrum 2 tokens (see ui/spectrum.css).
+ *
+ * - the panel: a content area of the app frame of its own, beside what is picked (layer 1 under
+ *   it, the base on it), its head tinted in the subtle purple; on a screen too narrow for three
+ *   columns, a Tray over the page.
+ * - its tab: an accent-colored Button in purple, at the page's bottom right, while it is closed.
+ * - the conversation: yours filled in purple, the agent's outlined in purple, dashed as its
+ *   notes are in the inbox; solid while it works.
+ * - the box: a TextArea, and Ask, the panel's one high-attention Button.
+ */
+
+/* ==== The layout =============================================================================== */
+:root { --kbchat-w: clamp(calc(var(--spectrum-spacing-100) * 45), 28vw, calc(var(--spectrum-spacing-100) * 70)); }
+#kbchat { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+#kbchat[hidden], #kbchatTab[hidden] { display: none; }
+/* Beside the page where three columns fit: the list, what is picked, and the panel. */
+@media (min-width: 1100px) {
+  main.kbchatting { grid-template-columns: calc(var(--spectrum-spacing-100) * 34) minmax(0, 1fr) var(--kbchat-w); }
+}
+/* Over the page where they do not: from the right edge, the page's full height. */
+@media (max-width: 1099px) {
+  #kbchat { position: fixed; z-index: 30; inset: 0 0 0 auto; width: min(100vw, calc(var(--spectrum-spacing-100) * 56)); }
+}
+#kbchatTab { position: fixed; z-index: 20; right: var(--spectrum-spacing-400); bottom: calc(var(--spectrum-spacing-400) + var(--safe-bottom, 0px)); display: inline-flex; align-items: center; gap: var(--spectrum-spacing-100); }
+#kbchatTab svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
+/* On a phone, only where something is picked: the list has no knowledge base. */
+@media (max-width: 699px) {
+  body:not(.picked) #kbchatTab { display: none; }
+}
+.kbc-head { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
+.kbc-what { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.kbc-what small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kbc-close { flex: none; display: grid; place-items: center; padding: 0; cursor: pointer; }
+.kbc-earlier { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-300); }
+.kbc-earlier select { flex: 1; min-width: 0; }
+.kbc-scroll { flex: 1; min-height: 0; overflow: hidden auto; overscroll-behavior: contain; }
+.kbc-body { display: flex; flex-direction: column; gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300) var(--spectrum-spacing-400); }
+.kbc-m { display: flex; gap: var(--spectrum-spacing-100); align-items: flex-end; }
+.kbc-m.you { flex-direction: row-reverse; }
+.kbc-m .col { min-width: 0; max-width: 88%; display: flex; flex-direction: column; align-items: flex-start; }
+.kbc-m.you .col { align-items: flex-end; }
+.kbc-m .col > .bubble { max-width: 100%; overflow-wrap: anywhere; }
+.kbc-m .who { margin: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-50); }
+.kbc-m.pending .bubble { opacity: .7; }
+.kbc-av { flex: none; width: var(--spectrum-spacing-500); height: var(--spectrum-spacing-500); border-radius: 50%; }
+.kbc-av.big { width: var(--spectrum-spacing-800); height: var(--spectrum-spacing-800); }
+.kbc-blank { display: flex; flex-direction: column; align-items: center; gap: var(--spectrum-spacing-100); text-align: center; padding: var(--spectrum-spacing-400) var(--spectrum-spacing-100); }
+.kbc-blank p { margin: 0; }
+.kbc-ex { display: flex; flex-direction: column; align-items: stretch; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-200); width: 100%; }
+.kbc-try { text-align: start; white-space: normal; cursor: pointer; }
+.kbc-wait { text-align: center; padding: var(--spectrum-spacing-400) 0; }
+.kbc-box { flex: none; display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300) calc(var(--spectrum-spacing-200) + var(--safe-bottom, 0px)); }
+.kbc-box textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: calc(var(--spectrum-component-height-100) * 2); max-height: 40vh; }
+.kbc-foot { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
+.kbc-foot .sub { flex: 1; }
+.kbc-m .bubble p { margin: 0; }
+.kbc-m .bubble p + p { margin-top: var(--spectrum-spacing-100); }
+.kbc-m .bubble > :last-child { margin-bottom: 0; }
+.kbc-m .bubble > :first-child { margin-top: 0; }
+.kbc-m .bubble ul, .kbc-m .bubble ol { margin: var(--spectrum-spacing-75) 0; padding-left: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); }
+.kbc-m .bubble pre { overflow: auto; margin: var(--spectrum-spacing-100) 0; white-space: pre-wrap; }
+.kbc-m .bubble pre code { background: none; padding: 0; }
+.kbc-m .bubble table { border-collapse: collapse; margin: var(--spectrum-spacing-100) 0; display: block; overflow-x: auto; overflow-wrap: break-word; }
+.kbc-m .bubble :is(th, td) { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); }
+.kbc-m .bubble :is(h1, h2, h3, h4, h5, h6) { font-size: 1em; margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-50); }
+.kbc-m .bubble blockquote { margin: var(--spectrum-spacing-75) 0; padding-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); }
+
+/* A command the agent asks you to run: a card between the messages. */
+.kbc-cmd { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
+.kbc-cmd-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--spectrum-spacing-100); flex-wrap: wrap; }
+.kbc-cmd pre { margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.kbc-var { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); }
+.kbc-var input { width: 100%; box-sizing: border-box; }
+.kbc-acts { display: flex; align-items: center; gap: var(--spectrum-spacing-100); flex-wrap: wrap; }
+
+/* ==== Its look ================================================================================= */
+.spectrum #kbchat { background: var(--content); border-radius: var(--content-radius); box-shadow: var(--content-shadow); }
+@media (min-width: 1100px) {
+  .spectrum #kbchat { margin: 0 var(--frame-gap) var(--frame-gap) 0; }
+}
+@media (max-width: 1099px) {
+  .spectrum #kbchat { border-radius: var(--content-radius) 0px 0px var(--content-radius); box-shadow: var(--spectrum-drop-shadow-x) var(--spectrum-drop-shadow-y) var(--spectrum-spacing-600) var(--spectrum-transparent-black-400); }
+}
+@media (max-width: 699px) {
+  .spectrum #kbchat { border-radius: 0px; }
+}
+.spectrum .kbc-head { background: var(--spectrum-purple-subtle-background-color-default); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .kbc-what b { color: var(--spectrum-purple-1000); font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .kbc-what small { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .kbc-head button { min-height: var(--spectrum-component-height-75); border: 0; background: none; font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .kbc-head button:hover:not(:disabled) { background: color-mix(in srgb, var(--spectrum-purple-visual-color) 14%, transparent); }
+.spectrum .kbc-head button:disabled { background: none; }
+.spectrum .kbc-head .kbc-close { width: var(--spectrum-component-height-75); }
+.spectrum .kbc-head button:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .kbc-earlier { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .kbc-earlier select { font-size: var(--spectrum-font-size-75); min-height: var(--spectrum-component-height-75); }
+.spectrum .kbc-m .who { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .kbc-m .who b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .kbc-m .bubble {
+  padding: var(--spectrum-spacing-100) var(--spectrum-component-edge-to-text-100);
+  border-radius: var(--spectrum-corner-radius-extra-large-default);
+  line-height: var(--spectrum-line-height-200);
+  font-size: var(--spectrum-font-size-100);
+}
+.spectrum .kbc-m.you .bubble { background: var(--spectrum-purple-background-color-default); color: var(--spectrum-white); border-bottom-right-radius: var(--spectrum-corner-radius-75); }
+.spectrum .kbc-m.you .bubble a { color: var(--spectrum-white); }
+.spectrum .kbc-m.agent .bubble { background: var(--spectrum-background-layer-2-color); border: var(--spectrum-border-width-200) dashed var(--spectrum-purple-visual-color); color: var(--spectrum-neutral-content-color-default); border-bottom-left-radius: var(--spectrum-corner-radius-75); }
+.spectrum .kbc-m.agent.working .bubble { border-style: solid; color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .kbc-m.agent.failed .bubble { color: var(--spectrum-neutral-subdued-content-color-default); border-color: var(--spectrum-gray-400); }
+.spectrum .kbc-m .bubble a { text-underline-offset: var(--spectrum-spacing-50); }
+.spectrum .kbc-m .bubble code { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); padding: 0 var(--spectrum-spacing-75); border-radius: var(--spectrum-corner-radius-75); background: var(--spectrum-gray-100); }
+.spectrum .kbc-m.you .bubble code { background: var(--spectrum-transparent-black-400); }
+.spectrum .kbc-m .bubble pre { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-medium-default); background: var(--spectrum-gray-100); }
+.spectrum .kbc-m .bubble :is(th, td) { border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); }
+.spectrum .kbc-m .bubble :is(h1, h2, h3, h4, h5, h6) { color: inherit; font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .kbc-m .bubble blockquote { border-left: var(--spectrum-border-width-200) solid var(--spectrum-gray-400); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .kbc-m .spin {
+  display: inline-block;
+  border-radius: 50%;
+  width: var(--spectrum-progress-circle-size-small);
+  height: var(--spectrum-progress-circle-size-small);
+  margin-right: var(--spectrum-spacing-75);
+  border: var(--spectrum-progress-circle-thickness-small) solid var(--spectrum-gray-300);
+  border-top-color: var(--spectrum-purple-visual-color);
+  vertical-align: text-bottom;
+  animation: kbc-spin var(--spectrum-animation-duration-2000) linear infinite;
+}
+@keyframes kbc-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spectrum .kbc-m .spin { animation: none; } }
+.spectrum .kbc-blank b { font-size: var(--spectrum-font-size-200); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-heading-color); }
+.spectrum .kbc-try {
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-purple-visual-color);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  background: var(--spectrum-background-layer-2-color);
+  color: var(--spectrum-purple-1000);
+  font-size: var(--spectrum-font-size-75);
+}
+.spectrum .kbc-try:hover:not(:disabled) { background: var(--spectrum-purple-subtle-background-color-default); color: var(--spectrum-purple-1000); }
+.spectrum .kbc-try:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .kbc-wait { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .kbc-err { font-size: var(--spectrum-font-size-75); color: var(--spectrum-negative-visual-color); }
+.spectrum .kbc-box { background: var(--spectrum-purple-subtle-background-color-default); border-top: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color); }
+.spectrum .kbc-box textarea {
+  padding: var(--spectrum-component-top-to-text-100) var(--spectrum-component-edge-to-text-100);
+  font: inherit;
+  font-size: var(--spectrum-font-size-100);
+  line-height: var(--spectrum-line-height-200);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--spectrum-background-layer-2-color);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-purple-visual-color);
+  border-radius: var(--spectrum-corner-radius-medium-default);
+}
+.spectrum .kbc-box textarea:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .kbc-foot .sub { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum :is(.kbc-ask, #kbchatTab) {
+  min-height: var(--s2-ctl);
+  padding: 0 calc(var(--spectrum-component-pill-edge-to-text-100) - var(--spectrum-border-width-200));
+  border: var(--spectrum-border-width-200) solid transparent;
+  border-radius: calc(var(--s2-ctl) / 2);
+  background: var(--spectrum-purple-background-color-default);
+  color: var(--spectrum-white);
+  font-weight: var(--spectrum-bold-font-weight);
+  cursor: pointer;
+}
+.spectrum :is(.kbc-ask, #kbchatTab):hover:not(:disabled) { background: var(--spectrum-purple-1000); color: var(--spectrum-white); }
+.spectrum :is(.kbc-ask, #kbchatTab):focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum #kbchatTab { box-shadow: var(--spectrum-drop-shadow-x) var(--spectrum-drop-shadow-y) var(--spectrum-drop-shadow-blur) var(--spectrum-transparent-black-400); }
+/* As a command request's in the inbox: the notice color's subtle fill while it waits for you,
+   gray once it is decided; Run the accent Button, Deny an outline one. */
+.spectrum .kbc-cmd { border-radius: var(--spectrum-corner-radius-large-default); background: var(--spectrum-gray-75); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .kbc-cmd.pending { background: var(--spectrum-notice-subtle-background-color-default); }
+.spectrum .kbc-cmd-head b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .kbc-cmd.done .kbc-st { color: var(--spectrum-positive-visual-color); }
+.spectrum .kbc-cmd:is(.failed, .timeout) .kbc-st { color: var(--spectrum-negative-visual-color); }
+.spectrum .kbc-why { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .kbc-cmd pre { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-medium-default); background: var(--spectrum-background-layer-2-color); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .kbc-var input { min-height: var(--spectrum-component-height-75); padding: 0 var(--spectrum-component-edge-to-text-75); font: inherit; border: var(--spectrum-border-width-200) solid var(--spectrum-gray-400); border-radius: var(--spectrum-corner-radius-medium-default); background: var(--spectrum-background-layer-2-color); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .kbc-acts button {
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-pill-edge-to-text-75);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-400);
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  background: transparent;
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  cursor: pointer;
+}
+.spectrum .kbc-acts .kbc-run { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
+.spectrum .kbc-acts .kbc-run:hover:not(:disabled) { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-hover); }
+.spectrum .kbc-acts button:focus-visible, .spectrum .kbc-var input:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+
+@media (forced-colors: active) {
+  .spectrum :is(.kbc-m .bubble, .kbc-box textarea, #kbchatTab, .kbc-ask) { border: var(--spectrum-border-width-100) solid CanvasText; }
+}

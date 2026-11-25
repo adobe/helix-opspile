@@ -102,6 +102,7 @@ function load() {
     customerName: (v) => NAMES[v] || v,
     orgName: (t) => t.org_name || t.org,
     orgIcon: (t) => t.customerDomain,
+    ...piece('/** Whether `org` is a customer of its own', '/** What GET /api/customers/profile', 'cardOrg, orgHref, withOrg', { esc }),
     favImg: piece('const FAV_RETRY_MS', '// A favicon that failed', 'favImg', { esc, favicon: (d) => `https://icons.test/${d}` }).favImg,
     tile: (name) => `<span class="ico av">${esc(name[0])}</span>`,
     preview: () => null,
@@ -227,7 +228,8 @@ describe('the simple personal view', () => {
       assert.doesNotMatch(r, / simple"/);
       assert.match(r, /class="mks"/);
       assert.match(r, /<span class="faces"><span class="av">Sam Reyes<\/span><\/span>/);
-      assert.match(r, /<span class="cust">[\s\S]*ACME<\/span>/);
+      // The customer shows its card (ui/inbox.js `custChip`), by keyboard too.
+      assert.match(r, /<span class="cust" data-org="acme" role="button" tabindex="0" aria-label="ACME">[\s\S]*ACME<\/span>/);
       assert.match(r, /<b class="men" title="Unread mentions of you">2 mentions<\/b>/);
       // The list by customer is the simple view's only.
       assert.equal(page.grouped(), false);
@@ -306,10 +308,10 @@ describe('the simple personal view', () => {
       assert.doesNotMatch(rowOf('a2'), /class="cust"/);
       const head = page.groupHtml(list()[0]);
       assert.match(head, /^<div class="grp new sticky" data-group="acme"><button type="button" class="gn" data-group="acme" title="Only ACME">/);
-      assert.match(head, /<span class="logo"><span class="ico av">A<\/span><img src="https:\/\/icons.test\/acme.example" alt="" data-fav><\/span>/);
+      assert.match(head, /<span data-org="acme" title="" class="logo"><span class="ico av">A<\/span><img src="https:\/\/icons.test\/acme.example" alt="" data-fav><\/span>/);
       assert.match(head, /<span class="nm">ACME<\/span>/);
       // A customer without an icon has its initial.
-      assert.match(page.groupHtml(list().find((x) => x.head === 'initech')), /<span class="logo"><span class="ico av">I<\/span><\/span>/);
+      assert.match(page.groupHtml(list().find((x) => x.head === 'initech')), /<span data-org="initech" title="" class="logo"><span class="ico av">I<\/span><\/span>/);
     });
 
     it('names the key parts of the customer\'s stack beside it: its drawing\'s first of each layer', () => {
@@ -351,7 +353,7 @@ describe('the simple personal view', () => {
       assert.deepEqual(outline(), ['a1', 'g1', 'a2', 'g2', 'a3', 'i1', 'a4']);
       // A result names its customer: there is no heading over it.
       const hit = { matched: ['title'] };
-      assert.match(page.row(state.data.threads.find((t) => t.thread === 'a2'), hit), /<span class="cust">ACME<\/span>/);
+      assert.match(page.row(state.data.threads.find((t) => t.thread === 'a2'), hit), /<span class="cust" data-org="acme"[^>]*>ACME<\/span>/);
     });
 
     it('folds, in the other designs: three per customer, or only what is new', () => {

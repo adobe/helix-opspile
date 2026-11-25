@@ -238,8 +238,10 @@ describe('a command request', () => {
     const e = env();
     const agent = fakeAgent(e);
     const names = (ctx, tools) => (agentToolsExtension(ctx, tools).tools || []).map((t) => t.name);
-    assert.deepEqual(names({ ...agent, hasThread: true }, ['computer']), ['bash', 'request_bash']);
-    assert.deepEqual(names({ ...agent, hasThread: false }, ['computer']), ['bash']);
+    assert.deepEqual(names({ ...agent, hasThread: true }, ['computer']), ['bash', 'view_image', 'request_bash']);
+    // A knowledge-base agent asks in a conversation of its page (chatOf), with nothing else.
+    assert.deepEqual(names({ ...agent, hasThread: false }, ['computer']), ['bash', 'view_image']);
+    assert.deepEqual(names({ ...agent, hasThread: false, chatOf: async () => null }, ['computer']), ['bash', 'view_image', 'request_bash']);
     assert.deepEqual(names({ ...agent, hasThread: true }, []), []);
 
     const ext = agentToolsExtension({ ...agent, hasThread: true }, ['computer']);
@@ -267,11 +269,15 @@ describe('a command request', () => {
     // What it is told about it, in the computer's section: a thread's agent only.
     const guide = (x) => x.sections.find((s) => s.key === 'computer').render();
     assert.match(await guide(ext), /\n\nrequest_bash asks a person on the team to run a command on your computer for you\./);
+    // A knowledge-base agent is told of its computer in a conversation of its page only, where it
+    // asks that conversation's person.
     const seed = agentToolsExtension({ ...agent, hasThread: false }, ['computer']);
-    assert.doesNotMatch(await guide(seed), /request_bash/);
+    assert.equal(await seed.sections.find((s) => s.key === 'computer').render({ conversationId: 's' }), undefined);
+    const chat = agentToolsExtension({ ...agent, hasThread: false, chatOf: async () => ({ chat: 'c', write: true }) }, ['computer']);
+    assert.match(await chat.sections.find((s) => s.key === 'computer').render({ conversationId: 's' }), /request_bash asks the person you talk to on the knowledge base's page/);
     // Without a schedule to arm (no ThreadAgent), it says so instead of asking.
     const bare = agentToolsExtension({ env: e, hasThread: true, target: agent.target }, ['computer']);
-    const refused = await bare.tools[1].execute({ command: 'ls', reason: 'why' }, {});
+    const refused = await bare.tools.find((t) => t.name === 'request_bash').execute({ command: 'ls', reason: 'why' }, {});
     assert.ok(refused.isError);
     assert.equal(e.DB.rows('SELECT * FROM bash_requests').length, 1);
   });

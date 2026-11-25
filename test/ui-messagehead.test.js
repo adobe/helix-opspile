@@ -129,7 +129,8 @@ describe('message time', () => {
 });
 
 /** `message` and what it asks of the page: you may react, and edit your own. */
-function page({ readonly = false } = {}) {
+function page({ readonly = false, orgs = {} } = {}) {
+  const { withOrg } = piece('/** Whether `org` is a customer of its own', '/** What GET /api/customers/profile', 'withOrg', { esc });
   const state = {
     profiles: new Map(), editing: null, data: { me: { readonly } }, me: { name: 'Dana Ops' },
   };
@@ -151,6 +152,8 @@ function page({ readonly = false } = {}) {
     SIGNAL_HINT: {},
     pendingFiles: () => '',
     sendState: () => '',
+    orgOfDomain: (d) => orgs[d] || null,
+    withOrg,
   });
 }
 
@@ -209,6 +212,22 @@ describe('message header', () => {
     const html = message(next, first, false);
     assert.match(html, /^<div class="msg\s[^"]*\bcont\b/);
     assert.match(html, /<div class="head"><div class="who">.*?<\/div><div class="quick-at">/);
+  });
+
+  it('shows the customer\'s card on the badge of its people\'s pictures, and the domain where it has none', () => {
+    const face = (html) => html.match(/<span class="face">(.*?)<\/span><\/span>|<span class="face">(.*)$/s)[0];
+    const known = page({ orgs: { 'acme.example': 'acme' } }).message(msg(), null, false);
+    assert.match(face(known), /<img data-org="acme" title="" class="badge-ico" src="\/favicon\/acme\.example" alt="" data-fav>/);
+    const unknown = page().message(msg(), null, false);
+    assert.match(face(unknown), /<img class="badge-ico" src="\/favicon\/acme\.example" alt="" title="acme\.example" data-fav>/);
+    assert.doesNotMatch(unknown, /data-org/);
+    // Adobe's people have no badge, so no card on it.
+    const staff = page({ orgs: { 'adobe.com': 'adobe' } }).message(msg({
+      author: {
+        kind: 'person', name: 'Dana Ops', staff: true, org: 'adobe.com',
+      },
+    }), null, false);
+    assert.doesNotMatch(staff, /badge-ico|data-org/);
   });
 
   it('gives system lines, the line between a group\'s posts and the sidebar the same time', () => {

@@ -315,11 +315,25 @@ export function readScope(tools, target) {
 }
 
 /**
+ * The switchable tools a knowledge-base agent has (`kb:<team>:`, `kb::<org>`, no thread): for the
+ * conversations of its knowledge base's sidebar (src/kbchat.js), which are a person's, not a
+ * channel's, so no switch decides them. The computer and the web search; a team's extraction
+ * rules and tech stack too. The tools themselves refuse outside those conversations
+ * (src/agent/tools.js), and their changes for who may not write the knowledge base.
+ */
+export const KB_AGENT_TOOLS = ['computer', 'web_search', 'extraction_rules'];
+
+/**
  * The switchable tools an agent's target (its team, channel and platform) has, as a sorted
  * list of their keys: on, or granted to its thread (src/toolrequests.js), working in this
- * deployment and on the thread's platform.
+ * deployment and on the thread's platform. A knowledge-base agent's (no `key`): KB_AGENT_TOOLS,
+ * those that work here, the extraction rules only for a team's.
  */
 export async function toolsFor(env, target) {
+  if (target && !target.key && (target.team || target.org)) {
+    return KB_AGENT_TOOLS.filter((t) => !toolProblem(env, t)
+      && (t !== 'extraction_rules' || Boolean(target.team))).sort();
+  }
   if (!target || !target.key || !env.DB) {
     return [];
   }

@@ -91,7 +91,7 @@ and the label job tells the rooms of the teams that follow those (`announceFollo
 
 **Following a technology.** not followed → followed → not followed: a row in `team_follows` or
 `person_follows` (migration 0072), nothing else. A team's area is the same, a row in
-`team_follows_by` (migration 0103), worked out with `thread_areas` each time as the technologies are
+`team_follows_by` (migration 0105), worked out with `thread_areas` each time as the technologies are
 with `thread_tech`. Configuration, like the shares: whose inbox has a
 thread is worked out from it, its thread's `thread_tech` and its group each time
 (`followingTeams`, `followersOf`), never stored, so a relabel, a re-threading or a follow taken back
@@ -283,6 +283,18 @@ event and the draft goes on with its `created_at` and `origin`, as if it had not
 draft that is not its `origin_body` keeps that in `draft_undo` until the Undo takes it or its
 minute is over (pruned at the next discard and by the cron).
 
+**A draft's files.** stored → named by a version → sent, or gone (`drafts.files`, `src/draftfiles.js`).
+A picture is put into `FILES` (`drafts/<id>`) before the save that names it, so a version never
+names one that is not there; a save that fails leaves it unnamed, and the bucket's 30-day rule
+deletes it. A save keeps the files it does not name (`files` left out) or the ones it lists by id,
+and the agent's replace them. Nothing deletes a file when its draft is sent or discarded: the rule
+does. A discard keeps the draft's files on its event (`draft_events.files`), and its Undo gives
+them back with the text. A draft over 30 days old names files that are gone (the inbox says so,
+and sends nothing). Taken into the reply box, they are in its tray, each knowing its id
+(`draftFile`): taking the draft in again adds only those not there, and a save from the box
+keeps on the draft only those still in the tray. Sent, they go as the reply's own files, checked against the channel's rule
+then.
+
 **Offer to let the agent post.** not asked → asked → switched on, or declined (`src/postoffer.js`,
 `offerPosting` in `ui/inbox.js`). Nothing is stored for it but its end: it is worked out on every
 send of a draft whose `origin` is the agent, from the person's `sent` events in the channel
@@ -365,6 +377,21 @@ retry finds nothing unseen afterwards. Deliveries run one at a time.
 before the mark moves, and a schedule whose `mark` is not the wake-up's is stale and does nothing.
 Due, it leaves the list before the agent is told, so it wakes it once; an agent turned off since
 drops it unsaid. At most five wait.
+
+**Agent watch.** set → told (again and again) → unwatched or ran out (`agent_watches`, migration
+0104, `src/agent/watches.js`, `src/watches.js`). `seen` is the watermark: the latest message's time
+of a watched thread, a GitHub item's `updated_at`. An update moves it first, and only from the value
+it read (`WHERE COALESCE(seen, '') = ?`), so two jobs of one burst, or two polls, tell the agent
+once. An update its agent did not take (its object did not answer, or could not check its access)
+puts `seen` back where it was, conditional on what it wrote: the queue delivers a thread's job again,
+and the next poll tells a GitHub item's. A GitHub watch is due at `poll_after`, which every poll
+moves (later for a quiet item, a failing one by `failures`, and past GitHub's reset when it limits
+the installation); its `etag` makes the poll conditional. One whose channel surely no longer reads
+the account (`githubAccess` answers an error) is deleted before anything of the item is read; one
+whose access could not be checked (D1 or GitHub did not answer: it throws) is kept, and backs off. Past
+`expires_at` the cron deletes the row and tells the agent; `unwatch_related` deletes it at once. The
+isolates keep the watched threads' keys a minute (`watchedKeys`): a new watch can miss what is posted
+in that minute elsewhere.
 
 **Agent feedback.** kept → filed, or given up (`agent_feedback`, `src/agent/feedback.js`). The
 row is written before GitHub is asked, with that try counted in `attempts`; `filed_at` (and the
@@ -520,6 +547,29 @@ once per state and text (`sidebar-kept` in the agent's storage, written after th
 queued right behind one does not hide it. Answered, a message may be followed up (→ followed up,
 up to three times, within a week of it: `addSidebarFollowup`), by a later turn's `sidebar_followup`:
 `<id>:followup:<n>`, `n` one more than the follow-ups it has, never while a sidebar turn runs.
+
+**Knowledge base's sidebar.** asked → answered (or failed → answered), in a conversation that is
+one person's (`kb_chat_messages`, migration 0104, `src/kbchat.js`, `src/agent/kbchat.js`). As a
+thread's sidebar message: the person's row is written before the agent is told and deleted when it
+did not take it; the answer's id is the message's with `:answer`, written only for a message of
+that conversation (the insert selects it), replaced only while it is failed, never dated before
+its message. A conversation (`kc_…`) exists once it has a row, and is only ever the person's who
+wrote it: the API finds it by knowledge base and person (`isChatOf`), so an id someone else knows
+is none. Its session in the knowledge-base agent (`chat-session:<chat>`, `chat-of:<session>` and
+`seed-pin:<session>` in its storage) is made and pinned before the first input is submitted, as a
+seed's is, so no turn of it writes another knowledge base. Which conversations have an answer not
+kept yet is `chats-open` (added before the input is submitted, left once nothing of the
+conversation is pending or working); what was kept of each is `chat-kept:<chat>`, written after the
+answers, so a failed write is tried again. They are kept at every round of tools and answer
+(`keepTurn`, a knowledge-base agent's), and whenever the page asks while an answer waits
+(`chatState`), so a missed timer is no lost answer. A new conversation is only the page's until
+its first message (`fresh`). Whether its person may have the knowledge base changed is not a state
+of the conversation: it is asked at every message (`mayWrite`) and kept with the session for the
+turns it starts (`write` in `chat-of:<session>`), so someone who joins or leaves the team counts
+from their next message. A command its agent asks for there is a command request as any (below),
+with `chat` set: only that conversation's person decides it, on the page, and how it ended is told
+to that session as a sidebar message of theirs, with a line of theirs in the conversation, written
+before it is submitted and taken back when it could not be.
 
 **Sidebar answer seen.** unseen → seen, and unseen again when a failed answer is replaced
 (`sidebar_messages.seen_at`, migration 0078, `seeSidebar` in `src/sidebar.js`). Only the person it

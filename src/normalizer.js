@@ -47,6 +47,8 @@ import { recordLobby } from './portalrequests.js';
 import { teamsFollowing } from './follows.js';
 import { classify } from './rules.js';
 import { threadKind } from './alertbots.js';
+import { isWatched, WATCH_DELAY_SECONDS } from './agent/watches.js';
+import { notifyWatched } from './watches.js';
 import {
   advanceWatermark, applyReaction, findMessage, indexMessage, mentionedByName, recordMentions,
   previewOf, replaceReactions, titleOf,
@@ -603,6 +605,12 @@ export async function processKey(env, key, cache = {}) {
   if (kind === 'channel' && author.kind === 'person' && !imported && env.AI) {
     await env.NORMALIZE.send({ label: message.thread }, { delaySeconds: LABEL_DELAY_SECONDS });
   }
+  // A thread agent watches this thread (src/agent/watches.js): it hears of a burst of new
+  // messages once, a minute after the first.
+  if (written && !deleted && !imported && !message.editedAt && kind !== 'ignore'
+    && await isWatched(env, message.thread, author)) {
+    await env.NORMALIZE.send({ watched: message.thread }, { delaySeconds: WATCH_DELAY_SECONDS });
+  }
   // Its vector, and the thread's; a deletion (whoever's) takes the message's vector away. The
   // full-text index (SEARCH) has the bots' messages too.
   const vectors = (author.kind === 'person' || deleted) && env.CONTENT && env.AI;
@@ -641,6 +649,7 @@ export async function processKey(env, key, cache = {}) {
 /** Whom a queue job works for: its thread, where it names one (src/cogs/meter.js). */
 export function jobSubject(body) {
   const thread = body.label || body.vectorize || body.rethread || body.agent || body.files
+    || body.watched
     || (body.backfill && body.backfill.thread)
     || (body.export && [].concat(body.export).length === 1 && [].concat(body.export)[0]);
   return typeof thread === 'string' ? { thread } : {};
@@ -675,6 +684,7 @@ export async function consume(batch, baseEnv, meter = null) {
       || (body.backfill && `backfill:${body.backfill.thread}`)
       || (body.rethread && `rethread:${body.rethread}`)
       || (body.agent && `agent:${body.agent}`)
+      || (body.watched && `watched:${body.watched}`)
       || (body.files && `files:${body.files}`)
       || (body.refile && `refile:${body.refile.source}:${body.refile.channelId}`)
       || (body.catchup && `catchup:${body.catchup.channelId}`)
@@ -707,6 +717,9 @@ export async function consume(batch, baseEnv, meter = null) {
       } else if (body.files) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await copyThreadFiles(env, body.files) };
+      } else if (body.watched) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await notifyWatched(env, body.watched) };
       } else if (body.agent) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await pokeAgent(env, body.agent, { retry: msg.attempts < LAST_ATTEMPT }) };

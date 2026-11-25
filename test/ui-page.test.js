@@ -1332,6 +1332,7 @@ describe('inbox page', () => {
       notButton: () => '',
       bar: () => '',
       esc: (s) => s,
+      withOrg: (h) => h,
     });
     const customer = { id: 'customer', value: (t) => t.org };
     const counts = () => [...facetRows(customer).matchAll(/data-v="([^"]+)"[\s\S]*?<span class="n">(\d+)<\/span>/g)]

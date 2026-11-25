@@ -115,7 +115,10 @@ import { weeksTo } from '../src/trends.js';
 import { latestTopicMap } from '../src/topicmap.js';
 import { trendsFixture } from './dev-ui-topics.mjs';
 import { findPerson } from '../src/kbpeople.js';
-import { AGENT, createStore, TRANSLATIONS } from './dev-ui-fixtures.mjs';
+import { pathOwner } from '../src/agent/kbwrite.js';
+import {
+  AGENT, createStore, kbChats, TRANSLATIONS,
+} from './dev-ui-fixtures.mjs';
 import { targetOf } from '../src/translate.js';
 import { OFFER_AFTER } from '../src/postoffer.js';
 import { followable, followsOfTeams } from '../src/follows.js';
@@ -1491,6 +1494,121 @@ async function proxyApi(req, res, url, b) {
   return true;
 }
 
+/**
+ * The knowledge base's sidebar (ui/kbchat.js, GET and POST /api/kb/chat, POST /api/kb/chat/bash):
+ * your conversations by knowledge base (the fixtures' `kbChats`, with a command the agent asks
+ * you to run), answered a few seconds after you ask, with what the agent is doing meanwhile.
+ */
+const chats = new Map(Object.entries(kbChats()));
+const CHAT_ANSWER_MS = 6000;
+function kbChat(req, res, url, listing, body) {
+  const list = chats.get(listing.repo) || [];
+  chats.set(listing.repo, list);
+  const write = listing.write ?? listing.may;
+  if (url.pathname === '/api/kb/chat/bash') {
+    const c = list.find((x) => x.chat === body.chat);
+    const r = c && (c.bash || []).find((x) => x.id === body.id);
+    if (!write) {
+      return json(res, { error: 'only the people on its team run commands on its agent\'s computer' }, 403);
+    }
+    if (!r || r.status !== 'pending') {
+      return json(res, { error: r ? 'It was decided already' : 'not found' }, r ? 409 : 404);
+    }
+    const at = new Date().toISOString();
+    Object.assign(r, { status: body.run ? 'running' : 'denied', by: { id: store.me.id, name: store.me.name }, decided_at: at });
+    // A line of yours, and a while later the agent's answer to it, as tellChat has it.
+    const said = (line) => {
+      const id = `sb_${crypto.randomUUID()}`;
+      c.messages.push({
+        id, role: 'person', state: 'done', reply_to: null, at: new Date().toISOString(), body: line,
+      });
+      setTimeout(() => c.messages.push({
+        id: `${id}:answer`,
+        role: 'agent',
+        state: 'done',
+        reply_to: id,
+        at: new Date().toISOString(),
+        body: body.run ? 'The active version is **42**, activated on 2026-11-20: after the October fix. I added that to `issues/cdn-purge-delay.md` as the newest source.'
+          : 'Understood: I left it. Without the service\'s history I kept `issues/cdn-purge-delay.md` as it was.',
+      }), CHAT_ANSWER_MS);
+    };
+    if (!body.run) {
+      said(`Denied the command (request ${r.id}).`);
+    } else {
+      setTimeout(() => {
+        Object.assign(r, { status: 'done', exit_code: 0, finished_at: new Date().toISOString() });
+        said(`Ran the command (request ${r.id}); it exited with code 0.`);
+      }, CHAT_ANSWER_MS / 2);
+    }
+    return json(res, { ok: true, request: r }, body.run ? 202 : 200);
+  }
+  const view = (c) => {
+    const last = c && c.messages[c.messages.length - 1];
+    const waits = Boolean(last && last.role === 'person');
+    const out = {
+      repo: listing.repo,
+      may: listing.may && !MEMBER,
+      write: Boolean(write),
+      chat: c ? c.chat : null,
+      messages: c ? c.messages : [],
+      bash: c ? c.bash || [] : [],
+      chats: list.map((x) => ({
+        chat: x.chat,
+        at: x.messages.at(-1).at,
+        messages: x.messages.length,
+        first: x.messages[0].body.slice(0, 200),
+      })),
+      working: null,
+    };
+    if (waits) {
+      const late = Date.now() - Date.parse(last.at) > CHAT_ANSWER_MS / 2;
+      out.working = late ? 'Reading another thread' : 'Reading your message';
+    }
+    return out;
+  };
+  if (req.method === 'GET') {
+    const asked = url.searchParams.get('chat');
+    return json(res, view(list.find((c) => c.chat === asked) || list[0] || null));
+  }
+  const asked = String(body.text || '').trim();
+  if (!asked) {
+    return json(res, { error: 'write what to ask the agent' }, 400);
+  }
+  const named = list.find((x) => x.chat === body.chat) || (body.chat ? null : list[0]);
+  let c = body.fresh ? null : named;
+  if (body.chat && !c) {
+    return json(res, { error: 'no such conversation' }, 404);
+  }
+  if (!c) {
+    c = { chat: `kc_${crypto.randomUUID()}`, messages: [] };
+    list.unshift(c);
+  } else {
+    list.splice(list.indexOf(c), 1);
+    list.unshift(c);
+  }
+  const message = {
+    id: `sb_${crypto.randomUUID()}`,
+    role: 'person',
+    state: 'done',
+    reply_to: null,
+    at: new Date().toISOString(),
+    body: asked,
+  };
+  c.messages.push(message);
+  setTimeout(() => {
+    c.messages.push({
+      id: `${message.id}:answer`,
+      role: 'agent',
+      state: 'done',
+      reply_to: message.id,
+      at: new Date().toISOString(),
+      body: 'This is the preview: no agent runs here. In production I would look this up in the'
+        + ` knowledge bases and the inbox's threads, and change \`${listing.repo}\` if you asked me to.`,
+    });
+  }, CHAT_ANSWER_MS);
+  return json(res, { chat: c.chat, message }, 202);
+}
+
 /** The fake `/api/kb*` (src/kbadmin.js), over the in-memory knowledge bases. */
 async function kbApi(req, res, url) {
   // Who reads and who changes a knowledge base's files: as src/kbadmin.js lists them (a
@@ -1499,10 +1617,16 @@ async function kbApi(req, res, url) {
     const list = await adminApi.kb({ method: 'GET' }, new URL('http://localhost/api/kb'), null);
     return (await list.json()).bases.find((b) => b.repo === repo);
   };
-  if (MEMBER && req.method !== 'GET') {
+  const open = ['/api/kb/file', '/api/kb/chat', '/api/kb/chat/bash'].includes(url.pathname);
+  if (MEMBER && req.method !== 'GET' && !open) {
     return json(res, { error: 'changing the agents is for the admin team and team managers' }, 403);
   }
   const body = req.method === 'GET' ? {} : await readJson(req);
+  if (url.pathname === '/api/kb/chat' || url.pathname === '/api/kb/chat/bash') {
+    const repo = req.method === 'GET' ? url.searchParams.get('repo') : body.repo;
+    const listing = kb.has(repo) && await listed(repo);
+    return listing ? kbChat(req, res, url, listing, body) : json(res, { error: 'no such knowledge base' }, 404);
+  }
   // The list (with its agent counts), the channels and their agents, the agents' MCP servers
   // and their switchable tools, and the teams' extraction rules: src/kbadmin.js itself.
   if (['/api/kb', '/api/kb/channels', '/api/kb/agent', '/api/kb/tools', '/api/kb/tools/secrets']
@@ -1564,8 +1688,11 @@ async function kbApi(req, res, url) {
   if (!listing) {
     return json(res, { error: 'no such knowledge base' }, 404);
   }
-  if (req.method !== 'GET' && !listing.may) {
-    return json(res, { error: 'the admin team and the managers of the teams it belongs to change it' }, 403);
+  // Its files, but systemprompt.md, are everyone's on the team (src/kbaccess.js `mayWrite`).
+  const content = url.pathname === '/api/kb/file'
+    && pathOwner(String(body.path || '').replace(/^\/+/, '')) === 'member';
+  if (req.method !== 'GET' && !(content ? listing.write ?? listing.may : listing.may)) {
+    return json(res, { error: content ? 'the people on its team change it' : 'the admin team and the managers of the teams it belongs to change it' }, 403);
   }
   if (url.pathname === '/api/kb/files') {
     const files = await kb.files(repo);
@@ -2145,6 +2272,16 @@ async function api(req, res, url) {
       }));
     return json(res, { platform: entry.row.source, experts });
   }
+  if (url.pathname === '/api/draft/file') {
+    // As src/draftfiles.js: a picture of the thread's draft.
+    const d = drafts.get(url.searchParams.get('thread'));
+    const id = url.searchParams.get('id');
+    const f = d && (d.files || []).some((x) => x.id === id) && store.uploads.get(id);
+    if (!f) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    return res.writeHead(200, { 'content-type': f.type, 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'" }).end(Buffer.from(f.bytes));
+  }
   if (url.pathname === '/api/draft/source') {
     // As src/sources.js would answer about each fixture's source; a Slack message as
     // src/messagelinks.js does, the message the store has.
@@ -2308,7 +2445,7 @@ async function api(req, res, url) {
   if (url.pathname === '/api/draft' && (req.method === 'PUT' || req.method === 'DELETE')) {
     // As src/drafts.js: `base` is the version the text was written from.
     const {
-      thread: key, text: body, mentions = [], sources, base = null,
+      thread: key, text: body, mentions = [], sources, files: keep, base = null,
     } = await readJson(req);
     const entry = store.threads.get(key);
     if (!entry || !inTeam(entry.row.team)) {
@@ -2344,6 +2481,8 @@ async function api(req, res, url) {
       body,
       mentions,
       sources: sources ?? current?.sources ?? [],
+      // As src/draftfiles.js: the ids it keeps, or all of them.
+      files: (current?.files || []).filter((f) => !keep || keep.includes(f.id)),
       by: { id: ME, name: me.name },
       created_at: current ? current.created_at : at,
       updated_at: at,

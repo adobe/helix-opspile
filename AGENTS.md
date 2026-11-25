@@ -90,6 +90,14 @@ code and docs, is the decision model that labels threads and channels.
   that `ui/admin.js` makes, which keeps the address (`view=`, `path=`). Before anything replaces
   what it shows, `ui/admin.js` awaits `Agent.leave()` (it saves, or asks). Its styles are
   `ui/spectrum-agent.css`, all under `.agent`. `/inbox/kb`, the page it was, redirects there.
+  Beside every section of those pages is the knowledge base's sidebar (`ui/kbchat.js`, the global
+  `KbChat`, in `ui/spectrum-kbchat.css`): whoever may read the knowledge base talks there to its
+  knowledge-base agent (`kb:<team>:`, `kb::<org>`), in conversations of their own, each a session
+  pinned to that knowledge base (`src/kbchat.js`, `src/agent/kbchat.js`), and it changes the
+  knowledge base only for the people on its team (`mayWrite` in `src/kbaccess.js`, which also says
+  who writes its files in the editor). Only those sessions read every thread and have the agent's
+  switchable tools (`kbChatExtension` in `src/agent/tools.js`, `KB_AGENT_TOOLS` in
+  `src/agent/agenttools.js`).
 - **Following and muting is one component, `ui/follow.js`** (the global `Follow`, its look in
   `ui/spectrum.css`, `.fo`): whatever may be followed (a product, a topic, a customer, a person) gets
   `Follow.button({ kind, id, name })` wherever a page shows it, never a button of its own; for whoever

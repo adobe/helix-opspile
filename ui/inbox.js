@@ -250,7 +250,7 @@ function cardContext(el) {
   const t = state.data?.threads.find((x) => x.thread === key) || {};
   const th = state.cache.get(key)?.data?.thread || {};
   return {
-    thread: key || null, org: orgName(t.org ? t : th), icon: orgIcon(t.org ? t : th), customerDomain: t.customerDomain || null, channel: t.channel_name || th.channel_name,
+    thread: key || null, slug: t.org || th.org || null, org: orgName(t.org ? t : th), icon: orgIcon(t.org ? t : th), customerDomain: t.customerDomain || null, channel: t.channel_name || th.channel_name,
   };
 }
 
@@ -317,14 +317,20 @@ function cardPerson(person) {
   if (!w) return profile ? `<div class="ps-part">${profile}</div>` : '';
   const ctx = {
     topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
-    orgHref: (slug) => `/inbox/admin?${new URLSearchParams({ tab: 'orgs', org: slug })}`,
+    orgHref,
     orgName: (slug, name) => name || slug,
     orgIcon: (slug, icon) => (icon ? favImg(icon) : ''),
   };
   // A few of each: the card is small; their team's overview has the rest.
-  const { knows, keys } = Person.work(w, ctx, { most: 3 });
+  const { knows, keys } = Person.work(w, ctx, { most: 3, more: true });
   return `<div class="ps-part">${profile}${w.messages ? Person.freq(person.name, w, w.weeks) : ''}${knows}${keys}</div>`;
 }
+
+/**
+ * Where an Adobe person's part will be while the knowledge bases are asked: as tall as it about
+ * is, so that the card does not grow under the pointer, or jump above the name, once it comes.
+ */
+const CARD_WAIT = '<div class="ps-part ps-wait" aria-hidden="true"><span class="ps-w-act"></span><span></span><span></span></div>';
 
 function cardHtml(p, ctx, found) {
   // An Adobe person as their team's overview shows them: the best of their accounts' name,
@@ -344,7 +350,8 @@ function cardHtml(p, ctx, found) {
     rows.push(['Ops teams', `<span class="teams">${person.teams.map(team).join(', ')}</span>`]);
   } else if (p.teams?.length) rows.push(['Ops teams', esc(p.teams.join(', '))]);
   if (ctx.org) {
-    rows.push(['Channel', `${ico(ctx.icon)}${esc(ctx.org)}${ctx.channel ? ` <span style="color:var(--faint)">· ${esc(ctx.channel)}</span>` : ''}`]);
+    const org = cardOrg(ctx.slug) ? `<a href="${esc(orgHref(ctx.slug))}" title="${esc(`${ctx.org}'s profile in Customers`)}">${esc(ctx.org)}</a>` : esc(ctx.org);
+    rows.push(['Channel', `${ico(ctx.icon)}${org}${ctx.channel ? ` <span style="color:var(--faint)">· ${esc(ctx.channel)}</span>` : ''}`]);
   }
   // A customer from another domain than the channel's customer may be a partner nobody listed.
   const other = rel === 'customer' && p.domain && ctx.customerDomain && p.domain !== ctx.customerDomain;
@@ -358,9 +365,163 @@ function cardHtml(p, ctx, found) {
     ${rows.length ? `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : ''}
     ${other ? `<div class="note">Not the usual customer domain in this channel (${esc(ctx.customerDomain)}).</div>` : ''}
     ${p.local ? '<div class="note">No account details known yet.</div>' : ''}
-    ${cardPerson(person)}
+    ${found?.pending && rel === 'adobe' ? CARD_WAIT : cardPerson(person)}
     ${cardKb(found)}
     ${mayAskAbout(ctx.thread, p) ? `<button type="button" class="ask-about" data-ask-about title="Ask in the sidebar: only your team sees it, nothing is posted">${SIDE_ICON}What should I know about ${esc(p.name)}?</button>` : ''}`;
+}
+
+// ---------------------------------------------------------------- customer cards
+// A customer's card, on its icon and its name where the inbox shows them (`data-org`): the
+// thread's icon in its header, the customer in a row, in the filters and over its threads in the
+// list, and the badge of its people's pictures. It is the person's card (`#pcard`), shown and
+// hidden the same way: first what the inbox has of the customer, then the numbers of its overview
+// in Customers (GET /api/customers/profile, src/orgprofile.js), asked when the card first shows
+// and kept a while. It leads to that overview, and picks the customer in the filters.
+const ORG_FRESH_MS = 5 * 60 * 1000;
+const orgCards = new Map();
+/** Whether `org` is a customer of its own: not the threads filed under none yet (`_unassigned`). */
+const cardOrg = (org) => Boolean(org) && !String(org).startsWith('_');
+/** The customer's overview in Customers (ui/admin.js reads `org`). */
+const orgHref = (org) => `/inbox/admin?${new URLSearchParams({ tab: 'orgs', org })}`;
+/** `data-org` on the first element of `html`, and an empty title, so no tooltip covers the card. */
+const withOrg = (html, org) => (cardOrg(org) && html ? html.replace(/^<(\w+)/, `<$1 data-org="${esc(org)}" title=""`) : html);
+/** What GET /api/customers/profile says of `org`: `{ pending, asked }`, then `{ p }` or `{ failed }`. */
+function orgOverview(org, now = Date.now()) {
+  const hit = orgCards.get(org);
+  if (hit && (hit.pending || now - hit.at < ORG_FRESH_MS)) return hit;
+  const asked = get(`/api/customers/profile?${new URLSearchParams({ org })}`).then((p) => ({ p }), () => ({ failed: true }));
+  const entry = { pending: true, asked, at: now };
+  orgCards.set(org, entry);
+  asked.then((r) => { if (orgCards.get(org) === entry) orgCards.set(org, { ...r, at: Date.now() }); });
+  return entry;
+}
+/** The customers of the icons on the list (a domain the admin team set), kept while it is the same. */
+const orgDomains = { threads: null, by: new Map() };
+/**
+ * The customer whose people write from `domain`: that of thread `key` (by its usual domain or its
+ * icon), else one on the list whose icon it is. Another thread's usual domain may be a partner's.
+ */
+function orgOfDomain(domain, key) {
+  const d = String(domain || '').toLowerCase();
+  if (!d) return null;
+  const own = [state.data?.threads.find((x) => x.thread === key), state.cache.get(key)?.data?.thread];
+  const mine = own.find((x) => cardOrg(x?.org) && [x.customerDomain, x.org_icon].some((v) => String(v || '').toLowerCase() === d));
+  if (mine) return mine.org;
+  const threads = state.data?.threads || [];
+  if (orgDomains.threads !== threads) {
+    orgDomains.threads = threads;
+    orgDomains.by = new Map();
+    for (const t of threads) {
+      if (!cardOrg(t.org)) continue;
+      const k = String(t.org_icon || '').toLowerCase();
+      if (k && !/^https:/.test(k) && !orgDomains.by.has(k)) orgDomains.by.set(k, t.org);
+    }
+  }
+  return orgDomains.by.get(d) || null;
+}
+/**
+ * What the inbox has of `org` at once: its name, icon and type, and of its threads on the list
+ * how many there are, wait on Adobe, are unread, and the latest one's time. `extra` is a thread
+ * of it that may not be on the list (the one open).
+ */
+function orgLocal(org, extra = null) {
+  const ts = (state.data?.threads || []).filter((t) => t.org === org);
+  const all = extra?.org === org ? [extra, ...ts] : ts;
+  const like = all.find((t) => orgIcon(t)) || all[0] || {};
+  return {
+    name: all.length ? orgName(like) : null,
+    icon: orgIcon(like),
+    type: like.org_type || null,
+    threads: ts.length,
+    us: ts.filter((t) => waitingOn(t) === 'Us').length,
+    unread: ts.filter((t) => t.unread).length,
+    latest: ts.map(activityOf).sort().pop() || null,
+  };
+}
+/** A wait in minutes, in words, as a customer's overview says it (ui/overview.js `wait`). */
+function waitWords(min) {
+  if (min === null || min === undefined) return null;
+  if (min < 60) return `${Math.max(1, Math.round(min))} min`;
+  const h = min / 60;
+  if (h < 48) return `${h < 10 ? h.toFixed(1).replace(/\.0$/, '') : Math.round(h)} h`;
+  return `${Math.round(h / 24)} days`;
+}
+const ORG_REL = {
+  customer: ['customer', 'Customer'], partner: ['partner', 'Partner'], vendor: ['vendor', 'Vendor'], internal: ['adobe', 'Internal'],
+};
+/** The part of the card from its overview: how much it says, how soon it is answered, who and what. */
+function orgCardOverview(name, found) {
+  if (!found || found.failed) return '';
+  if (found.pending) return '<div class="kb pending">Looking up its overview\u2026</div>';
+  const { p } = found;
+  const messages = (p.activity?.messages || []).reduce((s, v) => s + v, 0);
+  const last = (p.channels || []).map((c) => c.last).filter(Boolean).sort().pop() || null;
+  const freq = messages ? Person.freq(name, {
+    messages, threads: p.threadCount || 0, weekly: p.activity.messages, last,
+  }, p.weeks?.length || p.activity.messages.length) : '';
+  const rows = [];
+  const a = p.answers || {};
+  const wait = waitWords(a.median);
+  if (wait) rows.push([a.by === 'them' ? 'Answers' : 'Answered', `${a.by === 'them' ? 'Adobe in' : 'by Adobe in'} ${esc(wait)}, typically`]);
+  const people = (p.people || []).slice(0, 5);
+  if (people.length) {
+    const more = (p.peopleCount || 0) - people.length;
+    rows.push(['People', `<span class="oc-faces">${people.map((x) => Person.face(x.name, x.avatar, { cls: 'small', attrs: ` role="img" aria-label="${esc(x.name)}" title="${esc([x.name, x.title].filter(Boolean).join(' \u00b7 '))}"` })).join('')}${more > 0 ? `<span class="oc-more">+${more}</span>` : ''}</span>`]);
+  }
+  const teams = (p.teams || []).slice(0, 3);
+  if (teams.length) rows.push(['Teams', `<span class="teams">${teams.map((t) => `<a href="${esc(`/inbox/admin?${new URLSearchParams({ tab: 'teams', team: t.slug })}`)}" title="${esc(`${t.name}'s overview in Teams`)}">${esc(t.name)}</a>`).join(', ')}</span>`]);
+  const list = rows.length ? `<dl class="oc-rows">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : '';
+  // What its threads are about and show, as a person's card has theirs: each to the Topics page.
+  const topic = (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`;
+  const areas = (p.areas || []).slice(0, 3);
+  const tech = (p.tech || []).filter((t) => t.threads).slice(0, 3);
+  const knows = [
+    areas.length ? `<dt>Topics</dt><dd>${areas.map((x) => Person.chip(x.name, x.threads, { href: topic(`tag:${x.id}`) })).join('')}</dd>` : '',
+    tech.length ? `<dt>Products</dt><dd>${tech.map((t) => Person.chip(t.name, t.threads, { cls: 'tech', href: topic(`product:tech:${t.tech}`) })).join('')}</dd>` : '',
+  ].join('');
+  const parts = `${freq}${list}${knows ? `<dl class="ps-knows">${knows}</dl>` : ''}`;
+  return parts ? `<div class="ps-part">${parts}</div>` : '';
+}
+/**
+ * A customer's card: its icon and name, its type, its threads on the list and where this one is,
+ * then its overview's part (orgCardOverview), and the way to its overview and to its threads.
+ * `ctx` is cardContext's; `open` the thread's link on its platform, from the header's icon.
+ */
+function orgCardHtml(org, local, found, ctx = {}, open = null) {
+  const o = found?.p?.org || {};
+  const name = o.name || local.name || org;
+  const icon = local.icon || o.icon || o.domain;
+  const [rel, label] = ORG_REL[o.type || local.type] || ORG_REL.customer;
+  const channels = found?.p ? found.p.channelCount || 0 : null;
+  const sub = [channels ? Person.plural(channels, 'channel') : '', o.domain || ''].filter(Boolean).join(' \u00b7 ');
+  const rows = [];
+  if (local.threads) {
+    const parts = [Person.plural(local.threads, 'thread'), local.us ? `${local.us} waiting on us` : '', local.unread ? `${local.unread} unread` : ''];
+    rows.push(['Here', esc(parts.filter(Boolean).join(' \u00b7 '))]);
+  }
+  if (ctx.slug === org && ctx.channel) {
+    const there = open ? ` <a href="${esc(open.href)}" target="_blank" rel="noopener" title="${esc(`Open the thread in ${open.platform}`)}">Open in ${esc(open.platform)}</a>` : '';
+    rows.push(['Channel', `${esc(ctx.channel)}${there}`]);
+  }
+  if (local.latest) rows.push(['Active', esc(Person.ago(local.latest))]);
+  const only = state.sel.customer?.size === 1 && state.sel.customer.has(org);
+  return `<div class="top"><span class="logo oc-logo">${tile(name)}${icon ? favImg(icon) : ''}</span><div>
+      <div class="nm">${esc(name)}</div>${sub ? `<div class="ttl">${esc(sub)}</div>` : ''}</div></div>
+    <div class="chips"><span class="rel ${rel}">${label}</span></div>
+    ${rows.length ? `<dl class="oc-here">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : ''}
+    ${orgCardOverview(name, found)}
+    <div class="oc-acts"><a class="oc-act primary" href="${esc(orgHref(org))}" title="${esc(`${name}'s overview in Customers`)}">Open profile</a><button type="button" class="oc-act" data-org-only="${only ? '' : esc(org)}" title="${esc(only ? 'Every customer\'s threads again' : `Only ${name}'s threads in the inbox`)}">${only ? 'All customers' : 'Only its threads'}</button></div>`;
+}
+/** Picks only `org` in the filters, or (empty) all customers again. */
+function onlyOrg(org) {
+  hideCard();
+  if (org) {
+    state.sel.customer = new Set([org]);
+    state.not.customer?.delete(org);
+    if (!state.not.customer?.size) delete state.not.customer;
+  } else delete state.sel.customer;
+  render();
+  toUrl();
 }
 
 const card = { el: null, target: null, showTimer: 0, hideTimer: 0, pointer: 'mouse' };
@@ -420,19 +581,45 @@ function showCard(target) {
 }
 /** Fills the card for `target` and places it; again when its knowledge-base part comes. */
 function drawCard(target) {
-  const p = state.profiles.get(target.dataset.p);
-  if (!p || !target.isConnected) return;
+  const { org } = target.dataset;
+  const p = org ? null : state.profiles.get(target.dataset.p);
+  if ((!org && !p) || !target.isConnected) return;
   const el = cardEl();
   if (card.target && card.target !== target) card.target.removeAttribute('aria-describedby');
   const ctx = cardContext(target);
-  const found = ctx.thread && p.kind !== 'bot' ? kbPerson(ctx.thread, target.dataset.p, p) : null;
-  if (found?.pending) found.asked.then(() => { if (card.target === target && !el.hidden) drawCard(target); });
-  setHtml(el, cardHtml(p, ctx, found));
+  let html;
+  if (org) {
+    const found = orgOverview(org);
+    if (found.pending) found.asked.then(() => { if (card.target === target && !el.hidden) drawCard(target); });
+    const open = target.closest('#pane .ph') && target.matches('a[href]') ? { href: target.href, platform: platform(state.cache.get(ctx.thread)?.data?.thread || {}) } : null;
+    html = orgCardHtml(org, orgLocal(org, state.cache.get(ctx.thread)?.data?.thread), found, ctx, open);
+  } else {
+    const found = ctx.thread && p.kind !== 'bot' ? kbPerson(ctx.thread, target.dataset.p, p) : null;
+    if (found?.pending) found.asked.then(() => { if (card.target === target && !el.hidden) drawCard(target); });
+    html = cardHtml(p, ctx, found);
+  }
+  el.classList.toggle('ocard', Boolean(org));
+  setHtml(el, html);
   card.target = target;
   target.setAttribute('aria-describedby', 'pcard');
-  // Below the name or avatar, or above it when there is no room; always on screen.
+  // Below the name or avatar, or above it when there is no room; always on screen. A customer's
+  // in the filters is beside its card, which stays out (a rail's) while its card shows.
   const r = target.getBoundingClientRect();
+  const filter = target.closest('#filters .card');
+  const main = document.querySelector('main');
+  if (filter && main?.classList.contains('rail') && !main.classList.contains('railopen')) {
+    main.classList.add('railopen');
+    card.rail = true;
+  }
   measureFloat(el, ({ w, h }) => {
+    if (filter) {
+      el.classList.remove('s2-up');
+      el.style.top = `${Math.max(8, Math.min(r.top - 12, window.innerHeight - h - 8))}px`;
+      // The row's right edge: a rail's rows keep their full width while it slides out.
+      const right = Math.max(filter.getBoundingClientRect().right, target.closest('.fr')?.getBoundingClientRect().right || 0);
+      el.style.left = `${Math.max(8, Math.min(right + 6, window.innerWidth - w - 8))}px`;
+      return;
+    }
     let top = r.bottom + 6;
     const up = top + h > window.innerHeight - 8;
     if (up) top = Math.max(8, r.top - h - 6);
@@ -444,6 +631,8 @@ function drawCard(target) {
 function hideCard() {
   clearTimeout(card.showTimer);
   clearTimeout(card.hideTimer);
+  if (card.rail) document.querySelector('main')?.classList.remove('railopen');
+  card.rail = false;
   if (card.el) card.el.hidden = true;
   card.target?.removeAttribute('aria-describedby');
   card.target = null;
@@ -455,12 +644,14 @@ function hideCardSoon() {
 /** After a re-render: a card whose name or avatar is gone goes too. */
 function cardGone() { if (card.target && (!card.target.isConnected || card.target.closest?.('.leaving'))) hideCard(); }
 
+/** What a card shows on: a person's name or picture, a customer's icon or name. */
+const CARD_ON = '[data-p], [data-org]';
 function wireCards() {
   const hovering = (e) => e.pointerType === 'mouse' || e.pointerType === 'pen';
   document.addEventListener('pointerdown', (e) => { card.pointer = e.pointerType; }, true);
   document.addEventListener('pointerover', (e) => {
     if (!hovering(e)) return;
-    const t = e.target.closest('[data-p]');
+    const t = e.target.closest(CARD_ON);
     if (t) {
       clearTimeout(card.hideTimer);
       if (card.target === t) return;
@@ -471,7 +662,7 @@ function wireCards() {
   });
   document.addEventListener('pointerout', (e) => {
     if (!hovering(e)) return;
-    const t = e.target.closest('[data-p]');
+    const t = e.target.closest(CARD_ON);
     if (!t || (e.relatedTarget && t.contains(e.relatedTarget))) return;
     clearTimeout(card.showTimer);
     if (card.target) hideCardSoon();
@@ -486,15 +677,23 @@ function wireCards() {
       askAbout(ctx.thread, state.profiles.get(card.target.dataset.p)?.name);
       return;
     }
-    const t = e.target.closest('[data-p]');
-    const face = t?.matches('.av') && card.pointer !== 'touch' && !t.closest('.t[data-hit]') && state.profiles.get(t.dataset.p);
+    const only = e.target.closest('#pcard [data-org-only]');
+    if (only) {
+      e.preventDefault();
+      onlyOrg(only.dataset.orgOnly);
+      return;
+    }
+    const t = e.target.closest(CARD_ON);
+    const face = t?.matches('.av[data-p]') && card.pointer !== 'touch' && !t.closest('.t[data-hit]') && state.profiles.get(t.dataset.p);
     if (face && mayAskAbout(cardContext(t).thread, face)) {
       e.preventDefault();
       e.stopPropagation();
       askAbout(cardContext(t).thread, face.name);
       return;
     }
-    if (t && card.pointer === 'touch') {
+    // A tap on a customer's icon in the filters still picks it, and its link in the header opens it.
+    const taps = t && !(t.dataset.org && t.closest('.fr, a[href]'));
+    if (taps && card.pointer === 'touch') {
       e.preventDefault();
       e.stopPropagation();
       if (card.target === t) hideCard(); else showCard(t);
@@ -503,7 +702,7 @@ function wireCards() {
     if (card.target && !e.target.closest('#pcard') && t !== card.target) hideCard();
   }, true);
   document.addEventListener('focusin', (e) => {
-    const t = e.target.closest?.('[data-p]');
+    const t = e.target.closest?.(CARD_ON);
     if (t && t.matches(':focus-visible')) showCard(t);
   });
   document.addEventListener('focusout', (e) => {
@@ -511,7 +710,8 @@ function wireCards() {
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && card.target) { e.preventDefault(); hideCard(); return; }
-    const t = e.target.closest?.('[data-p]');
+    // Enter on a link or a button of its own (the header's icon, a filter) does what it does.
+    const t = e.target.closest?.('[data-p], [data-org][role="button"]');
     if (t && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
       if (card.target === t) hideCard(); else showCard(t);
@@ -1381,7 +1581,7 @@ function facetRows(f) {
     const label = rowLabel(f, v);
     return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || label)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
-      ${ic ? favImg(ic, { cls: 'ico', fallback: '<span></span>' }) : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>'))}
+      ${f.id === 'customer' ? withOrg(ic ? favImg(ic, { cls: 'ico', fallback: withOrg(tile(customerName(v)), v) }) : face, v) || '<span></span>' : (ic ? favImg(ic, { cls: 'ico', fallback: '<span></span>' }) : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>')))}
       <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${mentionBadge(mentions.get(v))}</span>
       ${notButton(out)}
       <span class="n">${n}</span>
@@ -1436,7 +1636,7 @@ const sideBadge = (n) => (n ? `<b class="sidebadge" title="${esc(sideTitle(n))}"
  */
 function logo(org, ts) {
   const t = ts.find((x) => x.org === org && orgIcon(x));
-  return `<span class="logo">${tile(customerName(org))}${t ? favImg(orgIcon(t)) : ''}</span>`;
+  return withOrg(`<span class="logo">${tile(customerName(org))}${t ? favImg(orgIcon(t)) : ''}</span>`, org);
 }
 /**
  * The customers' order in the column: those the red badge counts first (youCount), most
@@ -1873,6 +2073,10 @@ const rowOpen = (t, hit, cls) => `<div class="t ${t.unread ? 'unread' : ''} ${st
 /** One customer picked in the filters: every row is theirs, so the rows leave it out. */
 const oneCustomer = () => state.sel.customer?.size === 1;
 
+/** A row's customer, which shows its card (by keyboard too); a click opens the thread. */
+const custChip = (t, inner) => (cardOrg(t.org)
+  ? `<span class="cust" data-org="${esc(t.org)}" role="button" tabindex="0" aria-label="${esc(orgName(t))}">${inner}</span>`
+  : `<span class="cust">${inner}</span>`);
 /**
  * A thread's row: unread rows are white and read ones tinted. The customer is left out when
  * the filters pick one; the second line says "Y replies, X mentions" and, as far as there is
@@ -1899,8 +2103,7 @@ function row(t, hit = null) {
   // latest message is its title) or a search result (it shows the message that matched).
   const p = replies && !hit ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
-  const cust = oneCustomer() ? ''
-    : `<span class="cust">${favImg(orgIcon(t))}${esc(orgName(t))}</span>`;
+  const cust = oneCustomer() ? '' : custChip(t, `${favImg(orgIcon(t))}${esc(orgName(t))}`);
   return `${rowOpen(t, hit, oneCustomer() ? ' nocust' : '')}
     <div class="l1">${statusMark(t, status)}
       <span class="title">${titleHtml(t, hit)}</span>
@@ -1927,7 +2130,7 @@ function simpleRow(t, hit = null) {
   const n = youCount(t);
   const p = !hit && Math.max(0, (t.messages || 1) - 1) ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '<span class="snip"></span>';
-  const cust = hit && !oneCustomer() ? `<span class="cust">${esc(orgName(t))}</span>` : '';
+  const cust = hit && !oneCustomer() ? custChip(t, esc(orgName(t))) : '';
   const dot = GROUPS.mark === 'dot' ? `<span class="you"${n ? ` title="${esc(youTitle(n))}"` : ''}></span>` : '';
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
@@ -3090,6 +3293,11 @@ function authorCardKey(m) {
     name: a.name, staff: a.staff, kind: a.kind, domain: a.org, avatar: m.avatar, platform: m.source,
   });
 }
+/** The badge of a customer's person: their mail domain's icon, its customer's card where it has one. */
+function authorBadge(domain, key) {
+  const org = orgOfDomain(domain, key);
+  return org ? withOrg(favImg(domain, { cls: 'badge-ico' }), org) : favImg(domain, { cls: 'badge-ico', title: domain });
+}
 // A message's ⋮ (its menu): three dots, drawn, so every system shows the same.
 const KEBAB = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>';
 function message(m, prev, fresh, followed = false, dated = false) {
@@ -3104,7 +3312,7 @@ function message(m, prev, fresh, followed = false, dated = false) {
   const cont = continues(prev, m);
   const key = authorCardKey(m);
   const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' && !m.unnamed ? ' bot' : ''} · ${timeTag(m.at, dated)}`;
-  const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? favImg(a.org, { cls: 'badge-ico', title: a.org }) : ''}</span>`;
+  const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? authorBadge(a.org, m.thread) : ''}</span>`;
   // Reactions, on the bubble's bottom edge: who reacted on hover; a click adds yours, or takes
   // it off again.
   const can = canReact(m);
@@ -3636,9 +3844,11 @@ function techMenu(data) {
   // The customer's whole stack, drawn (showStack): its own button beside this one where it has a
   // drawing (stackButton); else here, which says there is none yet.
   const drawing = org && !headStack(data).length ? `<div class="hms"><button type="button" class="hmi stk-open" data-stack="${esc(org)}"><span>${esc(customer)}'s stack drawing</span></button></div>` : '';
+  // Where its whole stack and what it asks about are: its overview in Customers.
+  const profile = org ? `<div class="hms"><a class="hmi foot" href="${esc(orgHref(org))}" title="${esc(`${customer}'s overview in Customers: its whole stack, its people and what it asks about`)}"><span>${esc(customer)}'s profile</span><small>Customers</small></a></div>` : '';
   const list = hmSection('In this thread', here.map(item))
     + hmSection(here.length ? `Also used by ${customer}` : `Used by ${customer}`, also.map(item))
-    + hmSection('Topics of the thread', topics.map(topic)) + drawing;
+    + hmSection('Topics of the thread', topics.map(topic)) + drawing + profile;
   const more = count > 1 ? `<span class="n">+${count - 1}</span>` : '';
   return headMenu('tech', { button: `<span class="lb">${esc(label)}</span>${more}`, label: 'Tech stack and topics', list });
 }
@@ -3727,9 +3937,12 @@ function headSource(thread, members, entry) {
   }
   const link = thread.permalink || linked[0]?.permalink;
   const title = `${who ? `${who} · ` : ''}${link ? `Open in ${p}` : p}`;
+  // A customer's icon shows its card (which says where it opens) instead of a tooltip.
+  const org = cardOrg(thread.org) ? ` data-org="${esc(thread.org)}"` : '';
+  const tip = org ? '' : ` title="${esc(title)}"`;
   return link
-    ? `<a class="src" href="${esc(link)}" target="_blank" rel="noopener" title="${esc(title)}" aria-label="${esc(title)}">${face}${badge}</a>`
-    : `<span class="src" title="${esc(title)}">${face}${badge}</span>`;
+    ? `<a class="src" href="${esc(link)}" target="_blank" rel="noopener"${tip}${org} aria-label="${esc(title)}">${face}${badge}</a>`
+    : `<span class="src"${tip}${org}${org ? ` tabindex="0" aria-label="${esc(title)}"` : ''}>${face}${badge}</span>`;
 }
 
 // The dropdown open in the header, `{ key, name }`: it stays open while the thread updates, and
@@ -3762,7 +3975,8 @@ function toggleHeadMenu(name) {
   if (!was) {
     state.headOpen = { key: state.open, name };
     syncHeadMenus();
-    document.querySelector(`#pane > .ph [data-hm="${CSS.escape(name)}"] .hmpop a.hmi`)?.focus();
+    // The first of its links, not one at its foot (the customer's profile under the tech stack).
+    document.querySelector(`#pane > .ph [data-hm="${CSS.escape(name)}"] .hmpop a.hmi:not(.foot)`)?.focus();
   }
 }
 /** Arrow keys move through an open dropdown's links. */
@@ -5700,10 +5914,37 @@ const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); 
 const sourceLink = (u, label, cls = '', attrs = '') => `<a${cls ? ` class="${cls}"` : ''} href="${esc(u)}" target="_blank" rel="noopener noreferrer"${attrs}>${label}</a>`;
 
 /** The line of a draft's sources, or nothing. */
-function sourcesLine(d) {
-  if (!d.sources?.length) return '';
+function sourcesLine(d, thread = '') {
+  const files = draftFilesLine(d, thread);
+  if (!d.sources?.length) return files ? `<span class="srcs">${files}</span>` : '';
   const links = d.sources.map((s, i) => sourceLink(s.url, esc(s.title || hostOf(s.url)), 'src', ` data-source="${i}" title="${esc(s.url)}"`));
-  return `<span class="srcs"><span class="lb" title="For checking the draft. Only your team sees them: they are not sent.">Sources</span>${links.join('')}</span>`;
+  return `<span class="srcs">${files}<span class="lb" title="For checking the draft. Only your team sees them: they are not sent.">Sources</span>${links.join('')}</span>`;
+}
+
+// The draft's pictures (src/draftfiles.js), such as a screenshot the agent took: they go with it
+// when it is sent, as you or as the bot, and into the tray when you take it into the reply box.
+const draftFileUrl = (thread, f) => `/api/draft/file?thread=${encodeURIComponent(thread)}&id=${encodeURIComponent(f.id)}`;
+
+/** The draft's pictures on its line: each opens in a new tab. */
+function draftFilesLine(d, thread) {
+  if (!d.files?.length || !thread) return '';
+  const pics = d.files.map((f) => `<a class="dfile" href="${esc(draftFileUrl(thread, f))}" target="_blank" rel="noopener" title="${esc(`${f.name} · ${fileSize(f.size)}`)}"><img src="${esc(draftFileUrl(thread, f))}" alt="${esc(f.name)}" loading="lazy"></a>`);
+  return `<span class="lb" title="They go with the draft when it is sent: the customer sees them.">Sent with it</span>${pics.join('')}`;
+}
+
+/** The draft's pictures as files, to send or put in the tray; null when one could not be had. */
+async function draftFiles(key, d) {
+  if (!d?.files?.length) return [];
+  try {
+    return await Promise.all(d.files.map(async (f) => {
+      const res = await fetch(draftFileUrl(key, f), { credentials: 'same-origin', redirect: 'manual' });
+      if (!res.ok) throw new Error(res.status === 404 ? `${f.name} is gone (a draft keeps its files for 30 days)` : `${f.name} could not be had (${res.status})`);
+      return new File([await res.blob()], f.name, { type: f.type });
+    }));
+  } catch (e) {
+    toast(`Nothing was sent: ${e.message}.`);
+    return null;
+  }
 }
 
 function sourceView(key, url) {
@@ -5904,7 +6145,7 @@ function draftLine(d, {
   if (asBot) sends.push(`<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot"${draftPartLabels('bot')}>${DRAFT_ICONS.bot}<span>Send as bot</span></button>`);
   if (asMe) sends.push(`<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you"${draftPartLabels('me')}>${DRAFT_ICONS.me}<span>Send as me</span></button>`);
   return `<div class="dl"><div class="head"><span class="pen">${DRAFT_ICONS.draft}Draft</span><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span></div>
-      <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d)}
+      <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d, thread)}
       <span class="tools">${tools.join('')}</span>${sends.length ? `<span class="sends">${sends.join('')}</span>` : ''}</div>`;
 }
 
@@ -6115,6 +6356,30 @@ function adoptDraft(key) {
   box.focus();
   box.setSelectionRange(c.text.length, c.text.length);
   box.scrollTop = box.scrollHeight;
+  trayDraftFiles(key, d);
+}
+
+/**
+ * The draft's pictures into the tray, as files you attached: they go with the reply. Each knows
+ * the draft's file it is (`draftFile`), so one already there is not added again, and a save from
+ * the box keeps on the draft only those still in the tray (`trayedDraftFiles`).
+ */
+async function trayDraftFiles(key, d) {
+  const there = new Set((state.attachments.get(key) || []).map((a) => a.file.draftFile).filter(Boolean));
+  const wanted = (d.files || []).filter((f) => !there.has(f.id));
+  (state.trayed ||= new Map()).set(key, d.updated_at);
+  if (!wanted.length) return;
+  const files = await draftFiles(key, { ...d, files: wanted });
+  const thread = state.cache.get(key)?.data?.thread;
+  if (!files?.length || !thread) return;
+  files.forEach((file, i) => { file.draftFile = wanted[i].id; });
+  addFiles(key, thread, files);
+}
+
+/** The ids of the draft's files in the box's tray, once the box took the draft's in; else undefined. */
+function trayedDraftFiles(key) {
+  if (!state.trayed?.has(key)) return undefined;
+  return (state.attachments.get(key) || []).map((a) => a.file.draftFile).filter(Boolean);
 }
 
 /**
@@ -6125,12 +6390,28 @@ async function sendDraft(key, asApp, part = null) {
   const data = state.cache.get(key)?.data;
   const d = data?.draft;
   if (!d) return;
-  const out = part ? { body: part.body, mentions: part.mentions, updated_at: d.updated_at } : d;
+  const out = part ? { body: part.body, mentions: part.mentions, updated_at: d.updated_at } : { ...d };
   $('draftbar')?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   if (part) getSelection()?.removeAllRanges();
+  // Its pictures go with it, a part of it too, if the channel takes them.
+  const files = await draftFiles(key, d);
+  if (!files) {
+    renderDraftBar(key, true);
+    return;
+  }
+  if (files.length) {
+    const rule = asApp ? (state.me.attach?.app?.[data.thread?.source] || NO_RULE) : attachRule(data.thread);
+    const problem = attachProblem(rule, files);
+    if (problem) {
+      attachRefused(rule, `Nothing was sent: ${problem}`);
+      renderDraftBar(key, true);
+      return;
+    }
+    out.attached = files.map((file) => ({ file, url: URL.createObjectURL(file) }));
+  }
   if (asApp) {
     const sendIt = async (again = false) => {
-      const sent = await sendAsApp(key, out.body, out.updated_at, { mentions: out.mentions || [], again });
+      const sent = await sendAsApp(key, out.body, out.updated_at, { mentions: out.mentions || [], files, again });
       if (sent.unsure) toast(`It may have been sent: ${sent.error}.`, { label: 'Send again', run: () => sendIt(true) });
       else toast(sent.error ? `Nothing was sent: ${sent.error}.` : ['Sent as the bot.', sent.invited].filter(Boolean).join(' '), null, { stay: sent.missed });
     };
@@ -6211,6 +6492,7 @@ function adoptPart(key, part) {
   box.focus();
   box.setSelectionRange(text.length, text.length);
   box.scrollTop = box.scrollHeight;
+  trayDraftFiles(key, d);
 }
 
 /** The draft as the inbox list shows it, without fetching the inbox again. */
@@ -6235,8 +6517,10 @@ function setCachedDraft(key, d) {
 async function saveDraft(key, text, base, { fromBox = false, sources } = {}) {
   if (state.data?.me?.readonly || !text.trim()) return { error: 'nothing to save' };
   const c = state.composers.get(key) || { text, from: '', base: null };
+  // From the box that took the draft's pictures in: those still in its tray stay on the draft.
+  const files = fromBox ? trayedDraftFiles(key) : undefined;
   const res = await request('PUT', '/api/draft', {
-    thread: key, text, mentions: mentionsIn(key, text), sources, base: base === undefined ? c.base : base,
+    thread: key, text, mentions: mentionsIn(key, text), sources, base: base === undefined ? c.base : base, ...(files ? { files } : {}),
   });
   if (res.status === 409 && res.data.draft) {
     // A colleague saved (or changed) it meanwhile: show theirs, and offer to overwrite it.
@@ -7057,8 +7341,8 @@ async function deliver(p) {
 async function send(key, thread, draft = null) {
   const box = $('reply');
   const body = (draft ? draft.body : box.value).trim();
-  // The files in the tray go with the reply box, not with a draft sent from its line.
-  const attached = draft ? [] : state.attachments.get(key) || [];
+  // The files in the tray go with the reply box; a draft sent from its line takes its own.
+  const attached = draft ? draft.attached || [] : state.attachments.get(key) || [];
   state.sendError = null;
   if (!body && !attached.length) return false;
   closeMentions();
@@ -7074,7 +7358,7 @@ async function send(key, thread, draft = null) {
   // from its line leaves the box alone, unless the box holds that draft).
   // The files go with it (`uploads`), and show in its bubble (`files`) until it arrives.
   const files = attached.map((a) => ({ name: a.file.name, type: a.file.type, url: a.url }));
-  if (attached.length) {
+  if (attached.length && !draft) {
     state.attachments.delete(key);
     renderTray(key);
   }
@@ -7083,7 +7367,14 @@ async function send(key, thread, draft = null) {
     growReply(box);
     state.composers.set(key, { text: '', from: '', base: null });
     mention.picked.delete(key);
+    // The draft's pictures the box took in went with it from its line.
+    if (draft && state.trayed?.has(key)) {
+      state.attachments.delete(key);
+      renderTray(key);
+    }
   }
+  // The box's tray no longer holds the draft's pictures: it sent them, or the draft went.
+  state.trayed?.delete(key);
   sendSeq += 1;
   const p = {
     thread: key, body, mentions, kinds, base, files, uploads: attached.map((a) => a.file), at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, key: crypto.randomUUID(), source: thread.source, status: 'sending', ...ownLook(key, thread.source),
@@ -7925,7 +8216,7 @@ function named(f) {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} at ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}`;
-  return new File([f], `Screenshot ${stamp}.${ext}`, { type: f.type, lastModified: f.lastModified });
+  return Object.assign(new File([f], `Screenshot ${stamp}.${ext}`, { type: f.type, lastModified: f.lastModified }), f.draftFile ? { draftFile: f.draftFile } : {});
 }
 
 /** Explains why nothing can be attached, with a way to connect again where that helps. */

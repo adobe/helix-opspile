@@ -59,22 +59,26 @@ globalThis.TeamView = (() => {
   }
 
   function person(m, p, ctx) {
-    const role = m.role === 'manager' ? '<span class="tag tv-manager">Manager</span>' : '';
     // As the inbox's profile card draws them (ui/person.js): an area is `tag:<id>` on the Topics
     // page, a technology `product:tech:<id>`, a person `person:<id>`; key customers at the foot.
-    const { knows, keys } = Person.work(m, ctx);
-    const name = link(ctx.topicHref(`person:${m.id}`), esc(m.name || 'Someone'), { title: 'Their topics, customers and products on the Topics page' });
-    // Their profile on the team, from its knowledge base, under who they are.
+    const { keys } = Person.work(m, ctx);
+    // Their profile on the team, from its knowledge base.
     const profile = m.profile ? Person.profile([{
       team: p.team.slug, teamName: p.team.name, description: m.profile.description, href: ctx.kbHref(m.profile.path),
     }]) : '';
-    return `<article class="tv-person ps-card" data-person="${m.id}">
-      <header>${face(m.name, m.avatar, 'big')}<div class="who"><b>${name}</b>${role}${m.title ? `<span class="sub">${esc(m.title)}</span>` : ''}</div>${ctx.follow?.({ kind: 'person', id: m.id, name: m.name }) || ''}</header>
-      ${profile}
-      ${Person.freq(m.name, m, p.weeks.length)}
-      ${knows || '<p class="sub tv-none">Nothing Clef tagged in their threads yet.</p>'}
-      ${keys}
-    </article>`;
+    return Person.card(m, {
+      face: face(m.name, m.avatar, 'big'),
+      name: link(ctx.topicHref(`person:${m.id}`), esc(m.name || 'Someone'), { title: 'Their topics, customers and products on the Topics page' }),
+      badge: m.role === 'manager' ? '<span class="tag tv-manager">Manager</span>' : '',
+      title: m.title,
+      weeks: p.weeks.length,
+      profile,
+      foot: keys,
+      // Their Follow (ui/follow.js), where the page gives one.
+      action: ctx.follow?.({ kind: 'person', id: m.id, name: m.name }) || '',
+      ctx,
+      attrs: ` data-person="${esc(m.id)}"`,
+    });
   }
 
   function people(p, ctx) {

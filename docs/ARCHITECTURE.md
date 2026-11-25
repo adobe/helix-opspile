@@ -172,7 +172,7 @@ A person also follows a **customer**, a **person** or an **area** (`person_follo
 0087; `PUT /api/follows { kind, target }`): the customer's conversations, the threads the person
 posted in, and those Clef puts in the area (`thread_areas`, by index, written with the label, as
 `thread_tech` is) are in their personal view the same way, and in `followersOf` for live updates
-and notifications. A team follows an **area** too (`team_follows_by`, migration 0103): the threads
+and notifications. A team follows an **area** too (`team_follows_by`, migration 0105): the threads
 Clef puts in it are in the team's inbox as those that show a technology it follows are
 (`followedByTeam`, `followingTeams`; the relabel's room event names the areas it joined or left,
 `teamsFollowing`). A team follows a customer too (its managers and the admin team, with Follow's
@@ -890,9 +890,12 @@ guidelines' figures drawn by it at `/__dev/fmc`.
 **Editor.** A team's page in **Teams** and a customer's in **Customers** (`/inbox/admin`,
 ui/admin.js) have their agent's sections (ui/agent.js) after their own: **Thread agents**,
 **Tools and MCP servers**, a team's **Extraction rules**, and **Knowledge base**, its files and
-history beside an editor for `systemprompt.md` and the concepts. Members of the admin team, and
+history beside an editor for `systemprompt.md` and the concepts. Beside every section, whoever may look
+at the knowledge base talks to its agent (see "The knowledge base's sidebar", under Thread agents). Members of the admin team, and
 team managers for the knowledge bases of their teams and of the customers their teams own,
-change them there. The members of every ops team see every team's agent there read-only (its
+change them there. The files of a knowledge base but `systemprompt.md` and its Clef areas (`areas/`) are everyone's on its team (`pathOwner`, src/agent/kbwrite.js, which takes a path only as it is: `./systemprompt.md` is refused)
+(`mayWrite`, `write` on each knowledge base of `GET /api/kb`): a team's members write their team's,
+and the members of the teams that own a customer the customer's. The members of every ops team see every team's agent there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
 says per knowledge base whether they may change it, `may`), as every thread agent reads them,
 and the customers' their teams own the same way. A team owns the customers with a channel filed under it or shared with it
@@ -1589,7 +1592,8 @@ twice its share of all the map's threads). The lift keeps what is
   messages), the customers', partners' and vendors' people who posted (`customers`: by
   `people.id` where they are a person of D1, else, as every customer's person in production, by
   their platform account, `a:<author_key>`, named as `identities` has it, and not followed from
-  the page; bots are nobody), who each
+  the page; the accounts of one mail address are one, the first of them: a customer's guest
+  account and the one of their own workspace, on Slack Connect; bots are nobody), who each
   person is to group them by (`peopleOf`: Adobe's by the team they are on whose threads they
   posted in most, or none when they are on no team, the others by the customer of most of their threads), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
   and the **products**: the technologies Clef says the thread is about (`thread_tech.about`), or,
@@ -2410,6 +2414,43 @@ too (`src/agent/wakeups.js`). Each wakes it once, at least a minute and at most 
 five wait at a time at most; the prompt asks for one whenever it says it will come back to
 something.
 
+**Watching what the thread waits on.** A thread often waits on something elsewhere: a vendor's
+case, another team's thread, a GitHub issue or pull request. Someone tells the agent so in the
+sidebar (or the thread links it), and the agent watches it with `watch_related` (`agent_watches`,
+migration 0104; `src/agent/watches.js` for the agent's side, `src/watches.js` for the Worker's),
+with `why`, what exactly its thread waits on there, in its own words. Each change wakes it with an
+update, as an input of its own, with `why` given back:
+
+- a **thread** of the inbox, by its key, its opspile inbox link or a link to one of its messages
+  (Slack, Teams, Discord; one in a channel the agent may not read only where a person asked for it
+  in the sidebar, else it is "not found", as one that does not exist): a minute after a new message in it (a `{ watched }` queue job; a burst is
+  one update), every message after the watch's `seen` but the system's and Adobe's own bots', so
+  that two agents that watch each other's threads do not wake each other with their posts. The
+  update says how many came, from which side and when, and names the authors and the tool to read
+  them with (`read_thread`, `read_any_thread`) only where the agent may read that thread with its
+  tools; another customer's, without `any_thread`, is a count and nothing more. The agent reads
+  the messages itself, as any it reads.
+- a **GitHub issue or pull request**, by its URL, only of an account the opspile GitHub App reads
+  for the agent's channel (its `github` server on there, asked again before every poll and again
+  before the agent is told: one whose channel lost it ends, and the agent hears only that; one
+  whose access could not be checked, D1 or GitHub not answering, is kept and asked again later). A cron
+  of its own (`*/5 * * * *`, `pollWatches`) polls each when it is due (`poll_after`), with the
+  installation's token. A poll is one conditional request (`If-None-Match`): an unchanged item is
+  a 304, which GitHub does not count against the rate limit; only a changed one asks for its pull
+  request, comments and reviews. A quiet item is polled slower (a twelfth of how long it has been
+  quiet, from 4 minutes to an hour), a failing one backs off (doubling, up to six hours), and all
+  four times slower while the installation has less than a tenth of its requests left. Once GitHub
+  limits an installation (a 429, a 403 with no requests left or a `retry-after`), none of its
+  watches is asked until it says. The update says what changed (its state, merged, out of draft,
+  its title, new comments and reviews and by whom), not what a comment says: the agent reads it
+  with the github MCP server, which hides strangers' text.
+
+`seen` moves before the agent is told, and only from what the job read (`WHERE seen = ?`), so two
+jobs of a burst wake it once. A watch ends with `unwatch_related`, or after 30 days (`days`, at most
+90; the agent is told it ran out). Ten at a time per thread. The prompt asks it to say what an
+update means for its thread in the draft or its note, and never to post only because the other one
+changed.
+
 **In the inbox.** The open thread shows the agent's **latest turn** under its last message,
 on the Adobe side, as "Opspile Agent" with opspile's icon: while it works, a spinner and what
 it is doing (reading the thread, checking a web page, updating the draft…); once done, its
@@ -2582,7 +2623,8 @@ written by people outside its control.
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB and 8000 pixels a side, read from their headers) go to the model as images, larger ones through the Markdown conversion; an image the model would refuse never reaches it (`src/agent/images.js`), since the API refuses the whole request and the image would stay in the history: the provider also leaves such images out of every request (over 2000 pixels a side when it has more than 20 images); plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
 | `raw_message` | a message of the entry, or with `thread` of another conversation of its channel, as its platform sent it: the newest version in pile 1 (`src/agent/rawmessage.js`), only what the message says (the Teams body as HTML, its attachments and `eventDetail`; Slack's text, blocks, attachments and files, the edited message for an edit; Discord's content, embeds, attachments, components and poll), not the envelope, in parts of 30,000 characters (`offset`). It is not checked for prompt injection again: the agent is told it is data, not instructions. A withheld message stays withheld. A message whose markdown dropped something (`dropped`, see "Pile 2") says so where the agent reads it, naming the tool; under `read_any_thread`, which it cannot read, not |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` (its customer's, or any) |
-| `read_any_thread` | with `org_threads` (on by default) a thread of the customer's other channels, with `any_thread` (see "Agent tools") any thread of the inbox: by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
+| `read_any_thread` | with `org_threads` (on by default) a thread of the customer's other channels, with `any_thread` (see "Agent tools") any thread of the inbox: by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld; in the conversations of a knowledge base's sidebar, any thread of the inbox |
+| `search_threads` | a knowledge-base agent's, in the conversations of its knowledge base's sidebar only (see "The knowledge base's sidebar"): every thread of the inbox about a query, best first, as the inbox's search finds them, each with its key, title, channel, customer, team, link, why it matched and the message that matched best; `customer` keeps one customer's. There, `read_file`, `list_topics` and `list_experts` take a thread of the inbox instead of the agent's own |
 | `find_channels` | with `org_threads`: the customer's other channels, all of them, those a query names first; with `any_thread`: the inbox's channels, on every platform, that a customer's name, a channel's or Teams team's name, a domain's name, or a site or repository (`owner/name`, or an Edge Delivery host) names, best first, the agent's own left out: id, platform and name, customer, ops teams, conversations and latest activity, why it matched, and the channel's link on its platform |
 | `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for another channel (with `org_threads` the customer's, and of it the customer's threads only), by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
@@ -2590,16 +2632,18 @@ written by people outside its control.
 | `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
 | `sidebar_followup` | tells the person who asked something in the sidebar (`message`, its `sb_…` id) what has happened since, from a later turn on the thread's messages (`addSidebarFollowup` in `src/sidebar.js`): a new answer of the agent's to them, under their question; refused while it answers a sidebar message, for a message it did not answer yet, over a week old, or followed up three times |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
-| `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `update_draft` holds a draft's length against the replies staff write (`src/agent/draftlength.js`, log-normal over characters): beyond one standard deviation (42 to 480 characters) it saves with a warning, beyond two (12 to 1625) it saves nothing and says why. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
-| `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app. As no person reads it first, it refuses a reply longer than one standard deviation of staff replies (480 characters, `src/agent/draftlength.js`), which goes into the draft instead, and takes a short one |
+| `get_draft`, `update_draft`, `discard_draft` | the entry's shared draft and its sources, saved as the person `opspile agent` with the same version check as a person's save. `update_draft` holds a draft's length against the replies staff write (`src/agent/draftlength.js`, log-normal over characters): beyond one standard deviation (42 to 480 characters) it saves with a warning, beyond two (12 to 1625) it saves nothing and says why. `discard_draft` removes a draft the agent saved last when it is out of date (staff answered themselves); a colleague's draft it leaves alone. With the `computer`, `update_draft`'s `files` attaches pictures from it (a screenshot `playwright-cli` took): PNG, JPEG, GIF or WebP by their bytes, up to 5 MB and four a draft, kept in `FILES` under `drafts/<id>` for 30 days and named in `drafts.files` (migration 0103, `src/draftfiles.js`). Given, they replace the draft's; left out, they stay, as when a person edits the text. The draft line shows them ("Sent with it", `GET /api/draft/file`, served inline under `default-src 'none'`), and they go with it as the reply's files, as a person's own, whether it is sent from the line (as you or as the bot) or taken into the reply box (into its tray), under the channel's rule (src/attach.js). Unless `post_message` is on, this and `suggest_expert` are its only writes outside the knowledge bases: it cannot post, react or resolve. A person reads the draft and sends it. |
+| `post_message` | only where it is turned on (see "Agent tools"): posts a reply in the thread as the opspile app. As no person reads it first, it refuses a reply longer than one standard deviation of staff replies (480 characters, `src/agent/draftlength.js`), which goes into the draft instead, and takes a short one. With the `computer`, `files` posts pictures from it with the reply, where the channel takes them (`appRule`) |
 | `request_membership` | only where it is turned on (see "Agent tools"): asks the platform's admin bot to add people to the channel, or remove them, for the author of a message of the thread that asked; the bot's admins approve |
 | `add_reaction` | with `post_message`: reacts to a message of the thread with an emoji, as the opspile app, on Slack and Discord |
 | `bash` | only where the `computer` is turned on (see "Agent tools"): a shell with files of its own |
+| `view_image` | with the `computer`: a picture in its working directory (`/workspace`), PNG, JPEG, GIF or WebP by its bytes, up to 3.75 MB and 8000 pixels a side, as an image the model sees: a screenshot it took, before it attaches it (`readComputerFile`, `src/agent/computer.js`) |
 | `request_bash` | with the `computer`: asks a person on the team to run a command in that shell, with values the person fills in; it answers at once, and the agent is told later how it ended |
 | `request_codemode` | a thread's agent only: asks a person on the team to run a code mode script as themselves, calling the inbox's read-only tools it names (`search_threads`, `list_threads`, `get_thread`, `get_message`, `get_knowledge`, `whoami`) with that person's permissions; it answers at once, and the agent is told later what the script output (see "Scripts a person runs") |
 | `git_ls`, `git_read`, `git_grep`, `git_log` | the team's and the customer's knowledge base (`kb-team`, `kb-org`), every other team's (`kb-team-<slug>`), and the GitHub repositories listed for the team, the customer or everyone in `agent_repos` (to start: this repository) |
 | `kb_write` | create, replace or delete concepts in one commit, in the team's or the customer's knowledge base or that of a team the channel is shared with; the other teams' are read only |
 | `wakeup_after`, `wakeup_after_idle` | a thread's agent only: wakes it up once with a message it writes to itself, at a time (a duration or an ISO time) or once the thread has been quiet for a while (see "When it runs") |
+| `watch_related`, `unwatch_related` | a thread's agent only, always: watches another thread of the inbox or a GitHub issue or pull request its thread waits on, and is woken with an update whenever it changes; without `url`, lists its watches (see "Watching what the thread waits on") |
 | `draw_stack` | the customer's stack drawing, `stack.md` of kb-org (see "Stack drawing"), whole: a summary, parts by layer and the flows between them. One that exists is drawn again only from its `base` |
 | `send_feedback` | only where `FEEDBACK_REPO` and `FEEDBACK_GITHUB_TOKEN` are set: feedback to the people who build opspile, about opspile itself (a tool that failed or misled, something the agent needed, instructions that did not fit, or what a person asked it in the sidebar to pass on), as a GitHub issue labelled `agent-feedback` in that repository, or a comment on an open one about the same thing (`issue`); without `title`, the open ones (`src/agent/feedback.js`). The repository may be public, so the text is refused when it names the case: the customer, the channel, a person of the thread or who asked (by their whole name, or a word of it as it is written: a first name), an email address, a link, a host name on any ending (but files', `stack.md`, and the platforms' and tools' own, `api.github.com`), or a Slack, Teams, Discord or thread id; the thread, the team and who asked stay in `agent_feedback` (migration 0101), and only a private repository's issue links to the thread. Kept before it is filed; the cron files what GitHub did not take. Three a thread and forty in all a day |
 | `codemode` | a JavaScript script that calls the tools above, and the team's and the customer's MCP servers, as `await tools.<name>(args)`; only what the script outputs reaches the model |
@@ -2792,6 +2836,55 @@ knowledge base. A thread's `kb` is only ever that thread's own team or customer.
 agent names alone: `{ team, kb: "team" }` needs no customer and reaches `kb:<team>:` (the org
 left empty), which has no kb-org at all, and only the chosen knowledge base is created when it
 is missing.
+
+**The knowledge base's sidebar.** On a team's page in Teams and a customer's in Customers, whoever
+may look at its knowledge base (src/kbaccess.js `mayRead`: every ops team's members for a team's,
+the members of the teams that own the customer for a customer's, the admin team for all) talks to
+its knowledge-base agent, to ask what it knows and to have it changed: a panel beside every section
+of the page (ui/kbchat.js, the global `KbChat`, in `ui/spectrum-kbchat.css`), opened by **Ask the
+agent** at the page's bottom right and kept open or closed in the browser; beside the page where
+three columns fit, over it where they do not. A team's is the agent `kb:<team>:`, a customer's
+`kb::<org>`, which is no team's: neither has a thread or a draft. Each conversation is the person's
+own (`kb_chat_messages`, migration 0104, src/kbchat.js): nobody else sees it, **New** starts
+another, and the earlier ones are a pick away. Each is a session of the agent of its own, pinned
+to that knowledge base as a seed's is (src/agent/kbchat.js), so `kb_write` and `draw_stack` write
+it and nothing else, and it starts without the context of the other conversations. A message goes
+into the session as an input that starts as a thread's sidebar message does (`Sidebar message
+sb_… from`), so its turns are read as those are (`sidebarTurns`), and the turn's closing text is
+the answer, kept in D1 at every round of the agent's tools and whenever the page asks while it
+waits (`GET /api/kb/chat`, which also says what the agent is doing, `POST /api/kb/chat`).
+
+**Who changes it.** Everyone on its team (`mayWrite`: a team's members, the owning teams' members
+for a customer's, and the admin team) has the agent change the knowledge base and run commands;
+for anyone else, the agent answers but refuses to: each message tells it which (`write`, kept with
+the session as of the latest message, `chat-of:<session>`), and `kb_write`, `draw_stack`, `bash`,
+`request_bash` and the extraction rules' and tech stack's saves and deletes check it at every call.
+
+**What it has there**, and only there (the tools refuse in the agent's other sessions, a seed's or
+a dream's, and are not in their prompt):
+- every thread of the inbox (`kbChatExtension` in src/agent/tools.js): `search_threads` searches
+  every team's threads as the inbox's search does (src/search.js `find`: meaning, full text,
+  titles, channels, customers and facts), with `customer` for one customer's; `read_any_thread`,
+  `find_channels` and `list_any_channel_threads` as a thread's agent has them where `any_thread`
+  is on; `read_file`, a file of a message of any thread (`thread` and `file`);
+- who knows what: `list_topics` (with `topic`, the colleagues who worked its threads lately,
+  `topicPeople` in src/experts.js) and `list_experts` for a thread (`thread`, `about`);
+- its switchable tools, whatever the switches say, as they are for a person's conversation and not
+  a channel (`KB_AGENT_TOOLS`, src/agent/agenttools.js): the `computer` (`bash`, and `request_bash`,
+  which asks the conversation's person: a card in the conversation with Run and Deny, `POST
+  /api/kb/chat/bash`, `bash_requests.chat`; how it ended comes back as a line of theirs and a
+  sidebar message to the session, `tellChat`), `web_search`, and a team's agent the team's
+  extraction rules and tech stack. The computer is the agent's, so its files are shared by every
+  conversation of the page, and it has the team's and the customer's secrets.
+
+A customer's agent reads every team's knowledge base, those of the teams that work with the
+customer (`customerTeams` in src/shares.js) first and named so (`via: 'owner'`), read only. Its
+prompt (`kb-chat`) asks it to do what the person asks, read before it writes, back what it writes
+with the threads that say it (or the person, as `human:<name>`), keep one customer's details out of
+kb-team, and ask before it removes or rewrites much nobody asked for. Its commits say who asked
+(`log.md`: "asked by … on the knowledge base's page"). When it answers, the page lists the
+knowledge base again and shows the open file as it is now, unless you are editing it
+(`Agent.changed`). The agent's model use is metered under its team or customer, as a seed's.
 
 **Dreams.** Agents write the knowledge bases a thread at a time, so over time a customer's
 kb-org gathers the same site, issue or person under two names, facts repeated across concepts, and
@@ -3556,6 +3649,22 @@ blob and isolate. Bots have none. A click on someone's picture in the thread or 
 card's *What should I know about …?*) opens the thread, enters its sidebar and asks its agent
 that, where the thread has an agent and the viewer may talk to it; elsewhere the click does what
 it did.
+
+**Customer cards.** The same card, for a customer: hovering over (focusing, or tapping) its icon
+or name wherever the inbox shows them (`data-org`, ui/inbox.js "customer cards") shows it. That is
+the thread's icon in its header, the customer in a row of the list, its icon in the Customer
+filter and in the personal view's column and headings, and the badge on the picture of one of
+its people (their mail domain: the thread's customer's usual one or its icon, else the icon the
+admin team set for another customer on the list; one matched to none keeps its tooltip). It says what the inbox has of the customer at once: its
+name, icon and type, how many of its threads are on the list, wait on us and are unread, the
+thread's channel (with its link on the platform, from the header) and its latest activity. Then
+the numbers of its overview (`GET /api/customers/profile`, "Customer overview"), asked when its card first
+shows and kept five minutes in the page: how much it says, week by week, how soon it is
+answered, its people, the teams that work it, and what its threads are about and show, each a
+link to the Topics page. Its foot leads to its overview in Customers (*Open profile*) and picks
+it alone in the filters (*Only its threads*). A person's card links their channel's customer to
+its overview too, and so does the foot of the header's tech stack dropdown. A tap on a filter's
+icon still filters, and Enter on the header's icon still opens the thread on its platform.
 
 ### Team overview
 

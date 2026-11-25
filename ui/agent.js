@@ -49,6 +49,15 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const base = () => state.bases.find((b) => b.repo === state.repo);
 /** Whether you change the open knowledge base, its agents and their tools; else you only look. */
 const mayEdit = () => Boolean(base()?.may);
+/**
+ * Whether you write file `path` of the open knowledge base: its agent instructions are
+ * `mayEdit`'s, every other file everyone's on its team (`write`, src/kbaccess.js `mayWrite`).
+ */
+// Its agent instructions and its Clef areas are the managers' (src/agent/kbwrite.js `pathOwner`).
+const managed = (path) => path === SYSTEM_PROMPT || String(path || '').startsWith('areas/');
+const mayWrite = (path) => (managed(path) ? mayEdit() : Boolean(base()?.write ?? base()?.may));
+/** Who writes the files of the open knowledge base, for the read-only. */
+const whoWrites = (path) => (managed(path) ? whoEdits() : (base()?.kind === 'team' ? `the people of ${base().name}` : 'the people of its ops teams'));
 /** Who changes the open knowledge base, for the read-only. */
 const whoEdits = () => (base()?.kind === 'team' ? `the admin team and the managers of ${base().name}` : 'the admin team and the managers of its ops teams');
 
@@ -388,8 +397,8 @@ function renderFiles() {
     <h2>Files</h2>
     ${rows.join('') || '<div class="empty pad">Empty so far.</div>'}
     ${state.truncated ? '<div class="empty pad">Only the first 400 entries are shown.</div>' : ''}
-    <div class="tools">${mayEdit() ? '<button id="new">New file</button>' : ''}<button id="history"${state.view === 'history' ? ' class="primary"' : ''}>History</button></div>
-    ${mayEdit() ? '' : `<div class="empty ro pad">Read-only: ${esc(whoEdits())} change it.</div>`}`;
+    <div class="tools">${mayWrite() ? '<button id="new">New file</button>' : ''}<button id="history"${state.view === 'history' ? ' class="primary"' : ''}>History</button></div>
+    ${mayWrite() ? '' : `<div class="empty ro pad">Read-only: ${esc(whoWrites())} change it.</div>`}`;
   for (const el of $('files').querySelectorAll('[data-path]')) {
     el.onclick = () => openFile(el.dataset.path);
     // Pointing at a file not fetched yet reads it now, ahead of the prefetch's turn.
@@ -1905,7 +1914,7 @@ async function openFile(path, { force = false, nav = 'push' } = {}) {
   state.opening = opening;
   // Another file, or another view, was opened while this one was read: that one shows.
   const overtaken = () => state.opening !== opening || state.view !== 'file';
-  if (!exists && !mayEdit()) {
+  if (!exists && !mayWrite(path)) {
     // Nothing to read: only those who edit it start one.
     state.file = null;
     renderFiles();
@@ -1937,7 +1946,7 @@ async function openFile(path, { force = false, nav = 'push' } = {}) {
     }
     const generated = GENERATED.has(path.split('/').pop());
     state.file = {
-      path, hash: read.hash, baseline: read.text, readonly: generated || !mayEdit(), generated,
+      path, hash: read.hash, baseline: read.text, readonly: generated || !mayWrite(path), generated,
     };
   }
   renderFiles();
@@ -1969,7 +1978,7 @@ function renderEditor(note) {
   const dot = isDiagram(f.choosePath ? f.dotPath : f.path);
   const isPrompt = f.path === SYSTEM_PROMPT;
   let explain = f.readonly ? 'Written by code from the concepts; changes to the concepts update it.' : '';
-  if (f.readonly && !f.generated) explain = `Read-only: ${esc(whoEdits())} change it.`;
+  if (f.readonly && !f.generated) explain = `Read-only: ${esc(whoWrites(f.path))} change it.`;
   if (f.readonly && !f.generated && isPrompt) explain = `Appended to the system prompt of every thread agent of ${esc(base().kind === 'team' ? 'this ops team' : 'this customer')}. ${explain}`;
   if (!f.readonly) {
     explain = isPrompt
@@ -2262,6 +2271,26 @@ async function relist() {
   renderFiles();
 }
 
+/**
+ * The knowledge base's agent changed `repo` (an answer in its sidebar, ui/kbchat.js): the
+ * listing again; the open file, unless you are editing it, as it is now (or gone), and the
+ * history, if that is open.
+ */
+async function changed(repo) {
+  if (repo !== state.repo || !state.files) return;
+  const open = state.view === 'file' && state.file && !state.file.isNew ? state.file : null;
+  await relist();
+  if (state.repo !== repo) return;
+  if (state.view === 'history' && $('editor')) {
+    showHistory({ force: true, nav: 'replace' });
+    return;
+  }
+  if (!open || state.file !== open || edited()) return;
+  const now = state.files.find((f) => f.path === open.path);
+  if (!now) openFile(SYSTEM_PROMPT, { force: true, nav: 'replace' });
+  else if (now.hash !== open.hash) openFile(open.path, { force: true, nav: 'replace' });
+}
+
 async function showHistory({ force = false, nav = 'push' } = {}) {
   if (!force && state.file && !(await leave())) return false;
   if (!force) showPane('editor');
@@ -2342,6 +2371,7 @@ window.Agent = {
     if (state.loads.meta) state.loads.metaAt = 0;
   },
   show,
+  changed,
   /**
    * Before anything else is shown where the agent is: saves what is pending, and asks only
    * about edits that could not be saved. False when you stay.
