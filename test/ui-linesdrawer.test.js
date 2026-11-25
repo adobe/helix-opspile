@@ -38,8 +38,16 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
 
+// What a request is called, a command or a script (ui/inbox.js, where the cards are drawn).
+const { isScript, askNoun } = piece('const isScript = ', '/** How long from now until', 'isScript, askNoun');
 const { linesChips, linesTab, linesTitle } = piece('const linesDrawer = { key: null };', '/** The drawer\'s tab and whether it is open', 'linesChips, linesTab, linesTitle', {
-  esc, BASH_ICON: '<svg class="i-cmd"/>', DRAFT_ICONS: { draft: '<svg class="i-draft"/>' }, draftBy: (d) => d.by.name,
+  esc,
+  BASH_ICON: '<svg class="i-cmd"/>',
+  SCRIPT_ICON: '<svg class="i-script"/>',
+  DRAFT_ICONS: { draft: '<svg class="i-draft"/>' },
+  draftBy: (d) => d.by.name,
+  isScript,
+  askNoun,
 });
 
 const request = (status) => ({ status });
@@ -55,6 +63,12 @@ describe('the drawer\'s tab', () => {
     assert.deepEqual(said([request('done'), request('running')]), ['cmd: 1 command running']);
     assert.deepEqual(said([request('done'), request('denied'), request('expired')]), ['cmd: 3 past commands']);
     assert.deepEqual(said([request('timeout')]), ['cmd: 1 past command']);
+    // A script the agent asks a person to run as themselves is called so, with its icon.
+    const script = (status) => ({ status, kind: 'codemode' });
+    assert.deepEqual(said([script('pending')]), ['cmd ask: 1 script to decide']);
+    assert.deepEqual(said([script('pending'), request('pending')]), ['cmd ask: 2 requests to decide']);
+    assert.deepEqual(said([script('done'), request('pending')]), ['cmd ask: 1 command to decide']);
+    assert.match(linesTab(linesChips([script('pending')])), /^<span class="chip cmd ask"><svg class="i-script"\/><span>1 script to decide/);
     assert.deepEqual(said([], draft), ['draft: Draft by opspile <agent>']);
     // Nothing in it: no chips, and so no tab.
     assert.deepEqual(said(), []);
@@ -135,7 +149,7 @@ describe('the drawer', () => {
     assert.match(render, /if \(linesDrawer\.key !== key \|\| !chips\.length\) linesDrawer\.key = null;/);
     // From what the thread has, not from what the lines happen to show: a draft on its way is
     // not on its line, and so not in the tab.
-    assert.match(render, /linesChips\(hit\.data\?\.bash_requests, lineDraft\(key\)\)/);
+    assert.match(render, /linesChips\(barRequests\(key\), lineDraft\(key\)\)/);
     // A modal dialog only while it is open.
     assert.match(render, /const dialog = \{ role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'lines-title' \};/);
     assert.match(render, /if \(open\) sheet\.setAttribute\(name, value\); else sheet\.removeAttribute\(name\);/);

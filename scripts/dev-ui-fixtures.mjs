@@ -697,7 +697,9 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
    * `bash`: the commands the thread's agent asked a person to run, `[{ ago, command, reason,
    * env?, timeout?, open?, status?, by?, exit?, ended? }]`: asked `ago` minutes ago, open for
    * `open` more minutes; `status` (and `by`, a person key) for one that was decided `ended`
-   * minutes ago (2, unless it says).
+   * minutes ago (2, unless it says). `kind: 'codemode'` and `tools` make one a script to run as
+   * the person (src/agent/scriptrequest.js), `command` its code. `asked`: the index in `sidebar`
+   * of the message the agent answered when it asked, which shows it in that conversation.
    * `sidebar`: what someone on the team said to the thread's agent in the inbox's sidebar, and
    * its answers, `[who, minutesAgo, body]`, `who` a person key or 'agent' (src/sidebar.js); an
    * answer `[..., { unseen: true }]` its asker has not seen yet (the purple badge).
@@ -861,9 +863,12 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
           // Twelve hex digits, as src/agent/bashrequest.js makes them: the agent names them.
           id: (0x375f59640760 + threads.size * 0x10000 + i * 0x9e3779b1).toString(16).slice(-12),
           thread: key,
+          kind: b.kind || 'bash',
           command: b.command,
           reason: b.reason,
           env: b.env || [],
+          tools: b.tools || [],
+          sidebar: b.asked === undefined ? null : (sidebars.get(key) || [])[b.asked].id,
           timeout: b.timeout || 60,
           deadline: new Date(now + (b.open ?? 23 * 60) * MIN).toISOString(),
           status: b.status || 'pending',
@@ -1256,6 +1261,37 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
       topics: ['cdn', 'seo', 'publishing', 'performance', 'project', 'authoring', 'urls', 'auth'],
     },
     mentioned: [['dana', 180], ['dana', 50], ['dana', 15]],
+  });
+
+  // Asked in the sidebar whether another thread answered this already: the agent sees only its
+  // own channel, so it asks to run a script as Dana, which reads the inbox as she may.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 95, 'A new article does not show up on any of the blog cards, on the homepage or on /research/, though it is published.'],
+      ['tom', 80, 'cc @Dana Whitfield, I think the ops channel had this last week.'],
+    ],
+    reads: { dana: 'latest' },
+    sidebar: [
+      ['dana', 20, 'Is this already answered in another recent thread?'],
+      ['agent', 19, 'Not in this channel: none of its threads has it. Tom points at the ops channel, which I cannot read, so I asked to run a script as you that searches your inbox for it: here it is, for you to read and run.'],
+    ],
+    bash: [{
+      ago: 19,
+      asked: 0,
+      kind: 'codemode',
+      tools: ['search_threads', 'get_thread'],
+      command: `const { threads } = await tools.search_threads({ query: 'article missing from blog cards', limit: 5 });
+for (const t of threads.filter((x) => x.customer === 'globex')) {
+  const { messages } = await tools.get_thread({ thread: t.thread, limit: 5 });
+  text(\`\${t.title} (\${t.channel}, \${t.link})\`);
+  for (const m of messages) text(\`  \${m.from}: \${m.text.slice(0, 300)}\`);
+}`,
+      reason: 'Looks for a thread of Globex\'s about blog cards that miss an article, in the channels you can see, and prints the latest messages of each it finds.',
+    }],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1, resolved_p: 0.1,
+    },
   });
 
   // Labeled "us", but Adobe asked last: not waiting on us, whatever the label says.

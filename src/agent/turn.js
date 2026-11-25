@@ -34,6 +34,7 @@ const DOING = {
   discard_draft: 'Discarding the draft',
   kb_write: 'Filing what it learned in the knowledge bases',
   request_bash: 'Asking the team to run a command',
+  request_codemode: 'Asking the team to run a script',
   wakeup_after: 'Setting itself a reminder',
   wakeup_after_idle: 'Setting itself a reminder',
 };
