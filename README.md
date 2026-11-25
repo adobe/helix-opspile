@@ -502,7 +502,8 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   their processes in Dynamic Workers (the `LOADER` binding), over a working directory per
   thread that keeps its files. The shell reaches the internet without a
   filter, so what an agent read can leave through it; the prompt says not to send anything to
-  sites that are not the customer's or Adobe's. **Secrets**, added in the Computer tool of a
+  sites that are not the customer's or Adobe's, but for a link a person posted in the thread
+  for Adobe to see, which it opens as posted, with the password posted for it. **Secrets**, added in the Computer tool of a
   team's or a customer's knowledge base, are API keys the agents use without holding them: the
   shell has `$NAME` as a placeholder, and the Worker's gateway, which every request of the
   shell goes through, puts the value in only in HTTPS requests to the hosts the secret lists
