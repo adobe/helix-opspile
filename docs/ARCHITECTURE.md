@@ -2411,7 +2411,8 @@ update, as an input of its own, with `why` given back:
   the messages itself, as any it reads.
 - a **GitHub issue or pull request**, by its URL, only of an account the opspile GitHub App reads
   for the agent's channel (its `github` server on there, asked again before every poll and again
-  before the agent is told: one whose channel lost it ends, and the agent hears only that). A cron
+  before the agent is told: one whose channel lost it ends, and the agent hears only that; one
+  whose access could not be checked, D1 or GitHub not answering, is kept and asked again later). A cron
   of its own (`*/5 * * * *`, `pollWatches`) polls each when it is due (`poll_after`), with the
   installation's token. A poll is one conditional request (`If-None-Match`): an unchanged item is
   a 304, which GitHub does not count against the rate limit; only a changed one asks for its pull

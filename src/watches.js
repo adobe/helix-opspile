@@ -11,7 +11,7 @@
  */
 
 import { entryOf } from './drafts.js';
-import { currentApp, GITHUB_API, installationToken } from './github.js';
+import { GITHUB_API, installationToken } from './github.js';
 import { agentStub } from './agent/stub.js';
 import {
   forgetWatched, githubAccess, githubChanges, githubRef, MIN_POLL_MS,
@@ -32,7 +32,7 @@ const MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
 /** Tells the watching agent of watch `w` about `change`, in its own object. */
 async function tell(env, w, change) {
   if (!env.AGENTS) {
-    return;
+    return true;
   }
   try {
     const agent = await agentStub(env, w.watcher);
@@ -42,10 +42,12 @@ async function tell(env, w, change) {
       },
       change,
     });
+    return true;
   } catch (e) {
     console.error(JSON.stringify({
       route: 'agent', watch: 'tell failed', id: w.id, error: e.message,
     }));
+    return false;
   }
 }
 
@@ -66,6 +68,7 @@ export async function notifyWatched(env, thread, now = new Date()) {
   const place = (watches || []).length ? await env.DB.prepare('SELECT channel_name FROM threads WHERE thread = ?')
     .bind(entry.key).first() : null;
   let told = 0;
+  let failed = 0;
   for (const w of watches || []) {
     // eslint-disable-next-line no-await-in-loop
     const { results: rows } = await env.DB.prepare(`SELECT at, author, staff, author_kind FROM messages
@@ -82,7 +85,7 @@ export async function notifyWatched(env, thread, now = new Date()) {
         const names = (staff) => [...new Set(rows.filter((r) => Boolean(r.staff) === staff)
           .map((r) => r.author).filter(Boolean))];
         // eslint-disable-next-line no-await-in-loop
-        await tell(env, w, {
+        const ok = await tell(env, w, {
           type: 'thread',
           target: w.target,
           channel: (place && place.channel_name) || null,
@@ -94,9 +97,21 @@ export async function notifyWatched(env, thread, now = new Date()) {
           since: w.seen || null,
           latest,
         });
-        told += 1;
+        if (ok) {
+          told += 1;
+        } else {
+          // Not told: what it saw goes back, and the queue asks again.
+          // eslint-disable-next-line no-await-in-loop
+          await env.DB.prepare('UPDATE agent_watches SET seen = ? WHERE id = ? AND seen = ?')
+            .bind(w.seen, w.id, latest).run();
+          failed += 1;
+        }
       }
     }
+  }
+  if (failed) {
+    // The queue delivers the job again: those not told are, then.
+    throw new Error(`${failed} of the watching agents were not told`);
   }
   return { result: told ? 'told' : 'nothing new', watches: (watches || []).length, told };
 }
@@ -227,9 +242,15 @@ async function pollOne(env, app, w, ref, { now, rate }) {
       changed_at = ? WHERE id = ? AND COALESCE(seen, '') = ?`)
     .bind(issue.updated_at, JSON.stringify(state), r.etag, now.toISOString(), w.id, w.seen || '').run();
   if (lines.length && moved.meta && moved.meta.changes) {
-    await tell(env, w, {
+    const told = await tell(env, w, {
       type: 'github', target: w.target, title: state.title, item: state.type, lines, latest: issue.updated_at,
     });
+    if (!told) {
+      // Not told (its agent did not answer): what it saw goes back, so the next poll tells it.
+      await env.DB.prepare(`UPDATE agent_watches SET seen = ?, state = ?, etag = NULL
+        WHERE id = ? AND seen = ?`).bind(w.seen, w.state, w.id, issue.updated_at).run();
+      throw new Error('the watching agent was not told');
+    }
     return { told: true };
   }
   return { unchanged: true };
@@ -272,7 +293,6 @@ export async function pollWatches(env, now = new Date()) {
   if (!watches.length) {
     return out;
   }
-  const app = await currentApp(env).catch(() => null);
   // Per installation: GitHub's rate limit as it last said, and until when it is limited.
   const rates = new Map();
   const until = new Map();
@@ -280,12 +300,24 @@ export async function pollWatches(env, now = new Date()) {
       failures = ? WHERE id = ?`).bind(at, nextPoll(now, opts), opts.failures || 0, w.id).run();
   for (const w of watches) {
     const ref = githubRef(w.url);
-    // eslint-disable-next-line no-await-in-loop
-    const target = ref && await watcherTarget(env, w.watcher);
-    const access = !app || !target ? { error: 'there is no opspile GitHub App in this deployment' }
+    let access;
+    try {
       // eslint-disable-next-line no-await-in-loop
-      : await githubAccess(env, target, ref.owner).catch((e) => ({ error: e.message }));
-    if (access.error) {
+      const target = ref && await watcherTarget(env, w.watcher);
+      // A refusal is `{ error }`; what cannot be told (D1 or GitHub did not answer) throws.
+      // eslint-disable-next-line no-await-in-loop
+      access = target ? await githubAccess(env, target, ref.owner) : { error: 'the watching thread is gone' };
+    } catch (e) {
+      access = { unknown: e.message };
+    }
+    if (access.unknown) {
+      out.failed += 1;
+      console.error(JSON.stringify({
+        route: 'cron', watch: 'github', id: w.id, access: 'unknown', error: access.unknown,
+      }));
+      // eslint-disable-next-line no-await-in-loop
+      await later(w, { changedAt: w.changed_at, failures: (Number(w.failures) || 0) + 1 });
+    } else if (access.error) {
       // eslint-disable-next-line no-await-in-loop
       await env.DB.prepare('DELETE FROM agent_watches WHERE id = ?').bind(w.id).run();
       // eslint-disable-next-line no-await-in-loop
@@ -308,7 +340,7 @@ export async function pollWatches(env, now = new Date()) {
       out.polled += 1;
       try {
         // eslint-disable-next-line no-await-in-loop
-        const r = await pollOne(env, app, cur, ref, { now, rate });
+        const r = await pollOne(env, access.app, cur, ref, { now, rate });
         const low = Boolean(rate.limit && rate.remaining !== null
           && rate.remaining < rate.limit / 10);
         if (r.limited) {

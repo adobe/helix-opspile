@@ -16,7 +16,10 @@ import {
 } from '../github.js';
 import { readScope, toolsFor } from './agenttools.js';
 import { agentEnabled } from './enabled.js';
-import { globalServersFor } from './globals.js';
+import {
+  effective, forSource, globalServer, switchesFor,
+} from './globals.js';
+import { grantsOf } from '../toolrequests.js';
 import { resolveAnyThread } from './history.js';
 import { modelProblem } from './model.js';
 
@@ -136,25 +139,38 @@ async function latestAt(env, keys) {
 
 /**
  * The GitHub App installation that the agent of `target` reads `owner`'s repositories with:
- * one the admin team allowed, for an account named `owner`, whose `github` server is on for its
- * channel (src/agent/globals.js). `{ app, installation }` or `{ error }`.
+ * one the admin team allowed, for an account named `owner`, where the `github` server is on for
+ * its channel (src/agent/globals.js: its switch, or a grant in its sidebar).
+ * `{ app, installation }`, or `{ error }` when it surely may not: no app, the server off, no
+ * such installation. It throws when it cannot tell (D1 or GitHub did not answer), so that a
+ * caller does not take a passing failure for a refusal.
  */
 export async function githubAccess(env, target, owner) {
-  const app = await currentApp(env).catch(() => null);
-  if (!app) {
+  // `currentApp` answers null for a failed read too: whether there is one is asked first.
+  const any = await env.DB.prepare('SELECT 1 AS one FROM github_apps LIMIT 1').first();
+  if (!any) {
     return { error: 'there is no opspile GitHub App in this deployment' };
   }
-  const servers = await globalServersFor(env, target);
-  const on = new Set(servers.filter((s) => s.slug === 'github').map((s) => s.id));
-  if (!on.size) {
+  const app = await currentApp(env);
+  if (!app) {
+    throw new Error('the opspile GitHub App could not be read');
+  }
+  const g = globalServer('github');
+  const [switches, granted] = await Promise.all([
+    switchesFor(env, target),
+    grantsOf(env, target.key, 'server'),
+  ]);
+  const on = (effective(switches.get('github')) || (!g.admins && granted.get('global:github')))
+    && forSource(g, target.source);
+  if (!on) {
     return { error: 'the github MCP server is not on in your channel; ask in the sidebar for it with request_tool' };
   }
+  // Throws when GitHub does not list them.
   const all = await installationsWithApprovals(env, app);
   const mine = all.find((i) => i.approved && !i.suspended
-    && String(i.account).toLowerCase() === String(owner).toLowerCase()
-    && on.has(`global:github:${i.id}`));
+    && String(i.account).toLowerCase() === String(owner).toLowerCase());
   if (!mine) {
-    return { error: `the opspile GitHub App does not read ${owner}'s repositories for your channel (it reads ${all.filter((i) => i.approved).map((i) => i.account).join(', ') || 'none'})` };
+    return { error: `the opspile GitHub App does not read ${owner}'s repositories for your channel (it reads ${all.filter((i) => i.approved && !i.suspended).map((i) => i.account).join(', ') || 'none'})` };
   }
   return { app, installation: mine.id };
 }
@@ -229,7 +245,12 @@ export async function setWatch(agent, args = {}, now = new Date()) {
   let readableAs = null;
   const gh = githubRef(url);
   if (gh) {
-    const access = await githubAccess(env, t, gh.owner);
+    let access;
+    try {
+      access = await githubAccess(env, t, gh.owner);
+    } catch (e) {
+      return { error: `Whether your channel reads ${gh.owner}'s repositories could not be checked (${e.message}); try again in a while. Nothing was watched.` };
+    }
     if (access.error) {
       return { error: `${access.error}. Nothing was watched.` };
     }
@@ -414,7 +435,8 @@ export async function watchUpdate(agent, { watch, change }) {
   let told = change;
   const ref = change.type === 'github' && githubRef(watch.url);
   if (ref) {
-    const access = await githubAccess(env, t, ref.owner).catch((e) => ({ error: e.message }));
+    // Throws when it cannot tell: the change is told again later (src/watches.js).
+    const access = await githubAccess(env, t, ref.owner);
     if (access.error) {
       await env.DB.prepare('DELETE FROM agent_watches WHERE id = ?').bind(watch.id).run();
       told = { type: 'revoked', reason: access.error };

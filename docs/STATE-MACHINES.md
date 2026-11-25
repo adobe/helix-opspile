@@ -377,10 +377,13 @@ drops it unsaid. At most five wait.
 0104, `src/agent/watches.js`, `src/watches.js`). `seen` is the watermark: the latest message's time
 of a watched thread, a GitHub item's `updated_at`. An update moves it first, and only from the value
 it read (`WHERE COALESCE(seen, '') = ?`), so two jobs of one burst, or two polls, tell the agent
-once; a lost update is not told again, which is the price of never telling it twice. A GitHub watch
-is due at `poll_after`, which every poll moves (later for a quiet item, a failing one by `failures`,
-and past GitHub's reset when it limits the installation); its `etag` makes the poll conditional.
-One whose channel no longer reads the account is deleted before anything of the item is read. Past
+once. An update its agent did not take (its object did not answer, or could not check its access)
+puts `seen` back where it was, conditional on what it wrote: the queue delivers a thread's job again,
+and the next poll tells a GitHub item's. A GitHub watch is due at `poll_after`, which every poll
+moves (later for a quiet item, a failing one by `failures`, and past GitHub's reset when it limits
+the installation); its `etag` makes the poll conditional. One whose channel surely no longer reads
+the account (`githubAccess` answers an error) is deleted before anything of the item is read; one
+whose access could not be checked (D1 or GitHub did not answer: it throws) is kept, and backs off. Past
 `expires_at` the cron deletes the row and tells the agent; `unwatch_related` deletes it at once. The
 isolates keep the watched threads' keys a minute (`watchedKeys`): a new watch can miss what is posted
 in that minute elsewhere.

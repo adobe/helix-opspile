@@ -53,6 +53,9 @@ before(() => {
       return realFetch(input, init);
     }
     const reply = (body, status = 200) => Response.json(body, { status });
+    if (url.pathname === '/app/installations' && GH.down) {
+      return reply({ message: 'Server Error' }, 502);
+    }
     if (url.pathname === '/app/installations') {
       return reply([{ id: 41, account: { login: 'acme-labs', type: 'Organization' }, repository_selection: 'all' }]);
     }
@@ -119,7 +122,12 @@ function env() {
       get: (name) => ({
         // eslint-disable-next-line no-underscore-dangle
         __unsafe_ensureInitialized: async () => {},
-        watchUpdate: async (update) => { told.push([name, update]); },
+        watchUpdate: async (update) => {
+          if (told.down) {
+            throw new Error('the agent did not answer');
+          }
+          told.push([name, update]);
+        },
       }),
     },
   };
@@ -161,7 +169,14 @@ beforeEach(() => {
   forgetWatched();
   forgetGithub();
   Object.assign(GH, {
-    issue: null, pull: null, comments: [], reviews: [], limited: null, requests: [], remaining: 4000,
+    issue: null,
+    pull: null,
+    comments: [],
+    reviews: [],
+    limited: null,
+    requests: [],
+    remaining: 4000,
+    down: false,
   });
 });
 
@@ -384,8 +399,8 @@ describe('watching a GitHub issue or pull request', () => {
     const r = await quiet(() => pollWatches(e, new Date(NOW.getTime() + 300_000)));
     assert.deepEqual([r.polled, r.limited, r.failed], [1, 2, 0]);
     assert.equal(GH.requests.length, 1, 'the second watch of the installation is not asked');
-    const after = e.DB.rows('SELECT poll_after FROM agent_watches ORDER BY id').map((w) => w.poll_after);
-    assert.ok(after.every((t) => Date.parse(t) > reset * 1000), after.join());
+    const due = e.DB.rows('SELECT poll_after FROM agent_watches ORDER BY id').map((w) => w.poll_after);
+    assert.ok(due.every((t) => Date.parse(t) > reset * 1000), due.join());
     // Before the reset, nothing is due.
     GH.limited = null;
     assert.equal((await quiet(() => pollWatches(e, new Date(reset * 1000 - 60_000)))).polled, 0);
@@ -421,6 +436,68 @@ describe('watching a GitHub issue or pull request', () => {
     }, change), /ended .*github MCP server is not on/s);
   });
 
+  it('keeps a watch when GitHub or D1 cannot say whether its channel reads the account', async () => {
+    const e = env();
+    await withGithub(e);
+    await quiet(() => setWatch(watcher(e), { url: PR_URL, why: 'x' }, NOW));
+    GH.down = true;
+    forgetGithub();
+    const r = await quiet(() => pollWatches(e, new Date(NOW.getTime() + 300_000)));
+    assert.deepEqual([r.revoked, r.failed, r.polled], [0, 1, 0]);
+    assert.deepEqual(e.DB.rows('SELECT failures FROM agent_watches'), [{ failures: 1 }]);
+    assert.equal(e.told.length, 0);
+    // D1 failing to read the app is no refusal either.
+    GH.down = false;
+    const broken = {
+      ...e,
+      DB: {
+        ...e.DB,
+        prepare: (sql) => (/FROM github_apps/.test(sql) ? { first: async () => { throw new Error('D1 DB is overloaded'); } } : e.DB.prepare(sql)),
+      },
+    };
+    const again = await quiet(() => pollWatches(broken, new Date(NOW.getTime() + 3600_000)));
+    assert.deepEqual([again.revoked, again.failed], [0, 1]);
+    assert.equal(e.DB.rows('SELECT id FROM agent_watches').length, 1);
+    // An agent that cannot tell either keeps it, and the change for the next time.
+    GH.down = true;
+    forgetGithub();
+    const a = thinker(e);
+    const update = {
+      watch: {
+        id: 'w1', kind: 'github', target: 'acme-labs/site#7', url: PR_URL, why: 'x', set_at: hour(9),
+      },
+      change: {
+        type: 'github', target: 'acme-labs/site#7', title: 't', item: 'pull', lines: ['x'], latest: hour(1),
+      },
+    };
+    await assert.rejects(() => quiet(() => watchUpdate(a, update)), /502/);
+    assert.equal(a.submitted.length, 0);
+    assert.equal(e.DB.rows('SELECT id FROM agent_watches').length, 1);
+  });
+
+  it('tells a change again when its agent did not answer', async () => {
+    const e = env();
+    await withGithub(e);
+    await quiet(() => setWatch(watcher(e), { url: PR_URL, why: 'x' }, NOW));
+    Object.assign(GH.issue, { state: 'closed', updated_at: hour(-1) });
+    e.told.down = true;
+    const r = await quiet(() => pollWatches(e, new Date(NOW.getTime() + 300_000)));
+    assert.deepEqual([r.told, r.failed], [0, 1]);
+    assert.deepEqual(e.DB.rows('SELECT seen, failures FROM agent_watches'), [{ seen: hour(5), failures: 1 }]);
+    e.told.down = false;
+    const later = await quiet(() => pollWatches(e, new Date(NOW.getTime() + 3600_000)));
+    assert.equal(later.told, 1);
+    assert.match(e.told[0][1].change.lines[0], /closed now/);
+    // A watched thread's job fails, and is delivered again, with the same messages.
+    post(e, B, hour(8));
+    await quiet(() => setWatch(watcher(e), { url: B, why: 'y' }, NOW));
+    post(e, B, hour(1), { author: 'Vic' });
+    e.told.down = true;
+    await assert.rejects(() => quiet(() => notifyWatched(e, B, NOW)), /not told/);
+    e.told.down = false;
+    assert.equal((await quiet(() => notifyWatched(e, B, NOW))).told, 1);
+  });
+
   it('is checked again by the agent before it is told', async () => {
     const e = env();
     await withGithub(e, { on: false });
@@ -449,7 +526,9 @@ describe('watching a GitHub issue or pull request', () => {
     assert.equal(at({ changedAt: hour(0.1), failures: 20 }), 360 * M);
     assert.equal(at({ resetAt: NOW.getTime() + 7200_000 }), 7201_000);
     const r = (status, h = {}) => ({
-      status, retryAfter: h.retry ?? null, rate: { remaining: h.remaining ?? null, reset: h.reset ?? null },
+      status,
+      retryAfter: h.retry ?? null,
+      rate: { remaining: h.remaining ?? null, reset: h.reset ?? null },
     });
     assert.equal(limitedUntil(r(200)), null);
     assert.equal(limitedUntil(r(403)), null, 'a 403 without a limit is a failure');
