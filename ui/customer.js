@@ -130,6 +130,10 @@ globalThis.CustomerView = (() => {
     const profile = m.profile ? Person.profile([{
       team: p.org.slug, teamName: nameOf(p), description: m.profile.description, href,
     }]) : '';
+    // Their Follow (ui/follow.js): a person of D1 by their id, a customer's by their account.
+    let follow = null;
+    if (m.id) follow = { kind: 'person', id: m.id, name: m.name };
+    else if (m.account) follow = { kind: 'account', id: m.account, name: m.name || 'Someone' };
     const foot = href && !m.profile.description ? `<dl class="ps-keys"><dt>Contact</dt><dd><a class="tv-contact" href="${esc(href)}" title="Their Contact in the knowledge base">In the knowledge base</a></dd></dl>` : '';
     return Person.card(m, {
       face: face(m.name, m.avatar, 'big'),
@@ -140,6 +144,7 @@ globalThis.CustomerView = (() => {
       label: 'Asks about',
       profile,
       foot,
+      action: (follow && ctx.follow?.(follow)) || '',
       ctx,
     });
   }
@@ -228,11 +233,12 @@ globalThis.CustomerView = (() => {
       <p class="hint">The ops teams whose people post in its threads, by what they said there, and those its channels are filed under or shared with, or that follow it.</p></section>`;
   }
 
-  function areas(p) {
+  function areas(p, ctx) {
+    // Each a link to it on the Topics page, with its Follow (ui/follow.js).
     const rows = p.areas.map((a) => ({
       n: a.threads,
       count: plural(a.threads, 'thread'),
-      name: esc(a.name),
+      name: `<span class="tv-line">${link(ctx.topicHref(`tag:${a.id}`), esc(a.name), { title: 'Open it on the Topics page' })}${ctx.follow?.({ kind: 'area', id: a.id, name: a.name }) || ''}</span>`,
       weekly: a.weekly,
     }));
     return `<section class="tv-sec" aria-labelledby="tvAreas"><h2 id="tvAreas">${p.vendor ? 'What the cases are about' : 'What they ask about'}</h2>
@@ -274,7 +280,8 @@ globalThis.CustomerView = (() => {
         t.stack ? 'in their stack' : ''].filter(Boolean).join(' · ');
       const href = t.tech ? ctx.topicHref(`product:tech:${t.tech}`) : null;
       const name = href ? `<a href="${esc(href)}" title="Open it on the Topics page">${esc(t.name)}</a>` : esc(t.name);
-      return `<li><span class="tv-name"><span class="tv-line">${name}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
+      const button = (t.tech && ctx.follow?.({ kind: 'tech', id: t.tech, name: t.name })) || '';
+      return `<li><span class="tv-name"><span class="tv-line">${name}${button}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
         <span class="tv-meter">${bar(t.threads / most)}<span class="sub">${esc(plural(t.threads, 'thread'))}</span></span>${spark(t.weekly, { cls: 'tech', label: 'messages in its threads, week by week' })}</li>`;
     };
     return Overview.layers(p.tech.filter((t) => techIn(t, tab)), p.layers, row);
@@ -308,7 +315,7 @@ globalThis.CustomerView = (() => {
       <div class="tv-two">${dependents(p, ctx)}${thirdParty(p)}</div>` : ''}
       ${people(p, ctx)}
       <div class="tv-two">${staff(p, ctx)}${teams(p, ctx)}</div>
-      <div class="tv-two">${areas(p)}${channels(shown)}</div>
+      <div class="tv-two">${areas(p, ctx)}${channels(shown)}</div>
       ${tech(p, ctx, 'all')}
       ${Overview.knowledge(p.kb, {
     name: nameOf(p),

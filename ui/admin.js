@@ -2997,6 +2997,8 @@ async function showOrgOverview(slug) {
     kbHref: (path) => (base && p.kb?.readable ? address({ section: 'kb', path }) : null),
     // A node of the Topics page, picked, as a team's overview links them.
     topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
+    // A person's, a topic's and a product's Follow (ui/follow.js): not your own.
+    follow: (thing) => (thing.kind === 'person' && thing.id === state.me.id ? '' : Follow.button(thing)),
     // A vendor's page lists the customers of its products.
     orgHref: (org) => address({ tab: 'orgs', sel: org, section: 'overview' }),
     orgIcon: (org, icon) => {

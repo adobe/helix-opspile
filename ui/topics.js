@@ -524,8 +524,12 @@ function foldButton(n) {
 
 /** What following node `n` is (PUT /api/follows): `{ kind, target }`, or null for a topic. */
 function followOf(n) {
-  // A person of D1 (an id); someone known only by their account (`a:…`) cannot be followed.
-  if (n.type === 'person') return /^\d+$/.test(n.key) ? { kind: 'person', target: n.key } : null;
+  // A person of D1 (an id); someone known only by their account (`a:<identity key>`, a customer's
+  // person) by that account.
+  if (n.type === 'person') {
+    if (/^\d+$/.test(n.key)) return { kind: 'person', target: n.key };
+    return n.key.startsWith('a:') ? { kind: 'account', target: n.key.slice(2) } : null;
+  }
   if (n.type === 'org') return { kind: 'org', target: n.key };
   if (n.type === 'tag' && n.key !== TopicGraph.NONE) return { kind: 'area', target: n.key };
   if (n.type === 'product' && n.key.startsWith('tech:')) return { kind: 'tech', target: n.key.slice(5) };

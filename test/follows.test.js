@@ -372,7 +372,7 @@ describe('following technologies', () => {
     const { names, ...rest } = (await call(e, ew, 'GET', '/api/me')).body.follows;
     assert.deepEqual(rest, {
       me: {
-        tech: ['xw'], area: [], org: [], person: [],
+        tech: ['xw'], area: [], org: [], person: [], account: [], thread: [],
       },
       teams: { ew: { tech: ['da'], area: [], org: [] } },
       muted: { org: [] },
@@ -414,6 +414,46 @@ describe('following technologies', () => {
     // What no one may follow, and who may not.
     assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'area', target: 'nope' })).status, 400);
     assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'team', target: 'ew' })).status, 400);
+  });
+
+  it('puts the threads a customer\'s account posted in, and a thread followed itself, in the personal view', async () => {
+    const e = env();
+    const ew = asMe(EW);
+    const personal = async () => entries(await inbox(e, ew, null, { personal: true })).sort();
+    e.DB.sqlite.exec(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at) VALUES
+        ('slack', 'E1', 'U7', 'person', 'Cy Customer', '${AT}'), ('slack', 'E1', 'B1', 'bot', 'A bot', '${AT}')`);
+    e.DB.sqlite.prepare("UPDATE messages SET author_key = 'slack:E1:U7' WHERE thread = ?").run(key('C2', '4.1'));
+    // An account: the threads it posted in, one entry with its group; named as identities has it.
+    let r = await call(e, ew, 'PUT', '/api/follows', { kind: 'account', target: 'slack:E1:U7' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.me.account, ['slack:E1:U7']);
+    assert.equal(r.body.names['account:slack:E1:U7'], 'Cy Customer');
+    assert.deepEqual(await personal(), [key('C2', '3.1')]);
+    assert.deepEqual([...await followersOf(e, [EW.id, ADA.id], key('C2', '3.1'))], [EW.id]);
+    // Not a bot's, nor one nobody knows; and never a team's.
+    assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'account', target: 'slack:E1:B1' })).status, 400);
+    assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'account', target: 'slack:E1:U0' })).status, 400);
+    assert.equal((await call(e, asMe(MANAGER, 'manager'), 'PUT', '/api/follows', {
+      kind: 'account', target: 'slack:E1:U7', team: 'ew',
+    })).status, 400);
+    await call(e, ew, 'PUT', '/api/follows', { kind: 'account', target: 'slack:E1:U7', follow: false });
+    assert.deepEqual(await personal(), []);
+    // A thread: only one they may work already; following it does not open it.
+    assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'thread', target: key('C1', '2.1') })).status, 404);
+    const ada = asMe(ADA);
+    r = await call(e, ada, 'PUT', '/api/follows', { kind: 'thread', target: key('C1', '2.1') });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.me.thread, [key('C1', '2.1')]);
+    assert.equal(r.body.names[`thread:${key('C1', '2.1')}`], 'about 2.1');
+    assert.deepEqual(entries(await inbox(e, ada, null, { personal: true })), [key('C1', '2.1')]);
+    assert.deepEqual([...await followersOf(e, [ADA.id, EW.id], key('C1', '2.1'))], [ADA.id]);
+    // Not an alert, which the personal view never has.
+    assert.equal((await call(e, ada, 'PUT', '/api/follows', { kind: 'thread', target: key('C3', '5.1') })).status, 400);
+    // A group's member, followed: its entry is.
+    await call(e, ada, 'PUT', '/api/follows', { kind: 'thread', target: key('C2', '4.1') });
+    assert.deepEqual(entries(await inbox(e, ada, null, { personal: true })).sort(), [key('C1', '2.1'), key('C2', '3.1')]);
+    r = await call(e, ada, 'PUT', '/api/follows', { kind: 'thread', target: key('C1', '2.1'), follow: false });
+    assert.deepEqual(r.body.me.thread, [key('C2', '4.1')]);
   });
 
   it('lets a team\'s managers and the admin team pick what the team follows', async () => {

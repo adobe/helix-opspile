@@ -132,10 +132,12 @@ not removed by hand.
 
 **Following.** One concept, everywhere (`src/following.js`, `ui/follow.js`): who (you, or a team
 you may act for: one you manage, any team but the holding ones for the admin team), what (follow, or
-mute) and what of: a product (`tech`), a topic (`area`), a customer (`org`) or a person (`person`).
-A team follows products, topics and customers, never a person; a mute is always your own, and only
-of a customer. Wherever one of these is shown (a thread's tech stack and topics, a profile card, a
-team's overview, a customer's page, the Topics page, the suggestions) it has the same Follow
+mute) and what of: a product (`tech`), a topic (`area`), a customer (`org`), a person (`person`; a
+customer's person, who is none of D1, by their platform account, `account`) or a thread (`thread`).
+A team follows products, topics and customers, never a person or a thread; a mute is always your
+own, and only of a customer. Wherever one of these is shown (a thread's header, its tech stack and
+topics, a person's and a customer's card, a team's overview, a customer's page and its topics and
+people, the Topics page, the suggestions) it has the same Follow
 button, Follow / Following, for you; for whoever may follow for a team its chevron opens who follows
 it, you and each of those teams, to check or uncheck. Only teams you are on show as following it,
 in the chevron's count and its list (the admin team finds the others by name); on a team's page the
@@ -175,7 +177,11 @@ A person also follows a **customer**, a **person** or an **area** (`person_follo
 0087; `PUT /api/follows { kind, target }`): the customer's conversations, the threads the person
 posted in, and those Clef puts in the area (`thread_areas`, by index, written with the label, as
 `thread_tech` is) are in their personal view the same way, and in `followersOf` for live updates
-and notifications. A team follows an **area** too (`team_follows_by`, migration 0105): the threads
+and notifications. And (migration 0107) an **account**, a customer's person known by their identity
+key only (`messages.author_key`, by `messages_author`; the first of the accounts the Topics page
+counts as one), whose threads they posted in come the same way; and a **thread** itself (its key,
+its entry's members by it), a conversation they may work already (`mayWork`, asked by
+`PUT /api/follows`): following it keeps it in their personal view, and never opens one to them. A team follows an **area** too (`team_follows_by`, migration 0105): the threads
 Clef puts in it are in the team's inbox as those that show a technology it follows are
 (`followedByTeam`, `followingTeams`; the relabel's room event names the areas it joined or left,
 `teamsFollowing`). A team follows a customer too (its managers and the admin team, with Follow's

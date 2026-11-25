@@ -100,6 +100,10 @@
    line. */
 .ov .tv-person .ps-nm .fo { margin-inline-start: auto; }
 .ov .tv-layer .tv-line .fo { margin-inline-start: auto; }
+/* A ranked row's name with its Follow at the end (a customer's topics). */
+.ov .tv-rank .tv-line { display: flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; }
+.ov .tv-rank .tv-line > a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov .tv-rank .tv-line .fo { margin-inline-start: auto; flex: none; }
 .ov .tv-quiet { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin-top: var(--spectrum-spacing-300); }
 .ov .tv-q { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-100); }
 

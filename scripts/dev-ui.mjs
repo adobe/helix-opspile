@@ -273,7 +273,9 @@ const follows = () => fdb.prepare('SELECT tech FROM person_follows WHERE person 
   .map((r) => r.tech);
 /** What Dana follows besides technologies (src/follows.js `person_follows_by`). */
 const followsBy = () => {
-  const out = { org: [], person: [], area: [] };
+  const out = {
+    org: [], person: [], area: [], account: [], thread: [],
+  };
   for (const r of fdb.prepare('SELECT kind, target FROM person_follows_by WHERE person = ?').all(ME)) {
     out[r.kind].push(r.kind === 'person' ? Number(r.target) : r.target);
   }
@@ -454,7 +456,11 @@ function followedByMe(e) {
   const by = followsBy();
   return tech.some((t) => follows().includes(t)) || by.org.includes(e.row.org)
     || areas.some((a) => by.area.includes(a))
-    || e.messages.some((m) => by.person.some((id) => store.people.get(id)?.name === m.author.name));
+    || e.messages.some((m) => by.person.some((id) => store.people.get(id)?.name === m.author.name))
+    // A thread she follows, and the threads of a customer's person she follows, by their account.
+    || by.thread.includes(e.row.thread) || by.thread.includes(e.row.logical_thread)
+    || e.messages.some((m) => by.account.some((k) => [...store.people.values()]
+      .some((p) => p.name === m.author.name && k === `${e.ch.source}:T-FAKE:${p.key}`)));
 }
 /** As src/shares.js `mayPost`: her teams' channels, and those she posted or was mentioned in. */
 const mayPost = (entry) => inTeam(entry.row.team)
@@ -1972,7 +1978,24 @@ async function api(req, res, url) {
   if (url.pathname === '/api/follows') {
     // As src/api.js: what Dana follows and mutes, and her teams (src/following.js).
     if (req.method === 'PUT') {
-      const r = await changeFollow(adminApi.env, followMe(req), await readJson(req), { followOrg });
+      const body = await readJson(req);
+      // A thread and a customer's account are the fake inbox's, not the admin pages' D1: checked
+      // here (a thread she may work, an account of its people), then kept as src/follows.js does.
+      if (['thread', 'account'].includes(body.kind) && !body.team && body.mute === undefined) {
+        const target = String(body.target || '');
+        const ok = body.kind === 'thread' ? Boolean(store.threads.get(target) && mayWork(store.threads.get(target)))
+          : [...store.people.values()].some((p) => !p.staff && target.endsWith(`:T-FAKE:${p.key}`));
+        if (body.follow === false) {
+          fdb.prepare('DELETE FROM person_follows_by WHERE person = ? AND kind = ? AND target = ?').run(ME, body.kind, target);
+        } else if (!ok) {
+          return json(res, { error: `no such ${body.kind}` }, body.kind === 'thread' ? 404 : 400);
+        } else {
+          fdb.prepare(`INSERT OR IGNORE INTO person_follows_by (person, kind, target, added_at)
+            VALUES (?, ?, ?, ?)`).run(ME, body.kind, target, new Date().toISOString());
+        }
+        return json(res, { ...await followsNow(req), changed: true });
+      }
+      const r = await changeFollow(adminApi.env, followMe(req), body, { followOrg });
       return r.error ? json(res, { error: r.error }, r.status || 400)
         : json(res, { ...await followsNow(req), changed: r.changed });
     }

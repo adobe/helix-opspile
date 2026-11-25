@@ -23,7 +23,8 @@ import { keptTurn } from './agent/kept.js';
 import { sidebarFor, unseenAnswers } from './sidebar.js';
 import { toolRequestsFor } from './toolrequests.js';
 import {
-  discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, getDraftFile, saveDraft,
+  discardDraft, draftOf, draftsFor, draftSource, draftSummary, entryOf, getDraft, getDraftFile,
+  saveDraft,
 } from './drafts.js';
 import { requestsFor } from './bashrequests.js';
 import { teamsBotIcon } from './bots.js';
@@ -1357,7 +1358,12 @@ async function route(request, env, url, {
     if (request.method === 'PUT') {
       // `{ kind, target, follow, team? }` or `{ kind: 'org', target, mute }` (src/following.js).
       const body = await request.json().catch(() => ({}));
-      const res = await changeFollow(env, me, body, { followOrg });
+      // A thread, where they may work it (its entry, as its page has it).
+      const mayFollowThread = async (key) => {
+        const entry = await entryOf(env, key);
+        return Boolean(entry) && working(entry.teams, entry);
+      };
+      const res = await changeFollow(env, me, body, { followOrg, mayFollowThread });
       if (res.error) {
         return json({ error: res.error }, res.status || 400);
       }
