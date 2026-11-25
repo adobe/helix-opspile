@@ -607,6 +607,124 @@ describe('inbox page', () => {
     assert.deepEqual(reloads, ['a', 'g', 'b'], 'a member of a folded entry, read to its end, and a teammate\'s read');
   });
 
+  describe('\u2191 to edit your last message', () => {
+    /** The page's editLast and editArrived, with a thread `messages` and an outbox `sending`. */
+    function keys({ messages = [], sending = [], pane = [] } = {}) {
+      const state = {
+        open: 't', cache: new Map([['t', { data: { messages } }]]), sending, editing: null, editArriving: null,
+      };
+      const reply = { value: '', blur: () => {} };
+      const doc = { activeElement: reply, body: {} };
+      const did = {
+        edited: [], focused: [], toasts: [], later: [],
+      };
+      const fns = piece('function editLast', 'function globalKey', 'editLast, editArrived', {
+        state,
+        document: doc,
+        canEdit: (m) => Boolean(m.editable) && !m.pending,
+        sendLate: (p) => Boolean(p.late),
+        paneMessages: () => pane.map((id) => ({ dataset: { id } })),
+        focusMessage: (el) => did.focused.push(el.dataset.id),
+        toast: (text) => did.toasts.push(text),
+        startEdit: (id) => did.edited.push(id),
+        $: (id) => (id === 'reply' ? reply : null),
+        setTimeout: (fn) => did.later.push(fn),
+        SEND_ARRIVE_MS: 60000,
+        SEND_APP_ARRIVE_MS: 180000,
+      });
+      const settle = () => did.later.splice(0).forEach((fn) => fn());
+      return {
+        state, did, reply, doc, settle, ...fns,
+      };
+    }
+    const mine = (id, at) => ({
+      thread: 't', id, at, body: `reply ${id}`, editable: 'user',
+    });
+    const out = (id, at, status = 'sending', more = {}) => ({
+      thread: 't', id, at, body: 'just sent', status, ...more,
+    });
+
+    it('edits your last message of the thread', () => {
+      const p = keys({ messages: [mine('1', '2026-10-21T10:00:00Z'), mine('2', '2026-10-21T10:01:00Z')] });
+      assert.equal(p.editLast('t'), true);
+      assert.deepEqual(p.did.edited, ['t|2']);
+      assert.equal(p.state.editArriving, null);
+    });
+
+    it('waits for the reply just sent instead of editing the message before it, and opens it once it is back', () => {
+      for (const status of ['sending', 'sent', 'delivered']) {
+        const p = keys({
+          messages: [mine('1', '2026-10-21T10:00:00Z')],
+          sending: [out('pending-1', '2026-10-21T10:05:00Z', status)],
+        });
+        assert.equal(p.editLast('t'), true);
+        assert.deepEqual(p.did.edited, [], `${status}: not the message before it`);
+        assert.equal(p.state.editArriving.id, 'pending-1');
+        assert.match(p.did.toasts[0], /on its way/);
+        p.editArrived('t', mine('2', '2026-10-21T10:05:01Z'));
+        p.settle();
+        assert.deepEqual(p.did.edited, ['t|2'], status);
+        assert.equal(p.state.editArriving, null);
+      }
+    });
+
+    it('waits as long for a reply as the bot as it takes to come back', () => {
+      const p = keys({ sending: [out('pending-1', '2026-10-21T10:05:00Z', 'sent', { app: true })] });
+      const before = Date.now();
+      p.editLast('t');
+      assert.ok(p.state.editArriving.until >= before + 180000);
+    });
+
+    it('does not open the reply once you went on: typed, left the box, an edit, too late', () => {
+      const cases = [
+        [({ reply }) => Object.assign(reply, { value: 'next' }), 'typed the next reply'],
+        [({ doc }) => Object.assign(doc, { activeElement: {} }), 'left the box'],
+        [({ state }) => Object.assign(state, { editing: { id: 't|1' } }), 'editing another message'],
+        [({ state }) => Object.assign(state.editArriving, { until: Date.now() - 1 }), 'too late'],
+        [({ state }) => Object.assign(state, { open: 'u' }), 'another thread'],
+      ];
+      for (const [how, why] of cases) {
+        const p = keys({ sending: [out('pending-1', '2026-10-21T10:05:00Z')] });
+        p.editLast('t');
+        how(p);
+        p.editArrived('t', mine('2', '2026-10-21T10:05:01Z'));
+        p.settle();
+        assert.deepEqual(p.did.edited, [], why);
+        assert.equal(p.state.editArriving, null, why);
+      }
+    });
+
+    it('puts a reply that did not go out in focus, not the message before it', () => {
+      for (const status of ['failed', 'unknown']) {
+        const p = keys({
+          messages: [mine('1', '2026-10-21T10:00:00Z')],
+          sending: [out('pending-1', '2026-10-21T10:05:00Z', status)],
+          pane: ['t|1', 't|pending-1'],
+        });
+        assert.equal(p.editLast('t'), true);
+        assert.deepEqual(p.did.edited, [], status);
+        assert.deepEqual(p.did.focused, ['t|pending-1'], status);
+        assert.equal(p.state.editArriving, null, status);
+      }
+    });
+
+    it('edits a message newer than a reply in the outbox, and ignores other threads\' replies', () => {
+      const late = keys({
+        messages: [mine('1', '2026-10-21T10:00:00Z'), mine('2', '2026-10-21T10:10:00Z')],
+        sending: [out('pending-1', '2026-10-21T10:05:00Z', 'failed')],
+        pane: ['t|1', 't|pending-1', 't|2'],
+      });
+      late.editLast('t');
+      assert.deepEqual(late.did.edited, ['t|2']);
+      const other = keys({
+        messages: [mine('1', '2026-10-21T10:00:00Z')],
+        sending: [{ ...out('pending-1', '2026-10-21T10:05:00Z'), thread: 'u' }],
+      });
+      other.editLast('t');
+      assert.deepEqual(other.did.edited, ['t|1']);
+    });
+  });
+
   describe('live reloads', () => {
     /** The inbox's reloadSoon with fake timers: `due()` is how long until the reload set. */
     function live({ types = ['conversation'], view = 'team', open = null } = {}) {

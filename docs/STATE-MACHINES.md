@@ -332,7 +332,8 @@ unsent, it cannot be retried (`filesLost`), only discarded. Not-sent replies exp
 Tabs share the store: one gone in another tab (arrived, discarded) goes, one that moved on there
 takes its state. ↑ (⌘↑) in the empty reply box while your last reply is sending or sent and not
 back is that reply, not the one before: it is asked for (`state.editArriving`) and opens to edit
-when it settles, unless the thread changed, an edit or typing started, or a minute passed.
+when it settles, unless the thread changed, an edit or typing started, or a minute passed (three
+as the bot). One that did not go out (failed, unknown) is put in focus instead, not the one before.
 
 **Reaction made here.** asked → taken → settled, or refused (`state.reacting`, `ui/inbox.js`). It
 shows on the message at once. It goes once the thread's reactions agree after the platform took it,
