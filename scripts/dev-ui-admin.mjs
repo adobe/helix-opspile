@@ -807,6 +807,12 @@ function seedAccounts(DB, store) {
   }
 }
 
+/** The thread agents the answers to their questions go to: they take them, and do nothing. */
+const DEV_AGENTS = {
+  idFromName: (name) => name,
+  get: () => ({ __unsafe_ensureInitialized: async () => {}, answered: async () => ({ ok: true }) }),
+};
+
 export function createAdmin(store, { manager = false, member = false, bases = [] } = {}) {
   const teamRows = store.teams.some((t) => t.slug === 'admin')
     ? store.teams.map(({ slug, name }) => ({ slug, name }))
@@ -964,6 +970,40 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       ago(8),
       ago(7),
     );
+
+  // A thread agent's question to Dana (src/questions.js): how she raised Globex's image limit, for
+  // the runbook Priya asked about in the sidebar. A thread of Dana's inbox, Edge ops' and her
+  // personal view; and one she answered last week.
+  const images = [...store.threads.values()].find(({ row }) => row.title === 'Preview fails over 200 images');
+  if (images) {
+    DB.sqlite.prepare(`INSERT OR IGNORE INTO sidebar_messages (id, thread, role, person, body, at)
+      VALUES ('sb_dev_images', ?, 'person', 2, 'Do we have a runbook for raising the image limit?', ?)`)
+      .run(images.row.thread, ago(0.11));
+    const asked = { id: 'sb_dev_images' };
+    DB.sqlite.prepare(`INSERT INTO questions (id, thread, team, title, email, name, purpose, why,
+        items, sidebar, status, asked_at, deadline, answers, decided_at) VALUES
+      ('a1b2c3d4e5f6', ?1, 'edge', ?2, 'dana@example.com', 'Dana Ops', 'runbook', ?3, ?4, ?5, 'open', ?6, ?7, NULL, NULL),
+      ('0f1e2d3c4b5a', ?1, 'edge', ?2, 'dana@example.com', 'Dana Ops', 'fact', ?8, ?9, NULL, 'answered', ?10, ?11, ?12, ?13)`)
+      .run(
+        images.row.thread,
+        images.row.title,
+        'You raised the image limit for globex/www in this thread. kb-team knows the key (limits.maxImages) but not how it is set, its scope or how to undo it: I am writing the runbook Priya asked for.',
+        JSON.stringify([
+          { text: 'How did you set it?', guess: 'POST the whole site config with limits.maxImages', choices: ['POST the whole site config with limits.maxImages', 'The org config, for every site', 'The staff config tool'] },
+          { text: 'Does it apply to globex/www only, or to every site of the org?', guess: 'globex/www only', choices: ['globex/www only', 'Every site of globex'] },
+          { text: 'How is it set back to the default?' },
+        ]),
+        asked ? asked.id : null,
+        ago(0.1),
+        new Date(Date.now() + 2.9 * 86400000).toISOString(),
+        'Mei said the 200 image limit came with a release last month; I could not confirm it.',
+        JSON.stringify([{ text: 'Is the image limit 200 by default for every site?', guess: 'yes' }]),
+        ago(8),
+        ago(5),
+        JSON.stringify([{ pick: 'yes', text: 'Since early 2025; it was only enforced later.' }]),
+        ago(7.8),
+      );
+  }
 
   // Lena asks for Wonka's two orgs to be one (src/orgmerge.js): it waits in the admin team's inbox.
   DB.sqlite.prepare(`INSERT INTO org_merge_requests (slug, into_slug, note, requested_by, requested_name,
@@ -1238,11 +1278,10 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     }
     await seeded;
     await followed;
-    if (!me.admin) {
-      return Response.json({ error: 'for the admin team' }, { status: 403 });
-    }
+    // The inbox's viewer: an admin in the admin team's inbox only (the questions asked of them
+    // everywhere, `mine`), as src/api.js.
     if (url.pathname === '/api/requests') {
-      return Response.json(await requestEntries(env, me));
+      return Response.json(await requestEntries(env, me, { mine: url.searchParams.get('mine') === '1' }));
     }
     if (url.pathname === '/api/thread') {
       const t = await requestThread(env, me, key);
@@ -1253,7 +1292,9 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       return new Response(null, { status: 204 });
     }
     const run = { '/api/requests/note': addNote, '/api/requests/resolve': resolveRequest }[url.pathname];
-    const res = run ? await run(env, me, body || {}) : Response.json({ error: 'not found' }, { status: 404 });
+    // A question's answer goes to its thread's agent (src/agent/question.js): here, nowhere.
+    const told = { ...env, AGENTS: DEV_AGENTS };
+    const res = run ? await run(told, me, body || {}) : Response.json({ error: 'not found' }, { status: 404 });
     // Re-filing runs right away here.
     while (queued.length) {
       const messages = queued.splice(0).map((b) => ({ body: b, ack() {}, retry() {} }));

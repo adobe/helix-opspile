@@ -1127,8 +1127,9 @@ const WAITING_ICON = {
 };
 const TYPE_ICON = { conversation: 'chat', alert: 'bell', request: 'hand' };
 const PLATFORM_SITE = { Slack: 'slack.com', Teams: 'teams.microsoft.com', Discord: 'discord.com', Portal: 'adobe.com' };
-// What a thread is: a conversation, an alert, or one of the admin team's requests (in its inbox
-// only), which the number on Inbox in the header opens (ui/header.js, `REQUESTS`).
+// What a thread is: a conversation, an alert, or a request: one of the admin team's (in its inbox
+// only), or a question a thread agent asks you (in each of your inboxes), which the number on
+// Inbox in the header opens (ui/header.js, `REQUESTS`).
 const typeOf = (t) => {
   if (isRequestKey(t.thread)) return 'request';
   return t.kind === 'alert' ? 'alert' : 'conversation';
@@ -1412,7 +1413,7 @@ const FACETS = [
       ...(state.coPeople || []).map((p) => `person:${p}`)
         .sort((x, y) => PERSON_KINDS.indexOf(personKind(x.slice(7))) - PERSON_KINDS.indexOf(personKind(y.slice(7))))] },
   { id: 'type', title: 'Type', value: typeOf, order: ['conversation', 'alert', 'request'],
-    label: { conversation: 'Conversations', alert: 'Alerts', request: 'Admin requests' }, glyph: (v) => TYPE_ICON[v],
+    label: { conversation: 'Conversations', alert: 'Alerts', request: 'Requests' }, glyph: (v) => TYPE_ICON[v],
     color: colorOf({ conversation: 'c-blue', alert: 'c-crimson', request: 'c-pink' }) },
   { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams', 'Discord', 'Portal'],
     icon: (v) => PLATFORM_SITE[v],
@@ -1628,11 +1629,14 @@ const youCount = (t) => (t.unread
  * The purple badge: the agent's answers to you in a thread's sidebar that you have not seen
  * (`sideNew`, src/sidebar.js unseenAnswers), less those this page has shown you since (seeSide).
  * Read or not, the thread has them: a question asked in the sidebar and left is not forgotten.
+ * A question the agent asks you (see "the admin team's requests") has it too, until you answer.
  */
 const sideSeen = new Set();
 const sideCount = (t) => (t.sideNew || []).filter((id) => !sideSeen.has(id)).length;
-const sideTitle = (n) => `${n} new ${n === 1 ? 'answer' : 'answers'} from ${AGENT_NAME} to you in the sidebar`;
-const sideBadge = (n) => (n ? `<b class="sidebadge" title="${esc(sideTitle(n))}" aria-label="${esc(sideTitle(n))}">${SIDE_ICON}${n > 99 ? '99+' : n}</b>` : '');
+const sideTitle = (n, t = null) => (t && isQuestionKey(t.thread)
+  ? `${AGENT_NAME} asks you: answer it here`
+  : `${n} new ${n === 1 ? 'answer' : 'answers'} from ${AGENT_NAME} to you in the sidebar`);
+const sideBadge = (n, t = null) => (n ? `<b class="sidebadge" title="${esc(sideTitle(n, t))}" aria-label="${esc(sideTitle(n, t))}">${SIDE_ICON}${n > 99 ? '99+' : n}</b>` : '');
 /**
  * A customer's logo: its icon (the admin team's, else its mail domain's favicon) over its
  * initial on its colour, which shows where there is no icon or it does not load (wireFavicons).
@@ -2114,7 +2118,7 @@ function row(t, hit = null) {
     <div class="l2">${cust}
       <span class="faces">${faces}</span>
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
-      <span class="tags">${sideBadge(sideCount(t))}${moods(t)}</span>
+      <span class="tags">${sideBadge(sideCount(t), t)}${moods(t)}</span>
     </div>${hit ? hitLine(hit) : ''}</div>`;
 }
 
@@ -2138,7 +2142,7 @@ function simpleRow(t, hit = null) {
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}${said}${sideBadge(sideCount(t))}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
+    <div class="l2">${cust}${said}${sideBadge(sideCount(t), t)}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
 }
 /**
  * The list by customer (`shown` in the view's order, latest activity first): each customer
@@ -5461,22 +5465,41 @@ async function openThread(key, { live = false, cached = false } = {}) {
 // and what was decided; the card under it has what can be decided now (POST
 // /api/requests/resolve), each with what it does, its fields and, where it can be tried, what it
 // would change. Nothing there is posted anywhere, and no agent, draft or reaction is theirs.
+// A question a thread agent asks you (src/questions.js, kind `question`) is a request too, but
+// yours: in the personal view and in the inbox of the team its thread is filed under, and its
+// card answers it instead of deciding (the agent is told).
 const isRequestKey = (key) => typeof key === 'string' && key.startsWith('request:');
-/** Whether the inbox on screen has the requests: the admin team's, for one of its members. */
-const requestsShown = () => !personal() && state.team === 'admin' && Boolean(state.me?.admin) && !state.as;
+const isQuestionKey = (key) => typeof key === 'string' && key.startsWith('request:question:');
+/** Whether the inbox on screen is the admin team's, for one of its members: it has every request. */
+const adminRequests = () => !personal() && state.team === 'admin' && Boolean(state.me?.admin);
+/** Whether the inbox on screen has requests: the admin team's, or the questions asked of you. */
+const requestsShown = () => !state.as && Boolean(state.me);
+/** Whether request entry `t` belongs in the inbox on screen. */
+const requestHere = (t) => adminRequests() || (isQuestionKey(t.thread) && (personal() || t.team === state.team));
 // The requests as entries, loaded with the inbox, again once a room says one changed, else at
-// most every REQUESTS_FRESH_MS.
-const rqList = { entries: [], at: 0, loading: null };
+// most every REQUESTS_FRESH_MS; `mine` is whether they are only your questions (an inbox that is
+// not the admin team's).
+const rqList = {
+  entries: [], at: 0, loading: null, mine: null,
+};
 const REQUESTS_FRESH_MS = 5 * 60 * 1000;
 /** The requests' entries, loaded again when they are stale (`force`: whatever their age). */
 function loadRequests({ force = false } = {}) {
+  const mine = !adminRequests();
+  if (rqList.mine !== mine) Object.assign(rqList, { at: 0, loading: null, mine });
   if (!force && rqList.loading) return rqList.loading;
   if (!force && Date.now() - rqList.at < REQUESTS_FRESH_MS) return Promise.resolve(rqList.entries);
-  const asked = get('/api/requests').then((r) => {
+  const asked = get(mine ? '/api/requests?mine=1' : '/api/requests').then((r) => {
+    if (rqList.mine !== mine) return rqList.entries;
     rqList.entries = r.threads || [];
     rqList.at = Date.now();
-    // What waits, on Inbox in the header.
-    Header.setCount(rqList.entries.filter((t) => t.request?.open).length);
+    // What waits, on Inbox in the header: in the admin team's inbox every request, else your
+    // questions (the admin team's requests stay as the header counted them).
+    const waiting = rqList.entries.filter((t) => t.request?.open);
+    const questions = waiting.filter((t) => isQuestionKey(t.thread));
+    Header.setCounts({
+      ...(mine ? {} : { admin: waiting.length - questions.length }), questions: questions.length, team: questions[0]?.team || null,
+    });
     return rqList.entries;
   }).catch(() => rqList.entries).finally(() => { if (rqList.loading === asked) rqList.loading = null; });
   rqList.loading = asked;
@@ -5496,6 +5519,7 @@ const rq = {
   key: null, open: null, values: {}, preview: {}, busy: false, error: null, noting: false,
 };
 const RQ_LABEL = {
+  asked: 'Waiting for your answer', answered: 'Answered', passed: 'Passed on', unknown: 'Did not know', expired: 'Expired',
   waiting: 'Waiting for the admin team', confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged', adobe: 'Adobe\'s', external: 'External', linked: 'Linked', kept: 'Kept as it is', gone: 'Settled', mentioned: 'Mentioned only',
 };
 
@@ -5509,7 +5533,7 @@ function rqField(a, f) {
   }
   const input = {
     select: () => `<select id="${id}" ${name}>${(f.options || []).map((o) => `<option value="${esc(o.value)}"${o.value === f.value ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`,
-    textarea: () => `<textarea id="${id}" ${name} rows="4"${f.max ? ` maxlength="${f.max}"` : ''}>${esc(f.value || '')}</textarea>`,
+    textarea: () => `<textarea id="${id}" ${name} rows="${Number(f.rows) || 4}"${f.max ? ` maxlength="${f.max}"` : ''}>${esc(f.value || '')}</textarea>`,
   }[f.type];
   const control = input ? input() : `<input id="${id}" ${name} type="${f.type === 'email' ? 'email' : 'text'}" value="${esc(f.value || '')}"${f.max ? ` maxlength="${f.max}"` : ''}${f.required ? ' required' : ''} autocomplete="off">`;
   return `<label class="fld" for="${id}"><span>${esc(f.label)}</span>${control}</label>`;
@@ -5535,18 +5559,22 @@ function rqForm(a) {
 function rqCard(key, req) {
   const acts = req.actions || [];
   const st = `<span class="rq-st ${req.open ? 'open' : 'done'}">${esc(RQ_LABEL[req.status] || req.status)}</span>`;
-  if (!acts.length) return `<div class="rq" data-request="${esc(key)}"><div class="rq-head"><b>${esc(req.kindName)}</b>${st}</div><p class="rq-none">Nothing to decide: it is closed. What the admin team wrote stays above.</p></div>`;
+  const question = req.kind === 'question';
+  const none = question ? 'Nothing to answer: it is closed. The agent has what you said above.' : 'Nothing to decide: it is closed. What the admin team wrote stays above.';
+  if (!acts.length) return `<div class="rq" data-request="${esc(key)}"><div class="rq-head"><b>${esc(req.kindName)}</b>${st}</div><p class="rq-none">${none}</p></div>`;
   const open = acts.find((a) => a.id === rq.open);
+  const head = question ? 'Answer the agent' : (req.open ? 'Decide' : 'Change the decision');
   const buttons = acts.map((a) => `<button type="button" class="rq-act" data-rq-act="${esc(a.id)}" aria-expanded="${a === open}" aria-pressed="${Boolean(a.pressed)}"${a.off ? ` disabled title="${esc(a.off)}"` : ''}${rq.busy ? ' disabled' : ''}>${esc(a.label)}</button>`).join('');
   const off = acts.filter((a) => a.off).map((a) => `<p class="rq-off">${esc(a.label)}: ${esc(a.off)}</p>`).join('');
-  return `<div class="rq" data-request="${esc(key)}"><div class="rq-head"><b>${req.open ? 'Decide' : 'Change the decision'}</b>${st}</div>
+  return `<div class="rq" data-request="${esc(key)}"><div class="rq-head"><b>${head}</b>${st}</div>
     <div class="rq-acts">${buttons}</div>${off}${open ? rqForm(open) : ''}</div>`;
 }
 
-/** The reply box's place: the decision log's box. */
-function rqComposer() {
+/** The reply box's place: the decision log's box (a question's: notes of yours). */
+function rqComposer(key) {
   if (state.data?.me?.readonly) return `<div class="composer"><span class="connect">Viewing as ${esc(state.data.me.name)}: read-only.</span></div>`;
-  return `<div class="composer rqbox"><label class="rq-lbl" for="rqnote">Decision log: what you write here, only the admin team sees</label><textarea id="rqnote" rows="1"></textarea><button class="send" id="rqsend"${rq.noting ? ' disabled' : ''}>Add</button></div>`;
+  const what = isQuestionKey(key) ? 'Your notes: only you see them, and the agent does not' : 'Decision log: what you write here, only the admin team sees';
+  return `<div class="composer rqbox"><label class="rq-lbl" for="rqnote">${what}</label><textarea id="rqnote" rows="1"></textarea><button class="send" id="rqsend"${rq.noting ? ' disabled' : ''}>Add</button></div>`;
 }
 
 /**
@@ -5574,7 +5602,7 @@ function drawRequest(key, data, view) {
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
       <div class="l1">${lead}</div><div class="l2"></div></div>`;
   renderPane(pane, key, {
-    head, review: '', items, reply: rqComposer(), patch: !view.switching,
+    head, review: '', items, reply: rqComposer(key), patch: !view.switching,
   });
   placeSidePanel(key, thread, []);
   syncSideTab();
@@ -9558,7 +9586,10 @@ async function loadInbox(early = null, { fresh = false } = {}) {
   // The requests, as they are now: their entries, with the inbox's (an inbox switched away from
   // meanwhile has none).
   const entries = asked ? await asked : [];
-  if (asked && requestsShown() && scopeOf(first) === 'admin') first.threads.push(...entries.map((t) => ({ ...t })));
+  if (asked && requestsShown() && scopeOf(first) === scopeKey()) {
+    const keys = new Set(first.threads.map((t) => t.thread));
+    first.threads.push(...entries.filter((t) => requestHere(t) && !keys.has(t.thread)).map((t) => ({ ...t })));
+  }
   state.data = first;
   settleFolds();
   keepReads(first.threads);
@@ -11480,16 +11511,26 @@ function reactLast() {
  * ↑ in an empty reply box, as in Slack: your last message in the thread, to edit; without one
  * (or with ⌥), the last message, in focus. A reply of yours still on its way (sent here, not
  * back from the platform yet, some seconds) is the last one: it opens to edit once it is back,
- * since the platform has to have it first, and the one before it is not what was asked for.
+ * since the platform has to have it first, and the one before it is not what was asked for. One
+ * that did not go out (failed, or nobody knows) is the last one too: it is put in focus, with its
+ * Retry and Discard, since it cannot be edited.
  */
 function editLast(key, { focus = false } = {}) {
   const m = !focus && [...(state.cache.get(key)?.data?.messages || [])].reverse().find(canEdit);
-  const going = !focus && state.sending.filter((p) => p.thread === key
-    && ['sending', 'sent', 'delivered'].includes(p.status) && !sendLate(p)
-    && (!m || Date.parse(p.at) >= Date.parse(m.at))).at(-1);
+  const newer = (p) => p.thread === key && (!m || Date.parse(p.at) >= Date.parse(m.at));
+  const going = !focus && state.sending.filter((p) => newer(p)
+    && ['sending', 'sent', 'delivered'].includes(p.status) && !sendLate(p)).at(-1);
   if (going) {
-    state.editArriving = { key, id: going.id, until: Date.now() + SEND_ARRIVE_MS };
+    // As the bot, it takes longer to come back (SEND_APP_ARRIVE_MS).
+    state.editArriving = { key, id: going.id, until: Date.now() + (going.app ? SEND_APP_ARRIVE_MS : SEND_ARRIVE_MS) };
     toast('Your reply is on its way: it opens to edit once it is back.');
+    return true;
+  }
+  const unsent = !focus && state.sending.filter((p) => newer(p)
+    && (p.status === 'failed' || p.status === 'unknown')).at(-1);
+  const bubble = unsent && paneMessages().find((x) => x.dataset.id === `${unsent.thread}|${unsent.id}`);
+  if (bubble) {
+    focusMessage(bubble);
     return true;
   }
   if (!m) {

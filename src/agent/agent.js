@@ -38,6 +38,7 @@ import {
 } from './bashrequest.js';
 import { deliver, idle, verdictsOf } from './delivery.js';
 import { discarded, discardNote } from './discard.js';
+import { answered } from './question.js';
 import { dream, dreamOf, dreamState } from './dream.js';
 import { setWakeup, wakeupDue } from './wakeups.js';
 import { removeWatch, setWatch, watchUpdate } from './watches.js';
@@ -808,6 +809,11 @@ export class ThreadAgent extends Agent {
   /** A person on the team talks to the agent in the inbox's sidebar (src/agent/sidebar.js). */
   async sidebar(note) {
     return talk(this, note);
+  }
+
+  /** A person answered a question the agent asked them (src/agent/question.js). */
+  async answered(note) {
+    return answered(this, note);
   }
 
   /** A person discarded the agent's draft (src/agent/discard.js). */

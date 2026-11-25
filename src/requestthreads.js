@@ -22,6 +22,11 @@ import { getPortalRequest, listPortalRequests } from './portalrequests.js';
 import { portalBound } from './portalsource.js';
 import { announceRequest, parseRequestKey, requestKey } from './requestkeys.js';
 import { getRequest, listRequests } from './requests.js';
+import {
+  closeQuestion, getQuestion, listQuestions, markTold,
+} from './questions.js';
+import { answerNote } from './agent/question.js';
+import { agentStub } from './agent/stub.js';
 import { ADMIN_TEAM, isAdmin } from './review.js';
 import { ruleConflicts } from './ruleconflicts.js';
 import { techConflicts } from './techconflicts.js';
@@ -48,6 +53,11 @@ import { advanceWatermark, readState } from './threads.js';
  * conflicts) are kept in `request_threads` from when they are first seen waiting, and what is
  * decided from the thread is in the log; a conflict that is gone (settled, or its rules changed)
  * stays as a resolved thread with its title then.
+ *
+ * A thread agent's question to one person (kind `question`, src/questions.js) is a request too,
+ * but theirs, not the admin team's: it is a thread of their inbox, in the personal view and in
+ * the inbox of the team its thread is filed under (`personal`), and only they see and answer it.
+ * Answering does not take an admin route: the question is closed and the agent is told (`act`).
  */
 
 /** What the inbox names each kind, in the entry's place of a customer. */
@@ -61,7 +71,10 @@ export const KIND_NAMES = {
   person: 'Two accounts, one person?',
   tech: 'Technology conflicts',
   rule: 'Rule conflicts',
+  question: 'Questions for you',
 };
+/** The kinds that are one person's, not the admin team's: every inbox of theirs has them. */
+export const PERSONAL = new Set(['question']);
 /** The kinds without a row that says when they waited from: `request_threads` does. */
 const TRACKED = new Set(['bot', 'account', 'person', 'tech', 'rule']);
 /** The kinds that are worked out each time, and gone once settled. */
@@ -770,6 +783,168 @@ const ruleKind = {
   },
 };
 
+const PURPOSE = {
+  runbook: 'a runbook it is writing', reply: 'a reply to the customer', fact: 'a fact for the knowledge base',
+};
+const QUESTION_DONE = {
+  answered: 'Answered', passed: 'Passed on', unknown: 'Did not know', expired: 'Expired',
+};
+/** The value of a choice's option that says none of them: the answer is in the text below it. */
+const OTHER = '';
+
+/** What was answered to question `q`, as its thread says it: a line for each question. */
+function answersText(q) {
+  return q.items.map((item, i) => {
+    const a = q.answers[i] || {};
+    const said = [a.pick ? `**${md(a.pick)}**` : '', a.text ? md(a.text.replace(/\s+/g, ' ')) : ''].filter(Boolean).join(': ');
+    return `${i + 1}. ${md(item.text)} ${said || '_no answer_'}`;
+  }).join('\n');
+}
+
+/** What the person answered, from the answer form's values: one per question. */
+const answersOf = (q, v) => q.items.map((item, i) => ({
+  ...(v[`pick${i}`] ? { pick: v[`pick${i}`] } : {}),
+  ...(v[`text${i}`] ? { text: v[`text${i}`] } : {}),
+}));
+
+/**
+ * Tells the agent of question `q`'s thread how it ended (`answerNote`), and notes that it was
+ * told. Best effort: a question the agent was not told about stays closed, and says so.
+ */
+async function tellAgent(env, q, by) {
+  if (!env.AGENTS) {
+    return { error: 'agents are not configured' };
+  }
+  try {
+    const agent = await agentStub(env, q.thread);
+    const res = await agent.answered({ id: q.id, text: answerNote(q, by) });
+    if (res && res.error) {
+      return { error: res.error };
+    }
+    await markTold(env, q.id);
+    return { ok: true };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+const questionKind = {
+  list: (env, me) => listQuestions(env, { email: me.email, limit: LIMIT }),
+  async get(env, id, me) {
+    const q = await getQuestion(env, id);
+    return q && me && q.person.email === String(me.email || '').toLowerCase() ? q : null;
+  },
+  id: (q) => q.id,
+  describe(q) {
+    const open = q.status === 'open';
+    const link = `/inbox?team=${encodeURIComponent(q.team)}&t=${encodeURIComponent(q.thread)}`;
+    const items = q.items.map((item, i) => `${i + 1}. **${md(item.text)}**${item.guess ? `\n   My guess: ${md(item.guess)}` : ''}`).join('\n');
+    const facts = [
+      `- From [${md(q.title || 'a thread')}](${link})`,
+      q.sidebar ? `- Asked while it answered ${md(q.askedFor || 'someone')} in the thread's sidebar` : '',
+      open ? `- Waits for you until ${q.deadline.slice(0, 10)}; the answer goes to the agent only, never to the customer` : '',
+    ].filter(Boolean).join('\n');
+    const fields = q.items.flatMap((item, i) => [
+      ...(item.choices ? [{
+        name: `pick${i}`,
+        label: item.text,
+        type: 'select',
+        value: item.guess || item.choices[0],
+        options: [...item.choices.map((c) => ({ value: c, label: c === item.guess ? `${c} (the agent's guess)` : c })), { value: OTHER, label: 'Something else: say it below' }],
+      }] : []),
+      {
+        name: `text${i}`,
+        label: item.choices ? 'In your words (optional)' : item.text,
+        type: 'textarea',
+        rows: item.choices ? 1 : 3,
+        max: 2000,
+      },
+    ]);
+    const close = (status, values = {}) => ({
+      status,
+      answers: status === 'answered' ? answersOf(q, values) : [],
+      note: values.note || '',
+      passedTo: values.who || '',
+    });
+    const act = (status) => async (env, me, values) => {
+      const shut = close(status, values);
+      if (status === 'answered' && !shut.answers.some((a) => a.pick || a.text)) {
+        return { error: 'answer at least one of the questions', status: 400 };
+      }
+      if (!await closeQuestion(env, q.id, shut)) {
+        return { error: 'it is not waiting any more: answered meanwhile, or expired', status: 409 };
+      }
+      const told = await tellAgent(env, await getQuestion(env, q.id), me.name || me.email);
+      return { ok: true, told };
+    };
+    const told = (a) => (a.told && a.told.error ? ` The agent was not told (${md(a.told.error)}): tell it in the thread's sidebar.` : ' The agent goes on with it.');
+    let decision = null;
+    if (!open) {
+      const then = QUESTION_DONE[q.status] || q.status;
+      const how = {
+        answered: `\n\n${answersText(q)}`,
+        passed: q.passedTo ? `: ask ${md(q.passedTo)}` : '',
+        expired: ': nobody answered it in time',
+      }[q.status] || '';
+      decision = `**${then}**${how}${q.note ? `\n\n${quote(q.note)}` : ''}`;
+    }
+    return {
+      title: q.title ? `Question on ${q.title}` : 'A question from a thread agent',
+      team: q.team,
+      author: { name: 'Thread agent', kind: 'app', staff: true },
+      open,
+      status: open ? 'asked' : q.status,
+      askedAt: q.askedAt,
+      askedBy: null,
+      body: `The thread's agent asks you, for ${PURPOSE[q.purpose]}:\n\n${quote(q.why)}\n\n${items}\n\n${facts}`,
+      decidedAt: q.decidedAt || (q.status === 'expired' ? q.deadline : null),
+      decidedBy: null,
+      // What they answered is theirs to say, as a reply in the thread; an expiry is the inbox's.
+      answeredBy: q.status === 'expired' ? null : q.person,
+      decision,
+      actions: open ? [
+        {
+          id: 'answer',
+          label: 'Answer',
+          tone: 'accent',
+          hint: 'Pick or correct each guess. The agent gets your answer as yours, trusted, and finishes what it asked for with it.',
+          fields: [...fields, {
+            name: 'note', label: 'Anything else it should know (optional)', type: 'textarea', rows: 2, max: 1000,
+          }],
+          act: act('answered'),
+          done: (a) => `Sent to the agent.${told(a)}`,
+        },
+        {
+          id: 'pass',
+          label: 'Ask someone else',
+          hint: 'The agent asks whom you name, when they are on the team.',
+          fields: [
+            {
+              name: 'who', label: 'Who knows (a name or an address)', type: 'text', max: 200, required: true,
+            },
+            {
+              name: 'note', label: 'Anything else (optional)', type: 'text', max: 500,
+            },
+          ],
+          act: act('passed'),
+          done: (a) => `Passed on.${told(a)}`,
+        },
+        {
+          id: 'unknown',
+          label: 'I don\'t know',
+          tone: 'negative',
+          hint: 'The agent does not ask you about it again, and leaves the gap open.',
+          fields: [{
+            name: 'note', label: 'Who might know, or why nobody does (optional)', type: 'text', max: 500,
+          }],
+          act: act('unknown'),
+          done: (a) => `Told the agent.${told(a)}`,
+        },
+      ] : [],
+    };
+  },
+};
+
 const KIND = {
   channel: channelKind,
   member: memberKind,
@@ -780,6 +955,7 @@ const KIND = {
   person: personKind,
   tech: techKind,
   rule: ruleKind,
+  question: questionKind,
 };
 
 // ---- the log and the times ---------------------------------------------------------------------
@@ -858,7 +1034,7 @@ function messagesOf(key, d, log, {
     id: 'request',
     at: asked,
     source: 'request',
-    author: d.askedBy ? author(d.askedBy) : { name: 'Enterprise Support', kind: 'app', staff: true },
+    author: d.author || (d.askedBy ? author(d.askedBy) : { name: 'Enterprise Support', kind: 'app', staff: true }),
     // The inbox's own, with its icon (src/icons.js).
     avatar: d.askedBy ? null : '/icon.svg',
     body: d.body,
@@ -868,8 +1044,16 @@ function messagesOf(key, d, log, {
   // decided here since the log began).
   const logged = log.some((x) => x.type === 'decision');
   if (d.decision && d.decidedAt && !logged) {
+    const by = d.answeredBy;
     out.push({
-      thread: key, id: 'decision', at: d.decidedAt, source: 'request', author: { kind: 'system', name: '' }, body: d.decision, reactions: [],
+      thread: key,
+      id: 'decision',
+      at: d.decidedAt,
+      source: 'request',
+      author: by ? author(by) : { kind: 'system', name: '' },
+      body: d.decision,
+      ...(by ? { mine: by.email === String(me.email || '').toLowerCase() } : {}),
+      reactions: [],
     });
   }
   for (const x of log) {
@@ -901,8 +1085,13 @@ function messagesOf(key, d, log, {
 /** Whether a mail address is Adobe's. */
 const staffOf = (env) => (email) => Boolean(email) && isStaffDomain(env, email);
 
-/** An inbox entry of request `key`, as src/api.js `inbox` shapes a thread's. */
+/**
+ * An inbox entry of request `key`, as src/api.js `inbox` shapes a thread's. A question that waits
+ * has the agent's purple badge (`sideNew`, as an answer of the agent's in a sidebar has), until
+ * it is answered.
+ */
 function entryOf(key, kind, d, messages) {
+  const asks = PERSONAL.has(kind) && d.open;
   const shown = messages.filter((m) => m.author.kind !== 'system');
   const last = messages[messages.length - 1];
   const lastSaid = shown[shown.length - 1];
@@ -922,7 +1111,7 @@ function entryOf(key, kind, d, messages) {
     org_name: KIND_NAMES[kind],
     org_type: null,
     org_icon: null,
-    team: ADMIN_TEAM,
+    team: d.team || ADMIN_TEAM,
     kind: 'channel',
     channel_name: KIND_NAMES[kind],
     title: d.title,
@@ -955,16 +1144,21 @@ function entryOf(key, kind, d, messages) {
     draft: null,
     members: [{ thread: key, last_at: at, any_at: at }],
     request: { kind, status: d.status, open: d.open },
+    ...(asks ? { sideNew: [key] } : {}),
   };
 }
 
-/** The watermarks of the requests' threads: everyone's who is staff or on the admin team. */
+/**
+ * The watermarks of the requests' threads: everyone's who is staff or on the admin team, whose
+ * reads count (`in_team`); a question's, whoever it asks, whose inbox has it.
+ */
 async function marksOf(env, keys) {
   if (!keys.length) {
     return [];
   }
   const { results } = await env.DB.prepare(`SELECT w.person, w.thread, w.read_at, p.staff,
-      EXISTS (SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?1) AS in_team
+      (EXISTS (SELECT 1 FROM team_members m WHERE m.person = w.person AND m.team = ?1)
+        OR (w.thread >= 'request:question:' AND w.thread < 'request:question;')) AS in_team
     FROM watermarks w JOIN people p ON p.id = w.person
     WHERE w.thread >= 'request:' AND w.thread < 'request;'
       AND w.thread IN (SELECT value FROM json_each(?2))`).bind(ADMIN_TEAM, JSON.stringify(keys)).all();
@@ -989,10 +1183,15 @@ const goneOf = (row) => ({
  * src/api.js `inbox` shapes a thread's, with `request: { kind, status, open }`), every one that
  * waits and the latest decided of each kind, with the viewer's read state.
  */
-export async function requestEntries(env, me) {
+export async function requestEntries(env, me, { mine = false } = {}) {
   const n = await names(env);
   const bound = portalBound(env);
-  const lists = await Promise.all(Object.entries(KIND).map(async ([kind, k]) => {
+  // The admin team's kinds only for one of its members, in its inbox; what `request_threads`
+  // tracks of them is read and written only then (a personal listing has none of them, so it
+  // would take every tracked conflict for gone).
+  const admins = !mine && isAdmin(me);
+  const kinds = Object.entries(KIND).filter(([kind]) => PERSONAL.has(kind) || admins);
+  const lists = await Promise.all(kinds.map(async ([kind, k]) => {
     try {
       return (await k.list(env, me)).map((r) => ({ kind, id: k.id(r), r }));
     } catch (e) {
@@ -1005,7 +1204,8 @@ export async function requestEntries(env, me) {
   }));
   // A list that failed leaves its conflicts where they were: not gone.
   const complete = lists.every(Boolean);
-  const tracked = await track(env, items.filter((x) => TRACKED.has(x.kind)), { complete });
+  const tracked = admins
+    ? await track(env, items.filter((x) => TRACKED.has(x.kind)), { complete }) : new Map();
   const shown = new Set(items.map((x) => x.key));
   const gone = [...tracked.values()].filter((row) => row.closed_at && !shown.has(row.request))
     .map((row) => ({
@@ -1030,7 +1230,7 @@ export async function requestEntries(env, me) {
 /** `{ kind, id, key, r, d }` of request `key` as it is now, or null. */
 async function findRequest(env, me, key) {
   const parsed = parseRequestKey(key);
-  if (!parsed) {
+  if (!parsed || (!PERSONAL.has(parsed.kind) && !isAdmin(me))) {
     return null;
   }
   const k = KIND[parsed.kind];
@@ -1124,9 +1324,10 @@ async function logEntry(env, me, key, type, body) {
   return at;
 }
 
-const announce = (env, key) => {
+const announce = (env, key, x = null) => {
   const parsed = parseRequestKey(key);
-  return parsed ? announceRequest(env, parsed.kind, parsed.id) : null;
+  const teams = x && x.d && x.d.team ? [x.d.team] : [];
+  return parsed ? announceRequest(env, parsed.kind, parsed.id, { teams }) : null;
 };
 
 /**
@@ -1146,7 +1347,7 @@ export async function addNote(env, me, body) {
   const at = await logEntry(env, me, key, 'note', text);
   await advanceWatermark(env.DB, me.id, key, at, 'post');
   console.log(JSON.stringify({ route: 'requests', note: x.kind, by: me.id }));
-  await announce(env, key);
+  await announce(env, key, x);
   return json({ ok: true, thread: await requestThread(env, me, key) });
 }
 
@@ -1179,6 +1380,23 @@ export async function resolveRequest(env, me, body) {
   if (missing) {
     return json({ error: `give the ${missing.label.toLowerCase()}` }, 400);
   }
+  if (action.act) {
+    if (me.readonly) {
+      return json({ error: 'read-only while viewing as someone else' }, 403);
+    }
+    const done = await action.act(env, me, values);
+    await announce(env, key, x);
+    if (done.error) {
+      const thread = await requestThread(env, me, key);
+      return json({ error: done.error, thread }, done.status || 409);
+    }
+    console.log(JSON.stringify({
+      route: 'requests', resolved: x.kind, action: action.id, by: me.id,
+    }));
+    return json({
+      ok: true, done: action.done(done, values), thread: await requestThread(env, me, key),
+    });
+  }
   const call = action.run(values, dryRun || undefined);
   const url = new URL(`https://opspile.internal/api/admin/${call.path}`);
   const res = await admin(new Request(url, {
@@ -1210,3 +1428,12 @@ export async function resolveRequest(env, me, body) {
 
 /** Whether `me` may see the requests' threads and decide them: the admin team. */
 export const mayDecide = (me) => isAdmin(me);
+
+/** The team whose room has request `key`'s reads: a question's thread's team, else the admin's. */
+export async function readRoom(env, me, key) {
+  const x = await findRequest(env, me, key);
+  if (!x) {
+    return null;
+  }
+  return x.d.team || ADMIN_TEAM;
+}

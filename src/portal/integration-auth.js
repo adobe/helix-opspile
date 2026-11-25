@@ -11,6 +11,7 @@
  */
 
 import { accessClaims, signedClaims } from '../access.js';
+import { hostIdentity, tokenUser, UpstreamError } from './integration-identity.js';
 
 export const BASE = '/integrations/portal/v1';
 export const WEEK = 7 * 24 * 60 * 60;
@@ -27,7 +28,53 @@ export function fail(status, code) {
   throw new IntegrationError(status, code);
 }
 
-/** Only Access's signed service identity selects the host and therefore the assertion keys. */
+/** A host-signed assertion: short-lived, single-use, bound to the request's method and path. */
+async function assertion(request, host, aud, jwt, scope, now, invalid) {
+  const c = await signedClaims(jwt, () => JSON.parse(host.jwks).keys).catch(() => null);
+  if (!c || c.iss !== host.issuer || c.aud !== aud || c.method !== request.method
+      || c.path !== new URL(request.url).pathname || !id(c.tenant) || !id(c.sub) || !id(c.jti)
+      || !Number.isSafeInteger(c.iat) || !Number.isSafeInteger(c.exp) || c.iat > now
+      || c.exp <= now || c.exp - c.iat > 60
+      || (c.nbf !== undefined && (!Number.isSafeInteger(c.nbf) || c.nbf > now))) {
+    invalid();
+  }
+  if (c.scope !== scope || !JSON.parse(host.scopes).includes(scope)) {
+    fail(403, 'not_enrolled');
+  }
+  return c;
+}
+
+/**
+ * The user's own token, for a host whose registration names its identity provider: the tenant,
+ * subject and email are the provider's, the scope the route's. The token is not single-use, so
+ * each admitted operation gets its own nonce for the rate limits.
+ */
+async function userToken(identity, host, jwt, scope, options, invalid) {
+  const unavailable = (e) => {
+    if (e instanceof UpstreamError) {
+      console.warn(`portal integration: identity provider unavailable (${e.message})`);
+      fail(503, 'unavailable');
+    }
+    throw e;
+  };
+  const user = await tokenUser(identity, jwt, options).catch(unavailable);
+  if (!user) {
+    invalid();
+  }
+  if (!JSON.parse(host.scopes).includes(scope)) {
+    fail(403, 'not_enrolled');
+  }
+  const c = await user.profile().catch(unavailable);
+  if (!c) {
+    invalid();
+  }
+  if (!id(c.tenant)) {
+    fail(403, 'not_enrolled');
+  }
+  return { ...c, jti: `token:${crypto.randomUUID()}` };
+}
+
+/** Only Access's signed service identity selects the host and therefore how it names users. */
 export async function authorize(request, env, scope, options = {}) {
   const aud = env.PORTAL_INTEGRATION_AUD;
   const invalid = () => fail(401, 'invalid_assertion');
@@ -46,18 +93,17 @@ export async function authorize(request, env, scope, options = {}) {
     invalid();
   }
   const jwt = /^Bearer ([^ ]+)$/i.exec(request.headers.get('Authorization') || '')?.[1];
-  const c = await signedClaims(jwt, () => JSON.parse(host.jwks).keys).catch(() => null);
   const now = Math.floor((options.now ?? Date.now()) / 1000);
-  if (!c || c.iss !== host.issuer || c.aud !== aud || c.method !== request.method
-      || c.path !== new URL(request.url).pathname || !id(c.tenant) || !id(c.sub) || !id(c.jti)
-      || !Number.isSafeInteger(c.iat) || !Number.isSafeInteger(c.exp) || c.iat > now
-      || c.exp <= now || c.exp - c.iat > 60
-      || (c.nbf !== undefined && (!Number.isSafeInteger(c.nbf) || c.nbf > now))) {
+  let identity;
+  try {
+    identity = hostIdentity(host);
+  } catch {
+    console.warn('portal integration: host identity provider misconfigured');
     invalid();
   }
-  if (c.scope !== scope || !JSON.parse(host.scopes).includes(scope)) {
-    fail(403, 'not_enrolled');
-  }
+  const c = identity
+    ? await userToken(identity, host, jwt, scope, options, invalid)
+    : await assertion(request, host, aud, jwt, scope, now, invalid);
 
   const member = await env.DB.prepare(`SELECT c.channel, c.name AS channelName,
       m.actor, m.cursor_key, a.verified_email, u.name FROM integration_customers c

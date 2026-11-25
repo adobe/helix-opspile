@@ -1,8 +1,8 @@
 # State machines
 
-opspile has six status columns, `channel_requests.status`, `bash_requests.status`,
-`tool_requests.status`, `portal_requests.status`, `org_merge_requests.status` and
-`member_requests.status` (and the customer portal, in its own database, `lobbies.status`). Everything
+opspile has seven status columns, `channel_requests.status`, `bash_requests.status`,
+`tool_requests.status`, `portal_requests.status`, `org_merge_requests.status`,
+`member_requests.status` and `questions.status` (and the customer portal, in its own database, `lobbies.status`). Everything
 else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
@@ -228,6 +228,16 @@ assignment answers it) shows too. A decision is taken by the request's admin rou
 only when the request still offers it (the action is looked up in what it offers now), so a request
 decided meanwhile refuses it as the route does (`WHERE status = 'open'`).
 
+**Question.** open → answered, passed or unknown; open → expired (`questions.status`, migration
+0104, `src/questions.js`, `src/agent/question.js`). The agent asks (`ask_teammate`), and only the
+person it asks closes it, from its thread in their inbox (src/requestthreads.js, kind `question`);
+`CHECK` keeps the status to those five, and the close is `WHERE status = 'open' AND deadline > now`,
+so of two answers, or an answer at the deadline, one wins. Expired is read off the clock (an open one
+past its `deadline`, three days) and written only when the agent asks the same person on the same
+thread again, which closes it first so that the partial unique index (one open per thread and
+person) makes room. `told_at` is written after the agent took the answer (`ThreadAgent.answered`);
+one it could not be told stays closed, untold, and its thread says so.
+
 **Membership request.** open → confirmed (added, or member: on the team already), declined or
 withdrawn (`member_requests`, migration 0096; `src/memberrequests.js`). One open request per team and
 address (a partial unique index). Confirming claims it first (`WHERE status = 'open'`), then adds the
@@ -322,7 +332,8 @@ unsent, it cannot be retried (`filesLost`), only discarded. Not-sent replies exp
 Tabs share the store: one gone in another tab (arrived, discarded) goes, one that moved on there
 takes its state. ↑ (⌘↑) in the empty reply box while your last reply is sending or sent and not
 back is that reply, not the one before: it is asked for (`state.editArriving`) and opens to edit
-when it settles, unless the thread changed, an edit or typing started, or a minute passed.
+when it settles, unless the thread changed, an edit or typing started, or a minute passed (three
+as the bot). One that did not go out (failed, unknown) is put in focus instead, not the one before.
 
 **Reaction made here.** asked → taken → settled, or refused (`state.reacting`, `ui/inbox.js`). It
 shows on the message at once. It goes once the thread's reactions agree after the platform took it,
@@ -882,7 +893,10 @@ Reserve the channel ID, pre-file it by that ID in the inbox, then enable the ten
 create materializes its lobby and channel with the root and its events; racing creates reuse
 it. A member maps one subject to one customer actor of that channel; revoke by disabling the
 member, not by recycling its actor. Every operation checks both mappings, including a retry.
-The single-use assertion nonce lasts through expiry; a write's receipt lasts with the history.
+The single-use assertion nonce lasts through expiry; a host passing user tokens gets a fresh
+nonce per admitted operation, for the same rate limits. A write's receipt lasts with the history.
+A host has one mode (`integration_hosts.identity` or assertion keys, never both), and a user
+token's verification and profile are cached at most five minutes and one minute.
 A receipt, its message and the inbox outbox event commit or roll back together.
 
 **Managed viewer.** Snapshot → following changes → relist on expiry. Public mutations write

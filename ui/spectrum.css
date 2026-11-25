@@ -651,6 +651,20 @@ header .note { white-space: nowrap; }
 .spectrum header .count:not(.total):hover, .spectrum .pagemenu .count:hover {
   background: var(--spectrum-accent-background-color-hover);
 }
+/* The questions thread agents ask you: the agent's purple, with its bubble, as in the inbox. */
+.spectrum header .count.asks, .spectrum .pagemenu .count.asks {
+  display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50);
+  background: var(--spectrum-purple-background-color-default);
+}
+.spectrum header .count.asks:hover, .spectrum .pagemenu .count.asks:hover {
+  background: var(--spectrum-purple-background-color-default);
+  filter: brightness(0.92);
+}
+.spectrum header .count.asks[hidden], .spectrum .pagemenu .count.asks[hidden] { display: none; }
+.spectrum header .count.asks .bubble-ico, .spectrum .pagemenu .count.asks .bubble-ico {
+  position: static; flex: none; padding: 0; color: inherit; background: none;
+  width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200);
+}
 /* The page's tools stand apart from the pages by the space alone: S2's app chrome has no Divider. */
 .spectrum header .divider { height: var(--spectrum-component-height-75); }
 /* The page's tools: quiet ActionButtons. */
