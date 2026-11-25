@@ -11480,16 +11480,26 @@ function reactLast() {
  * ↑ in an empty reply box, as in Slack: your last message in the thread, to edit; without one
  * (or with ⌥), the last message, in focus. A reply of yours still on its way (sent here, not
  * back from the platform yet, some seconds) is the last one: it opens to edit once it is back,
- * since the platform has to have it first, and the one before it is not what was asked for.
+ * since the platform has to have it first, and the one before it is not what was asked for. One
+ * that did not go out (failed, or nobody knows) is the last one too: it is put in focus, with its
+ * Retry and Discard, since it cannot be edited.
  */
 function editLast(key, { focus = false } = {}) {
   const m = !focus && [...(state.cache.get(key)?.data?.messages || [])].reverse().find(canEdit);
-  const going = !focus && state.sending.filter((p) => p.thread === key
-    && ['sending', 'sent', 'delivered'].includes(p.status) && !sendLate(p)
-    && (!m || Date.parse(p.at) >= Date.parse(m.at))).at(-1);
+  const newer = (p) => p.thread === key && (!m || Date.parse(p.at) >= Date.parse(m.at));
+  const going = !focus && state.sending.filter((p) => newer(p)
+    && ['sending', 'sent', 'delivered'].includes(p.status) && !sendLate(p)).at(-1);
   if (going) {
-    state.editArriving = { key, id: going.id, until: Date.now() + SEND_ARRIVE_MS };
+    // As the bot, it takes longer to come back (SEND_APP_ARRIVE_MS).
+    state.editArriving = { key, id: going.id, until: Date.now() + (going.app ? SEND_APP_ARRIVE_MS : SEND_ARRIVE_MS) };
     toast('Your reply is on its way: it opens to edit once it is back.');
+    return true;
+  }
+  const unsent = !focus && state.sending.filter((p) => newer(p)
+    && (p.status === 'failed' || p.status === 'unknown')).at(-1);
+  const bubble = unsent && paneMessages().find((x) => x.dataset.id === `${unsent.thread}|${unsent.id}`);
+  if (bubble) {
+    focusMessage(bubble);
     return true;
   }
   if (!m) {
