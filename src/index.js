@@ -18,6 +18,8 @@ import { clientDocumentResponse, keepOAuthAlive } from './agent/mcpoauth.js';
 import { refreshMirrors } from './agent/repos.js';
 import { sweepFeedback } from './agent/feedback.js';
 import { agentStub } from './agent/stub.js';
+import { WATCH_CRON } from './agent/watches.js';
+import { pollWatches } from './watches.js';
 import { api, personByEmail } from './api.js';
 import { syncInstalledBots } from './bots.js';
 import { listDead, pruneDead, redrive } from './deadjobs.js';
@@ -271,7 +273,15 @@ const handlers = {
  * expert finder's mention model once a day and build the Topics page's map once a week; and roll
  * up what the days used, for COGS.
  */
+  // The five-minute cron (`WATCH_CRON`) polls only what thread agents watch on GitHub.
   async scheduled(controller, env, ctx) {
+    // Every five minutes: the GitHub items thread agents watch (src/agent/watches.js), alone.
+    if (controller.cron === WATCH_CRON) {
+      ctx.waitUntil(pollWatches(env)
+        .then((r) => console.log(JSON.stringify({ route: 'cron', watches: r })))
+        .catch((e) => console.error(JSON.stringify({ route: 'cron', watches: 'error', error: e.message }))));
+      return;
+    }
     // What the days cost so far, for the COGS dashboard (src/cogs/rollup.js).
     ctx.waitUntil(rollupCogs(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', cogs: r })))

@@ -156,7 +156,7 @@ export async function appJwt(app, now = Date.now()) {
 
 // ---- the app -----------------------------------------------------------------------------
 
-async function github(path, { method = 'GET', token, body } = {}) {
+export async function github(path, { method = 'GET', token, body } = {}) {
   const res = await fetch(`${GITHUB_API}${path}`, {
     method,
     headers: {

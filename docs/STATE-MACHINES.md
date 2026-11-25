@@ -361,6 +361,16 @@ before the mark moves, and a schedule whose `mark` is not the wake-up's is stale
 Due, it leaves the list before the agent is told, so it wakes it once; an agent turned off since
 drops it unsaid. At most five wait.
 
+**Agent watch.** set → told (again and again) → unwatched or ran out (`agent_watches`, migration
+0103, `src/agent/watches.js`, `src/watches.js`). `seen` is the watermark: the latest message's time
+of a watched thread, a GitHub item's `updated_at`. An update moves it first, and only from the value
+it read (`WHERE COALESCE(seen, '') = ?`), so two jobs of one burst, or two polls, tell the agent
+once; a lost update is not told again, which is the price of never telling it twice. A GitHub watch
+writes `checked_at` before it asks GitHub, so a poll that fails waits for the next one. Past
+`expires_at` the cron deletes the row and tells the agent; `unwatch_related` deletes it at once. The
+isolates keep the watched threads' keys a minute (`watchedKeys`): a new watch can miss what is posted
+in that minute elsewhere.
+
 **Agent feedback.** kept → filed, or given up (`agent_feedback`, `src/agent/feedback.js`). The
 row is written before GitHub is asked, with that try counted in `attempts`; `filed_at` (and the
 issue it went to) is written last, after the issue or comment exists. A failed try keeps its

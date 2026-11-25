@@ -27,6 +27,7 @@ import {
 } from '../src/normalizer.js';
 import { d1 } from './d1.js';
 import { questionKeys } from '../src/techid.js';
+import { forgetWatched } from '../src/agent/watches.js';
 import { fakeArtifacts, fakeBucket, quiet } from './fakes.js';
 
 // Made-up ids, names and domains only.
@@ -1179,6 +1180,23 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual(jobs, [{ body: { vectorize: 'slack:E1:C1:1.1' }, options: { delaySeconds: 120 } }]);
     await quiet(() => consume({ messages: [{ body: jobs[0].body, ack() {}, retry() {} }] }, e));
     assert.deepEqual([...stored.values()].map((v) => v.metadata.type).sort(), ['message', 'thread']);
+  });
+
+  it('tells the watches of a thread about a new message, a minute later', async () => {
+    const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const e = env({
+      [root]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'the purge is fixed now',
+      }),
+    });
+    e.DB.sqlite.prepare(`INSERT INTO agent_watches (id, watcher, kind, target, url, why, set_at, expires_at)
+      VALUES ('w1', 'slack:E1:C9:9.9', 'thread', 'slack:E1:C1:1.1', 'u', 'x', ?, '2099-01-01T00:00:00Z')`).run(NOW_ISO);
+    forgetWatched();
+    await processKey(e, root);
+    assert.deepEqual(e.queued.filter((q) => q.body.watched), [
+      { body: { watched: 'slack:E1:C1:1.1' }, options: { delaySeconds: 60 } },
+    ]);
+    forgetWatched();
   });
 
   it('labels a thread with Clef and keeps confident Clairic facts', async () => {
