@@ -31,7 +31,11 @@ that whoever comes second finds out instead of overwriting.
 
 **Message file.** absent → live → edited → tombstone. `merge` in `src/channels.js`: a file only moves
 to a newer `version` (or, at the same version, to what a higher `FORMAT` writes differently: its
-body or `dropped`), and a tombstone is final, so a replay in any order comes out the same.
+body or `dropped`), and a tombstone is final, so a replay in any order comes out the same. What makes
+one is the platform's deletion event (Slack `message_deleted`, a Discord deletion the poller found,
+a portal message's `deletedAt`) or, on Teams, a fetched copy with `deletedDateTime` or the `deleted`
+change notification itself, since Graph answers 404 for a deleted channel message. A message restored
+on the platform afterwards stays a tombstone.
 
 **Read watermark.** One moving position per person and thread (`watermarks`, `advanceWatermark` in
 `src/threads.js`). The write is conditional on being newer, so it never moves back.

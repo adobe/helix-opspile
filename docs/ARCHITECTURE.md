@@ -59,6 +59,10 @@ are removed before an event is stored.
   event id, so a notification is keyed by its own hash (`notification-<sha256>.json`), and a
   fetched message by its version (`<lastModified ms>-<messageId>.json`). The notification's
   `resource` names the message; the message's metadata names the notification.
+  A deleted channel message cannot be fetched (Graph answers 404), so its `deleted`
+  notification is all pile 1 has of the deletion: the normalizer files it as the message's
+  tombstone (`normalizeTeams`), timed when the notification was received (the object's
+  `receivedAt`), and skips every other notification, whose message it files from the fetched copy.
   The files of a Teams message are kept here too, as bytes: the images pasted into it (hosted
   contents, fetched with the app's Graph token) and the files attached to it (SharePoint or
   OneDrive links, fetched through Graph's `/shares` with `Files.Read.All`), under
