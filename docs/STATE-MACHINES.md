@@ -315,7 +315,9 @@ reply in a thread the inbox has is kept in localStorage meanwhile (`opspile.send
 one that was sent as delivered and waiting. A reply with files keeps their names only: restored
 unsent, it cannot be retried (`filesLost`), only discarded. Not-sent replies expire after a week.
 Tabs share the store: one gone in another tab (arrived, discarded) goes, one that moved on there
-takes its state.
+takes its state. ↑ (⌘↑) in the empty reply box while your last reply is sending or sent and not
+back is that reply, not the one before: it is asked for (`state.editArriving`) and opens to edit
+when it settles, unless the thread changed, an edit or typing started, or a minute passed.
 
 **Reaction made here.** asked → taken → settled, or refused (`state.reacting`, `ui/inbox.js`). It
 shows on the message at once. It goes once the thread's reactions agree after the platform took it,
