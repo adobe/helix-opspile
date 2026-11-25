@@ -845,6 +845,27 @@ header .note { white-space: nowrap; }
 .spectrum .ps-spark .area { fill: var(--spectrum-gray-100); }
 .spectrum .ps-freq .ps-spark polyline { stroke: var(--spectrum-indigo-visual-color); }
 .spectrum .ps-freq .ps-spark .area { fill: var(--spectrum-indigo-subtle-background-color-default); }
+/* A line in its person's or customer's color (`data-tint`, ui/person.js's TINTS and ui/overview.js's
+   tintIcons): their initials' hue, or the Spectrum 2 color nearest their favicon's. */
+.spectrum .ps-spark[data-tint] polyline { stroke: var(--tint); }
+.spectrum .ps-spark[data-tint] .area { fill: var(--tint-area); }
+.ps-spark[data-tint="red"] { --tint: var(--spectrum-red-visual-color); --tint-area: var(--spectrum-red-subtle-background-color-default); }
+.ps-spark[data-tint="orange"] { --tint: var(--spectrum-orange-visual-color); --tint-area: var(--spectrum-orange-subtle-background-color-default); }
+.ps-spark[data-tint="yellow"] { --tint: var(--spectrum-yellow-visual-color); --tint-area: var(--spectrum-yellow-subtle-background-color-default); }
+.ps-spark[data-tint="chartreuse"] { --tint: var(--spectrum-chartreuse-visual-color); --tint-area: var(--spectrum-chartreuse-subtle-background-color-default); }
+.ps-spark[data-tint="celery"] { --tint: var(--spectrum-celery-visual-color); --tint-area: var(--spectrum-celery-subtle-background-color-default); }
+.ps-spark[data-tint="green"] { --tint: var(--spectrum-green-visual-color); --tint-area: var(--spectrum-green-subtle-background-color-default); }
+.ps-spark[data-tint="seafoam"] { --tint: var(--spectrum-seafoam-visual-color); --tint-area: var(--spectrum-seafoam-subtle-background-color-default); }
+.ps-spark[data-tint="cyan"] { --tint: var(--spectrum-cyan-visual-color); --tint-area: var(--spectrum-cyan-subtle-background-color-default); }
+.ps-spark[data-tint="turquoise"] { --tint: var(--spectrum-turquoise-visual-color); --tint-area: var(--spectrum-turquoise-subtle-background-color-default); }
+.ps-spark[data-tint="blue"] { --tint: var(--spectrum-blue-visual-color); --tint-area: var(--spectrum-blue-subtle-background-color-default); }
+.ps-spark[data-tint="indigo"] { --tint: var(--spectrum-indigo-visual-color); --tint-area: var(--spectrum-indigo-subtle-background-color-default); }
+.ps-spark[data-tint="purple"] { --tint: var(--spectrum-purple-visual-color); --tint-area: var(--spectrum-purple-subtle-background-color-default); }
+.ps-spark[data-tint="fuchsia"] { --tint: var(--spectrum-fuchsia-visual-color); --tint-area: var(--spectrum-fuchsia-subtle-background-color-default); }
+.ps-spark[data-tint="magenta"] { --tint: var(--spectrum-magenta-visual-color); --tint-area: var(--spectrum-magenta-subtle-background-color-default); }
+.ps-spark[data-tint="pink"] { --tint: var(--spectrum-pink-visual-color); --tint-area: var(--spectrum-pink-subtle-background-color-default); }
+.ps-spark[data-tint="cinnamon"] { --tint: var(--spectrum-cinnamon-visual-color); --tint-area: var(--spectrum-cinnamon-subtle-background-color-default); }
+.ps-spark[data-tint="brown"] { --tint: var(--spectrum-brown-visual-color); --tint-area: var(--spectrum-brown-subtle-background-color-default); }
 /* What they know, and for whom: each label over its tags, which wrap across the card. */
 .ps-knows, .ps-keys { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); margin: 0; }
 .ps-knows dd, .ps-keys dd { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); min-width: 0; margin: 0 0 var(--spectrum-spacing-100); }

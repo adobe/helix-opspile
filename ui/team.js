@@ -102,6 +102,7 @@ globalThis.TeamView = (() => {
       n: c.messages,
       of: null,
       lead: face(c.name, c.avatar),
+      tint: Person.tintOf(c.name),
       name: `<b>${esc(c.name || 'Someone')}</b>`,
       sub: [c.title ? esc(c.title) : '', c.last ? esc(`last ${ago(c.last)}`) : ''].filter(Boolean).join(' · '),
       weekly: c.weekly,
