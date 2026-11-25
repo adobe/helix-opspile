@@ -101,6 +101,23 @@ export async function customerStanding(db, person, now = Date.now()) {
   return standingOf(posted, (named || []).map((r) => r.org), now);
 }
 
+/**
+ * SQL: the customers person `param` (an SQL parameter, an id) muted and has not acted on since
+ * (customer_marks.muted_at): a message of theirs in any thread of the customer after the mute lifts
+ * it, for every channel of it. Nobody else's message, a mention of them or what they follow does
+ * not. Uncorrelated, so that it is asked once per query, not once per thread.
+ */
+export const mutedOrgs = (param) => `SELECT u.org FROM customer_marks u
+    WHERE u.person = ${param} AND u.muted_at IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM messages m JOIN threads x ON x.thread = m.thread
+        WHERE m.person = ${param} AND m.at > u.muted_at AND x.org = u.org)`;
+
+/** The customers person `person` muted, as `mutedOrgs` counts them: slugs, sorted. */
+export async function mutedOf(db, person) {
+  const { results } = await db.prepare(`${mutedOrgs('?1')} ORDER BY u.org`).bind(person).all();
+  return (results || []).map((r) => r.org);
+}
+
 /** The marks a person may set on a customer, by the column that keeps each. */
 export const MARKS = { unstar: 'unstarred_at', mute: 'muted_at' };
 

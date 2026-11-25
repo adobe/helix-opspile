@@ -96,6 +96,10 @@
 .ov .tv-person .ps-more { flex: none; }
 .ov .tv-person .ps-profile p { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .ov .tv-person .ps-noprof { margin: 0; }
+/* A member's Follow (ui/follow.js), after their name and badge; a technology's at the end of its
+   line. */
+.ov .tv-person .ps-nm .fo { margin-inline-start: auto; }
+.ov .tv-layer .tv-line .fo { margin-inline-start: auto; }
 .ov .tv-quiet { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin-top: var(--spectrum-spacing-300); }
 .ov .tv-q { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-100); }
 

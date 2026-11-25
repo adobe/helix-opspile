@@ -61,7 +61,7 @@ function load(listStacks = {}) {
       here: [{ id: 'akamai/cdn', name: 'Akamai', p: 0.9 }], also: [], topics: [], label: 'Akamai', count: 1,
     }),
     hmSection: (title, rows) => (rows.length ? `<h>${title}</h>${rows.join('')}` : ''),
-    followButton: () => '',
+    Follow: { button: () => '' },
     pct: (p) => `${Math.round(p * 100)}%`,
     headMenu: (name, { list }) => `<menu ${name}>${list}</menu>`,
   });

@@ -57,10 +57,10 @@ import {
 export { notifyRoom };
 
 /**
- * A thread whose label gained or lost technologies (`tech`, src/label.js): the open inboxes of
- * the teams that follow one of them, and of the people who do (in the rooms of its teams), list
- * it again, so a thread that now shows a technology they follow comes in, and one that no longer
- * does goes. Best effort, as every room's.
+ * A thread whose label gained or lost technologies (`tech`, src/label.js) or areas: the open
+ * inboxes of the teams that follow one of them, and of the people who do (in the rooms of its
+ * teams), list it again, so a thread that now shows a technology they follow comes in, and one
+ * that no longer does goes. Best effort, as every room's.
  */
 async function announceFollowed(env, key, tech, areas) {
   if (!env.ROOMS) {
@@ -72,7 +72,7 @@ async function announceFollowed(env, key, tech, areas) {
     .bind(key).first();
   const [teams, following] = await Promise.all([
     row ? teamsOf(env, row) : [],
-    teamsFollowing(env, changed),
+    teamsFollowing(env, changed, moved),
   ]);
   const rooms = [...new Set([...teams, ...following])];
   if (rooms.length) {

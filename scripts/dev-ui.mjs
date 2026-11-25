@@ -97,7 +97,7 @@ import {
 } from '../src/api.js';
 import { stackParts, storeOrgStack } from '../src/orgstacks.js';
 import {
-  MARKS, REGULAR_DAYS, QUIET_DAYS, standingOf,
+  REGULAR_DAYS, QUIET_DAYS, setMark, standingOf,
 } from '../src/standing.js';
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin, devFavicon } from './dev-ui-admin.mjs';
@@ -122,6 +122,8 @@ import {
 import { targetOf } from '../src/translate.js';
 import { OFFER_AFTER } from '../src/postoffer.js';
 import { followable, followsOfTeams } from '../src/follows.js';
+import { changeFollow, followState } from '../src/following.js';
+import { followOrg } from '../src/admin.js';
 import { cleanQuery, suggestionsOf, TREND_DAYS } from '../src/followsuggest.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -247,16 +249,55 @@ let settings = withDefaults(store.me, {
     { view: '~personal', sel: {} },
   ],
 });
-// The technologies Dana follows (src/follows.js), and her teams', which the admin pages keep.
-let follows = NO_TEAM ? [] : ['da'];
-// What Dana follows besides technologies (src/follows.js `person_follows_by`).
-let followsBy = { org: [], person: [], area: [] };
+// What Dana follows and mutes, and what her teams follow (src/following.js): in the admin pages'
+// D1, as production keeps them, and changed by the same code (PUT /api/follows). She follows
+// Document Authoring, and a colleague; Edge ops follows a topic (`--manager` changes it).
+const fdb = adminApi.env.DB.sqlite;
+const followAt = new Date().toISOString();
+if (!NO_TEAM) {
+  fdb.prepare('INSERT OR IGNORE INTO person_follows (person, tech, added_at) VALUES (?, ?, ?)').run(ME, 'da', followAt);
+  const colleague = [...store.people.values()].find((x) => x.id !== ME && x.staff);
+  if (colleague) {
+    fdb.prepare(`INSERT OR IGNORE INTO person_follows_by (person, kind, target, added_at)
+      VALUES (?, 'person', ?, ?)`).run(ME, String(colleague.id), followAt);
+  }
+  const area = fdb.prepare('SELECT id FROM areas WHERE enabled = 1 ORDER BY id LIMIT 1').get();
+  if (area && store.teams.some((t) => t.slug === 'edge')) {
+    fdb.prepare(`INSERT OR IGNORE INTO team_follows_by (team, kind, target, added_by, added_at)
+      VALUES ('edge', 'area', ?, ?, ?)`).run(area.id, store.me.email, followAt);
+  }
+}
+/** The technologies Dana follows. */
+const follows = () => fdb.prepare('SELECT tech FROM person_follows WHERE person = ? ORDER BY tech').all(ME)
+  .map((r) => r.tech);
+/** What Dana follows besides technologies (src/follows.js `person_follows_by`). */
+const followsBy = () => {
+  const out = { org: [], person: [], area: [] };
+  for (const r of fdb.prepare('SELECT kind, target FROM person_follows_by WHERE person = ?').all(ME)) {
+    out[r.kind].push(r.kind === 'person' ? Number(r.target) : r.target);
+  }
+  return out;
+};
 // The Trends view's made-up data (dev-ui-topics.mjs), made when it is first asked for.
 let trends = null;
-const followsNow = async () => ({
-  me: follows,
-  teams: await followsOfTeams(adminApi.env, store.me.teams.map((t) => t.slug)),
-  by: followsBy,
+/** Whether a request is the admin team's, as /api/me says (Dana is, on the admin pages). */
+const adminFor = (req) => !MANAGER && !MEMBER && !NO_TEAM
+  && (ADMIN || store.me.admin || /\/inbox\/(kb|admin|cogs|topics)\b/.test(req?.headers.referer || ''));
+/** Dana as src/following.js takes her: her teams, and their roles (and the admin team's). */
+const followMe = (req) => ({
+  id: ME,
+  email: store.me.email,
+  teams: [...store.me.teams.map((t) => ({ slug: t.slug, role: MANAGER && t.slug === 'edge' ? 'manager' : 'member' })),
+    ...(adminFor(req) && !store.me.teams.some((t) => t.slug === 'admin') ? [{ slug: 'admin', role: 'member' }] : [])],
+});
+/**
+ * GET /api/follows, as src/following.js answers it; the mutes as the fake data lifts them: by
+ * what Dana posted in the fake threads (`mutedNow`), which the admin pages' D1 does not have.
+ */
+const followsNow = async (req) => ({
+  ...await followState(adminApi.env, followMe(req)),
+  // eslint-disable-next-line no-use-before-define
+  muted: { org: mutedNow() },
 });
 const reloadClients = new Set();
 
@@ -374,26 +415,20 @@ function myChannels() {
     .map(at));
 }
 
-/** Dana's marks on customers, by org: `{ unstarred_at, muted_at }` (customer_marks). */
-const customerMarks = new Map();
-const mutedAt = (org) => customerMarks.get(org)?.muted_at || '';
+/** Dana's marks on customers (customer_marks, in the admin pages' D1): by org. */
+const customerMarks = () => new Map(fdb.prepare(`SELECT org, unstarred_at, muted_at FROM customer_marks
+  WHERE person = ?`).all(ME).map((r) => [r.org, r]));
+const mutedAt = (org) => customerMarks().get(org)?.muted_at || '';
 /**
- * As src/shares.js `listedChannels`: her channels, but those of a customer she muted only where
- * she posted or was mentioned since.
+ * As src/standing.js `mutedOrgs`: the customers Dana muted and has not posted in since, in any
+ * of their threads.
  */
-function listedChannels() {
+function mutedNow() {
   const { name } = store.people.get(ME);
-  const at = (e) => `${e.ch.source}:${e.ch.channelId}`;
-  const since = new Map();
-  for (const e of store.threads.values()) {
-    const mute = mutedAt(e.row.org);
-    const later = e.messages.some((m) => m.author.name === name && m.at > mute)
-      || store.mentions.some((m) => m.thread === e.key && m.person === ME && m.at > mute);
-    if (later) {
-      since.set(at(e), true);
-    }
-  }
-  return new Set([...myChannels()].filter((c) => since.has(c)));
+  return [...customerMarks().values()].filter((u) => u.muted_at && ![...store.threads.values()]
+    .some((e) => e.row.org === u.org
+      && e.messages.some((m) => m.author.name === name && m.at > u.muted_at)))
+    .map((u) => u.org).sort();
 }
 
 const inTeam = (team) => store.teams.some((t) => t.slug === team && t.members.includes(ME));
@@ -415,8 +450,10 @@ function followedByMe(e) {
     return false;
   }
   const { tech, areas } = showsOf(e);
-  return tech.some((t) => follows.includes(t)) || followsBy.org.includes(e.row.org)
-    || areas.some((a) => followsBy.area.includes(a));
+  const by = followsBy();
+  return tech.some((t) => follows().includes(t)) || by.org.includes(e.row.org)
+    || areas.some((a) => by.area.includes(a))
+    || e.messages.some((m) => by.person.some((id) => store.people.get(id)?.name === m.author.name));
 }
 /** As src/shares.js `mayPost`: her teams' channels, and those she posted or was mentioned in. */
 const mayPost = (entry) => inTeam(entry.row.team)
@@ -821,9 +858,10 @@ function standing() {
   const since = new Date(Date.now() - REGULAR_DAYS * day).toISOString();
   const quiet = new Date(Date.now() - QUIET_DAYS * day).toISOString();
   const posted = new Map();
+  const marks = customerMarks();
   for (const e of store.threads.values()) {
     for (const m of e.row.org ? e.messages : []) {
-      const mark = customerMarks.get(e.row.org) || {};
+      const mark = marks.get(e.row.org) || {};
       if (m.author.name === name && !m.deletedAt && m.at >= since && m.at > (mark.muted_at || '')) {
         const r = posted.get(e.row.org) || { org: e.row.org, n: 0, last: '' };
         r.n += m.at > (mark.unstarred_at || '') ? 1 : 0;
@@ -847,13 +885,13 @@ function inbox(team, before = null, personal = false, only = null, limit = null)
   const size = Math.max(1, Math.min(300, Number(limit) || INBOX_PAGE));
   const latest = (r) => r.last_at || r.any_at || '';
   const mine = store.teams.filter((t) => t.members.includes(ME)).map((t) => t.slug);
-  const channels = personal ? listedChannels() : null;
-  // Whichever team the channels are filed under; what she follows of a customer she muted, once
-  // it has activity since.
+  const channels = personal ? myChannels() : null;
+  const muted = personal ? new Set(mutedNow()) : null;
+  // Whichever team the channels are filed under; none of a customer she muted (src/shares.js
+  // `inPersonalInbox`).
   const inScope = (r) => (personal
-    ? r.kind !== 'alert' && (channels.has(`${r.source}:${r.channel_id}`)
-      || (followedByMe(store.threads.get(r.thread))
-        && (r.last_at || r.any_at || '') > mutedAt(r.org)))
+    ? r.kind !== 'alert' && !muted.has(r.org) && (channels.has(`${r.source}:${r.channel_id}`)
+      || followedByMe(store.threads.get(r.thread)))
     : r.team === team);
   // Paged by inbox entry, as src/api.js's: a re-threaded group counts once, by its latest member.
   const groupOf = (r) => r.logical_thread || r.thread;
@@ -1378,6 +1416,11 @@ async function suggestNow(q) {
       teams.set(t, [...(teams.get(t) || []), name]);
     }
   }
+  const areaTeams = new Map();
+  for (const r of fdb.prepare(`SELECT f.target, COALESCE(t.name, f.team) AS name FROM team_follows_by f
+    LEFT JOIN teams t ON t.slug = f.team WHERE f.kind = 'area' ORDER BY name`).all()) {
+    areaTeams.set(r.target, [...(areaTeams.get(r.target) || []), r.name]);
+  }
   const { results: areaRows } = await adminApi.env.DB
     .prepare('SELECT DISTINCT id, name FROM areas WHERE enabled = 1').all();
   const slugs = [...new Set([...store.threads.values()].map((e) => e.row.org).filter(Boolean))];
@@ -1387,10 +1430,11 @@ async function suggestNow(q) {
     techs: await followable(adminApi.env),
     areaList: areaRows || [],
     teams,
+    areaTeams,
     trend,
     own,
-    followed: follows,
-    followedBy: followsBy,
+    followed: follows(),
+    followedBy: followsBy(),
     orgs: query ? slugs.filter((o) => o.includes(low)) : [...own.org.keys()],
     names: new Map(),
   });
@@ -1804,7 +1848,16 @@ async function api(req, res, url) {
       readonly: true,
       connected: {},
       react: {},
-      follows: { me: [], teams: {} },
+      follows: {
+        me: {
+          tech: [], area: [], org: [], person: [],
+        },
+        teams: {},
+        muted: { org: [] },
+        may: [],
+        names: {},
+        teamNames: {},
+      },
     });
   }
   if (url.pathname === '/api/me') {
@@ -1844,7 +1897,7 @@ async function api(req, res, url) {
         app: Object.fromEntries(['slack', 'teams', 'discord', 'portal'].map((p) => [p, appRule(p)])),
       },
       settings,
-      follows: await followsNow(),
+      follows: await followsNow(req),
     });
   }
   // The Topics page's Trends (src/trends.js): the made-up half year of dev-ui-topics.mjs, with
@@ -1891,7 +1944,7 @@ async function api(req, res, url) {
     if (req.method === 'POST') {
       return json(res, { error: 'the preview has no CONTENT index to build a map from' }, 503);
     }
-    const r = await topicsPage(adminApi.env, topicsViewer(), await followsNow());
+    const r = await topicsPage(adminApi.env, topicsViewer(), await followsNow(req));
     const body = await r.json();
     // The made-up map's people are on no team in the preview's D1: on the map's.
     for (const [p, who] of Object.entries(body.latest?.map?.peopleOf || {})) {
@@ -1909,40 +1962,18 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/standing' && req.method === 'POST') {
     // As src/api.js, src/standing.js `setMark`: her star and mute on a customer, or their undo.
-    const b = await readJson(req);
-    const column = MARKS[b.mark];
-    if (!column || !b.org) {
-      return json(res, { error: 'mark is unstar or mute, org a customer' }, 400);
-    }
-    const mark = { ...customerMarks.get(b.org) };
-    const was = mark[column] ?? null;
-    mark[column] = b.at === undefined ? new Date().toISOString() : b.at;
-    customerMarks.set(b.org, mark);
-    return json(res, { was, standing: standing() });
+    const r = await setMark(adminApi.env.DB, ME, await readJson(req));
+    return r.error ? json(res, { error: r.error }, r.status)
+      : json(res, { was: r.was, standing: standing() });
   }
   if (url.pathname === '/api/follows') {
-    // As src/api.js: what Dana follows, changed one technology at a time.
+    // As src/api.js: what Dana follows and mutes, and her teams (src/following.js).
     if (req.method === 'PUT') {
-      const b = await readJson(req);
-      if (b.kind && b.kind !== 'tech') {
-        const list = followsBy[b.kind];
-        if (!list) {
-          return json(res, { error: 'kind is org, person, area or tech' }, 400);
-        }
-        const t = b.kind === 'person' ? Number(b.target) : String(b.target);
-        const next = b.follow === false ? list.filter((x) => x !== t) : [...new Set([...list, t])];
-        followsBy = { ...followsBy, [b.kind]: next };
-        return json(res, await followsNow());
-      }
-      const id = String(b.tech || b.target || '');
-      if (!vocabNames.tech[id]) {
-        return json(res, { error: 'no tech stack has that technology' }, 400);
-      }
-      follows = b.follow === false ? follows.filter((t) => t !== id)
-        : [...new Set([...follows, id])].sort();
-      return json(res, await followsNow());
+      const r = await changeFollow(adminApi.env, followMe(req), await readJson(req), { followOrg });
+      return r.error ? json(res, { error: r.error }, r.status || 400)
+        : json(res, { ...await followsNow(req), changed: r.changed });
     }
-    return json(res, { ...await followsNow(), tech: await followable(adminApi.env) });
+    return json(res, { ...await followsNow(req), tech: await followable(adminApi.env) });
   }
   if (url.pathname === '/api/settings') {
     if (req.method === 'PUT') {

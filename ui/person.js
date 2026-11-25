@@ -144,16 +144,18 @@ globalThis.Person = (() => {
    * there without one), how often they post (`w`, over `weeks`) in its corner, the areas (named
    * `label`) and the technologies, two lines of tags each (the first three and a count of the
    * rest), their profile (`profile`, HTML; its first two lines) and the foot (`foot`, HTML: their
-   * key customers, or their Contact) at the bottom. `attrs` adds to it.
+   * key customers, or their Contact) at the bottom. `action` (HTML, their Follow) ends the name's
+   * line; `attrs` adds to it.
    */
   function card(w, {
     face: pic, name, badge = '', title = '', weeks, label = 'Expertise', profile: about = '', foot = '', ctx, attrs = '',
+    action = '',
   }) {
     const { areas, tech } = work(w, ctx, { label, most: 3, more: true });
     // Where Clef has nothing, the card says so where the tags would be.
     const none = (kind) => `<dl class="ps-knows"><dt>${kind}</dt><dd><span class="sub">None yet</span></dd></dl>`;
     return `<article class="tv-person ps-card"${attrs}>`
-      + `<header>${pic}<div class="who"><span class="ps-nm"><b>${name}</b>${badge}</span><span class="sub ps-ttl">${esc(title)}</span></div></header>`
+      + `<header>${pic}<div class="who"><span class="ps-nm"><b>${name}</b>${badge}${action}</span><span class="sub ps-ttl">${esc(title)}</span></div></header>`
       + `<div class="ps-s ps-s-act">${freq(w.name, w, weeks)}</div>`
       + `<div class="ps-s ps-s-areas">${areas || none(label)}</div>`
       + `<div class="ps-s ps-s-tech">${tech || none('Products')}</div>`

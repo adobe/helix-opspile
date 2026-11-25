@@ -28,8 +28,9 @@
  *   catalog has (its knowledge base's products/) and what else Clef sees in its threads, which the
  *   tabs above them pick. Then its knowledge base by type, and its stack drawing where it has one.
  *
- * A person's card is drawn with what the inbox's profile card is (ui/person.js). Everything in it
- * is a name, a number or a picture, written escaped.
+ * A person's card is drawn with what the inbox's profile card is (ui/person.js). A person and a
+ * technology have their Follow where the page gives one (`ctx.follow`, ui/follow.js). Everything
+ * in it is a name, a number or a picture, written escaped.
  *
  * Its second section, Vendors (`vendors`, GET /api/teams/vendors, src/vendors.js): the vendors
  * the team works with, each with its open cases and how soon it answers, a Follow for the team's
@@ -73,6 +74,8 @@ globalThis.TeamView = (() => {
       weeks: p.weeks.length,
       profile,
       foot: keys,
+      // Their Follow (ui/follow.js), where the page gives one.
+      action: ctx.follow?.({ kind: 'person', id: m.id, name: m.name }) || '',
       ctx,
       attrs: ` data-person="${esc(m.id)}"`,
     });
@@ -138,7 +141,9 @@ globalThis.TeamView = (() => {
       const follow = t.followed ? ' <span class="tag tv-follow" title="Followed: its threads are in the team\'s inbox">Followed</span>' : '';
       const sub = [t.vendor !== t.name && t.vendor, t.kind && t.kind !== 'Product' ? t.kind.toLowerCase() : '',
         t.catalog ? 'in its catalog' : ''].filter(Boolean).join(' · ');
-      return `<li><span class="tv-name"><span class="tv-line">${name}${follow}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
+      // And its Follow (ui/follow.js), with the team in its chevron for whoever manages it.
+      const button = ctx.follow?.({ kind: 'tech', id: t.tech, name: t.name }) || '';
+      return `<li><span class="tv-name"><span class="tv-line">${name}${follow}${button}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
         <span class="tv-meter">${bar(t.threads / most)}<span class="sub">${esc(plural(t.threads, 'thread'))}</span></span>${spark(t.weekly, { cls: 'tech', label: 'messages in its threads, week by week' })}</li>`;
     };
     return Overview.layers(p.tech.filter((t) => techIn(t, tab)), p.layers, row);
@@ -198,7 +203,8 @@ globalThis.TeamView = (() => {
     let inbox = '';
     if (v.follows) inbox = '<span class="tag tv-follow" title="Every channel of it is in the team\'s inbox, shared, now and later">Followed</span>';
     else if (!v.inInbox && !v.channels) inbox = '<span class="sub" title="It has no channel the inbox knows of: nothing to follow yet">no channel</span>';
-    else if (!v.inInbox && p.may.follow) inbox = `<button type="button" class="ofollow" data-follow="${esc(v.slug)}" title="Follow it: every channel of it goes into the team's inbox, shared, now and later">Follow</button>`;
+    // The team's own Follow, in Follow's look (ui/follow.js); ui/admin.js sends it as Follow does.
+    else if (!v.inInbox && p.may.follow) inbox = `<span class="fo"><span class="fo-follow"><button type="button" class="fo-b" aria-pressed="false" data-follow="${esc(v.slug)}" title="Follow it with the team: every channel of it goes into the team's inbox, shared, now and later">Follow</button></span></span>`;
     else if (!v.inInbox) inbox = '<span class="sub" title="Its channels are not in the team\'s inbox; the team\'s managers can follow it">not in the inbox</span>';
     return `<li>${ctx.orgIcon(v.slug, v.icon)}
       <span class="tv-name"><a href="${esc(ctx.orgHref(v.slug))}">${esc(ctx.orgName(v.slug, v.name))}</a><span class="sub">${esc(relation(v) || 'none of its channels is here')}${v.last ? ` · ${esc(ago(v.last))}` : ''}</span></span>

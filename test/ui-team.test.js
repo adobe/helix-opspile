@@ -170,7 +170,7 @@ describe('a team\'s vendors, drawn', () => {
     assert.match(html, /<a href="\/org\/cdnco">CDN &lt;Co&gt;<\/a><span class="sub">1 channel filed here · the team posted 4 messages there · in 2 customer threads/);
     assert.match(html, /<span class="tag tv-them"[^>]*>1 waits on them<\/span><span class="tag tv-us"[^>]*>1 waits on Adobe<\/span>/);
     assert.match(html, /<b>1 h<\/b><span class="sub">first answer<\/span>/);
-    assert.match(html, /<button type="button" class="ofollow" data-follow="xlate"/);
+    assert.match(html, /<span class="fo"><span class="fo-follow"><button type="button" class="fo-b" aria-pressed="false" data-follow="xlate"/);
     // One without a channel has nothing to follow; nobody but a manager follows.
     assert.equal([...html.matchAll(/data-follow=/g)].length, 1);
     assert.match(html, /no channel/);

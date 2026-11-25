@@ -124,7 +124,7 @@ describe('agent: the channel\'s assignment', () => {
     e.DB.sqlite.exec(`INSERT INTO thread_tech (thread, tech, p) VALUES ('${KEY}', 'xw', 0.9), ('${KEY}', 'da', 1);
       INSERT INTO team_follows (team, tech, added_at) VALUES ('edge', 'xw', '2026-10-22'), ('edge', 'da', '2026-10-22')`);
     const { text } = await agentTools(e)('channel_assignment');
-    assert.match(text, /This thread is in the inboxes of edge \(Edge ops\) \(follows da, xw\) too: they follow a technology Clef tagged the thread with\./);
+    assert.match(text, /This thread is in the inboxes of edge \(Edge ops\) \(follows da, xw\) too: they follow a technology Clef tagged the thread with, or an area Clef put it in\./);
   });
 
   it('lists the teams, with their rules and members, and finds them', async () => {

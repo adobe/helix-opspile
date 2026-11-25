@@ -19,6 +19,7 @@
 
 import { ADMIN_TEAM, isAdmin } from './review.js';
 import { UNASSIGNED } from './rules.js';
+import { mutedOrgs } from './standing.js';
 import {
   followedByPerson, followersOf, followersOfAreas, followersOfTech, followingTeams, followsEntry,
 } from './follows.js';
@@ -156,44 +157,16 @@ export const inPersonalView = (alias, param) => `${alias}.channel_id IN (
   AND (${alias}.source, ${alias}.channel_id) IN (${personalChannels(param)})`;
 
 /**
- * SQL: the channels of person `param`'s personal view as its list has them: `personalChannels`,
- * but those of a customer they muted (customer_marks.muted_at, migration 0099) only where they
- * posted or were mentioned after the mute. A person who muted none reads no more than before:
- * the mute is looked for by its key, and the channel's customer and later posts only for one.
- */
-export const listedChannels = (param) => `SELECT source, channel_id FROM (${personalChannels(param)}) pc
-    WHERE NOT EXISTS (SELECT 1 FROM customer_marks u WHERE u.person = ${param}
-      AND u.muted_at IS NOT NULL
-      AND u.org = (SELECT x.org FROM threads x
-        WHERE x.channel_id = pc.channel_id AND x.source = pc.source LIMIT 1)
-      AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.person = ${param}
-        AND m.source = pc.source AND m.channel_id = pc.channel_id AND m.at > u.muted_at)
-      AND NOT EXISTS (SELECT 1 FROM mentions n JOIN threads c ON c.thread = n.thread
-        WHERE n.person = ${param} AND n.at > u.muted_at
-          AND c.source = pc.source AND c.channel_id = pc.channel_id))`;
-
-/**
- * SQL: thread row `alias` is of a customer person `param` muted, and has had no activity since
- * (customer_marks.muted_at): what they follow does not bring it into their personal view.
- */
-const mutedBefore = (alias, param) => `EXISTS (SELECT 1 FROM customer_marks u
-    WHERE u.person = ${param} AND u.org = ${alias}.org
-      AND u.muted_at >= COALESCE(${alias}.last_at, ${alias}.any_at))`;
-
-/**
  * SQL: thread row `alias` is in person `param`'s personal view, as its list has it: in one of its
- * channels (`listedChannels`), or in an entry they follow (src/follows.js) that has had activity
- * since they muted its customer, if they did. The access to a thread stays `inPersonalView`'s:
- * muting a customer takes its threads off the list only.
+ * channels (`inPersonalView`), or in an entry they follow (src/follows.js); and not of a customer
+ * they muted and have not posted in since (src/standing.js `mutedOrgs`). The access to a thread
+ * stays `inPersonalView`'s: muting a customer takes its threads off the list only. The mute is
+ * asked after the OR, not in it: in it, SQLite no longer searches each side of it by index
+ * (MULTI-INDEX OR), and reads every thread.
  */
-export const inPersonalInbox = (alias, param) => {
-  const listed = `${alias}.channel_id IN (SELECT channel_id FROM (${listedChannels(param)}))
-  AND (${alias}.source, ${alias}.channel_id) IN (${listedChannels(param)})`;
-  // The mute is asked after the OR, not in it: in it, SQLite no longer searches each side of
-  // it by index (MULTI-INDEX OR), and reads every thread.
-  return `((${listed}) OR ${followedByPerson(alias, param)})
-  AND (NOT ${mutedBefore(alias, param)} OR (${listed}))`;
-};
+export const inPersonalInbox = (alias, param) => `((${inPersonalView(alias, param)})
+    OR ${followedByPerson(alias, param)})
+  AND COALESCE(${alias}.org, '') NOT IN (${mutedOrgs(param)})`;
 
 /**
  * Which of `people` (ids) posted or were mentioned in channel `place` (`source`, `channel_id`):

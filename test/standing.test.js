@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { inbox } from '../src/api.js';
 import {
-  customerStanding, regularsOf, setMark, standingOf,
+  customerStanding, mutedOf, regularsOf, setMark, standingOf,
 } from '../src/standing.js';
 import { indexMessage, recordMentions } from '../src/threads.js';
 import { d1 } from './d1.js';
@@ -176,7 +176,7 @@ describe('a muted customer in the personal view', () => {
   const listed = async (DB) => (await inbox({ DB }, me, null, { personal: true })).threads
     .map((t) => t.thread).sort();
 
-  it('leaves it until you post or are mentioned in one of its channels again', async () => {
+  it('leaves it until you post in one of its threads again, then all of it is back', async () => {
     const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }], people: [{ id: 1, name: 'Sam' }, { id: 2, name: 'Dana', staff: 1 }] });
     await say(DB, {
       thread: 'a1', channelId: 'C1', person: 2, at: 1,
@@ -190,39 +190,47 @@ describe('a muted customer in the personal view', () => {
     assert.deepEqual(await listed(DB), ['a1', 'b1', 'o1']);
     await setMark(DB, 2, { org: 'acme', mark: 'mute' }, minute(10));
     assert.deepEqual(await listed(DB), ['o1']);
-    // Someone else posting does not bring it back; a mention of you in C2 does, C2 only.
+    assert.deepEqual(await mutedOf(DB, 2), ['acme']);
+    // Someone else posting does not bring it back, nor does a mention of you: you did not act.
     await say(DB, {
       thread: 'a2', channelId: 'C1', person: 1, at: 11,
     });
     const m = await say(DB, {
       thread: 'b2', channelId: 'C2', person: 1, at: 12,
     });
-    assert.deepEqual(await listed(DB), ['o1']);
     await recordMentions(DB, { thread: 'b2', message: m, at: minute(13) }, [{ person: 2, via: 'id' }]);
-    assert.deepEqual(await listed(DB), ['b1', 'b2', 'o1']);
-    // Posting in C1 brings it back, every thread of it.
+    assert.deepEqual(await listed(DB), ['o1']);
+    // Posting in C1 lifts the mute: every channel of the customer is back.
     await say(DB, {
       thread: 'a3', channelId: 'C1', person: 2, at: 14,
     });
     assert.deepEqual(await listed(DB), ['a1', 'a2', 'a3', 'b1', 'b2', 'o1']);
+    assert.deepEqual(await mutedOf(DB, 2), []);
   });
 
-  it('leaves what you follow of it until that has activity again', async () => {
+  it('leaves what you follow of it out too, whatever its activity, until you act on it', async () => {
     const DB = d1({ teams: [{ slug: 'helix', name: 'Helix' }], people: [{ id: 1, name: 'Sam' }, { id: 2, name: 'Dana', staff: 1 }] });
-    DB.sqlite.prepare(`INSERT INTO person_follows_by (person, kind, target, added_at)
-      VALUES (2, 'org', 'acme', ?)`).run(minute(0));
+    DB.sqlite.prepare(`INSERT INTO person_follows (person, tech, added_at)
+      VALUES (2, 'xw', ?)`).run(minute(0));
     await say(DB, {
       thread: 'f1', channelId: 'C1', person: 1, at: 1,
     });
     await say(DB, {
       thread: 'f2', channelId: 'C1', person: 1, at: 2,
     });
+    for (const t of ['f1', 'f2']) {
+      DB.sqlite.prepare('INSERT INTO thread_tech (thread, tech, p) VALUES (?, \'xw\', 1)').run(t);
+    }
     assert.deepEqual(await listed(DB), ['f1', 'f2']);
     await setMark(DB, 2, { org: 'acme', mark: 'mute' }, minute(10));
     assert.deepEqual(await listed(DB), []);
     await say(DB, {
       thread: 'f2', channelId: 'C1', person: 1, at: 11,
     });
-    assert.deepEqual(await listed(DB), ['f2']);
+    assert.deepEqual(await listed(DB), []);
+    await say(DB, {
+      thread: 'f2', channelId: 'C1', person: 2, at: 12,
+    });
+    assert.deepEqual(await listed(DB), ['f1', 'f2']);
   });
 });

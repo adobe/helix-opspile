@@ -18,8 +18,8 @@ import {
 } from '../src/api.js';
 import { entryOf } from '../src/drafts.js';
 import {
-  entryFollowers, followable, followersOf, followingTeams, threadAreaStatements,
-  threadTechStatements,
+  entryFollowers, entryFollows, followable, followersOf, followingTeams, teamsFollowing,
+  threadAreaStatements, threadTechStatements,
 } from '../src/follows.js';
 import { forgetTrends, suggestFollows } from '../src/followsuggest.js';
 import {
@@ -124,6 +124,9 @@ async function call(e, me, method, path, body) {
 }
 
 const entries = (data) => data.threads.map((t) => t.thread).sort();
+const key2place = (channel, root) => ({
+  thread: key(channel, root), team: 'helix', source: 'slack', channel_id: channel,
+});
 
 describe('following technologies', () => {
   it('fills thread_tech from the labels that have technologies', () => {
@@ -334,13 +337,15 @@ describe('following technologies', () => {
     assert.equal((await recipients(e, { thread: key('C1', '2.1'), areas: ['seo'] }, sockets)).length, 1);
     // Unfollowed with what followed it, spaces and all.
     let r = await call(e, ew, 'PUT', '/api/follows', { kind: 'area', target: ' seo ', follow: false });
-    assert.deepEqual(r.body.by.area, []);
+    assert.deepEqual(r.body.me.area, []);
     // A person's id is stored as the integer it is: "007" is 7, "1e1" no one.
     r = await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: `00${ADA.id}` });
-    assert.deepEqual(r.body.by.person, [ADA.id]);
+    assert.deepEqual(r.body.me.person, [ADA.id]);
+    // Named as they are, for a list of what one follows.
+    assert.equal(r.body.names[`person:${ADA.id}`], 'Ada');
     assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: '1e0' })).status, 400);
     r = await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: ADA.id, follow: false });
-    assert.deepEqual(r.body.by.person, []);
+    assert.deepEqual(r.body.me.person, []);
   });
 
   it('finds the threads a team follows when it searches', async () => {
@@ -357,18 +362,27 @@ describe('following technologies', () => {
     followTeam(e, 'ew', 'da');
     let r = await call(e, ew, 'PUT', '/api/follows', { tech: 'xw' });
     assert.equal(r.status, 200);
-    assert.deepEqual(r.body.me, ['xw']);
-    assert.deepEqual(r.body.teams, { ew: ['da'] });
+    assert.deepEqual(r.body.me.tech, ['xw']);
+    assert.deepEqual(r.body.teams, { ew: { tech: ['da'], area: [], org: [] } });
     assert.equal((await call(e, ew, 'PUT', '/api/follows', { tech: 'nothing-like-it' })).status, 400);
     assert.equal((await call(e, { ...ew, readonly: true }, 'PUT', '/api/follows', { tech: 'ue' })).status, 403);
     r = await call(e, ew, 'GET', '/api/follows');
-    assert.deepEqual(r.body.me, ['xw']);
+    assert.deepEqual(r.body.me.tech, ['xw']);
     assert.ok(r.body.tech.some((t) => t.tech === 'xw' && t.name));
-    assert.deepEqual((await call(e, ew, 'GET', '/api/me')).body.follows, {
-      me: ['xw'], teams: { ew: ['da'] }, by: { org: [], person: [], area: [] },
+    const { names, ...rest } = (await call(e, ew, 'GET', '/api/me')).body.follows;
+    assert.deepEqual(rest, {
+      me: {
+        tech: ['xw'], area: [], org: [], person: [],
+      },
+      teams: { ew: { tech: ['da'], area: [], org: [] } },
+      muted: { org: [] },
+      // A member follows for no team.
+      may: [],
+      teamNames: { ew: 'EW' },
     });
+    assert.ok(names['tech:xw'] && names['tech:da']);
     r = await call(e, ew, 'PUT', '/api/follows', { tech: 'xw', follow: false });
-    assert.deepEqual(r.body.me, []);
+    assert.deepEqual(r.body.me.tech, []);
   });
 
   it('puts the threads of a customer, a person or an area a person follows in their personal view', async () => {
@@ -379,14 +393,14 @@ describe('following technologies', () => {
     // A customer: its conversations, not its alerts.
     let r = await call(e, ew, 'PUT', '/api/follows', { kind: 'org', target: 'globex' });
     assert.equal(r.status, 200);
-    assert.deepEqual(r.body.by.org, ['globex']);
+    assert.deepEqual(r.body.me.org, ['globex']);
     assert.deepEqual(await personal(), [key('C2', '3.1')]);
     assert.deepEqual([...await followersOf(e, [EW.id, ADA.id], key('C2', '4.1'))], [EW.id]);
     await call(e, ew, 'PUT', '/api/follows', { kind: 'org', target: 'globex', follow: false });
     // A person: the threads they posted in.
     e.DB.sqlite.prepare('UPDATE messages SET person = ? WHERE thread = ?').run(ADA.id, key('C1', '2.1'));
     r = await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: ADA.id });
-    assert.deepEqual(r.body.by.person, [ADA.id]);
+    assert.deepEqual(r.body.me.person, [ADA.id]);
     assert.deepEqual(await personal(), [key('C1', '2.1')]);
     await call(e, ew, 'PUT', '/api/follows', { kind: 'person', target: ADA.id, follow: false });
     // An area: the threads Clef puts in it (thread_areas, written with the label).
@@ -394,7 +408,7 @@ describe('following technologies', () => {
       ('admin', 'seo', 'SEO', 'SEO', 'areas/seo.md')`);
     await e.DB.batch(threadAreaStatements(e.DB, key('C2', '4.1'), { seo: 0.9 }));
     r = await call(e, ew, 'PUT', '/api/follows', { kind: 'area', target: 'seo' });
-    assert.deepEqual(r.body.by.area, ['seo']);
+    assert.deepEqual(r.body.me.area, ['seo']);
     assert.deepEqual(await personal(), [key('C2', '3.1')]);
     assert.deepEqual([...await followersOf(e, [EW.id], key('C2', '3.1'))], [EW.id]);
     // What no one may follow, and who may not.
@@ -449,6 +463,91 @@ describe('following technologies', () => {
     assert.deepEqual(await kb(['ew']), [
       { team: 'ew', writable: true, scope: 'shared' }, { team: 'admin', writable: false, scope: 'other' },
     ]);
+  });
+});
+
+describe('following and muting, one way for all', () => {
+  const seo = (e) => e.DB.sqlite.exec(`INSERT INTO areas (team, id, name, what, path) VALUES
+    ('admin', 'seo', 'SEO', 'SEO', 'areas/seo.md')`);
+
+  it('puts the threads Clef puts in an area a team follows in its inbox', async () => {
+    const e = env();
+    const ew = asMe(EW);
+    seo(e);
+    await e.DB.batch(threadAreaStatements(e.DB, key('C2', '4.1'), { seo: 0.9 }));
+    assert.deepEqual(entries(await inbox(e, ew, 'ew')), []);
+    const r = await call(e, asMe(MANAGER, 'manager'), 'PUT', '/api/follows', { kind: 'area', target: 'seo', team: 'ew' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.teams.ew.area, ['seo']);
+    // The group, as one entry, by its post that is in the area.
+    assert.deepEqual(entries(await inbox(e, ew, 'ew')), [key('C2', '3.1')]);
+    assert.deepEqual(entries(await searchInbox(e, ew, 'ew', 'about')), [key('C2', '3.1')]);
+    assert.deepEqual(await followingTeams(e, key('C2', '3.1')), ['ew']);
+    assert.deepEqual(await entryFollows(e, key('C2', '3.1')), [{ team: 'ew', area: 'seo' }]);
+    assert.deepEqual((await entryOf(e, key('C2', '3.1'))).follows, ['ew']);
+    assert.deepEqual(await teamsFollowing(e, [], ['seo']), ['ew']);
+    assert.ok(await mayWork(e, ew)(await teamsOf(e, { ...key2place('C2', '4.1') }), key2place('C2', '4.1')));
+    // An area no tech stack or team has, or one turned off, is not followed.
+    assert.equal((await call(e, asMe(ADMIN), 'PUT', '/api/follows', { kind: 'area', target: 'nope', team: 'ew' })).status, 400);
+    await call(e, asMe(MANAGER, 'manager'), 'PUT', '/api/follows', {
+      kind: 'area', target: 'seo', team: 'ew', follow: false,
+    });
+    assert.deepEqual(entries(await inbox(e, ew, 'ew')), []);
+  });
+
+  it('lets a team\'s managers and the admin team follow for it, not a person, and not its members', async () => {
+    const e = env();
+    const put = (me, body) => call(e, me, 'PUT', '/api/follows', body);
+    const lead = asMe(MANAGER, 'manager');
+    assert.equal((await put(asMe(EW), { tech: 'xw', team: 'ew' })).status, 403);
+    assert.equal((await put(lead, { tech: 'xw', team: 'helix' })).status, 403);
+    assert.equal((await put(lead, { kind: 'person', target: ADA.id, team: 'ew' })).status, 400);
+    assert.equal((await put(asMe(ADMIN), { tech: 'xw', team: 'nope' })).status, 404);
+    let r = await put(lead, { tech: 'xw', team: 'ew' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.teams.ew.tech, ['xw']);
+    // What they follow themselves stays as it was.
+    assert.deepEqual(r.body.me.tech, []);
+    // A customer: a follow rule of field org, as on the customer's page.
+    r = await put(lead, { kind: 'org', target: 'globex', team: 'ew' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.teams.ew.org, ['globex']);
+    assert.ok((await e.DB.prepare(`SELECT 1 FROM rules WHERE target = 'follow' AND field = 'org'
+      AND value = 'ew'`).first()));
+    // Who follows for which teams: a manager theirs, the admin team every team but those that
+    // hold channels.
+    assert.deepEqual(r.body.may, ['ew']);
+    assert.deepEqual(r.body.teamNames, { ew: 'EW' });
+    const all = (await call(e, asMe(ADMIN), 'GET', '/api/follows')).body;
+    assert.deepEqual(all.may, ['ew', 'helix']);
+    assert.deepEqual(all.teams.ew, { tech: ['xw'], area: [], org: ['globex'] });
+    r = await put(asMe(ADMIN), {
+      kind: 'org', target: 'globex', team: 'ew', follow: false,
+    });
+    assert.deepEqual(r.body.teams.ew.org, []);
+  });
+
+  it('mutes a customer for you alone, and ends your follow of it, as following lifts the mute', async () => {
+    const e = env();
+    const ew = asMe(EW);
+    const put = (body) => call(e, ew, 'PUT', '/api/follows', body);
+    assert.equal((await put({
+      kind: 'org', target: 'globex', mute: true, team: 'ew',
+    })).status, 400);
+    assert.equal((await put({ tech: 'xw', mute: true })).status, 400);
+    let r = await put({ kind: 'org', target: 'globex' });
+    assert.deepEqual(r.body.me.org, ['globex']);
+    r = await put({ kind: 'org', target: 'globex', mute: true });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.me.org, []);
+    assert.deepEqual(r.body.muted.org, ['globex']);
+    r = await put({ kind: 'org', target: 'globex' });
+    assert.deepEqual(r.body.me.org, ['globex']);
+    assert.deepEqual(r.body.muted.org, []);
+    await put({ kind: 'org', target: 'globex', mute: true });
+    r = await put({ kind: 'org', target: 'globex', mute: false });
+    assert.deepEqual(r.body.muted.org, []);
+    assert.deepEqual(r.body.me.org, []);
   });
 });
 

@@ -123,6 +123,18 @@ async function teamsByTech(env) {
   return out;
 }
 
+/** The names of the teams that follow each area (migration 0105): `Map<area, [name]>`. */
+async function teamsByArea(env) {
+  const { results } = await env.DB.prepare(`SELECT f.target AS area, COALESCE(t.name, f.team) AS name
+    FROM team_follows_by f LEFT JOIN teams t ON t.slug = f.team WHERE f.kind = 'area'
+    ORDER BY name`).all();
+  const out = new Map();
+  for (const r of results || []) {
+    out.set(r.area, [...(out.get(r.area) || []), r.name]);
+  }
+  return out;
+}
+
 /** Customers by slug: `Map<slug, { name, icon }>`, for those the admin pages named. */
 async function orgNames(env, slugs) {
   if (!slugs.length) {
@@ -170,12 +182,13 @@ const matches = (q) => {
  * The suggestions, or the matches of `query`, from what was asked for (`suggestFollows`), without
  * D1, so that `npm run ui:dev` makes them from its fake data the same way. `techs` as `followable`
  * answers, `areaList` `[{ id, name }]`, `teams` the names of the teams that follow each
- * technology, `trend` and `own` the counts (`{ tech, area }` and `{ tech, area, org }` of Maps),
- * `followed` and `followedBy` what the person follows, `orgs` the customers' slugs (theirs, or
- * those the query found) and `names` what the admin pages call them.
+ * technology (`areaTeams`, each area), `trend` and `own` the counts (`{ tech, area }` and
+ * `{ tech, area, org }` of Maps), `followed` and `followedBy` what the person follows, `orgs` the
+ * customers' slugs (theirs, or those the query found) and `names` what the admin pages call them.
  */
 export function suggestionsOf({
-  query = '', techs, areaList, teams, trend, own, followed, followedBy, orgs, names,
+  query = '', techs, areaList, teams, areaTeams = new Map(), trend, own, followed, followedBy, orgs,
+  names,
 }) {
   const counts = (kind, id) => {
     const t = trend[kind].get(id);
@@ -184,7 +197,9 @@ export function suggestionsOf({
   const tech = techs.map((t) => ({
     id: t.tech, name: t.name, product: t.product, ...counts('tech', t.tech), teams: teams.get(t.tech) || [],
   }));
-  const area = areaList.map((a) => ({ id: a.id, name: a.name, ...counts('area', a.id) }));
+  const area = areaList.map((a) => ({
+    id: a.id, name: a.name, ...counts('area', a.id), teams: areaTeams.get(a.id) || [],
+  }));
   const org = orgs.map((s) => ({ ...orgOf(names, s), mine: own.org.get(s) || 0 }));
   // Theirs first, then what is talked about most.
   const order = (a, b) => b.mine - a.mine || (b.recent || 0) - (a.recent || 0)
@@ -216,19 +231,22 @@ export const cleanQuery = (q) => String(q || '').replace(/\s+/g, ' ').trim().sli
 
 /**
  * Suggestions for `me` (`{ id }`), or the matches of query `q`: `{ q, tech, area, org }`, each a
- * list of `{ id, name, mine, recent, before }` (a technology with its `product` and the `teams`
- * that follow it, a customer with its `icon`). `mine` counts the conversations of their own
- * channels, `recent` and `before` every team's (none for customers).
+ * list of `{ id, name, mine, recent, before }` (a technology or an area with the `teams` that
+ * follow it, a technology with its `product`, a customer with its `icon`). `mine` counts the
+ * conversations of their own channels, `recent` and `before` every team's (none for customers).
  */
 export async function suggestFollows(env, me, { q = '', now = Date.now() } = {}) {
   const query = cleanQuery(q);
-  const [techs, areaList, teams, trend, own, followed, followedBy, found] = await Promise.all([
-    followable(env), areas(env), teamsByTech(env), trending(env, now), mine(env, me, now),
-    personFollows(env, me.id), personFollowsBy(env, me.id), query ? orgsMatching(env, query) : null,
+  const [
+    techs, areaList, teams, areaTeams, trend, own, followed, followedBy, found,
+  ] = await Promise.all([
+    followable(env), areas(env), teamsByTech(env), teamsByArea(env), trending(env, now),
+    mine(env, me, now), personFollows(env, me.id), personFollowsBy(env, me.id),
+    query ? orgsMatching(env, query) : null,
   ]);
   const orgs = found || [...own.org.keys()];
   const names = await orgNames(env, orgs);
   return suggestionsOf({
-    query, techs, areaList, teams, trend, own, followed, followedBy, orgs, names,
+    query, techs, areaList, teams, areaTeams, trend, own, followed, followedBy, orgs, names,
   });
 }

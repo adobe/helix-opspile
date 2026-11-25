@@ -12,14 +12,14 @@
 
 /*
  * What to follow, as the global `FollowSuggest`: the products, topics and customers GET
- * /api/follows/suggest suggests (src/followsuggest.js), each with a Follow switch, and a search
- * box that finds any of them by name. ui/inbox.js shows it where an empty personal view would be,
- * and in a dialog from your menu's Following.
+ * /api/follows/suggest suggests (src/followsuggest.js), each with its Follow button (ui/follow.js,
+ * the same as everywhere: with who follows it, for whom manages a team), and a search box that
+ * finds any of them by name. ui/inbox.js shows it where an empty personal view would be, and
+ * ui/follow.js in a dialog from your menu's Following.
  *
- * `mount(box, { load, isOn, toggle, intro })` draws it into `box`: `load(q)` answers what the
- * endpoint does (`q` empty for the suggestions), `isOn(kind, id)` whether you follow it, and
- * `toggle(kind, id, name)` follows it or no more, and resolves once that is settled. `kind` is
- * `tech` (a product), `area` (a topic) or `org` (a customer), as PUT /api/follows takes them.
+ * `mount(box, { load, intro })` draws it into `box`: `load(q)` answers what the endpoint does
+ * (`q` empty for the suggestions). `kind` is `tech` (a product), `area` (a topic) or `org` (a
+ * customer), as PUT /api/follows takes them.
  */
 globalThis.FollowSuggest = (() => {
   const KINDS = [['tech', 'Products'], ['area', 'Topics'], ['org', 'Customers']];
@@ -42,26 +42,25 @@ globalThis.FollowSuggest = (() => {
     return out.join(' · ');
   }
 
-  const button = (kind, x, on) => `<button type="button" class="fs-follow" data-fs-kind="${kind}" data-fs-id="${esc(x.id)}" data-fs-name="${esc(x.name)}" aria-pressed="${on}" aria-label="${on ? 'Following' : 'Follow'} ${esc(x.name)}">${on ? 'Following' : 'Follow'}</button>`;
+  // Muting is the customer's page's and its column's: here one picks what to follow.
+  const button = (kind, x) => Follow.button({ kind, id: x.id, name: x.name }, { mute: false });
 
-  function rowHtml(kind, x, on, days) {
+  function rowHtml(kind, x, days) {
     const what = why(kind, x, days);
     const product = kind === 'tech' && x.product && x.product !== x.name ? `<span class="fs-of">${esc(x.product)}</span>` : '';
-    return `<li class="fs-row"><span class="fs-name"><span class="fs-nm">${esc(x.name)}</span>${product}${what ? `<span class="fs-why">${esc(what)}</span>` : ''}</span>${button(kind, x, on)}</li>`;
+    return `<li class="fs-row"><span class="fs-name"><span class="fs-nm">${esc(x.name)}</span>${product}${what ? `<span class="fs-why">${esc(what)}</span>` : ''}</span>${button(kind, x)}</li>`;
   }
 
   /** The lists of `data`, a section a kind; or a line saying there is nothing. */
-  function html(data, isOn) {
+  function html(data) {
     const parts = KINDS.filter(([kind]) => data[kind]?.length).map(([kind, title]) => `<section class="fs-kind"><h3>${title}</h3>
-      <ul>${data[kind].map((x) => rowHtml(kind, x, isOn(kind, x.id), data.days)).join('')}</ul></section>`);
+      <ul>${data[kind].map((x) => rowHtml(kind, x, data.days)).join('')}</ul></section>`);
     if (parts.length) return parts.join('');
     return data.q ? `<p class="fs-note">No product, topic or customer is called “${esc(data.q)}”.</p>`
       : '<p class="fs-note">Nothing to suggest yet: search for a product, topic or customer.</p>';
   }
 
-  function mount(box, {
-    load, isOn, toggle, intro = '',
-  }) {
+  function mount(box, { load, intro = '' }) {
     box.classList.add('fs');
     box.innerHTML = `${intro}<label class="fld fs-find"><span>Find a product, topic or customer</span>
       <span class="s2-search"><input type="search" autocomplete="off" spellcheck="false" enterkeyhint="search"></span></label>
@@ -75,7 +74,7 @@ globalThis.FollowSuggest = (() => {
       const mine = seq;
       const data = await load(q).catch(() => null);
       if (mine !== seq) return;
-      list.innerHTML = data ? html(data, isOn) : '<p class="fs-note">Could not get suggestions. Try again in a moment.</p>';
+      list.innerHTML = data ? html(data) : '<p class="fs-note">Could not get suggestions. Try again in a moment.</p>';
     }
     input.addEventListener('input', () => {
       clearTimeout(timer);
@@ -83,21 +82,6 @@ globalThis.FollowSuggest = (() => {
     });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && input.value) { e.preventDefault(); e.stopPropagation(); input.value = ''; draw(''); }
-    });
-    list.addEventListener('click', async (e) => {
-      const b = e.target.closest('[data-fs-kind]');
-      if (!b || b.disabled) return;
-      const { fsKind: kind, fsId: id, fsName: name } = b.dataset;
-      b.disabled = true;
-      try {
-        await toggle(kind, id, name);
-      } finally {
-        b.disabled = false;
-        const on = isOn(kind, id);
-        b.setAttribute('aria-pressed', String(on));
-        b.setAttribute('aria-label', `${on ? 'Following' : 'Follow'} ${name}`);
-        b.textContent = on ? 'Following' : 'Follow';
-      }
     });
     draw('');
     return { focus: () => input.focus(), refresh: () => draw(input.value.trim()) };

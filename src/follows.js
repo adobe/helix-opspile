@@ -83,17 +83,30 @@ const followedEntries = (techs) => `SELECT COALESCE(x.logical_thread, x.thread)
 const inFollowed = (alias, techs) => `(${alias}.thread IN (${followedEntries(techs)})
     OR ${alias}.logical_thread IN (${followedEntries(techs)}))`;
 
-/** SQL: thread row `alias` shows a technology team `param` (an SQL parameter, a slug) follows. */
-export const followedByTeam = (alias, param) => inFollowed(
+/** What a team follows besides technologies (migration 0105); customers are follow rules. */
+export const TEAM_FOLLOW_KINDS = ['area'];
+
+/** SQL: the entries Clef puts in one of the areas `areas` selects (SQL that selects area ids). */
+const inAreas = (alias, areas) => inEntries(alias, `SELECT a.thread FROM thread_areas a
+      WHERE a.area IN (${areas})`);
+
+/**
+ * SQL: thread row `alias` is in an entry team `param` (an SQL parameter, a slug) follows: one that
+ * shows a technology it follows, or one Clef puts in an area it follows (thread_areas).
+ */
+export const followedByTeam = (alias, param) => `(${inFollowed(
   alias,
   `SELECT tech FROM team_follows WHERE team = ${param}`,
-);
+)}
+  OR ${inAreas(alias, `SELECT target FROM team_follows_by WHERE team = ${param} AND kind = 'area'`)})`;
 
 /** SQL: as `followedByTeam`, for any of the teams `param` (a JSON array of slugs) has. */
-export const followedByTeams = (alias, param) => inFollowed(
+export const followedByTeams = (alias, param) => `(${inFollowed(
   alias,
   `SELECT tech FROM team_follows WHERE team IN (SELECT value FROM json_each(${param}))`,
-);
+)}
+  OR ${inAreas(alias, `SELECT target FROM team_follows_by
+      WHERE team IN (SELECT value FROM json_each(${param})) AND kind = 'area'`)})`;
 
 /**
  * SQL: thread row `alias` is in an entry person `param` (an SQL parameter, an id) follows: one
@@ -107,8 +120,7 @@ export const followedByPerson = (alias, param) => `(${inFollowed(
   OR (${alias}.kind = 'channel' AND ${alias}.org IN (${followedBy(param, 'org')}))
   OR ${inEntries(alias, `SELECT m.thread FROM messages m WHERE m.deleted = 0
       AND m.person IN (SELECT CAST(target AS INTEGER) FROM (${followedBy(param, 'person')}))`)}
-  OR ${inEntries(alias, `SELECT a.thread FROM thread_areas a
-      WHERE a.area IN (${followedBy(param, 'area')})`)})`;
+  OR ${inAreas(alias, followedBy(param, 'area'))})`;
 
 /**
  * SQL, `?1` a thread: the members of its entry (`x`), each with what it shows (`g`). For who
@@ -118,31 +130,45 @@ const ENTRY_TECH = `WITH k AS (SELECT COALESCE(logical_thread, thread) AS g FROM
   SELECT DISTINCT f.who FROM k JOIN threads x ON (x.thread = k.g OR x.logical_thread = k.g)
     JOIN thread_tech g ON g.thread = x.thread`;
 
-/** The teams that follow a technology inbox entry `thread` (any of its members' keys) shows. */
+/**
+ * SQL, `?1` a thread: why teams have its entry, `(team, tech, area)`: each technology it shows
+ * that a team follows (`area` null), and each area Clef puts it in that a team follows (`tech`
+ * null). Conversations only.
+ */
+const ENTRY_TEAM_FOLLOWS = `WITH k AS (SELECT COALESCE(logical_thread, thread) AS g
+      FROM threads WHERE thread = ?1),
+    x AS (SELECT t.thread FROM k JOIN threads t ON (t.thread = k.g OR t.logical_thread = k.g)
+      WHERE t.kind = 'channel')
+  SELECT f.team, f.tech, NULL AS area FROM x JOIN thread_tech g ON g.thread = x.thread
+    JOIN team_follows f ON f.tech = g.tech
+  UNION SELECT f.team, NULL, f.target FROM x JOIN thread_areas a ON a.thread = x.thread
+    JOIN team_follows_by f ON f.kind = 'area' AND f.target = a.area`;
+
+/**
+ * The teams that follow inbox entry `thread` (any of its members' keys): a technology it shows,
+ * or an area Clef puts it in.
+ */
 export async function followingTeams(env, thread) {
   if (!env.DB || !thread) {
     return [];
   }
-  const { results } = await env.DB.prepare(`${ENTRY_TECH}
-      JOIN (SELECT team AS who, tech FROM team_follows) f ON f.tech = g.tech
-    WHERE x.kind = 'channel' ORDER BY f.who`).bind(String(thread)).all();
-  return (results || []).map((r) => r.who);
+  const { results } = await env.DB.prepare(`SELECT DISTINCT team FROM (${ENTRY_TEAM_FOLLOWS})
+    ORDER BY team`).bind(String(thread)).all();
+  return (results || []).map((r) => r.team);
 }
 
 /**
- * Why the teams that follow inbox entry `thread` have it: `[{ team, tech }]`, each technology
- * of the entry's that a team follows, by team.
+ * Why the teams that follow inbox entry `thread` have it: `[{ team, tech }]` for each technology
+ * of the entry's that a team follows, `[{ team, area }]` for each area, by team.
  */
 export async function entryFollows(env, thread) {
   if (!env.DB || !thread) {
     return [];
   }
-  const { results } = await env.DB.prepare(`WITH k AS (SELECT COALESCE(logical_thread, thread) AS g
-      FROM threads WHERE thread = ?1)
-    SELECT DISTINCT f.team, f.tech FROM k JOIN threads x ON (x.thread = k.g OR x.logical_thread = k.g)
-      JOIN thread_tech g ON g.thread = x.thread JOIN team_follows f ON f.tech = g.tech
-    WHERE x.kind = 'channel' ORDER BY f.team, f.tech`).bind(String(thread)).all();
-  return results || [];
+  const { results } = await env.DB.prepare(`SELECT team, tech, area FROM (${ENTRY_TEAM_FOLLOWS})
+    ORDER BY team, tech IS NULL, tech, area`).bind(String(thread)).all();
+  return (results || []).map((r) => (r.tech ? { team: r.team, tech: r.tech }
+    : { team: r.team, area: r.area }));
 }
 
 /**
@@ -228,14 +254,18 @@ export async function followsEntry(env, person, thread) {
   return (await followersOf(env, [person], thread)).has(person);
 }
 
-/** The teams that follow any of `techs` (ids), by slug. */
-export async function teamsFollowing(env, techs) {
+/** The teams that follow any of `techs` (ids), or any of `areas` (ids), by slug. */
+export async function teamsFollowing(env, techs, areas = []) {
   const list = [...new Set([].concat(techs || []).filter(Boolean))];
-  if (!env.DB || !list.length) {
+  const inAreasList = [...new Set([].concat(areas || []).filter(Boolean))];
+  if (!env.DB || (!list.length && !inAreasList.length)) {
     return [];
   }
-  const { results } = await env.DB.prepare(`SELECT DISTINCT team FROM team_follows
-    WHERE tech IN (SELECT value FROM json_each(?)) ORDER BY team`).bind(JSON.stringify(list)).all();
+  const { results } = await env.DB.prepare(`SELECT team FROM team_follows
+      WHERE tech IN (SELECT value FROM json_each(?1))
+    UNION SELECT team FROM team_follows_by WHERE kind = 'area'
+      AND target IN (SELECT value FROM json_each(?2))
+    ORDER BY team`).bind(JSON.stringify(list), JSON.stringify(inAreasList)).all();
   return (results || []).map((r) => r.team);
 }
 
@@ -437,4 +467,60 @@ export async function setPersonFollow(env, { person, tech, follow }) {
   const { meta } = await env.DB.prepare(`INSERT INTO person_follows (person, tech, added_at)
     VALUES (?, ?, ?) ON CONFLICT DO NOTHING`).bind(person, id, new Date().toISOString()).run();
   return { ok: true, changed: Boolean(meta.changes) };
+}
+
+/**
+ * What team `team` follows besides technologies: `[{ kind, target, added_by, added_at }]`, areas
+ * (migration 0105). Its customers are follow rules (src/admin.js `followOrg`).
+ */
+export async function teamFollowsBy(env, team) {
+  const { results } = await env.DB.prepare(`SELECT kind, target, added_by, added_at
+    FROM team_follows_by WHERE team = ? ORDER BY kind, target`).bind(team).all();
+  return results || [];
+}
+
+/**
+ * Team `team` follows `target` of `kind` (TEAM_FOLLOW_KINDS: an area's id), or (`follow` false)
+ * no more, as `by` (an email). As setTeamFollow: `{ ok, changed }` or `{ error, status }`.
+ */
+export async function setTeamFollowBy(env, {
+  team, kind, target, follow, by,
+}) {
+  if (!TEAM_FOLLOW_KINDS.includes(kind)) {
+    return { error: `a team follows a ${TEAM_FOLLOW_KINDS.join(', ')}, a technology or a customer`, status: 400 };
+  }
+  if (!follow) {
+    const { meta } = await env.DB.prepare(`DELETE FROM team_follows_by
+      WHERE team = ? AND kind = ? AND target = ?`).bind(team, kind, targetOf(kind, target) ?? '').run();
+    return { ok: true, changed: Boolean(meta.changes) };
+  }
+  const id = await knownTarget(env, kind, target);
+  if (!id) {
+    return { error: 'no such area', status: 400 };
+  }
+  const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM team_follows_by WHERE team = ? AND kind = ?')
+    .bind(team, kind).first('n');
+  if (n >= MAX_FOLLOWS) {
+    return { error: `a team follows at most ${MAX_FOLLOWS} of each`, status: 400 };
+  }
+  const { meta } = await env.DB.prepare(`INSERT INTO team_follows_by (team, kind, target, added_by,
+      added_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
+    .bind(team, kind, id, by || null, new Date().toISOString()).run();
+  return { ok: true, changed: Boolean(meta.changes) };
+}
+
+/** The areas each of `teams` (slugs) follows: `{ [slug]: [area] }`. */
+export async function areasOfTeams(env, teams) {
+  const list = [...new Set([].concat(teams || []).filter(Boolean))];
+  if (!list.length) {
+    return {};
+  }
+  const { results } = await env.DB.prepare(`SELECT team, target FROM team_follows_by
+    WHERE kind = 'area' AND team IN (SELECT value FROM json_each(?)) ORDER BY team, target`)
+    .bind(JSON.stringify(list)).all();
+  const out = Object.fromEntries(list.map((t) => [t, []]));
+  for (const r of results || []) {
+    out[r.team].push(r.target);
+  }
+  return out;
 }

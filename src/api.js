@@ -11,7 +11,8 @@
  */
 
 import { accessEmail } from './access.js';
-import { admin, STAFF_ROUTES } from './admin.js';
+import { admin, followOrg, STAFF_ROUTES } from './admin.js';
+import { changeFollow, followState } from './following.js';
 import { kbAdmin } from './kbadmin.js';
 import { personInKb } from './kbpeople.js';
 import {
@@ -66,10 +67,7 @@ import {
   inPersonalInbox, mayPost, mayReply, maySee, mayWork, memberOf, roomsOf, sharedWith, teamsOf,
   viewTeam,
 } from './shares.js';
-import {
-  followable, followedByTeam, followsOfTeams, personFollows, personFollowsBy, setPersonFollow,
-  setPersonFollowBy,
-} from './follows.js';
+import { followable, followedByTeam } from './follows.js';
 import { suggestFollows } from './followsuggest.js';
 import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { claimPost, logPost, settlePost } from './postkeys.js';
@@ -298,19 +296,8 @@ export async function viewer(request, env, options) {
   return me;
 }
 
-/**
- * What `me` follows (src/follows.js): `{ me: [tech], teams: { [slug]: [tech] } }`, theirs and
- * their teams'.
- */
-async function followsOf(env, me) {
-  const [mine, teams, by] = await Promise.all([
-    personFollows(env, me.id),
-    followsOfTeams(env, (me.teams || []).map((t) => t.slug)),
-    personFollowsBy(env, me.id),
-  ]);
-  // `me` the technologies, as before; `by` the customers, people and areas.
-  return { me: mine, teams, by };
-}
+/** What `me` follows and mutes, and what their teams follow (src/following.js). */
+const followsOf = (env, me) => followState(env, me);
 
 /**
  * Whether the viewer is internal: a member of an ops team, or staff signed in on none (from
@@ -1270,7 +1257,7 @@ async function route(request, env, url, {
       // The rooms the inbox listens to (GET /api/live): the person's teams, and the teams of
       // the threads in their personal view.
       rooms: await roomsOf(env, me),
-      // The technologies they follow, and those their teams follow (src/follows.js).
+      // What they follow and mute, and what their teams follow (src/following.js).
       follows: await followsOf(env, me),
     });
   }
@@ -1374,20 +1361,15 @@ async function route(request, env, url, {
       : json({ error: 'GET' }, 405);
   }
   if (url.pathname === '/api/follows') {
-    // The technologies the person follows, for their personal view (src/follows.js).
+    // What the person follows and mutes, and their teams (src/following.js); and every
+    // technology one may follow.
     if (request.method === 'GET') {
       return json({ ...await followsOf(env, me), tech: await followable(env) });
     }
     if (request.method === 'PUT') {
+      // `{ kind, target, follow, team? }` or `{ kind: 'org', target, mute }` (src/following.js).
       const body = await request.json().catch(() => ({}));
-      // `{ tech }`, or `{ kind: org | person | area, target }` (src/follows.js).
-      const res = body.kind && body.kind !== 'tech'
-        ? await setPersonFollowBy(env, {
-          person: me.id, kind: body.kind, target: body.target, follow: body.follow !== false,
-        })
-        : await setPersonFollow(env, {
-          person: me.id, tech: body.tech ?? body.target, follow: body.follow !== false,
-        });
+      const res = await changeFollow(env, me, body, { followOrg });
       if (res.error) {
         return json({ error: res.error }, res.status || 400);
       }
