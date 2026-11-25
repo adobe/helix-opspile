@@ -55,8 +55,8 @@ export const MAX_KEY_CUSTOMERS = 3;
 /** Entries listed per type of the knowledge base. */
 export const MAX_ENTRIES = 8;
 /** The types of the catalog (shown as technologies) and the files that are no entries. */
-const CATALOG_TYPES = new Set(['Vendor', 'Product', 'Feature', 'Category', 'Area', 'System Prompt']);
-const UNASSIGNED = '_unassigned';
+export const CATALOG_TYPES = new Set(['Vendor', 'Product', 'Feature', 'Category', 'Area', 'System Prompt']);
+export const UNASSIGNED = '_unassigned';
 
 let cache = new WeakMap();
 
@@ -83,16 +83,16 @@ const MINE = `mine AS (SELECT keys.person, g.thread, COUNT(*) AS n FROM keys
     WHERE g.deleted = 0 AND g.counted = 1 GROUP BY 1, 2)`;
 
 /** SQL: the Monday of the week of `col`, as YYYY-MM-DD (src/trends.js `mondayOf`). */
-const WEEK = (col) => `date(${col}, '-6 days', 'weekday 1')`;
+export const WEEK = (col) => `date(${col}, '-6 days', 'weekday 1')`;
 
 /** A list of `n` zeros, one a week. */
-const zeros = (n) => Array.from({ length: n }, () => 0);
+export const zeros = (n) => Array.from({ length: n }, () => 0);
 
 /**
  * `{ key: { ... , weekly } }` from rows of `{ [by], week, n }`: `n` added up per key and week
  * (into `weekly`, by the index of the week), and `extra(row, entry)` for the rest.
  */
-function byWeek(rows, by, weeks, extra = () => {}) {
+export function byWeek(rows, by, weeks, extra = () => {}) {
   const at = new Map(weeks.map((w, i) => [w, i]));
   const out = new Map();
   for (const r of rows) {
@@ -153,7 +153,7 @@ export function distinctive(rows, totals, { most = MAX_EXPERTISE } = {}) {
 }
 
 /** The names of the technologies, as `team`'s catalog has them, else the admin team's. */
-function techNames(rows, team) {
+export function techNames(rows, team) {
   const by = new Map();
   // The team's own first, then the admin team's, then any other's.
   const rank = (r) => [team, ADMIN_TEAM, r.team].indexOf(r.team);

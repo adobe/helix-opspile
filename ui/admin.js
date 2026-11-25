@@ -36,7 +36,11 @@
  *
  * A team's page opens at its overview, everyone's at Adobe (see "a team's overview", ui/team.js):
  * its people, customers, collaborators, technologies and knowledge base. What changes the team
- * is its second section, Manage (`own`, `view=manage`), its managers' and the admin team's.
+ * is its second section, Manage (`own`, `view=manage`), its managers' and the admin team's. A
+ * customer's page opens at its overview too (see "a customer's overview", ui/customer.js): its
+ * people, Adobe's and the teams on it, what it asks about, its channels, technologies and
+ * knowledge base. Its Manage section (who follows it, its channels; its name, icon and type for
+ * the admin team) is for the members of the ops teams.
  *
  * A team's or a customer's page has its agent too, a section each (see "sections"): its thread
  * agents, its tools and MCP servers, a team's extraction rules, and the knowledge base with its
@@ -224,6 +228,9 @@ function confirmFirst(question, detail, yes) {
 const followedOrg = (r) => (r.target === 'follow' && r.field === 'org'
   ? (/^\^([a-z0-9_][a-z0-9-]*)\$$/.exec(r.pattern || '') || [])[1] || null : null);
 
+/** Whether you are on an ops team (the admin team is one): Customers' Manage is theirs. */
+const onATeam = () => Boolean(state.me.admin) || (state.me.teams || []).length > 0;
+
 /** How many channels, in words: "1 channel", "48 channels". */
 const channelCount = (n) => `${n} ${n === 1 ? 'channel' : 'channels'}`;
 
@@ -280,8 +287,8 @@ function address({
 } = {}) {
   const q = new URLSearchParams({ tab });
   if (sel) q.set(PARAM[tab], sel);
-  // A team's page opens at its overview; what its managers change is `manage`.
-  if (sel && agented(tab, sel) && section === 'own' && tab === 'teams' && sel !== UNASSIGNED) q.set('view', 'manage');
+  // A team's page and a customer's open at their overview; what changes them is `manage`.
+  if (sel && agented(tab, sel) && section === 'own' && sel !== UNASSIGNED) q.set('view', 'manage');
   else if (sel && agented(tab, sel) && section && !['own', 'overview'].includes(section)) {
     q.set('view', section);
     if (section === 'kb' && path) q.set('path', path);
@@ -314,8 +321,6 @@ function wanted(url) {
     } else if (q.get('org') && !q.get('team') && state.orgs.some((o) => o.slug === q.get('org'))) tab = 'orgs';
   }
   if (tab !== 'orgs') tab = 'teams';
-  // Customers is for the members of a team; Adobe's people on none see the teams' overviews.
-  if (tab === 'orgs' && !state.me.admin && !(state.me.teams || []).length) tab = 'teams';
   sel = sel || q.get(PARAM[tab]);
   const view = q.get('view');
   const legacy = Boolean(q.get('repo') || q.get('path'));
@@ -391,7 +396,8 @@ async function load() {
   const onTeam = state.me.admin || (state.me.teams || []).length > 0;
   const [teams, orgs, requests, bases, follows, directory] = await Promise.all([
     state.me.admin || state.me.manages?.length ? call('/api/admin/teams') : none,
-    onTeam ? call('/api/admin/orgs') : none,
+    // Adobe's people on no team: every customer, whose overview they see.
+    call(onTeam ? '/api/admin/orgs' : '/api/customers'),
     state.me.admin ? call('/api/admin/requests') : none,
     call('/api/kb'),
     call('/api/follows'),
@@ -416,7 +422,8 @@ async function load() {
   state.myOrgs = new Set((follows.ok && follows.body.by?.org) || []);
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
   if (state.me.admin) loadGroups();
-  loadDups();
+  // The duplicate customers are for the ops teams, who ask for a merge.
+  if (onTeam) loadDups();
   return true;
 }
 
@@ -563,6 +570,15 @@ function drawList() {
       state.teams.sort((x, y) => x.name.localeCompare(y.name));
       select(r.body.team.slug);
     };
+  } else if (!state.me.admin && !onATeam()) {
+    // Adobe's people on no team: the customers they follow, then every other one, to see its
+    // overview.
+    const orgMatch = (o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f);
+    const followed = state.orgs.filter((o) => state.myOrgs.has(o.slug) && orgMatch(o));
+    const rest = state.orgs.filter((o) => orgMatch(o) && !state.myOrgs.has(o.slug));
+    $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter customers" value="${esc(state.filter)}"></label>
+      ${followed.length ? `<h2>Customers you follow</h2>${followed.map(orgRow).join('')}` : ''}
+      <h2>${followed.length ? 'Every other customer' : 'Customers'}</h2>${rest.map(orgRow).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No customer yet.'}</div>`}`;
   } else if (!state.me.admin) {
     // The customers you follow, then those your teams own (their agents, which their managers
     // change), then every other one: to follow it, or ask for its channels.
@@ -691,14 +707,15 @@ const baseOf = (tab, slug) => state.bases.find((b) => b.kind === (tab === 'orgs'
  * agent's where it has a knowledge base.
  */
 function sectionsOf(tab, slug) {
-  // A customer's own section is everyone's: who follows it, and its channels; the admin team
-  // edits its name, icon and type there too.
+  // A customer's own section is every ops team member's: who follows it, and its channels; the
+  // admin team edits its name, icon and type there too.
   const own = tab === 'teams' ? state.teams.some((t) => t.slug === slug) || (slug === UNASSIGNED && state.me.admin)
-    : Boolean(state.me.admin) || (slug !== UNASSIGNED && state.orgs.some((o) => o.slug === slug));
+    : Boolean(state.me.admin) || (onATeam() && slug !== UNASSIGNED && state.orgs.some((o) => o.slug === slug));
   const b = baseOf(tab, slug);
   return [
-    // A team's overview, everyone's (ui/team.js); then what its managers change.
-    ...(tab === 'teams' && slug !== UNASSIGNED ? ['overview'] : []),
+    // A team's and a customer's overview, everyone's (ui/team.js, ui/customer.js); then what
+    // changes them.
+    ...(slug !== UNASSIGNED ? ['overview'] : []),
     ...(own ? ['own'] : []),
     ...(b ? ['agents', 'mcp', ...(b.kind === 'team' ? ['extraction'] : []), 'kb', 'history'] : []),
   ];
@@ -708,12 +725,11 @@ function sectionsOf(tab, slug) {
 function sectionTabs() {
   const b = baseOf(state.tab, state.sel);
   const tags = b ? Agent.tags(b.repo) : {};
-  const type = state.orgs.find((o) => o.slug === state.sel)?.type || 'customer';
-  const own = state.tab === 'teams' ? 'Manage' : `${type[0].toUpperCase()}${type.slice(1)}`;
-  const label = { overview: 'Overview', own, ...SECTION_LABEL };
+  const label = { overview: 'Overview', own: 'Manage', ...SECTION_LABEL };
   const orgTitle = state.me.admin ? 'Its name, icon, type, channels and who follows it' : 'Its channels and who follows it';
   const title = {
-    overview: 'Its people, customers, collaborators, technologies and knowledge base',
+    overview: state.tab === 'teams' ? 'Its people, customers, collaborators, technologies and knowledge base'
+      : 'Its people, Adobe\'s people and teams on it, what it asks about, its channels, technologies and knowledge base',
     own: state.tab === 'teams' ? 'Its members, rules, channels and technologies: for its managers and the admin team' : orgTitle,
     ...SECTION_TITLE,
   };
@@ -765,7 +781,8 @@ function showPicked({ channel = null, flash = null, fresh = false } = {}) {
     return;
   }
   if (section === 'overview' || section === 'own') {
-    if (section === 'overview') showOverview(sel);
+    if (section === 'overview' && tab === 'teams') showOverview(sel);
+    else if (section === 'overview') showOrgOverview(sel);
     else if (tab === 'teams') showTeam(sel);
     else showOrg(sel);
     // The agent's badges, on its tabs.
@@ -1718,7 +1735,7 @@ function ruleRow(r) {
   // A customer the team follows (PUT /api/admin/org-follows): changed on the customer's page.
   const org = followedOrg(r);
   if (org) {
-    return `<tr data-rule="${r.id}"><td>${does}</td><td>Customer</td><td><a href="${esc(address({ tab: 'orgs', sel: org, section: 'own' }))}">${esc(orgLabel(org))}</a></td>
+    return `<tr data-rule="${r.id}"><td>${does}</td><td>Customer</td><td><a href="${esc(address({ tab: 'orgs', sel: org, section: 'overview' }))}">${esc(orgLabel(org))}</a></td>
     <td>${r.source ? `<span class="tag">${esc(r.source)} only</span>` : ''}</td>
     <td class="n">${r.priority}</td><td class="sub">${esc(r.note || '')}</td>
     <td><button class="link" data-del="${r.id}"${off(`rule:${r.id}`)}>Delete</button></td></tr>`;
@@ -1868,11 +1885,10 @@ async function showOverview(slug) {
   }
   const p = r.body;
   const onTeam = Boolean(state.me.admin) || (state.me.teams || []).some((t) => t.slug === slug);
-  // The customers' pages are for the members of a team; anyone else reads their names.
-  const customers = Boolean(state.me.admin || (state.me.teams || []).length);
   const base = baseOf('teams', slug);
   const ctx = {
-    orgHref: (org) => (customers ? address({ tab: 'orgs', sel: org, section: 'own' }) : null),
+    // The customers' overviews are everyone's at Adobe, as the teams'.
+    orgHref: (org) => address({ tab: 'orgs', sel: org, section: 'overview' }),
     orgName: (org, name) => name || orgLabel(org),
     orgIcon: (org, icon) => {
       const o = state.orgs.find((x) => x.slug === org);
@@ -1892,7 +1908,7 @@ async function showOverview(slug) {
     <div class="title">${backButton()}<h1 class="fill">${esc(p.team.name)}</h1>
       <span class="sub">${facts}</span><span class="sub mono">${esc(p.team.slug)}</span></div>
     ${sectionsNav()}
-    <div class="team" id="overview">${TeamView.html(p, ctx)}</div>`;
+    <div class="ov" id="overview">${TeamView.html(p, ctx)}</div>`;
   tabInView();
   TeamView.wire($('overview'), p, ctx);
   if (p.kb?.stack) drawTeamStack(slug, current);
@@ -2602,6 +2618,102 @@ function renderPortal() {
   }
 }
 
+// ---- a customer's overview ------------------------------------------------------------------
+//
+// The first section of a customer's page, everyone's at Adobe: its people, Adobe's people and
+// the teams on it, what it asks about, its channels, technologies and knowledge base, from
+// GET /api/customers/profile (src/orgprofile.js), which ui/customer.js draws. Its title has a
+// Follow of your own (its conversations in your personal view) and a link to its threads in an
+// inbox of yours; what changes it is its Manage section (`own`).
+
+/** A customer's threads in an inbox of yours: a team's of yours that has it, else your own view. */
+function orgInbox(slug, teams) {
+  const q = `filters=1&f.customer=${encodeURIComponent(slug)}`;
+  const mine = new Set((state.me.teams || []).map((t) => t.slug));
+  const team = teams.find((t) => mine.has(t.slug) && (t.filed || t.shared || t.follows));
+  if (team) return `/inbox?team=${encodeURIComponent(team.slug)}&${q}`;
+  return state.myOrgs.has(slug) ? `/inbox?view=personal&${q}` : null;
+}
+
+/** A customer's stack drawing, where its knowledge base has one: under its entries. */
+async function drawOrgStack(slug, current) {
+  const r = await call(`/api/kb/stack?org=${encodeURIComponent(slug)}`, 'GET', undefined, { parallel: true });
+  const slot = $('tvStack');
+  if (!current() || !slot || !r.ok || !r.body.drawing) return;
+  const view = r.body.drawing;
+  const kb = baseOf('orgs', slug);
+  slot.innerHTML = `<div class="tv-drawing"><h3>Stack drawing</h3>${Stack.html(view)}
+    ${kb ? `<p class="hint"><a href="${esc(address({ section: 'kb', path: r.body.path }))}">${r.body.may ? 'Edit it in its knowledge base' : 'Open it in its knowledge base'}</a></p>` : ''}</div>`;
+  Stack.wire(slot, view, { title: `${orgLabel(slug)}'s stack` });
+}
+
+async function showOrgOverview(slug) {
+  const current = loadingPage();
+  const r = await call(`/api/customers/profile?org=${encodeURIComponent(slug)}`);
+  if (!current()) return;
+  state.view = { target: 'org-overview', value: slug };
+  if (!r.ok && r.body.mergedInto) {
+    // Merged (src/orgmerge.js): it is the org it went into now.
+    $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(slug)}</h1></div>
+      <div class="empty">Merged into <a href="${esc(address({ tab: 'orgs', sel: r.body.mergedInto, section: 'overview' }))}">${esc(orgLabel(r.body.mergedInto))}</a>.</div>`;
+    return;
+  }
+  if (!r.ok) {
+    $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(orgLabel(slug))}</h1></div>
+      ${sectionsNav()}<div class="empty">${esc(r.body.error || 'Could not load.')}</div>`;
+    tabInView();
+    return;
+  }
+  const p = r.body;
+  const row = state.orgs.find((o) => o.slug === slug);
+  const base = baseOf('orgs', slug);
+  const ctx = {
+    teamHref: (team) => address({ tab: 'teams', sel: team, section: 'overview' }),
+    teamName: (team) => teamLabel(team),
+    kbHref: (path) => (base && p.kb?.readable ? address({ section: 'kb', path }) : null),
+    // A node of the Topics page, picked, as a team's overview links them.
+    topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
+  };
+  const name = p.org.name || p.org.slug;
+  const inbox = orgInbox(slug, p.teams);
+  const facts = [
+    channelCount(p.org.channels),
+    inbox ? `<a href="${esc(inbox)}" title="Its threads in your inbox">Its threads</a>` : '',
+  ].filter(Boolean).join(' · ');
+  const followKey = `orgfollow:me:${slug}`;
+  const followButton = () => {
+    const on = state.myOrgs.has(slug);
+    return `<button type="button" class="ofollow" id="ovFollow" aria-pressed="${on}" aria-label="${esc(`${on ? 'Following' : 'Follow'}: ${name}`)}"
+      title="${on ? 'You follow it: its conversations are in your personal view' : 'Follow it: its conversations go into your personal view'}"${off(followKey)}>${on ? 'Following' : 'Follow'}</button>`;
+  };
+  $('detail').innerHTML = `
+    <div class="title">${backButton()}${ico(p.org.icon || row?.icon || null, p.org.domain || row?.domain || null)}<h1 class="fill">${esc(name)}</h1>
+      ${p.org.type !== 'customer' ? `<span class="tag ${esc(p.org.type)}">${esc(p.org.type)}</span>` : ''}
+      <span class="sub">${facts}</span><span id="ovFollowAt">${followButton()}</span><span class="sub mono">${esc(slug)}</span></div>
+    ${sectionsNav()}
+    <div class="status" id="status"></div>
+    <div class="ov" id="overview">${CustomerView.html(p, ctx)}</div>`;
+  showStatus();
+  tabInView();
+  CustomerView.wire($('overview'), p, ctx);
+  const wireFollow = () => {
+    $('ovFollow').onclick = (e) => hold(e.currentTarget, followKey, async () => {
+      const follow = !state.myOrgs.has(slug);
+      const res = await call('/api/follows', 'PUT', { kind: 'org', target: slug, follow });
+      if (!res.ok) { failed(follow ? `Follow ${name}` : `Unfollow ${name}`, res); return; }
+      state.myOrgs = new Set(res.body.by?.org || []);
+      status('ok', follow ? `You follow ${name}: its conversations are in your personal view.` : `You no longer follow ${name}.`);
+      renderList();
+    }).then(() => {
+      if (state.view?.target !== 'org-overview' || state.view.value !== slug || !$('ovFollowAt')) return;
+      $('ovFollowAt').innerHTML = followButton();
+      wireFollow();
+    });
+  };
+  wireFollow();
+  if (p.kb?.drawing) drawOrgStack(slug, current);
+}
+
 // ---- orgs ---------------------------------------------------------------------------------
 
 async function showOrg(slug) {
@@ -2611,7 +2723,7 @@ async function showOrg(slug) {
   if (!r.ok && r.body.mergedInto) {
     // Merged (src/orgmerge.js): it is the org it went into now.
     $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(slug)}</h1></div>
-      <div class="empty">Merged into <a href="${esc(address({ tab: 'orgs', sel: r.body.mergedInto, section: 'own' }))}">${esc(orgLabel(r.body.mergedInto))}</a>.</div>`;
+      <div class="empty">Merged into <a href="${esc(address({ tab: 'orgs', sel: r.body.mergedInto, section: 'overview' }))}">${esc(orgLabel(r.body.mergedInto))}</a>.</div>`;
     return;
   }
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
@@ -3193,7 +3305,7 @@ const askText = (r, v = null) => `${who(r.requestedBy)} asked to merge <b>${esc(
 
 /** One side of a pair: what the inbox knows of the org. */
 function pairSide(o, kept) {
-  const page = address({ tab: 'orgs', sel: o.slug, section: 'own' });
+  const page = address({ tab: 'orgs', sel: o.slug, section: 'overview' });
   const chans = o.channelNames.map((c) => `<li>${esc(c.label)} <span class="sub">${esc(platform(c))} · ${c.threads} ${c.threads === 1 ? 'thread' : 'threads'}</span>${c.topic ? `<div class="sub">${esc(c.topic)}</div>` : ''}</li>`).join('');
   return `<div class="side${kept ? ' kept' : ''}">
     <div class="inline">${ico(o.icon, o.domain)}<a href="${esc(page)}"><b>${esc(o.name || o.slug)}</b></a>${kept ? '<span class="tag confirmed">kept</span>' : ''}</div>
@@ -3275,7 +3387,7 @@ function drawPair(v) {
   const seg = `<span class="seg" id="pKeep">${[pair.a, pair.b].map((s) => `<button type="button" data-keep="${esc(s)}" aria-pressed="${v.keep === s}">${esc(nameIn(v, s))}</button>`).join('')}</span>`;
   let act = '';
   if (v.done) {
-    act = `<div class="card"><h2>Merged</h2><p>${esc(nameIn(v, v.done.from))} is part of <a href="${esc(address({ tab: 'orgs', sel: v.done.into, section: 'own' }))}">${esc(nameIn(v, v.done.into))}</a> now${v.done.moves ? `; ${v.done.moves} ${v.done.moves === 1 ? 'channel is' : 'channels are'} re-filed` : ''}${v.done.kb ? `; ${v.done.kb}` : ''}.</p>
+    act = `<div class="card"><h2>Merged</h2><p>${esc(nameIn(v, v.done.from))} is part of <a href="${esc(address({ tab: 'orgs', sel: v.done.into, section: 'overview' }))}">${esc(nameIn(v, v.done.into))}</a> now${v.done.moves ? `; ${v.done.moves} ${v.done.moves === 1 ? 'channel is' : 'channels are'} re-filed` : ''}${v.done.kb ? `; ${v.done.kb}` : ''}.</p>
       <div class="form"><button id="pUndo"${off(`unmerge:${v.done.from}`)}>Undo the merge</button></div></div>`;
   } else if (admin) {
     act = `<div class="card"><h2>Merge them</h2><div class="field"><label>Keep</label>${seg}</div>

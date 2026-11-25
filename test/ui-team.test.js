@@ -14,9 +14,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { SCRIPTS } from './ui.js';
 
-// The page's scripts, in order: ui/person.js, then ui/team.js, which draws with it.
+// As the page loads them: a person's parts (ui/person.js), what the overviews are drawn with
+// (ui/overview.js), then the team's overview.
 // eslint-disable-next-line no-new-func
-const TeamView = new Function('globalThis', `${SCRIPTS['person.js']}\nconst { Person } = globalThis;\n${SCRIPTS['team.js']}\nreturn globalThis.TeamView;`)({});
+const TeamView = new Function('globalThis', `${SCRIPTS['person.js']}\nconst { Person } = globalThis;\n${SCRIPTS['overview.js']}\nconst { Overview } = globalThis;\n${SCRIPTS['team.js']}\nreturn globalThis.TeamView;`)({});
 
 // Made-up people, customers and technologies only.
 const weeks = ['2026-11-16', '2026-11-23'];

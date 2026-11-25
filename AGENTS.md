@@ -67,12 +67,14 @@ code and docs, is the decision model that labels threads and channels.
   `npm run portal:dev` previews it (README, "Customer portal"). What people upload there (files,
   pictures, logos) is served so that a browser runs none of it (`src/portal/files.js`,
   `openThreadFile` in `src/fileview.js`): keep it so, and never serve SVG or HTML inline.
-- **A team's page opens at its overview** (`ui/team.js`, the global `TeamView`, from
-  `src/teamprofile.js`): everyone's at Adobe, as the Topics page. A person's card there and their profile card
-  in the inbox are drawn by one script, `ui/person.js` (the global `Person`), from the same person
-  (`src/person.js`, `src/personsql.js`): change what both show there. What changes the team is its
-  second section, Manage (`own` in `ui/admin.js`, `view=manage`), its managers' and the admin
-  team's.
+- **A team's page and a customer's open at their overview** (`ui/team.js`, the global
+  `TeamView`, from `src/teamprofile.js`; `ui/customer.js`, `CustomerView`, from
+  `src/orgprofile.js`; both drawn with `ui/overview.js`, `Overview`, in
+  `ui/spectrum-overview.css`): everyone's at Adobe, as the Topics page. A person's card there and
+  their profile card in the inbox are drawn by one script, `ui/person.js` (the global `Person`),
+  from the same person (`src/person.js`, `src/personsql.js`): change what both show there. What
+  changes them is their second section, Manage (`own` in `ui/admin.js`, `view=manage`): a team's
+  managers' and the admin team's, a customer's the ops teams'.
 - **A team's and a customer's agent are sections of their pages** in Teams and Customers
   (`ui/admin.html`): `ui/agent.js` (the global `Agent`; thread agents, tools and MCP servers,
   extraction rules, the knowledge base and its editor) draws into the `#files` and `#editor`

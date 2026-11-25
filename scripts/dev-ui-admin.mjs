@@ -30,6 +30,7 @@ import { IMAGES, layerNames } from './computer-images.mjs';
 import { seedCogs } from './dev-ui-cogs.mjs';
 import { seedTopicMap } from './dev-ui-topics.mjs';
 import { seedTeamProfile } from './dev-ui-team.mjs';
+import { seedCustomerProfile } from './dev-ui-customer.mjs';
 import { fakeBucket } from '../test/fakes.js';
 import { fakeMcpServers } from '../test/mcp-server.js';
 
@@ -882,6 +883,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   seedMemberSuggestions(DB);
   // Platform ops' half year, for its overview (dev-ui-team.mjs).
   seedTeamProfile(DB);
+  // And ACME's, for its overview (dev-ui-customer.mjs).
+  seedCustomerProfile(DB);
   // The people outside Adobe post in their org's threads, so each org has a usual mail
   // domain: the org list shows its favicon when the org has no icon (src/admin.js).
   for (const p of store.people.values()) {

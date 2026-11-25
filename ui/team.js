@@ -13,7 +13,8 @@
 /*
  * A team's overview, the first section of its page in Teams (ui/admin.js draws the page around
  * it), as the global `TeamView`: what GET /api/teams/profile says (src/teamprofile.js) of the
- * team's last half year, for everyone at Adobe.
+ * team's last half year, for everyone at Adobe, drawn with ui/overview.js (`Overview`), as a
+ * customer's is (ui/customer.js).
  *
  * - The team's threads, week by week: a chart of what Adobe's people and the customers said, and
  *   how much there is of each part below.
@@ -31,62 +32,9 @@
  * is a name, a number or a picture, written escaped.
  */
 globalThis.TeamView = (() => {
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-  // What both people cards share (ui/person.js).
   const {
-    face: personFace, spark, plural, ago, link,
-  } = Person;
-  const face = (name, url, cls = '') => personFace(name, url, { cls });
-  const monthOf = (w) => new Date(`${w}T00:00:00Z`).toLocaleString('en', { month: 'short', timeZone: 'UTC' });
-  const dayOf = (w) => new Date(`${w}T00:00:00Z`).toLocaleString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-
-  // ---- small drawings -----------------------------------------------------------------------
-
-  /** A bar of `share` (0 to 1) of its track, `of` the second part of it (Adobe's, say). */
-  function bar(share, of = null) {
-    const w = Math.max(1, Math.round(100 * share));
-    const part = of === null ? '' : `<rect class="part" width="${Math.round(w * of)}" height="6" rx="3"></rect>`;
-    return `<svg class="tv-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="track" width="100" height="6" rx="3"></rect><rect class="fill" width="${w}" height="6" rx="3"></rect>${part}</svg>`;
-  }
-
-  /**
-   * The chart of the team's weeks: what customers said over what Adobe's people said, the
-   * months under it, the most in a week beside it. A week under the pointer says its numbers.
-   */
-  function chart(p) {
-    const W = 600;
-    const H = 140;
-    const { messages, staff } = p.activity;
-    const n = messages.length;
-    const m = Math.max(...messages, 1);
-    const x = (i) => ((i * W) / Math.max(1, n - 1)).toFixed(1);
-    const y = (v) => (H - (H - 6) * (v / m)).toFixed(1);
-    const line = (vals) => vals.map((v, i) => `${x(i)},${y(v)}`).join(' ');
-    // The band between two lines: along the top one, and back along the bottom one.
-    const area = (top, bottom) => `${line(top)} ${bottom.map((v, i) => `${x(i)},${y(v)}`).reverse().join(' ')}`;
-    const zero = messages.map(() => 0);
-    // Customers' on top of Adobe's: the whole is everything said.
-    const months = p.weeks.map((w, i) => [w, i]).filter(([w], i) => i === 0 || w.slice(5, 7) !== p.weeks[i - 1].slice(5, 7));
-    const grid = [0.5, 1].map((f) => `<line class="grid" x1="0" x2="${W}" y1="${y(m * f)}" y2="${y(m * f)}"></line>`).join('');
-    return `<div class="tv-chart" data-chart>
-      <div class="tv-axis"><span>${m.toLocaleString('en')}</span><span>${Math.round(m / 2).toLocaleString('en')}</span><span>0</span></div>
-      <div class="tv-plot">
-        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(`Messages in ${p.team.name}'s threads, week by week, the last ${n} weeks`)}">
-          ${grid}
-          <polygon class="all" points="${area(messages, staff)}"></polygon>
-          <polygon class="staff" points="${area(staff, zero)}"></polygon>
-          <polyline class="all" points="${line(messages)}"></polyline>
-          <polyline class="staff" points="${line(staff)}"></polyline>
-          <line class="guide" x1="0" x2="0" y1="0" y2="${H}" hidden></line>
-        </svg>
-        <div class="tv-months">${months.map(([w, i]) => `<span data-at="${(i / Math.max(1, n - 1)).toFixed(3)}">${esc(monthOf(w))}</span>`).join('')}</div>
-        <div class="tv-tip" hidden></div>
-      </div>
-      <div class="tv-legend"><span class="staff">Adobe</span><span class="all">Customers and partners</span></div>
-    </div>`;
-  }
+    esc, face, plural, ago, link, spark, bar, ranked,
+  } = Overview;
 
   // ---- the parts ----------------------------------------------------------------------------
 
@@ -95,18 +43,19 @@ globalThis.TeamView = (() => {
     const staff = p.activity.staff.reduce((s, v) => s + v, 0);
     const threads = p.activity.threads.reduce((s, v) => s + v, 0);
     const active = p.members.filter((m) => m.messages).length;
-    const tile = (n, what, sub) => `<div class="tv-stat"><b>${typeof n === 'number' ? n.toLocaleString('en') : esc(n)}</b><span>${esc(what)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
-    return `<div class="tv-stats">
-      ${tile(p.members.length, p.members.length === 1 ? 'person' : 'people', `${active} posted in the last ${p.weeks.length} weeks`)}
-      ${tile(p.customerCount, p.customerCount === 1 ? 'customer' : 'customers', 'in its threads')}
-      ${tile(total, total === 1 ? 'message' : 'messages', total ? `${Math.round((100 * staff) / total)}% by Adobe` : '')}
-      ${tile(p.threadCount, p.threadCount === 1 ? 'thread' : 'threads', `${Math.round(threads / p.weeks.length)} active in a week`)}
-      ${tile(p.collaboratorCount, p.collaboratorCount === 1 ? 'collaborator' : 'collaborators', 'from Adobe, not on the team')}
-    </div>`;
+    return Overview.stats([
+      [p.members.length, p.members.length === 1 ? 'person' : 'people', `${active} posted in the last ${p.weeks.length} weeks`],
+      [p.customerCount, p.customerCount === 1 ? 'customer' : 'customers', 'in its threads'],
+      [total, total === 1 ? 'message' : 'messages', total ? `${Math.round((100 * staff) / total)}% by Adobe` : ''],
+      [p.threadCount, p.threadCount === 1 ? 'thread' : 'threads', `${Math.round(threads / p.weeks.length)} active in a week`],
+      [p.collaboratorCount, p.collaboratorCount === 1 ? 'collaborator' : 'collaborators', 'from Adobe, not on the team'],
+    ]);
   }
 
   function person(m, p, ctx) {
     const role = m.role === 'manager' ? '<span class="tag tv-manager">Manager</span>' : '';
+    // As the inbox's profile card draws them (ui/person.js): an area is `tag:<id>` on the Topics
+    // page, a technology `product:tech:<id>`, a person `person:<id>`; key customers at the foot.
     const { knows, keys } = Person.work(m, ctx);
     const name = link(ctx.topicHref(`person:${m.id}`), esc(m.name || 'Someone'), { title: 'Their topics, customers and products on the Topics page' });
     // Their profile on the team, from its knowledge base, under who they are.
@@ -130,17 +79,6 @@ globalThis.TeamView = (() => {
     return `<section class="tv-sec" aria-labelledby="tvPeople"><h2 id="tvPeople">People <span class="sub">${esc(plural(p.members.length, 'member'))}, the busiest first</span></h2>
       ${p.members.length ? `${cards ? `<div class="tv-people">${cards}</div>` : ''}${rest}` : '<div class="empty">Nobody is on this team yet.</div>'}
       <p class="hint">What they posted anywhere in the inbox, the last ${p.weeks.length} weeks. Expertise and products are Clef's areas and technologies of their threads, those they have more of than the rest of the team first, each a link to it on the Topics page (a name, to the person there); key customers the ones they posted the most for.</p></section>`;
-  }
-
-  /** A ranked list: `rows` of `{ n, of, lead, name, sub, weekly, tail }`. */
-  function ranked(rows, weeks) {
-    const most = Math.max(...rows.map((r) => r.n), 1);
-    return `<ol class="tv-rank">${rows.map((r, i) => `<li>
-      <span class="tv-i">${i + 1}</span>${r.lead}
-      <span class="tv-name">${r.name}${r.sub ? `<span class="sub">${r.sub}</span>` : ''}</span>
-      <span class="tv-meter">${bar(r.n / most, r.of)}<span class="sub">${esc(plural(r.n, 'message'))}</span></span>
-      ${spark(r.weekly, { label: `week by week, the last ${weeks} weeks` })}
-      <span class="tv-tail">${r.tail || ''}</span></li>`).join('')}</ol>`;
   }
 
   function customers(p, ctx) {
@@ -167,7 +105,7 @@ globalThis.TeamView = (() => {
       name: `<b>${esc(c.name || 'Someone')}</b>`,
       sub: [c.title ? esc(c.title) : '', c.last ? esc(`last ${ago(c.last)}`) : ''].filter(Boolean).join(' · '),
       weekly: c.weekly,
-      tail: c.teams.length ? c.teams.map((t) => `<a class="ps-chip team" href="${esc(ctx.teamHref(t.slug))}">${esc(t.name)}</a>`).join('') : '<span class="sub">on no team</span>',
+      tail: Overview.teamChips(c.teams, ctx.teamHref),
     }));
     return `<section class="tv-sec" aria-labelledby="tvCollab"><h2 id="tvCollab">Top collaborators <span class="sub">${p.collaboratorCount > p.collaborators.length ? `${p.collaborators.length} of ${p.collaboratorCount}` : esc(plural(p.collaboratorCount, 'person', 'people'))}</span></h2>
       ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">Nobody from outside the team posted in its threads in these weeks.</div>'}
@@ -184,14 +122,7 @@ globalThis.TeamView = (() => {
     || (tab === 'catalog' && t.catalog) || (tab === 'seen' && !t.followed && !t.catalog);
 
   function techRows(p, ctx, tab) {
-    const shown = p.tech.filter((t) => techIn(t, tab));
-    if (!shown.length) return '<div class="empty">None.</div>';
     const most = Math.max(...p.tech.map((t) => t.threads), 1);
-    const layers = (p.layers || []).map((l) => ({ ...l, tech: shown.filter((t) => (t.layer || 'other') === l.id) }))
-      .filter((l) => l.tech.length);
-    const known = new Set((p.layers || []).map((l) => l.id));
-    const loose = shown.filter((t) => !known.has(t.layer || 'other'));
-    if (loose.length) layers.push({ id: 'other', name: 'Other', tech: loose });
     const row = (t) => {
       const href = t.path ? ctx.kbHref(t.path) : null;
       const name = href ? `<a href="${esc(href)}">${esc(t.name)}</a>` : esc(t.name);
@@ -202,27 +133,15 @@ globalThis.TeamView = (() => {
       return `<li><span class="tv-name"><span class="tv-line">${name}${follow}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
         <span class="tv-meter">${bar(t.threads / most)}<span class="sub">${esc(plural(t.threads, 'thread'))}</span></span>${spark(t.weekly, { cls: 'tech', label: 'messages in its threads, week by week' })}</li>`;
     };
-    return layers.map((l) => `<div class="tv-layer" data-layer="${esc(l.id)}"><h3>${esc(l.name)}</h3><ul>${l.tech.map(row).join('')}</ul></div>`).join('');
+    return Overview.layers(p.tech.filter((t) => techIn(t, tab)), p.layers, row);
   }
 
   function tech(p, ctx, tab) {
-    const count = (id) => p.tech.filter((t) => techIn(t, id)).length;
+    const list = TECH_TABS.map((t) => ({ ...t, n: p.tech.filter((x) => techIn(x, t.id)).length }));
     return `<section class="tv-sec" aria-labelledby="tvTech"><h2 id="tvTech">Products and technologies</h2>
-      <div class="tv-tabs" role="tablist" aria-label="Which technologies">${TECH_TABS.map((t) => `<button type="button" role="tab" data-tech-tab="${t.id}" aria-selected="${t.id === tab}"${t.hint ? ` title="${esc(t.hint)}"` : ''}>${esc(t.label)} <span class="sub">${count(t.id)}</span></button>`).join('')}</div>
+      ${Overview.tabs(list, tab, { label: 'Which technologies' })}
       <div class="tv-stack" id="tvTechRows">${techRows(p, ctx, tab)}</div>
       <p class="hint">By the layer of a customer's stack they are in. The count is the team's threads Clef sees one in, the line what was said in them week by week.</p></section>`;
-  }
-
-  function knowledge(p, ctx) {
-    const { kb } = p;
-    if (!kb) return `<section class="tv-sec" aria-labelledby="tvKb"><h2 id="tvKb">Knowledge base</h2><div class="empty">${esc(p.team.name)} has no knowledge base yet: its thread agents start one.</div></section>`;
-    const total = kb.types.reduce((s, t) => s + t.n, 0);
-    const tiles = kb.types.map((t) => `<div class="tv-kbtype"><h3><b>${t.n.toLocaleString('en')}</b> ${esc(`${t.type.toLowerCase()}${t.n === 1 ? '' : 's'}`)}</h3>
-      ${t.entries.length ? `<ul>${t.entries.map((e) => `<li>${ctx.kbHref(e.path) ? `<a href="${esc(ctx.kbHref(e.path))}"${e.description ? ` title="${esc(e.description)}"` : ''}>${esc(e.title)}</a>` : esc(e.title)}</li>`).join('')}${t.n > t.entries.length ? `<li class="sub">and ${t.n - t.entries.length} more</li>` : ''}</ul>` : ''}</div>`).join('');
-    return `<section class="tv-sec" aria-labelledby="tvKb"><h2 id="tvKb">Knowledge base <span class="sub">${esc(plural(total, 'entry', 'entries'))}</span></h2>
-      ${tiles ? `<div class="tv-kb">${tiles}</div>` : '<div class="empty">Nothing in it yet but its catalog: its thread agents add what they learn.</div>'}
-      <div id="tvStack"></div>
-      ${kb.readable ? '' : '<p class="hint">The members of the ops teams read the entries themselves.</p>'}</section>`;
   }
 
   // ---- the page -----------------------------------------------------------------------------
@@ -235,48 +154,17 @@ globalThis.TeamView = (() => {
    */
   function html(p, ctx) {
     return `<div class="tv">
-      <section class="tv-sec tv-hero" aria-label="Activity">${stats(p)}${chart(p)}</section>
+      <section class="tv-sec tv-hero" aria-label="Activity">${stats(p)}${Overview.chart(p, { label: `Messages in ${p.team.name}'s threads` })}</section>
       ${people(p, ctx)}
       <div class="tv-two">${customers(p, ctx)}${collaborators(p, ctx)}</div>
       ${tech(p, ctx, 'all')}
-      ${knowledge(p, ctx)}
+      ${Overview.knowledge(p.kb, { name: p.team.name, kbHref: ctx.kbHref })}
     </div>`;
   }
 
   /** What the overview does in `el`: the chart's weeks under the pointer, the tabs of the technologies. */
   function wire(el, p, ctx) {
-    const plot = el.querySelector('[data-chart] .tv-plot');
-    if (plot) {
-      const tip = plot.querySelector('.tv-tip');
-      const guide = plot.querySelector('.guide');
-      const n = p.weeks.length;
-      const show = (e) => {
-        const r = plot.getBoundingClientRect();
-        const f = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-        const i = Math.round(f * (n - 1));
-        const at = (600 * i) / Math.max(1, n - 1);
-        guide.setAttribute('x1', at);
-        guide.setAttribute('x2', at);
-        guide.hidden = false;
-        const all = p.activity.messages[i];
-        const staff = p.activity.staff[i];
-        tip.innerHTML = `<b>Week of ${esc(dayOf(p.weeks[i]))}</b><span>${esc(plural(all, 'message'))} in ${esc(plural(p.activity.threads[i], 'thread'))}</span><span>${esc(`${staff.toLocaleString('en')} by Adobe, ${(all - staff).toLocaleString('en')} by customers and partners`)}</span>`;
-        tip.hidden = false;
-        tip.classList.toggle('left', f > 0.6);
-        tip.dataset.at = f.toFixed(3);
-        tip.style.setProperty('--at', f.toFixed(3));
-      };
-      plot.addEventListener('pointermove', show);
-      plot.addEventListener('pointerleave', () => { tip.hidden = true; guide.hidden = true; });
-    }
-    for (const b of el.querySelectorAll('[data-tech-tab]')) {
-      b.onclick = () => {
-        for (const x of el.querySelectorAll('[data-tech-tab]')) x.setAttribute('aria-selected', String(x === b));
-        el.querySelector('#tvTechRows').innerHTML = techRows(p, ctx, b.dataset.techTab);
-      };
-    }
-    // The months, where their weeks are.
-    for (const m of el.querySelectorAll('.tv-months [data-at]')) m.style.setProperty('--at', m.dataset.at);
+    Overview.wire(el, p, { onTab: (b) => { el.querySelector('#tvTechRows').innerHTML = techRows(p, ctx, b.dataset.tab); } });
   }
 
   return { html, wire };

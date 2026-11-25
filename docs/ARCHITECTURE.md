@@ -3464,6 +3464,50 @@ Names, numbers, pictures and titles only: no message text and no mail address. A
 cost the biggest team under a second of D1, and are kept five minutes per isolate.
 `GET /api/teams` lists every team, for the list beside it.
 
+### Customer overview
+
+A customer's page in Customers opens at its overview too (`ui/customer.js`, from
+`GET /api/customers/profile?org=`, `src/orgprofile.js`), every internal user's as a team's is: a
+starting point for anyone at Adobe who is about to talk to the customer. Both overviews are drawn
+with `ui/overview.js` (`Overview`) in `ui/spectrum-overview.css`. What changes the customer (who
+follows it, its channels; its name, icon, type and merges for the admin team) is its second
+section, **Manage** (`view=manage`), for the members of the ops teams; its agent's sections follow.
+Its title has a Follow of your own (its conversations in your personal view) and a link to its
+threads in an inbox of yours, where one has them. The overview is the customer's last 26 weeks of
+channel threads filed under it, from D1:
+
+- its **threads**, week by week, as a stacked bar chart (where a team's has an area chart), broken
+  down by the focus picked above it: who said it (its people, the partners', Adobe's), which of
+  its people, the team a thread is filed under, its likeliest area (Clef's surest), technology,
+  or its channel (`breakdowns`; a thread is in one part of each, the biggest seven parts shown and
+  the rest as one); beside it its numbers, and how soon Adobe **answers** a thread its people
+  start: the
+  median wait from their first message to Adobe's first post, over the threads started in the
+  window (with how many of those have an answer);
+- its **people**, a card each: their picture and title, a partner's marked (its mail domain in
+  `partner_domains`, src/profiles.js), how often they post (in its threads, a line of their
+  weeks), what they ask about (Clef's areas and technologies of their threads, ranked by their
+  lift over the rest of its people, as a team's members are), and their profile there: their
+  Contact in its knowledge base (`contacts/`, found by their name as src/kbpeople.js finds one),
+  its description under their name, for whoever may read it. The cards are drawn by
+  `ui/person.js`, as a team's members' and the inbox's profile cards are;
+- **Adobe's people** in its threads (a person's accounts as one, no workflow or bot account),
+  ranked by what they said there, with the teams they are on; and the **teams** that work it: by
+  what their people said there, with the channels filed under or shared with each, and whether
+  it follows the customer (a follow rule);
+- what its threads are **about** (Clef's areas, by how many threads), and its **channels**, by
+  what was said in each, with the team it is filed under and those it is shared with;
+- its **technologies**, by the layer of a stack: those Clef sees most in its threads, and the
+  parts of its stack drawing (`org_stacks`) for whoever may read its knowledge base;
+- its **knowledge base**, its entries by type (`kb_concepts`, the catalog left out), listed for
+  whoever may read it (src/kbaccess.js) and counted for everyone else, and its stack drawing
+  (`GET /api/kb/stack?org=`).
+
+Names, numbers, pictures and titles only: no message text and no mail address. The biggest
+customer's numbers cost under a tenth of a second of D1, and are kept five minutes per isolate.
+`GET /api/customers` lists every customer for Adobe's people on no team, who do not get
+`/api/admin/orgs`.
+
 ## Customer portal
 
 Some customers can use neither Slack nor Teams with Adobe: their company allows no chat tool
