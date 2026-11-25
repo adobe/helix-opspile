@@ -16,9 +16,14 @@
  * knowledge bases and every thread of the inbox, and for the people on its team (`write`)
  * changes that knowledge base and runs commands on its computer, some of which it asks you to run
  * (a card in the conversation, with Run and Deny: POST /api/kb/chat/bash). It is
- * a panel beside the page (`#kbchat`), on every section of it, opened and closed by its tab at
- * the page's edge (`#kbchatTab`) and kept open or closed in the browser; on a narrow screen it
- * comes over the page. Each conversation is yours alone: **New conversation** starts another,
+ * a panel beside the page (`#kbchat`), on every section of it; on a narrow screen it comes over
+ * the page. Its tab (`#kbchatTab`) is the inbox's sidebar's: purple, on the right edge of what is
+ * picked, halfway down, where the panel comes from; a click opens or closes it, and pulled, the
+ * panel comes with it and stays or goes by where it is let go. Where the page is wide enough
+ * (ROOM) the panel shows by itself, unless you closed it there (kept in the browser); where it
+ * comes over the page it shows only when you open it. The tab wiggles when the agent answers,
+ * and has a dot while an answer came with the panel closed. Each conversation is yours alone:
+ * **New conversation** starts another,
  * and the earlier ones are a pick away. Over GET and POST /api/kb/chat; while the agent works
  * on an answer the panel asks every few seconds, shows what it is doing, and when it answers,
  * the page shows the knowledge base as it is now (`onAnswer`, Agent.changed). What it says is
@@ -32,6 +37,17 @@ globalThis.KbChat = (() => {
   // Past this, the panel stops asking; a message or opening it asks again.
   const WAIT_MS = 15 * 60 * 1000;
   const MAX = 8000;
+  // Beside the page from here (ui/spectrum-kbchat.css), over it below; and from ROOM, where what
+  // is picked keeps room enough beside it, shown by itself.
+  const BESIDE = matchMedia('(min-width: 1100px)');
+  const ROOM = matchMedia('(min-width: 1400px)');
+  const REDUCED = matchMedia('(prefers-reduced-motion: reduce)');
+  // How far a press moves before it pulls the panel instead of clicking, and how fast a flick is
+  // (px/ms): as the inbox's sidebar's tab.
+  const PULL_SLOP = 4;
+  const PULL_FLICK = 0.4;
+  const OPEN_HINT = `Talk to the ${NAME}: only you see it, nothing is posted`;
+  const CLOSE_HINT = `Close the ${NAME} (Esc)`;
   const CHAT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
   const EXAMPLES = {
     team: [
@@ -64,6 +80,8 @@ globalThis.KbChat = (() => {
     loading: false, sending: false, turn: 0, timer: 0, since: 0, draft: new Map(), write: false,
     // The values typed into a command's fields, by request and name, kept across redraws.
     values: new Map(), deciding: new Set(),
+    // Whether a knowledge base was shown before on this page.
+    seen: false,
   };
   const host = { onAnswer: () => {} };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -78,17 +96,141 @@ globalThis.KbChat = (() => {
     return today ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
       : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
-  const wasOpen = () => {
-    try { return localStorage.getItem(KEEP) === 'open'; } catch { return false; }
+  // Whether you opened or closed the panel last: `open`, `closed`, or null (never).
+  const kept = () => {
+    try { return localStorage.getItem(KEEP); } catch { return null; }
   };
-  const keepOpen = (shown) => {
+  const keep = (shown) => {
     try { localStorage.setItem(KEEP, shown ? 'open' : 'closed'); } catch { /* private mode */ }
   };
+  /** Whether the panel shows by itself: beside the page where you left it open, and where the
+   * page is wide enough unless you closed it. Never where it comes over the page. */
+  const shows = () => BESIDE.matches && (kept() === 'open' || (ROOM.matches && kept() !== 'closed'));
 
   let panel = null;
   let tab = null;
   const main = () => document.querySelector('main');
-  const isOpen = () => Boolean(panel && !panel.hidden);
+  const isOpen = () => Boolean(panel && !panel.hidden && motion.to === 1);
+
+  // ---- how it comes and goes ---------------------------------------------------------------
+  // `p` from 0 (gone) to 1 (open), eased on its way to `to` over --kbchat-motion; the room beside
+  // the page and the tray over it follow it (`--kbchat-open`, ui/spectrum-kbchat.css).
+  const motion = {
+    p: 0, to: 0, raf: 0, pulling: false,
+  };
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2);
+
+  function draw() {
+    const { p } = motion;
+    const m = main();
+    if (p > 0 && p < 1) m.style.setProperty('--kbchat-open', p.toFixed(4));
+    else m.style.removeProperty('--kbchat-open');
+    m.classList.toggle('kbchatting', p > 0);
+    m.classList.toggle('kbchat-moving', p > 0 && p < 1);
+    panel.hidden = p === 0;
+    syncTab();
+  }
+
+  /** Towards `to` (0 or 1), over --kbchat-motion if `animate` (not where motion is reduced). */
+  function move(to, { animate = true } = {}) {
+    cancelAnimationFrame(motion.raf);
+    motion.raf = 0;
+    motion.to = to;
+    const ms = parseFloat(getComputedStyle(main()).getPropertyValue('--kbchat-motion')) || 0;
+    const dur = animate && !REDUCED.matches ? ms * Math.abs(to - motion.p) : 0;
+    if (!dur) {
+      motion.p = to;
+      draw();
+      return;
+    }
+    const from = motion.p;
+    const t0 = performance.now();
+    const step = (now) => {
+      const k = clamp01((now - t0) / dur);
+      motion.p = from + (to - from) * ease(k);
+      draw();
+      if (k < 1) motion.raf = requestAnimationFrame(step);
+      else motion.raf = 0;
+    };
+    motion.raf = requestAnimationFrame(step);
+  }
+
+  /** The tab, as the panel stands: hidden without a knowledge base. */
+  function syncTab() {
+    if (!tab) return;
+    tab.hidden = !state.base;
+    const shown = motion.to === 1;
+    tab.title = shown ? CLOSE_HINT : OPEN_HINT;
+    tab.setAttribute('aria-label', tab.title);
+    tab.setAttribute('aria-expanded', String(shown));
+    if (shown) tab.classList.remove('fresh');
+  }
+
+  /** The tab wiggles, once (not where motion is reduced, nor while it is pulled). */
+  function wiggle() {
+    if (!tab || tab.hidden || REDUCED.matches || motion.pulling) return;
+    tab.classList.remove('wiggle');
+    tab.getBoundingClientRect();
+    tab.classList.add('wiggle');
+  }
+
+  /** The tab: a click opens the panel or closes it; pulled, the panel comes with it. */
+  function wireTab() {
+    let pull = null;
+    let pulled = false;
+    tab.onpointerdown = (e) => {
+      if (e.button !== 0 || !state.base) return;
+      pull = {
+        id: e.pointerId, x: e.clientX, from: motion.p, moved: false, lx: e.clientX, lt: e.timeStamp, v: 0,
+      };
+      pulled = false;
+      tab.setPointerCapture(e.pointerId);
+    };
+    tab.onpointermove = (e) => {
+      if (!pull || e.pointerId !== pull.id) return;
+      const dx = e.clientX - pull.x;
+      if (!pull.moved) {
+        if (Math.abs(dx) < PULL_SLOP) return;
+        pull.moved = true;
+        pulled = true;
+        motion.pulling = true;
+        tab.classList.add('pulling');
+        cancelAnimationFrame(motion.raf);
+        motion.raf = 0;
+        if (panel.hidden) render();
+      }
+      const dt = e.timeStamp - pull.lt;
+      if (dt > 0) pull.v = (e.clientX - pull.lx) / dt;
+      Object.assign(pull, { lx: e.clientX, lt: e.timeStamp });
+      const w = panel.offsetWidth || 360;
+      motion.p = clamp01(pull.from - dx / w);
+      draw();
+    };
+    const done = (e) => {
+      if (!pull || e.pointerId !== pull.id) return;
+      const { moved, v, lt } = pull;
+      pull = null;
+      motion.pulling = false;
+      tab.classList.remove('pulling');
+      setTimeout(() => { pulled = false; });
+      if (!moved) return;
+      // Resting a moment before letting go is no flick.
+      const flick = e.timeStamp - lt > 100 ? 0 : v;
+      const shown = Math.abs(flick) > PULL_FLICK ? flick < 0 : motion.p > 0.5;
+      // Let go where it was (open, pulled part of the way in): it settles back, all of it.
+      if (shown && motion.to === 1) move(1);
+      else if (shown) open();
+      else close();
+    };
+    tab.onpointerup = done;
+    tab.onpointercancel = done;
+    tab.onclick = () => {
+      if (pulled) return;
+      if (isOpen()) close(); else open();
+    };
+    tab.onanimationend = () => tab.classList.remove('wiggle');
+  }
 
   function mount() {
     if (panel) return;
@@ -100,12 +242,22 @@ globalThis.KbChat = (() => {
     tab.id = 'kbchatTab';
     tab.type = 'button';
     tab.hidden = true;
-    tab.innerHTML = `${CHAT_ICON}<span>Ask the agent</span>`;
-    tab.onclick = () => open();
+    tab.setAttribute('aria-controls', 'kbchat');
+    tab.innerHTML = `${CHAT_ICON}<span class="dot" aria-hidden="true"></span>`;
+    wireTab();
     main().append(panel, tab);
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && isOpen() && panel.contains(document.activeElement)) close();
     });
+    // The window grew or shrank: the panel shows where it does by itself now, and does not stay
+    // over the page it was beside.
+    const room = () => {
+      if (!state.base) return;
+      if (shows() && !isOpen()) open({ focus: false, keepIt: false });
+      else if (!BESIDE.matches && isOpen()) close({ keepIt: false });
+    };
+    BESIDE.addEventListener('change', room);
+    ROOM.addEventListener('change', room);
   }
 
   // ---- what it shows -----------------------------------------------------------------------
@@ -266,7 +418,8 @@ globalThis.KbChat = (() => {
   function poll() {
     clearTimeout(state.timer);
     const running = state.bash.some((r) => r.status === 'running');
-    if (!isOpen() || !(waiting() || running) || Date.now() - state.since > WAIT_MS) return;
+    // Also while the panel is closed: its tab says when the answer is there.
+    if (!state.base || !(waiting() || running) || Date.now() - state.since > WAIT_MS) return;
     state.timer = setTimeout(() => load({ chat: state.chat, quiet: true }), POLL_MS);
   }
 
@@ -307,7 +460,11 @@ globalThis.KbChat = (() => {
     state.working = res.body.working || (waiting() ? 'Reading your message' : null);
     render();
     const after = state.messages.filter((m) => m.role === 'agent').length;
-    if (quiet && after > before) host.onAnswer(b.repo);
+    if (quiet && after > before) {
+      host.onAnswer(b.repo);
+      if (!isOpen()) tab.classList.add('fresh');
+      wiggle();
+    }
     poll();
   }
 
@@ -385,24 +542,30 @@ globalThis.KbChat = (() => {
 
   // ---- the panel ---------------------------------------------------------------------------
 
-  function open({ focus = true } = {}) {
+  /**
+   * Opens the panel; `animate`, it comes out of the page's edge. Kept, as you opened it, unless it
+   * showed by itself (`keepIt: false`).
+   */
+  function open({ focus = true, animate = true, keepIt = true } = {}) {
     if (!state.base) return;
-    keepOpen(true);
+    if (keepIt) keep(true);
+    const was = isOpen();
     panel.hidden = false;
-    tab.hidden = true;
-    main().classList.add('kbchatting');
     state.since = Date.now();
     render({ focus });
+    if (!was || motion.p !== 1) move(1, { animate });
     load({ chat: state.chat });
   }
 
-  function close() {
-    keepOpen(false);
-    clearTimeout(state.timer);
-    panel.hidden = true;
-    tab.hidden = !state.base;
-    main().classList.remove('kbchatting');
-    if (state.base) tab.focus();
+  /**
+   * Closes the panel. Beside the page that is kept (it does not show by itself again); over the
+   * page it is not, as that closes it to get back to the page (`keepIt: false` neither).
+   */
+  function close({ keepIt = true, animate = true } = {}) {
+    if (keepIt && BESIDE.matches) keep(false);
+    const focused = panel.contains(document.activeElement);
+    move(0, { animate });
+    if (state.base && focused) tab.focus();
   }
 
   /**
@@ -415,24 +578,23 @@ globalThis.KbChat = (() => {
     if ((b && b.repo) === (state.base && state.base.repo)) return;
     // What was typed for the knowledge base it showed stays that one's, and its panel goes.
     keepDraft();
+    const was = isOpen();
     panel.innerHTML = '';
     clearTimeout(state.timer);
     state.turn += 1;
     Object.assign(state, {
       base: b, chat: null, fresh: false, messages: [], bash: [], chats: [], working: null, error: '', write: Boolean(b && (b.write ?? b.may)),
     });
+    tab.classList.remove('fresh', 'wiggle');
     if (!b) {
-      panel.hidden = true;
-      tab.hidden = true;
-      main().classList.remove('kbchatting');
+      move(0, { animate: false });
       return;
     }
-    if (wasOpen()) open({ focus: false });
-    else {
-      panel.hidden = true;
-      tab.hidden = false;
-      main().classList.remove('kbchatting');
-    }
+    // Open as another one is picked, it stays open; else it shows where it does by itself.
+    // It comes out of the edge, but is simply there as the page loads.
+    if (was || shows()) open({ focus: false, animate: state.seen, keepIt: false });
+    else move(0, { animate: false });
+    state.seen = true;
   }
 
   return {
