@@ -2395,7 +2395,8 @@ with `why`, what exactly its thread waits on there, in its own words. Each chang
 update, as an input of its own, with `why` given back:
 
 - a **thread** of the inbox, by its key, its opspile inbox link or a link to one of its messages
-  (Slack, Teams, Discord): a minute after a new message in it (a `{ watched }` queue job; a burst is
+  (Slack, Teams, Discord; one in a channel the agent may not read only where a person asked for it
+  in the sidebar, else it is "not found", as one that does not exist): a minute after a new message in it (a `{ watched }` queue job; a burst is
   one update), every message after the watch's `seen` but the system's and Adobe's own bots', so
   that two agents that watch each other's threads do not wake each other with their posts. The
   update says how many came, from which side and when, and names the authors and the tool to read
@@ -2403,10 +2404,18 @@ update, as an input of its own, with `why` given back:
   tools; another customer's, without `any_thread`, is a count and nothing more. The agent reads
   the messages itself, as any it reads.
 - a **GitHub issue or pull request**, by its URL, only of an account the opspile GitHub App reads
-  for the agent's channel (its `github` server on there): polled every five minutes by a cron of
-  its own (`*/5 * * * *`, `pollWatches`) with the installation's token. The update says what
-  changed (its state, merged, out of draft, its title, new comments and reviews and by whom), not
-  what a comment says: the agent reads it with the github MCP server, which hides strangers' text.
+  for the agent's channel (its `github` server on there, asked again before every poll and again
+  before the agent is told: one whose channel lost it ends, and the agent hears only that). A cron
+  of its own (`*/5 * * * *`, `pollWatches`) polls each when it is due (`poll_after`), with the
+  installation's token. A poll is one conditional request (`If-None-Match`): an unchanged item is
+  a 304, which GitHub does not count against the rate limit; only a changed one asks for its pull
+  request, comments and reviews. A quiet item is polled slower (a twelfth of how long it has been
+  quiet, from 4 minutes to an hour), a failing one backs off (doubling, up to six hours), and all
+  four times slower while the installation has less than a tenth of its requests left. Once GitHub
+  limits an installation (a 429, a 403 with no requests left or a `retry-after`), none of its
+  watches is asked until it says. The update says what changed (its state, merged, out of draft,
+  its title, new comments and reviews and by whom), not what a comment says: the agent reads it
+  with the github MCP server, which hides strangers' text.
 
 `seen` moves before the agent is told, and only from what the job read (`WHERE seen = ?`), so two
 jobs of a burst wake it once. A watch ends with `unwatch_related`, or after 30 days (`days`, at most

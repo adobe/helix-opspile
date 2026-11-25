@@ -11,10 +11,10 @@
  */
 
 import { entryOf } from './drafts.js';
-import { currentApp, github } from './github.js';
+import { currentApp, GITHUB_API, installationToken } from './github.js';
 import { agentStub } from './agent/stub.js';
 import {
-  forgetWatched, githubChanges, githubNow, githubRef,
+  forgetWatched, githubAccess, githubChanges, githubRef, MIN_POLL_MS,
 } from './agent/watches.js';
 
 /**
@@ -24,8 +24,10 @@ import {
  * watching agent through its object (`watchUpdate`).
  */
 
-const POLL_EVERY_MS = 4 * 60 * 1000;
 const MAX_POLL = 30;
+/** A quiet GitHub item is polled at most this rarely, a failing one backs off to this. */
+const MAX_POLL_MS = 60 * 60 * 1000;
+const MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
 
 /** Tells the watching agent of watch `w` about `change`, in its own object. */
 async function tell(env, w, change) {
@@ -99,9 +101,151 @@ export async function notifyWatched(env, thread, now = new Date()) {
   return { result: told ? 'told' : 'nothing new', watches: (watches || []).length, told };
 }
 
+/** When to poll a GitHub watch again, as an ISO time (see `pollWatches`). */
+export function nextPoll(now, {
+  changedAt = null, failures = 0, low = false, resetAt = null,
+} = {}) {
+  const t = now.getTime();
+  // Quiet items slower: a twelfth of how long it has been quiet, from 4 minutes to an hour.
+  const quiet = changedAt ? Math.max(0, t - Date.parse(changedAt)) : 0;
+  let every = Math.min(MAX_POLL_MS, Math.max(MIN_POLL_MS, quiet / 12));
+  if (low) {
+    every *= 4;
+  }
+  if (failures) {
+    every = Math.max(every, Math.min(MAX_BACKOFF_MS, MIN_POLL_MS * 2 ** failures));
+  }
+  const at = Math.max(t + every, resetAt ? resetAt + 1000 : 0);
+  return new Date(at).toISOString();
+}
+
 /**
- * Cron (`WATCH_CRON`): each GitHub watch not polled for a few minutes, the oldest first: what
- * changed since its `seen` wakes its agent. Expired watches end, and their agents hear so.
+ * A GET of GitHub's API as `token`, conditional on `etag` (a 304 does not count against the rate
+ * limit): `{ status, data, etag, rate: { remaining, limit, reset }, retryAfter }`, never throws
+ * for an HTTP status.
+ */
+export async function githubGet(path, token, etag = null) {
+  const res = await fetch(`${GITHUB_API}${path}`, {
+    headers: {
+      accept: 'application/vnd.github+json',
+      'user-agent': 'helix-opspile',
+      'x-github-api-version': '2022-11-28',
+      authorization: `Bearer ${token}`,
+      ...(etag ? { 'if-none-match': etag } : {}),
+    },
+  });
+  const num = (h) => (res.headers.get(h) === null ? null : Number(res.headers.get(h)));
+  return {
+    status: res.status,
+    data: res.status === 200 ? await res.json().catch(() => null) : null,
+    etag: res.headers.get('etag'),
+    rate: { remaining: num('x-ratelimit-remaining'), limit: num('x-ratelimit-limit'), reset: num('x-ratelimit-reset') },
+    retryAfter: num('retry-after'),
+  };
+}
+
+/**
+ * When GitHub says to stop asking with this token, as ms since the epoch, or null: a 429, or a
+ * 403 with no requests left (the primary limit, until `x-ratelimit-reset`) or a `retry-after`
+ * (the secondary limit).
+ */
+export function limitedUntil(r, now = Date.now()) {
+  if (r.status !== 403 && r.status !== 429) {
+    return null;
+  }
+  if (r.retryAfter !== null && Number.isFinite(r.retryAfter)) {
+    return now + r.retryAfter * 1000;
+  }
+  if (r.rate.remaining === 0 && r.rate.reset) {
+    return r.rate.reset * 1000;
+  }
+  // GitHub's advice for a secondary limit without a header: wait a minute at least.
+  return r.status === 429 ? now + 60_000 : null;
+}
+
+/** The target of the agent of inbox entry `key`, as far as its GitHub access goes. */
+async function watcherTarget(env, key) {
+  const entry = await entryOf(env, key);
+  const row = entry && await env.DB.prepare('SELECT team, channel_id, source, org FROM threads WHERE thread = ?')
+    .bind(entry.key).first();
+  return row ? {
+    key: entry.key,
+    team: entry.team || row.team,
+    channelId: row.channel_id,
+    source: row.source,
+    org: row.org,
+  } : null;
+}
+
+/** What one poll of watch `w` found: `{ told }`, `{ unchanged }` or `{ limited: until }`. */
+async function pollOne(env, app, w, ref, { now, rate }) {
+  const { token } = await installationToken(env, app, w.installation);
+  const base = `/repos/${encodeURIComponent(ref.owner)}/${encodeURIComponent(ref.repo)}`;
+  const r = await githubGet(`${base}/issues/${ref.number}`, token, w.etag);
+  if (r.rate.limit) {
+    Object.assign(rate, r.rate);
+  }
+  const limited = limitedUntil(r, now.getTime());
+  if (limited) {
+    return { limited };
+  }
+  if (r.status === 304) {
+    return { unchanged: true };
+  }
+  if (r.status !== 200 || !r.data) {
+    throw new Error(`GitHub GET ${base}/issues/${ref.number}: ${r.status}`);
+  }
+  const issue = r.data;
+  if (!issue.updated_at || issue.updated_at === w.seen) {
+    await env.DB.prepare('UPDATE agent_watches SET etag = ? WHERE id = ?').bind(r.etag, w.id).run();
+    return { unchanged: true };
+  }
+  const since = w.seen || w.set_at;
+  const [pull, comments, reviews] = await Promise.all([
+    issue.pull_request ? githubGet(`${base}/pulls/${ref.number}`, token) : null,
+    githubGet(`${base}/issues/${ref.number}/comments?since=${encodeURIComponent(since)}&per_page=50`, token),
+    issue.pull_request ? githubGet(`${base}/pulls/${ref.number}/reviews?per_page=100`, token) : null,
+  ]);
+  const ok = (x) => (x && x.status === 200 && Array.isArray(x.data) ? x.data : []);
+  const p = pull && pull.status === 200 ? pull.data : null;
+  const state = {
+    type: issue.pull_request ? 'pull' : 'issue',
+    title: String(issue.title || '').slice(0, 200),
+    state: issue.state || null,
+    reason: issue.state_reason || null,
+    merged: p ? Boolean(p.merged) : null,
+    draft: p ? Boolean(p.draft) : null,
+    comments: Number(issue.comments) || 0,
+  };
+  const lines = githubChanges(JSON.parse(w.state || '{}'), state, {
+    comments: ok(comments).filter((c) => c.created_at > since)
+      .map((c) => ({ by: (c.user && c.user.login) || 'someone', at: c.created_at })),
+    reviews: ok(reviews).filter((v) => v.submitted_at && v.submitted_at > since)
+      .map((v) => ({ by: (v.user && v.user.login) || 'someone', at: v.submitted_at, state: v.state })),
+  });
+  const moved = await env.DB.prepare(`UPDATE agent_watches SET seen = ?, state = ?, etag = ?,
+      changed_at = ? WHERE id = ? AND COALESCE(seen, '') = ?`)
+    .bind(issue.updated_at, JSON.stringify(state), r.etag, now.toISOString(), w.id, w.seen || '').run();
+  if (lines.length && moved.meta && moved.meta.changes) {
+    await tell(env, w, {
+      type: 'github', target: w.target, title: state.title, item: state.type, lines, latest: issue.updated_at,
+    });
+    return { told: true };
+  }
+  return { unchanged: true };
+}
+
+/**
+ * Cron (`WATCH_CRON`, every five minutes): the GitHub watches due (`poll_after`), the most
+ * overdue first. Before each poll, the watching agent's channel is asked again whether it still
+ * reads the item's account (src/agent/watches.js githubAccess): one that no longer does ends, and
+ * its agent hears only that. Each poll is one conditional request (an unchanged item answers 304,
+ * which costs no rate limit); only a changed one asks for its pull request, comments and reviews.
+ * When to poll again (`nextPoll`): a quiet item slower (up to an hour), a failing one backing off
+ * (up to six hours), all of them four times slower while the installation has less than a tenth
+ * of its requests left; once GitHub limits an installation (a 429, a 403 without requests left),
+ * none of its watches is asked until GitHub says so. Expired watches end, and their agents hear
+ * so.
  */
 export async function pollWatches(env, now = new Date()) {
   if (!env.DB) {
@@ -120,63 +264,72 @@ export async function pollWatches(env, now = new Date()) {
     forgetWatched();
   }
   const { results } = await env.DB.prepare(`SELECT * FROM agent_watches WHERE kind = 'github'
-    AND (checked_at IS NULL OR checked_at < ?) ORDER BY checked_at LIMIT ?`)
-    .bind(new Date(now.getTime() - POLL_EVERY_MS).toISOString(), MAX_POLL).all();
+    AND (poll_after IS NULL OR poll_after <= ?) ORDER BY poll_after LIMIT ?`).bind(at, MAX_POLL).all();
   const watches = results || [];
+  const out = {
+    expired: (expired || []).length, polled: 0, told: 0, failed: 0, revoked: 0, limited: 0,
+  };
   if (!watches.length) {
-    return { expired: (expired || []).length, polled: 0 };
+    return out;
   }
   const app = await currentApp(env).catch(() => null);
-  let told = 0;
-  let failed = 0;
+  // Per installation: GitHub's rate limit as it last said, and until when it is limited.
+  const rates = new Map();
+  const until = new Map();
+  const later = (w, opts) => env.DB.prepare(`UPDATE agent_watches SET checked_at = ?, poll_after = ?,
+      failures = ? WHERE id = ?`).bind(at, nextPoll(now, opts), opts.failures || 0, w.id).run();
   for (const w of watches) {
-    // eslint-disable-next-line no-await-in-loop
-    await env.DB.prepare('UPDATE agent_watches SET checked_at = ? WHERE id = ?').bind(at, w.id).run();
     const ref = githubRef(w.url);
-    if (!app || !ref) {
-      failed += 1;
+    // eslint-disable-next-line no-await-in-loop
+    const target = ref && await watcherTarget(env, w.watcher);
+    const access = !app || !target ? { error: 'there is no opspile GitHub App in this deployment' }
+      // eslint-disable-next-line no-await-in-loop
+      : await githubAccess(env, target, ref.owner).catch((e) => ({ error: e.message }));
+    if (access.error) {
+      // eslint-disable-next-line no-await-in-loop
+      await env.DB.prepare('DELETE FROM agent_watches WHERE id = ?').bind(w.id).run();
+      // eslint-disable-next-line no-await-in-loop
+      await tell(env, w, { type: 'revoked', reason: access.error });
+      out.revoked += 1;
+    } else if (until.has(access.installation)) {
+      // eslint-disable-next-line no-await-in-loop
+      await later(w, {
+        changedAt: w.changed_at, failures: w.failures, resetAt: until.get(access.installation),
+      });
+      out.limited += 1;
     } else {
+      const cur = { ...w, installation: access.installation };
+      if (cur.installation !== w.installation) {
+        // eslint-disable-next-line no-await-in-loop
+        await env.DB.prepare('UPDATE agent_watches SET installation = ? WHERE id = ?').bind(cur.installation, w.id).run();
+      }
+      const rate = rates.get(cur.installation) || {};
+      rates.set(cur.installation, rate);
+      out.polled += 1;
       try {
         // eslint-disable-next-line no-await-in-loop
-        const current = await githubNow(env, app, w.installation, ref);
-        if (current.updated && current.updated !== w.seen) {
-          const since = w.seen || w.set_at;
+        const r = await pollOne(env, app, cur, ref, { now, rate });
+        const low = Boolean(rate.limit && rate.remaining !== null
+          && rate.remaining < rate.limit / 10);
+        if (r.limited) {
+          until.set(cur.installation, r.limited);
+          out.limited += 1;
           // eslint-disable-next-line no-await-in-loop
-          const [comments, reviews] = await Promise.all([
-            github(`${current.base}/issues/${ref.number}/comments?since=${encodeURIComponent(since)}&per_page=50`, { token: current.token })
-              .catch(() => []),
-            current.state.type === 'pull'
-              ? github(`${current.base}/pulls/${ref.number}/reviews?per_page=100`, { token: current.token }).catch(() => [])
-              : [],
-          ]);
-          const was = JSON.parse(w.state || '{}');
-          const lines = githubChanges(was, current.state, {
-            comments: (comments || []).filter((c) => c.created_at > since)
-              .map((c) => ({ by: (c.user && c.user.login) || 'someone', at: c.created_at })),
-            reviews: (reviews || []).filter((r) => r.submitted_at && r.submitted_at > since)
-              .map((r) => ({ by: (r.user && r.user.login) || 'someone', at: r.submitted_at, state: r.state })),
-          });
+          await later(w, { changedAt: w.changed_at, failures: w.failures, resetAt: r.limited });
+        } else {
+          out.told += r.told ? 1 : 0;
           // eslint-disable-next-line no-await-in-loop
-          const moved = await env.DB.prepare(`UPDATE agent_watches SET seen = ?, state = ?
-            WHERE id = ? AND COALESCE(seen, '') = ?`)
-            .bind(current.updated, JSON.stringify(current.state), w.id, w.seen || '').run();
-          if (lines.length && moved.meta && moved.meta.changes) {
-            // eslint-disable-next-line no-await-in-loop
-            await tell(env, w, {
-              type: 'github', target: w.target, title: current.state.title, item: current.state.type, lines, latest: current.updated,
-            });
-            told += 1;
-          }
+          await later(w, { changedAt: r.told ? at : w.changed_at, low });
         }
       } catch (e) {
-        failed += 1;
+        out.failed += 1;
         console.error(JSON.stringify({
           route: 'cron', watch: 'github', id: w.id, error: e.message,
         }));
+        // eslint-disable-next-line no-await-in-loop
+        await later(w, { changedAt: w.changed_at, failures: (Number(w.failures) || 0) + 1 });
       }
     }
   }
-  return {
-    expired: (expired || []).length, polled: watches.length, told, failed,
-  };
+  return out;
 }

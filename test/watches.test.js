@@ -19,7 +19,9 @@ import {
   forgetWatched, githubChanges, githubRef, inboxThread, isWatched, MAX_WATCHES, removeWatch,
   setWatch, watchText, watchUpdate,
 } from '../src/agent/watches.js';
-import { notifyWatched, pollWatches } from '../src/watches.js';
+import {
+  limitedUntil, nextPoll, notifyWatched, pollWatches,
+} from '../src/watches.js';
 import { opspileExtension } from '../src/agent/tools.js';
 import { forgetGithub, pkcs8Pem } from '../src/github.js';
 import { seal } from '../src/post.js';
@@ -40,7 +42,7 @@ const hour = (n) => new Date(NOW.getTime() - n * 3600000).toISOString();
 
 // GitHub's API, as far as a watch reads it.
 const GH = {
-  issue: null, pull: null, comments: [], reviews: [],
+  issue: null, pull: null, comments: [], reviews: [], limited: null, requests: [], remaining: 4000,
 };
 const realFetch = globalThis.fetch;
 before(() => {
@@ -61,8 +63,18 @@ before(() => {
     if (request.headers.get('authorization') !== `Bearer ${TOKEN}`) {
       return reply({ message: 'Bad credentials' }, 401);
     }
+    GH.requests.push(`${url.pathname}${request.headers.get('if-none-match') ? ' (conditional)' : ''}`);
+    if (GH.limited) {
+      return Response.json({ message: 'API rate limit exceeded' }, { status: 403, headers: GH.limited });
+    }
     if (url.pathname === '/repos/acme-labs/site/issues/7') {
-      return GH.issue ? reply(GH.issue) : reply({ message: 'Not Found' }, 404);
+      if (!GH.issue) {
+        return reply({ message: 'Not Found' }, 404);
+      }
+      const etag = `"${GH.issue.updated_at}"`;
+      const headers = { etag, 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': String(GH.remaining) };
+      return request.headers.get('if-none-match') === etag ? new Response(null, { status: 304, headers })
+        : Response.json(GH.issue, { headers });
     }
     if (url.pathname === '/repos/acme-labs/site/pulls/7') {
       return reply(GH.pull);
@@ -149,7 +161,7 @@ beforeEach(() => {
   forgetWatched();
   forgetGithub();
   Object.assign(GH, {
-    issue: null, pull: null, comments: [], reviews: [],
+    issue: null, pull: null, comments: [], reviews: [], limited: null, requests: [], remaining: 4000,
   });
 });
 
@@ -167,10 +179,14 @@ describe('watching a thread', () => {
     assert.equal(set.watch.expires_at, '2026-12-25T12:00:00.000Z');
     // A Slack link to a message of C: another customer's channel, which the agent may not read.
     post(e, C, hour(7), { id: '1792000200.000100' });
-    const slack = await quiet(() => setWatch(watcher(e, { sidebar: false }), {
-      url: 'https://acme.slack.com/archives/C3/p1792000200000100', why: 'CDN Co has to fix the purge', days: 5,
+    const link = 'https://acme.slack.com/archives/C3/p1792000200000100';
+    // Not asked for in the sidebar: another customer's thread is "not found", as one that is none.
+    const outside = await setWatch(watcher(e, { sidebar: false }), { url: link, why: 'x' }, NOW);
+    assert.equal(outside.error, (await setWatch(watcher(e, { sidebar: false }), { url: 'https://acme.slack.com/archives/C3/p1792000999000100', why: 'x' }, NOW)).error);
+    const slack = await quiet(() => setWatch(watcher(e), {
+      url: link, why: 'CDN Co has to fix the purge', days: 5,
     }, NOW));
-    assert.deepEqual([slack.watch.target, slack.readable, slack.watch.set_in], [C, null, 'thread']);
+    assert.deepEqual([slack.watch.target, slack.readable, slack.watch.set_in], [C, null, 'sidebar']);
     assert.equal(slack.others.length, 1);
   });
 
@@ -179,7 +195,7 @@ describe('watching a thread', () => {
     const w = watcher(e);
     assert.match((await setWatch(w, { url: A, why: 'x' }, NOW)).error, /your own thread/);
     assert.match((await setWatch(w, { url: B }, NOW)).error, /`why`/);
-    assert.match((await setWatch(w, { url: 'https://example.com/nope', why: 'x' }, NOW)).error, /no thread has that key/);
+    assert.match((await setWatch(w, { url: 'https://example.com/nope', why: 'x' }, NOW)).error, /No thread you may read has that key/);
     assert.match((await setWatch(w, { url: B, why: 'x', days: 91 }, NOW)).error, /`days`/);
     await quiet(() => setWatch(w, { url: B, why: 'x' }, NOW));
     assert.match((await setWatch(w, { url: B, why: 'again' }, NOW)).error, /watch .* already/);
@@ -321,7 +337,7 @@ describe('watching a GitHub issue or pull request', () => {
     assert.deepEqual([set.watch.kind, set.watch.target, set.watch.installation, set.watch.seen], ['github', 'acme-labs/site#7', 41, hour(5)]);
     // Polled again before four minutes passed: nothing asked; unchanged: nothing told.
     const early = await quiet(() => pollWatches(e, new Date(NOW.getTime() + 60_000)));
-    assert.deepEqual(early, { expired: 0, polled: 0 });
+    assert.equal(early.polled, 0);
     assert.equal((await quiet(() => pollWatches(e, new Date(NOW.getTime() + 300_000)))).told, 0);
     // It merged, with a comment and an approval.
     Object.assign(GH.issue, { state: 'closed', updated_at: hour(-1), comments: 2 });
@@ -341,6 +357,105 @@ describe('watching a GitHub issue or pull request', () => {
     assert.match(watchText({
       id: 'w', url: PR_URL, why: 'x', set_at: hour(1),
     }, change), /GitHub pull request acme-labs\/site#7 \("Purge stale objects"\) changed:\n- It is closed \(merged\)/);
+  });
+
+  it('asks with the ETag, and an unchanged item costs one free request', async () => {
+    const e = env();
+    await withGithub(e);
+    await quiet(() => setWatch(watcher(e), { url: PR_URL, why: 'x' }, NOW));
+    GH.requests.length = 0;
+    await quiet(() => pollWatches(e, new Date(NOW.getTime() + 300_000)));
+    await quiet(() => pollWatches(e, new Date(NOW.getTime() + 900_000)));
+    assert.deepEqual(GH.requests, ['/repos/acme-labs/site/issues/7', '/repos/acme-labs/site/issues/7 (conditional)']);
+    assert.equal(e.told.length, 0);
+  });
+
+  it('stops asking an installation GitHub limits, until GitHub says so', async () => {
+    const e = env();
+    await withGithub(e);
+    await quiet(() => setWatch(watcher(e), { url: PR_URL, why: 'x' }, NOW));
+    e.DB.sqlite.prepare(`INSERT INTO agent_watches (id, watcher, kind, target, url, why, installation, seen,
+      set_at, poll_after, expires_at) VALUES ('w2', ?, 'github', 'acme-labs/site#8',
+      'https://github.com/acme-labs/site/issues/8', 'y', 41, ?, ?, ?, '2099-01-01T00:00:00Z')`)
+      .run(A, hour(5), hour(1), hour(1));
+    const reset = Math.floor(NOW.getTime() / 1000) + 3600;
+    GH.limited = { 'x-ratelimit-remaining': '0', 'x-ratelimit-limit': '5000', 'x-ratelimit-reset': String(reset) };
+    GH.requests.length = 0;
+    const r = await quiet(() => pollWatches(e, new Date(NOW.getTime() + 300_000)));
+    assert.deepEqual([r.polled, r.limited, r.failed], [1, 2, 0]);
+    assert.equal(GH.requests.length, 1, 'the second watch of the installation is not asked');
+    const after = e.DB.rows('SELECT poll_after FROM agent_watches ORDER BY id').map((w) => w.poll_after);
+    assert.ok(after.every((t) => Date.parse(t) > reset * 1000), after.join());
+    // Before the reset, nothing is due.
+    GH.limited = null;
+    assert.equal((await quiet(() => pollWatches(e, new Date(reset * 1000 - 60_000)))).polled, 0);
+  });
+
+  it('polls four times slower while the installation runs low on requests', async () => {
+    const e = env();
+    await withGithub(e);
+    await quiet(() => setWatch(watcher(e), { url: PR_URL, why: 'x' }, NOW));
+    GH.remaining = 100;
+    const at = new Date(NOW.getTime() + 300_000);
+    await quiet(() => pollWatches(e, at));
+    const [{ poll_after: next }] = e.DB.rows('SELECT poll_after FROM agent_watches');
+    assert.equal(Date.parse(next) - at.getTime(), 16 * 60_000);
+  });
+
+  it('ends a watch whose channel no longer reads the account, and tells nothing of the item', async () => {
+    const e = env();
+    await withGithub(e);
+    await quiet(() => setWatch(watcher(e), { url: PR_URL, why: 'x' }, NOW));
+    e.DB.sqlite.exec('UPDATE mcp_global_switches SET enabled = 0');
+    Object.assign(GH.issue, { title: 'A secret title', updated_at: hour(-1) });
+    GH.requests.length = 0;
+    const r = await quiet(() => pollWatches(e, new Date(NOW.getTime() + 300_000)));
+    assert.equal(r.revoked, 1);
+    assert.deepEqual(GH.requests, []);
+    assert.deepEqual(e.DB.rows('SELECT id FROM agent_watches'), []);
+    const [[, { change }]] = e.told;
+    assert.equal(change.type, 'revoked');
+    assert.doesNotMatch(JSON.stringify(change), /secret/);
+    assert.match(watchText({
+      id: 'w', url: PR_URL, why: 'x', set_at: hour(1),
+    }, change), /ended .*github MCP server is not on/s);
+  });
+
+  it('is checked again by the agent before it is told', async () => {
+    const e = env();
+    await withGithub(e, { on: false });
+    const a = thinker(e);
+    const res = await quiet(() => watchUpdate(a, {
+      watch: {
+        id: 'w1', kind: 'github', target: 'acme-labs/site#7', url: PR_URL, why: 'x', set_at: hour(9),
+      },
+      change: {
+        type: 'github', target: 'acme-labs/site#7', title: 'A secret title', item: 'pull', lines: ['It is closed now, was open.'], latest: hour(1),
+      },
+    }));
+    assert.equal(res.result, 'told');
+    assert.doesNotMatch(a.submitted[0][0], /secret|closed now/);
+    assert.match(a.submitted[0][0], /ended/);
+  });
+
+  it('polls a quiet item slower, a failing one later, and waits out a limit', () => {
+    const at = (opts) => Date.parse(nextPoll(NOW, opts)) - NOW.getTime();
+    const M = 60_000;
+    assert.equal(at({ changedAt: hour(0.1) }), 4 * M);
+    assert.equal(at({ changedAt: hour(6) }), 30 * M);
+    assert.equal(at({ changedAt: hour(48) }), 60 * M);
+    assert.equal(at({ changedAt: hour(0.1), low: true }), 16 * M);
+    assert.equal(at({ changedAt: hour(0.1), failures: 3 }), 32 * M);
+    assert.equal(at({ changedAt: hour(0.1), failures: 20 }), 360 * M);
+    assert.equal(at({ resetAt: NOW.getTime() + 7200_000 }), 7201_000);
+    const r = (status, h = {}) => ({
+      status, retryAfter: h.retry ?? null, rate: { remaining: h.remaining ?? null, reset: h.reset ?? null },
+    });
+    assert.equal(limitedUntil(r(200)), null);
+    assert.equal(limitedUntil(r(403)), null, 'a 403 without a limit is a failure');
+    assert.equal(limitedUntil(r(403, { remaining: 0, reset: 100 })), 100_000);
+    assert.equal(limitedUntil(r(403, { retry: 30 }), 1000), 31_000);
+    assert.equal(limitedUntil(r(429), 1000), 61_000);
   });
 
   it('ends a watch that ran out, and says so', async () => {
