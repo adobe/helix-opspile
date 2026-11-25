@@ -18,6 +18,8 @@ import { SCRIPTS } from './ui.js';
 // (ui/overview.js), then the team's overview.
 // eslint-disable-next-line no-new-func
 const TeamView = new Function('globalThis', `${SCRIPTS['person.js']}\nconst { Person } = globalThis;\n${SCRIPTS['overview.js']}\nconst { Overview } = globalThis;\n${SCRIPTS['team.js']}\nreturn globalThis.TeamView;`)({});
+// eslint-disable-next-line no-new-func
+const Person = new Function('globalThis', `${SCRIPTS['person.js']}\nreturn globalThis.Person;`)({});
 
 // Made-up people, customers and technologies only.
 const weeks = ['2026-11-16', '2026-11-23'];
@@ -85,6 +87,28 @@ describe('a team\'s overview, drawn', () => {
   it('leaves a tag unlinked where there is nowhere to go', () => {
     const html = TeamView.html(profile, { ...ctx, topicHref: () => null });
     assert.match(html, /<span class="ps-chip" title="Caching: 2 threads of theirs">Caching<\/span>/);
+  });
+
+  it('draws a person\'s line in the color of their initials, a customer\'s gray until its icon is read', () => {
+    const p = {
+      ...profile,
+      customers: [{
+        slug: 'acme', name: 'ACME', type: 'customer', icon: null, messages: 4, staff: 2, threads: 1, weekly: [1, 3], members: [],
+      }],
+      customerCount: 1,
+      collaborators: [{
+        id: 8, name: 'Grace', avatar: null, title: null, messages: 2, weekly: [1, 1], teams: [],
+      }],
+      collaboratorCount: 1,
+    };
+    const html = TeamView.html(p, { ...ctx, orgIcon: () => '<img class="ico" src="/api/favicon?domain=acme.example" alt="">' });
+    const hue = (name) => ['cinnamon', 'seafoam', 'purple', 'magenta', 'blue', 'green', 'brown', 'cyan'][Person.hueOf(name)];
+    const card = html.slice(html.indexOf('<article'), html.indexOf('</article>'));
+    assert.match(card, new RegExp(`<div class="ps-freq"><svg class="ps-spark" data-tint="${hue('Ada <Ops>')}"`));
+    const collab = html.slice(html.indexOf('id="tvCollab"'));
+    assert.match(collab, new RegExp(`<svg class="ps-spark" data-tint="${hue('Grace')}"`));
+    const customers = html.slice(html.indexOf('id="tvCustomers"'), html.indexOf('id="tvCollab"'));
+    assert.match(customers, /<svg class="ps-spark" viewBox=/);
   });
 });
 

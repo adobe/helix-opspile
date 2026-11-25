@@ -43,6 +43,11 @@ code and docs, is the decision model that labels threads and channels.
 - The header is every page's too: its styles in `ui/spectrum.css` and `ui/header.js`, the global
   `Header`: the switch between the pages, which keeps where each page was left in the browser
   tab, and you with your menu. Change it there, not in a page.
+- **The sidebar of Teams, Customers and Topics is one** (`ui/sidenav.js`, the global `SideNav`;
+  its styles "the sidebar" in `ui/spectrum.css`): one-line rows of one height, ranked by activity
+  (`recent`, the threads active in the last 30 days, `src/listactivity.js`) unless its footer's
+  sort asks for names, its filter on the footer's left, and what waits for someone a group at
+  the top. `ui/admin.js` and `ui/topics.js` draw their rows with it: change it there.
 - **The pages are Spectrum 2** (README, "Spectrum 2"), and their styles are all in
   `ui/spectrum.css` (every page's: the base, the header, the shared look) and
   `ui/spectrum-<page>.css` (the page's layout, then its look), which the pages link. A page

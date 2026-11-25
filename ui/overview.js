@@ -20,12 +20,13 @@
  * - `stats` and `chart`: the big numbers at the top, and the weeks as an area chart of what
  *   Adobe's people said under what the others did (a team's); a week under the pointer says its
  *   numbers. `bars` and `wireBars`: the weeks as stacked bars of any breakdown (a customer's).
- * - `ranked`: a ranking, each row with its rank, a face or an icon, a meter and a line.
+ * - `ranked`: a ranking, each row with its rank, a face or an icon, a meter and a line in the
+ *   color of its face (`tint`) or icon (`tintIcons`, in `wire`).
  * - `tabs` and `layers`: tabs over a list, and a list of technologies by the layer of a stack.
  * - `knowledge`: a knowledge base's entries by type, a tile each.
  * - `threads` and `waitTag`: a list of threads (a vendor's cases, what waits on a vendor), each
  *   with who has the next move.
- * - `wire`: what the chart and the tabs do.
+ * - `wire`: what the chart and the tabs do, and the icons' colors.
  *
  * Everything in them is a name, a number or a picture, written escaped.
  */
@@ -196,9 +197,10 @@ globalThis.Overview = (() => {
     : '<span class="sub">on no team</span>');
 
   /**
-   * A ranked list: `rows` of `{ n, of, lead, name, sub, weekly, tail, count }`, `count` the words
-   * under the meter ("12 messages" without it), `of` the second part of its bar; a row without
-   * `weekly` has no line.
+   * A ranked list: `rows` of `{ n, of, lead, name, sub, weekly, tail, count, tint }`, `count` the
+   * words under the meter ("12 messages" without it), `of` the second part of its bar, `tint` the
+   * color of its line (a person's, `Person.tintOf`); a row without `weekly` has no line. A row led
+   * by an org's icon (`img.ico`) gets its color from the icon (`tintIcons`).
    */
   function ranked(rows, weeks) {
     const most = Math.max(...rows.map((r) => r.n), 1);
@@ -206,7 +208,7 @@ globalThis.Overview = (() => {
       <span class="tv-i">${i + 1}</span>${r.lead || '<span class="tv-lead"></span>'}
       <span class="tv-name">${r.name}${r.sub ? `<span class="sub">${r.sub}</span>` : ''}</span>
       <span class="tv-meter">${bar(r.n / most, r.of ?? null)}<span class="sub">${esc(r.count || plural(r.n, 'message'))}</span></span>
-      ${r.weekly ? spark(r.weekly, { label: `week by week, the last ${weeks} weeks` }) : ''}
+      ${r.weekly ? spark(r.weekly, { label: `week by week, the last ${weeks} weeks`, tint: r.tint || '' }) : ''}
       <span class="tv-tail">${r.tail || ''}</span></li>`).join('')}</ol>`;
   }
 
@@ -283,11 +285,147 @@ globalThis.Overview = (() => {
       ${kb.readable ? '' : `<p class="hint">${esc(readers)}</p>`}</section>`;
   }
 
+  // ---- an icon's color ---------------------------------------------------------------------
+
+  /** The Spectrum 2 colors an org's line can be in (ui/spectrum.css, `.ps-spark[data-tint]`). */
+  const PALETTE = ['red', 'orange', 'yellow', 'chartreuse', 'celery', 'green', 'seafoam', 'cyan',
+    'turquoise', 'blue', 'indigo', 'purple', 'fuchsia', 'magenta', 'pink', 'cinnamon', 'brown'];
+
+  /** sRGB (0 to 255) in OKLab, where a distance is about as large as two colors look apart. */
+  function oklab([r, g, b]) {
+    const lin = (c) => {
+      const v = c / 255;
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    const [R, G, B] = [lin(r), lin(g), lin(b)];
+    const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B);
+    const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B);
+    const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+    return [
+      0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+      1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+      0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+    ];
+  }
+
+  /** The palette's colors as the page has them (light or dark), in OKLab: read once, from `el`. */
+  let palette = null;
+  function paletteIn(el) {
+    if (palette) return palette;
+    const probe = document.createElement('span');
+    probe.className = 'ps-spark';
+    probe.hidden = true;
+    probe.style.color = 'var(--tint)';
+    el.append(probe);
+    palette = PALETTE.map((name) => {
+      probe.dataset.tint = name;
+      const rgb = (getComputedStyle(probe).color.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+      return { name, lab: rgb.length === 3 ? oklab(rgb) : null };
+    }).filter((c) => c.lab);
+    probe.remove();
+    return palette;
+  }
+
+  /** The palette's color nearest `rgb`; lightness counts half, as the palette's are all mid-tones. */
+  function nearest(rgb, el) {
+    const [L, a, b] = oklab(rgb);
+    let best = null;
+    let least = Infinity;
+    for (const c of paletteIn(el)) {
+      const d = (0.5 * (L - c.lab[0])) ** 2 + (a - c.lab[1]) ** 2 + (b - c.lab[2]) ** 2;
+      if (d < least) {
+        least = d;
+        best = c.name;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * An image's main color, in sRGB: the average of its most common hue (by 20°) among its
+   * colorful pixels, null where too few are (a gray, black or white logo). Throws for an image of
+   * another origin that does not allow it (a tainted canvas).
+   */
+  function dominant(img) {
+    const n = 24;
+    const canvas = document.createElement('canvas');
+    canvas.width = n;
+    canvas.height = n;
+    const g = canvas.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0, n, n);
+    const { data } = g.getImageData(0, 0, n, n);
+    const bins = Array.from({ length: 18 }, () => ({ n: 0, w: 0, rgb: [0, 0, 0] }));
+    let seen = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] >= 128) {
+        seen += 1;
+        const px = [data[i], data[i + 1], data[i + 2]];
+        const max = Math.max(...px);
+        const d = max - Math.min(...px);
+        const sat = max ? d / max : 0;
+        if (sat >= 0.3 && max >= 64) {
+          let h;
+          if (max === px[0]) h = (px[1] - px[2]) / d;
+          else if (max === px[1]) h = (px[2] - px[0]) / d + 2;
+          else h = (px[0] - px[1]) / d + 4;
+          const bin = bins[Math.round(((h * 60 + 360) % 360) / 20) % 18];
+          const w = sat * (max / 255);
+          bin.n += 1;
+          bin.w += w;
+          bin.rgb = bin.rgb.map((v, k) => v + w * px[k]);
+        }
+      }
+    }
+    const best = bins.reduce((x, y) => (y.w > x.w ? y : x));
+    if (!seen || best.n < 0.08 * seen) return null;
+    return best.rgb.map((v) => v / best.w);
+  }
+
+  /** The tint of the icon at `src` (a color of PALETTE, or null), once per icon. */
+  const iconTints = new Map();
+  function iconTint(src, el) {
+    if (!iconTints.has(src)) {
+      iconTints.set(src, new Promise((resolve) => {
+        const img = new Image();
+        if (new URL(src, location.href).origin !== location.origin) img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            const rgb = dominant(img);
+            resolve(rgb ? nearest(rgb, el) : null);
+          } catch {
+            resolve(null);
+          }
+        };
+        img.onerror = () => resolve(null);
+        img.src = src;
+      }));
+    }
+    return iconTints.get(src);
+  }
+
+  /**
+   * The lines of the rankings in `el` led by an org's icon, in the icon's color: the Spectrum 2
+   * color nearest its main one. A gray logo, or one of another origin that does not allow it to be
+   * read, keeps the gray line.
+   */
+  function tintIcons(el) {
+    for (const li of el.querySelectorAll('.tv-rank li')) {
+      const icon = li.querySelector('img.ico, img[data-fav]');
+      const line = li.querySelector('.ps-spark:not([data-tint])');
+      if (icon && line) {
+        iconTint(icon.getAttribute('src'), el).then((tint) => {
+          if (tint) line.dataset.tint = tint;
+        });
+      }
+    }
+  }
+
   /**
    * What an overview does in `el`: the chart's weeks under the pointer (`p.weeks`, `p.activity`),
    * and its tabs: `onTab(button)` for a click on one (`[data-tab]`), after it is picked.
    */
   function wire(el, p, { onTab = null } = {}) {
+    tintIcons(el);
     const plot = el.querySelector('[data-chart] .tv-plot');
     if (plot) {
       const tip = plot.querySelector('.tv-tip');

@@ -49,6 +49,7 @@ import { LAYERS, STACK_PATH } from './stack.js';
 import { partnerOf } from './profiles.js';
 import { personSlug } from './agent/okf.js';
 import { mailDomains } from './orgmerge.js';
+import { activeSince } from './listactivity.js';
 import { AVATAR, NAME, TITLE } from './personsql.js';
 import { VENDOR, vendorForViewer, vendorNumbers } from './vendors.js';
 import {
@@ -700,12 +701,13 @@ export async function orgDirectory(env) {
       (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug AND t.kind = 'channel')
         AS channels,
       (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug) AS threads,
+      (SELECT COUNT(*) FROM threads t WHERE t.org = s.slug AND t.last_at >= ?2) AS recent,
       (SELECT MAX(COALESCE(last_at, any_at)) FROM threads t WHERE t.org = s.slug) AS latest
     FROM (SELECT slug FROM orgs UNION SELECT DISTINCT org FROM threads
       UNION SELECT slug FROM knowledge_bases WHERE kind = 'org') s
     LEFT JOIN orgs o ON o.slug = s.slug
-    WHERE s.slug != ? AND s.slug NOT IN (SELECT slug FROM org_merges)
-    ORDER BY COALESCE(o.name, s.slug)`).bind(UNASSIGNED).all();
+    WHERE s.slug != ?1 AND s.slug NOT IN (SELECT slug FROM org_merges)
+    ORDER BY COALESCE(o.name, s.slug)`).bind(UNASSIGNED, activeSince()).all();
   // Its usual mail domain, whose favicon it is shown with when it has no icon (as Customers').
   const domains = await mailDomains(env);
   return (results || []).map((o) => ({ ...o, domain: (domains.get(o.slug) || [])[0] || null }));
