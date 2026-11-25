@@ -15,7 +15,7 @@ import {
 } from '../drafts.js';
 import { chatRequests, requestOf } from '../bashrequests.js';
 import { json } from '../http.js';
-import { managesTeam } from '../review.js';
+import { managesTeam } from '../roles.js';
 import { ensureKnowledgeBase, repoName } from '../kb.js';
 import { notifyRoom } from '../notify.js';
 import {

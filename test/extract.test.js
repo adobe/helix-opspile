@@ -19,7 +19,7 @@ import {
   techNames, testRule,
 } from '../src/extract.js';
 import { kbAdmin } from '../src/kbadmin.js';
-import { ADMIN_TEAM } from '../src/review.js';
+import { ADMIN_TEAM } from '../src/roles.js';
 import { d1 } from './d1.js';
 import { quiet } from './fakes.js';
 
@@ -56,7 +56,7 @@ async function call(e, me, method, path, body) {
 }
 
 describe('the admin team\'s extraction rules', () => {
-  it('is the admin team of src/review.js', () => {
+  it('is the admin team of src/roles.js', () => {
     assert.equal(GLOBAL_TEAM, ADMIN_TEAM);
   });
 

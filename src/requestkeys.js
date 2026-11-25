@@ -29,7 +29,7 @@ export const PREFIX = 'request:';
  */
 export const KINDS = ['channel', 'member', 'portal', 'merge', 'bot', 'account', 'tech', 'rule', 'question'];
 
-/** The team whose inbox has them (src/review.js ADMIN_TEAM). */
+/** The team whose inbox has them (src/roles.js ADMIN_TEAM). */
 const ADMIN_TEAM = 'admin';
 
 export const isRequestKey = (key) => typeof key === 'string' && key.startsWith(PREFIX);

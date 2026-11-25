@@ -30,7 +30,7 @@ import { json, text } from './http.js';
 import { checkState, makeState, seal } from './post.js';
 import { repoName } from './kb.js';
 import { mayEdit, mayRead } from './kbaccess.js';
-import { isAdmin, managesTeam } from './review.js';
+import { isAdmin, managesTeam } from './roles.js';
 
 /**
  * The agents' API (ui/agent.js) for the MCP servers of the thread agents (migration 0023),

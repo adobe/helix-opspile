@@ -25,7 +25,7 @@ import { mcpAdmin } from './mcpadmin.js';
 import {
   access, mayEdit, mayRead, mayWrite,
 } from './kbaccess.js';
-import { isAdmin, managesTeam } from './review.js';
+import { isAdmin, managesTeam } from './roles.js';
 import { toolAdmin } from './tooladmin.js';
 import { extractionAdmin } from './extractadmin.js';
 import { decideKbChatBash, kbChatView, talkInKbChat } from './agent/stub.js';

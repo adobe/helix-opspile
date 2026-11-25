@@ -26,7 +26,7 @@ import { isStaffDomain, loadRules, toChannel } from './lookup.js';
 import { enqueueMoves, plan } from './refile.js';
 import {
   ADMIN_TEAM, isAdmin, managedTeams, managesTeam,
-} from './review.js';
+} from './roles.js';
 import {
   classify, followedOrg, orgPattern, slug as toSlug, UNASSIGNED,
 } from './rules.js';

@@ -116,9 +116,6 @@ they may see or work (`inPersonalView`, `mayWork`). A mute and their follow of t
 or the other (`changeFollow` in `src/following.js`): following it clears `muted_at`, and muting it
 deletes the follow, in the same request; the Undo of either puts back both.
 
-**Label review.** applies to the current label → history only. A review holds while its
-`labeled_through` matches the label's (`src/review.js`).
-
 **Resolution.** Clef decides → resolved → reopened → Clef decides. Not stored: `resolution` in
 `src/resolve.js` works it out from the staff ✅ on the root, the thread agent's resolution (an
 `agent_labels` row, which counts as a ✅ from its `at`), the latest customer message and
@@ -132,8 +129,7 @@ row per platform thread and question, replaced by the agent's next answer, never
 expired. Whether a row holds is worked out on each read (`holds`): a kind always, the urgency and
 the next actor while no person has posted after its `at` (`threads.last_at`, which bots do not
 move, so the agent's own posts keep them). A row is written on the entry's latest member, and the
-same question is deleted on the others in the same batch, so one row speaks for the group. A
-person's label review of the current label wins over it (`effectiveLabel`).
+same question is deleted on the others in the same batch, so one row speaks for the group.
 
 **Status pile.** critical, hot, you, waiting, silent, team, quiet. Not stored: `statusOf` in
 `ui/inbox.js`, from the thread, the viewer and the clock (for normal and low urgency, a clock

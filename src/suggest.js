@@ -17,7 +17,7 @@ import {
   getChannel, isStaffDomain, loadRules, slackApi,
 } from './lookup.js';
 import { followChange } from './refile.js';
-import { ADMIN_TEAM } from './review.js';
+import { ADMIN_TEAM } from './roles.js';
 import { sharedWith } from './shares.js';
 
 /**

@@ -1491,18 +1491,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .pcard .ask-about { display: flex; align-items: center; gap: var(--spectrum-spacing-75); width: 100%; margin-top: var(--spectrum-spacing-200); font: inherit; text-align: left; cursor: pointer; }
 .pcard .ask-about .bubble-ico { position: static; flex: none; padding: 0; }
 
-.rv .apply { display: flex; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-100); }
-.rv .apply .send { border-radius: var(--spectrum-corner-radius-100); padding: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) var(--spectrum-spacing-200); background: var(--me); color: var(--spectrum-white); border: 0; }
-.rv .apply .send:disabled { opacity: .45; }
-/* Above a message's quick reactions and the reaction picker, which scroll under it. */
-.rv { position: sticky; top: 0; z-index: 5; box-shadow: 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) var(--spectrum-spacing-300) var(--spectrum-transparent-black-300); margin: var(--spectrum-spacing-200) calc(var(--spectrum-spacing-400) - var(--spectrum-spacing-50)) 0; padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); border: var(--spectrum-border-width-100) solid var(--line); border-radius: var(--spectrum-corner-radius-700); background: var(--card); font-size: var(--spectrum-font-size-100); }
-.rv .q { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); align-items: center; flex-wrap: wrap; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) 0; }
-.rv .q b { width: calc(var(--spectrum-spacing-100) * 10 + var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); font-weight: 600; }
-.rv button { padding: var(--spectrum-border-width-100) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); }
-.rv button.model { border-color: var(--accent); }
-.rv button.picked { background: var(--accent); color: var(--spectrum-white); }
-.rv .hist { color: var(--mute); font-size: var(--spectrum-font-size-75); margin-top: var(--spectrum-spacing-75); }
-
 /*
  * Read and unread set apart (the thread list's design A): unread rows are white (lighter in
  * the dark theme), read rows tinted; unread titles are bold, the time blue, a resolved one's
@@ -1602,7 +1590,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   #threads .count .filt { display: inline-flex; }
   .ph, .feed { padding-left: var(--spectrum-spacing-300); padding-right: var(--spectrum-spacing-300); }
   .composer { padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-300) calc(var(--spectrum-spacing-200) + var(--safe-bottom)); }
-  .rv { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-300) 0; }
   .mentions { left: var(--spectrum-spacing-300); max-width: calc(100% - var(--spectrum-spacing-500)); }
 }
 @media (max-width: 699px) {
@@ -1639,7 +1626,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .composer { padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-100) + var(--safe-bottom)); }
 
 
-  .rv { margin: var(--spectrum-spacing-100) var(--spectrum-spacing-200) 0; padding: var(--spectrum-spacing-100) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); }
   .mentions { left: var(--spectrum-spacing-200); min-width: 0; width: calc(100% - var(--spectrum-spacing-400)); }
   .empty { padding: var(--spectrum-spacing-500) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); }
 }
@@ -2943,25 +2929,9 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 }
 .spectrum .edithint button[data-edit-save] { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-25); border: 0; font-weight: var(--spectrum-bold-font-weight); }
 
-/* Reviewing Clef's labels (admin): a floating panel (layer 2, elevated, it sticks over the
-   feed), each question an ActionGroup whose picked answer is selected; Apply the accent. */
-.spectrum .rv {
-  padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
-  font-size: var(--spectrum-font-size-100);
-  background: var(--s2-popover);
-  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-200);
-  border-radius: var(--spectrum-corner-radius-large-default);
-  box-shadow: var(--s2-elevated);
-}
-.spectrum .rv .q { gap: var(--spectrum-spacing-75); }
-.spectrum .rv .q b { font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .rv button { min-height: var(--spectrum-component-height-75); padding: 0 var(--spectrum-component-edge-to-text-75); font-size: var(--spectrum-font-size-75); }
-.spectrum .rv button.model { border-color: var(--spectrum-accent-visual-color); }
-.spectrum .rv button.picked, .spectrum .rv button.picked:hover { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); }
-.spectrum .rv .hist { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum :is(.rv, dialog.confirm) .apply { gap: var(--spectrum-spacing-100); }
-/* The accent Button wherever a panel or dialog sends. */
-.spectrum :is(.rv, dialog.confirm) .apply .send {
+.spectrum dialog.confirm .apply { gap: var(--spectrum-spacing-100); }
+/* The accent Button wherever a dialog sends. */
+.spectrum dialog.confirm .apply .send {
   min-height: var(--s2-ctl);
   padding: 0 var(--spectrum-component-pill-edge-to-text-100);
   color: var(--spectrum-white);
@@ -2971,8 +2941,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   font-size: var(--spectrum-font-size-100);
   font-weight: var(--spectrum-bold-font-weight);
 }
-.spectrum :is(.rv, dialog.confirm) .apply .send:hover:not(:disabled) { background: var(--spectrum-accent-background-color-hover); }
-.spectrum :is(.rv, dialog.confirm) .apply .send:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); }
+.spectrum dialog.confirm .apply .send:hover:not(:disabled) { background: var(--spectrum-accent-background-color-hover); }
+.spectrum dialog.confirm .apply .send:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); }
 .spectrum dialog.confirm .apply button:not(.send) {
   min-height: var(--s2-ctl);
   padding: 0 var(--spectrum-component-pill-edge-to-text-100);

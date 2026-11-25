@@ -13,7 +13,7 @@
 import { loadRules, toChannel } from '../lookup.js';
 import { platformName } from '../platforms.js';
 import { createRequest, listRequests } from '../requests.js';
-import { ADMIN_TEAM } from '../review.js';
+import { ADMIN_TEAM } from '../roles.js';
 import { matching } from '../rules.js';
 import { sharesOf } from '../shares.js';
 import { entryFollows } from '../follows.js';

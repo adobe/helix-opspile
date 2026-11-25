@@ -16,7 +16,7 @@
  * viewer cannot see is left out, preview and all.
  */
 
-import { isAdmin } from './review.js';
+import { isAdmin } from './roles.js';
 import { mayWork, teamsOf } from './shares.js';
 import { slackMessageRefs } from './slackurl.js';
 

@@ -131,8 +131,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const uiDir = join(root, 'ui');
 const PORT = Number(process.env.PORT) || 8787;
 const SIMULATE = !process.argv.includes('--no-sim');
-// Dana in the admin team: the inbox shows the switch to the knowledge-base editor, "View as"
-// (read-only) and label review.
+// Dana in the admin team: the inbox shows the switch to the knowledge-base editor and "View as"
+// (read-only).
 const ADMIN = process.argv.includes('--admin');
 // Dana manages Edge ops and is in no admin team: what team managers see.
 const MANAGER = process.argv.includes('--manager');
@@ -1351,7 +1351,6 @@ function thread(asked) {
     // As src/api.js: the customer's stack drawing's parts (src/orgstacks.js).
     stack: orgStacks[entry.row.org] || [],
     vocab: vocabNames,
-    reviews: [],
     facts: store.facts.get(key) || [],
     resolution: resolutionOf(entry),
     draft: drafts.get(key) || null,
@@ -1998,13 +1997,9 @@ async function api(req, res, url) {
         .sort((a, b) => a.name.localeCompare(b.name)),
     });
   }
-  if (url.pathname === '/api/review/queue' && ADMIN) {
-    // No labels in the fake data, so nothing to review.
-    return json(res, { queue: [], answers: {} });
-  }
-  if (url.pathname.startsWith('/api/review') || url.pathname === '/api/people') {
-    // The fake user is not in the admin team, so the review API answers as it does for her.
-    return json(res, { error: 'label review is for the admin team' }, 403);
+  if (url.pathname === '/api/people') {
+    // The fake user is not in the admin team, so "View as" answers as it does for her.
+    return json(res, { error: 'viewing as someone is for the admin team' }, 403);
   }
   if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
     const view = inbox(null, url.searchParams.get('before'), true, null, url.searchParams.get('limit'));

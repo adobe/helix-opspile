@@ -842,7 +842,6 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
         language: label.language || 'en',
         language_p: label.language_p ?? 0.97,
         labeled_through: entry.row.any_at,
-        reviewed: [],
       });
     }
     // Clairic's affected page; the rest as the rules found them.

@@ -26,7 +26,7 @@ import {
 } from './questions.js';
 import { answerNote } from './agent/question.js';
 import { agentStub } from './agent/stub.js';
-import { ADMIN_TEAM, isAdmin } from './review.js';
+import { ADMIN_TEAM, isAdmin } from './roles.js';
 import { ruleConflicts } from './ruleconflicts.js';
 import { techConflicts } from './techconflicts.js';
 import { advanceWatermark, readState } from './threads.js';

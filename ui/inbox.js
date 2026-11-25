@@ -13,7 +13,7 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const state = {
-  me: null, team: null, data: null, open: null, compose: null, awaiting: null, sockets: [], live: 0, review: null, answers: null,
+  me: null, team: null, data: null, open: null, compose: null, awaiting: null, sockets: [], live: 0,
   sel: { type: new Set(['conversation']) },
   // Facet values excluded, as klickhaus's negative filters: by facet id, like `sel`.
   not: {},
@@ -22,7 +22,7 @@ const state = {
   list: newList(),
   // The simple personal view's customer column: the places it holds while you read (columnPlace).
   column: null,
-  cache: new Map(), staged: {}, profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, headOpen: null, composers: new Map(), attachments: new Map(), filtering: false,
+  cache: new Map(), profiles: new Map(), experts: new Map(), expertsAt: new Map(), expertsOpen: null, headOpen: null, composers: new Map(), attachments: new Map(), filtering: false,
   // The thread agents' latest turns, by inbox entry: { turn, latest, timer }.
   agents: new Map(),
   // Search (GET /api/search): the query, its words, the answer, and which request is current.
@@ -3235,30 +3235,6 @@ function threadRows() {
 function render() { syncRail(); inPass(() => { renderFilters(); renderThreads(); }); }
 
 // ---------------------------------------------------------------- messages
-const QUESTION_LABEL = { next_actor: 'Next actor', kind: 'Kind', urgency: 'Urgency', resolved: 'Resolved' };
-function modelValue(model, q) {
-  if (q === 'urgency') return model.urgency == null ? null : String(Math.round(model.urgency));
-  if (q === 'resolved') return model.resolved_p == null ? null : (model.resolved_p >= 0.5 ? 'yes' : 'no');
-  return model[q];
-}
-/**
- * Label review (admin team, "Review labels" on): pinned to the top of the thread, so you
- * can read on, pick the right answers, and apply them together.
- */
-function reviewPanel(thread, model, reviews) {
-  const current = reviews.filter((r) => r.labeled_through === model.labeled_through);
-  const staged = state.staged[thread.thread] || {};
-  const rows = Object.keys(QUESTION_LABEL).map((q) => {
-    const mv = modelValue(model, q);
-    const reviewed = (current.find((r) => r.question === q) || {}).value;
-    const picked = staged[q] ?? reviewed;
-    return `<div class="q"><b>${QUESTION_LABEL[q]}</b>${(state.answers?.[q] || []).map((v) => `<button data-q="${q}" data-v="${esc(v)}" class="${v === mv ? 'model' : ''} ${v === picked ? 'picked' : ''}" title="${v === mv ? 'Clef' : ''}">${esc(v)}</button>`).join('')}</div>`;
-  }).join('');
-  const n = Object.keys(staged).length;
-  return `<div class="rv" data-thread="${esc(thread.thread)}">${rows}
-    <div class="apply"><button class="send" data-apply="1" ${n ? '' : 'disabled'}>Apply ${n || ''} ${n === 1 ? 'correction' : 'corrections'}</button>
-      <button data-confirm="1" title="Clef got everything right">All correct</button></div></div>`;
-}
 // Discord lets only bots react through its API: reactions there are made in Discord.
 const canReact = (m) => !state.data?.me?.readonly && !m.pending && !m.deletedAt && m.author?.kind !== 'system'
   && m.source !== 'discord' && m.source !== 'request';
@@ -4678,7 +4654,7 @@ function drawJoin() {
 function sideScrolls(scroller) {
   const r = scroller.getBoundingClientRect();
   let top = r.top;
-  for (const el of scroller.querySelectorAll('.day, .rv')) {
+  for (const el of scroller.querySelectorAll('.day')) {
     const d = el.getBoundingClientRect();
     if (d.top <= r.top + 1 && d.bottom > top) top = d.bottom;
   }
@@ -5083,25 +5059,24 @@ function patchItems(feed, items) {
 }
 
 /**
- * Shows a thread in the pane: header, review panel, feed, reply box. Showing the same thread
+ * Shows a thread in the pane: header, feed, reply box. Showing the same thread
  * again (a live update, a reaction, a refresh) patches it: only the parts and messages whose
  * HTML changed are rebuilt, so the rest keeps its DOM (images, the reply box and its focus,
  * the scroll position), and an unchanged thread costs next to nothing.
  */
 function renderPane(pane, key, {
-  head, review, items, reply, patch,
+  head, items, reply, patch,
 }) {
   const feed = patch && pane.__key === key && pane.querySelector(':scope > .scroller > .feed');
   if (!feed) {
     // Another thread: its favicons that the last one had too (the customer's, the platform's)
     // stay as they were drawn.
     const was = [...pane.children];
-    pane.innerHTML = `${head}<div class="scroller">${review}<div class="feed">${items.map((i) => i.html).join('')}</div></div>${reply}`;
+    pane.innerHTML = `${head}<div class="scroller"><div class="feed">${items.map((i) => i.html).join('')}</div></div>${reply}`;
     pane.__key = key;
     const [ph, scroller, box] = pane.children;
     ph.__html = head;
     box.__html = reply;
-    if (review) scroller.firstElementChild.__html = review;
     const nodes = [...scroller.lastElementChild.children];
     if (nodes.length === items.length) nodes.forEach((n, i) => { n.__html = items[i].html; if (items[i].enter) n.classList.add('enter'); });
     keepFavicons(was, [...pane.children]);
@@ -5114,11 +5089,6 @@ function renderPane(pane, key, {
     ph.replaceWith(node);
     keepFavicons(ph, node);
     keepShown(ph, node);
-  }
-  const rv = feed.parentElement.querySelector(':scope > .rv');
-  if ((rv ? rv.__html : '') !== review) {
-    rv?.remove();
-    if (review) feed.before(htmlNode(review));
   }
   patchItems(feed, items);
   keepHaloTurning(feed);
@@ -5202,7 +5172,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     });
     return;
   }
-  const { thread, members = [], messages, watermarks, model, reviews, facts, resolution } = data;
+  const { thread, members = [], messages, watermarks, facts, resolution } = data;
   if (state.open !== key) return;
   const group = members.length > 1;
   const t = searchEntry(key) || {};
@@ -5363,7 +5333,6 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
       <div class="l1">${lead}</div>
       <div class="l2">${techMenu(data)}${stackButton(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
-  const review = state.review && state.me.admin && model ? reviewPanel({ thread: thread.label_thread || thread.thread }, model, reviews) : '';
   const reply = sideInline(key) ? sideComposer(key, thread)
     : composer(thread, resolveButton(thread, resolution), key);
   // Drawn meanwhile by another call (a page opened at a thread draws it twice at once, as it
@@ -5372,7 +5341,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     ? pane.querySelector(':scope > .scroller') : null;
   const lateTop = late ? late.scrollTop : 0;
   renderPane(pane, key, {
-    head, review, items, reply, patch: !switching,
+    head, items, reply, patch: !switching,
   });
   placeSidePanel(key, thread, runs);
   side.runs = { key, runs };
@@ -5602,7 +5571,7 @@ function drawRequest(key, data, view) {
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
       <div class="l1">${lead}</div><div class="l2"></div></div>`;
   renderPane(pane, key, {
-    head, review: '', items, reply: rqComposer(key), patch: !view.switching,
+    head, items, reply: rqComposer(key), patch: !view.switching,
   });
   placeSidePanel(key, thread, []);
   syncSideTab();
@@ -9455,18 +9424,6 @@ function renderUser() {
   $('viewing').innerHTML = as ? `<span class="lbl">Viewing as</span><b>${esc(as)}</b><span class="x" aria-hidden="true"><span class="s2-cross"></span></span>` : '';
 }
 
-/**
- * Label review (admin team): a tool beside the pages while it is off, a mode on the right
- * ("Reviewing labels ✕") while it is on, as "View as" is.
- */
-function showReview(on) {
-  state.review = on;
-  const can = Boolean(state.me?.admin);
-  $('review').hidden = !can || on;
-  $('toolsep').hidden = !can || on || $('pages').hidden;
-  $('reviewing').hidden = !can || !on;
-}
-
 // The inbox comes in pages, newest activity first: the first page shows at once, older ones
 // are fetched behind it (up to BACKFILL entries), and more on demand at the end of the list.
 // Reloading the first page (live updates) keeps the older pages already here.
@@ -10667,7 +10624,6 @@ function toUrl(push = true, entry = null) {
   for (const [id, set] of Object.entries(state.not)) if (set.size) q.set(`not.${id}`, [...set].join('|'));
   if (state.open) q.set('t', state.open);
   if (state.compose) q.set('compose', '1');
-  if (state.review) q.set('review', '1');
   if (state.unread) q.set('unread', '1');
   if (mentionsOn()) q.set('mentions', '1');
   if (state.as) q.set('as', String(state.as));
@@ -10711,7 +10667,7 @@ function fromUrl() {
   state.mentions = q.get('mentions') === '1';
   state.as = Number(q.get('as')) || null;
   return {
-    open: q.get('t'), msg: q.get('m'), compose: q.get('compose') === '1' && !state.as, review: q.get('review') === '1', q: q.get('q') || '',
+    open: q.get('t'), msg: q.get('m'), compose: q.get('compose') === '1' && !state.as, q: q.get('q') || '',
   };
 }
 
@@ -11808,30 +11764,6 @@ async function start() {
     }
     if (msg && chip) { react(msg.dataset.id, chip.dataset.emoji, Boolean(chip.dataset.mine)); return; }
     if (!e.target.closest('.picker')) closePicker();
-    const panel = e.target.closest('.rv');
-    const b = e.target.closest('.rv button');
-    if (!panel || !b) return;
-    const thread = panel.dataset.thread;
-    const staged = state.staged[thread] || (state.staged[thread] = {});
-    if (b.dataset.q) {
-      if (staged[b.dataset.q] === b.dataset.v) delete staged[b.dataset.q]; else staged[b.dataset.q] = b.dataset.v;
-      openThread(state.open, { live: true, cached: true });
-      return;
-    }
-    // "All correct" confirms Clef's answers; "Apply" sends the picks.
-    const model = state.cache.get(state.open)?.data?.model;
-    const answers = b.dataset.confirm && model
-      ? Object.fromEntries(Object.keys(QUESTION_LABEL).map((k) => [k, modelValue(model, k)]).filter(([, v]) => v != null))
-      : staged;
-    for (const [question, value] of Object.entries(answers)) {
-      // eslint-disable-next-line no-await-in-loop
-      const res = await fetch('/api/review', { method: 'POST', credentials: 'same-origin', body: JSON.stringify({ thread, question, value }) });
-      // eslint-disable-next-line no-await-in-loop
-      if (!res.ok) { toast((await res.json()).error || res.status); return; }
-    }
-    delete state.staged[thread];
-    toast(`Saved ${Object.keys(answers).length} answer(s).`);
-    openThread(state.open, { live: true });
   };
   document.addEventListener('click', (e) => {
     const item = e.target.closest?.('.linkpick a[data-thread]');
@@ -11895,13 +11827,12 @@ async function start() {
     main.classList.toggle('instant', Boolean(e.hasUAVisualTransition));
     const scope = scopeKey();
     const {
-      open, msg, compose, review, q: query,
+      open, msg, compose, q: query,
     } = fromUrl();
     if (!compose) Object.assign(state, { compose: null, awaiting: null });
     renderUser();
     if (scope !== scopeKey()) { state.prevKeys = null; state.cache.clear(); state.search.data = null; await loadInbox(); connect(); }
     if (query !== state.search.q || !state.search.data) runSearch(query, { asked: true });
-    showReview(review);
     render();
     if (compose) { if (!state.compose) openCompose({ push: false }); } else if (open && msg) openMessage(open, msg, { linked: true }); else if (open && open !== state.open) openThread(open); else if (!open) { state.expertsOpen = null; state.open = null; }
     syncReading();
@@ -11952,15 +11883,6 @@ async function start() {
     };
     sel.onchange = () => { $('menu').hidePopover(); viewAs(Number(sel.value) || null); };
     $('viewing').onclick = () => viewAs(null);
-    get('/api/review/queue').then((r) => { state.answers = r.answers; });
-    const toggle = () => {
-      showReview(!state.review);
-      toUrl();
-      if (state.open) openThread(state.open, { live: true });
-    };
-    $('review').onclick = toggle;
-    $('reviewing').onclick = toggle;
-    showReview(state.review);
   }
   wireNotify();
   wireTraces();
@@ -11976,7 +11898,6 @@ async function start() {
   if (initial.q) runSearch(initial.q);
   await loadInbox(early);
   loadOwnEmoji();
-  if (initial.review && state.me.admin) showReview(true);
   if (initial.compose) openCompose({ push: false });
   else if (initial.open) openThread(initial.open);
   connect();

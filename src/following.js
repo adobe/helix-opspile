@@ -29,7 +29,7 @@ import {
 } from './follows.js';
 import { loadRules } from './lookup.js';
 import { NAME } from './personsql.js';
-import { isAdmin, managedTeams, managesTeam } from './review.js';
+import { isAdmin, managedTeams, managesTeam } from './roles.js';
 import { followedOrg } from './rules.js';
 import { isHolding } from './shares.js';
 import { mutedOf, setMark } from './standing.js';

@@ -34,7 +34,7 @@ import { areaFile, AREAS } from './areas.js';
 import { scalar, splitFrontmatter } from './agent/okf.js';
 import { json } from './http.js';
 import { underlying } from './d1batch.js';
-import { ADMIN_TEAM, isAdmin, managedTeams } from './review.js';
+import { ADMIN_TEAM, isAdmin, managedTeams } from './roles.js';
 import { buildTopicMap, latestTopicMap } from './topicmap.js';
 import {
   assignPending, matchTerm, trendsData, trendThreads,
