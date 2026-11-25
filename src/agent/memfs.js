@@ -101,8 +101,12 @@ export function memfs() {
       }
       const bytes = typeof data === 'string' ? enc.encode(data) : new Uint8Array(data);
       const mode = (options && typeof options === 'object' && options.mode) || 0o100644;
+      // A new inode on every write, as a write-and-rename gives: git takes a file whose stats
+      // match its index entry for unchanged (mtime in whole seconds, size, inode), so a rewrite
+      // of the same size within the second of the checkout (an index's "10 concepts" becoming
+      // "11 concepts") would otherwise be left out of the commit.
       nodes.set(p, {
-        type: 'file', data: bytes, mode, ino: existing ? existing.ino : nextInode(), mtimeMs: Date.now(),
+        type: 'file', data: bytes, mode, ino: nextInode(), mtimeMs: Date.now(),
       });
     },
     async unlink(path) {
