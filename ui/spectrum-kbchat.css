@@ -6,28 +6,54 @@
  * - the panel: a content area of the app frame of its own, beside what is picked (layer 1 under
  *   it, the base on it), its head tinted in the subtle purple; on a screen too narrow for three
  *   columns, a Tray over the page.
- * - its tab: an accent-colored Button in purple, at the page's bottom right, while it is closed.
+ * - its tab: the inbox's sidebar's (ui/spectrum-inbox.css), a filled purple tab with the speech
+ *   bubble on the right edge of what is picked, halfway down; open, on the panel's edge.
  * - the conversation: yours filled in purple, the agent's outlined in purple, dashed as its
  *   notes are in the inbox; solid while it works.
  * - the box: a TextArea, and Ask, the panel's one high-attention Button.
  */
 
 /* ==== The layout =============================================================================== */
-:root { --kbchat-w: clamp(calc(var(--spectrum-spacing-100) * 45), 28vw, calc(var(--spectrum-spacing-100) * 70)); }
+:root { --kbchat-w: clamp(calc(var(--spectrum-spacing-100) * 45), 28vw, calc(var(--spectrum-spacing-100) * 70));
+  --kbchat-tray: min(100vw, calc(var(--spectrum-spacing-100) * 56)); }
+/* How it comes and goes (move in ui/kbchat.js): --kbchat-open from 0 (gone) to 1 (open), over
+   --kbchat-motion; the room beside the page opens as it does, or the tray slides in over it. */
+main { --kbchat-motion: var(--spectrum-animation-duration-500); }
 #kbchat { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
 #kbchat[hidden], #kbchatTab[hidden] { display: none; }
-/* Beside the page where three columns fit: the list, what is picked, and the panel. */
+/* Each in its cell, as the tab shares one with what is picked. */
+@media (min-width: 700px) {
+  main > #list { grid-area: 1 / 1; }
+  main > #detail { grid-area: 1 / 2; }
+}
+/* Beside the page where three columns fit: the list, what is picked, and the panel, which keeps
+   its width as its room opens, and comes out of the edge. */
 @media (min-width: 1100px) {
-  main.kbchatting { grid-template-columns: calc(var(--spectrum-spacing-100) * 34) minmax(0, 1fr) var(--kbchat-w); }
+  main.kbchatting { grid-template-columns: calc(var(--spectrum-spacing-100) * 34) minmax(0, 1fr) calc(var(--kbchat-w) * var(--kbchat-open, 1)); }
+  main.kbchat-moving { overflow: clip; }
+  #kbchat { grid-area: 1 / 3; justify-self: start; width: calc(var(--kbchat-w) - var(--frame-gap)); }
 }
 /* Over the page where they do not: from the right edge, the page's full height. */
 @media (max-width: 1099px) {
-  #kbchat { position: fixed; z-index: 30; inset: 0 0 0 auto; width: min(100vw, calc(var(--spectrum-spacing-100) * 56)); }
+  #kbchat { position: fixed; z-index: 30; inset: 0 0 0 auto; width: var(--kbchat-tray); transform: translateX(calc((1 - var(--kbchat-open, 1)) * 100%)); }
 }
-#kbchatTab { position: fixed; z-index: 20; right: var(--spectrum-spacing-400); bottom: calc(var(--spectrum-spacing-400) + var(--safe-bottom, 0px)); display: inline-flex; align-items: center; gap: var(--spectrum-spacing-100); }
-#kbchatTab svg { width: var(--spectrum-workflow-icon-size-100); height: var(--spectrum-workflow-icon-size-100); }
-/* On a phone, only where something is picked: the list has no knowledge base. */
+/* The tab (wireTab in ui/kbchat.js): on the right edge of what is picked, halfway down, where the
+   panel comes from; open, on the panel's edge, which it goes back into. Pulled, the panel comes
+   or goes with it (--kbchat-open). */
+#kbchatTab { grid-area: 1 / 2; justify-self: end; align-self: center; position: relative; z-index: 20; display: grid; place-items: center;
+  width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-800); margin-right: var(--frame-gap); padding: 0px; cursor: pointer; touch-action: none; }
+#kbchatTab.pulling { cursor: grabbing; }
+#kbchatTab svg { width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+@media (min-width: 1100px) {
+  main.kbchatting #kbchatTab { margin-right: calc(var(--frame-gap) * (1 - var(--kbchat-open, 1))); }
+}
+@media (min-width: 700px) and (max-width: 1099px) {
+  main.kbchatting #kbchatTab { margin-right: calc(var(--frame-gap) * (1 - var(--kbchat-open, 1)) + var(--kbchat-tray) * var(--kbchat-open, 1)); }
+}
+/* On a phone, only where something is picked: the list has no knowledge base. The tray, the
+   page's width, comes over it. */
 @media (max-width: 699px) {
+  #kbchatTab { grid-area: 1 / 1; margin-right: 0px; }
   body:not(.picked) #kbchatTab { display: none; }
 }
 .kbc-head { flex: none; display: flex; align-items: center; gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-200) var(--spectrum-spacing-300); }
@@ -156,7 +182,7 @@
 }
 .spectrum .kbc-box textarea:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
 .spectrum .kbc-foot .sub { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
-.spectrum :is(.kbc-ask, #kbchatTab) {
+.spectrum .kbc-ask {
   min-height: var(--s2-ctl);
   padding: 0 calc(var(--spectrum-component-pill-edge-to-text-100) - var(--spectrum-border-width-200));
   border: var(--spectrum-border-width-200) solid transparent;
@@ -166,9 +192,34 @@
   font-weight: var(--spectrum-bold-font-weight);
   cursor: pointer;
 }
-.spectrum :is(.kbc-ask, #kbchatTab):hover:not(:disabled) { background: var(--spectrum-purple-1000); color: var(--spectrum-white); }
-.spectrum :is(.kbc-ask, #kbchatTab):focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
-.spectrum #kbchatTab { box-shadow: var(--spectrum-drop-shadow-x) var(--spectrum-drop-shadow-y) var(--spectrum-drop-shadow-blur) var(--spectrum-transparent-black-400); }
+.spectrum .kbc-ask:hover:not(:disabled) { background: var(--spectrum-purple-1000); color: var(--spectrum-white); }
+.spectrum .kbc-ask:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+/* The tab is the inbox's sidebar's: the sidebar's purple, filled, with the speech bubble, its
+   open side on the edge it comes out of. Under the pointer it comes out a little further. A dot:
+   an answer came while the panel was closed. As the agent answers, it wiggles, once. */
+.spectrum #kbchatTab {
+  border: 0;
+  border-radius: var(--s2-radius) 0px 0px var(--s2-radius);
+  background: var(--spectrum-purple-background-color-default);
+  color: var(--spectrum-white);
+  box-shadow: var(--content-shadow);
+  transform-origin: right center;
+  transition: width var(--s2-ease), background-color var(--s2-ease);
+}
+.spectrum #kbchatTab:hover, .spectrum #kbchatTab.pulling { width: calc(var(--spectrum-spacing-400) + var(--spectrum-spacing-75)); background: var(--spectrum-purple-1000); }
+.spectrum #kbchatTab:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum #kbchatTab .dot { display: none; position: absolute; top: var(--spectrum-spacing-100); left: var(--spectrum-spacing-75);
+  width: var(--spectrum-spacing-100); height: var(--spectrum-spacing-100); border-radius: 50%; background: var(--spectrum-white); }
+.spectrum #kbchatTab.fresh .dot { display: block; }
+.spectrum #kbchatTab.wiggle { animation: kbchat-tab-wiggle var(--spectrum-animation-duration-1000) var(--spectrum-animation-ease-in-out); }
+@keyframes kbchat-tab-wiggle {
+  0%, 100% { rotate: 0deg; translate: 0px 0px; }
+  15% { rotate: -9deg; translate: calc(-1 * var(--spectrum-spacing-100)) 0px; }
+  30% { rotate: 7deg; translate: calc(-1 * var(--spectrum-spacing-75)) 0px; }
+  45% { rotate: -5deg; translate: calc(-1 * var(--spectrum-spacing-50)) 0px; }
+  60% { rotate: 3deg; translate: 0px 0px; }
+  75% { rotate: -1deg; }
+}
 /* As a command request's in the inbox: the notice color's subtle fill while it waits for you,
    gray once it is decided; Run the accent Button, Deny an outline one. */
 .spectrum .kbc-cmd { border-radius: var(--spectrum-corner-radius-large-default); background: var(--spectrum-gray-75); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }

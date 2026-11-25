@@ -2869,9 +2869,13 @@ is missing.
 may look at its knowledge base (src/kbaccess.js `mayRead`: every ops team's members for a team's,
 the members of the teams that own the customer for a customer's, the admin team for all) talks to
 its knowledge-base agent, to ask what it knows and to have it changed: a panel beside every section
-of the page (ui/kbchat.js, the global `KbChat`, in `ui/spectrum-kbchat.css`), opened by **Ask the
-agent** at the page's bottom right and kept open or closed in the browser; beside the page where
-three columns fit, over it where they do not. A team's is the agent `kb:<team>:`, a customer's
+of the page (ui/kbchat.js, the global `KbChat`, in `ui/spectrum-kbchat.css`), beside the page where
+three columns fit, over it where they do not. Its tab is the inbox's sidebar's: purple, on the right
+edge of what is picked, halfway down; a click opens or closes the panel, pulled the panel comes with
+it, and it wiggles when the agent answers, with a dot while that answer waits behind a closed panel.
+Where the page is wide enough (1400px) the panel shows by itself unless you closed it there; where
+it comes over the page it shows only when you open it. Opened or closed beside the page is kept in
+the browser. A team's is the agent `kb:<team>:`, a customer's
 `kb::<org>`, which is no team's: neither has a thread or a draft. Each conversation is the person's
 own (`kb_chat_messages`, migration 0104, src/kbchat.js): nobody else sees it, **New** starts
 another, and the earlier ones are a pick away. Each is a session of the agent of its own, pinned
