@@ -3822,7 +3822,8 @@ an unbound inbox shows the portal's threads it has, and says that it cannot post
 
 **Embedding hosts.** [Portal integration v1](PORTAL-INTEGRATION.md) is a separate service-only
 path on this Worker. Access's verified service identity selects a registered host; a short-lived
-assertion identifies its enrolled tenant and member. Each host/customer has one reserved channel
+assertion identifies its enrolled tenant and member, or, for a host that registered a trusted
+identity provider (Adobe IMS), the user's own token and the provider's profile do. Each host/customer has one reserved channel
 ID for team/customer routing and its own `<channel>.embed.invalid` lobby, never a sign-in domain.
 It uses the same messages, inbox outbox and staff reply binding as the standalone portal. A
 separate resumable feed contains public invalidations only, not the outbox or staff status.

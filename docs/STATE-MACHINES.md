@@ -882,7 +882,10 @@ Reserve the channel ID, pre-file it by that ID in the inbox, then enable the ten
 create materializes its lobby and channel with the root and its events; racing creates reuse
 it. A member maps one subject to one customer actor of that channel; revoke by disabling the
 member, not by recycling its actor. Every operation checks both mappings, including a retry.
-The single-use assertion nonce lasts through expiry; a write's receipt lasts with the history.
+The single-use assertion nonce lasts through expiry; a host passing user tokens gets a fresh
+nonce per admitted operation, for the same rate limits. A write's receipt lasts with the history.
+A host has one mode (`integration_hosts.identity` or assertion keys, never both), and a user
+token's verification and profile are cached at most five minutes and one minute.
 A receipt, its message and the inbox outbox event commit or roll back together.
 
 **Managed viewer.** Snapshot → following changes → relist on expiry. Public mutations write
