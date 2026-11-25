@@ -48,10 +48,11 @@ export async function extractionAdmin(request, env, url, me) {
   }
   const team = reader.slug;
   if (url.pathname === PATH && request.method === 'GET') {
-    const editor = await ownerOf(env, me, repo);
+    // Asked together: /api/* sends the reads of one tick to D1 as one batch (src/d1batch.js).
+    const [editor, rules] = await Promise.all([ownerOf(env, me, repo), config(env, team)]);
     // The layers of the stack a technology may be in (src/stack.js), for the form.
     return json({
-      repo, ...await config(env, team), layers: LAYERS, may: Boolean(editor),
+      repo, ...rules, layers: LAYERS, may: Boolean(editor),
     });
   }
   // Testing changes nothing, but runs scripts: for those who may change the rules, too.

@@ -164,6 +164,8 @@ function serial(fn) {
  */
 // eslint-disable-next-line default-param-last -- call(path) reads, call(path, 'POST', body) writes
 async function call(path, method = 'GET', body, { parallel = false, idempotent = method !== 'POST' } = {}) {
+  // A change makes what was read ahead old (see "read ahead"), once it is sent and once it is done.
+  if (method !== 'GET') forget();
   const attempt = async () => {
     for (let i = 0; ; i += 1) {
       let r;
@@ -180,7 +182,46 @@ async function call(path, method = 'GET', body, { parallel = false, idempotent =
       await sleep(500 * 2 ** i);
     }
   };
-  return method === 'GET' || parallel ? attempt() : serial(attempt);
+  if (method === 'GET') return attempt();
+  const done = parallel ? attempt() : serial(attempt);
+  return done.finally(forget);
+}
+
+// ---- read ahead ---------------------------------------------------------------------------
+//
+// What the sections of a team's and a customer's page show (their overview and their Manage
+// section, GET /api/teams/profile, /api/customers/profile, /api/admin/team, /api/admin/org, and
+// the stack drawing) is read ahead, so that going to another section or another team shows it
+// at once: the sections of what is picked once it is shown (`readAhead`), a section's tab or a
+// row of the list when the pointer rests on it or it has the focus (`warm`). An answer is kept
+// for KEEP_MS, and every change made here (`call` with another method, the agent's too) forgets
+// all of them: what a change does is never shown from before it.
+
+const KEEP_MS = 60000;
+/** A path → `{ at, read }`: when it was asked for, and the answer (a promise of it). */
+const ahead = new Map();
+/** Counts the changes sent and done: an answer asked for before one is not kept. */
+let changes = 0;
+function forget() {
+  changes += 1;
+  ahead.clear();
+  // The agent's counts and switches (channels it has, say) are read again too.
+  Agent.stale();
+}
+/**
+ * A GET as `call` answers it, read once in KEEP_MS (and while it is on its way); every caller
+ * gets a copy of its own, which it may change. A failure is not kept.
+ */
+function cached(path) {
+  let k = ahead.get(path);
+  if (!k || Date.now() - k.at > KEEP_MS) {
+    const before = changes;
+    const read = call(path);
+    k = { at: Date.now(), read };
+    ahead.set(path, k);
+    read.then((r) => { if ((!r.ok || changes !== before) && ahead.get(path)?.read === read) ahead.delete(path); });
+  }
+  return k.read.then((r) => structuredClone(r));
 }
 
 /**
@@ -767,7 +808,8 @@ function agentTitle(b) {
 /**
  * What is picked, at its section (`state.section`): its own, or its agent's, which then shows
  * the thread agents at a `channel`, or the servers with what a sign-in said (`flash`). `fresh`
- * reads the agent again (another team or customer was picked, or another section).
+ * reads the agent again (another team or customer was picked); another section shows what was
+ * read of it, unless it is old (ui/agent.js, `META_MAX_AGE`).
  */
 function showPicked({ channel = null, flash = null, fresh = false } = {}) {
   const { tab, sel, section } = state;
@@ -781,12 +823,14 @@ function showPicked({ channel = null, flash = null, fresh = false } = {}) {
     return;
   }
   if (section === 'overview' || section === 'own') {
-    if (section === 'overview' && tab === 'teams') showOverview(sel);
-    else if (section === 'overview') showOrgOverview(sel);
-    else if (tab === 'teams') showTeam(sel);
-    else showOrg(sel);
+    let shown;
+    if (section === 'overview' && tab === 'teams') shown = showOverview(sel);
+    else if (section === 'overview') shown = showOrgOverview(sel);
+    else if (tab === 'teams') shown = showTeam(sel);
+    else shown = showOrg(sel);
     // The agent's badges, on its tabs.
     if (b) Agent.load(b.repo, { fresh });
+    readAhead(shown);
     return;
   }
   loadingPage();
@@ -795,8 +839,87 @@ function showPicked({ channel = null, flash = null, fresh = false } = {}) {
   $('detail').innerHTML = `${agentTitle(b)}${sectionsNav()}
     <div class="agent${kb ? ' kb' : ''}" id="agent">${kb ? '<section id="files" aria-label="Files"></section>' : ''}<section id="editor"></section></div>`;
   tabInView();
-  Agent.show(b.repo, {
+  readAhead(Agent.show(b.repo, {
     view: section === 'kb' ? 'file' : section, path: state.path, channel, flash, fresh, nav: 'replace',
+  }));
+}
+
+/** What the overview and the Manage section of a team (`teams`) or a customer (`orgs`) read. */
+const READS = {
+  overview: (tab, sel) => (tab === 'teams' ? `/api/teams/profile?team=${encodeURIComponent(sel)}`
+    : `/api/customers/profile?org=${encodeURIComponent(sel)}`),
+  own: (tab, sel) => `/api/admin/${tab === 'teams' ? 'team' : 'org'}?slug=${encodeURIComponent(sel)}`,
+};
+/** The people suggested for a team, which its Manage section shows (not the admin team's). */
+const suggestPath = (slug) => `/api/admin/member-suggestions?team=${encodeURIComponent(slug)}`;
+/** A team's or a customer's stack drawing, which its overview shows where it has one. */
+const stackPath = (tab, sel) => `/api/kb/stack?${tab === 'teams' ? 'team' : 'org'}=${encodeURIComponent(sel)}`;
+
+/**
+ * Reads a section of a team's or a customer's page ahead (see "read ahead"): its overview (and
+ * its stack drawing), its Manage section, or with `agent` its agent's, which is the picked one's
+ * only (ui/agent.js keeps one knowledge base's).
+ */
+function warm(tab, sel, section, { agent = false } = {}) {
+  if (!sel || !agented(tab, sel)) return;
+  const shown = sectionsOf(tab, sel);
+  const s = shown.includes(section) ? section : shown[0];
+  if (s === 'overview') {
+    cached(READS.overview(tab, sel)).then((r) => {
+      if (r.ok && (tab === 'teams' ? r.body.kb?.stack : r.body.kb?.drawing)) cached(stackPath(tab, sel));
+    });
+  } else if (s === 'own') {
+    cached(READS.own(tab, sel));
+    if (tab === 'teams' && sel !== 'admin' && sel !== UNASSIGNED) cached(suggestPath(sel));
+  } else if (s && agent) {
+    const b = baseOf(tab, sel);
+    if (b) Agent.preload(b.repo);
+  }
+}
+
+/**
+ * Once the section shown is there (`shown`, a promise), the other sections of what is picked
+ * are read ahead: going to one of them shows it at once.
+ */
+function readAhead(shown) {
+  const { tab, sel } = state;
+  Promise.resolve(shown).catch(() => {}).then(() => setTimeout(() => {
+    if (state.tab !== tab || state.sel !== sel) return;
+    for (const s of sectionsOf(tab, sel)) warm(tab, sel, s, { agent: true });
+  }, 0));
+}
+
+/**
+ * The pointer resting on (or the focus on) a section's tab, a row of the list or a link to a
+ * team or a customer: what it opens is read ahead.
+ */
+function wireWarm() {
+  let timer = 0;
+  let at = null;
+  const target = (e) => e.target.closest?.('#sections a[data-section], #list [data-sel], a[href^="/inbox/admin?"]');
+  const go = (el) => {
+    if (el.matches('#list [data-sel]')) {
+      warm(state.tab, el.dataset.sel);
+      return;
+    }
+    const w = wanted(el.getAttribute('href'));
+    const here = w.tab === state.tab && String(w.sel) === String(state.sel);
+    warm(w.tab, w.sel, w.section || (el.dataset.section ?? null), { agent: here });
+  };
+  const rest = (e) => {
+    const el = target(e);
+    if (el === at) return;
+    at = el;
+    clearTimeout(timer);
+    // Resting, not passing over it on the way elsewhere.
+    if (el) timer = setTimeout(() => go(el), e.type === 'focusin' ? 0 : 80);
+  };
+  document.addEventListener('pointerover', rest);
+  document.addEventListener('focusin', rest);
+  // Pressed: the click comes when it is let go.
+  document.addEventListener('pointerdown', (e) => {
+    const el = target(e);
+    if (el) go(el);
   });
 }
 
@@ -816,7 +939,7 @@ function openSection(section, { path = null, channel = null, flash = null } = {}
     Agent.show(baseOf(state.tab, state.sel).repo, { view: next === 'kb' ? 'file' : 'history', path, nav: 'replace' });
     return;
   }
-  showPicked({ channel, flash, fresh: true });
+  showPicked({ channel, flash });
 }
 
 // ---- view state ---------------------------------------------------------------------------
@@ -1615,7 +1738,7 @@ function wireMemberPicker() {
  * taking someone off the team, until Suggest again.
  */
 async function loadMemberSuggestions(v) {
-  const r = await call(`/api/admin/member-suggestions?team=${encodeURIComponent(v.team.slug)}`, 'GET', undefined, { parallel: true });
+  const r = await cached(suggestPath(v.team.slug));
   if (v !== state.view || !$('memberSuggest')) return;
   if (!r.ok) { $('memberSuggest').innerHTML = `<div class="empty">${esc(r.body.error || 'Could not load the suggestions.')}</div>`; return; }
   v.memberSuggest = { ...r.body, showDismissed: false };
@@ -1850,7 +1973,18 @@ let loading = 0;
 function loadingPage() {
   const ticket = ++loading;
   note = { kind: '', text: '' };
-  $('detail').innerHTML = '<div class="empty">Loading…</div>';
+  const detail = $('detail');
+  const shown = `${state.tab}|${state.sel}`;
+  const nav = $('sections');
+  if (nav && detail.dataset.shown === shown && nav.parentElement === detail) {
+    // Another section of what is shown: its title and tabs stay, the tab asked for current.
+    while (nav.nextSibling) nav.nextSibling.remove();
+    nav.after(Object.assign(document.createElement('div'), { className: 'empty', textContent: 'Loading…' }));
+    drawSections();
+  } else {
+    detail.innerHTML = '<div class="empty">Loading…</div>';
+  }
+  detail.dataset.shown = shown;
   return () => ticket === loading;
 }
 
@@ -1862,7 +1996,7 @@ function loadingPage() {
 
 /** A team's stack drawing, where its knowledge base has one: under its entries. */
 async function drawTeamStack(slug, current) {
-  const r = await call(`/api/kb/stack?team=${encodeURIComponent(slug)}`, 'GET', undefined, { parallel: true });
+  const r = await cached(stackPath('teams', slug));
   const slot = $('tvStack');
   if (!current() || !slot || !r.ok || !r.body.drawing) return;
   const view = r.body.drawing;
@@ -1874,7 +2008,7 @@ async function drawTeamStack(slug, current) {
 
 async function showOverview(slug) {
   const current = loadingPage();
-  const r = await call(`/api/teams/profile?team=${encodeURIComponent(slug)}`);
+  const r = await cached(READS.overview('teams', slug));
   if (!current()) return;
   state.view = { target: 'overview', value: slug };
   if (!r.ok) {
@@ -1916,7 +2050,7 @@ async function showOverview(slug) {
 
 async function showTeam(slug) {
   const current = loadingPage();
-  const r = await call(`/api/admin/team?slug=${encodeURIComponent(slug)}`);
+  const r = await cached(READS.own('teams', slug));
   if (!current()) return;
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   const {
@@ -2637,7 +2771,7 @@ function orgInbox(slug, teams) {
 
 /** A customer's stack drawing, where its knowledge base has one: under its entries. */
 async function drawOrgStack(slug, current) {
-  const r = await call(`/api/kb/stack?org=${encodeURIComponent(slug)}`, 'GET', undefined, { parallel: true });
+  const r = await cached(stackPath('orgs', slug));
   const slot = $('tvStack');
   if (!current() || !slot || !r.ok || !r.body.drawing) return;
   const view = r.body.drawing;
@@ -2649,7 +2783,7 @@ async function drawOrgStack(slug, current) {
 
 async function showOrgOverview(slug) {
   const current = loadingPage();
-  const r = await call(`/api/customers/profile?org=${encodeURIComponent(slug)}`);
+  const r = await cached(READS.overview('orgs', slug));
   if (!current()) return;
   state.view = { target: 'org-overview', value: slug };
   if (!r.ok && r.body.mergedInto) {
@@ -2718,7 +2852,7 @@ async function showOrgOverview(slug) {
 
 async function showOrg(slug) {
   const current = loadingPage();
-  const r = await call(`/api/admin/org?slug=${encodeURIComponent(slug)}`);
+  const r = await cached(READS.own('orgs', slug));
   if (!current()) return;
   if (!r.ok && r.body.mergedInto) {
     // Merged (src/orgmerge.js): it is the org it went into now.
@@ -3641,7 +3775,10 @@ function wireOrgMerge(slug) {
     },
     // A file it names (a technology of the team's catalog), in the knowledge base.
     onOpen: (view, path) => openUrl(address({ section: view === 'file' ? 'kb' : view, path })),
+    // Its changes make what was read ahead old (see "read ahead").
+    onWrite: forget,
   });
+  wireWarm();
   // An icon that does not load: Google has no favicon for the domain (or the image is gone).
   // The org is then shown without one, and counts as one without an icon.
   let redraw = 0;

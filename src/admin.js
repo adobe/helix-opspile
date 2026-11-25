@@ -231,30 +231,32 @@ function matchScore(c, needle) {
  * (`channelMatch`), the ones whose name or Teams team matches first.
  */
 async function channelList(env, rules, { q = '', team: inTeam, org: inOrg } = {}) {
-  const filed = await rows(env, `SELECT c.source, c.tenant, c.channel_id, c.name, c.group_name, c.shared,
-      t.team, t.org, o.name AS org_name, t.kind, COUNT(t.thread) AS threads,
-      MAX(t.channel_name) AS channel_name, MAX(COALESCE(t.last_at, t.any_at)) AS latest
-    FROM channels c LEFT JOIN threads t ON t.source = c.source AND t.tenant = c.tenant
-      AND t.channel_id = c.channel_id
-    LEFT JOIN orgs o ON o.slug = t.org
-    WHERE c.archived_at IS NULL
-    GROUP BY c.source, c.tenant, c.channel_id, t.team, t.org, t.kind
-    ORDER BY latest DESC`);
-  const labels = new Map((await rows(env, 'SELECT * FROM channel_labels'))
-    .map((l) => [`${l.source}:${l.tenant}:${l.channel_id}`, l]));
-  const shares = await sharesByChannel(env);
+  const needle = q.toLowerCase().trim();
+  const words = searchWords(needle);
+  // Asked together: /api/* sends the reads of one tick to D1 as one batch (src/d1batch.js).
+  const [filed, labelRows, shares, ruleShares, teamRows] = await Promise.all([
+    rows(env, `SELECT c.source, c.tenant, c.channel_id, c.name, c.group_name, c.shared,
+        t.team, t.org, o.name AS org_name, t.kind, COUNT(t.thread) AS threads,
+        MAX(t.channel_name) AS channel_name, MAX(COALESCE(t.last_at, t.any_at)) AS latest
+      FROM channels c LEFT JOIN threads t ON t.source = c.source AND t.tenant = c.tenant
+        AND t.channel_id = c.channel_id
+      LEFT JOIN orgs o ON o.slug = t.org
+      WHERE c.archived_at IS NULL
+      GROUP BY c.source, c.tenant, c.channel_id, t.team, t.org, t.kind
+      ORDER BY latest DESC`),
+    rows(env, 'SELECT * FROM channel_labels'),
+    sharesByChannel(env),
+    rows(env, "SELECT source, channel_id, team FROM channel_teams WHERE added_by LIKE 'rule:%'"),
+    words.length ? rows(env, 'SELECT slug, name FROM teams') : [],
+  ]);
+  const labels = new Map(labelRows.map((l) => [`${l.source}:${l.tenant}:${l.channel_id}`, l]));
   // The shares a follow rule made (src/followrules.js): the rule's, not taken away by hand.
   const byRule = new Map();
-  for (const r of await rows(env, `SELECT source, channel_id, team FROM channel_teams
-    WHERE added_by LIKE 'rule:%'`)) {
+  for (const r of ruleShares) {
     const k = `${r.source}:${r.channel_id}`;
     byRule.set(k, [...(byRule.get(k) || []), r.team]);
   }
-  const needle = q.toLowerCase().trim();
-  const words = searchWords(needle);
-  const teamNames = words.length
-    ? new Map((await rows(env, 'SELECT slug, name FROM teams')).map((t) => [t.slug, t.name]))
-    : new Map();
+  const teamNames = new Map(teamRows.map((t) => [t.slug, t.name]));
   const manual = (target, channelId) => rules.find((r) => r.target === target && isManual(r)
     && r.pattern === manualPattern(channelId)) || null;
   const out = [];
@@ -1145,33 +1147,47 @@ async function listTeams(env, me) {
 }
 
 async function team(env, slug, me) {
-  const t = await env.DB.prepare('SELECT slug, name, self_managed FROM teams WHERE slug = ?').bind(slug).first();
+  // Asked together: /api/* sends the reads of one tick to D1 as one batch (src/d1batch.js).
+  const [t, rules] = await Promise.all([
+    env.DB.prepare('SELECT slug, name, self_managed FROM teams WHERE slug = ?').bind(slug).first(),
+    loadRules(env),
+  ]);
   if (!t && slug !== UNASSIGNED) {
     return json({ error: 'no such team' }, 404);
   }
-  const rules = await loadRules(env);
+  const none = Promise.resolve([]);
+  const [
+    members, channels, requests, memberRequests, portal, follows, techs, suggestions,
+  ] = await Promise.all([
+    rows(env, `SELECT p.id, p.name, p.email, p.staff, m.role FROM team_members m
+      JOIN people p ON p.id = m.person WHERE m.team = ? ORDER BY p.name`, slug),
+    channelList(env, rules, { team: slug }),
+    t ? listRequests(env, { teams: [slug], limit: 50 }) : none,
+    t ? listMemberRequests(env, { teams: [slug], limit: 50 }) : none,
+    t ? listPortalRequests(env, { teams: [slug], limit: 50 }) : none,
+    t ? teamFollows(env, slug) : none,
+    t ? followable(env, slug) : none,
+    isAdmin(me) && t && slug !== ADMIN_TEAM ? suggestionsFor(env, slug) : Promise.resolve({}),
+  ]);
   return json({
     team: t ? { ...t, self_managed: Boolean(t.self_managed) } : { slug, name: 'Unassigned', self_managed: false },
-    members: await rows(env, `SELECT p.id, p.name, p.email, p.staff, m.role FROM team_members m
-      JOIN people p ON p.id = m.person WHERE m.team = ? ORDER BY p.name`, slug),
+    members,
     rules: rules.filter((r) => (r.target === 'team' && (r.value === slug || /\$\d/.test(r.value)))
       || (r.target === 'follow' && r.value === slug))
       .sort((a, b) => a.priority - b.priority || a.id - b.id),
-    channels: await channelList(env, rules, { team: slug }),
+    channels,
     // What the team's managers asked the admin team for, and what came of it.
-    requests: t ? await listRequests(env, { teams: [slug], limit: 50 }) : [],
+    requests,
     // The people asked for on the team (thread agents, for whoever asked them), and the answers.
-    memberRequests: t ? await listMemberRequests(env, { teams: [slug], limit: 50 }) : [],
+    memberRequests,
     // The customers in the portal who picked a technology the team follows.
-    portal: t ? await listPortalRequests(env, { teams: [slug], limit: 50 }) : [],
+    portal,
     portalBound: portalBound(env),
     // The technologies it follows (src/follows.js), and what it may follow.
-    ...(t ? {
-      follows: await teamFollows(env, slug), followable: await followable(env, slug),
-    } : {}),
+    ...(t ? { follows, followable: techs } : {}),
     // The admin team decides which channels a team gets: what it might want of the admin
     // team's channels.
-    ...(isAdmin(me) && t && slug !== ADMIN_TEAM ? await suggestionsFor(env, slug) : {}),
+    ...suggestions,
   });
 }
 
@@ -1598,27 +1614,24 @@ async function oneRowEach(env, rules, channels) {
     const k = `${c.source}:${c.tenant}:${c.channelId}`;
     by.set(k, [...(by.get(k) || []), c]);
   }
-  const out = [];
-  for (const list of by.values()) {
+  const out = await Promise.all([...by.values()].map(async (list) => {
     if (list.length === 1) {
-      out.push({ ...list[0], split: [] });
-    } else {
-      // eslint-disable-next-line no-await-in-loop
-      const { team: home } = await homeOf(env, rules, list[0].source, list[0].channelId);
-      const row = list.find((c) => c.team === home) || list[0];
-      const latest = list.map((c) => c.latest).filter(Boolean).sort().pop() || null;
-      out.push({
-        ...row,
-        team: home,
-        sharedWith: row.sharedWith.filter((t) => t !== home),
-        followedByRule: row.followedByRule.filter((t) => t !== home),
-        threads: list.reduce((n, c) => n + c.threads, 0),
-        latest,
-        split: list.filter((c) => c.team !== home)
-          .map((c) => ({ team: c.team, threads: c.threads })),
-      });
+      return { ...list[0], split: [] };
     }
-  }
+    const { team: home } = await homeOf(env, rules, list[0].source, list[0].channelId);
+    const row = list.find((c) => c.team === home) || list[0];
+    const latest = list.map((c) => c.latest).filter(Boolean).sort().pop() || null;
+    return {
+      ...row,
+      team: home,
+      sharedWith: row.sharedWith.filter((t) => t !== home),
+      followedByRule: row.followedByRule.filter((t) => t !== home),
+      threads: list.reduce((n, c) => n + c.threads, 0),
+      latest,
+      split: list.filter((c) => c.team !== home)
+        .map((c) => ({ team: c.team, threads: c.threads })),
+    };
+  }));
   return out.sort((a, b) => String(b.latest || '').localeCompare(String(a.latest || '')));
 }
 
@@ -1631,40 +1644,48 @@ async function org(env, slug, me) {
   if (slug === UNASSIGNED) {
     return isAdmin(me) ? unassignedOrg(env) : json({ error: 'for the admin team' }, 403);
   }
+  // Asked together: /api/* sends the reads of one tick to D1 as one batch (src/d1batch.js).
+  const [merged, row, rules, domains, teamRows, mergedHere, kb] = await Promise.all([
+    env.DB.prepare('SELECT into_slug FROM org_merges WHERE slug = ?').bind(slug).first(),
+    env.DB.prepare('SELECT slug, name, type, icon, updated_at FROM orgs WHERE slug = ?').bind(slug).first(),
+    loadRules(env),
+    mailDomains(env, slug),
+    rows(env, 'SELECT slug, name FROM teams'),
+    // The orgs merged into this one, which an admin may take out again.
+    rows(env, `SELECT slug, name, merged_by, merged_at FROM org_merges
+      WHERE into_slug = ? ORDER BY merged_at DESC`, slug),
+    env.DB.prepare("SELECT 1 FROM knowledge_bases WHERE kind = 'org' AND slug = ?").bind(slug).first(),
+  ]);
   // A merged org is the one it was merged into now (src/orgmerge.js).
-  const merged = await env.DB.prepare('SELECT into_slug FROM org_merges WHERE slug = ?').bind(slug).first();
   if (merged) {
     return json({ error: `${slug} was merged into ${merged.into_slug}`, mergedInto: merged.into_slug }, 404);
   }
-  const row = await env.DB.prepare('SELECT slug, name, type, icon, updated_at FROM orgs WHERE slug = ?').bind(slug).first();
-  const rules = await loadRules(env);
-  const channels = await oneRowEach(env, rules, await channelList(env, rules, { org: slug }));
+  const listed = await channelList(env, rules, { org: slug });
+  const [channels, requests] = await Promise.all([
+    oneRowEach(env, rules, listed),
+    listed.length ? listRequests(env, {
+      teams: isAdmin(me) ? null : managedTeams(me), status: 'open',
+    }) : [],
+  ]);
   const orgRules = rules.filter((r) => r.target === 'org' && (r.value === slug || /\$\d/.test(r.value)))
     .sort((a, b) => a.priority - b.priority || a.id - b.id);
-  if (!row && !channels.length && !orgRules.some((r) => r.value === slug)) {
-    const kb = await env.DB.prepare("SELECT 1 FROM knowledge_bases WHERE kind = 'org' AND slug = ?").bind(slug).first();
-    if (!kb) {
-      return json({ error: 'no such org' }, 404);
-    }
+  if (!row && !channels.length && !orgRules.some((r) => r.value === slug) && !kb) {
+    return json({ error: 'no such org' }, 404);
   }
   return json({
     org: row || {
       slug, name: null, type: 'customer', icon: null,
     },
-    domains: ((await mailDomains(env, slug)).get(slug) || []).slice(0, 3),
+    domains: (domains.get(slug) || []).slice(0, 3),
     rules: isAdmin(me) ? orgRules : [],
     channels,
     types: TYPES,
     follows: orgFollowers(rules, slug),
     // Every team's name, for a page that lists only some teams (a manager's, a member's).
-    names: Object.fromEntries((await rows(env, 'SELECT slug, name FROM teams')).map((t) => [t.slug, t.name])),
-    requests: channels.length ? (await listRequests(env, {
-      teams: isAdmin(me) ? null : managedTeams(me), status: 'open',
-    })).filter((r) => channels.some((c) => c.source === r.channel.source
-      && c.channelId === r.channel.channelId)) : [],
-    // The orgs merged into this one, which an admin may take out again.
-    merged: await rows(env, `SELECT slug, name, merged_by, merged_at FROM org_merges
-      WHERE into_slug = ? ORDER BY merged_at DESC`, slug),
+    names: Object.fromEntries(teamRows.map((t) => [t.slug, t.name])),
+    requests: requests.filter((r) => channels.some((c) => c.source === r.channel.source
+      && c.channelId === r.channel.channelId)),
+    merged: mergedHere,
   });
 }
 

@@ -332,17 +332,18 @@ async function channels(env, me, base) {
   // A channel being re-filed has threads in two places for a while: its latest place counts.
   const seen = new Set();
   const rows = (results || []).filter((r) => !seen.has(r.channel_id) && seen.add(r.channel_id));
-  const states = await agentStates(env, rows.map((r) => r.channel_id), {
-    // Alert channels have no agents: their team's default does not turn them on.
-    teams: new Map(rows.filter((r) => r.kind === 'channel').map((r) => [r.channel_id, r.team])),
-  });
+  const [states, byDefault] = await Promise.all([
+    agentStates(env, rows.map((r) => r.channel_id), {
+      // Alert channels have no agents: their team's default does not turn them on.
+      teams: new Map(rows.filter((r) => r.kind === 'channel').map((r) => [r.channel_id, r.team])),
+    }),
+    base.kind === 'team' ? teamDefault(env, base.slug) : null,
+  ]);
   return json({
     repo: base.repo,
     configured: agentsConfigured(env),
     // A team's knowledge base: whether the channels nobody switched have agents.
-    teamDefault: base.kind === 'team' ? {
-      ...await teamDefault(env, base.slug), may: managesTeam(me, base.slug),
-    } : null,
+    teamDefault: base.kind === 'team' ? { ...byDefault, may: managesTeam(me, base.slug) } : null,
     channels: rows.map((r) => ({
       source: r.source,
       channelId: r.channel_id,

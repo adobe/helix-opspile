@@ -40,7 +40,9 @@ const state = {
   secretEditing: null,
 };
 /** What the page around it does: keeps the address, and redraws what counts the agent. */
-const host = { onUrl: () => {}, onChange: () => {}, onOpen: () => {} };
+const host = {
+  onUrl: () => {}, onChange: () => {}, onOpen: () => {}, onWrite: () => {},
+};
 const VIEWS = ['file', 'history', 'agents', 'mcp', 'extraction'];
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -51,13 +53,20 @@ const mayEdit = () => Boolean(base()?.may);
 const whoEdits = () => (base()?.kind === 'team' ? `the admin team and the managers of ${base().name}` : 'the admin team and the managers of its ops teams');
 
 async function call(path, options = {}) {
-  const res = await fetch(path, {
-    credentials: 'same-origin',
-    ...options,
-    headers: options.body ? { 'content-type': 'application/json' } : {},
-  });
-  const body = await res.json().catch(() => ({}));
-  return { status: res.status, ok: res.ok, body };
+  // A change: what the page read ahead of its team or customer is old now.
+  const change = Boolean(options.method && options.method !== 'GET');
+  if (change) host.onWrite();
+  try {
+    const res = await fetch(path, {
+      credentials: 'same-origin',
+      ...options,
+      headers: options.body ? { 'content-type': 'application/json' } : {},
+    });
+    const body = await res.json().catch(() => ({}));
+    return { status: res.status, ok: res.ok, body };
+  } finally {
+    if (change) host.onWrite();
+  }
 }
 
 // ---- prefetch ---------------------------------------------------------------------------
@@ -240,8 +249,17 @@ function reset(repo) {
   });
 }
 
+/**
+ * How long what was read of the agent (`loadMeta`) is shown again without reading it again:
+ * going from one of its sections to another shows them at once. What is changed here changes
+ * it in place; what others change shows after this long, or when the team or customer is picked.
+ */
+const META_MAX_AGE = 60000;
+
 /** Its channels, tools, MCP servers and extraction rules: what the page counts. */
 function loadMeta(repo) {
+  if (state.loads.meta && Date.now() - state.loads.metaAt > META_MAX_AGE) state.loads.meta = null;
+  if (!state.loads.meta) state.loads.metaAt = Date.now();
   state.loads.meta = state.loads.meta || Promise.all([
     loadChannels(repo),
     loadMcp(repo),
@@ -275,6 +293,20 @@ function load(repo, { fresh = false } = {}) {
   if (repo !== state.repo) reset(repo);
   else if (fresh) state.loads.meta = null;
   return loadMeta(repo);
+}
+
+/**
+ * Reads ahead what showing the agent of `repo` needs, not shown yet: what it counts, the
+ * listing of its knowledge base and the agent instructions, which the knowledge base opens at.
+ */
+function preload(repo) {
+  if (repo !== state.repo) reset(repo);
+  // What is old is read again, but not under a view that shows it: `show` reads it, and draws it.
+  if (!state.loads.meta || !$('editor')) loadMeta(repo);
+  loadFiles(repo).then(() => {
+    const f = state.repo === repo && (state.files || []).find((x) => x.path === SYSTEM_PROMPT);
+    if (f && f.hash && !blobs.has(f.hash)) blobText(repo, f.hash);
+  });
 }
 
 /**
@@ -2270,14 +2302,23 @@ document.querySelector('main').addEventListener('click', (e) => {
 
 window.Agent = {
   /** Who you are (/api/me), and the knowledge bases you may see (/api/kb), kept in place. */
-  init(me, bases, { onUrl, onChange, onOpen } = {}) {
+  init(me, bases, {
+    onUrl, onChange, onOpen, onWrite = () => {},
+  } = {}) {
     state.me = me;
     state.bases = bases;
     // Yours (src/settings.js): whether your inbox shows the agent's thinking (renderAgents).
     state.settings = me.readonly ? null : me.settings || null;
-    Object.assign(host, { onUrl, onChange, onOpen });
+    Object.assign(host, {
+      onUrl, onChange, onOpen, onWrite,
+    });
   },
   load,
+  preload,
+  /** Something changed: what was read of the agent is read again when it is shown next. */
+  stale() {
+    if (state.loads.meta) state.loads.metaAt = 0;
+  },
   show,
   /**
    * Before anything else is shown where the agent is: saves what is pending, and asks only

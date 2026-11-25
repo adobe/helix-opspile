@@ -75,6 +75,10 @@ code and docs, is the decision model that labels threads and channels.
   from the same person (`src/person.js`, `src/personsql.js`): change what both show there. What
   changes them is their second section, Manage (`own` in `ui/admin.js`, `view=manage`): a team's
   managers' and the admin team's, a customer's the ops teams'.
+- **Teams and Customers read their sections ahead** (`cached` in `ui/admin.js`): the overview's
+  and Manage's GETs go through it, are kept for a minute, and every change the page or the agent
+  makes forgets them (docs/STATE-MACHINES.md, "Teams and Customers read ahead"). A new section's
+  read goes through `cached` and into `warm`; a change through `call`, never `send`.
 - **A team's and a customer's agent are sections of their pages** in Teams and Customers
   (`ui/admin.html`): `ui/agent.js` (the global `Agent`; thread agents, tools and MCP servers,
   extraction rules, the knowledge base and its editor) draws into the `#files` and `#editor`

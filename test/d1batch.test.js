@@ -255,4 +255,33 @@ describe('d1 batch', () => {
       assert.ok(Number(calls) <= Number(rounds) + 2, `${path}: ${calls} calls in ${rounds} rounds`);
     }
   });
+
+  it('reads a team\'s and a customer\'s Manage section and agent in a few rounds of D1', async () => {
+    const { DB } = counting();
+    DB.sqlite.exec(`INSERT INTO teams (slug, name) VALUES ('admin', 'Admin');
+      INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at)
+        VALUES ('kb-team-helix', 'team', 'helix', 'r', '2026-01-01');
+      INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
+        VALUES ('slack', 'E1', 'C1', 'aem-acme', '2026-01-01');
+      INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+        kind, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES ('slack:E1:C1:1.1', 'slack', 'E1', 'C1', '1.1', 'acme', 'helix', 'channel',
+        'channels/acme/helix/slack-C1/1.1/', '2026-01-01', '2026-01-01', '2026-01-01', 1, '2026-01-01')`);
+    const me = {
+      id: 1, name: 'Ada', email: 'ada@staff.example', teams: [{ slug: 'admin', name: 'Admin', role: 'manager' }],
+    };
+    const env = { DB, CHANNELS: fakeBucket() };
+    // Before, they asked one query after the other: the team's page took 20 rounds.
+    for (const [path, most] of [['/api/admin/team?slug=helix', 4], ['/api/admin/org?slug=acme', 4],
+      ['/api/kb/channels?repo=kb-team-helix', 4], ['/api/kb/tools?repo=kb-team-helix', 4],
+      ['/api/kb/extraction?repo=kb-team-helix', 4]]) {
+      const url = new URL(`https://opspile.example${path}`);
+      // eslint-disable-next-line no-await-in-loop
+      const res = await api(new Request(url), env, url, { viewer: me });
+      assert.equal(res.status, 200, path);
+      const [, rounds] = /d1;dur=[\d.]+;desc="\d+ calls? in (\d+) rounds?"/
+        .exec(res.headers.get('server-timing'));
+      assert.ok(Number(rounds) <= most, `${path}: ${rounds} rounds`);
+    }
+  });
 });
