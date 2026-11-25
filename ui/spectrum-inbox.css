@@ -597,6 +597,13 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
   max-width: min(80%, calc(var(--spectrum-spacing-100) * 95));
   margin: 0 0 0 calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500) + var(--spectrum-spacing-100));
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
+/* The commands and scripts the agent asked for in a conversation (bashSideCards, ui/inbox.js):
+   the bar's cards, lined up with its bubbles under the answer, as wide as the conversation, and
+   as tall as they are (the conversation scrolls, not they). */
+.sc-body .bashbar.sidebash { flex: none; max-height: none; overflow: visible;
+  margin: 0 0 0 calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-500) + var(--spectrum-spacing-100)); }
+/* In the bar, a request asked in a conversation that does not show: a link that opens it. */
+.bashbar .toside { display: inline; cursor: pointer; }
 .sc-body .tq-head { display: flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; }
 .sc-body .tq-head svg { flex: none; }
 .sc-body .tq :is(.tq-why, .tq-about) { margin: 0; overflow-wrap: anywhere; }
@@ -690,7 +697,9 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 /* ==== Wide screens: the bands, and the columns you size =======================================
    Three bands past a desktop's screen: ultrawide from 2400px (a 2560px screen), megawide from
    3200px (3440px) and hyperwide from 4800px (5120px). In each the filters flow into one more
-   column (2, 3, 4: `#facets`, in reading order, balanced, a group never split), the list takes
+   column (2, 3, 4: `#facets`, in reading order, balanced, a group never split; where a column
+   starts is the page's, `.card.cb`, so a card does not jump columns as its rows change: "the
+   filters' columns" in ui/inbox.js), the list takes
    a smaller share of what is left (30%, 26%, 22%), as its rows need no more, and the sidebar may
    grow wider, so the thread keeps most of the room. Each column of filters is a little wider
    than the one column is (--facet-w), as there is room, so fewer labels are cut short. The simple personal view keeps one column
@@ -707,6 +716,7 @@ main.side-sliding #side { transform: translateX(calc((1 - var(--side-open)) * 10
 @media (min-width: 1100px) {
   main:not(.rail):not(.simple) #facets { display: block; columns: auto var(--facet-w); column-gap: var(--facet-gap); }
   main:not(.rail):not(.simple) #facets > .card { break-inside: avoid; margin-bottom: var(--fr-h); }
+  main:not(.rail):not(.simple) #facets > .card.cb { break-before: column; }
 }
 @media (min-width: 2400px) {
   main:not(.simple) { --filters-w: calc(var(--facet-w) * 2 + var(--facet-gap) + var(--spectrum-spacing-300) + var(--frame-gap)); }
@@ -1204,6 +1214,8 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .bashbar .by { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .bashbar .why { margin: 0; overflow-wrap: anywhere; }
 .bashbar .cmd { margin: 0; max-height: 20vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A script's tools of the inbox, under it: what it may call as whoever runs it, a row of names. */
+.bashbar .tools { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--spectrum-spacing-75); min-width: 0; }
 /* Decided: one line, how it stands and then the command, as far as it fits. */
 .bashbar .br:not(.pending) { flex-direction: row; align-items: baseline; gap: var(--spectrum-spacing-200); }
 .bashbar .br:not(.pending) .head { flex: 0 1 auto; max-width: 70%; }
@@ -2758,6 +2770,14 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 }
 .spectrum .bashbar .br:not(.pending) .cmd { padding: 0px; color: inherit; background: none; }
 .spectrum .bashbar code { padding: 0px; font: inherit; background: none; }
+.spectrum .bashbar .tools code {
+  padding: 0 var(--spectrum-spacing-75);
+  font-family: var(--s2-code);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-neutral-content-color-default);
+  background: var(--s2-hover);
+  border-radius: var(--spectrum-corner-radius-100);
+}
 .spectrum .bashbar .var .nm code { font-family: var(--s2-code); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-content-color-default); }
 .spectrum .bashbar .kept { color: var(--spectrum-positive-visual-color); }
 .spectrum .bashbar .var input {
@@ -2779,8 +2799,9 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .bashbar button.deny { color: var(--spectrum-neutral-content-color-default); background: transparent; border-color: var(--spectrum-gray-400); }
 .spectrum .bashbar button.deny:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--s2-hover); }
 .spectrum .bashbar button:disabled { opacity: 1; color: var(--spectrum-disabled-content-color); background: var(--spectrum-disabled-background-color); border-color: transparent; }
-/* Forget, and the earlier requests: links, not buttons of the card's. */
-.spectrum .bashbar button:is(.forget, .more), .spectrum .bashbar button.forget:disabled {
+/* Forget, the earlier requests and the conversation a request was asked in: links, not buttons
+   of the card's. */
+.spectrum .bashbar button:is(.forget, .more, .toside), .spectrum .bashbar button.forget:disabled {
   min-height: 0px;
   padding: 0px;
   border: 0;

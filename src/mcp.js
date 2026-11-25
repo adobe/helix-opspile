@@ -15,6 +15,7 @@ import { personById, viewer } from './api.js';
 import { bearerPerson, challenge } from './oauth.js';
 import { isAdmin } from './review.js';
 import { mayUse, TOOLS, toolList } from './mcp-tools.js';
+import { SCRIPT_TOOL_NAMES } from './scripttools.js';
 import { batchedDatabase } from './d1batch.js';
 
 /**
@@ -146,6 +147,28 @@ async function call(env, me, params) {
     console.error(`mcp ${tool.name}: ${e.stack || e.message}`);
     return { result: toolResult({ error: `${tool.name} failed on the server. Try again later.` }) };
   }
+}
+
+/**
+ * The inbox's tools as a thread agent's script calls them, as `me`, the person who runs it
+ * (src/agent/scriptrequest.js, `decideBash` in src/agent/stub.js): `(name, args)` resolves to
+ * the tool's `{ data }` or `{ error }`, as JSON. Only the read-only tools of SCRIPT_TOOLS
+ * (src/scripttools.js), however a script names them.
+ */
+export function inboxCall(env, me) {
+  return async (name, args) => {
+    const tool = SCRIPT_TOOL_NAMES.includes(name) && TOOLS.find((t) => t.name === name);
+    if (!mayUse(me, tool)) {
+      return { error: `${name} is not a tool a script can call` };
+    }
+    try {
+      const { data, error } = await tool.run(env, me, args && typeof args === 'object' ? args : {});
+      return error ? { error } : { data: JSON.parse(JSON.stringify(data ?? null)) };
+    } catch (e) {
+      console.error(`script ${tool.name}: ${e.stack || e.message}`);
+      return { error: `${tool.name} failed on the server. Try again later.` };
+    }
+  };
 }
 
 /** One request, modern or legacy, to `{ result }` or `{ error }`. */

@@ -11,6 +11,9 @@
  */
 
 import { nameProblem } from './agent/secrets.js';
+import { entryOf } from './drafts.js';
+import { notifyRoom } from './notify.js';
+import { SCRIPT_TOOL_NAMES } from './scripttools.js';
 
 /**
  * Command requests (migration 0062): a thread agent asks a person on the team to run a command
@@ -18,6 +21,12 @@ import { nameProblem } from './agent/secrets.js';
  * under the thread, near the draft: the command, the agent's reason, and a field for each
  * variable the agent asked for, which the person fills in (their own API token, say). The
  * person runs it or denies it; nobody doing either until its deadline closes it.
+ *
+ * A script request (migration 0102, `kind: 'codemode'`) is the same record with the same
+ * lifecycle: the agent asks a person to run a code mode script as themselves (its
+ * `request_codemode`, src/agent/scriptrequest.js), calling the inbox's tools it names (`tools`,
+ * src/scripttools.js) with that person's permissions. `command` is the script; it has no
+ * variables.
  *
  * This file is the record in D1 and its lifecycle, `status`:
  *
@@ -140,6 +149,28 @@ export function cleanRequest(args, now = new Date()) {
 }
 
 /**
+ * What a script request is made of, from the agent's arguments: `{ kind, command, reason, env,
+ * tools, timeout, deadline }`, or `{ error }`. `tools` are names of SCRIPT_TOOLS, each once.
+ */
+export function cleanScript(args, now = new Date()) {
+  const code = String((args && args.code) || '');
+  if (!code.trim() || code.length > MAX_COMMAND) {
+    return { error: `give the script (up to ${MAX_COMMAND} characters)` };
+  }
+  const list = args.tools === undefined || args.tools === null ? [] : args.tools;
+  if (!Array.isArray(list) || !list.length) {
+    return { error: `name the tools the script calls, in \`tools\` (of ${SCRIPT_TOOL_NAMES.join(', ')})` };
+  }
+  const tools = [...new Set(list.map((t) => String(t).trim()))];
+  const unknown = tools.filter((t) => !SCRIPT_TOOL_NAMES.includes(t));
+  if (unknown.length) {
+    return { error: `a script can call only ${SCRIPT_TOOL_NAMES.join(', ')} as the person, not ${unknown.join(', ')}` };
+  }
+  const request = cleanRequest({ ...args, command: code, env: [] }, now);
+  return request.error ? request : { kind: 'codemode', ...request, tools };
+}
+
+/**
  * The values a person filled in for the variables of `request`: `{ values }`, each variable's
  * and nothing else, or `{ error }` when one is missing or is not a value.
  */
@@ -158,9 +189,10 @@ export function cleanValues(request, given) {
   return { values };
 }
 
-const envOf = (raw) => {
+const listOf = (raw) => {
   try {
-    return JSON.parse(raw || '[]');
+    const list = JSON.parse(raw || '[]');
+    return Array.isArray(list) ? list : [];
   } catch {
     return [];
   }
@@ -173,9 +205,15 @@ const envOf = (raw) => {
 const shape = (r, now) => ({
   id: r.id,
   thread: r.thread,
+  // `bash`, a command for the agent's computer, or `codemode`, a script run as the person.
+  kind: r.kind || 'bash',
   command: r.command,
   reason: r.reason,
-  env: envOf(r.env),
+  env: listOf(r.env),
+  tools: listOf(r.tools),
+  // The sidebar message the agent answered when it asked, or null: the inbox shows the request
+  // in that conversation.
+  sidebar: r.sidebar || null,
   timeout: r.timeout,
   deadline: r.deadline,
   status: r.status === 'pending' && r.deadline <= now.toISOString() ? 'expired' : r.status,
@@ -221,18 +259,25 @@ export async function openCount(env, thread, now = new Date()) {
   return row ? row.n : 0;
 }
 
-/** Stores a new request of `thread` (`request` from cleanRequest) under `id`: pending. */
+/**
+ * Stores a new request of `thread` (`request` from cleanRequest, or cleanScript, with the
+ * `sidebar` message it was asked in answer to, if one) under `id`: pending.
+ */
 export async function insertRequest(env, id, thread, request, now = new Date()) {
-  await env.DB.prepare(`INSERT INTO bash_requests (id, thread, command, reason, env, timeout,
-      deadline, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
+  await env.DB.prepare(`INSERT INTO bash_requests (id, thread, kind, command, reason, env, tools,
+      timeout, deadline, sidebar, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
     .bind(
       id,
       thread,
+      request.kind || 'bash',
       request.command,
       request.reason,
       JSON.stringify(request.env),
+      JSON.stringify(request.tools || []),
       request.timeout,
       request.deadline,
+      request.sidebar || null,
       now.toISOString(),
     ).run();
   return requestOf(env, id, now);
@@ -266,7 +311,8 @@ export async function expireRequest(env, id, now = new Date()) {
 
 /**
  * running -> `status` (`done` with the command's `exitCode`, `timeout`, or `failed` with
- * `error`). Whether it did: a run that was settled already (by the watchdog, say) stays so.
+ * `error`; a script that threw is `done` with its `error`). Whether it did: a run that was
+ * settled already (by the watchdog, say) stays so.
  */
 export async function settleRequest(env, id, outcome, now = new Date()) {
   const { status, exitCode = null, error = null } = outcome;
@@ -283,3 +329,19 @@ export async function markTold(env, id, now = new Date()) {
 }
 
 export const isOpen = (request) => OPEN.includes(request.status);
+
+/**
+ * What the agent is told of a request it asked for in answer to a sidebar message: whom to tell
+ * what came of it, and how; nothing for one it asked for otherwise.
+ */
+export const sidebarNote = (request) => (request.sidebar
+  ? `\n\nYou asked for it while you answered sidebar message ${request.sidebar}: tell its author what came of it with sidebar_followup (message ${request.sidebar}), not in your note, which does not reach them.`
+  : '');
+
+/** Tells the inboxes of the thread's teams that its requests changed. */
+export async function announceRequests(env, thread) {
+  const entry = await entryOf(env, thread).catch(() => null);
+  if (entry) {
+    await notifyRoom(env, entry.teams, { type: 'bash', thread: entry.key });
+  }
+}

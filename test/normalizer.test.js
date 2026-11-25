@@ -662,6 +662,70 @@ describe('processKey', () => {
     assert.deepEqual(tomb.meta.raw, [orig, edit, del].sort());
   });
 
+  it('files a Teams message deleted in Teams (Graph answers 404) as a tombstone, in any order', async () => {
+    const CH = '19:c@thread.tacv2';
+    const day = `teams/TN/G1/${CH}/2026/10/21`;
+    const reply = `${day}/1792584120000-1792584060000.json`;
+    const note = `${day}/notification-ab.json`;
+    const raw = {
+      [reply]: {
+        id: '1792584060000',
+        replyToId: '1792584000000',
+        messageType: 'message',
+        createdDateTime: '2026-10-21T12:01:00Z',
+        lastModifiedDateTime: '2026-10-21T12:02:00Z',
+        channelIdentity: { teamId: 'G1', channelId: CH },
+        from: { application: { displayName: 'Alerts' } },
+        body: { contentType: 'html', content: '<p>made up</p>' },
+      },
+      [note]: {
+        subscriptionId: 'sub-1',
+        changeType: 'deleted',
+        tenantId: 'TN',
+        resource: `teams('G1')/channels('${CH}')/messages('1792584000000')/replies('1792584060000')`,
+      },
+    };
+    const path = `channels/acme/helix/teams-${CH}/1792584000000/1792584060000.md`;
+    const run = async (order) => {
+      const e = env(raw);
+      e.DB.sqlite.exec(`INSERT INTO channels (source, tenant, channel_id, name, group_id, fetched_at)
+        VALUES ('teams', 'TN', '${CH}', 'aem-acme', 'G1', '2099-01-01T00:00:00Z')`);
+      const results = [];
+      for (const k of order) {
+        // eslint-disable-next-line no-await-in-loop
+        results.push((await processKey(e, k)).result);
+      }
+      return { e, results };
+    };
+
+    const after = await run([reply, note]);
+    assert.deepEqual(after.results, ['upsert', 'delete']);
+    const tomb = parse(after.e.CHANNELS.objects.get(path).body);
+    assert.equal(tomb.body, '');
+    assert.ok(tomb.meta.deletedAt);
+    // Who wrote it and when stay in the file.
+    assert.deepEqual([tomb.meta.author.name, tomb.meta.at], ['Alerts', '2026-10-21T12:01:00Z']);
+    assert.deepEqual(tomb.meta.raw, [reply, note].sort());
+    assert.deepEqual(after.e.DB.rows('SELECT id, at, deleted FROM messages'), [
+      { id: '1792584060000', at: '2026-10-21T12:01:00.000Z', deleted: 1 },
+    ]);
+
+    // The fetched copy last (a notification is queued before its message is fetched).
+    const before = await run([note, reply]);
+    const first = parse(before.e.CHANNELS.objects.get(path).body);
+    assert.equal(first.body, '');
+    assert.ok(first.meta.deletedAt);
+    assert.deepEqual(before.e.DB.rows('SELECT id, deleted FROM messages'), [
+      { id: '1792584060000', deleted: 1 },
+    ]);
+
+    // A notification of a new or an edited message files nothing itself.
+    const created = env({ [note]: { ...raw[note], changeType: 'created' } });
+    assert.deepEqual(await processKey(created, note), {
+      key: note, result: 'skip', reason: 'notification',
+    });
+  });
+
   it('indexes the thread and moves a reactor\'s watermark', async () => {
     const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
     const react = 'slack/E1/C1/2026/10/21/1.4-r.json';

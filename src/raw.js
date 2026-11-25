@@ -86,3 +86,23 @@ export function messageKey(tenantId, res, message) {
   return `teams/${segment(tenantId)}/${segment(res.teamId)}/${segment(res.channelId)}/`
     + `${dayPath(modified)}/${modified.getTime()}-${segment(message.id || res.messageId)}.json`;
 }
+
+const RESOURCE = /^\/?teams\('([^']+)'\)\/channels\('([^']+)'\)\/messages\('([^']+)'\)(?:\/replies\('([^']+)'\))?$/;
+
+/**
+ * Parses a channel-message resource path from a change notification, for example
+ * `teams('…')/channels('…')/messages('…')` or `…/messages('…')/replies('…')`.
+ */
+export function parseResource(resource) {
+  const m = RESOURCE.exec(resource || '');
+  if (!m) {
+    return null;
+  }
+  const [, teamId, channelId, rootId, replyId] = m;
+  const reply = replyId ? `/replies/${encodeURIComponent(replyId)}` : '';
+  const path = `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}`
+    + `/messages/${encodeURIComponent(rootId)}${reply}`;
+  return {
+    teamId, channelId, rootId, messageId: replyId || rootId, path,
+  };
+}

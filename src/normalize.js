@@ -26,6 +26,7 @@
 
 import { snowflakeMs } from './discord.js';
 import { mdLink, sizeTitle } from './markdown.js';
+import { parseResource } from './raw.js';
 import { canonicalUrl } from './teamsfiles.js';
 
 /** Slack subtypes that are ordinary messages from a person or a bot. */
@@ -535,10 +536,54 @@ const attr = (s) => String(s).replace(/[&"<>]/g, (c) => ({
   '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;',
 })[c]);
 
-export function normalizeTeams(key, msg) {
+/**
+ * A Teams change notification (src/teams.js). A new or edited message is filed from the copy
+ * fetched next to it; a deleted one only from the notification, since Graph answers 404 for a
+ * deleted channel message. The notification names the message (its `resource`) and nothing
+ * else: the tombstone's time is when it was received (`receivedAt`, the object's metadata, or
+ * else the day in its key), and its creation time is its id, the milliseconds Teams gives it.
+ */
+function teamsNotification(key, item, { receivedAt } = {}) {
+  if (!item || item.changeType !== 'deleted') {
+    return { op: 'skip', reason: 'notification' };
+  }
+  const res = parseResource(item.resource);
+  if (!res) {
+    return { op: 'skip', reason: 'notification' };
+  }
+  const parts = key.split('/');
+  const [, tenant] = parts;
+  const [y, m, d] = parts.slice(-4, -1);
+  const deletedAt = (receivedAt && !Number.isNaN(Date.parse(receivedAt))
+    ? new Date(receivedAt).toISOString() : null)
+    || (/^\d{4}$/.test(y) ? `${y}-${m}-${d}T00:00:00.000Z` : new Date(0).toISOString());
+  const created = /^\d{10,15}$/.test(res.messageId) ? Number(res.messageId) : NaN;
+  return {
+    op: 'delete',
+    message: {
+      source: 'teams',
+      tenant,
+      channelId: res.channelId,
+      groupId: res.teamId,
+      rootId: res.rootId,
+      id: res.messageId,
+      thread: `teams:${tenant}:${res.teamId}:${res.channelId}:${res.rootId}`,
+      at: Number.isNaN(created) ? deletedAt : new Date(created).toISOString(),
+      // A deletion carries no version; it is newer than any version of the message.
+      version: '9'.repeat(15),
+      deletedAt,
+      authorRef: { kind: 'system', name: 'Microsoft Teams' },
+      format: 'text',
+      text: '',
+      raw: key,
+    },
+  };
+}
+
+export function normalizeTeams(key, msg, meta = {}) {
   const [, tenant] = key.split('/');
   if (key.split('/').pop().startsWith('notification-')) {
-    return { op: 'skip', reason: 'notification' };
+    return teamsNotification(key, msg, meta);
   }
   const identity = msg.channelIdentity || {};
   const rootId = msg.replyToId || msg.id;
@@ -763,8 +808,11 @@ export function normalizePortal(key, event) {
   return { op: 'upsert', message };
 }
 
-/** Dispatches on the pile-1 key's source. */
-export function normalize(key, json) {
+/**
+ * Dispatches on the pile-1 key's source. `meta` is the object's custom metadata (`receivedAt`),
+ * for what the event does not say itself.
+ */
+export function normalize(key, json, meta = {}) {
   const source = key.split('/')[0];
   if (source === 'slack' && json && json.type === 'file_info') {
     // A kept files.info answer (src/slackfiles.js), not an event.
@@ -774,7 +822,7 @@ export function normalize(key, json) {
     return normalizeSlack(key, json);
   }
   if (source === 'teams') {
-    return normalizeTeams(key, json);
+    return normalizeTeams(key, json, meta);
   }
   if (source === 'discord') {
     return normalizeDiscord(key, json);

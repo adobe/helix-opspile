@@ -30,12 +30,19 @@ function tab(path, storage = new Map(), local = new Map(), preset = {}) {
     querySelector: () => null,
     querySelectorAll: () => [],
     closest: () => null,
+    matches: () => false,
   });
   const go = (url) => {
     const u = new URL(url, location.href);
     location.href = u.href;
   };
+  location.assign = go;
   const listeners = {};
+  // The <header>'s own listeners (its clicks), by type.
+  const header = { ...element(), on: {} };
+  header.addEventListener = (type, fn) => {
+    header.on[type] = fn;
+  };
   const elements = new Map();
   const root = { dataset: {} };
   const metas = [
@@ -71,7 +78,7 @@ function tab(path, storage = new Map(), local = new Map(), preset = {}) {
       createElement: (tag) => ({ tag, innerHTML: '', addEventListener() {} }),
       documentElement: root,
       getElementById: byId,
-      querySelector: element,
+      querySelector: (sel) => (sel === 'header' ? header : element()),
       querySelectorAll: (sel) => (sel.startsWith('meta') ? metas : []),
     },
   };
@@ -86,7 +93,32 @@ function tab(path, storage = new Map(), local = new Map(), preset = {}) {
     metas,
     listeners,
     local,
+    header,
   };
+}
+
+/**
+ * A click on Inbox in the header, on its number (`count`) or on its name; says whether the
+ * page took it (the browser follows the link otherwise).
+ */
+function clickInbox(t, { count = true } = {}) {
+  const a = {
+    dataset: { page: 'inbox' },
+    target: '',
+    hasAttribute: () => false,
+    getAttribute: () => '/inbox?team=edge',
+    closest: () => null,
+  };
+  const badge = { hidden: false };
+  let prevented = false;
+  t.header.on.click({
+    button: 0,
+    target: {
+      closest: (sel) => ({ 'a[data-page]': a, '.count:not(.total)': count ? badge : null }[sel] ?? null),
+    },
+    preventDefault: () => { prevented = true; },
+  });
+  return prevented;
 }
 
 describe('the header', () => {
@@ -224,6 +256,43 @@ describe('the header', () => {
     // The requests that wait for the admin team are counted on Inbox: they are threads there.
     assert.match(admin.html, /<a data-page="inbox" href="\/inbox" title="[^"]*">Inbox<span class="count" hidden><\/span><\/a>/);
     assert.doesNotMatch(nav({ teams: [{ slug: 'edge' }] }).html, /class="count"/);
+  });
+
+  it('opens the admin team\'s open requests from the number on Inbox', () => {
+    const requests = '/inbox?team=admin&filters=1&f.type=request&f.resolved=open';
+    // In the inbox: the inbox opens them itself, in the tab.
+    const inbox = tab('/inbox?team=edge');
+    const opened = [];
+    inbox.Header.init({ admin: true }, { count: false, open: (url) => opened.push(url) });
+    assert.equal(inbox.Header.REQUESTS, requests);
+    inbox.Header.setCount(1);
+    assert.equal(clickInbox(inbox), true);
+    assert.deepEqual(opened, [requests]);
+    // Inbox's name, on the inbox: nothing to open.
+    clickInbox(inbox, { count: false });
+    assert.deepEqual(opened, [requests]);
+    // No request waits: the number is not there to click.
+    inbox.Header.setCount(0);
+    clickInbox(inbox);
+    assert.deepEqual(opened, [requests]);
+
+    // A page that opens the others itself (Teams, which saves what its agent has open first).
+    const admin = tab('/inbox/admin?tab=teams');
+    const went = [];
+    admin.Header.init({ admin: true }, { count: false, go: (id, url) => went.push([id, url]) });
+    admin.Header.setCount(2);
+    assert.equal(clickInbox(admin), true);
+    assert.deepEqual(went, [['inbox', requests]]);
+    // Its name: the inbox as it was left.
+    clickInbox(admin, { count: false });
+    assert.deepEqual(went, [['inbox', requests], ['inbox', '/inbox?team=edge']]);
+
+    // Any other page: the browser goes there.
+    const cogs = tab('/inbox/cogs');
+    cogs.Header.init({ admin: true }, { count: false });
+    cogs.Header.setCount(1);
+    assert.equal(clickInbox(cogs), true);
+    assert.equal(cogs.location.href, `${ORIGIN}${requests}`);
   });
 
   it('opens Stats on the org and the team the page on screen sends', () => {

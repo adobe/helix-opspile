@@ -752,13 +752,20 @@ export async function testRule(env, input, { text, thread = null, messages = nul
 
 /** The configuration a team's page shows: its own rules and technologies, and the admin team's. */
 export async function config(env, team) {
-  const own = { rules: await teamRules(env, team), tech: await teamTech(env, team) };
+  const global = team === GLOBAL_TEAM;
+  // Asked together: /api/* sends the reads of one tick to D1 as one batch (src/d1batch.js).
+  const [rules, tech, globalRules, globalTech] = await Promise.all([
+    teamRules(env, team),
+    teamTech(env, team),
+    global ? null : teamRules(env, GLOBAL_TEAM),
+    global ? null : teamTech(env, GLOBAL_TEAM),
+  ]);
   return {
     team,
-    global: team === GLOBAL_TEAM,
-    ...own,
-    inherited: team === GLOBAL_TEAM ? null
-      : { rules: await teamRules(env, GLOBAL_TEAM), tech: await teamTech(env, GLOBAL_TEAM) },
+    global,
+    rules,
+    tech,
+    inherited: global ? null : { rules: globalRules, tech: globalTech },
     scripts: Boolean(env.LOADER),
   };
 }

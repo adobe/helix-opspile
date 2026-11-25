@@ -55,6 +55,8 @@ header .count { display: inline-grid; place-items: center;
   margin-left: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
   line-height: 1; }
 header .count[hidden] { display: none; }
+/* Inbox's number opens the admin team's open requests (ui/header.js). */
+header .count:not(.total), .pagemenu .count { cursor: pointer; }
 /* Phones: the pages are a menu under the one you are on. */
 .pagemenu { inset: calc(var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-75)) auto auto var(--spectrum-spacing-100); margin: 0; min-width: calc(var(--spectrum-spacing-100) * 22 + var(--spectrum-spacing-75));
   padding: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75));
@@ -644,6 +646,9 @@ header .note { white-space: nowrap; }
   background: var(--spectrum-accent-background-color-default);
   font-size: var(--spectrum-font-size-50);
   font-weight: var(--spectrum-bold-font-weight);
+}
+.spectrum header .count:not(.total):hover, .spectrum .pagemenu .count:hover {
+  background: var(--spectrum-accent-background-color-hover);
 }
 /* The page's tools stand apart from the pages by the space alone: S2's app chrome has no Divider. */
 .spectrum header .divider { height: var(--spectrum-component-height-75); }

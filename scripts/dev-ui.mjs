@@ -2127,7 +2127,8 @@ async function api(req, res, url) {
   const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);
   if (bash && req.method === 'POST') {
     // As src/agent/bashrequest.js: run answers once the command has started; it ends a few
-    // seconds later, and the room says so each time. The values are not kept, or printed.
+    // seconds later, and the room says so each time. The values are not kept, or printed. A
+    // script (`kind: 'codemode'`) answers once it has ended.
     const { thread: key, id, env: values = {} } = await readJson(req);
     const entry = store.threads.get(key);
     if (entry && !inTeam(entry.row.team) && maySee(entry)) {
@@ -2150,6 +2151,17 @@ async function api(req, res, url) {
     Object.assign(request, { by: { id: ME, name: me.name }, decided_at: at });
     if (bash[1] === 'deny') {
       Object.assign(request, { status: 'denied', finished_at: at });
+    } else if (request.kind === 'codemode') {
+      // As src/agent/stub.js: a script runs as you, and the answer comes once it has ended.
+      request.status = 'running';
+      broadcast(entry.row.team, { type: 'bash', thread: key });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 3000);
+      });
+      Object.assign(request, { status: 'done', finished_at: new Date().toISOString() });
+      console.log(`script ${id} on ${key}: ran`);
+      broadcast(entry.row.team, { type: 'bash', thread: key });
+      return json(res, { ok: true, request });
     } else {
       request.status = 'running';
       setTimeout(() => {

@@ -1222,7 +1222,9 @@ function room(env, team) {
 }
 
 /** `/api/*` with the viewer known; see `api`. */
-async function route(request, env, url, { viewer: injected, waitUntil } = {}, timing = null) {
+async function route(request, env, url, {
+  viewer: injected, waitUntil, inboxTools = null,
+} = {}, timing = null) {
   // A customer's favicon (src/favicons.js), which the inbox shows on many rows at once. It is
   // Google's, no one's secret: someone Access signed in is enough, without looking them up.
   if (url.pathname === '/api/favicon' && (request.method === 'GET' || request.method === 'HEAD')) {
@@ -1525,11 +1527,13 @@ async function route(request, env, url, { viewer: injected, waitUntil } = {}, ti
     const body = await request.json().catch(() => ({}));
     return decideTool(env, me, body, working, tool[1], { seeing });
   }
-  // A command the thread's agent asked a person to run (src/agent/bashrequest.js).
+  // A command the thread's agent asked a person to run (src/agent/bashrequest.js), or a script
+  // to run as themselves (src/agent/scriptrequest.js), with the inbox's tools `inboxTools` gives
+  // (src/mcp.js, `inboxCall`; the Worker passes it, so that this file does not import them).
   const bash = /^\/api\/bash\/(run|deny)$/.exec(url.pathname);
   if (bash && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    return decideBash(env, me, body, working, { run: bash[1] === 'run', seeing });
+    return decideBash(env, me, body, working, { run: bash[1] === 'run', seeing, inboxTools });
   }
   // Someone is writing a reply: the customer portal shows its customers (src/post.js).
   if (url.pathname === '/api/typing' && request.method === 'POST') {

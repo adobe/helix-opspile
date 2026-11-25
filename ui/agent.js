@@ -40,7 +40,9 @@ const state = {
   secretEditing: null,
 };
 /** What the page around it does: keeps the address, and redraws what counts the agent. */
-const host = { onUrl: () => {}, onChange: () => {}, onOpen: () => {} };
+const host = {
+  onUrl: () => {}, onChange: () => {}, onOpen: () => {}, onWrite: () => {},
+};
 const VIEWS = ['file', 'history', 'agents', 'mcp', 'extraction'];
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -51,13 +53,20 @@ const mayEdit = () => Boolean(base()?.may);
 const whoEdits = () => (base()?.kind === 'team' ? `the admin team and the managers of ${base().name}` : 'the admin team and the managers of its ops teams');
 
 async function call(path, options = {}) {
-  const res = await fetch(path, {
-    credentials: 'same-origin',
-    ...options,
-    headers: options.body ? { 'content-type': 'application/json' } : {},
-  });
-  const body = await res.json().catch(() => ({}));
-  return { status: res.status, ok: res.ok, body };
+  // A change: what the page read ahead of its team or customer is old now.
+  const change = Boolean(options.method && options.method !== 'GET');
+  if (change) host.onWrite();
+  try {
+    const res = await fetch(path, {
+      credentials: 'same-origin',
+      ...options,
+      headers: options.body ? { 'content-type': 'application/json' } : {},
+    });
+    const body = await res.json().catch(() => ({}));
+    return { status: res.status, ok: res.ok, body };
+  } finally {
+    if (change) host.onWrite();
+  }
 }
 
 // ---- prefetch ---------------------------------------------------------------------------
@@ -240,31 +249,54 @@ function reset(repo) {
   });
 }
 
-/** Its channels, tools, MCP servers and extraction rules: what the page counts. */
+/**
+ * How long what was read of the agent (`loadMeta`) is shown again without reading it again:
+ * going from one of its sections to another shows them at once. What is changed here changes
+ * it in place; what others change shows after this long, or when the team or customer is picked.
+ */
+const META_MAX_AGE = 60000;
+
+/**
+ * Its channels, tools, MCP servers and extraction rules: what the page counts. Kept for
+ * META_MAX_AGE only when every read succeeded: after a failure (a 503, D1 overloaded), the next
+ * section shown reads them again.
+ */
 function loadMeta(repo) {
-  state.loads.meta = state.loads.meta || Promise.all([
+  if (state.loads.meta && Date.now() - state.loads.metaAt > META_MAX_AGE) state.loads.meta = null;
+  if (state.loads.meta) return state.loads.meta;
+  state.loads.metaAt = Date.now();
+  const read = Promise.all([
     loadChannels(repo),
     loadMcp(repo),
     loadTools(repo),
     loadExtraction(repo),
-  ]).then(() => { if (state.repo === repo) counted(); });
-  return state.loads.meta;
+  ]).then((oks) => {
+    if (oks.includes(false) && state.loads.meta === read) state.loads.metaAt = 0;
+    if (state.repo === repo) counted();
+  });
+  state.loads.meta = read;
+  return read;
 }
 
 /** Its files, listed once; then the ones not here yet are fetched ahead (see prefetch). */
 function loadFiles(repo) {
-  state.loads.files = state.loads.files || call(`/api/kb/files?repo=${encodeURIComponent(repo)}`).then(({ ok, body }) => {
+  if (state.loads.files) return state.loads.files;
+  const read = call(`/api/kb/files?repo=${encodeURIComponent(repo)}`).then(({ ok, body }) => {
     if (state.repo !== repo) return;
     if (!ok) {
       state.filesError = body.error || 'Could not list the files.';
+      // Not kept: the knowledge base shown next lists them again.
+      if (state.loads.files === read) state.loads.files = null;
       return;
     }
+    state.filesError = null;
     state.files = body.files;
     state.hasSystemPrompt = body.hasSystemPrompt;
     state.truncated = body.truncated;
     state.listedAt = Date.now();
   });
-  return state.loads.files;
+  state.loads.files = read;
+  return read;
 }
 
 /**
@@ -275,6 +307,20 @@ function load(repo, { fresh = false } = {}) {
   if (repo !== state.repo) reset(repo);
   else if (fresh) state.loads.meta = null;
   return loadMeta(repo);
+}
+
+/**
+ * Reads ahead what showing the agent of `repo` needs, not shown yet: what it counts, the
+ * listing of its knowledge base and the agent instructions, which the knowledge base opens at.
+ */
+function preload(repo) {
+  if (repo !== state.repo) reset(repo);
+  // What is old is read again, but not under a view that shows it: `show` reads it, and draws it.
+  if (!state.loads.meta || !$('editor')) loadMeta(repo);
+  loadFiles(repo).then(() => {
+    const f = state.repo === repo && (state.files || []).find((x) => x.path === SYSTEM_PROMPT);
+    if (f && f.hash && !blobs.has(f.hash)) blobText(repo, f.hash);
+  });
 }
 
 /**
@@ -361,10 +407,11 @@ function renderFiles() {
 /** The channels this knowledge base learns from, with their agents; null when unknown. */
 async function loadChannels(repo) {
   const { ok, body } = await call(`/api/kb/channels?repo=${encodeURIComponent(repo)}`);
-  if (state.repo !== repo) return;
+  if (state.repo !== repo) return true;
   state.channels = ok ? body.channels : null;
   state.configured = ok ? body.configured : true;
   state.teamDefault = ok ? body.teamDefault || null : null;
+  return ok;
 }
 
 /**
@@ -618,9 +665,10 @@ async function switchTeamDefault(el) {
 /** This knowledge base's MCP servers, and the global ones; null when unknown. */
 async function loadMcp(repo) {
   const { ok, body } = await call(`/api/kb/mcp?repo=${encodeURIComponent(repo)}`);
-  if (state.repo !== repo) return;
+  if (state.repo !== repo) return true;
   state.mcp = ok ? body.servers : null;
   state.globals = ok ? body.globals || [] : null;
+  return ok;
 }
 
 /** Whether a global server is on somewhere here: for the team, or in any of these channels. */
@@ -718,8 +766,9 @@ function mcpRow(s) {
 /** The agent tools of this knowledge base's team or customer; null when unknown. */
 async function loadTools(repo) {
   const { ok, body } = await call(`/api/kb/tools?repo=${encodeURIComponent(repo)}`);
-  if (state.repo !== repo) return;
+  if (state.repo !== repo) return true;
   state.tools = ok ? body.tools : null;
+  return ok;
 }
 
 const toolOn = (t) => Boolean((t.team && t.team.enabled) || Object.values(t.channels).some((c) => c.enabled));
@@ -961,6 +1010,10 @@ const TOOL_CONFIRM = {
     on: (where) => `From their next message, the agents of ${where} have a bash shell with a working directory of their own per thread (Cloudflare Computer), and curl, which reaches the internet without a filter.`,
     off: (where) => `Agents of ${where} lose their shell with their next message. The files they made stay in their threads.`,
   },
+  org_threads: {
+    on: (where) => `From their next message, the agents of ${where} can list and read the other channels of their thread's customer, on every platform, never another customer's, and what they read can reach their drafts, notes, the customer's knowledge base and their posts.`,
+    off: (where) => `Agents of ${where} stop reading the customer's other channels at once. What they read before stays in their transcripts.`,
+  },
   any_thread: {
     on: (where) => `From their next message, the agents of ${where} can read any thread of the inbox, of any channel, team or customer, and find any customer's channels, and what they read can reach their drafts, notes, knowledge bases and their other tools.`,
     off: (where) => `Agents of ${where} stop reading other channels' threads at once. What they read before stays in their transcripts.`,
@@ -987,7 +1040,7 @@ const TOOL_CONFIRM = {
 function toolsSection() {
   const b = base();
   if (!state.tools) return '<div class="empty">Could not list the agent tools.</div>';
-  const note = b.kind === 'team' ? `Built-in tools: on or off for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). New teams start with Computer, Extraction rules, Web search, Resolve threads and Label threads on.`
+  const note = b.kind === 'team' ? `Built-in tools: on or off for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). New teams start with Computer, Extraction rules, Read the customer's channels, Web search, Resolve threads and Label threads on.`
     : `Built-in tools: turned on for a whole team on its page in Teams, or here for one of ${b.name}'s channels.`;
   return `<h3 class="group">Tools</h3><div class="sub intro">${esc(note)}</div>${state.tools.map(toolRow).join('')}`;
 }
@@ -1054,10 +1107,11 @@ function bindTools() {
 
 async function loadExtraction(repo) {
   const b = state.bases.find((x) => x.repo === repo);
-  if (!b || b.kind !== 'team') { state.extraction = null; return; }
+  if (!b || b.kind !== 'team') { state.extraction = null; return true; }
   const { ok, body } = await call(`/api/kb/extraction?repo=${encodeURIComponent(repo)}`);
-  if (state.repo !== repo) return;
+  if (state.repo !== repo) return true;
   state.extraction = ok ? body : null;
+  return ok;
 }
 
 /** "5 rules · 3 tech" next to "Extraction rules". */
@@ -2270,14 +2324,23 @@ document.querySelector('main').addEventListener('click', (e) => {
 
 window.Agent = {
   /** Who you are (/api/me), and the knowledge bases you may see (/api/kb), kept in place. */
-  init(me, bases, { onUrl, onChange, onOpen } = {}) {
+  init(me, bases, {
+    onUrl, onChange, onOpen, onWrite = () => {},
+  } = {}) {
     state.me = me;
     state.bases = bases;
     // Yours (src/settings.js): whether your inbox shows the agent's thinking (renderAgents).
     state.settings = me.readonly ? null : me.settings || null;
-    Object.assign(host, { onUrl, onChange, onOpen });
+    Object.assign(host, {
+      onUrl, onChange, onOpen, onWrite,
+    });
   },
   load,
+  preload,
+  /** Something changed: what was read of the agent is read again when it is shown next. */
+  stale() {
+    if (state.loads.meta) state.loads.metaAt = 0;
+  },
   show,
   /**
    * Before anything else is shown where the agent is: saves what is pending, and asks only

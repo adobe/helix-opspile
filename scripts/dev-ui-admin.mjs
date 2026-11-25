@@ -1127,12 +1127,15 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   });
   // The computer is on for the platform team already, and posting in one of its channels: the
   // per-channel lists put the channels switched on their own first. Web search is on for the
-  // team as migration 0077 turned it on (without Workers AI here, the page says it cannot run).
+  // team as migration 0077 turned it on (without Workers AI here, the page says it cannot run),
+  // and reading the customer's channels as migration 0102 did, with one channel opted out.
   DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by, changed_at) VALUES
     ('computer', 'team', 'platform', 1, 'Dana', '2026-10-24T09:00:00Z'),
     ('post_message', 'channel', 'C0INITECH1', 1, 'Dana', '2026-10-25T09:00:00Z'),
     ('any_thread', 'channel', 'C0EDGEQ01', 1, 'Dana', '2026-10-25T09:00:00Z'),
-    ('web_search', 'team', 'platform', 1, 'migration 0077', '2026-11-18T00:00:00Z');
+    ('web_search', 'team', 'platform', 1, 'migration 0077', '2026-11-18T00:00:00Z'),
+    ('org_threads', 'team', 'platform', 1, 'migration 0102', '2026-11-25T00:00:00Z'),
+    ('org_threads', 'channel', 'C0INITECH1', 0, 'Dana', '2026-11-25T09:00:00Z');
     INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
       VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
   // The admin team gave platform ops' computers the image for working on data.

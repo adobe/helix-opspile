@@ -31,7 +31,11 @@ that whoever comes second finds out instead of overwriting.
 
 **Message file.** absent → live → edited → tombstone. `merge` in `src/channels.js`: a file only moves
 to a newer `version` (or, at the same version, to what a higher `FORMAT` writes differently: its
-body or `dropped`), and a tombstone is final, so a replay in any order comes out the same.
+body or `dropped`), and a tombstone is final, so a replay in any order comes out the same. What makes
+one is the platform's deletion event (Slack `message_deleted`, a Discord deletion the poller found,
+a portal message's `deletedAt`) or, on Teams, a fetched copy with `deletedDateTime` or the `deleted`
+change notification itself, since Graph answers 404 for a deleted channel message. A message restored
+on the platform afterwards stays a tombstone.
 
 **Read watermark.** One moving position per person and thread (`watermarks`, `advanceWatermark` in
 `src/threads.js`). The write is conditional on being newer, so it never moves back.
@@ -450,8 +454,9 @@ older manifest goes on reading its layers after an upload. A running kernel keep
 booted with until it boots again.
 
 **Command request.** pending → running → done, timeout or failed; pending → denied or expired
-(`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). The agent asks
-(`request_bash`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
+(`bash_requests.status`, `src/bashrequests.js`, `src/agent/bashrequest.js`). A script request
+(`kind: 'codemode'`, `request_codemode`, `src/agent/scriptrequest.js`) is one too, with the same
+lifecycle. The agent asks (`request_bash`, `request_codemode`), and a person runs or denies it; `CHECK` keeps the status to those seven, and every
 transition is `WHERE status = …`, so of two clicks, or a click at the deadline, one wins and the
 other is told who did. The deadline's schedule is armed before the request is stored (a deadline
 with no request does nothing), and a request past its deadline reads as expired before the schedule
@@ -464,7 +469,13 @@ took its whole timeout: the shell says it stopped a run no other way, and a comm
 124 by itself. The kernel's shell says it with the signal that ended bash (143, or 137), under the
 same condition. `told_at` is written last, after the agent was
 told how the request ended; one that ended untold (the agent's storage failed) is told at its
-deadline, without what the command printed, which is kept nowhere.
+deadline, without what the command printed, which is kept nowhere. A script runs as the person
+who clicked only while that click's request lasts: each of its tool calls goes back to the Worker
+that serves it, so the object claims it, runs it and tells the agent before it answers; one whose
+object or click went away under it is lost, as a command whose object restarted, and the watchdog
+settles it as failed. A script that threw is `done`, with its `error`, as a nonzero exit is.
+`sidebar`, the sidebar message a request was asked in answer to, is written with it and never
+changes: where the inbox shows it follows from whether that conversation shows, not from state.
 
 **Tool request.** pending → granted → revoked; pending → denied (`tool_requests.status`,
 `src/toolrequests.js`, `src/agent/toolrequest.js`, `decideTool` in `src/agent/stub.js`). The agent
@@ -940,6 +951,19 @@ the save, and asks only when it could not be made, once however many ways out we
 says which hash a path has, and is the watermark: a save relists (unless another save started while
 it was read), and so does showing the tab again after `RELIST_MS`. A failed batch leaves its hashes
 not here, and opening one reads it by its path.
+
+**Teams and Customers read ahead.** not read → in flight → kept → forgotten (`ahead`, `cached`,
+`forget` in `ui/admin.js`). What a team's or a customer's overview and Manage section read (their
+profile, `/api/admin/team` or `/org`, the member suggestions, the stack drawing) is asked for once
+what is picked is shown (`readAhead`), or when the pointer rests on, or the focus is on, a section's
+tab, a row of the list or a link to one (`warm`), and kept for `KEEP_MS`. Every change the page
+makes (`call` with another method than GET, and the agent's, `onWrite`) forgets all of it, when it
+is sent and again when it is done, and an answer asked for before a change is not kept: nothing is
+shown from before a change made here. A failed read is not kept. What the agent of the picked one
+counts (its channels, tools, servers, extraction rules: `loadMeta` in `ui/agent.js`) is read once
+for its sections, and again after `META_MAX_AGE`, when it is picked again, or after a change
+(`Agent.stale`). It is kept only when all four reads succeeded, and the knowledge base's listing
+(`loadFiles`) only when it did: after a failure, the next section shown reads again.
 
 **Code highlighter.** not loaded → loading → loaded, or failed → loading again (`highlighter` in
 `ui/inbox.js`). The first code block rendered starts the import; until it has loaded, code is plain

@@ -140,7 +140,7 @@ describe('what an agent may ask for', () => {
     // Off, and working here: posting (a Slack bot), extraction rules, membership needs the
     // admin bots, the computer a Worker Loader, web search Workers AI; read any thread is the
     // admin team's, as is slack_channels. Resolving and labeling need nothing.
-    assert.deepEqual(ids, ['post_message', 'extraction_rules', 'resolve', 'label', 'mcp:2', 'mcp:global:browser']);
+    assert.deepEqual(ids, ['post_message', 'extraction_rules', 'org_threads', 'resolve', 'label', 'mcp:2', 'mcp:global:browser']);
     e.DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_by,
       changed_at) VALUES ('extraction_rules', 'team', 'helix', 1, 'Ada', 't')`);
     assert.ok(!(await requestableFor(e, TARGET)).some((x) => x.id === 'extraction_rules'));
@@ -216,7 +216,7 @@ describe('a person decides on a tool request', () => {
     assert.equal(await serverWithHeaders(e, 2, { channelId: 'C1', thread: 'slack:E1:C1:2.2' }), null);
     // Nothing more to ask for of those.
     const left = (await requestableFor(e, TARGET)).map((x) => x.id);
-    assert.deepEqual(left, ['post_message', 'resolve', 'label']);
+    assert.deepEqual(left, ['post_message', 'org_threads', 'resolve', 'label']);
 
     // A day later it is over, and the agent may ask again.
     e.DB.sqlite.exec('UPDATE tool_requests SET expires_at = \'2020-01-01T00:00:00.000Z\'');

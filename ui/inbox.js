@@ -919,8 +919,14 @@ const DRAFT_ICON = { mine: 'edit', team: 'user-edit', none: 'edit-no' };
 const WAITING_ICON = {
   Us: 'call-center', Customer: 'clock', Vendor: 'clock', Nobody: 'pause-circle',
 };
-const TYPE_ICON = { conversation: 'chat', alert: 'bell' };
+const TYPE_ICON = { conversation: 'chat', alert: 'bell', request: 'hand' };
 const PLATFORM_SITE = { Slack: 'slack.com', Teams: 'teams.microsoft.com', Discord: 'discord.com', Portal: 'adobe.com' };
+// What a thread is: a conversation, an alert, or one of the admin team's requests (in its inbox
+// only), which the number on Inbox in the header opens (ui/header.js, `REQUESTS`).
+const typeOf = (t) => {
+  if (isRequestKey(t.thread)) return 'request';
+  return t.kind === 'alert' ? 'alert' : 'conversation';
+};
 const kindOf = (t) => (t.kind === 'alert' ? 'alert' : (t.label?.label_kind && t.label.label_kind !== 'other' ? t.label.label_kind : 'other'));
 // A staff ✅ on the root decides (until a customer writes again), else Clef does.
 const resolvedOf = (t) => t.resolution?.verdict
@@ -1199,9 +1205,9 @@ const FACETS = [
     order: () => ['me', ...Object.keys(state.data?.teams || {}).map((s) => `team:${s}`),
       ...(state.coPeople || []).map((p) => `person:${p}`)
         .sort((x, y) => PERSON_KINDS.indexOf(personKind(x.slice(7))) - PERSON_KINDS.indexOf(personKind(y.slice(7))))] },
-  { id: 'type', title: 'Type', value: (t) => (t.kind === 'alert' ? 'alert' : 'conversation'), order: ['conversation', 'alert'],
-    label: { conversation: 'Conversations', alert: 'Alerts' }, glyph: (v) => TYPE_ICON[v],
-    color: colorOf({ conversation: 'c-blue', alert: 'c-crimson' }) },
+  { id: 'type', title: 'Type', value: typeOf, order: ['conversation', 'alert', 'request'],
+    label: { conversation: 'Conversations', alert: 'Alerts', request: 'Admin requests' }, glyph: (v) => TYPE_ICON[v],
+    color: colorOf({ conversation: 'c-blue', alert: 'c-crimson', request: 'c-pink' }) },
   { id: 'platform', title: 'Platform', value: platform, order: ['Slack', 'Teams', 'Discord', 'Portal'],
     icon: (v) => PLATFORM_SITE[v],
     color: colorOf({ Slack: 'c-slack', Teams: 'c-msteams', Discord: 'c-discord', Portal: 'c-portal' }) },
@@ -1583,6 +1589,7 @@ function filterCards() {
   if (old.length !== cards.length || old.some((c) => c.__html === undefined)) {
     setHtml(box, cards.join(''));
     [...box.children].forEach((c, i) => { c.__html = cards[i]; });
+    pinColumns();
     return;
   }
   cards.forEach((html, i) => {
@@ -1592,6 +1599,99 @@ function filterCards() {
     old[i].replaceWith(node);
     keepFavicons(old[i], node);
   });
+  pinColumns();
+}
+
+// ---------------------------------------------------------------- the filters' columns
+/*
+ * Where the filters flow into columns (ui/spectrum-inbox.css, "Wide screens"), the browser
+ * balances them anew on every change: a card a few rows longer than it was (the older pages
+ * coming in after a reload, a new thread) moves a whole card into the next column, and every
+ * card after it with it. So the page says where each column starts (`.card.cb`, a forced column
+ * break): at the cuts that balance the cards best (bestCuts), unless the cuts it has are no more
+ * than COLUMN_SLACK rows taller than those. While the inbox loads its older pages, it keeps the
+ * cuts it has: the ones it had when it was last loaded, kept per inbox, number of columns and
+ * cards in localStorage (`opspile.facetcols`), so that a reload starts as it ended.
+ */
+const FACET_COLS_KEY = 'opspile.facetcols';
+const COLUMN_SLACK = 4;
+/** How tall the tallest column is, with `heights` cut into columns before each index of `cuts`. */
+function tallest(heights, cuts) {
+  let most = 0;
+  [0, ...cuts].forEach((from, i) => {
+    const to = i < cuts.length ? cuts[i] : heights.length;
+    most = Math.max(most, heights.slice(from, to).reduce((a, b) => a + b, 0));
+  });
+  return most;
+}
+/** The cuts of `heights` into `n` columns (or one per card, if fewer) that make the tallest least. */
+function bestCuts(heights, n) {
+  const k = Math.min(n, heights.length) - 1;
+  let best = null;
+  let bestH = Infinity;
+  const walk = (cuts, from) => {
+    if (cuts.length === k) {
+      const h = tallest(heights, cuts);
+      if (h < bestH) { best = cuts; bestH = h; }
+      return;
+    }
+    for (let i = from; i <= heights.length - (k - cuts.length); i += 1) walk([...cuts, i], i + 1);
+  };
+  walk([], 1);
+  return best || [];
+}
+/**
+ * The cuts to use for cards `heights` in `n` columns: `had` (the cuts there were) if it still
+ * fits them and `keep` says so, or if it makes the tallest column no more than `slack` taller
+ * than the best cuts do; the best cuts otherwise.
+ */
+function pickCuts(heights, n, had, { keep = false, slack = 0 } = {}) {
+  const best = bestCuts(heights, n);
+  const fits = Array.isArray(had) && had.length === best.length
+    && had.every((c, i) => Number.isInteger(c) && c > (i ? had[i - 1] : 0) && c < heights.length);
+  if (fits && (keep || tallest(heights, had) <= tallest(heights, best) + slack)) return had;
+  return best;
+}
+const storedFacetCols = () => { try { return JSON.parse(localStorage.getItem(FACET_COLS_KEY) || '{}'); } catch { return {}; } };
+let facetCols = { key: null, cuts: null };
+/** Sets where each column of filters starts (`.cb`), as pickCuts says, where they are columns. */
+function pinColumns() {
+  const box = $('facets');
+  const cards = [...box.children];
+  const cs = getComputedStyle(box);
+  const width = parseFloat(cs.columnWidth);
+  let n = 1;
+  if (cs.display === 'block' && width > 0) {
+    const gap = parseFloat(cs.columnGap) || 0;
+    const inner = box.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    n = Math.max(1, Math.floor((inner + gap) / (width + gap)));
+  }
+  let cuts = [];
+  if (n > 1 && cards.length > 1) {
+    // A card's gap below it is one row (--fr-h): every card's is the same.
+    const rowH = parseFloat(getComputedStyle(cards[0]).marginBottom) || 0;
+    const heights = cards.map((c) => c.offsetHeight + rowH);
+    const key = `${scopeKey()}|${n}|${cards.map((c) => c.dataset.f).join(',')}`;
+    const stored = storedFacetCols();
+    const had = facetCols.key === key ? facetCols.cuts : stored[key];
+    const loading = !state.data || Boolean(state.data.page?.next && state.data.threads.length < BACKFILL);
+    cuts = pickCuts(heights, n, had, { keep: loading, slack: COLUMN_SLACK * rowH });
+    facetCols = { key, cuts };
+    if (!loading && String(stored[key]) !== String(cuts)) {
+      try { localStorage.setItem(FACET_COLS_KEY, JSON.stringify({ ...stored, [key]: cuts })); } catch { /* storage is off */ }
+    }
+  }
+  cards.forEach((c, i) => { if (c.classList.contains('cb') !== cuts.includes(i)) c.classList.toggle('cb'); });
+}
+/** A wider or narrower filter column may hold another number of columns: cut them again. */
+function wirePinColumns() {
+  let was = null;
+  new ResizeObserver(() => {
+    const w = $('facets').clientWidth;
+    if (w === was) return;
+    was = w;
+    if (!simple()) pinColumns();
+  }).observe($('facets'));
 }
 
 // ---------------------------------------------------------------- filters out of view
@@ -4049,8 +4149,8 @@ async function decideToolRequest(key, id, act) {
 }
 
 /**
- * What a run of sidebar messages shows, one element each: its messages, each with the tools the
- * agent asked for in answer to it, then the agent working on its answer, or that it answers once
+ * What a run of sidebar messages shows, one element each: its messages, each with the tools, the
+ * commands and the scripts the agent asked for in answer to it, then the agent working on its answer, or that it answers once
  * it is done (`last`: the thread's latest run).
  */
 function sideRun(key, run, last) {
@@ -4059,7 +4159,7 @@ function sideRun(key, run, last) {
   const doing = working ? [`<div class="sm agent working" aria-live="polite"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
     <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble"><span class="spin" aria-hidden="true"></span>${esc(state.agents.get(key).side.text)}…</div></div></div>`] : [];
   const queued = waiting ? [`<div class="sc-wait">${AGENT_NAME} answers once it is done with what it is doing.</div>`] : [];
-  return [...run.flatMap((m) => [sideMessage(key, m), ...toolCards(key, run, m)]), ...doing, ...queued];
+  return [...run.flatMap((m) => [sideMessage(key, m), ...toolCards(key, run, m), ...bashSideCards(key, run, m)]), ...doing, ...queued];
 }
 
 /**
@@ -4108,6 +4208,19 @@ function sideGroup(key, run, { last, trailing }) {
     </button>${body}</div>`;
 }
 
+/**
+ * Whether conversation `where` (`{ run, trailing }`, as openThread found it) of thread `key`
+ * shows now: in the panel beside the thread, or unfolded in it.
+ */
+const sideRunShown = (key, { run, trailing }) => sidePaneled(key)
+  || (!side.wide && (side.open.has(run[0].id) || (trailing && sideInline(key))));
+
+/** The conversation of the open thread `key` that has sidebar message `id`, as last drawn. */
+function sideRunOf(key, id) {
+  const runs = side.runs?.key === key ? side.runs.runs : [];
+  return (id && runs.find(({ run }) => run.some((m) => m.id === id))) || null;
+}
+
 /** Whether `m` is the agent's answer to you that you have not seen (the purple badge). */
 const unseenByMe = (m) => m.role === 'agent' && m.unseen && m.to === state.me?.id && !sideSeen.has(m.id);
 
@@ -4119,9 +4232,7 @@ const unseenByMe = (m) => m.role === 'agent' && m.unseen && m.to === state.me?.i
  */
 function seeSide(key, runs) {
   if (hidden() || state.as || state.data?.me?.readonly) return;
-  const shows = ({ run, trailing }) => sidePaneled(key)
-    || (!side.wide && (side.open.has(run[0].id) || (trailing && sideInline(key))));
-  const ids = runs.filter(shows).flatMap(({ run }) => run.filter(unseenByMe).map((m) => m.id));
+  const ids = runs.filter((where) => sideRunShown(key, where)).flatMap(({ run }) => run.filter(unseenByMe).map((m) => m.id));
   if (!ids.length) return;
   for (const id of ids) sideSeen.add(id);
   request('POST', '/api/agent/sidebar/seen', { thread: key, ids }).then((res) => {
@@ -6325,12 +6436,19 @@ async function discardDraft(key) {
 // ---------------------------------------------------------------- command requests
 // The thread's agent can ask a person to run a command on its computer (its request_bash,
 // src/agent/bashrequest.js): what needs a credential it does not have, or a person's go-ahead.
+// Or a script to run as themselves (its request_codemode, src/agent/scriptrequest.js, `kind:
+// 'codemode'`): one that calls the inbox's tools it names with the person's permissions, to read
+// what the agent cannot (another channel's thread), shown with the tools it calls and Run as me.
 // Each request is a card between the reply box and the draft's line: the command, the agent's
 // reason, a field for every variable it asked for, and Run and Deny. What is filled in goes to
 // the Worker with Run, for that one run; the agent is told what the command printed, never a
 // value. A request that ended stays for an hour, on one line, saying how; of several, only the
 // latest shows, with the earlier ones a click away, so that an agent that tries a few times does
 // not fill the pane with what it tried.
+// A request the agent made while it answered a sidebar message (`sidebar`) is part of that
+// conversation: while the conversation shows (in the panel beside the thread, or unfolded in it)
+// its cards are there, under the agent's answer (`bashSideCards`), and not in the bar; while it
+// does not, the bar has them, saying so, with a link that opens the conversation.
 
 // What a person fills in can be remembered on this device, by variable name: encrypted
 // (AES-GCM) in localStorage, with a key made here that cannot be exported, kept in IndexedDB.
@@ -6409,6 +6527,13 @@ const bashBusy = new Set();
 const bashEarlier = new Set();
 
 const BASH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><path d="M4.6 6.3l2 1.7-2 1.7M8.4 9.9h3"/></svg>';
+const SCRIPT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 4L1.8 8l3.4 4M10.8 4l3.4 4-3.4 4M9.2 2.8L6.8 13.2"/></svg>';
+const isScript = (r) => r.kind === 'codemode';
+/** What a request is called in a few words: a command, or a script. */
+const askNoun = (list) => {
+  if (list.every(isScript)) return 'script';
+  return list.some(isScript) ? 'request' : 'command';
+};
 /** How long from now until `iso`: "under a minute", "25m", "23h", "3d". */
 function timeLeft(iso, now = Date.now()) {
   const s = (Date.parse(iso) - now) / 1000;
@@ -6425,6 +6550,7 @@ function timeLeft(iso, now = Date.now()) {
 function bashState(r) {
   const who = r.by?.id === viewerId() ? 'you' : (r.by?.name || 'a colleague');
   const by = ` · by ${who} · ${ago(r.finished_at)}`;
+  if (isScript(r)) return scriptState(r, who, by);
   const told = 'The agent was told what the command printed.';
   if (r.status === 'running') return { text: `Running, started by ${who}`, hint: 'On the agent\'s computer. The agent is told what it prints.' };
   if (r.status === 'done') return { text: `Ran, exit code ${r.exit_code}`, rest: by, bad: r.exit_code !== 0, hint: told };
@@ -6433,6 +6559,21 @@ function bashState(r) {
   if (r.status === 'denied') return { text: `Denied by ${who}`, rest: ` · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
   return { text: `Expired at ${clock(r.deadline)}: nobody ran it`, hint: 'It did not run. The agent was told.' };
 }
+/** How a script request that is no longer waiting stands, as bashState says it of a command. */
+function scriptState(r, who, by) {
+  const told = 'The agent was told what the script output.';
+  if (r.status === 'running') return { text: `Running as ${who}`, hint: 'In the agent\'s code mode, calling the inbox as them. The agent is told what it outputs.' };
+  if (r.status === 'done' && r.error) return { text: `Ran, and threw: ${r.error}`, rest: by, bad: true, hint: told };
+  if (r.status === 'done') return { text: 'Ran', rest: by, hint: told };
+  if (r.status === 'timeout') return { text: `Stopped after ${r.timeout} s, its timeout`, rest: by, bad: true, hint: told };
+  if (r.status === 'failed') return { text: `Did not run to its end: ${r.error || 'the sandbox failed'}`, rest: by, bad: true, hint: 'The agent was told.' };
+  if (r.status === 'denied') return { text: `Denied by ${who}`, rest: ` · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
+  return { text: `Expired at ${clock(r.deadline)}: nobody ran it`, hint: 'It did not run. The agent was told.' };
+}
+
+/** The inbox's tools a script calls as whoever runs it, as a row of their names. */
+const scriptTools = (r) => `<div class="tools"><span class="ds">Calls as ${r.status === 'pending' ? 'you' : 'them'}, reading what ${r.status === 'pending' ? 'you' : 'they'} may read:</span>${r.tools.map((t) => `<code>${esc(t)}</code>`).join('')}</div>`;
+
 /**
  * A request's card. Waiting, and `decide` (the viewer may run it): a form with a field for each
  * variable (`kept`: the names a remembered value fills), Run and Deny, disabled while `busy`.
@@ -6441,26 +6582,37 @@ function bashState(r) {
  * Every card has the request's id, which is how the agent names it in its notes.
  */
 function bashCard(r, {
-  decide = false, busy = false, kept = [], earlier = 0, all = false, why = null,
+  decide = false, busy = false, kept = [], earlier = 0, all = false, why = null, side: run = null,
 } = {}) {
-  const head = (line) => `<div class="head"><span class="what">${BASH_ICON}Command</span><code class="id" title="This request's id: the agent names it in its notes">${esc(r.id)}</code><span class="by">${line}</span></div>`;
+  const script = isScript(r);
+  const head = (line) => `<div class="head"><span class="what">${script ? `${SCRIPT_ICON}Script` : `${BASH_ICON}Command`}</span><code class="id" title="This request's id: the agent names it in its notes">${esc(r.id)}</code><span class="by">${line}</span></div>`;
   if (r.status !== 'pending') {
     const spin = r.status === 'running' ? '<i class="spin"></i>' : '';
     const {
       text, rest = '', bad, hint,
     } = bashState(r);
-    const more = earlier ? `<button type="button" class="more" data-bash="earlier" aria-expanded="${all}" title="${all ? 'Show only the latest command that ended' : 'Show the commands that ended before this one, within the hour'}">${all ? 'Hide earlier' : `${earlier} earlier`}</button>` : '';
+    const more = earlier ? `<button type="button" class="more" data-bash="earlier" aria-expanded="${all}" title="${all ? 'Show only the latest request that ended' : 'Show the requests that ended before this one, within the hour'}">${all ? 'Hide earlier' : `${earlier} earlier`}</button>` : '';
     return `<div class="br ${esc(r.status)}" data-id="${esc(r.id)}">${head(`${spin}<span class="st${bad ? ' bad' : ''}" title="${esc(hint)}">${esc(text)}</span>${esc(rest)}`)}<pre class="cmd"><code>${esc(r.command)}</code></pre>${more}</div>`;
   }
-  // To be read before it is run: highlighted as the shell command it is, once that has loaded.
-  const lit = highlightCode(r.command, 'bash');
-  const command = `<pre class="cmd${lit ? ' hl' : ''}"><code>${lit ?? esc(r.command)}</code></pre>`;
-  const asked = `the agent asks · ${ago(r.created_at)} · <span title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can run it">open for ${timeLeft(r.deadline)}</span>`;
+  // To be read before it is run: highlighted as the shell command or the script it is, once
+  // that has loaded.
+  const lit = highlightCode(r.command, script ? 'javascript' : 'bash');
+  const command = `<pre class="cmd${lit ? ' hl' : ''}"><code>${lit ?? esc(r.command)}</code></pre>${script ? scriptTools(r) : ''}`;
+  // In the bar, asked in a sidebar conversation that does not show: a link that opens it.
+  const where = run ? ` <button type="button" class="toside" data-side-toggle="${esc(run)}" title="Show the sidebar conversation the agent asked this in">in the sidebar</button>` : '';
+  const asked = `the agent asks${where} · ${ago(r.created_at)} · <span title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can run it">open for ${timeLeft(r.deadline)}</span>`;
   const reason = `<p class="why">${esc(r.reason)}</p>`;
   // `why` you may not run it, when it is not that you view as someone else: under the command.
   const whyNot = why ? `<div class="foot"><span class="note">${esc(why)}</span></div>` : '';
   if (!decide) return `<div class="br pending" data-id="${esc(r.id)}">${head(asked)}${reason}${command}${whyNot}</div>`;
   const off = busy ? ' disabled' : '';
+  if (script) {
+    const note = `Runs in the agent's code mode as you, for up to ${r.timeout} s. The agent gets what it outputs.`;
+    const hint = 'Each of those tools reads the inbox as you do: other channels, teams and customers too, what you may see. Nothing else of yours reaches the agent. Read the script before you run it: what it outputs is what the agent reads.';
+    const spin = busy ? '<i class="spin"></i>' : '';
+    return `<form class="br pending" data-id="${esc(r.id)}" autocomplete="off">${head(asked)}${reason}${command}
+      <div class="foot"><span class="note" title="${esc(hint)}">${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>${spin}Run as me</button></span></div></form>`;
+  }
   const vars = r.env.map((v) => {
     const has = kept.includes(v.name);
     const forget = has ? `<button type="button" class="forget" data-bash="forget" data-name="${esc(v.name)}" title="Forget the value of ${esc(v.name)} remembered on this device"${off}>Forget</button>` : '';
@@ -6472,6 +6624,64 @@ function bashCard(r, {
   const hint = vars.length ? 'What you fill in goes to this one run and is kept nowhere. Where the output has a value of 8 characters or more, the agent reads the variable\'s name instead. The command itself can still store a value or send it somewhere: read it before you run it.' : 'The agent is told what the command printed, or that it failed or timed out.';
   return `<form class="br pending" data-id="${esc(r.id)}" autocomplete="off">${head(asked)}${reason}${command}${vars.length ? `<div class="vars">${vars.join('')}${remember}</div>` : ''}
       <div class="foot"><span class="note" title="${esc(hint)}">${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>Run</button></span></div></form>`;
+}
+
+/** What bashCard is told about the viewer of thread `key`, for each request. */
+function bashOptions(key) {
+  const readonly = Boolean(state.data?.me?.readonly);
+  const decide = !readonly && canWork(key);
+  const why = readonly || decide ? null : onlyTeam('run it');
+  return (r) => ({
+    decide, why, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)),
+  });
+}
+
+/** Whether request `r` of thread `key` shows in the sidebar conversation it was asked in, now. */
+function onSide(key, r) {
+  const where = r.sidebar && sideRunOf(key, r.sidebar);
+  return Boolean(where) && sideRunShown(key, where);
+}
+
+/** The requests of thread `key` that the bar under the reply box shows: those not in the sidebar. */
+const barRequests = (key) => (state.cache.get(key)?.data?.bash_requests || []).filter((r) => !onSide(key, r));
+
+/**
+ * The cards of the requests the agent made in answer to sidebar message `m` of `run`, in one
+ * box: under its answer, or under the message itself while there is none yet (as toolCards).
+ */
+function bashSideCards(key, run, m) {
+  const list = state.cache.get(key)?.data?.bash_requests || [];
+  let asked = null;
+  if (m.role === 'agent') asked = m.reply_to;
+  else if (!run.some((x) => x.reply_to === m.id)) asked = m.id;
+  const mine = asked ? list.filter((r) => r.sidebar === asked) : [];
+  if (!mine.length) return [];
+  const options = bashOptions(key);
+  const cards = mine.map((r) => bashCard(r, r.status === 'pending' || r.status === 'running' ? options(r) : {}));
+  return [`<div class="bashbar sidebash" data-asked="${esc(asked)}">${cards.join('')}</div>`];
+}
+
+/**
+ * The requests of thread `key` drawn again where they are: in the bar, and in the sidebar where
+ * one of them shows there (the thread is drawn again from what is known, as for a tool request).
+ */
+function renderAsks(key) {
+  const list = state.cache.get(key)?.data?.bash_requests || [];
+  if (list.some((r) => onSide(key, r))) showSide(key); else renderBashBar(key);
+}
+
+/** What was typed into a request's fields, or is remembered, back in them: where it is not. */
+function fillBashForm(form) {
+  const typed = bashTyped.get(form.dataset.id) || {};
+  const fields = [...form.querySelectorAll('.var input')];
+  for (const input of fields) {
+    const value = typed[input.name] ?? vault.values.get(input.name) ?? '';
+    if (input.value !== value) input.value = value;
+  }
+  // Ticked as it was left, or because a remembered value is in it.
+  const remember = form.elements.remember;
+  const ticked = typed.remember ?? fields.some((i) => vault.values.has(i.name));
+  if (remember && remember.checked !== ticked) remember.checked = ticked;
 }
 
 /**
@@ -6495,13 +6705,14 @@ function renderBashBar(key) {
   // Not cached: the thread is being fetched again (its room said a request changed), and the
   // cards stay as they are until it is here.
   if (!el || !hit || state.open !== key) return;
-  const list = hit.data?.bash_requests || [];
-  const readonly = Boolean(state.data?.me?.readonly);
-  const decide = !readonly && canWork(key);
-  const why = readonly || decide ? null : onlyTeam('run it');
+  // The cards in the sidebar's conversations have what was typed in them too.
+  for (const form of document.querySelectorAll('.sidebash form.br')) fillBashForm(form);
+  const all = hit.data?.bash_requests || [];
+  const list = barRequests(key);
+  const options = bashOptions(key);
   const html = bashCards(list, {
     all: bashEarlier.has(key),
-    options: (r) => ({ decide, why, busy: bashBusy.has(r.id), kept: r.env.map((v) => v.name).filter((n) => vault.values.has(n)) }),
+    options: (r) => ({ ...options(r), side: r.sidebar ? sideRunOf(key, r.sidebar)?.run[0].id : null }),
   });
   if (el.__html !== html) {
     // A change in the open thread's cards grows, folds or resizes them (on a phone they are in
@@ -6513,20 +6724,13 @@ function renderBashBar(key) {
       apply: () => { if (list.length) el.innerHTML = html; },
       done: () => { el.innerHTML = ''; },
     });
-    for (const form of el.querySelectorAll('form.br')) {
-      const typed = bashTyped.get(form.dataset.id) || {};
-      const fields = [...form.querySelectorAll('.var input')];
-      for (const input of fields) input.value = typed[input.name] ?? vault.values.get(input.name) ?? '';
-      // Ticked as it was left, or because a remembered value is in it.
-      const remember = form.elements.remember;
-      if (remember) remember.checked = typed.remember ?? fields.some((i) => vault.values.has(i.name));
-    }
+    for (const form of el.querySelectorAll('form.br')) fillBashForm(form);
   }
   el.__key = key;
   if (!el.__wired) wireBashBar(el);
   // The remembered values are read once, the first time a card has a field for one.
-  if (decide && !vault.loaded && list.some((r) => r.status === 'pending' && r.env.length)) {
-    vaultLoad().then(() => { if (vault.values.size) renderBashBar(el.__key); });
+  if (options({ env: [] }).decide && !vault.loaded && all.some((r) => r.status === 'pending' && r.env.length)) {
+    vaultLoad().then(() => { if (vault.values.size) renderAsks(el.__key); });
   }
   renderLines(key);
 }
@@ -6564,9 +6768,11 @@ function linesChips(requests = [], draft = null) {
   const count = (status) => requests.filter((r) => r.status === status).length;
   const n = (k, what) => `${k} ${what}${k === 1 ? '' : 's'}`;
   const chips = [];
-  if (count('pending')) chips.push({ kind: 'cmd ask', icon: BASH_ICON, text: `${n(count('pending'), 'command')} to decide` });
-  else if (count('running')) chips.push({ kind: 'cmd', icon: BASH_ICON, text: `${n(count('running'), 'command')} running` });
-  else if (requests.length) chips.push({ kind: 'cmd', icon: BASH_ICON, text: n(requests.length, 'past command') });
+  const of = (status) => requests.filter((r) => r.status === status);
+  const icon = (list) => (list.every(isScript) ? SCRIPT_ICON : BASH_ICON);
+  if (count('pending')) chips.push({ kind: 'cmd ask', icon: icon(of('pending')), text: `${n(count('pending'), askNoun(of('pending')))} to decide` });
+  else if (count('running')) chips.push({ kind: 'cmd', icon: icon(of('running')), text: `${n(count('running'), askNoun(of('running')))} running` });
+  else if (requests.length) chips.push({ kind: 'cmd', icon: icon(requests), text: n(requests.length, `past ${askNoun(requests)}`) });
   if (draft) chips.push({ kind: 'draft', icon: DRAFT_ICONS.draft, text: `Draft by ${draftBy(draft)}` });
   return chips;
 }
@@ -6586,7 +6792,7 @@ function renderLines(key) {
   const hit = state.cache.get(key);
   // Not cached: the thread is being fetched again, and the drawer stays as it is until then.
   if (!tab || !el || !hit || state.open !== key) return;
-  const chips = linesChips(hit.data?.bash_requests, lineDraft(key));
+  const chips = linesChips(barRequests(key), lineDraft(key));
   // Another thread's, or nothing left in it: closed.
   if (linesDrawer.key !== key || !chips.length) linesDrawer.key = null;
   const open = linesDrawer.key === key;
@@ -6630,6 +6836,8 @@ function wireLines(tab, el) {
     if (e.target === el || e.target.closest('[data-lines="close"]')) { setLines(el.__key, false, { back: true }); return; }
     // Taking the draft into the reply box and sending it happen in the thread.
     if (e.target.closest('[data-draft="edit"], [data-draft="me"], [data-draft="bot"]')) setLines(el.__key, false);
+    // So does showing the sidebar conversation a request was asked in.
+    if (e.target.closest('[data-side-toggle]')) setLines(el.__key, false);
   });
   el.addEventListener('keydown', (e) => {
     if (linesDrawer.key !== el.__key) return;
@@ -6651,33 +6859,46 @@ function wireLines(tab, el) {
 
 function wireBashBar(el) {
   el.__wired = true;
+  wireBash(el, () => el.__key);
+}
+
+/**
+ * What is typed into the request cards under `root`, and their buttons, for thread `keyOf()`:
+ * the bar's, and those in the sidebar's conversations (`sidebash`, in the thread and in the panel
+ * beside it), which leave the bar's to the bar.
+ */
+function wireBash(root, keyOf, { side: inSide = false } = {}) {
   const idOf = (node) => node.closest('[data-id]')?.dataset.id;
-  el.addEventListener('input', (e) => {
+  const ours = (node) => !inSide || Boolean(node.closest('.sidebash'));
+  root.addEventListener('input', (e) => {
     const id = idOf(e.target);
-    if (!id || !e.target.name) return;
+    if (!ours(e.target) || !id || !e.target.name) return;
     const typed = bashTyped.get(id) || {};
     typed[e.target.name] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
     bashTyped.set(id, typed);
   });
-  el.addEventListener('submit', (e) => {
+  root.addEventListener('submit', (e) => {
+    if (!ours(e.target) || !e.target.matches('form.br')) return;
     e.preventDefault();
-    runBash(el.__key, idOf(e.target), e.target);
+    runBash(keyOf(), idOf(e.target), e.target);
   });
-  el.addEventListener('click', (e) => {
+  root.addEventListener('click', (e) => {
     const b = e.target.closest('[data-bash]');
-    if (!b || b.disabled) return;
-    if (b.dataset.bash === 'deny') denyBash(el.__key, idOf(b));
+    if (!b || b.disabled || !ours(b)) return;
+    const key = keyOf();
+    if (b.dataset.bash === 'deny') denyBash(key, idOf(b));
     if (b.dataset.bash === 'earlier') {
-      if (bashEarlier.has(el.__key)) bashEarlier.delete(el.__key); else bashEarlier.add(el.__key);
-      renderBashBar(el.__key);
-      el.querySelector('.more')?.focus();
+      if (bashEarlier.has(key)) bashEarlier.delete(key); else bashEarlier.add(key);
+      renderBashBar(key);
+      root.querySelector('.more')?.focus();
     }
     if (b.dataset.bash === 'forget') {
       vaultForget(b.dataset.name);
       // The field is emptied with it, unless something else was typed there.
       for (const typed of bashTyped.values()) delete typed[b.dataset.name];
-      el.__html = undefined;
-      renderBashBar(el.__key);
+      const shown = $('bashbar');
+      if (shown) shown.__html = undefined;
+      renderAsks(key);
     }
   });
 }
@@ -6686,23 +6907,27 @@ function wireBashBar(el) {
 function setCachedBash(key, r) {
   const hit = state.cache.get(key);
   if (hit && r) hit.data = { ...hit.data, bash_requests: (hit.data.bash_requests || []).map((x) => (x.id === r.id ? r : x)) };
-  renderBashBar(key);
+  renderAsks(key);
 }
 
-/** Run: sends what is in the fields of `form` with the request; the agent's computer runs it. */
+/**
+ * Run: sends what is in the fields of `form` with the request; the agent's computer runs it. A
+ * script runs as the viewer, and the inbox answers once it has ended.
+ */
 async function runBash(key, id, form) {
   const r = state.cache.get(key)?.data?.bash_requests?.find((x) => x.id === id);
   if (!r || bashBusy.has(id)) return;
+  const what = isScript(r) ? 'script' : 'command';
   const values = Object.fromEntries(r.env.map((v) => [v.name, form.elements[v.name].value]));
   const remember = Boolean(form.elements.remember?.checked);
   bashBusy.add(id);
-  renderBashBar(key);
+  renderAsks(key);
   const res = await request('POST', '/api/bash/run', { thread: key, id, env: values }).catch(() => null);
   bashBusy.delete(id);
   // No answer, or the Worker failed: that does not say the command did not start.
   if (!res || res.status >= 500) {
-    renderBashBar(key);
-    toast('The inbox did not answer, so the command may be running all the same. The card says how it stands.');
+    renderAsks(key);
+    toast(`The inbox did not answer, so the ${what} may be running all the same. The card says how it stands.`);
     reloadSoon(key);
     return;
   }
@@ -6719,7 +6944,7 @@ async function runBash(key, id, form) {
 async function denyBash(key, id) {
   if (bashBusy.has(id)) return;
   bashBusy.add(id);
-  renderBashBar(key);
+  renderAsks(key);
   const res = await request('POST', '/api/bash/deny', { thread: key, id }).catch((e) => ({ ok: false, data: { error: e.message } }));
   bashBusy.delete(id);
   if (res.ok) bashTyped.delete(id);
@@ -10393,6 +10618,8 @@ function wireSideRoom() {
   moved.observe($('pane'));
   $('pane').addEventListener('scroll', queueJoin, { capture: true, passive: true });
   $('pane').addEventListener('load', queueJoin, true);
+  // The requests the agent made in a conversation, under its answer there.
+  wireBash(panel, () => panel.__key, { side: true });
   panel.onclick = (e) => {
     if (e.target.closest('[data-side-exit]')) { exitSide(); return; }
     const tool = e.target.closest('[data-tool-act]');
@@ -11178,6 +11405,7 @@ async function start() {
   // Shift-click excludes: it should not select the labels it passes over.
   $('filters').addEventListener('mousedown', (e) => { if (e.shiftKey && e.target.closest('.fr')) e.preventDefault(); });
   wireOffView();
+  wirePinColumns();
   // A row under the pointer is about to be opened: fetch it first.
   $('threads').addEventListener('pointerover', (e) => {
     const t = e.target.closest('.t');
@@ -11230,6 +11458,8 @@ async function start() {
   // Another thread (or the new conversation) fades in; a live update of the same one does not
   // (ui/app.js). Where the pane slides in over the list (phones), the slide is the motion.
   Swap.watch($('pane'), () => (state.compose ? 'compose' : state.open), { skip: () => TAKING_TURNS.matches });
+  // The requests the agent made in a sidebar conversation unfolded in the thread.
+  wireBash($('pane'), () => state.open, { side: true });
   $('pane').onclick = async (e) => {
     if (e.target.closest('[data-close]')) { closeThread(); return; }
     const tra = e.target.closest('[data-tr]');
@@ -11247,12 +11477,15 @@ async function start() {
     const fold = e.target.closest('[data-side-toggle]');
     if (fold && fold.getAttribute('aria-disabled') !== 'true') {
       const id = fold.dataset.sideToggle;
+      // From a request's card in the bar: its conversation opens, with the card in it.
+      const fromBar = Boolean(fold.closest('#bashbar'));
       // The line joined to the open panel is part of it: picked, the panel goes back into it.
       if (side.wide && sidePaneled(state.open) && side.joined === id) { exitSide(); return; }
       // Beside the thread where there is room; else unfolded where it is.
       if (side.wide) { enterSide(state.open, { at: id }); return; }
-      if (side.open.has(id)) side.open.delete(id); else side.open.add(id);
-      showSide(state.open);
+      if (side.open.has(id) && !fromBar) side.open.delete(id); else side.open.add(id);
+      await showSide(state.open);
+      if (fromBar) $('pane').querySelector(`.sidechat[data-side="${CSS.escape(id)}"] .sidebash`)?.scrollIntoView({ block: 'center', behavior: REDUCED_MOTION.matches ? 'auto' : 'smooth' });
       return;
     }
     if (e.target.closest('[data-rechannel]')) { setChannel(null); return; }
@@ -11410,6 +11643,8 @@ async function start() {
       orgs: () => (customerOnScreen() ? `/inbox/admin?tab=orgs&org=${encodeURIComponent(customerOnScreen())}` : null),
       stats: () => Header.stats({ org: customerOnScreen(), team: personal() ? null : state.team }),
     },
+    // The number on Inbox, clicked: the open requests, in this tab.
+    open: openInbox,
     count: !state.as,
   });
   if (state.me.admin) {
@@ -11499,7 +11734,7 @@ const FILTER_ARGS = {
 // Filters whose values are ids the API names (src/label.js vocab): checked against them.
 const VOCAB_ARGS = { topic: 'topics', tech: 'tech' };
 const FILTER_VALUES = {
-  status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams', 'discord', 'portal'], resolved: ['open', 'resolved'],
+  status: STATUS_ORDER, type: ['conversation', 'alert', 'request'], platform: ['slack', 'teams', 'discord', 'portal'], resolved: ['open', 'resolved'],
   waiting_on: ['us', 'customer', 'vendor', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_ICON),
   draft: ['mine', 'team', 'none'],
 };
@@ -11601,7 +11836,7 @@ const FILTER_PROPS = {
   urgency: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.urgency } },
   kind: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.kind } },
   resolved: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.resolved } },
-  type: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.type }, description: 'Conversations with customers, or automated alerts' },
+  type: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.type }, description: 'Conversations with customers, automated alerts, or the admin team\'s requests (in its inbox)' },
   platform: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.platform } },
   draft: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.draft }, description: 'Threads with a shared draft reply saved last by the viewer (mine) or a colleague (team), or without one (none)' },
   topic: { type: 'array', items: { type: 'string' }, description: 'What threads are about (cdn, auth, performance, …), as get_inbox_state counts them' },

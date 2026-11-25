@@ -38,9 +38,15 @@ import { searchProblem } from './websearch.js';
  * - `extraction_rules`: the agent reads, tests and changes its team's extraction rules and
  *   tech stack (src/extract.js), which apply to every channel of the team from the next
  *   labeling of a thread. It cannot change the admin team's, which apply to every channel.
+ * - `org_threads`: the agent reads the other channels of its thread's customer (the org its
+ *   thread is filed under), on every platform, with the same three tools as `any_thread`, but
+ *   never a channel or thread of another org (src/agent/channelfind.js, src/agent/history.js).
+ *   Not for an internal org, whose channels are about every customer, nor an internal slug
+ *   (`_unassigned`), which is nobody's (`orgReadable`). On for every team (migration 0102) and
+ *   every new one; a team's managers turn it off, for the team or one channel.
  * - `any_thread`: the agent reads any thread of the inbox, whatever its channel, team or
  *   customer (src/agent/history.js), finds a customer's channels and lists their threads
- *   (src/agent/channelfind.js).
+ *   (src/agent/channelfind.js). Where it is on, it stands for `org_threads`.
  * - `membership`: the agent asks the platform's admin bot to add people to the thread's channel,
  *   or remove them, where someone asked for it in the thread (src/agent/membership.js): on Teams
  *   admin-bot (teams-admin-agent), on Slack AEM Ops Automation (the slack-automation relay), each
@@ -56,6 +62,9 @@ import { searchProblem } from './websearch.js';
  *   only (src/agentlabels.js). On for every team (migration 0091) and every new one.
  *
  * Those marked `newTeams` are turned on for a team when it is created (src/admin.js).
+ *
+ * A tool marked `org` works only where the thread's org is one whose channels may be read across
+ * (`orgReadable`).
  *
  * A tool marked `internal` has no team switch, only the admin team switches it, and it works
  * only in an internal channel (`internalChannel`), however it got switched on.
@@ -110,6 +119,23 @@ export const AGENT_TOOLS = [
       + ' team\'s rules.',
     platforms: null,
     newTeams: true,
+  },
+  {
+    tool: 'org_threads',
+    title: 'Read the customer\'s channels',
+    names: ['read_any_thread', 'find_channels', 'list_any_channel_threads'],
+    description: 'The agent reads the other channels of its thread\'s customer, on every'
+      + ' platform: it lists them, lists a channel\'s conversations and reads a thread of one,'
+      + ' by its key or a link to one of its messages. Never a channel or thread of another'
+      + ' customer',
+    note: 'The customer is the org the thread is filed under (Rules): a channel counts when its'
+      + ' latest thread is filed there, a thread when it is. Not in channels of an internal org,'
+      + ' nor unassigned ones. What the agent read can reach its drafts, notes and the customer\'s'
+      + ' knowledge base, and its posts in this customer\'s channels. Every thread it reads is'
+      + ' recorded (agent_thread_reads).',
+    platforms: null,
+    newTeams: true,
+    org: true,
   },
   {
     tool: 'any_thread',
@@ -263,6 +289,32 @@ export async function internalChannel(env, channelId) {
 }
 
 /**
+ * Whether an agent may read across the channels of org `org` (`org_threads`): an org the rules
+ * filed its thread under, not an internal slug (`_unassigned`, `_test`: many customers' channels,
+ * nobody's), and not an org of type `internal` (Adobe's own channels, which are about every
+ * customer; reading them is `any_thread`'s, the admin team's to turn on).
+ */
+export async function orgReadable(env, org) {
+  if (!org || String(org).startsWith('_')) {
+    return false;
+  }
+  const row = await env.DB.prepare('SELECT type FROM orgs WHERE slug = ?').bind(String(org)).first();
+  return ((row && row.type) || 'customer') !== 'internal';
+}
+
+/**
+ * Where an agent may read other channels' threads, from the tools it has (`toolsFor`):
+ * `{ org: null }` anywhere in the inbox (`any_thread`), `{ org }` in its customer's channels only
+ * (`org_threads`), or null nowhere.
+ */
+export function readScope(tools, target) {
+  if (tools.includes('any_thread')) {
+    return { org: null };
+  }
+  return tools.includes('org_threads') && target && target.org ? { org: target.org } : null;
+}
+
+/**
  * The switchable tools an agent's target (its team, channel and platform) has, as a sorted
  * list of their keys: on, or granted to its thread (src/toolrequests.js), working in this
  * deployment and on the thread's platform.
@@ -281,8 +333,11 @@ export async function toolsFor(env, target) {
       || (!t.internal && granted.has(t.tool)))
       && !toolProblem(env, t.tool) && onPlatform(env, t.tool, target.source);
   });
-  const internal = on.some((t) => t.internal) && await internalChannel(env, target.channelId);
-  return on.filter((t) => !t.internal || internal).map((t) => t.tool).sort();
+  const [internal, org] = await Promise.all([
+    on.some((t) => t.internal) && internalChannel(env, target.channelId),
+    on.some((t) => t.org) && orgReadable(env, target.org),
+  ]);
+  return on.filter((t) => (!t.internal || internal) && (!t.org || org)).map((t) => t.tool).sort();
 }
 
 /**
