@@ -23,9 +23,11 @@ export const PREFIX = 'request:';
 /**
  * The kinds: channel (src/requests.js), member (src/memberrequests.js), portal
  * (src/portalrequests.js), merge (src/orgmerge.js), bot (src/ourbots.js), account
- * (src/accountlinks.js), tech (src/techconflicts.js) and rule (src/ruleconflicts.js).
+ * (src/accountlinks.js), person (src/accountpairs.js), tech (src/techconflicts.js) and rule
+ * (src/ruleconflicts.js).
  */
-export const KINDS = ['channel', 'member', 'portal', 'merge', 'bot', 'account', 'tech', 'rule'];
+export const KINDS = ['channel', 'member', 'portal', 'merge', 'bot', 'account', 'person', 'tech',
+  'rule'];
 
 /** The team whose inbox has them (src/review.js ADMIN_TEAM). */
 const ADMIN_TEAM = 'admin';
