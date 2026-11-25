@@ -13,13 +13,14 @@
 /*
  * Following and muting, every page's, as the global `Follow` (src/following.js has the rules).
  * Whatever may be followed has its Follow button wherever it is shown: a product (`tech`), a
- * topic (`area`), a customer (`org`) or a person (`person`). It is a toggle, Follow / Following,
+ * topic (`area`), a customer (`org`), a person (`person`, of D1; `account`, a customer's person,
+ * by their identity key) or a thread (`thread`, its key: it stays in your personal view). It is a toggle, Follow / Following,
  * for you; for someone who manages a team (and the admin team) it is a split button whose chevron
  * opens who follows it, you and each team you may follow for, to check or uncheck. Only your own
  * teams (those you are on) are shown as following it, in its count, title and dropdown: a team you
  * are not on is there only to be found by name, where you may follow for it (the admin team). In
  * a team's context (its page, `{ team }`), it is you and that team only. A person is
- * only ever your own follow. A customer has a Mute beside it, your own only: its threads leave
+ * only ever your own follow, and so is a thread. A customer has a Mute beside it, your own only: its threads leave
  * your personal view until you post in one of them, or follow it again; following and muting it
  * are one or the other.
  *
@@ -43,8 +44,15 @@ globalThis.Follow = (() => {
   const TEAM_KINDS = ['tech', 'area', 'org'];
   const MUTE_KINDS = ['org'];
   const NOUN = {
-    tech: 'product', area: 'topic', org: 'customer', person: 'person',
+    tech: 'product', area: 'topic', org: 'customer', person: 'person', account: 'person', thread: 'thread',
   };
+  // What following one puts in your personal view.
+  const BRINGS = {
+    thread: 'it stays in your personal view',
+    account: 'the threads they post in come into your personal view',
+    person: 'the threads they post in come into your personal view',
+  };
+  const brings = (kind) => BRINGS[kind] || 'its threads come into your personal view, in any channel';
   // Past this many teams to follow for (the admin team's), the others are found by name.
   const SHOWN_TEAMS = 6;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -130,16 +138,20 @@ globalThis.Follow = (() => {
     if (!NOUN[kind] || id === undefined || id === null || String(id) === '') return false;
     if (kind === 'person') return /^\d+$/.test(String(id));
     if (kind === 'org') return !String(id).startsWith('_');
+    // An identity key, `<source>:<tenant>:<user id>`: not a card's made-up one (`local:…`).
+    if (kind === 'account') return !String(id).startsWith('local:') && String(id).split(':').length >= 3;
     return true;
   };
 
   /** The button's title: what following it does, and who else does. */
-  function followTitle(kind, id, name, team) {
+  function followTitle(kind, id, raw, team) {
     const on = follows(kind, id);
+    // A thread's name is its title, already beside the button.
+    const name = kind === 'thread' ? 'this thread' : raw;
     const by = shownTeams(kind, id, team).map(teamName);
     const also = by.length ? ` ${and(by)} ${by.length === 1 ? 'follows' : 'follow'} it.` : '';
-    return on ? `You follow ${name}: its threads are in your personal view. Click to stop.${also}`
-      : `Follow ${name}: its threads come into your personal view, in any channel.${also}`;
+    return on ? `You follow ${name}: ${kind === 'thread' ? 'it is' : 'its threads are'} in your personal view. Click to stop.${also}`
+      : `Follow ${name}: ${brings(kind)}.${also}`;
   }
 
   /** What the button holds for `{ kind, id, name }`. */
@@ -185,7 +197,7 @@ globalThis.Follow = (() => {
   function set(state) {
     st = state ? {
       me: {
-        tech: [], area: [], org: [], person: [], ...(state.me || {}),
+        tech: [], area: [], org: [], person: [], account: [], thread: [], ...(state.me || {}),
       },
       teams: state.teams || {},
       muted: { org: [], ...(state.muted || {}) },
@@ -244,7 +256,7 @@ globalThis.Follow = (() => {
     const inbox = kind === 'org' ? 'its channels are in its inbox, shared' : 'its threads are in its inbox';
     const text = team
       ? (on ? `${teamName(team)} follows ${name}: ${inbox}.` : `${teamName(team)} no longer follows ${name}.`)
-      : (on ? `Following ${name}: its threads are in your personal view.` : `No longer following ${name}.`);
+      : (on ? `Following ${name}: ${kind === 'thread' ? 'it is' : 'its threads are'} in your personal view.` : `No longer following ${name}.`);
     const wasMuted = !team && on && muted(kind, id);
     return send({
       kind,
@@ -439,7 +451,7 @@ globalThis.Follow = (() => {
     box.hidden = !ready();
     if (box.hidden) return;
     const list = box.querySelector('#followList');
-    const order = ['tech', 'area', 'org', 'person'];
+    const order = ['tech', 'area', 'org', 'person', 'account', 'thread'];
     const followed = order.flatMap((k) => ids(st.me[k]).map((id) => [k, id]))
       .sort(([ka, a], [kb, b]) => order.indexOf(ka) - order.indexOf(kb) || nameOf(ka, a).localeCompare(nameOf(kb, b)));
     const mutedList = ids(st.muted.org).map((id) => ['org', id]);

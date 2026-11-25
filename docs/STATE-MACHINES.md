@@ -92,7 +92,10 @@ and the label job tells the rooms of the teams that follow those (`announceFollo
 **Following a technology.** not followed → followed → not followed: a row in `team_follows` or
 `person_follows` (migration 0072), nothing else. A team's area is the same, a row in
 `team_follows_by` (migration 0105), worked out with `thread_areas` each time as the technologies are
-with `thread_tech`. Configuration, like the shares: whose inbox has a
+with `thread_tech`; and so is what a person follows besides, a row in `person_follows_by` (a
+customer, a person, an area, an account, a thread: migrations 0087, 0107). A followed thread is its
+key: a re-threading that folds it into another entry brings that entry along, and taking the follow
+back is the only way out. Configuration, like the shares: whose inbox has a
 thread is worked out from it, its thread's `thread_tech` and its group each time
 (`followingTeams`, `followersOf`), never stored, so a relabel, a re-threading or a follow taken back
 moves the thread in or out of the inboxes at once, and nothing has to be undone. A person's row

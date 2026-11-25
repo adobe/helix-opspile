@@ -72,7 +72,7 @@ describe('the Topics page', { skip: !hasGit() && 'git is not installed' }, () =>
       assert.deepEqual(r.body.members[MEMBER.id], ['edge']);
       assert.deepEqual(r.body.areas, []);
       assert.deepEqual(r.body.follows.me, {
-        tech: [], org: [], person: [], area: [],
+        tech: [], org: [], person: [], area: [], account: [], thread: [],
       });
       assert.equal((await call(e, as(MEMBER), 'POST', '/api/areas', {
         team: 'edge', id: 'search', title: 'Site search', what: 'site search',

@@ -335,7 +335,7 @@ function cardPerson(person) {
  */
 const CARD_WAIT = '<div class="ps-part ps-wait" aria-hidden="true"><span class="ps-w-act"></span><span></span><span></span></div>';
 
-function cardHtml(p, ctx, found) {
+function cardHtml(p, ctx, found, key = null) {
   // An Adobe person as their team's overview shows them: the best of their accounts' name,
   // picture and title, their teams with their role, once the knowledge bases' answer is here.
   const person = found?.person || null;
@@ -359,8 +359,11 @@ function cardHtml(p, ctx, found) {
   // A customer from another domain than the channel's customer may be a partner nobody listed.
   const other = rel === 'customer' && p.domain && ctx.customerDomain && p.domain !== ctx.customerDomain;
   // Someone the inbox knows (a person of D1), but not you: followed, the threads they post in
-  // are in your personal view (ui/follow.js).
-  const follow = person?.id && person.id !== state.me?.id ? Follow.button({ kind: 'person', id: person.id, name }) : '';
+  // are in your personal view (ui/follow.js). A customer's person, of no person of D1, by their
+  // account (the card's key), once it is known that they are none.
+  let follow = '';
+  if (person?.id) follow = person.id !== state.me?.id ? Follow.button({ kind: 'person', id: person.id, name }) : '';
+  else if (key && p.kind !== 'bot' && rel !== 'adobe' && !p.local && found && !found.pending) follow = Follow.button({ kind: 'account', id: key, name });
   return `<div class="top">${avatar(name || '?', p.avatar || person?.avatar)}<div>
       <div class="nm">${esc(name || 'unknown')}</div>${role ? `<div class="ttl">${esc(role)}</div>` : ''}</div></div>
     <div class="chips"><span class="rel ${esc(rel)}" title="${esc(RELATION_HINT[rel] || '')}">${esc(label)}</span>
@@ -510,7 +513,7 @@ function orgCardHtml(org, local, found, ctx = {}, open = null) {
   const only = state.sel.customer?.size === 1 && state.sel.customer.has(org);
   return `<div class="top"><span class="logo oc-logo">${tile(name)}${icon ? favImg(icon) : ''}</span><div>
       <div class="nm">${esc(name)}</div>${sub ? `<div class="ttl">${esc(sub)}</div>` : ''}</div></div>
-    <div class="chips"><span class="rel ${rel}">${label}</span></div>
+    <div class="chips"><span class="rel ${rel}">${label}</span>${Follow.button({ kind: 'org', id: org, name })}</div>
     ${rows.length ? `<dl class="oc-here">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : ''}
     ${orgCardOverview(name, found)}
     <div class="oc-acts"><a class="oc-act primary" href="${esc(orgHref(org))}" title="${esc(`${name}'s overview in Customers`)}">Open profile</a><button type="button" class="oc-act" data-org-only="${only ? '' : esc(org)}" title="${esc(only ? 'Every customer\'s threads again' : `Only ${name}'s threads in the inbox`)}">${only ? 'All customers' : 'Only its threads'}</button></div>`;
@@ -599,7 +602,7 @@ function drawCard(target) {
   } else {
     const found = ctx.thread && p.kind !== 'bot' ? kbPerson(ctx.thread, target.dataset.p, p) : null;
     if (found?.pending) found.asked.then(() => { if (card.target === target && !el.hidden) drawCard(target); });
-    html = cardHtml(p, ctx, found);
+    html = cardHtml(p, ctx, found, target.dataset.p);
   }
   el.classList.toggle('ocard', Boolean(org));
   setHtml(el, html);
@@ -5330,8 +5333,12 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // suggests.
   const chan = thread.channel_name ? channelTitle(thread.source, thread.channel_name, thread.channel_group) : '';
   const lead = `<div class="lead">${headSource(thread, members, t)}${headWhat(thread.title, chan)}</div>`;
+  // The thread's own Follow (ui/follow.js), at the right: followed, it stays in your personal
+  // view. A conversation you may work only: the personal view has no alert.
+  const follow = thread.kind !== 'alert' && data.can_work !== false
+    ? Follow.button({ kind: 'thread', id: key, name: thread.title || 'this thread' }) : '';
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
-      <div class="l1">${lead}</div>
+      <div class="l1">${lead}${follow ? `<span class="ph-follow">${follow}</span>` : ''}</div>
       <div class="l2">${techMenu(data)}${stackButton(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
   const reply = sideInline(key) ? sideComposer(key, thread)
     : composer(thread, resolveButton(thread, resolution), key);

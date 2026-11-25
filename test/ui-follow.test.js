@@ -139,6 +139,26 @@ describe('Follow (ui/follow.js)', () => {
     assert.match(Follow.button({ kind: 'tech', id: 'da', name: 'D' }, { team: 'edge' }), /<span class="fo-n">1<\/span>/);
   });
 
+  it('follows a customer\'s person by their account, and a thread, as your own only', () => {
+    const { Follow } = load();
+    Follow.init({ me: { teams: [{ slug: 'edge' }] } });
+    Follow.set({
+      ...STATE,
+      me: { ...STATE.me, account: ['slack:T1:U7'], thread: ['slack:T1:C1:1.1'] },
+      names: { ...STATE.names, 'account:slack:T1:U7': 'Cy', 'thread:slack:T1:C1:1.1': 'Go-live' },
+    });
+    const account = Follow.button({ kind: 'account', id: 'slack:T1:U7', name: 'Cy' });
+    assert.match(account, /aria-pressed="true"[^>]*>Following</);
+    assert.doesNotMatch(account, /fo-more|fo-mute/);
+    // A card's made-up key is no account.
+    assert.equal(Follow.button({ kind: 'account', id: 'local:person:0::Cy', name: 'Cy' }), '');
+    const thread = Follow.button({ kind: 'thread', id: 'slack:T1:C1:2.1', name: 'Outage' });
+    assert.match(thread, /title="Follow this thread: it stays in your personal view\."/);
+    assert.doesNotMatch(thread, /fo-more|fo-mute/);
+    assert.equal(Follow.follows('thread', 'slack:T1:C1:1.1'), true);
+    assert.equal(Follow.name('thread', 'slack:T1:C1:1.1'), 'Go-live');
+  });
+
   it('sends every change as PUT /api/follows, says it with Undo, and takes back what failed', async () => {
     let next = null;
     const { Follow, sent, said } = load(() => next);

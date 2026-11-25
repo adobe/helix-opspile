@@ -452,6 +452,8 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
    as tall as the icon: the title and, quieter, the channel. Each stays on its one line, cut
    short with an ellipsis (the whole of it in the tooltip), so the three always line up. */
 .ph .l1 { display: flex; align-items: center; min-width: 0; }
+/* The thread's Follow, at the right of its title. */
+.ph .ph-follow { flex: none; margin-inline-start: var(--spectrum-spacing-200); }
 .ph .lead { display: flex; align-items: center; gap: var(--spectrum-spacing-200); flex: 1; min-width: 0; }
 .ph .what { display: flex; flex-direction: column; justify-content: center; flex: 1; min-width: 0; min-height: var(--spectrum-spacing-600); }
 .ph .l1 h2 { display: block; margin: 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
@@ -1453,6 +1455,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .pcard .av { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); font-size: var(--spectrum-font-size-200); border-radius: var(--spectrum-corner-radius-700); }
 .pcard .nm { font-size: var(--spectrum-font-size-100); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pcard .ttl { color: var(--mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pcard .chips .fo { margin-inline-start: auto; }
 .pcard .chips { display: flex; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); flex-wrap: wrap; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) 0 calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
 .pcard .rel { font-size: var(--spectrum-font-size-50); font-weight: 650; padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); border: var(--spectrum-border-width-100) solid transparent; border-radius: var(--spectrum-corner-radius-600); color: var(--spectrum-white); }
 .pcard .rel.adobe { background: var(--me); } .pcard .rel.partner { background: var(--spectrum-purple-background-color-default); }

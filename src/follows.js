@@ -51,8 +51,12 @@ const signInDomains = (env) => String(env.SIGNIN_DOMAINS || '').toLowerCase().sp
 const ADMITTED = `(EXISTS (SELECT 1 FROM team_members m WHERE m.person = p.id)
     OR lower(substr(p.email, instr(p.email, '@') + 1)) IN (SELECT value FROM json_each(?2)))`;
 
-/** What a person follows besides technologies. */
-export const FOLLOW_KINDS = ['org', 'person', 'area'];
+/**
+ * What a person follows besides technologies: a customer, a person of D1, an area, a person known
+ * by their platform account only (`account`, an identity key, as messages.author_key has it), and
+ * a thread (`thread`, an inbox entry's key).
+ */
+export const FOLLOW_KINDS = ['org', 'person', 'area', 'account', 'thread'];
 
 /** SQL: the targets of kind `kind` person `param` follows. */
 const followedBy = (param, kind) => `SELECT target FROM (${COUNTED_FOLLOWS_BY})
@@ -111,7 +115,8 @@ export const followedByTeams = (alias, param) => `(${inFollowed(
 /**
  * SQL: thread row `alias` is in an entry person `param` (an SQL parameter, an id) follows: one
  * that shows a technology they follow, a conversation of a customer they follow, one a person
- * they follow posted in, or one Clef puts in an area they follow (thread_areas).
+ * (or an account) they follow posted in, one Clef puts in an area they follow (thread_areas), or
+ * one they follow itself. Each by index: an account's messages by `messages_author`.
  */
 export const followedByPerson = (alias, param) => `(${inFollowed(
   alias,
@@ -120,7 +125,10 @@ export const followedByPerson = (alias, param) => `(${inFollowed(
   OR (${alias}.kind = 'channel' AND ${alias}.org IN (${followedBy(param, 'org')}))
   OR ${inEntries(alias, `SELECT m.thread FROM messages m WHERE m.deleted = 0
       AND m.person IN (SELECT CAST(target AS INTEGER) FROM (${followedBy(param, 'person')}))`)}
-  OR ${inAreas(alias, followedBy(param, 'area'))})`;
+  OR ${inEntries(alias, `SELECT m.thread FROM messages m WHERE m.deleted = 0
+      AND m.author_key IN (${followedBy(param, 'account')})`)}
+  OR ${inAreas(alias, followedBy(param, 'area'))}
+  OR ${inEntries(alias, followedBy(param, 'thread'))})`;
 
 /**
  * SQL, `?1` a thread: the members of its entry (`x`), each with what it shows (`g`). For who
@@ -189,7 +197,7 @@ export async function entryFollowers(env, thread) {
 
 /**
  * Which of `people` (ids) follow inbox entry `thread`: a technology it shows, its customer, a
- * person who posted in it, or an area it is in. A Set of ids.
+ * person (or an account) who posted in it, an area it is in, or the entry itself. A Set of ids.
  */
 export async function followersOf(env, people, thread) {
   const ids = [...new Set([].concat(people || []).filter(Boolean))];
@@ -210,7 +218,10 @@ export async function followersOf(env, people, thread) {
         (f.kind = 'org' AND f.target IN (SELECT org FROM x))
         OR (f.kind = 'area' AND f.target IN (SELECT a.area FROM thread_areas a WHERE a.thread IN (SELECT thread FROM x)))
         OR (f.kind = 'person' AND CAST(f.target AS INTEGER) IN (SELECT m.person FROM messages m
-          WHERE m.thread IN (SELECT thread FROM x) AND m.deleted = 0))`)
+          WHERE m.thread IN (SELECT thread FROM x) AND m.deleted = 0))
+        OR (f.kind = 'account' AND f.target IN (SELECT m.author_key FROM messages m
+          WHERE m.thread IN (SELECT thread FROM x) AND m.deleted = 0))
+        OR (f.kind = 'thread' AND f.target IN (SELECT thread FROM x))`)
       .bind(String(thread), JSON.stringify(ids)).all(),
   ]);
   return new Set([...(tech || []), ...(more || [])].map((r) => r.who));
@@ -290,7 +301,8 @@ export async function teamFollows(env, team) {
 }
 
 /**
- * What person `person` follows besides technologies: `{ org: [slug], person: [id], area: [id] }`.
+ * What person `person` follows besides technologies: `{ org: [slug], person: [id], area: [id],
+ * account: [identity key], thread: [key] }`.
  */
 export async function personFollowsBy(env, person) {
   const { results } = await env.DB.prepare(`SELECT kind, target FROM person_follows_by
@@ -311,25 +323,43 @@ function targetOf(kind, target) {
   return /^\d+$/.test(id) && Number.isSafeInteger(Number(id)) ? String(Number(id)) : null;
 }
 
-/** Whether `target` is one of kind `kind` that may be followed: a customer, a person, an area. */
+/**
+ * Whether `target` is one of kind `kind` that may be followed: a customer, a person, an area, an
+ * account (a person's, not a bot's) or a conversation (no alert: the personal view has none).
+ */
 async function knownTarget(env, kind, target) {
   const id = targetOf(kind, target);
-  if (!id || id.length > 120) {
+  if (!id || id.length > (kind === 'thread' || kind === 'account' ? 400 : 120)) {
     return null;
+  }
+  if (kind === 'account') {
+    const [source, tenant, ...rest] = id.split(':');
+    if (!source || !tenant || !rest.length) {
+      return null;
+    }
+    const row = await env.DB.prepare(`SELECT 1 FROM identities
+      WHERE source = ? AND tenant = ? AND user_id = ? AND kind != 'bot'`).bind(source, tenant, rest.join(':')).first();
+    return row ? id : null;
   }
   // A customer is one with threads, whether or not the admin pages named it (`orgs`).
   const sql = {
     org: 'SELECT 1 FROM threads WHERE org = ?1 UNION ALL SELECT 1 FROM orgs WHERE slug = ?1',
     person: 'SELECT 1 FROM people WHERE id = ?1',
     area: 'SELECT 1 FROM areas WHERE id = ?1 AND enabled = 1',
+    thread: "SELECT 1 FROM threads WHERE thread = ?1 AND kind = 'channel'",
   }[kind];
   const row = await env.DB.prepare(`${sql} LIMIT 1`).bind(kind === 'person' ? Number(id) : id).first();
   return row ? id : null;
 }
 
+const NOUNS = {
+  org: 'customer', person: 'person', area: 'area', account: 'account', thread: 'thread',
+};
+
 /**
- * Person `person` follows `target` of `kind` (a customer's slug, a person's id, an area's id), or
- * (`follow` false) no more. As setPersonFollow: anyone signed in follows, on a team or not.
+ * Person `person` follows `target` of `kind` (a customer's slug, a person's id, an area's id, an
+ * identity key, a thread's key), or (`follow` false) no more. As setPersonFollow: anyone signed
+ * in follows, on a team or not; whether they may follow a thread is the caller's to ask.
  */
 export async function setPersonFollowBy(env, {
   person, kind, target, follow,
@@ -344,7 +374,7 @@ export async function setPersonFollowBy(env, {
   }
   const id = await knownTarget(env, kind, target);
   if (!id) {
-    return { error: `no such ${{ org: 'customer', person: 'person', area: 'area' }[kind]}` };
+    return { error: `no such ${NOUNS[kind]}` };
   }
   const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM person_follows_by WHERE person = ? AND kind = ?')
     .bind(person, kind).first('n');

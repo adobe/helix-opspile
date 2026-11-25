@@ -84,6 +84,8 @@ function page({ threads = [], answer = async () => PROFILE, open = null } = {}) 
     esc,
     state,
     Person,
+    // Its Follow (ui/follow.js), as a stand-in that says what it was asked for.
+    Follow: { button: ({ kind, id, name }) => `<span class="fo" data-fo="${kind}" data-fo-id="${id}">${esc(name)}</span>` },
     get: (path) => {
       asked.push(path);
       return answer(path);
@@ -247,7 +249,7 @@ describe('customer card', () => {
     const html = p.orgCardHtml('acme', local, { p: PROFILE }, { slug: 'acme', channel: 'aem-acme' }, { href: 'https://slack.example/t1', platform: 'Slack' });
     assert.match(html, /^<div class="top"><span class="logo oc-logo"><span class="ico av">A<\/span><img src="\/fav\/acme\.example"><\/span>/);
     assert.match(html, /<div class="ttl">2 channels · acme\.example<\/div>/);
-    assert.match(html, /<span class="rel customer">Customer<\/span>/);
+    assert.match(html, /<span class="rel customer">Customer<\/span><span class="fo" data-fo="org" data-fo-id="acme">ACME Corporation<\/span>/);
     assert.match(html, /<dt>Here<\/dt><dd>1 thread · 1 waiting on us · 1 unread<\/dd>/);
     assert.match(html, /<dt>Channel<\/dt><dd>aem-acme <a href="https:\/\/slack\.example\/t1" target="_blank" rel="noopener" title="Open the thread in Slack">Open in Slack<\/a><\/dd>/);
     assert.match(html, /<dt>Active<\/dt><dd>/);

@@ -517,6 +517,8 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     const partner = partnerOf(e.domain, partners);
     return {
       id: e.person,
+      // Without a person of D1, the account they are known by (an identity key), to follow.
+      account: !e.person && w.startsWith('a:') ? w.slice(2) : null,
       name,
       avatar: (p && p.avatar) || null,
       title: (p && p.title) || null,
