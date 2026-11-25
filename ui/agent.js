@@ -256,33 +256,47 @@ function reset(repo) {
  */
 const META_MAX_AGE = 60000;
 
-/** Its channels, tools, MCP servers and extraction rules: what the page counts. */
+/**
+ * Its channels, tools, MCP servers and extraction rules: what the page counts. Kept for
+ * META_MAX_AGE only when every read succeeded: after a failure (a 503, D1 overloaded), the next
+ * section shown reads them again.
+ */
 function loadMeta(repo) {
   if (state.loads.meta && Date.now() - state.loads.metaAt > META_MAX_AGE) state.loads.meta = null;
-  if (!state.loads.meta) state.loads.metaAt = Date.now();
-  state.loads.meta = state.loads.meta || Promise.all([
+  if (state.loads.meta) return state.loads.meta;
+  state.loads.metaAt = Date.now();
+  const read = Promise.all([
     loadChannels(repo),
     loadMcp(repo),
     loadTools(repo),
     loadExtraction(repo),
-  ]).then(() => { if (state.repo === repo) counted(); });
-  return state.loads.meta;
+  ]).then((oks) => {
+    if (oks.includes(false) && state.loads.meta === read) state.loads.metaAt = 0;
+    if (state.repo === repo) counted();
+  });
+  state.loads.meta = read;
+  return read;
 }
 
 /** Its files, listed once; then the ones not here yet are fetched ahead (see prefetch). */
 function loadFiles(repo) {
-  state.loads.files = state.loads.files || call(`/api/kb/files?repo=${encodeURIComponent(repo)}`).then(({ ok, body }) => {
+  if (state.loads.files) return state.loads.files;
+  const read = call(`/api/kb/files?repo=${encodeURIComponent(repo)}`).then(({ ok, body }) => {
     if (state.repo !== repo) return;
     if (!ok) {
       state.filesError = body.error || 'Could not list the files.';
+      // Not kept: the knowledge base shown next lists them again.
+      if (state.loads.files === read) state.loads.files = null;
       return;
     }
+    state.filesError = null;
     state.files = body.files;
     state.hasSystemPrompt = body.hasSystemPrompt;
     state.truncated = body.truncated;
     state.listedAt = Date.now();
   });
-  return state.loads.files;
+  state.loads.files = read;
+  return read;
 }
 
 /**
@@ -393,10 +407,11 @@ function renderFiles() {
 /** The channels this knowledge base learns from, with their agents; null when unknown. */
 async function loadChannels(repo) {
   const { ok, body } = await call(`/api/kb/channels?repo=${encodeURIComponent(repo)}`);
-  if (state.repo !== repo) return;
+  if (state.repo !== repo) return true;
   state.channels = ok ? body.channels : null;
   state.configured = ok ? body.configured : true;
   state.teamDefault = ok ? body.teamDefault || null : null;
+  return ok;
 }
 
 /**
@@ -650,9 +665,10 @@ async function switchTeamDefault(el) {
 /** This knowledge base's MCP servers, and the global ones; null when unknown. */
 async function loadMcp(repo) {
   const { ok, body } = await call(`/api/kb/mcp?repo=${encodeURIComponent(repo)}`);
-  if (state.repo !== repo) return;
+  if (state.repo !== repo) return true;
   state.mcp = ok ? body.servers : null;
   state.globals = ok ? body.globals || [] : null;
+  return ok;
 }
 
 /** Whether a global server is on somewhere here: for the team, or in any of these channels. */
@@ -750,8 +766,9 @@ function mcpRow(s) {
 /** The agent tools of this knowledge base's team or customer; null when unknown. */
 async function loadTools(repo) {
   const { ok, body } = await call(`/api/kb/tools?repo=${encodeURIComponent(repo)}`);
-  if (state.repo !== repo) return;
+  if (state.repo !== repo) return true;
   state.tools = ok ? body.tools : null;
+  return ok;
 }
 
 const toolOn = (t) => Boolean((t.team && t.team.enabled) || Object.values(t.channels).some((c) => c.enabled));
@@ -1086,10 +1103,11 @@ function bindTools() {
 
 async function loadExtraction(repo) {
   const b = state.bases.find((x) => x.repo === repo);
-  if (!b || b.kind !== 'team') { state.extraction = null; return; }
+  if (!b || b.kind !== 'team') { state.extraction = null; return true; }
   const { ok, body } = await call(`/api/kb/extraction?repo=${encodeURIComponent(repo)}`);
-  if (state.repo !== repo) return;
+  if (state.repo !== repo) return true;
   state.extraction = ok ? body : null;
+  return ok;
 }
 
 /** "5 rules · 3 tech" next to "Extraction rules". */

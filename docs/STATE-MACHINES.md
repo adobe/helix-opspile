@@ -942,7 +942,8 @@ is sent and again when it is done, and an answer asked for before a change is no
 shown from before a change made here. A failed read is not kept. What the agent of the picked one
 counts (its channels, tools, servers, extraction rules: `loadMeta` in `ui/agent.js`) is read once
 for its sections, and again after `META_MAX_AGE`, when it is picked again, or after a change
-(`Agent.stale`).
+(`Agent.stale`). It is kept only when all four reads succeeded, and the knowledge base's listing
+(`loadFiles`) only when it did: after a failure, the next section shown reads again.
 
 **Code highlighter.** not loaded → loading → loaded, or failed → loading again (`highlighter` in
 `ui/inbox.js`). The first code block rendered starts the import; until it has loaded, code is plain
