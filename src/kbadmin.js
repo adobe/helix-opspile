@@ -13,7 +13,7 @@
 import {
   agentChannels, agentStates, setAgent, setTeamDefault, teamDefault,
 } from './agent/enabled.js';
-import { writeKnowledge } from './agent/kbwrite.js';
+import { isCanonicalPath, pathOwner, writeKnowledge } from './agent/kbwrite.js';
 import {
   isEntry, scalar, splitFrontmatter, SYSTEM_PROMPT,
 } from './agent/okf.js';
@@ -22,10 +22,13 @@ import {
 } from './agent/repos.js';
 import { json } from './http.js';
 import { mcpAdmin } from './mcpadmin.js';
-import { access, mayEdit, mayRead } from './kbaccess.js';
+import {
+  access, mayEdit, mayRead, mayWrite,
+} from './kbaccess.js';
 import { isAdmin, managesTeam } from './review.js';
 import { toolAdmin } from './tooladmin.js';
 import { extractionAdmin } from './extractadmin.js';
+import { decideKbChatBash, kbChatView, talkInKbChat } from './agent/stub.js';
 import { repoName } from './kb.js';
 import { parseStack, STACK_PATH, stackView } from './stack.js';
 import { resolveTech, techMoves } from './catalog.js';
@@ -155,7 +158,8 @@ async function toolCounts(env) {
 /**
  * GET /api/kb: every knowledge base `me` may read, teams first, with the team's or customer's
  * name (a customer's display name, else its slug), its entries (null until counted), how many
- * channels with agents and tools it has, and whether `me` may change it (`may`).
+ * channels with agents and tools it has, whether `me` may change it (`may`: its agents, tools,
+ * servers and instructions) and whether they may write its files (`write`).
  */
 async function listBases(env, me) {
   const [agents, tools, may, { results }] = await Promise.all([
@@ -182,6 +186,8 @@ async function listBases(env, me) {
       agents: agents.size(`${r.kind}:${r.slug}`),
       tools: tools.size(`${r.kind}:${r.slug}`),
       may: may.edit(r),
+      // Its files (but systemprompt.md): everyone on the team (src/kbaccess.js `mayWrite`).
+      write: may.write(r),
     })),
   });
 }
@@ -466,6 +472,27 @@ export async function kbAdmin(request, env, url, me) {
     const team = url.searchParams.get('team');
     return team ? stack(env, me, team, 'team') : stack(env, me, url.searchParams.get('org'));
   }
+  // The knowledge base's sidebar: whoever looks at it talks to its knowledge-base agent, which
+  // changes it only for who may write it (src/kbchat.js).
+  if ((url.pathname === '/api/kb/chat' && ['GET', 'POST'].includes(request.method))
+    || (url.pathname === '/api/kb/chat/bash' && request.method === 'POST')) {
+    const body = request.method === 'GET' ? {} : await request.json().catch(() => ({}));
+    const repo = request.method === 'GET' ? url.searchParams.get('repo') : body.repo;
+    const base = await knownRepo(env, repo);
+    if (!base || !await mayRead(env, me, base)) {
+      return json({ error: 'no such knowledge base' }, 404);
+    }
+    const write = await mayWrite(env, me, base);
+    if (url.pathname === '/api/kb/chat/bash') {
+      return write ? decideKbChatBash(env, me, base, body) : json({
+        error: 'only the people on its team run commands on its agent\'s computer',
+      }, 403);
+    }
+    if (request.method === 'GET') {
+      return kbChatView(env, me, base, { chat: url.searchParams.get('chat'), write });
+    }
+    return talkInKbChat(env, me, base, body, { write });
+  }
   if (url.pathname === '/api/kb/channels' && request.method === 'GET') {
     const base = await knownRepo(env, url.searchParams.get('repo'));
     return base && await mayRead(env, me, base) ? channels(env, me, base)
@@ -483,9 +510,17 @@ export async function kbAdmin(request, env, url, me) {
   if (!base || !await mayRead(env, me, base)) {
     return json({ error: 'no such knowledge base' }, 404);
   }
-  if (request.method !== 'GET' && !await mayEdit(env, me, base)) {
+  // Its files are everyone's on the team (src/kbaccess.js `mayWrite`), but its instructions and
+  // areas (`pathOwner`); a path is taken only as it is, so `./systemprompt.md` is not another file.
+  const path = String(body.path || '').replace(/^\/+/, '');
+  if (url.pathname === '/api/kb/file' && request.method !== 'GET' && !isCanonicalPath(path)) {
+    return json({ error: 'give the file\'s path as it is, without ./, ../ or //' }, 400);
+  }
+  const content = url.pathname === '/api/kb/file' && pathOwner(path) === 'member';
+  if (request.method !== 'GET' && !await (content ? mayWrite : mayEdit)(env, me, base)) {
     return json({
-      error: 'the admin team and the managers of the teams it belongs to change it',
+      error: content ? 'the people on its team change it'
+        : 'the admin team and the managers of the teams it belongs to change it',
     }, 403);
   }
   if (url.pathname === '/api/kb/files' && request.method === 'GET') {

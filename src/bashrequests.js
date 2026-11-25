@@ -205,6 +205,8 @@ const listOf = (raw) => {
 const shape = (r, now) => ({
   id: r.id,
   thread: r.thread,
+  // A knowledge-base agent's, asked in a conversation of its sidebar (src/kbchat.js).
+  ...(r.chat ? { chat: r.chat } : {}),
   // `bash`, a command for the agent's computer, or `codemode`, a script run as the person.
   kind: r.kind || 'bash',
   command: r.command,
@@ -251,6 +253,19 @@ export async function requestsFor(env, keys, now = new Date()) {
   return (results || []).map((r) => shape(r, now));
 }
 
+/**
+ * The requests asked in conversation `chat` of a knowledge base's sidebar (src/kbchat.js), oldest
+ * first: every one, as the conversation keeps them.
+ */
+export async function chatRequests(env, chat, now = new Date()) {
+  if (!chat) {
+    return [];
+  }
+  const { results } = await env.DB.prepare(`${SELECT} WHERE r.chat = ? ORDER BY r.created_at, r.id`)
+    .bind(String(chat)).all();
+  return (results || []).map((r) => shape(r, now));
+}
+
 /** How many requests of `thread` wait or run. */
 export async function openCount(env, thread, now = new Date()) {
   const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM bash_requests
@@ -261,12 +276,13 @@ export async function openCount(env, thread, now = new Date()) {
 
 /**
  * Stores a new request of `thread` (`request` from cleanRequest, or cleanScript, with the
- * `sidebar` message it was asked in answer to, if one) under `id`: pending.
+ * `sidebar` message it was asked in answer to, if one) under `id`: pending. `chat`: the
+ * conversation of a knowledge base's sidebar it was asked in (src/kbchat.js), if one.
  */
-export async function insertRequest(env, id, thread, request, now = new Date()) {
+export async function insertRequest(env, id, thread, request, now = new Date(), chat = null) {
   await env.DB.prepare(`INSERT INTO bash_requests (id, thread, kind, command, reason, env, tools,
-      timeout, deadline, sidebar, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
+      timeout, deadline, sidebar, status, created_at, chat)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
     .bind(
       id,
       thread,
@@ -279,6 +295,7 @@ export async function insertRequest(env, id, thread, request, now = new Date()) 
       request.deadline,
       request.sidebar || null,
       now.toISOString(),
+      chat,
     ).run();
   return requestOf(env, id, now);
 }

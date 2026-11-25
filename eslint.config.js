@@ -102,6 +102,8 @@ export default [
         TeamView: 'readonly',
         // A customer's overview, ui/customer.js (in Customers, ui/admin.js).
         CustomerView: 'readonly',
+        // The knowledge base's sidebar, ui/kbchat.js (in Teams and Customers, ui/admin.js).
+        KbChat: 'readonly',
         // A person's parts, as both people cards draw them, ui/person.js (the inbox, Teams).
         Person: 'readonly',
         // The sidebar of Teams, Customers and Topics, ui/sidenav.js.

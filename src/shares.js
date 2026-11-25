@@ -111,6 +111,22 @@ export async function ownedCustomers(env, teams) {
   return new Set((results || []).map((r) => r.org));
 }
 
+/**
+ * The ops teams (slugs) that own customer `org` (see `ownedCustomers`): its channels are filed
+ * under them or shared with them. Sorted.
+ */
+export async function customerTeams(env, org) {
+  if (!org || !env.DB) {
+    return [];
+  }
+  const { results } = await env.DB.prepare(`SELECT t.team FROM threads t
+      WHERE t.org = ?1 AND t.kind != 'ignore' AND t.team IS NOT NULL
+    UNION SELECT c.team FROM channel_teams c WHERE (c.source, c.channel_id) IN (
+      SELECT source, channel_id FROM threads WHERE org = ?1 AND kind != 'ignore')`)
+    .bind(String(org)).all();
+  return [...new Set((results || []).map((r) => r.team).filter((t) => !isHolding(t)))].sort();
+}
+
 /** Whether one of `teams` (slugs) owns customer `org` (see `ownedCustomers`), by `threads_org`. */
 export async function ownsCustomer(env, teams, org) {
   if (!(teams || []).length || !org) {

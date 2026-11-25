@@ -877,6 +877,44 @@ export async function topicExperts(env, key, name, { me = null, now = Date.now()
   };
 }
 
+/**
+ * The Adobe colleagues who worked the threads of topic `name` (its id, or a word of its label),
+ * for an agent without a thread (a knowledge base's sidebar, src/kbchat.js): `{ topic, people:
+ * [{ person, name, email, threads, last }] }`, the most threads first, of those active in the
+ * last ACTIVE_DAYS; or `{ error }`.
+ */
+export async function topicPeople(env, name, { now = Date.now() } = {}) {
+  const index = await topicIndex(env, { now });
+  if (!index) {
+    return { error: 'there is no topic map yet' };
+  }
+  const topic = findTopic(index, name);
+  if (!topic) {
+    return { error: `no topic is called ${JSON.stringify(String(name || ''))}: list_topics without a topic lists them` };
+  }
+  const all = [...topic.people.keys()];
+  const recent = all.length ? await active(env, all, now) : new Set();
+  const listed = all.filter((p) => recent.has(p))
+    .sort((a, b) => topic.people.get(b).threads - topic.people.get(a).threads
+      || String(topic.people.get(b).last).localeCompare(String(topic.people.get(a).last)))
+    .slice(0, MAX_TOPIC_PEOPLE);
+  const { results } = listed.length ? await env.DB.prepare(`SELECT id, name, email FROM people
+    WHERE id IN (SELECT value FROM json_each(?)) AND staff = 1`).bind(JSON.stringify(listed)).all()
+    : { results: [] };
+  const who = new Map((results || []).map((r) => [r.id, r]));
+  return {
+    topic: {
+      id: topic.id, label: topic.label, theme: topic.theme, size: topic.size,
+    },
+    people: listed.filter((p) => who.has(p)).map((p) => ({
+      person: p,
+      name: who.get(p).name || who.get(p).email,
+      email: who.get(p).email,
+      ...topic.people.get(p),
+    })),
+  };
+}
+
 /** Forgets the kept lists and the mention model (tests). */
 export function clearExpertLists() {
   cache.clear();

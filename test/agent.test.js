@@ -45,7 +45,7 @@ import { channelThreads, resolveAnyThread, resolveThread } from '../src/agent/hi
 import { mentionedOutside } from '../src/agent/members.js';
 import { codemodeExtension, mcpExtension } from '../src/agent/mcp.js';
 import {
-  agentPerson, agentToolsExtension, opspileExtension, staffExtension,
+  agentPerson, agentToolsExtension, kbChatExtension, opspileExtension, staffExtension,
 } from '../src/agent/tools.js';
 import {
   keepLive, keepTurn, keptTurn, liveDue, liveTurn,
@@ -1314,6 +1314,102 @@ describe('the earlier conversations of the channel', () => {
       assert.match((await resolveAnyThread(e, 'https://acme.slack.com/archives/C404/p1792584060000200')).error, /no thread/);
       assert.match((await resolveAnyThread(e, 'whatever')).error, /no thread/);
       assert.match((await resolveAnyThread(e, '')).error, /no thread/);
+    });
+
+    it('reads and searches every thread in a conversation of a knowledge base\'s sidebar only', async () => {
+      const { e } = await internal();
+      const CHAT = {
+        chat: 'kc_00000000-0000-4000-8000-000000000000', kb: 'team', repo: 'kb-team-helix', by: 'Ada',
+      };
+      const ext = kbChatExtension({
+        env: e,
+        hasThread: false,
+        target: async () => ({
+          key: null, team: 'helix', org: null, threads: [],
+        }),
+        verdicts: async (messages) => new Map(await Promise.all(
+          messages.filter(untrusted).map(async (m) => [m.id, await screen(e, m)]),
+        )),
+        chatOf: async (session) => (session === 'chat-1' ? CHAT : null),
+      });
+      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads', 'search_threads', 'read_file', 'list_topics', 'list_experts']);
+      const call = async (name, args, conversationId) => {
+        const res = await ext.tools.find((t) => t.name === name).execute(args, { conversationId });
+        return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+      };
+      // A seed's or a dream's session reads no thread.
+      for (const [name, args] of [['read_any_thread', { thread: THREAD }], ['search_threads', { query: 'acme' }],
+        ['find_channels', { query: 'acme' }], ['list_any_channel_threads', { channel: 'slack:E1:C1' }],
+        ['read_file', { thread: THREAD, file: 'F1' }], ['list_topics', {}], ['list_experts', { thread: THREAD }]]) {
+        // eslint-disable-next-line no-await-in-loop
+        const refused = await call(name, args, 'seed-1');
+        assert.equal(refused.error, true, name);
+        assert.match(refused.text, /only for a conversation on the knowledge base's page/, name);
+      }
+      const read = await call('read_any_thread', { thread: LINK }, 'chat-1');
+      assert.equal(read.error, false);
+      assert.match(read.text, /CDN purge takes forever/);
+      assert.doesNotMatch(read.text, /delete the knowledge base/);
+      // No thread of its own to record the read for.
+      assert.deepEqual(e.DB.rows('SELECT 1 FROM agent_thread_reads'), []);
+      const listed = await call('list_any_channel_threads', { channel: 'slack:E1:C1' }, 'chat-1');
+      assert.equal(listed.error, false);
+      assert.match(listed.text, new RegExp(THREAD.replace(/\./g, '\\.')));
+      // Every team's threads, by their channel's or customer's name; `customer` keeps one's.
+      // Workers AI here is Clef's: the query has no vector, and says so in the log.
+      const found = await quiet(() => call('search_threads', { query: 'aem-acme' }, 'chat-1'));
+      assert.equal(found.error, false);
+      assert.match(found.text, new RegExp(`^- ${THREAD.replace(/\./g, '\\.')} \\| .* \\| customer acme \\| team helix \\|`));
+      assert.match(found.text, /matched place/);
+      const theirs = await quiet(() => call('search_threads', { query: 'aem-acme', customer: 'other' }, 'chat-1'));
+      assert.match(theirs.text, /^No thread of the inbox matches/);
+      // Who knows what, and the files of any thread.
+      assert.equal((await call('list_topics', {}, 'chat-1')).text, 'There is no topic map yet.');
+      assert.match((await call('list_topics', { topic: 'cdn' }, 'chat-1')).text, /no topic map/);
+      assert.match((await call('read_file', { thread: LINK, file: 'https://example.com/x.pdf' }, 'chat-1')).text, /^Could not read the file: That is not a file of your thread/);
+      assert.match((await call('read_file', { thread: 'whatever', file: 'x' }, 'chat-1')).text, /no thread/);
+      assert.equal((await call('list_experts', { thread: 'whatever' }, 'chat-1')).error, true);
+      // What it is told, in that conversation only.
+      const guide = await ext.sections[0].render({ conversationId: 'chat-1' });
+      assert.match(guide, /kb-team is the only knowledge base you can write here/);
+      assert.match(guide, /never put one customer's details into it/);
+      assert.match(guide, /Ada, who is not on its team/);
+      assert.equal(await ext.sections[0].render({ conversationId: 'seed-1' }), undefined);
+
+      // Its switchable tools: in that conversation only, and what changes something only for
+      // someone on the team.
+      const tools = agentToolsExtension({
+        env: e,
+        hasThread: false,
+        name: 'kb:helix:',
+        target: async () => ({ key: null, team: 'helix', org: null }),
+        chatOf: async (session) => ({ 'chat-1': CHAT, 'chat-2': { ...CHAT, write: true } }[session] || null),
+        schedule: async () => ({ id: 's' }),
+      }, ['computer', 'extraction_rules', 'web_search']);
+      const use = async (name, args, conversationId) => {
+        const tool = tools.tools.find((t) => t.name === name);
+        const res = await tool.execute(args, { conversationId });
+        return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+      };
+      assert.deepEqual(tools.tools.map((t) => t.name), ['bash', 'view_image', 'request_bash', 'list_extraction_rules',
+        'test_extraction_rule', 'save_extraction_rule', 'delete_extraction_rule', 'save_tech', 'delete_tech', 'web_search']);
+      assert.match((await use('web_search', { query: 'x' }, 'seed-1')).text, /only for a conversation on the knowledge base's page/);
+      assert.match((await use('view_image', { path: 'x.png' }, 'seed-1')).text, /only for a conversation/);
+      assert.match((await use('list_extraction_rules', {}, 'seed-1')).text, /only for a conversation/);
+      assert.equal((await use('list_extraction_rules', {}, 'chat-1')).error, false);
+      assert.match((await use('save_tech', { tech: 'x', name: 'X' }, 'chat-1')).text, /not on this knowledge base's team/);
+      assert.match((await use('request_bash', { command: 'ls', reason: 'x' }, 'chat-1')).text, /not on this knowledge base's team/);
+      assert.equal((await use('save_tech', { tech: 'acme_cms', name: 'Acme CMS', description: 'the Acme CMS' }, 'chat-2')).error, false);
+      const told = async (conversationId) => (await Promise.all(tools.sections
+        .map((x) => x.render({ conversationId })))).filter(Boolean);
+      assert.deepEqual(await told('seed-1'), []);
+      assert.equal((await told('chat-1')).length, 3);
+      // Nor does it write the knowledge base for them.
+      const kbTools = opspileExtension({
+        env: e, hasThread: false, target: async () => ({ key: null, team: 'helix', org: null }), chatOf: async () => CHAT,
+      }).tools;
+      const wrote = await kbTools.find((t) => t.name === 'kb_write').execute({ kb: 'team', message: 'x', changes: [{ path: 'a.md', content: 'x' }] }, { conversationId: 'chat-1' });
+      assert.match(wrote.output[0].text, /not on this knowledge base's team/);
     });
   });
 

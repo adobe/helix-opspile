@@ -872,9 +872,12 @@ guidelines' figures drawn by it at `/__dev/fmc`.
 **Editor.** A team's page in **Teams** and a customer's in **Customers** (`/inbox/admin`,
 ui/admin.js) have their agent's sections (ui/agent.js) after their own: **Thread agents**,
 **Tools and MCP servers**, a team's **Extraction rules**, and **Knowledge base**, its files and
-history beside an editor for `systemprompt.md` and the concepts. Members of the admin team, and
+history beside an editor for `systemprompt.md` and the concepts. Beside every section, whoever may look
+at the knowledge base talks to its agent (see "The knowledge base's sidebar", under Thread agents). Members of the admin team, and
 team managers for the knowledge bases of their teams and of the customers their teams own,
-change them there. The members of every ops team see every team's agent there read-only (its
+change them there. The files of a knowledge base but `systemprompt.md` and its Clef areas (`areas/`) are everyone's on its team (`pathOwner`, src/agent/kbwrite.js, which takes a path only as it is: `./systemprompt.md` is refused)
+(`mayWrite`, `write` on each knowledge base of `GET /api/kb`): a team's members write their team's,
+and the members of the teams that own a customer the customer's. The members of every ops team see every team's agent there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
 says per knowledge base whether they may change it, `may`), as every thread agent reads them,
 and the customers' their teams own the same way. A team owns the customers with a channel filed under it or shared with it
@@ -2565,7 +2568,8 @@ written by people outside its control.
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB and 8000 pixels a side, read from their headers) go to the model as images, larger ones through the Markdown conversion; an image the model would refuse never reaches it (`src/agent/images.js`), since the API refuses the whole request and the image would stay in the history: the provider also leaves such images out of every request (over 2000 pixels a side when it has more than 20 images); plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
 | `raw_message` | a message of the entry, or with `thread` of another conversation of its channel, as its platform sent it: the newest version in pile 1 (`src/agent/rawmessage.js`), only what the message says (the Teams body as HTML, its attachments and `eventDetail`; Slack's text, blocks, attachments and files, the edited message for an edit; Discord's content, embeds, attachments, components and poll), not the envelope, in parts of 30,000 characters (`offset`). It is not checked for prompt injection again: the agent is told it is data, not instructions. A withheld message stays withheld. A message whose markdown dropped something (`dropped`, see "Pile 2") says so where the agent reads it, naming the tool; under `read_any_thread`, which it cannot read, not |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` (its customer's, or any) |
-| `read_any_thread` | with `org_threads` (on by default) a thread of the customer's other channels, with `any_thread` (see "Agent tools") any thread of the inbox: by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
+| `read_any_thread` | with `org_threads` (on by default) a thread of the customer's other channels, with `any_thread` (see "Agent tools") any thread of the inbox: by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld; in the conversations of a knowledge base's sidebar, any thread of the inbox |
+| `search_threads` | a knowledge-base agent's, in the conversations of its knowledge base's sidebar only (see "The knowledge base's sidebar"): every thread of the inbox about a query, best first, as the inbox's search finds them, each with its key, title, channel, customer, team, link, why it matched and the message that matched best; `customer` keeps one customer's. There, `read_file`, `list_topics` and `list_experts` take a thread of the inbox instead of the agent's own |
 | `find_channels` | with `org_threads`: the customer's other channels, all of them, those a query names first; with `any_thread`: the inbox's channels, on every platform, that a customer's name, a channel's or Teams team's name, a domain's name, or a site or repository (`owner/name`, or an Edge Delivery host) names, best first, the agent's own left out: id, platform and name, customer, ops teams, conversations and latest activity, why it matched, and the channel's link on its platform |
 | `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for another channel (with `org_threads` the customer's, and of it the customer's threads only), by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
@@ -2776,6 +2780,55 @@ knowledge base. A thread's `kb` is only ever that thread's own team or customer.
 agent names alone: `{ team, kb: "team" }` needs no customer and reaches `kb:<team>:` (the org
 left empty), which has no kb-org at all, and only the chosen knowledge base is created when it
 is missing.
+
+**The knowledge base's sidebar.** On a team's page in Teams and a customer's in Customers, whoever
+may look at its knowledge base (src/kbaccess.js `mayRead`: every ops team's members for a team's,
+the members of the teams that own the customer for a customer's, the admin team for all) talks to
+its knowledge-base agent, to ask what it knows and to have it changed: a panel beside every section
+of the page (ui/kbchat.js, the global `KbChat`, in `ui/spectrum-kbchat.css`), opened by **Ask the
+agent** at the page's bottom right and kept open or closed in the browser; beside the page where
+three columns fit, over it where they do not. A team's is the agent `kb:<team>:`, a customer's
+`kb::<org>`, which is no team's: neither has a thread or a draft. Each conversation is the person's
+own (`kb_chat_messages`, migration 0104, src/kbchat.js): nobody else sees it, **New** starts
+another, and the earlier ones are a pick away. Each is a session of the agent of its own, pinned
+to that knowledge base as a seed's is (src/agent/kbchat.js), so `kb_write` and `draw_stack` write
+it and nothing else, and it starts without the context of the other conversations. A message goes
+into the session as an input that starts as a thread's sidebar message does (`Sidebar message
+sb_… from`), so its turns are read as those are (`sidebarTurns`), and the turn's closing text is
+the answer, kept in D1 at every round of the agent's tools and whenever the page asks while it
+waits (`GET /api/kb/chat`, which also says what the agent is doing, `POST /api/kb/chat`).
+
+**Who changes it.** Everyone on its team (`mayWrite`: a team's members, the owning teams' members
+for a customer's, and the admin team) has the agent change the knowledge base and run commands;
+for anyone else, the agent answers but refuses to: each message tells it which (`write`, kept with
+the session as of the latest message, `chat-of:<session>`), and `kb_write`, `draw_stack`, `bash`,
+`request_bash` and the extraction rules' and tech stack's saves and deletes check it at every call.
+
+**What it has there**, and only there (the tools refuse in the agent's other sessions, a seed's or
+a dream's, and are not in their prompt):
+- every thread of the inbox (`kbChatExtension` in src/agent/tools.js): `search_threads` searches
+  every team's threads as the inbox's search does (src/search.js `find`: meaning, full text,
+  titles, channels, customers and facts), with `customer` for one customer's; `read_any_thread`,
+  `find_channels` and `list_any_channel_threads` as a thread's agent has them where `any_thread`
+  is on; `read_file`, a file of a message of any thread (`thread` and `file`);
+- who knows what: `list_topics` (with `topic`, the colleagues who worked its threads lately,
+  `topicPeople` in src/experts.js) and `list_experts` for a thread (`thread`, `about`);
+- its switchable tools, whatever the switches say, as they are for a person's conversation and not
+  a channel (`KB_AGENT_TOOLS`, src/agent/agenttools.js): the `computer` (`bash`, and `request_bash`,
+  which asks the conversation's person: a card in the conversation with Run and Deny, `POST
+  /api/kb/chat/bash`, `bash_requests.chat`; how it ended comes back as a line of theirs and a
+  sidebar message to the session, `tellChat`), `web_search`, and a team's agent the team's
+  extraction rules and tech stack. The computer is the agent's, so its files are shared by every
+  conversation of the page, and it has the team's and the customer's secrets.
+
+A customer's agent reads every team's knowledge base, those of the teams that work with the
+customer (`customerTeams` in src/shares.js) first and named so (`via: 'owner'`), read only. Its
+prompt (`kb-chat`) asks it to do what the person asks, read before it writes, back what it writes
+with the threads that say it (or the person, as `human:<name>`), keep one customer's details out of
+kb-team, and ask before it removes or rewrites much nobody asked for. Its commits say who asked
+(`log.md`: "asked by … on the knowledge base's page"). When it answers, the page lists the
+knowledge base again and shows the open file as it is now, unless you are editing it
+(`Agent.changed`). The agent's model use is metered under its team or customer, as a seed's.
 
 **Dreams.** Agents write the knowledge bases a thread at a time, so over time a customer's
 kb-org gathers the same site, issue or person under two names, facts repeated across concepts, and

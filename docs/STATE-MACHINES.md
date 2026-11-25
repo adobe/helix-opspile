@@ -528,6 +528,29 @@ queued right behind one does not hide it. Answered, a message may be followed up
 up to three times, within a week of it: `addSidebarFollowup`), by a later turn's `sidebar_followup`:
 `<id>:followup:<n>`, `n` one more than the follow-ups it has, never while a sidebar turn runs.
 
+**Knowledge base's sidebar.** asked → answered (or failed → answered), in a conversation that is
+one person's (`kb_chat_messages`, migration 0104, `src/kbchat.js`, `src/agent/kbchat.js`). As a
+thread's sidebar message: the person's row is written before the agent is told and deleted when it
+did not take it; the answer's id is the message's with `:answer`, written only for a message of
+that conversation (the insert selects it), replaced only while it is failed, never dated before
+its message. A conversation (`kc_…`) exists once it has a row, and is only ever the person's who
+wrote it: the API finds it by knowledge base and person (`isChatOf`), so an id someone else knows
+is none. Its session in the knowledge-base agent (`chat-session:<chat>`, `chat-of:<session>` and
+`seed-pin:<session>` in its storage) is made and pinned before the first input is submitted, as a
+seed's is, so no turn of it writes another knowledge base. Which conversations have an answer not
+kept yet is `chats-open` (added before the input is submitted, left once nothing of the
+conversation is pending or working); what was kept of each is `chat-kept:<chat>`, written after the
+answers, so a failed write is tried again. They are kept at every round of tools and answer
+(`keepTurn`, a knowledge-base agent's), and whenever the page asks while an answer waits
+(`chatState`), so a missed timer is no lost answer. A new conversation is only the page's until
+its first message (`fresh`). Whether its person may have the knowledge base changed is not a state
+of the conversation: it is asked at every message (`mayWrite`) and kept with the session for the
+turns it starts (`write` in `chat-of:<session>`), so someone who joins or leaves the team counts
+from their next message. A command its agent asks for there is a command request as any (below),
+with `chat` set: only that conversation's person decides it, on the page, and how it ended is told
+to that session as a sidebar message of theirs, with a line of theirs in the conversation, written
+before it is submitted and taken back when it could not be.
+
 **Sidebar answer seen.** unseen → seen, and unseen again when a failed answer is replaced
 (`sidebar_messages.seen_at`, migration 0078, `seeSidebar` in `src/sidebar.js`). Only the person it
 answers (`person` on the agent's row) has it unseen, and only they mark it, by id: the inbox does

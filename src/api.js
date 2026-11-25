@@ -1730,8 +1730,10 @@ async function route(request, env, url, {
   }
   if (url.pathname === '/api/kb' || url.pathname.startsWith('/api/kb/')) {
     // The members of a team look at its knowledge base and agents; changing them is for the
-    // admin team and team managers (and src/kbadmin.js checks whose).
-    if (request.method !== 'GET' && !isManager(me)) {
+    // admin team and team managers (and src/kbadmin.js checks whose). Its files are everyone's
+    // on the team, and its agent's sidebar whoever's who looks (src/kbaccess.js `mayWrite`).
+    const open = ['/api/kb/file', '/api/kb/chat', '/api/kb/chat/bash'].includes(url.pathname);
+    if (request.method !== 'GET' && !open && !isManager(me)) {
       return json({ error: 'changing the agents is for the admin team and team managers' }, 403);
     }
     return (await kbAdmin(request, env, url, me)) || json({ error: 'not found' }, 404);
