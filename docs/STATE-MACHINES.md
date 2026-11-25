@@ -945,6 +945,19 @@ says which hash a path has, and is the watermark: a save relists (unless another
 it was read), and so does showing the tab again after `RELIST_MS`. A failed batch leaves its hashes
 not here, and opening one reads it by its path.
 
+**Teams and Customers read ahead.** not read → in flight → kept → forgotten (`ahead`, `cached`,
+`forget` in `ui/admin.js`). What a team's or a customer's overview and Manage section read (their
+profile, `/api/admin/team` or `/org`, the member suggestions, the stack drawing) is asked for once
+what is picked is shown (`readAhead`), or when the pointer rests on, or the focus is on, a section's
+tab, a row of the list or a link to one (`warm`), and kept for `KEEP_MS`. Every change the page
+makes (`call` with another method than GET, and the agent's, `onWrite`) forgets all of it, when it
+is sent and again when it is done, and an answer asked for before a change is not kept: nothing is
+shown from before a change made here. A failed read is not kept. What the agent of the picked one
+counts (its channels, tools, servers, extraction rules: `loadMeta` in `ui/agent.js`) is read once
+for its sections, and again after `META_MAX_AGE`, when it is picked again, or after a change
+(`Agent.stale`). It is kept only when all four reads succeeded, and the knowledge base's listing
+(`loadFiles`) only when it did: after a failure, the next section shown reads again.
+
 **Code highlighter.** not loaded → loading → loaded, or failed → loading again (`highlighter` in
 `ui/inbox.js`). The first code block rendered starts the import; until it has loaded, code is plain
 text, and loaded is part of the key of what is rendered, so the list and the open thread render

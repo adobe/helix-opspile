@@ -53,18 +53,20 @@ async function list(env, me, repo) {
     return json({ error: 'no such knowledge base' }, 404);
   }
   const column = owner.scope === 'team' ? 'team' : 'org';
-  const { results } = await env.DB.prepare(`SELECT * FROM agent_tool_switches
-    WHERE (scope = 'team' AND target = ?) OR (scope = 'channel' AND target IN
-      (SELECT DISTINCT channel_id FROM threads WHERE ${column} = ?))`)
-    .bind(owner.scope === 'team' ? owner.slug : '', owner.slug).all();
+  const team = owner.scope === 'team';
+  // Asked together: /api/* sends the reads of one tick to D1 as one batch (src/d1batch.js).
+  const [{ results }, secrets, image, images] = await Promise.all([
+    env.DB.prepare(`SELECT * FROM agent_tool_switches
+      WHERE (scope = 'team' AND target = ?) OR (scope = 'channel' AND target IN
+        (SELECT DISTINCT channel_id FROM threads WHERE ${column} = ?))`)
+      .bind(team ? owner.slug : '', owner.slug).all(),
+    secretsOf(env, owner),
+    // The computer's image is a team's: a customer's knowledge base has none to show.
+    team ? teamImage(env, owner.slug) : null,
+    team ? listImages(env.IMAGES) : null,
+  ]);
   const rows = results || [];
-  const secrets = await secretsOf(env, owner);
-  // The computer's image is a team's: a customer's knowledge base has none to show.
-  const shell = owner.scope === 'team' ? {
-    image: await teamImage(env, owner.slug),
-    images: await listImages(env.IMAGES),
-    mayImage: isAdmin(me),
-  } : {};
+  const shell = team ? { image, images, mayImage: isAdmin(me) } : {};
   return json({
     repo,
     tools: AGENT_TOOLS.map((t) => ({

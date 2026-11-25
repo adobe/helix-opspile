@@ -512,20 +512,44 @@ export function tfidf({ posted = 0, reacted = 0, member = false }, df, n) {
  * tf-idf (see `tfidf`), then by how many are active, Clef's confidence and the latest activity.
  */
 export async function suggestionsFor(env, team) {
-  const people = new Map((await rows(env, `SELECT p.id, p.name, p.email FROM team_members tm
-    JOIN people p ON p.id = tm.person WHERE tm.team = ?`, team)).map((p) => [p.id, p]));
-  const admin = await rows(env, `SELECT t.source, t.tenant, t.channel_id, COUNT(*) AS threads,
-      MAX(COALESCE(t.last_at, t.any_at)) AS latest, MAX(t.org) AS org,
-      c.name, c.group_name, c.topic, c.members_at, c.members_error,
-      l.team AS l_team, l.team_p, l.teams AS l_teams, l.kind AS l_kind, l.kind_p, l.model, l.labeled_at
-    FROM threads t
-    LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
-    LEFT JOIN channel_labels l ON l.source = t.source AND l.tenant = t.tenant AND l.channel_id = t.channel_id
-    WHERE t.team = ? AND c.archived_at IS NULL GROUP BY t.source, t.tenant, t.channel_id`, ADMIN_TEAM);
-  // A channel shared with the team already is in its inbox (migration 0024): not suggested,
-  // though it still counts in the corpus below.
-  const shared = new Set((await rows(env, 'SELECT source, channel_id FROM channel_teams WHERE team = ?', team))
-    .map((r) => `${r.source}:${r.channel_id}`));
+  // Asked together: /api/* sends the reads of one tick to D1 as one batch (src/d1batch.js).
+  // The activity reads join the team's members: with none, they find nothing.
+  const [
+    peopleRows, admin, sharedRows, postedRows, reactedRows, memberRows, orgRows,
+  ] = await Promise.all([
+    rows(env, `SELECT p.id, p.name, p.email FROM team_members tm
+      JOIN people p ON p.id = tm.person WHERE tm.team = ?`, team),
+    rows(env, `SELECT t.source, t.tenant, t.channel_id, COUNT(*) AS threads,
+        MAX(COALESCE(t.last_at, t.any_at)) AS latest, MAX(t.org) AS org,
+        c.name, c.group_name, c.topic, c.members_at, c.members_error,
+        l.team AS l_team, l.team_p, l.teams AS l_teams, l.kind AS l_kind, l.kind_p, l.model, l.labeled_at
+      FROM threads t
+      LEFT JOIN channels c ON c.source = t.source AND c.tenant = t.tenant AND c.channel_id = t.channel_id
+      LEFT JOIN channel_labels l ON l.source = t.source AND l.tenant = t.tenant AND l.channel_id = t.channel_id
+      WHERE t.team = ? AND c.archived_at IS NULL GROUP BY t.source, t.tenant, t.channel_id`, ADMIN_TEAM),
+    // A channel shared with the team already is in its inbox (migration 0024): not suggested,
+    // though it still counts in the corpus below.
+    rows(env, 'SELECT source, channel_id FROM channel_teams WHERE team = ?', team),
+    rows(env, `SELECT m.source, m.tenant, m.channel_id, m.person, COUNT(*) AS n
+      FROM threads t JOIN messages m ON m.thread = t.thread
+      JOIN team_members tm ON tm.person = m.person AND tm.team = ?2
+      WHERE t.team = ?1 AND m.counted = 1 AND m.deleted = 0
+      GROUP BY m.source, m.tenant, m.channel_id, m.person`, ADMIN_TEAM, team),
+    rows(env, `SELECT t.source, t.tenant, t.channel_id, p.id AS person, COUNT(*) AS n
+      FROM threads t JOIN reactions r ON r.thread = t.thread
+      JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +r.user_key
+      JOIN people p ON p.id = i.person OR (i.person IS NULL AND p.email = i.email)
+      JOIN team_members tm ON tm.person = p.id AND tm.team = ?2
+      WHERE t.team = ?1 GROUP BY t.source, t.tenant, t.channel_id, p.id`, ADMIN_TEAM, team),
+    rows(env, `SELECT DISTINCT cm.source, cm.tenant, cm.channel_id, p.id AS person
+      FROM channel_members cm JOIN people p ON p.email = cm.email
+      JOIN team_members tm ON tm.person = p.id AND tm.team = ?2
+      WHERE EXISTS (SELECT 1 FROM threads t WHERE t.source = cm.source AND t.tenant = cm.tenant
+        AND t.channel_id = cm.channel_id AND t.team = ?1)`, ADMIN_TEAM, team),
+    rows(env, 'SELECT slug, name, type FROM orgs'),
+  ]);
+  const people = new Map(peopleRows.map((p) => [p.id, p]));
+  const shared = new Set(sharedRows.map((r) => `${r.source}:${r.channel_id}`));
   const activity = new Map();
   const touch = (r, how, n = 1) => {
     const p = people.get(r.person);
@@ -545,31 +569,16 @@ export async function suggestionsFor(env, team) {
     byPerson.set(p.id, a);
     activity.set(k, byPerson);
   };
-  if (people.size) {
-    for (const r of await rows(env, `SELECT m.source, m.tenant, m.channel_id, m.person, COUNT(*) AS n
-      FROM threads t JOIN messages m ON m.thread = t.thread
-      JOIN team_members tm ON tm.person = m.person AND tm.team = ?2
-      WHERE t.team = ?1 AND m.counted = 1 AND m.deleted = 0
-      GROUP BY m.source, m.tenant, m.channel_id, m.person`, ADMIN_TEAM, team)) {
-      touch(r, 'posted', r.n);
-    }
-    for (const r of await rows(env, `SELECT t.source, t.tenant, t.channel_id, p.id AS person, COUNT(*) AS n
-      FROM threads t JOIN reactions r ON r.thread = t.thread
-      JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +r.user_key
-      JOIN people p ON p.id = i.person OR (i.person IS NULL AND p.email = i.email)
-      JOIN team_members tm ON tm.person = p.id AND tm.team = ?2
-      WHERE t.team = ?1 GROUP BY t.source, t.tenant, t.channel_id, p.id`, ADMIN_TEAM, team)) {
-      touch(r, 'reacted', r.n);
-    }
-    for (const r of await rows(env, `SELECT DISTINCT cm.source, cm.tenant, cm.channel_id, p.id AS person
-      FROM channel_members cm JOIN people p ON p.email = cm.email
-      JOIN team_members tm ON tm.person = p.id AND tm.team = ?2
-      WHERE EXISTS (SELECT 1 FROM threads t WHERE t.source = cm.source AND t.tenant = cm.tenant
-        AND t.channel_id = cm.channel_id AND t.team = ?1)`, ADMIN_TEAM, team)) {
-      touch(r, 'member');
-    }
+  for (const r of postedRows) {
+    touch(r, 'posted', r.n);
   }
-  const orgs = new Map((await rows(env, 'SELECT slug, name, type FROM orgs')).map((o) => [o.slug, o]));
+  for (const r of reactedRows) {
+    touch(r, 'reacted', r.n);
+  }
+  for (const r of memberRows) {
+    touch(r, 'member');
+  }
+  const orgs = new Map(orgRows.map((o) => [o.slug, o]));
   // In how many of the admin team's channels each member is active.
   const df = new Map();
   for (const byPerson of activity.values()) {

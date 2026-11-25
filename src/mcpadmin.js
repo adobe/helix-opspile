@@ -731,16 +731,20 @@ async function list(env, me, repo) {
   if (!owner) {
     return json({ error: NO_BASE }, 404);
   }
-  const { results } = await env.DB.prepare(`SELECT * FROM mcp_servers WHERE scope = ? AND slug = ?
-    ORDER BY name`).bind(owner.scope, owner.slug).all();
-  const may = await mayManage(env, me, owner.scope, owner.slug);
-  const servers = await Promise.all((results || []).map((r) => shown(env, r)));
+  // Asked together: /api/* sends the reads of one tick to D1 as one batch (src/d1batch.js).
+  const [servers, may, globals] = await Promise.all([
+    env.DB.prepare(`SELECT * FROM mcp_servers WHERE scope = ? AND slug = ?
+      ORDER BY name`).bind(owner.scope, owner.slug).all()
+      .then(({ results }) => Promise.all((results || []).map((r) => shown(env, r)))),
+    mayManage(env, me, owner.scope, owner.slug),
+    globalsView(env, me, owner),
+  ]);
   return json({
     repo,
     // Whether `me` changes them; a member of the team only looks, at bare URLs.
     may,
     servers: may ? servers : servers.map(readOnly),
-    globals: await globalsView(env, me, owner),
+    globals,
   });
 }
 
