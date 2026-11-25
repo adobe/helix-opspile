@@ -754,7 +754,7 @@ inbox's:
 | Name | Kind | What |
 | --- | --- | --- |
 | `PORTAL_DOMAINS` | var | Comma-separated mail domains whose people may use the portal. Nobody else gets past its API, whatever Access lets in; empty, the portal is open to nobody |
-| `PORTAL_INTEGRATION_AUD` | var | Optional, distinct Access audience for the service-only integration path. Unset disables the API. Host public keys, scopes, tenant mappings and roster are operator-managed portal D1 records; no host private credentials in Opspile. |
+| `PORTAL_INTEGRATION_AUD` | var | Optional, distinct Access audience for the service-only integration path. Unset disables the API. Host public keys or trusted identity provider, scopes, tenant mappings and roster are operator-managed portal D1 records; no host private credentials in Opspile. |
 | `ACCESS_AUD` | var | The audience tag of the portal's Access application, exported as `PORTAL_ACCESS_AUD` at deploy |
 | `ACCESS_TEAM_DOMAIN` | var | `https://<team>.cloudflareaccess.com`; at deploy `PORTAL_ACCESS_TEAM_DOMAIN`, else the inbox's `ACCESS_TEAM_DOMAIN` |
 | `PUBLIC_ORIGIN` | var | Optional: the portal's own `https://` origin (`PORTAL_ORIGIN` at deploy), for the links to its messages its events carry |
