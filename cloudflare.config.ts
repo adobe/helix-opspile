@@ -149,7 +149,7 @@ const SECRETS = [
   // Thread agents: the Amazon Bedrock API key, and (AI_GATEWAY_TOKEN_REQUIRED=1) a token for
   // an authenticated AI Gateway. Required only where agents are on.
   ...(process.env.AGENT_MODEL ? ['BEDROCK_API_KEY'] : []),
-  // The global browser MCP server (Cloudflare's hosted Browser Run one): an account API token
+  // The computers' browser (src/agent/browser.js, Browser Run over CDP): an account API token
   // with Browser Run Write only. Required only where agents are on.
   ...(process.env.AGENT_MODEL ? ['BROWSER_RUN_TOKEN'] : []),
   ...(process.env.AGENT_MODEL && process.env.AI_GATEWAY_TOKEN_REQUIRED ? ['AI_GATEWAY_TOKEN'] : []),

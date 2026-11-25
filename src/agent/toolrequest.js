@@ -39,7 +39,7 @@ const HOURS = GRANT_MS / (60 * 60 * 1000);
 
 /**
  * What target `t` (the agent's) could be granted: `[{ id, kind, name, title, about, whose? }]`,
- * `id` being what the agent names it by (`web_search`, `mcp:12`, `mcp:global:browser`).
+ * `id` being what the agent names it by (`web_search`, `mcp:12`, `mcp:global:github`).
  */
 export async function requestableFor(env, t) {
   if (!t || !t.key || !env.DB) {

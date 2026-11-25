@@ -59,9 +59,6 @@ function doing({ name, arguments: args }) {
     return 'Working';
   }
   const code = String((args && args.code) || '');
-  if (/mcp__browser/.test(code)) {
-    return 'Checking a web page';
-  }
   return /mcp__github/.test(code) ? 'Looking at GitHub' : 'Running a script';
 }
 

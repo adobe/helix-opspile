@@ -272,7 +272,7 @@ export const SERVICES = [
   {
     id: 'browser_run',
     name: 'Browser Run',
-    about: 'The agents\' browser: their computers\' (playwright-cli) and the global browser MCP server',
+    about: 'The browser of the agents\' computers (playwright-cli)',
     url: 'https://developers.cloudflare.com/browser-run/pricing/',
     metrics: [
       {

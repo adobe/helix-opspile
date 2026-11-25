@@ -12,7 +12,7 @@
 
 import { generateKeyPairSync } from 'node:crypto';
 import { admin } from '../src/admin.js';
-import { BROWSER_MCP_URL, GITHUB_MCP_URL } from '../src/agent/globals.js';
+import { GITHUB_MCP_URL } from '../src/agent/globals.js';
 import { FLUFFYJAWS_MCP_URL } from '../src/agent/fluffyjaws.js';
 import { SLACK_MCP_URL } from '../src/agent/slackmcp.js';
 import { kbAdmin } from '../src/kbadmin.js';
@@ -178,24 +178,6 @@ async function wikiOauth(request) {
 }
 const PREVIEW_INSTALL_TOKEN = 'ghs_preview';
 const GLOBAL_MCP = fakeMcpServers([
-  {
-    url: BROWSER_MCP_URL,
-    name: 'cloudflare-browser-mcp-server',
-    token: PREVIEW_TOKEN,
-    tools: tools([
-      ['get_url_markdown', 'Fetches the webpage content and converts it into Markdown format', true],
-      ['get_url_html_content', 'Retrieves the HTML content of the specified URL', true],
-      ['get_url_screenshot', 'Captures a screenshot of the webpage', true],
-      ['get_url_pdf', 'Renders the webpage to a PDF document', true],
-      ['get_url_links', 'Returns the list of links on the page', true],
-      ['scrape_url_elements', 'Scrapes elements from the page by CSS selector', true],
-      ['get_url_json', 'Extracts structured JSON from the page using AI', true],
-      ['start_crawl', 'Starts an asynchronous crawl of a website', false],
-      ['get_crawl_result', 'Returns the status and records of a crawl job', true],
-      ['list_browser_sessions', 'Lists active Browser Run sessions for the account', true],
-      ['kill_browser_session', 'Closes a Browser Run session by its session ID', false],
-    ], 'url'),
-  },
   {
     url: GITHUB_MCP_URL,
     name: 'github',
@@ -1095,8 +1077,6 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     // Seals the MCP servers' headers; made up for the preview.
     TOKEN_KEY: Buffer.alloc(32, 9).toString('base64url'),
     PUBLIC_ORIGIN: PREVIEW_ORIGIN,
-    // The global browser server's API token, made up.
-    BROWSER_RUN_TOKEN: PREVIEW_TOKEN,
     // The relay's channel-management MCP server, as a service binding.
     SLACK_MCP: { fetch: (request) => SLACK_MCP.fetch(request) },
     // FluffyJaws' Okta and opspile's client there, made up.
@@ -1177,7 +1157,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('org_threads', 'team', 'platform', 1, 'migration 0102', '2026-11-25T00:00:00Z'),
     ('org_threads', 'channel', 'C0INITECH1', 0, 'Dana', '2026-11-25T09:00:00Z');
     INSERT INTO mcp_global_switches (server, scope, target, enabled, changed_by, changed_at)
-      VALUES ('browser', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
+      VALUES ('github', 'channel', 'C0GLOBEX01', 1, 'Dana', '2026-10-25T09:00:00Z')`);
   // The admin team gave platform ops' computers the image for working on data.
   DB.sqlite.exec(`INSERT INTO agent_tool_options (tool, team, name, value, changed_by, changed_at)
     VALUES ('computer', 'platform', 'image', 'data', 'Dana', '2026-10-27T09:00:00Z')`);
@@ -1250,7 +1230,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     secretsUrl,
     admins,
   )), Promise.resolve()))
-    .then(() => Promise.all(['browser', 'github', 'fluffyjaws', 'slack_channels'].map((server) => kbAdmin(
+    .then(() => Promise.all(['github', 'fluffyjaws', 'slack_channels'].map((server) => kbAdmin(
       toRequest({ method: 'POST' }, checkUrl, { server }),
       env,
       checkUrl,

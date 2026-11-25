@@ -1592,10 +1592,10 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
       asked: 6,
       ago: 61.5,
       kind: 'server',
-      name: 'global:browser',
-      title: 'MCP server Cloudflare Browser Run',
-      about: 'Cloudflare Browser Run\'s MCP server: load a web page in a real Chrome and get it as markdown or HTML, a screenshot or a PDF, its links, elements by CSS selector, or JSON extracted from it; or crawl a site',
-      reason: 'Dana asked what preview answers for /en/index right now. With a browser I can load the preview page and tell her, instead of asking Sam to try it.',
+      name: 'global:fluffyjaws',
+      title: 'MCP server FluffyJaws',
+      about: 'FluffyJaws\' MCP server, Adobe\'s internal support assistant: searches its knowledge (FluffyPack), product documentation, Slack, the wiki, Jira, GitHub code and support tickets, and answers questions about them',
+      reason: 'Dana asked whether the content host has had 503s for other customers this week. FluffyJaws has the support tickets, so I can tell her, instead of asking around.',
     }],
   });
 

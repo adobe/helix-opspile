@@ -54,7 +54,7 @@ describe('the agent\'s latest turn', () => {
   it('is its closing note, for the last input only', async () => {
     const entries = await transcript(['first', 'second'], [
       () => fauxAssistantMessage('Nothing yet.'),
-      () => fauxAssistantMessage([{ type: 'text', text: 'Checking.' }, fauxToolCall('codemode', { code: 'await tools.mcp__browser__get_url_markdown({})' })], { stopReason: 'toolUse' }),
+      () => fauxAssistantMessage([{ type: 'text', text: 'Checking.' }, fauxToolCall('bash', { command: 'playwright-cli open https://www.acme.example/' })], { stopReason: 'toolUse' }),
       () => fauxAssistantMessage(fauxToolCall('update_draft', { text: 'hi' }), { stopReason: 'toolUse' }),
       () => fauxAssistantMessage('The site answers 503; **updated the draft**.'),
     ]);
@@ -66,7 +66,7 @@ describe('the agent\'s latest turn', () => {
 
   it('says what it is doing while it works', async () => {
     const entries = await transcript(['new message'], [
-      () => fauxAssistantMessage([{ type: 'text', text: 'Checking.' }, fauxToolCall('codemode', { code: 'await tools.mcp__browser__get_url_markdown({})' })], { stopReason: 'toolUse' }),
+      () => fauxAssistantMessage([{ type: 'text', text: 'Checking.' }, fauxToolCall('bash', { command: 'playwright-cli open https://www.acme.example/' })], { stopReason: 'toolUse' }),
       () => fauxAssistantMessage('Done.'),
     ]);
     // Cut after the tool call, as a running turn looks.

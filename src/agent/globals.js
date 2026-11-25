@@ -25,10 +25,6 @@ import {
  * wins over its team's, and both are off until someone turns them on). Those marked `newTeams`
  * are turned on for a team when it is created (src/admin.js).
  *
- * - `browser`: Cloudflare's hosted Browser Run MCP server, with an API token of the account
- *   (BROWSER_RUN_TOKEN, Browser Run Write only): fetch pages as markdown or HTML, screenshots,
- *   PDFs, links, elements by selector, JSON extraction, crawls. Each call loads the page anew;
- *   there is no browser to click around in.
  * - `github`: GitHub's MCP server, read-only, as the opspile GitHub App (src/github.js), on
  *   the repositories it is installed on, for each installation the admin team allowed. One
  *   server per allowed installation: `github`, or `github_<account>` when there are several.
@@ -53,24 +49,10 @@ import {
  * (src/agent/mcp.js); its id there is `global:<key>`.
  */
 
-export const BROWSER_MCP_URL = 'https://browser.mcp.cloudflare.com/mcp';
 export const GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/readonly';
 const GITHUB_TOOLSETS = 'context,repos,issues,pull_requests,actions,discussions';
 
 export const GLOBAL_SERVERS = [
-  {
-    server: 'browser',
-    title: 'Cloudflare Browser Run',
-    description: 'Cloudflare Browser Run\'s MCP server: load a web page in a real Chrome and get'
-      + ' it as markdown or HTML, a screenshot or a PDF, its links, elements by CSS selector, or'
-      + ' JSON extracted from it; or crawl a site',
-    instructions: 'Each call loads the page anew, in a browser signed in nowhere: there is no'
-      + ' session to click through. get_url_markdown is the cheapest way to read a page;'
-      + ' start_crawl is for whole sites (then get_crawl_result).',
-    // The account's own sessions are not the agents' business.
-    exclude: ['list_browser_sessions', 'kill_browser_session'],
-    newTeams: true,
-  },
   {
     server: 'github',
     title: 'GitHub (read-only)',
@@ -119,12 +101,6 @@ const githubName = (account) => `github_${String(account).toLowerCase().replace(
  * `problem` says why there are none.
  */
 export async function instancesOf(env, server) {
-  if (server === 'browser') {
-    if (!env.BROWSER_RUN_TOKEN) {
-      return { instances: [], problem: 'BROWSER_RUN_TOKEN is not set in this deployment.' };
-    }
-    return { instances: [{ key: 'browser', name: 'browser' }], problem: null };
-  }
   if (server === 'github') {
     const app = await currentApp(env).catch(() => null);
     if (!app) {
@@ -258,14 +234,6 @@ export async function globalServersFor(env, target) {
  */
 export async function globalConnection(env, id) {
   const key = String(id).replace(/^global:/, '');
-  if (key === 'browser') {
-    return env.BROWSER_RUN_TOKEN ? {
-      id,
-      name: 'browser',
-      url: BROWSER_MCP_URL,
-      headers: { Authorization: `Bearer ${env.BROWSER_RUN_TOKEN}` },
-    } : null;
-  }
   if (key === 'fluffyjaws') {
     return fluffyConnection(env, id);
   }

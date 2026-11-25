@@ -53,7 +53,7 @@ import { searchProblem } from './websearch.js';
  *   through a service binding. The admins approve, as when a person asks the bot.
  * - `web_search`: the agent searches the public web, through Microsoft Web IQ, or Cloudflare's
  *   Web Search API and AI Gateway (src/agent/websearch.js), for pages it has no address for;
- *   it reads them with the global browser MCP server or its computer. On for every team
+ *   it reads them on its computer (playwright-cli, curl). On for every team
  *   (migration 0077) and every new one; its managers turn it off.
  * - `resolve`: the agent marks its thread resolved, or takes that back (src/agentlabels.js), in
  *   the inbox only: it counts as a staff ✅ on the root (src/resolve.js). On for every team

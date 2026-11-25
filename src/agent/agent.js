@@ -435,7 +435,7 @@ export class ThreadAgent extends Agent {
   browserHost() {
     const { storage } = this.ctx;
     return browserHost(this.env, {
-      // Browser Run's time, for COGS (src/cogs/meter.js), as the browser MCP server's is.
+      // Browser Run's time, for COGS (src/cogs/meter.js).
       used: (ms) => this.env.meter?.add('browser_run', 'browser_ms', '', ms),
       store: {
         get: () => storage.get('browser-session'),
