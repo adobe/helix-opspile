@@ -80,6 +80,7 @@ describe('Follow (ui/follow.js)', () => {
 
   it('is a toggle for you, a split button for whom may follow for a team, and a customer has its Mute', () => {
     const { Follow } = load();
+    Follow.init({ me: { teams: [{ slug: 'edge' }] } });
     Follow.set(STATE);
     const tech = Follow.button({ kind: 'tech', id: 'xw', name: 'Experience Workspace' });
     assert.match(tech, /data-fo-act="me" aria-pressed="true"/);
@@ -102,6 +103,40 @@ describe('Follow (ui/follow.js)', () => {
     assert.doesNotMatch(Follow.button({ kind: 'tech', id: 'xw', name: 'X' }), /fo-more/);
     assert.deepEqual(Follow.teams('tech', 'xw'), ['edge']);
     assert.equal(Follow.name('person', 7), 'Ada');
+  });
+
+  it('counts only the teams you are on, and on a team\'s page that team only', () => {
+    const { Follow } = load();
+    // The admin team may follow for every team, and is on none of these.
+    Follow.init({ me: { teams: [{ slug: 'admin' }] } });
+    const teams = {
+      admin: { tech: [], area: [], org: [] },
+      edge: { tech: ['xw', 'da'], area: [], org: [] },
+      platform: { tech: ['da'], area: [], org: [] },
+    };
+    Follow.set({
+      ...STATE, teams, may: ['admin', 'edge', 'platform'], teamNames: { ...STATE.teamNames, admin: 'Admin' },
+    });
+    // Elsewhere: Edge ops follows it, but you are not on it, so it is no count and no name.
+    const any = Follow.button({ kind: 'tech', id: 'xw', name: 'Experience Workspace' });
+    assert.match(any, /class="fo-follow split"/);
+    assert.doesNotMatch(any, /class="fo-n"/);
+    assert.doesNotMatch(any, /Edge ops/);
+    // On Edge ops' page: its count says Edge ops follows it; Platform ops is not counted.
+    const edge = Follow.button({ kind: 'tech', id: 'da', name: 'Document Authoring' }, { team: 'edge' });
+    assert.match(edge, /data-fo-team="edge"/);
+    assert.match(edge, /<span class="fo-n">1<\/span>/);
+    assert.match(edge, /Edge ops follows it/);
+    assert.doesNotMatch(edge, /Platform ops/);
+    assert.doesNotMatch(Follow.button({ kind: 'tech', id: 'xw', name: 'X' }, { team: 'platform' }), /class="fo-n"/);
+    // A person is never a team's.
+    assert.doesNotMatch(Follow.button({ kind: 'person', id: 7, name: 'Ada' }, { team: 'edge' }), /fo-more|data-fo-team/);
+    // On the page of a team you are not on and may not follow for: a toggle only.
+    Follow.init({ me: { teams: [{ slug: 'edge' }] } });
+    Follow.set({ ...STATE, teams, may: [] });
+    assert.doesNotMatch(Follow.button({ kind: 'tech', id: 'da', name: 'D' }, { team: 'platform' }), /fo-more/);
+    // On your own team's page, though you do not manage it, the chevron shows it follows it.
+    assert.match(Follow.button({ kind: 'tech', id: 'da', name: 'D' }, { team: 'edge' }), /<span class="fo-n">1<\/span>/);
   });
 
   it('sends every change as PUT /api/follows, says it with Undo, and takes back what failed', async () => {

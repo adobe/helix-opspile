@@ -15,7 +15,10 @@
  * Whatever may be followed has its Follow button wherever it is shown: a product (`tech`), a
  * topic (`area`), a customer (`org`) or a person (`person`). It is a toggle, Follow / Following,
  * for you; for someone who manages a team (and the admin team) it is a split button whose chevron
- * opens who follows it, you and each team you may follow for, to check or uncheck. A person is
+ * opens who follows it, you and each team you may follow for, to check or uncheck. Only your own
+ * teams (those you are on) are shown as following it, in its count, title and dropdown: a team you
+ * are not on is there only to be found by name, where you may follow for it (the admin team). In
+ * a team's context (its page, `{ team }`), it is you and that team only. A person is
  * only ever your own follow. A customer has a Mute beside it, your own only: its threads leave
  * your personal view until you post in one of them, or follow it again; following and muting it
  * are one or the other.
@@ -25,9 +28,10 @@
  *   `{ ok, status, data }`), how it says what happened (`say(text, undo)`, `undo` a function or
  *   none; a toast of its own without), and whether it changes nothing (viewing as someone).
  * - `set(state)`: what GET /api/follows answers, and what every button and list draws from.
- * - `button({ kind, id, name }, { mute })`: the button's HTML, `''` where there is nothing to
- *   follow (no state yet, read-only, an unassigned customer, a person known by an account only);
- *   `mute: false` leaves out a customer's Mute. Clicks are handled here, for the whole page.
+ * - `button({ kind, id, name }, { mute, team })`: the button's HTML, `''` where there is nothing
+ *   to follow (no state yet, read-only, an unassigned customer, a person known by an account
+ *   only); `mute: false` leaves out a customer's Mute, `team` is the team whose page it is on,
+ *   the only team its chevron has. Clicks are handled here, for the whole page.
  * - `on(fn)`: `fn(change)` after each change is done, `{ kind, id, name, team, follow, mute }`.
  * - `menu()`: the Following section of your menu (#menu), what you follow and mute, each to
  *   stop, and Find something to follow (ui/followsuggest.js, in a dialog).
@@ -110,6 +114,17 @@ globalThis.Follow = (() => {
   const teams = (kind, id) => Object.keys(st?.teams || {}).filter((t) => follows(kind, id, t));
   /** The teams you may follow `kind` for. */
   const mayFor = (kind) => (TEAM_KINDS.includes(kind) ? st?.may || [] : []);
+  /**
+   * The teams that matter to the button: `team`, in its context, where you are on it or may follow
+   * for it; else the teams you are on. Only these show as following it.
+   */
+  const relevant = (kind, team) => {
+    if (!TEAM_KINDS.includes(kind)) return [];
+    if (team) return mine().has(team) || mayFor(kind).includes(team) ? [team] : [];
+    return [...mine()];
+  };
+  /** Of the teams that matter (`relevant`), those that follow it. */
+  const shownTeams = (kind, id, team) => relevant(kind, team).filter((t) => follows(kind, id, t));
   /** Whether `id` of `kind` is one that may be followed. */
   const followable = (kind, id) => {
     if (!NOUN[kind] || id === undefined || id === null || String(id) === '') return false;
@@ -119,23 +134,25 @@ globalThis.Follow = (() => {
   };
 
   /** The button's title: what following it does, and who else does. */
-  function followTitle(kind, id, name) {
+  function followTitle(kind, id, name, team) {
     const on = follows(kind, id);
-    const by = teams(kind, id).map(teamName);
+    const by = shownTeams(kind, id, team).map(teamName);
     const also = by.length ? ` ${and(by)} ${by.length === 1 ? 'follows' : 'follow'} it.` : '';
     return on ? `You follow ${name}: its threads are in your personal view. Click to stop.${also}`
       : `Follow ${name}: its threads come into your personal view, in any channel.${also}`;
   }
 
   /** What the button holds for `{ kind, id, name }`. */
-  function inner(kind, id, name, withMute) {
+  function inner(kind, id, name, withMute, team) {
     const on = follows(kind, id);
     const may = mayFor(kind);
-    const n = teams(kind, id).filter((t) => may.includes(t)).length;
+    const n = shownTeams(kind, id, team).length;
     const meBusy = busy.has(`${key(kind, id)}:me`);
     const main = `<button type="button" class="fo-b" data-fo-act="me" aria-pressed="${on}"
-      title="${esc(followTitle(kind, id, name))}"${meBusy ? ' disabled' : ''}>${on ? 'Following' : 'Follow'}</button>`;
-    const more = may.length ? `<button type="button" class="fo-more" data-fo-act="who" aria-haspopup="menu" aria-expanded="false"
+      title="${esc(followTitle(kind, id, name, team))}"${meBusy ? ' disabled' : ''}>${on ? 'Following' : 'Follow'}</button>`;
+    // The chevron: where you may follow for a team, or, on a team's page, where you are on it.
+    const split = team ? relevant(kind, team).length > 0 : may.length > 0;
+    const more = split ? `<button type="button" class="fo-more" data-fo-act="who" aria-haspopup="menu" aria-expanded="false"
       aria-label="${esc(`Who follows ${name}: you, or a team`)}" title="Who follows it: you, or a team you manage">${n ? `<span class="fo-n">${n}</span>` : ''}<span class="s2-chevron" aria-hidden="true"></span></button>` : '';
     const isMuted = withMute && muted(kind, id);
     const muteBtn = withMute ? `<button type="button" class="fo-mute" data-fo-act="mute" aria-pressed="${isMuted}"
@@ -144,19 +161,22 @@ globalThis.Follow = (() => {
     return `<span class="fo-follow${more ? ' split' : ''}">${main}${more}</span>${muteBtn}`;
   }
 
-  function button({ kind, id, name }, { mute: muting = MUTE_KINDS.includes(kind) } = {}) {
+  function button({ kind, id, name }, { mute: muting = MUTE_KINDS.includes(kind), team = null } = {}) {
     if (!ready() || !followable(kind, id)) return '';
     const shown = name || nameOf(kind, id);
     if (name) shownAs.set(key(kind, id), name);
     const withMute = muting && MUTE_KINDS.includes(kind);
-    return `<span class="fo" data-fo="${esc(kind)}" data-fo-id="${esc(id)}" data-fo-name="${esc(shown)}"${withMute ? ' data-fo-mute' : ''}>${inner(kind, String(id), shown, withMute)}</span>`;
+    const at = team && TEAM_KINDS.includes(kind) ? String(team) : null;
+    return `<span class="fo" data-fo="${esc(kind)}" data-fo-id="${esc(id)}" data-fo-name="${esc(shown)}"${at ? ` data-fo-team="${esc(at)}"` : ''}${withMute ? ' data-fo-mute' : ''}>${inner(kind, String(id), shown, withMute, at)}</span>`;
   }
 
   /** Every button and list on the page, drawn again from the state. */
   function redraw() {
     for (const el of document.querySelectorAll('.fo[data-fo]')) {
-      const { fo: kind, foId: id, foName: name } = el.dataset;
-      el.innerHTML = ready() ? inner(kind, id, name, el.hasAttribute('data-fo-mute')) : '';
+      const {
+        fo: kind, foId: id, foName: name, foTeam: team,
+      } = el.dataset;
+      el.innerHTML = ready() ? inner(kind, id, name, el.hasAttribute('data-fo-mute'), team || null) : '';
     }
     if (pop.el?.matches(':popover-open')) drawPop();
     menu();
@@ -301,18 +321,23 @@ globalThis.Follow = (() => {
   function drawPop({ keepFind = false } = {}) {
     const at = pop.at;
     if (!at || !at.isConnected) { pop.el?.hidePopover(); return; }
-    const { fo: kind, foId: id, foName: name } = at.dataset;
+    const {
+      fo: kind, foId: id, foName: name, foTeam: team,
+    } = at.dataset;
     pop.key = key(kind, id);
     const may = mayFor(kind);
     const yours = mine();
     const following = teams(kind, id);
-    // Yours, those that follow it, then (past SHOWN_TEAMS) the rest by name.
-    const first = may.filter((t) => yours.has(t) || following.includes(t));
-    const rest = may.filter((t) => !first.includes(t));
+    // On a team's page, that team only; else yours, then (past SHOWN_TEAMS) the rest by name: a
+    // team you are not on is not shown for following it, only found where you may follow for it.
+    const first = team ? may.filter((t) => t === team) : may.filter((t) => yours.has(t));
+    const rest = team ? [] : may.filter((t) => !first.includes(t));
     const all = rest.length + first.length <= SHOWN_TEAMS;
     const q = pop.find.trim().toLowerCase();
     const found = all ? rest : (q ? rest.filter((t) => teamName(t).toLowerCase().includes(q) || t.includes(q)) : []);
-    const ro = following.filter((t) => !may.includes(t));
+    // Yours that you do not manage, shown but not changed: those that follow it; on its page, the team.
+    const ro = relevant(kind, team || null)
+      .filter((t) => !may.includes(t) && (team || following.includes(t)));
     const sorted = (list) => [...list].sort((a, b) => teamName(a).localeCompare(teamName(b)));
     const what = kind === 'org' ? 'every channel of it is in its inbox, shared, now and later'
       : 'its threads are in its inbox, in any team\'s channels';
@@ -320,7 +345,7 @@ globalThis.Follow = (() => {
       ${row('me', 'You', follows(kind, id), true, 'your personal view')}
       <div class="fo-sep" role="separator"></div><div class="fo-h sub">Teams</div>
       ${sorted([...first, ...(all ? rest : [])]).map((t) => row(t, teamName(t), follows(kind, id, t), true)).join('')}
-      ${sorted(ro).map((t) => row(t, teamName(t), true, false, 'you do not manage it')).join('')}
+      ${sorted(ro).map((t) => row(t, teamName(t), following.includes(t), false, 'you do not manage it')).join('')}
       ${all ? '' : `<label class="fo-another"><span class="hint">Another team</span><input type="search" class="fo-find" autocomplete="off" spellcheck="false" value="${esc(pop.find)}"></label>
         ${sorted(found).slice(0, SHOWN_TEAMS).map((t) => row(t, teamName(t), follows(kind, id, t), true)).join('')}`}
       <p class="hint fo-hint">A team that follows it: ${what}.</p>`;

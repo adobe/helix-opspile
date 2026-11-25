@@ -137,8 +137,11 @@ A team follows products, topics and customers, never a person; a mute is always 
 of a customer. Wherever one of these is shown (a thread's tech stack and topics, a profile card, a
 team's overview, a customer's page, the Topics page, the suggestions) it has the same Follow
 button, Follow / Following, for you; for whoever may follow for a team its chevron opens who follows
-it, you and each of those teams, to check or uncheck. A customer has a Mute beside it. Following a
-customer and muting it are one or the other: following it lifts the mute, muting it ends the follow.
+it, you and each of those teams, to check or uncheck. Only teams you are on show as following it,
+in the chevron's count and its list (the admin team finds the others by name); on a team's page the
+chevron is you and that team only, and its count is what says the team follows it. A customer has a
+Mute beside it. Following a customer and muting it are one or the other: following it lifts the
+mute, muting it ends the follow.
 A mute lifts itself once you act on the customer: a message of yours in any of its threads after it
 (`mutedOrgs` in `src/standing.js`); nobody else's message, a mention of you, or what you follow does
 not bring it back. `GET /api/follows` (and `/api/me`'s `follows`) is one state for every page, with
