@@ -3540,6 +3540,22 @@ card's *What should I know about …?*) opens the thread, enters its sidebar and
 that, where the thread has an agent and the viewer may talk to it; elsewhere the click does what
 it did.
 
+**Customer cards.** The same card, for a customer: hovering over (focusing, or tapping) its icon
+or name wherever the inbox shows them (`data-org`, ui/inbox.js "customer cards") shows it. That is
+the thread's icon in its header, the customer in a row of the list, its icon in the Customer
+filter and in the personal view's column and headings, and the badge on the picture of one of
+its people (their mail domain: the thread's customer's usual one or its icon, else the icon the
+admin team set for another customer on the list; one matched to none keeps its tooltip). It says what the inbox has of the customer at once: its
+name, icon and type, how many of its threads are on the list, wait on us and are unread, the
+thread's channel (with its link on the platform, from the header) and its latest activity. Then
+the numbers of its overview (`GET /api/customers/profile`, "Customer overview"), asked when its card first
+shows and kept five minutes in the page: how much it says, week by week, how soon it is
+answered, its people, the teams that work it, and what its threads are about and show, each a
+link to the Topics page. Its foot leads to its overview in Customers (*Open profile*) and picks
+it alone in the filters (*Only its threads*). A person's card links their channel's customer to
+its overview too, and so does the foot of the header's tech stack dropdown. A tap on a filter's
+icon still filters, and Enter on the header's icon still opens the thread on its platform.
+
 ### Team overview
 
 A team's page in Teams opens at its overview (`ui/team.js`, from `GET /api/teams/profile?team=`,

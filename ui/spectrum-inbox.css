@@ -2687,6 +2687,38 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .pcard .ask-about:hover { background: var(--spectrum-purple-subtle-background-color-default); }
 .spectrum .pcard .ask-about:focus-visible { outline: var(--s2-focus); }
 .spectrum .pcard .ask-about .bubble-ico { color: var(--spectrum-purple-visual-color); background: none; width: var(--spectrum-spacing-300); height: var(--spectrum-spacing-300); }
+/* A customer's card: the person's, its logo a large square Avatar, its type the Badge in its
+   filter's color, the people in it a row of small Avatars, and at its foot an accent Button to
+   its overview beside secondary outline ones. */
+/* Over the filters, also where they are a drawer over the page (narrow screens). */
+.pcard.ocard { z-index: 31; }
+.pcard .oc-logo { width: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); height: calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-600)); }
+.spectrum .pcard .oc-logo > *, .spectrum .pcard .oc-logo .av { border-radius: var(--spectrum-corner-radius-200); }
+.spectrum .pcard .oc-logo .av { font-size: var(--spectrum-font-size-200); }
+.spectrum .pcard .rel.vendor { background: var(--spectrum-cyan-background-color-default); }
+.pcard .oc-here { margin-top: var(--spectrum-spacing-100); }
+.pcard .oc-faces { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50); }
+.pcard .oc-faces .ps-av { width: var(--spectrum-spacing-400); height: var(--spectrum-spacing-400); font-size: var(--spectrum-font-size-50); border-radius: 50%; }
+.pcard .oc-faces .ps-av img { width: 100%; height: 100%; border-radius: 50%; }
+.pcard .oc-rows dd { flex-wrap: wrap; }
+.spectrum .pcard .oc-more { color: var(--spectrum-neutral-subdued-content-color-default); margin-left: var(--spectrum-spacing-50); }
+.pcard .oc-acts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100); margin-top: var(--spectrum-spacing-300); }
+.spectrum .pcard .oc-act {
+  display: inline-flex; align-items: center; min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-gray-300);
+  border-radius: calc(var(--spectrum-component-height-75) / 2);
+  background: none; color: var(--spectrum-neutral-content-color-default);
+  font: inherit; font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight);
+  text-decoration: none; cursor: pointer; white-space: nowrap;
+}
+.spectrum .pcard .oc-act:hover { background: var(--spectrum-gray-100); }
+.spectrum .pcard .oc-act.primary { border-color: transparent; background: var(--spectrum-accent-background-color-default); color: var(--spectrum-white); }
+.spectrum .pcard .oc-act.primary:hover { background: var(--spectrum-accent-background-color-hover); }
+.spectrum .pcard .oc-act:focus-visible { outline: var(--s2-focus); }
+/* What shows a customer's card is pointed at as a person's name is. */
+.spectrum :is(.t .cust, .ph .src, .msg .face .badge-ico)[data-org] { cursor: pointer; }
+.spectrum .t .cust[data-org]:focus-visible { outline: var(--s2-focus); border-radius: var(--spectrum-corner-radius-75); }
 /* A picture in a thread is a button: a click asks the agent about them. */
 .spectrum .feed .face .av[data-p] { cursor: pointer; }
 /* A source of the draft beside it: the header plain, the quote S2's quiet blockquote. */
