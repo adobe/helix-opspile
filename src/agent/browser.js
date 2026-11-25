@@ -13,7 +13,7 @@
 /**
  * The browser of an agent's computer: Cloudflare Browser Run, over the Chrome DevTools
  * Protocol. The kernel serves CDP to its programs at `ws://127.0.0.1:9222` (`SLICC_CDP_URL`),
- * where `playwright-cli` and `curlwright` (@ai-ecoverse/slicc-cdp, the `browser` layer of
+ * where `playwright-cli` (@ai-ecoverse/slicc-cdp, the `browser` layer of
  * scripts/computer-images.mjs) find it, and hands every connection to the hook of an attached
  * client (`serveCdp`, src/agent/agent.js). The hook here opens a WebSocket of the Worker's to
  * Browser Run with BROWSER_RUN_TOKEN, which never enters the computer.

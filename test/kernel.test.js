@@ -730,11 +730,15 @@ describe('the images this repository builds', () => {
       .every((c) => commandsOf(base).includes(c)));
     assert.ok(['sqlite3', 'strings'].every((c) => commandsOf(data).includes(c)
       && !commandsOf(base).includes(c)));
-    // playwright-cli and curlwright, WASI programs, in the Browser image only.
+    // playwright-cli, a WASI program, in the Browser image only, without its package's curlwright.
     const browser = built.images.find((i) => i.name === 'browser');
     assert.deepEqual(browser.layers.slice(0, base.layers.length), base.layers);
-    assert.ok(['playwright-cli', 'curlwright'].every((c) => commandsOf(browser).includes(c)
-      && !commandsOf(base).includes(c)));
+    assert.ok(commandsOf(browser).includes('playwright-cli') && !commandsOf(base).includes('playwright-cli'));
+    assert.ok(!commandsOf(browser).includes('curlwright'));
+    assert.deepEqual(
+      built.layers.get('browser').layer.files.map((f) => f.path.split('/').slice(-2).join('/')),
+      ['bin/playwright-cli.wasm', 'slicc-cdp/package.json'],
+    );
     await assert.rejects(build({ images: [{ ...IMAGES[0], tools: 'cat, sqlite3' }] }), /tells the agent of sqlite3/);
     await assert.rejects(build({ images: [{ ...IMAGES[0], layers: ['gpu'] }] }), /has a layer gpu, which there is none of/);
 

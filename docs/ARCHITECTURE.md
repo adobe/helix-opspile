@@ -2942,7 +2942,7 @@ choice before each delivery, as it follows its tools (`syncTools`; docs/STATE-MA
     findutils, diff and cmp, tree, which, rev, column, hexdump, xxd, patch), `archive` (gzip,
     tar, zip and unzip, xz, bzip2), `net` (curl, BIND's dig, host and nslookup), `tls`
     (openssl), `js` (qjs), `git`, `formats` (yq, html2markdown, file), `data` (sqlite3,
-    strings) and `browser` (playwright-cli and curlwright, `@ai-ecoverse/slicc-cdp`; below,
+    strings) and `browser` (playwright-cli, `@ai-ecoverse/slicc-cdp`, without its curlwright; below,
     "The computer's browser"). `base` is the first eight, and
     `data` is `from: 'base'` with `data`, `browser` with `browser`. A package's other files a program needs are named
     in its `files` (git's `libexec/git-core`, whose transports git runs by their paths; file's

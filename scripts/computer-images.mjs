@@ -127,11 +127,11 @@ export const LAYERS = {
   diagrams: [
     { name: '@ai-ecoverse/wasm-graphviz' },
   ],
-  // playwright-cli and curlwright (@ai-ecoverse/slicc-cdp): they drive a browser over CDP at
-  // SLICC_CDP_URL, which the agent's object serves from Cloudflare Browser Run
-  // (src/agent/browser.js) for an image that has them.
+  // playwright-cli (@ai-ecoverse/slicc-cdp): it drives a browser over CDP at SLICC_CDP_URL,
+  // which the agent's object serves from Cloudflare Browser Run (src/agent/browser.js) for an
+  // image that has it. Not its curlwright.
   browser: [
-    { name: '@ai-ecoverse/slicc-cdp' },
+    { name: '@ai-ecoverse/slicc-cdp', commands: ['playwright-cli'] },
   ],
   data: [
     { name: '@ai-ecoverse/wasm-sqlite3' },
@@ -185,9 +185,8 @@ export const IMAGES = [
     title: 'Browser',
     description: 'Base, with a browser (Chromium on Cloudflare Browser Run) and playwright-cli'
       + ' to drive it: open a page, wait for its scripts, read its accessibility tree, run'
-      + ' JavaScript or add CSS in it, click and type, and take screenshots at any viewport;'
-      + ' curlwright asks as the open tab, with its cookies.',
-    tools: `${BASE_TOOLS}, playwright-cli, curlwright`,
+      + ' JavaScript or add CSS in it, click and type, and take screenshots at any viewport.',
+    tools: `${BASE_TOOLS}, playwright-cli`,
     layers: ['browser'],
   },
   // The renderer Worker's (src/graphviz/worker.js): dot alone, no shell. Not offered to teams
