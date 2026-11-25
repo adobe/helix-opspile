@@ -57,7 +57,7 @@ import {
 import {
   getBot, listBots, setBot, unreviewedCount,
 } from './ourbots.js';
-import { linkAccount, listAccounts } from './accountlinks.js';
+import { linkAccount, listAccounts, unlinkedCount } from './accountlinks.js';
 import { followable, setTeamFollow, teamFollows } from './follows.js';
 import { portalAuthor, portalBound, portalCall } from './portalsource.js';
 import { openConflictCount, resolveConflict, techConflicts } from './techconflicts.js';
@@ -745,9 +745,12 @@ async function requestList(env, me, { status, count }) {
   const merges = isAdmin(me) ? await openMergeCount(env) : 0;
   // And the bots nobody said whose they are (src/ourbots.js), the admin team's too.
   const bots = isAdmin(me) ? await unreviewedCount(env) : 0;
+  // And the admin accounts nobody said whose they are (src/accountlinks.js), the admin team's too.
+  const accounts = isAdmin(me) ? await unlinkedCount(env) : 0;
   const open = await openCount(env, teams) + await portalOpenCount(env, teams)
     + await memberOpenCount(env, teams)
-    + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length + merges + bots;
+    + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length + merges + bots
+    + accounts;
   if (count) {
     return json({ open });
   }
@@ -1138,7 +1141,7 @@ async function listTeams(env, me) {
     + await memberOpenCount(env, scope)
     + (everything ? await openConflictCount(env)
       + (await ruleConflicts(env, { kept: false })).length + await openMergeCount(env)
-      + await unreviewedCount(env) : 0);
+      + await unreviewedCount(env) + await unlinkedCount(env) : 0);
   // Every team's name, for a manager's page to say where a channel is now.
   const names = Object.fromEntries(all.map((t) => [t.slug, t.name]));
   return json({
