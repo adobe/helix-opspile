@@ -18,6 +18,7 @@ import { authHeaders, gatewayBaseUrl, modelProblem } from './agent/model.js';
 import { threadVectorId } from './vectors.js';
 import { packVectors, saveAssignments, SAMPLE_VECTORS } from './trends.js';
 import { topicPlaces } from './topicspace.js';
+import { sameAccounts, sameLinks } from './accountpairs.js';
 import {
   coveredBy, GENERIC, nameKey, productKey, techIndex,
 } from './products.js';
@@ -357,16 +358,11 @@ async function threadsOf(env) {
     WHERE kind = 'person' AND person IS NULL`).all();
   const named = new Map((accounts || []).map((a) => [`a:${a.author}`, a.name]));
   // The accounts of one mail address (a customer's, as a guest and again from their own
-  // workspace) are one of them, the first.
-  const firstOfMail = new Map();
-  for (const a of accounts || []) {
-    const was = firstOfMail.get(a.mail);
-    if (a.mail && (!was || a.author < was)) {
-      firstOfMail.set(a.mail, a.author);
-    }
-  }
-  const sameAs = new Map((accounts || []).filter((a) => a.mail)
-    .map((a) => [`a:${a.author}`, `a:${firstOfMail.get(a.mail)}`]));
+  // workspace), and those the admin team said are one person (src/accountpairs.js), are one of
+  // them, the first.
+  const links = await sameLinks(env);
+  const same = sameAccounts((accounts || []).map((a) => ({ key: a.author, mail: a.mail })), links);
+  const sameAs = new Map((accounts || []).map((a) => [`a:${a.author}`, `a:${same(a.author)}`]));
   const merged = new Map();
   for (const p of posts || []) {
     const who = sameAs.get(p.person) || p.person;

@@ -59,6 +59,7 @@ import {
   getBot, listBots, setBot, unreviewedCount,
 } from './ourbots.js';
 import { linkAccount, listAccounts, unlinkedCount } from './accountlinks.js';
+import { decideAccountPair, undecidedPairCount } from './accountpairs.js';
 import { followable, setTeamFollow, teamFollows } from './follows.js';
 import { portalAuthor, portalBound, portalCall } from './portalsource.js';
 import { openConflictCount, resolveConflict, techConflicts } from './techconflicts.js';
@@ -749,10 +750,12 @@ async function requestList(env, me, { status, count }) {
   const bots = isAdmin(me) ? await unreviewedCount(env) : 0;
   // And the admin accounts nobody said whose they are (src/accountlinks.js), the admin team's too.
   const accounts = isAdmin(me) ? await unlinkedCount(env) : 0;
+  // And a customer's two accounts that may be one person (src/accountpairs.js), the admin team's.
+  const pairs = isAdmin(me) ? await undecidedPairCount(env) : 0;
   const open = await openCount(env, teams) + await portalOpenCount(env, teams)
     + await memberOpenCount(env, teams)
     + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length + merges + bots
-    + accounts;
+    + accounts + pairs;
   if (count) {
     return json({ open });
   }
@@ -2000,6 +2003,7 @@ async function adminRoute(request, env, url, me) {
     case 'PUT bots': return setBot(env, me, body);
     case 'GET accounts': return listAccounts(env);
     case 'PUT accounts': return linkAccount(env, me, body);
+    case 'PUT account-pairs': return decideAccountPair(env, me, body);
     case 'GET cogs': return json(await cogsReport(env, url));
     case 'POST cogs/rollup': return json(await rollupCogs(env));
     case 'GET topics': return json({
@@ -2018,7 +2022,8 @@ const DECIDING = new Set(['DELETE requests', 'POST member-requests/confirm',
   'POST member-requests/decline', 'POST portal/open', 'POST portal/decline',
   'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
   'DELETE org-merge', 'POST members', 'POST assign', 'DELETE assign', 'POST rules', 'PUT rules',
-  'DELETE rules', 'PUT bots', 'PUT accounts', 'POST conflicts', 'POST rule-conflicts']);
+  'DELETE rules', 'PUT bots', 'PUT accounts', 'PUT account-pairs', 'POST conflicts',
+  'POST rule-conflicts']);
 
 export async function admin(request, env, url, me) {
   const route = `${request.method} ${url.pathname.slice('/api/admin/'.length)}`;
