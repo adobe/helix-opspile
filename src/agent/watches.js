@@ -345,13 +345,20 @@ export async function watchedKeys(env, now = Date.now()) {
 
 /**
  * Whether a message just written in `thread` (by `author`) is news for a watch: not a system
- * message nor one of Adobe's own bots', and in a watched thread (its key, or its group's).
+ * message nor one of Adobe's own bots', and in a watched thread (its key, or its group's). Best
+ * effort: a failed read (D1 overloaded, the table not migrated yet) is no, and logged, so that a
+ * watch never holds up a message's normalizing; the next message asks again.
  */
 export async function isWatched(env, thread, author = {}) {
   if (!env.DB || author.kind === 'system' || (author.kind === 'bot' && author.staff)) {
     return false;
   }
-  return (await watchedKeys(env)).has(thread);
+  try {
+    return (await watchedKeys(env)).has(thread);
+  } catch (e) {
+    console.warn(JSON.stringify({ route: 'normalize', watched: 'unknown', error: e.message }));
+    return false;
+  }
 }
 
 // ---- GitHub -------------------------------------------------------------------------------

@@ -235,6 +235,14 @@ describe('watching a thread', () => {
       'channel', 'p/', ?, ?)`).run(B, hour(1));
     forgetWatched();
     assert.equal(await isWatched(e, 'slack:E1:C1:3.0', { kind: 'person' }), true);
+    // A read that fails is no, and does not stay so.
+    forgetWatched();
+    const fails = async () => {
+      throw new Error('no such table: agent_watches');
+    };
+    const broken = { ...e, DB: { prepare: () => ({ all: fails }) } };
+    assert.equal(await quiet(() => isWatched(broken, B, { kind: 'person' })), false);
+    assert.equal(await isWatched(e, B, { kind: 'person' }), true);
   });
 
   it('tells the watching agent once what came since, without Adobe\'s bots', async () => {
