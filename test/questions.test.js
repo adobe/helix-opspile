@@ -200,9 +200,8 @@ describe('questions as threads of the inbox of whom they ask', () => {
     assert.equal(t.unread, true);
     assert.deepEqual(t.request, { kind: 'question', status: 'asked', open: true });
     assert.deepEqual(t.participants.map((p) => p.name), ['Thread agent']);
-    // It mentions Ray: his in the Status card ("You"), with the red badge, until he reads it.
-    const you = [t.mentioned, t.mentionedMe, t.unreadMentions];
-    assert.deepEqual(you, [[{ person: RAY.id }], true, 1]);
+    // The agent's purple badge, as for its answers in a sidebar, until he answers; no mention.
+    assert.deepEqual([t.sideNew, t.mentionedMe], [[key], false]);
     // Lee, who asked in the sidebar, Eve, and the admin team see none of it.
     const path = `/api/thread?thread=${encodeURIComponent(key)}`;
     const others = await Promise.all([LEE, EVE].map(async (who) => [
@@ -214,6 +213,37 @@ describe('questions as threads of the inbox of whom they ask', () => {
     // The number on Inbox.
     assert.deepEqual((await as(RAY, e, 'GET', '/api/me')).body.questions, { open: 1, team: 'helix' });
     assert.deepEqual((await as(LEE, e, 'GET', '/api/me')).body.questions, { open: 0, team: null });
+  });
+
+  it('leave the admin team\'s tracked requests alone, and show none of them, to anyone else', async () => {
+    const e = env();
+    await asked(e);
+    // A conflict the admin team's inbox found waiting, and one it found gone.
+    e.DB.sqlite.exec(`INSERT INTO request_threads (request, title, opened_at, closed_at) VALUES
+      ('request:rule:rule:1|rule:2', 'Helix ops and Edge ops: rules overlap', '${AT}', NULL),
+      ('request:tech:name:x', 'Secret conflict', '${AT}', '${AT}')`);
+    const before = e.DB.rows('SELECT request, closed_at FROM request_threads ORDER BY request');
+    for (const path of ['/api/requests', '/api/requests?mine=1']) {
+      // eslint-disable-next-line no-await-in-loop
+      const { body } = await as(RAY, e, 'GET', path);
+      assert.deepEqual(body.threads.map((t) => t.request.kind), ['question']);
+    }
+    // An admin's personal listing too.
+    const mine = await as(ADA, e, 'GET', '/api/requests?mine=1');
+    assert.deepEqual(mine.body.threads, []);
+    assert.deepEqual(e.DB.rows('SELECT request, closed_at FROM request_threads ORDER BY request'), before);
+  });
+
+  it('are filed in the inbox of a team of whom they ask, when the thread is only shared with it', async () => {
+    const e = env();
+    e.DB.sqlite.exec(`INSERT INTO channel_teams (source, channel_id, team, added_at)
+      VALUES ('teams', '19:c1@thread.tacv2', 'edge', '${AT}')`);
+    const res = await agentTools(e)('ask_teammate', { ...RUNBOOK, email: EVE.email });
+    assert.equal(res.error, false, res.text);
+    assert.deepEqual(e.DB.rows('SELECT team FROM questions').map((r) => r.team), ['edge']);
+    assert.deepEqual(e.notified.map((n) => n.team), ['admin', 'edge']);
+    const [t] = (await as(EVE, e, 'GET', '/api/requests?mine=1')).body.threads;
+    assert.equal(t.team, 'edge');
   });
 
   it('show the question with the agent\'s guesses, and a form that confirms them', async () => {
@@ -246,7 +276,7 @@ describe('questions as threads of the inbox of whom they ask', () => {
     e.DB.sqlite.prepare(`INSERT INTO watermarks (person, thread, read_at, via, updated_at)
       VALUES (?, ?, ?, 'open', ?)`).run(RAY.id, key, now, now);
     const [seen] = (await as(RAY, e, 'GET', '/api/requests?mine=1')).body.threads;
-    assert.deepEqual([seen.unread, seen.mentionedMe], [false, false]);
+    assert.deepEqual([seen.unread, seen.sideNew], [false, [key]]);
     assert.equal((await as(LEE, e, 'POST', '/api/read', { thread: key, at: AT })).status, 404);
   });
 
@@ -288,7 +318,8 @@ describe('questions as threads of the inbox of whom they ask', () => {
     assert.equal(again.status, 409);
     assert.equal(e.told.length, 1);
     assert.deepEqual((await as(RAY, e, 'GET', '/api/me')).body.questions, { open: 0, team: null });
-    assert.equal((await as(RAY, e, 'GET', '/api/requests?mine=1')).body.threads[0].resolution.verdict, 'resolved');
+    const [done] = (await as(RAY, e, 'GET', '/api/requests?mine=1')).body.threads;
+    assert.deepEqual([done.resolution.verdict, done.sideNew], ['resolved', undefined]);
   });
 
   it('passed on or not known, tell the agent so; read-only, nothing is decided', async () => {

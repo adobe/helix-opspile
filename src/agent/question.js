@@ -39,10 +39,15 @@ async function titleOf(env, key) {
   return (row && row.title) || null;
 }
 
-/** `email`, a person on one of `teams`, with the name the inbox knows them by; or null. */
+/**
+ * `email`, a person on one of `teams`, with the name the inbox knows them by and the first of
+ * those teams they are on (`team`: the inbox the question is filed in); or null.
+ */
 async function onTeams(env, email, teams) {
-  return env.DB.prepare(`SELECT p.email, p.name FROM team_members m JOIN people p ON p.id = m.person
-    WHERE LOWER(p.email) = ? AND m.team IN (SELECT value FROM json_each(?)) LIMIT 1`)
+  return env.DB.prepare(`SELECT p.email, p.name, m.team FROM team_members m
+      JOIN people p ON p.id = m.person
+      JOIN json_each(?2) w ON w.value = m.team
+    WHERE LOWER(p.email) = ?1 ORDER BY w.key LIMIT 1`)
     .bind(email, JSON.stringify(teams)).first();
 }
 
@@ -91,7 +96,7 @@ export async function askTeammate(ctx, args = {}, now = new Date()) {
   const id = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
   const res = await createQuestion(env, id, {
     thread: entry.key,
-    team: entry.team,
+    team: member.team,
     title: await titleOf(env, entry.key),
     person: { email: who.email, name: member.name || who.name || null },
     purpose,
@@ -103,9 +108,9 @@ export async function askTeammate(ctx, args = {}, now = new Date()) {
     return { error: `Nobody was asked: ${res.error}.`, question: res.question || null };
   }
   console.log(JSON.stringify({
-    route: 'agent', action: 'question', id, purpose, items: cleaned.items.length, team: entry.team,
+    route: 'agent', action: 'question', id, purpose, items: cleaned.items.length, team: member.team,
   }));
-  await announceRequest(env, 'question', id, { teams: entry.teams });
+  await announceRequest(env, 'question', id, { teams: [member.team] });
   return { question: res.question };
 }
 

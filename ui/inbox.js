@@ -1429,11 +1429,14 @@ const youCount = (t) => (t.unread
  * The purple badge: the agent's answers to you in a thread's sidebar that you have not seen
  * (`sideNew`, src/sidebar.js unseenAnswers), less those this page has shown you since (seeSide).
  * Read or not, the thread has them: a question asked in the sidebar and left is not forgotten.
+ * A question the agent asks you (see "the admin team's requests") has it too, until you answer.
  */
 const sideSeen = new Set();
 const sideCount = (t) => (t.sideNew || []).filter((id) => !sideSeen.has(id)).length;
-const sideTitle = (n) => `${n} new ${n === 1 ? 'answer' : 'answers'} from ${AGENT_NAME} to you in the sidebar`;
-const sideBadge = (n) => (n ? `<b class="sidebadge" title="${esc(sideTitle(n))}" aria-label="${esc(sideTitle(n))}">${SIDE_ICON}${n > 99 ? '99+' : n}</b>` : '');
+const sideTitle = (n, t = null) => (t && isQuestionKey(t.thread)
+  ? `${AGENT_NAME} asks you: answer it here`
+  : `${n} new ${n === 1 ? 'answer' : 'answers'} from ${AGENT_NAME} to you in the sidebar`);
+const sideBadge = (n, t = null) => (n ? `<b class="sidebadge" title="${esc(sideTitle(n, t))}" aria-label="${esc(sideTitle(n, t))}">${SIDE_ICON}${n > 99 ? '99+' : n}</b>` : '');
 /**
  * A customer's logo: its icon (the admin team's, else its mail domain's favicon) over its
  * initial on its colour, which shows where there is no icon or it does not load (wireFavicons).
@@ -1912,7 +1915,7 @@ function row(t, hit = null) {
     <div class="l2">${cust}
       <span class="faces">${faces}</span>
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
-      <span class="tags">${sideBadge(sideCount(t))}${moods(t)}</span>
+      <span class="tags">${sideBadge(sideCount(t), t)}${moods(t)}</span>
     </div>${hit ? hitLine(hit) : ''}</div>`;
 }
 
@@ -1936,7 +1939,7 @@ function simpleRow(t, hit = null) {
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}${said}${sideBadge(sideCount(t))}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
+    <div class="l2">${cust}${said}${sideBadge(sideCount(t), t)}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
 }
 /**
  * The list by customer (`shown` in the view's order, latest activity first): each customer

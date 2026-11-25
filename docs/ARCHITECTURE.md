@@ -425,9 +425,11 @@ answers as choices, for a runbook, a reply or a fact (`questions`, migration 010
 can open it), never the person the agent is answering in the sidebar, one open question per person and
 thread and two per thread at a time; one waits three days. Unlike the requests above, it is theirs,
 not the admin team's: a thread of their inbox ("Requests as threads", kind `question`, **Questions
-for you**), in their personal view and in the inbox of the team the thread is filed under, that
-mentions them (Status **You**, the red badge) and is counted on **Inbox** in the header, which opens
-it where no admin request waits. Its card answers instead of deciding: **Answer** (a choice for each
+for you**), in their personal view and in the inbox of the first of the thread's teams they are on,
+with the agent's purple badge (as its unseen answers in a sidebar have) until they answer, and a
+purple number of its own beside **Inbox** in the header, which opens them (the blue one stays the
+admin team's requests). A personal listing has none of the admin team's kinds, and leaves what
+`request_threads` tracks of them alone. Its card answers instead of deciding: **Answer** (a choice for each
 guess, preset to it, and the person's own words), **Ask someone else** (whom) or **I don't know**.
 The agent is told as an input of its own, trusted as the person's, with what it asked the answer for
 (write the runbook, update the draft, file the fact) and, when it asked while answering someone in the

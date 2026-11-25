@@ -1029,10 +1029,11 @@ const staffOf = (env) => (email) => Boolean(email) && isStaffDomain(env, email);
 
 /**
  * An inbox entry of request `key`, as src/api.js `inbox` shapes a thread's. A question that waits
- * mentions whom it asks (`me`): it is theirs, as a thread that mentions them is (ui/inbox.js).
+ * has the agent's purple badge (`sideNew`, as an answer of the agent's in a sidebar has), until
+ * it is answered.
  */
-function entryOf(key, kind, d, messages, me = null) {
-  const yours = PERSONAL.has(kind) && d.open && me && me.id;
+function entryOf(key, kind, d, messages) {
+  const asks = PERSONAL.has(kind) && d.open;
   const shown = messages.filter((m) => m.author.kind !== 'system');
   const last = messages[messages.length - 1];
   const lastSaid = shown[shown.length - 1];
@@ -1078,13 +1079,14 @@ function entryOf(key, kind, d, messages, me = null) {
     reactions: [],
     tech: [],
     posters: [...new Set(messages.map((m) => m.person).filter(Boolean))],
-    mentioned: yours ? [{ person: me.id }] : [],
+    mentioned: [],
     signals: [],
     resolution: { verdict: d.open ? 'open' : 'resolved', state: d.open ? 'open' : 'resolved' },
     waiting_on: d.open ? 'us' : 'nobody',
     draft: null,
     members: [{ thread: key, last_at: at, any_at: at }],
     request: { kind, status: d.status, open: d.open },
+    ...(asks ? { sideNew: [key] } : {}),
   };
 }
 
@@ -1126,8 +1128,11 @@ const goneOf = (row) => ({
 export async function requestEntries(env, me, { mine = false } = {}) {
   const n = await names(env);
   const bound = portalBound(env);
-  const kinds = Object.entries(KIND)
-    .filter(([kind]) => PERSONAL.has(kind) || (!mine && isAdmin(me)));
+  // The admin team's kinds only for one of its members, in its inbox; what `request_threads`
+  // tracks of them is read and written only then (a personal listing has none of them, so it
+  // would take every tracked conflict for gone).
+  const admins = !mine && isAdmin(me);
+  const kinds = Object.entries(KIND).filter(([kind]) => PERSONAL.has(kind) || admins);
   const lists = await Promise.all(kinds.map(async ([kind, k]) => {
     try {
       return (await k.list(env, me)).map((r) => ({ kind, id: k.id(r), r }));
@@ -1141,7 +1146,8 @@ export async function requestEntries(env, me, { mine = false } = {}) {
   }));
   // A list that failed leaves its conflicts where they were: not gone.
   const complete = lists.every(Boolean);
-  const tracked = await track(env, items.filter((x) => TRACKED.has(x.kind)), { complete });
+  const tracked = admins
+    ? await track(env, items.filter((x) => TRACKED.has(x.kind)), { complete }) : new Map();
   const shown = new Set(items.map((x) => x.key));
   const gone = [...tracked.values()].filter((row) => row.closed_at && !shown.has(row.request))
     .map((row) => ({
@@ -1158,12 +1164,9 @@ export async function requestEntries(env, me, { mine = false } = {}) {
     {
       staff, me, tracked: tracked.get(x.key), gone: x.gone,
     },
-  ), me));
+  )));
   const marks = await marksOf(env, entries.map((e) => e.thread));
-  // A question that waits mentions whom it asks, when it was asked: their red badge, until read.
-  const mentions = entries.filter((e) => e.mentioned.length)
-    .map((e) => ({ thread: e.thread, person: me.id, at: e.root_at }));
-  return { threads: readState(entries, marks, mentions, me.id) };
+  return { threads: readState(entries, marks, [], me.id) };
 }
 
 /** `{ kind, id, key, r, d }` of request `key` as it is now, or null. */
@@ -1215,7 +1218,7 @@ export async function requestThread(env, me, key) {
   const messages = messagesOf(key, x.d, logs.get(key) || [], {
     staff: staffOf(env), me, tracked, gone: x.gone,
   });
-  const entry = entryOf(key, x.kind, x.d, messages, me);
+  const entry = entryOf(key, x.kind, x.d, messages);
   const { results: marks } = await env.DB.prepare(`SELECT w.person, w.read_at FROM watermarks w
     WHERE w.thread = ?`).bind(key).all();
   return {
