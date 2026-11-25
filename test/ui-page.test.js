@@ -1091,6 +1091,51 @@ describe('inbox page', () => {
     assert.equal(sidePeople(said(lena, { id: 3, name: 'Tom' }, me)), 'Lena Berg, Tom and you');
   });
 
+  it('keeps a sidebar conversation one line, whoever joins it and whatever the thread says meanwhile', () => {
+    const { sideConversations } = piece('// A pause this long between two sidebar messages', '/** "Lena Berg", "You"', 'sideConversations');
+    const lena = { id: 2, name: 'Lena Berg' };
+    const me = { id: 1, name: 'Dana Ops' };
+    const at = (hm) => `2026-10-21T${hm}:00.000Z`;
+    const ask = (id, by, hm) => ({
+      id, role: 'person', by, at: at(hm),
+    });
+    const answer = (to, hm) => ({
+      id: `${to}:answer`, role: 'agent', reply_to: to, at: at(hm),
+    });
+    const ids = (convs) => convs.map((c) => [c.run.map((m) => m.id), c.at, c.trailing, c.last]);
+    // Lena asks, the thread goes on, you join an hour later: one conversation, where it was
+    // last talked in, after the thread's message between.
+    const joined = [ask('a', lena, '10:00'), answer('a', '10:01'), ask('b', me, '11:00'), answer('b', '11:01')];
+    assert.deepEqual(ids(sideConversations(joined, [at('09:00'), at('10:30'), at('11:30')])), [
+      [['a', 'a:answer', 'b', 'b:answer'], 2, false, true],
+    ]);
+    // After the thread's latest message: trailing, so that the sidebar goes on with it.
+    assert.deepEqual(ids(sideConversations(joined, [at('09:00'), at('10:30')])), [
+      [['a', 'a:answer', 'b', 'b:answer'], 2, true, true],
+    ]);
+    // Asked before the thread's message, answered after it: the answer goes with it.
+    assert.deepEqual(ids(sideConversations(joined.slice(0, 2), ['2026-10-21T10:00:30.000Z'])), [
+      [['a', 'a:answer'], 1, true, true],
+    ]);
+    // A long pause, with the thread's messages in it: a conversation of its own.
+    const later = [...joined, ask('c', lena, '16:00'), answer('c', '16:01')];
+    assert.deepEqual(ids(sideConversations(later, [at('10:30'), at('12:00')])), [
+      [['a', 'a:answer', 'b', 'b:answer'], 1, false, false],
+      [['c', 'c:answer'], 2, true, true],
+    ]);
+    // A long pause with nothing in the thread between is still one line, as it always was.
+    assert.equal(sideConversations(later, [at('09:00')]).length, 1);
+    // The agent's follow-up after the thread moved on: a line of its own.
+    const followup = {
+      id: 'a:followup:1', role: 'agent', reply_to: 'a', at: at('10:40'),
+    };
+    assert.deepEqual(ids(sideConversations([...joined.slice(0, 2), followup], [at('10:30')])), [
+      [['a', 'a:answer'], 0, false, false],
+      [['a:followup:1'], 1, true, true],
+    ]);
+    assert.deepEqual(sideConversations([], [at('10:00')]), []);
+  });
+
   describe('the sidebar beside the thread, where there is room', () => {
     const lena = { id: 2, name: 'Lena Berg' };
     const run = [
