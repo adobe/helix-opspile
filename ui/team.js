@@ -137,13 +137,13 @@ globalThis.TeamView = (() => {
     const row = (t) => {
       const href = t.path ? ctx.kbHref(t.path) : null;
       const name = href ? `<a href="${esc(href)}">${esc(t.name)}</a>` : esc(t.name);
-      // Followed is a badge beside the name; what it is, and that the catalog has it, under it.
-      const follow = t.followed ? ' <span class="tag tv-follow" title="Followed: its threads are in the team\'s inbox">Followed</span>' : '';
+      // What it is, and that the catalog has it, under the name.
       const sub = [t.vendor !== t.name && t.vendor, t.kind && t.kind !== 'Product' ? t.kind.toLowerCase() : '',
         t.catalog ? 'in its catalog' : ''].filter(Boolean).join(' · ');
-      // And its Follow (ui/follow.js), with the team in its chevron for whoever manages it.
+      // And its Follow (ui/follow.js), with the team in its chevron (its count says whether the
+      // team follows it) for whoever is on it or manages it.
       const button = ctx.follow?.({ kind: 'tech', id: t.tech, name: t.name }) || '';
-      return `<li><span class="tv-name"><span class="tv-line">${name}${follow}${button}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
+      return `<li><span class="tv-name"><span class="tv-line">${name}${button}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
         <span class="tv-meter">${bar(t.threads / most)}<span class="sub">${esc(plural(t.threads, 'thread'))}</span></span>${spark(t.weekly, { cls: 'tech', label: 'messages in its threads, week by week' })}</li>`;
     };
     return Overview.layers(p.tech.filter((t) => techIn(t, tab)), p.layers, row);

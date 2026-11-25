@@ -124,7 +124,7 @@
 /* The technologies: tabs, then one list per layer, its name at the left. */
 .ov .tv-tabs { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100); margin-bottom: var(--spectrum-spacing-300); }
 /* The technologies: the layers in columns, as many as fit, each layer whole, its name over its list;
-   a row is the name (and Followed) over what it is, then its threads and their weeks. */
+   a row is the name (and its Follow) over what it is, then its threads and their weeks. */
 .ov .tv-stack { columns: 32em; column-gap: var(--spectrum-spacing-600); }
 .ov .tv-stack > .empty { column-span: all; }
 .ov .tv-layer { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); min-width: 0; margin-bottom: var(--spectrum-spacing-400); break-inside: avoid; }

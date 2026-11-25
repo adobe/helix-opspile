@@ -2149,8 +2149,9 @@ async function showOverview(slug) {
     },
     teamHref: (team) => address({ tab: 'teams', sel: team, section: 'overview' }),
     kbHref: (path) => (base && p.kb?.readable ? address({ section: 'kb', path }) : null),
-    // A member's Follow, and a technology's (ui/follow.js): not your own.
-    follow: (thing) => (thing.kind === 'person' && thing.id === state.me.id ? '' : Follow.button(thing)),
+    // A member's Follow, and a technology's (ui/follow.js): not your own. Its chevron is you and
+    // this team only: the other teams that follow it are not this page's.
+    follow: (thing) => (thing.kind === 'person' && thing.id === state.me.id ? '' : Follow.button(thing, { team: slug })),
     // A node of the Topics page, picked (ui/topics.js opens its group, and adds its line to the chart).
     topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
   };
