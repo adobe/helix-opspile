@@ -92,6 +92,7 @@ on:
       - 'src/post.js'
       - 'src/products.js'
       - 'src/profiles.js'
+      - 'src/questions.js'
       - 'src/raw.js'
       - 'src/refile.js'
       - 'src/requestkeys.js'

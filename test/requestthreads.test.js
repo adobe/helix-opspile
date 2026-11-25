@@ -97,7 +97,10 @@ describe('the admin team\'s requests as threads', () => {
   it('are entries of its inbox, the ones that wait unresolved, for the admin team only', async () => {
     const e = env();
     const key = await asked(e);
-    assert.equal((await call(e, BO, 'GET', '/api/requests')).status, 403);
+    // Anyone else has only the questions thread agents asked them (none here).
+    const theirs = await quiet(() => call(e, BO, 'GET', '/api/requests'));
+    assert.equal(theirs.status, 200);
+    assert.deepEqual(theirs.body.threads, []);
     const { status, body } = await quiet(() => call(e, ADA, 'GET', '/api/requests'));
     assert.equal(status, 200);
     const byKey = new Map(body.threads.map((t) => [t.thread, t]));
@@ -143,7 +146,7 @@ describe('the admin team\'s requests as threads', () => {
     assert.match(tried.body.preview, /Files #shop-acme under Helix ops by hand.*\n\n- #shop-acme: 1 thread from Edge ops to Helix ops/s);
     // Only what the thread offers.
     assert.equal((await quiet(() => call(e, ADA, 'POST', '/api/requests/resolve', { key, action: 'merge' }))).status, 409);
-    assert.equal((await call(e, BO, 'POST', '/api/requests/resolve', { key, action: 'decline' })).status, 403);
+    assert.equal((await quiet(() => call(e, BO, 'POST', '/api/requests/resolve', { key, action: 'decline' }))).status, 404);
     const declined = await quiet(() => call(e, ADA, 'POST', '/api/requests/resolve', {
       key, action: 'decline', values: { reason: 'Edge ops works it' },
     }));

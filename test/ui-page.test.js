@@ -711,6 +711,7 @@ describe('inbox page', () => {
       keepReads: () => {},
       mergeStacks: (a, b) => ({ ...a, ...b }),
       requestsShown: () => shown,
+      requestHere: (t) => state.team === 'admin' || t.team === state.team,
       loadRequests: async () => asked.shift(),
       isRequestKey: (k) => k.startsWith('request:'),
     });
@@ -725,6 +726,44 @@ describe('inbox page', () => {
     pages.push({ team: 'admin', threads: [{ thread: 'a' }], page: { next: null } });
     await loadInbox();
     assert.deepEqual(keys(), ['a', 'b']);
+  });
+
+  it('lists the questions asked of you in the inbox of their thread\'s team, not in another', async () => {
+    const state = { team: 'edge', data: null, scores: new Map() };
+    const page = () => ({ team: 'edge', threads: [{ thread: 'a' }], page: { next: null } });
+    const pages = [page(), page()];
+    const asked = [
+      [{ thread: 'request:question:q1', team: 'edge' }, { thread: 'request:question:q2', team: 'forms' }],
+      [{ thread: 'request:question:q1', team: 'edge' }],
+    ];
+    const { loadInbox } = piece('const BACKFILL = 1000;', '\nlet paging = null;', 'loadInbox', {
+      state,
+      personal: () => false,
+      scopeKey: () => state.team,
+      scopeOf: (d) => d.team,
+      get: async () => pages.shift(),
+      syncSockets: () => {},
+      checkBells: () => {},
+      mergeProfiles: () => {},
+      renderUser: () => {},
+      renderFollowMenu: () => {},
+      coParticipants: () => new Map(),
+      inPass: (f) => f(),
+      smartScore: () => 0,
+      render: () => {},
+      backfill: () => {},
+      keepReads: () => {},
+      mergeStacks: (a, b) => ({ ...a, ...b }),
+      requestsShown: () => true,
+      requestHere: (t) => t.team === state.team,
+      loadRequests: async () => asked.shift(),
+      isRequestKey: (k) => k.startsWith('request:'),
+    });
+    await loadInbox();
+    assert.deepEqual(state.data.threads.map((t) => t.thread), ['a', 'request:question:q1']);
+    // Shown once, however often it is listed.
+    await loadInbox();
+    assert.deepEqual(state.data.threads.map((t) => t.thread), ['a', 'request:question:q1']);
   });
 
   describe('a thread folded into a group (re-threading)', () => {

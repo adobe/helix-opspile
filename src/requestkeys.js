@@ -23,9 +23,11 @@ export const PREFIX = 'request:';
 /**
  * The kinds: channel (src/requests.js), member (src/memberrequests.js), portal
  * (src/portalrequests.js), merge (src/orgmerge.js), bot (src/ourbots.js), account
- * (src/accountlinks.js), tech (src/techconflicts.js) and rule (src/ruleconflicts.js).
+ * (src/accountlinks.js), tech (src/techconflicts.js) and rule (src/ruleconflicts.js); and
+ * question (src/questions.js), a thread agent's question to one person, which is theirs, in
+ * whichever inbox they are, not the admin team's.
  */
-export const KINDS = ['channel', 'member', 'portal', 'merge', 'bot', 'account', 'tech', 'rule'];
+export const KINDS = ['channel', 'member', 'portal', 'merge', 'bot', 'account', 'tech', 'rule', 'question'];
 
 /** The team whose inbox has them (src/review.js ADMIN_TEAM). */
 const ADMIN_TEAM = 'admin';
@@ -48,10 +50,11 @@ export function parseRequestKey(key) {
 
 /**
  * Tells the admin team's room that request `kind` `id` is new or changed (without a kind, that
- * some may be): its inboxes load the requests again (`{ type: 'request', thread? }`). Best
+ * some may be): its inboxes load the requests again (`{ type: 'request', thread? }`). `teams`,
+ * a question's: the rooms of its thread's teams too, where the person it asks listens. Best
  * effort, as every room's.
  */
-export async function announceRequest(env, kind = null, id = null) {
+export async function announceRequest(env, kind = null, id = null, { teams = [] } = {}) {
   const known = kind && id !== null && id !== undefined;
-  await notifyRoom(env, ADMIN_TEAM, { type: 'request', ...(known ? { thread: requestKey(kind, id) } : {}) });
+  await notifyRoom(env, [ADMIN_TEAM, ...teams], { type: 'request', ...(known ? { thread: requestKey(kind, id) } : {}) });
 }

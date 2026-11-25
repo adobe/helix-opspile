@@ -102,6 +102,7 @@ import {
 import { parseStack, STACK_PATH, stackView } from '../src/stack.js';
 import { createAdmin, devFavicon } from './dev-ui-admin.mjs';
 import { isRequestKey } from '../src/requestkeys.js';
+import { openQuestions } from '../src/questions.js';
 import { faviconProxy } from '../src/favicons.js';
 import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
@@ -1684,6 +1685,8 @@ async function api(req, res, url) {
     const {
       id, name, email, teams, staff,
     } = store.me;
+    // The questions thread agents asked Dana (src/questions.js), on Inbox.
+    const questions = await openQuestions(adminApi.env, email);
     // Dana is not in the admin team (unless --admin), except on the admin pages (and COGS), so
     // they can be tried; with --no-team, never, as staff on no team see them (Inbox and Topics).
     const admin = !MANAGER && !MEMBER && !NO_TEAM
@@ -1698,6 +1701,7 @@ async function api(req, res, url) {
       teams: MANAGER || MEMBER ? teams.map((t) => ({ ...t, role: MANAGER && t.slug === 'edge' ? 'manager' : 'member' })) : teams,
       admin,
       manages: MANAGER ? ['edge'] : [],
+      questions: NO_TEAM ? { open: 0, team: null } : questions,
       // The header's Stats link (src/klickhaus.js): Dana is in Edge ops, unless --no-team.
       ...statsOf(teams),
       avatar: FACE,

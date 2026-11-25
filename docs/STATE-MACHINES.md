@@ -1,8 +1,8 @@
 # State machines
 
-opspile has six status columns, `channel_requests.status`, `bash_requests.status`,
-`tool_requests.status`, `portal_requests.status`, `org_merge_requests.status` and
-`member_requests.status` (and the customer portal, in its own database, `lobbies.status`). Everything
+opspile has seven status columns, `channel_requests.status`, `bash_requests.status`,
+`tool_requests.status`, `portal_requests.status`, `org_merge_requests.status`,
+`member_requests.status` and `questions.status` (and the customer portal, in its own database, `lobbies.status`). Everything
 else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
@@ -222,6 +222,16 @@ a kind with a row shows the row's decision, so one taken elsewhere (a manager wi
 assignment answers it) shows too. A decision is taken by the request's admin route, as the person,
 only when the request still offers it (the action is looked up in what it offers now), so a request
 decided meanwhile refuses it as the route does (`WHERE status = 'open'`).
+
+**Question.** open → answered, passed or unknown; open → expired (`questions.status`, migration
+0104, `src/questions.js`, `src/agent/question.js`). The agent asks (`ask_teammate`), and only the
+person it asks closes it, from its thread in their inbox (src/requestthreads.js, kind `question`);
+`CHECK` keeps the status to those five, and the close is `WHERE status = 'open' AND deadline > now`,
+so of two answers, or an answer at the deadline, one wins. Expired is read off the clock (an open one
+past its `deadline`, three days) and written only when the agent asks the same person on the same
+thread again, which closes it first so that the partial unique index (one open per thread and
+person) makes room. `told_at` is written after the agent took the answer (`ThreadAgent.answered`);
+one it could not be told stays closed, untold, and its thread says so.
 
 **Membership request.** open → confirmed (added, or member: on the team already), declined or
 withdrawn (`member_requests`, migration 0096; `src/memberrequests.js`). One open request per team and

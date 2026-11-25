@@ -1112,6 +1112,25 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
 
+  // Dana raised a limit by hand; Priya asked the agent in the sidebar whether the team has a
+  // runbook for it, and the agent asked Dana for the steps it could not find
+  // (src/questions.js): the question is a thread of Dana's inbox (scripts/dev-ui-admin.mjs).
+  seed({
+    ch: CHANNELS.cdn,
+    messages: [
+      ['mei', 300, 'Preview fails on our product pages since they have more than 200 images. Can the limit go up for globex/www?', { subject: 'Preview fails over 200 images' }],
+      ['dana', 240, 'Raised it to 400 images for globex/www. Please try again.'],
+      ['mei', 200, 'Works now, thanks!'],
+    ],
+    sidebar: [
+      ['priya', 150, 'Do we have a runbook for raising the image limit?'],
+      ['agent', 149, 'Partly: kb-team says it is `limits.maxImages` in the site config, under `limits`, not `features`. It does not say how Dana set it, whether it is per site or per org, or how to undo it. I asked Dana for those three, and will write the runbook once she answers.'],
+    ],
+    label: {
+      kind: 'request', next_actor: 'nobody', urgency: 0.3, resolved_p: 0.9, topics: ['cdn'],
+    },
+  });
+
   // Dana mentioned Noor, whose name Teams filled in: she was not in the Teams team. The agent
   // said so in the sidebar, and once the bot had added her, followed up there ("Thread Agent
   // followed up with you"), unseen: the row has the purple badge.

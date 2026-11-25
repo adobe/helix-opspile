@@ -95,8 +95,9 @@ import { teamVendors } from './vendors.js';
 import { orgDirectory, orgProfile } from './orgprofile.js';
 import { drawDiagram } from './diagrams.js';
 import { isRequestKey } from './requestkeys.js';
+import { openQuestions } from './questions.js';
 import {
-  addNote, requestEntries, requestThread, resolveRequest,
+  addNote, readRoom, requestEntries, requestThread, resolveRequest,
 } from './requestthreads.js';
 import { targetOf, translateMessages } from './translate.js';
 
@@ -1272,6 +1273,8 @@ async function route(request, env, url, {
       rooms: await roomsOf(env, me),
       // The technologies they follow, and those their teams follow (src/follows.js).
       follows: await followsOf(env, me),
+      // The questions thread agents asked them that wait (src/questions.js): on Inbox.
+      questions: await openQuestions(env, me.email),
     });
   }
   // Looking as someone else is read-only: no reads, replies, reviews or connections.
@@ -1630,13 +1633,11 @@ async function route(request, env, url, {
       limit: url.searchParams.get('limit'),
     }));
   }
-  // The admin team's requests, threads of its inbox (src/requestthreads.js).
+  // The admin team's requests, threads of its inbox (src/requestthreads.js), and the questions
+  // thread agents ask the viewer, threads of every inbox of theirs (`mine`: only those).
   if (url.pathname === '/api/requests' || url.pathname.startsWith('/api/requests/')) {
-    if (!isAdmin(me)) {
-      return json({ error: 'for the admin team' }, 403);
-    }
     if (url.pathname === '/api/requests' && request.method === 'GET') {
-      return json(await requestEntries(env, me));
+      return json(await requestEntries(env, me, { mine: url.searchParams.get('mine') === '1' }));
     }
     const body = await request.json().catch(() => ({}));
     if (url.pathname === '/api/requests/note' && request.method === 'POST') {
@@ -1648,7 +1649,8 @@ async function route(request, env, url, {
     return json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/thread' && isRequestKey(url.searchParams.get('thread'))) {
-    const result = isAdmin(me) ? await requestThread(env, me, url.searchParams.get('thread')) : null;
+    // The admin team's, or a question to the viewer (findRequest decides).
+    const result = await requestThread(env, me, url.searchParams.get('thread'));
     return result ? json(result) : json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/thread') {
@@ -1774,12 +1776,14 @@ async function route(request, env, url, {
   }
   if (url.pathname === '/api/read' && request.method === 'POST') {
     const { thread: key, at, team: from } = await request.json().catch(() => ({}));
-    // A request's thread is read in the admin team's inbox, and its room has it.
+    // A request's thread is read in the admin team's inbox, and its room has it; a question's,
+    // in the room of its thread's team.
     if (isRequestKey(key)) {
-      if (!isAdmin(me) || typeof at !== 'string') {
+      const where = typeof at === 'string' ? await readRoom(env, me, key) : null;
+      if (!where) {
         return json({ error: 'not found' }, 404);
       }
-      await room(env, 'admin').fetch('https://room/read', {
+      await room(env, where).fetch('https://room/read', {
         method: 'POST',
         body: JSON.stringify({ person: me.id, thread: key, at }),
       });

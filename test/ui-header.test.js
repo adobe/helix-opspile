@@ -255,7 +255,31 @@ describe('the header', () => {
     assert.deepEqual(admin.pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs']);
     // The requests that wait for the admin team are counted on Inbox: they are threads there.
     assert.match(admin.html, /<a data-page="inbox" href="\/inbox" title="[^"]*">Inbox<span class="count" hidden><\/span><\/a>/);
-    assert.doesNotMatch(nav({ teams: [{ slug: 'edge' }] }).html, /class="count"/);
+    // So are the questions thread agents ask a member: theirs, in their inbox.
+    assert.match(nav({ teams: [{ slug: 'edge' }] }).html, /Inbox<span class="count" hidden><\/span>/);
+    assert.doesNotMatch(nav({ staff: true }).html, /class="count"/);
+  });
+
+  it('counts the questions asked of you, and opens them where no admin request waits', () => {
+    const inbox = tab('/inbox?team=edge');
+    const opened = [];
+    inbox.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 2, team: 'helix' } }, { open: (url) => opened.push(url) });
+    assert.equal(inbox.byId('pages').dataset.count, '2');
+    assert.equal(clickInbox(inbox), true);
+    assert.deepEqual(opened, ['/inbox?team=helix&filters=1&f.type=request&f.resolved=open']);
+    // An admin's requests and their questions add up, and open the admin team's inbox: both.
+    inbox.Header.setCounts({ admin: 3 });
+    assert.equal(inbox.byId('pages').dataset.count, '5');
+    clickInbox(inbox);
+    assert.equal(opened[1], inbox.Header.REQUESTS);
+    // None of either: nothing to click.
+    inbox.Header.setCounts({ admin: 0, questions: 0, team: null });
+    clickInbox(inbox);
+    assert.equal(opened.length, 2);
+    // Viewing as someone else (`count: false`), theirs are not counted.
+    const as = tab('/inbox?team=edge');
+    as.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 1, team: 'edge' } }, { count: false });
+    assert.equal(as.byId('pages').dataset.count, '0');
   });
 
   it('opens the admin team\'s open requests from the number on Inbox', () => {
