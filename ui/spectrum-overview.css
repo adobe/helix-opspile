@@ -65,6 +65,9 @@
 .ov .tv-people { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 21em), 1fr)); gap: var(--spectrum-spacing-300); }
 .ov .tv-person { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); min-width: 0; }
 .ov .tv-person > header { display: flex; align-items: center; gap: var(--spectrum-spacing-200); min-width: 0; height: auto; padding: 0; }
+/* A member's Follow and a technology's (ui/follow.js), at the end of their line. */
+.ov .tv-person > header .fo, .ov .tv-layer .tv-line .fo { margin-inline-start: auto; }
+.ov .tv-person > header .fo { align-self: flex-start; }
 .ov .tv-person .who { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-50) var(--spectrum-spacing-100); min-width: 0; }
 .ov .tv-person .who b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ov .tv-person .who .sub { flex-basis: 100%; }

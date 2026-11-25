@@ -68,8 +68,6 @@ const state = {
   dups: null, dupsMore: false, orgMerges: [],
   // The channels no rule files under an org (GET /api/admin/orgs `unassigned`): how many.
   orgsUnassigned: null,
-  // The customers you follow yourself (GET /api/follows `by.org`): in your personal view.
-  myOrgs: new Set(),
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -460,7 +458,8 @@ async function load() {
   state.unassigned = teams.body.unassigned;
   state.orgs = orgs.body.orgs || [];
   state.orgsUnassigned = state.me.admin ? orgs.body.unassigned || null : null;
-  state.myOrgs = new Set((follows.ok && follows.body.by?.org) || []);
+  // What you and your teams follow and mute (ui/follow.js): every Follow button here.
+  Follow.set(follows.ok ? follows.body : null);
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
   if (state.me.admin) loadGroups();
   // The duplicate customers are for the ops teams, who ask for a merge.
@@ -528,13 +527,21 @@ function listError(text) {
   if ($('listStatus')) $('listStatus').textContent = text;
 }
 
-/** An org's row in the Customers list: its icon, name, type and channels, and whether you follow it. */
-const orgRow = (o) => `
+/** Whether you follow customer `slug` yourself (ui/follow.js): its threads in your personal view. */
+const followsOrg = (slug) => Follow.follows('org', slug);
+
+/**
+ * An org's row in the Customers list: its icon, name, type and channels, and whether you follow
+ * or muted it (but under "Customers you follow", which says so).
+ */
+const orgRow = (o, { tags = true } = {}) => `
       <div class="row${state.sel === o.slug ? ' on' : ''}" data-sel="${esc(o.slug)}">
         ${ico(o.icon, o.domain)}<span class="name">${esc(o.name || o.slug)}${o.name ? ` <span class="sub">${esc(o.slug)}</span>` : ''}</span>
         ${o.type !== 'customer' ? `<span class="tag ${o.type}">${esc(o.type)}</span>` : ''}
-        ${state.me.admin && state.myOrgs.has(o.slug) ? '<span class="tag" title="You follow it: its conversations are in your personal view">following</span>' : ''}
+        ${tags && followsOrg(o.slug) ? '<span class="tag" title="You follow it: its threads are in your personal view">Following</span>' : ''}
+        ${tags && Follow.muted('org', o.slug) ? '<span class="tag" title="You muted it: its threads are back in your personal view once you post in one of them">Muted</span>' : ''}
         <span class="sub">${channelCount(o.channels)}</span></div>`;
+const followedRow = (o) => orgRow(o, { tags: false });
 
 /** A team's row that you do not manage: its people, its agent, its entries. */
 function teamRow(t) {
@@ -615,29 +622,29 @@ function drawList() {
     // Adobe's people on no team: the customers they follow, then every other one, to see its
     // overview.
     const orgMatch = (o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f);
-    const followed = state.orgs.filter((o) => state.myOrgs.has(o.slug) && orgMatch(o));
-    const rest = state.orgs.filter((o) => orgMatch(o) && !state.myOrgs.has(o.slug));
+    const followed = state.orgs.filter((o) => followsOrg(o.slug) && orgMatch(o));
+    const rest = state.orgs.filter((o) => orgMatch(o) && !followsOrg(o.slug));
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter customers" value="${esc(state.filter)}"></label>
-      ${followed.length ? `<h2>Customers you follow</h2>${followed.map(orgRow).join('')}` : ''}
-      <h2>${followed.length ? 'Every other customer' : 'Customers'}</h2>${rest.map(orgRow).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No customer yet.'}</div>`}`;
+      ${followed.length ? `<h2>Customers you follow</h2>${followed.map(followedRow).join('')}` : ''}
+      <h2>${followed.length ? 'Every other customer' : 'Customers'}</h2>${rest.map((o) => orgRow(o)).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No customer yet.'}</div>`}`;
   } else if (!state.me.admin) {
     // The customers you follow, then those your teams own (their agents, which their managers
     // change), then every other one: to follow it, or ask for its channels.
     const orgMatch = (o) => !f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f);
-    const followed = state.orgs.filter((o) => state.myOrgs.has(o.slug) && orgMatch(o));
-    const kb = state.bases.filter((b) => b.kind === 'org' && matches(b) && !state.myOrgs.has(b.slug))
+    const followed = state.orgs.filter((o) => followsOrg(o.slug) && orgMatch(o));
+    const kb = state.bases.filter((b) => b.kind === 'org' && matches(b) && !followsOrg(b.slug))
       .sort((x, y) => x.name.localeCompare(y.name));
     const ours = new Set(kb.map((b) => b.slug));
-    const rest = state.orgs.filter((o) => orgMatch(o) && !ours.has(o.slug) && !state.myOrgs.has(o.slug));
+    const rest = state.orgs.filter((o) => orgMatch(o) && !ours.has(o.slug) && !followsOrg(o.slug));
     $('list').innerHTML = `<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter customers" value="${esc(state.filter)}"></label>
-      ${dupSection(f)}${followed.length ? `<h2>Customers you follow</h2>${followed.map(orgRow).join('')}` : ''}
+      ${dupSection(f)}${followed.length ? `<h2>Customers you follow</h2>${followed.map(followedRow).join('')}` : ''}
       <h2>Customers of your teams</h2>${kb.map(baseRow).join('') || `<div class="empty">${f ? 'Nothing matches.' : 'No customer of your teams has a knowledge base yet.'}</div>`}
       <p class="hint">The customers with a channel filed under or shared with one of your teams, once their thread agents started a knowledge base.</p>
-      ${rest.length ? `<h2>Every other customer</h2>${rest.map(orgRow).join('')}` : ''}`;
+      ${rest.length ? `<h2>Every other customer</h2>${rest.map((o) => orgRow(o)).join('')}` : ''}`;
     wireDups();
   } else {
     const rows = state.orgs.filter((o) => (!f || `${o.name || ''} ${o.slug}`.toLowerCase().includes(f))
-      && (!state.noIcon || iconless(o))).map(orgRow).join('');
+      && (!state.noIcon || iconless(o))).map((o) => orgRow(o)).join('');
     // The channels without an org, to be given one (see "unassigned channels").
     const un = state.orgsUnassigned && state.orgsUnassigned.channels && (!f || 'unassigned'.includes(f))
       ? `<div class="row${state.sel === UNASSIGNED ? ' on' : ''}" data-sel="${UNASSIGNED}"><span class="ico none"></span>
@@ -1555,43 +1562,57 @@ function renderSuggestions() {
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 /**
- * The technologies the team follows (src/follows.js): the threads that show one are in its
- * inbox. Its managers and the admin team pick them; the list offers the rest of the tech stack,
- * by product.
+ * What the team follows (src/follows.js): the technologies and topics whose threads are in its
+ * inbox, in any team's channels. Its managers and the admin team pick them here, as with Follow's
+ * chevron wherever one is shown (ui/follow.js); the list offers the rest of the tech stack, by
+ * product, and the topics Clef asks about. Its customers are follow rules, on the customer's page.
  */
 function renderFollows() {
   const v = state.view;
   const { team } = v;
-  const byId = new Map(v.followable.map((t) => [t.tech, t]));
-  const name = (id) => byId.get(id)?.name || id;
-  $('followsTable').innerHTML = v.follows.length
-    ? `<table><tr><th>Technology</th><th>Product</th><th>Added by</th><th></th></tr>${v.follows.map((f) => `<tr>
-      <td>${esc(name(f.tech))} <span class="sub mono">${esc(f.tech)}</span></td><td>${esc(byId.get(f.tech)?.product || '')}</td>
-      <td>${esc(f.added_by || '')}</td>
-      <td><button class="link" data-unfollow="${esc(f.tech)}"${off(`follow:${team.slug}:${f.tech}`)}>Unfollow</button></td></tr>`).join('')}</table>`
+  const tech = new Map(v.followable.map((t) => [t.tech, t]));
+  const areas = new Map((v.areas || []).map((a) => [a.id, a]));
+  const name = (kind, id) => (kind === 'tech' ? tech.get(id)?.name : areas.get(id)?.name) || id;
+  const rows = [...v.follows.map((f) => ({ kind: 'tech', id: f.tech, by: f.added_by })),
+    ...(v.followsBy || []).filter((f) => f.kind === 'area').map((f) => ({ kind: 'area', id: f.target, by: f.added_by }))];
+  const offFor = (kind, id) => off(`follow:${team.slug}:${kind}:${id}`);
+  $('followsTable').innerHTML = rows.length
+    ? `<table><tr><th>What</th><th>Name</th><th>Product</th><th>Added by</th><th></th></tr>${rows.map((f) => `<tr>
+      <td>${f.kind === 'tech' ? 'Technology' : 'Topic'}</td>
+      <td>${esc(name(f.kind, f.id))} <span class="sub mono">${esc(f.id)}</span></td><td>${esc(f.kind === 'tech' ? tech.get(f.id)?.product || '' : '')}</td>
+      <td>${esc(f.by || '')}</td>
+      <td><button class="link" data-unfollow="${esc(f.id)}" data-kind="${f.kind}"${offFor(f.kind, f.id)}>Unfollow</button></td></tr>`).join('')}</table>`
     : '<div class="empty">None yet: the inbox has the team\'s channels and the channels shared with it.</div>';
-  const followed = new Set(v.follows.map((f) => f.tech));
+  const followed = new Set(rows.map((f) => `${f.kind}:${f.id}`));
   const groups = new Map();
-  for (const t of v.followable.filter((x) => !followed.has(x.tech))) {
+  for (const t of v.followable.filter((x) => !followed.has(`tech:${x.tech}`))) {
     const g = t.product || 'Other';
     groups.set(g, [...(groups.get(g) || []), t]);
   }
-  $('fTech').innerHTML = `<option value="">Pick one…</option>${[...groups].sort(([a], [b]) => a.localeCompare(b))
-    .map(([g, list]) => `<optgroup label="${esc(g)}">${list.map((t) => `<option value="${esc(t.tech)}">${esc(t.name)}</option>`).join('')}</optgroup>`).join('')}`;
-  const change = (tech, follow, button) => hold(button, `follow:${team.slug}:${tech}`, async () => {
-    const res = await call('/api/admin/follows', 'PUT', { team: team.slug, tech, follow });
-    if (!res.ok) { failed(follow ? `Follow ${name(tech)}` : `Unfollow ${name(tech)}`, res); return; }
-    v.follows = res.body.follows;
-    status('ok', follow ? `${team.name} follows ${name(tech)}: the threads that show it are in its inbox.` : `${team.name} no longer follows ${name(tech)}.`);
-    if (v === state.view) renderFollows();
-  });
+  const topics = [...areas.values()].filter((a) => !followed.has(`area:${a.id}`));
+  $('fTech').innerHTML = `<option value="">Pick one…</option>${topics.length ? `<optgroup label="Topics">${topics.map((a) => `<option value="area:${esc(a.id)}">${esc(a.name)}</option>`).join('')}</optgroup>` : ''}${[...groups].sort(([a], [b]) => a.localeCompare(b))
+    .map(([g, list]) => `<optgroup label="${esc(g)}">${list.map((t) => `<option value="tech:${esc(t.tech)}">${esc(t.name)}</option>`).join('')}</optgroup>`).join('')}`;
+  // PUT /api/follows with the team, as Follow's chevron sends it (src/following.js).
+  const change = (kind, id, follow, button) => hold(button, `follow:${team.slug}:${kind}:${id}`, async () => {
+    const res = await call('/api/follows', 'PUT', {
+      kind, target: id, team: team.slug, follow,
+    });
+    if (!res.ok) { failed(follow ? `Follow ${name(kind, id)}` : `Unfollow ${name(kind, id)}`, res); return; }
+    Follow.set(res.body);
+    const now = await call(READS.own('teams', team.slug));
+    if (now.ok) {
+      v.follows = now.body.follows || [];
+      v.followsBy = now.body.followsBy || [];
+    }
+    status('ok', follow ? `${team.name} follows ${name(kind, id)}: its threads are in its inbox.` : `${team.name} no longer follows ${name(kind, id)}.`);
+  }).then(() => { if (v === state.view) renderFollows(); });
   for (const b of $('followsTable').querySelectorAll('[data-unfollow]')) {
-    b.onclick = () => change(b.dataset.unfollow, false, b);
+    b.onclick = () => change(b.dataset.kind, b.dataset.unfollow, false, b);
   }
   $('followForm').onsubmit = (e) => {
     e.preventDefault();
-    const tech = $('fTech').value;
-    if (tech) change(tech, true, $('fAdd'));
+    const [kind, ...id] = $('fTech').value.split(':');
+    if (kind && id.length) change(kind, id.join(':'), true, $('fAdd'));
   };
 }
 
@@ -2030,6 +2051,8 @@ async function showOverview(slug) {
     },
     teamHref: (team) => address({ tab: 'teams', sel: team, section: 'overview' }),
     kbHref: (path) => (base && p.kb?.readable ? address({ section: 'kb', path }) : null),
+    // A member's Follow, and a technology's (ui/follow.js): not your own.
+    follow: (thing) => (thing.kind === 'person' && thing.id === state.me.id ? '' : Follow.button(thing)),
     // A node of the Topics page, picked (ui/topics.js opens its group, and adds its line to the chart).
     topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
   };
@@ -2055,12 +2078,12 @@ async function showTeam(slug) {
   if (!r.ok) { $('detail').innerHTML = `<div class="empty">${esc(r.body.error)}</div>`; return; }
   const {
     team, members, rules, channels, suggestions, coverage, requests = [], follows = [], followable = [],
-    portal = [], memberRequests = [],
+    followsBy = [], areas = [], portal = [], memberRequests = [],
   } = r.body;
   if (r.body.portalBound !== undefined) state.portalBound = Boolean(r.body.portalBound);
   const v = {
     target: 'team', value: slug, team, members, rules, channels, suggestions, coverage, requests, follows, followable, portal,
-    memberRequests,
+    memberRequests, followsBy, areas,
   };
   state.view = v;
   const templates = rules.filter((x) => x.value !== slug);
@@ -2095,10 +2118,10 @@ async function showTeam(slug) {
       <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>. A follow rule files nothing: the channels it matches are shared with the team, wherever they are filed. Conflicts between the teams' rules are threads of the admin team's inbox.</p>
       ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}` : ''}
     ${channelsCard('team')}
-    ${real ? `<div class="card"><h2>Technologies</h2><div id="followsTable"></div>
-      <form class="form" id="followForm"><label class="fld grow"><span>Follow a technology</span><select id="fTech"></select></label>
+    ${real ? `<div class="card"><h2>Following</h2><div id="followsTable"></div>
+      <form class="form" id="followForm"><label class="fld grow"><span>Follow a topic or a technology</span><select id="fTech"></select></label>
       <button class="primary" id="fAdd">Follow</button></form>
-      <p class="hint">Threads that show one of these technologies are in this team's inbox, in any team's channels, and its members work them there. Clef tags each thread with what the thread itself shows, not what its channel uses. The channels stay filed where they are, and the thread's agent gets this team's knowledge base too.</p></div>` : ''}
+      <p class="hint">Threads that show one of these technologies, or that Clef puts in one of these topics, are in this team's inbox, in any team's channels, and its members work them there. Clef tags each thread with what the thread itself shows, not what its channel uses. A customer the team follows is on the customer's page. The channels stay filed where they are, and the thread's agent gets this team's knowledge base too.</p></div>` : ''}
     ${real && (!admin || v.requests.length) ? `<div class="card"><h2>Requests</h2><div id="requestsTable"></div>
       <p class="hint">${admin ? 'Channels this team\'s managers asked for. Review one to confirm or decline it.' : 'The channels this team asked the admin team for, and their answers.'}</p></div>` : ''}
     ${real && v.portal.length ? `<div class="card"><h2>Customers in the portal</h2><div id="portalTable"></div>
@@ -2766,7 +2789,7 @@ function orgInbox(slug, teams) {
   const mine = new Set((state.me.teams || []).map((t) => t.slug));
   const team = teams.find((t) => mine.has(t.slug) && (t.filed || t.shared || t.follows));
   if (team) return `/inbox?team=${encodeURIComponent(team.slug)}&${q}`;
-  return state.myOrgs.has(slug) ? `/inbox?view=personal&${q}` : null;
+  return followsOrg(slug) ? `/inbox?view=personal&${q}` : null;
 }
 
 /** A customer's stack drawing, where its knowledge base has one: under its entries. */
@@ -2814,37 +2837,16 @@ async function showOrgOverview(slug) {
     channelCount(p.org.channels),
     inbox ? `<a href="${esc(inbox)}" title="Its threads in your inbox">Its threads</a>` : '',
   ].filter(Boolean).join(' · ');
-  const followKey = `orgfollow:me:${slug}`;
-  const followButton = () => {
-    const on = state.myOrgs.has(slug);
-    return `<button type="button" class="ofollow" id="ovFollow" aria-pressed="${on}" aria-label="${esc(`${on ? 'Following' : 'Follow'}: ${name}`)}"
-      title="${on ? 'You follow it: its conversations are in your personal view' : 'Follow it: its conversations go into your personal view'}"${off(followKey)}>${on ? 'Following' : 'Follow'}</button>`;
-  };
   $('detail').innerHTML = `
     <div class="title">${backButton()}${ico(p.org.icon || row?.icon || null, p.org.domain || row?.domain || null)}<h1 class="fill">${esc(name)}</h1>
       ${p.org.type !== 'customer' ? `<span class="tag ${esc(p.org.type)}">${esc(p.org.type)}</span>` : ''}
-      <span class="sub">${facts}</span><span id="ovFollowAt">${followButton()}</span><span class="sub mono">${esc(slug)}</span></div>
+      <span class="sub">${facts}</span>${Follow.button({ kind: 'org', id: slug, name })}<span class="sub mono">${esc(slug)}</span></div>
     ${sectionsNav()}
     <div class="status" id="status"></div>
     <div class="ov" id="overview">${CustomerView.html(p, ctx)}</div>`;
   showStatus();
   tabInView();
   CustomerView.wire($('overview'), p, ctx);
-  const wireFollow = () => {
-    $('ovFollow').onclick = (e) => hold(e.currentTarget, followKey, async () => {
-      const follow = !state.myOrgs.has(slug);
-      const res = await call('/api/follows', 'PUT', { kind: 'org', target: slug, follow });
-      if (!res.ok) { failed(follow ? `Follow ${name}` : `Unfollow ${name}`, res); return; }
-      state.myOrgs = new Set(res.body.by?.org || []);
-      status('ok', follow ? `You follow ${name}: its conversations are in your personal view.` : `You no longer follow ${name}.`);
-      renderList();
-    }).then(() => {
-      if (state.view?.target !== 'org-overview' || state.view.value !== slug || !$('ovFollowAt')) return;
-      $('ovFollowAt').innerHTML = followButton();
-      wireFollow();
-    });
-  };
-  wireFollow();
   if (p.kb?.drawing) drawOrgStack(slug, current);
 }
 
@@ -3020,62 +3022,43 @@ async function showOrg(slug) {
 /** Whether you may change what team `slug` has: the admin team, or its manager. */
 const managesHere = (slug) => Boolean(state.me.admin || (state.me.manages || []).includes(slug));
 
-/** The teams whose following you see on a customer's page: those that follow it, and yours. */
-function followRows(v) {
-  const following = new Set(v.follows.map((f) => f.team));
-  const yours = state.me.admin ? [] : (state.me.manages || []);
-  return [...new Set([...yours, ...following])].map((team) => ({ team, on: following.has(team) }))
-    .sort((a, b) => teamLabel(a.team).localeCompare(teamLabel(b.team)));
-}
-
 function followCard() {
   return `<div class="card"><h2>Following</h2><div id="orgFollows"></div>
-    <p class="hint">You following it puts its conversations in your personal view. A team that follows it has every channel of it in its inbox, shared, now and later (a follow rule on the team's page); the channels stay filed under their teams.</p></div>`;
+    <p class="hint">You following it puts its threads in your personal view; muting it takes them out until you post in one of them. A team that follows it has every channel of it in its inbox, shared, now and later (a follow rule on the team's page); the channels stay filed under their teams. Follow's chevron has your teams, for those you manage.</p></div>`;
 }
 
+/** Who follows the customer: your Follow and Mute (ui/follow.js, as on its overview), and every team that does. */
 function renderOrgFollows() {
   const v = state.view;
   const slug = v.value;
   const name = v.org.name || slug;
-  const me = state.myOrgs.has(slug);
-  const button = (data, on, label, key) => `<button type="button" class="ofollow" ${data} aria-pressed="${on}"
-    aria-label="${esc(`${on ? 'Following' : 'Follow'}: ${label}`)}"${off(key)}>${on ? 'Following' : 'Follow'}</button>`;
-  const rows = followRows(v).map(({ team, on }) => `<li><span class="name">${esc(teamLabel(team))}</span>
-      ${managesHere(team) ? button(`data-team="${esc(team)}"`, on, teamLabel(team), `orgfollow:${team}:${slug}`) : '<span class="sub">follows it</span>'}</li>`).join('');
-  const others = state.me.admin ? state.teams.filter((t) => !isHolding(t.slug) && !v.follows.some((f) => f.team === t.slug)) : [];
-  $('orgFollows').innerHTML = `<ul class="followers">
-      <li><span class="name">You</span>${button('data-me="1"', me, 'you', `orgfollow:me:${slug}`)}</li>${rows}</ul>
-    ${others.length ? `<form class="form" id="ofAdd"><label class="fld"><span>Follow it with a team</span><select id="ofTeam"><option value="">Pick one…</option>
-      ${others.map((t) => `<option value="${esc(t.slug)}">${esc(t.name)}</option>`).join('')}</select></label><button>Follow</button></form>` : ''}`;
-  // The card is drawn again once the change is done and its button no longer busy (`off`): drawn
-  // while it is, the new button would be disabled for good.
-  const redraw = () => { if (v === state.view) renderOrgFollows(); };
-  const team = (t, follow, b) => hold(b, `orgfollow:${t}:${slug}`, async () => {
-    const res = await call('/api/admin/org-follows', 'PUT', { team: t, org: slug, follow });
-    if (!res.ok) { failed(follow ? `${teamLabel(t)}: follow ${name}` : `${teamLabel(t)}: unfollow ${name}`, res); return; }
-    v.follows = res.body.followers;
-    // The shares are the rule's: its channels as they are now.
-    const now = await call(`/api/admin/org?slug=${encodeURIComponent(slug)}`);
-    if (now.ok && now.body.channels) v.channels = now.body.channels;
-    if (v === state.view) renderChannels();
-    status('ok', follow ? `${teamLabel(t)} follows ${name}: its channels are in ${teamLabel(t)}'s inbox, shared.` : `${teamLabel(t)} no longer follows ${name}.`);
-  }).then(redraw);
-  for (const b of $('orgFollows').querySelectorAll('[data-team]')) {
-    b.onclick = () => team(b.dataset.team, b.getAttribute('aria-pressed') !== 'true', b);
-  }
-  $('orgFollows').querySelector('[data-me]').onclick = (e) => hold(e.currentTarget, `orgfollow:me:${slug}`, async () => {
-    const follow = !state.myOrgs.has(slug);
-    const res = await call('/api/follows', 'PUT', { kind: 'org', target: slug, follow });
-    if (!res.ok) { failed(follow ? `Follow ${name}` : `Unfollow ${name}`, res); return; }
-    state.myOrgs = new Set(res.body.by?.org || []);
-    status('ok', follow ? `You follow ${name}: its conversations are in your personal view.` : `You no longer follow ${name}.`);
-    renderList();
-  }).then(redraw);
-  if ($('ofAdd')) {
-    $('ofAdd').onsubmit = (e) => {
-      e.preventDefault();
-      if ($('ofTeam').value) team($('ofTeam').value, true, e.submitter || $('ofAdd').querySelector('button'));
-    };
+  const teams = [...new Set(v.follows.map((f) => f.team))].sort((a, b) => teamLabel(a).localeCompare(teamLabel(b)));
+  $('orgFollows').innerHTML = `<div class="fo-at">${Follow.button({ kind: 'org', id: slug, name })}</div>
+    <p class="sub">${teams.length ? `Followed by ${teams.map((t) => `<a href="${esc(address({ tab: 'teams', sel: t, section: 'overview' }))}">${esc(teamLabel(t))}</a>`).join(', ')}.` : 'No team follows it.'}</p>`;
+}
+
+/**
+ * After a change of what you or a team follows (ui/follow.js): the lists that show it, and the
+ * page on screen where it is a team's: a customer's followers and channels (a team that follows
+ * it shares them), or a team's Following.
+ */
+async function followChanged(change) {
+  if (change.kind === 'org') renderList();
+  const v = state.view;
+  if (!change.team || !v) return;
+  if (v.target === 'org' && v.value === change.id) {
+    const now = await call(READS.own('orgs', change.id));
+    if (v !== state.view || !now.ok) return;
+    if (now.body.channels) v.channels = now.body.channels;
+    v.follows = now.body.follows || v.follows;
+    renderOrgFollows();
+    renderChannels();
+  } else if (v.target === 'team' && v.value === change.team && $('followsTable')) {
+    const now = await call(READS.own('teams', change.team));
+    if (v !== state.view || !now.ok) return;
+    v.follows = now.body.follows || [];
+    v.followsBy = now.body.followsBy || [];
+    renderFollows();
   }
 }
 
@@ -3756,6 +3739,14 @@ function wireOrgMerge(slug) {
       else if (await Agent.leave()) location.assign(url);
     },
   });
+  // Following and muting (ui/follow.js): sent as the page sends (`call`, which forgets what was
+  // read ahead), said in a toast with Undo.
+  Follow.init({
+    me: state.me,
+    readonly: Boolean(state.me.readonly),
+    request: (method, path, body) => call(path, method, body).then((r) => ({ ok: r.ok, status: r.status, data: r.body })),
+  });
+  Follow.on(followChanged);
   if (!(await load())) return;
   Agent.init(state.me, state.bases, {
     // The agent's address: the view and the file it has open, in the page's.

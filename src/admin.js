@@ -58,7 +58,9 @@ import {
   getBot, listBots, setBot, unreviewedCount,
 } from './ourbots.js';
 import { linkAccount, listAccounts, unlinkedCount } from './accountlinks.js';
-import { followable, setTeamFollow, teamFollows } from './follows.js';
+import {
+  followable, setTeamFollow, teamFollows, teamFollowsBy,
+} from './follows.js';
 import { portalAuthor, portalBound, portalCall } from './portalsource.js';
 import { openConflictCount, resolveConflict, techConflicts } from './techconflicts.js';
 import { ruleConflicts, settlement } from './ruleconflicts.js';
@@ -671,7 +673,7 @@ async function releaseChannel(env, me, body) {
  * filed under their teams. For the admin team and the team's managers. The answer has the teams
  * that follow it after the change (`followers`).
  */
-async function followOrg(env, me, body) {
+export async function followOrg(env, me, body) {
   const slug = clean(body.team);
   const target = toSlug(clean(body.org));
   const follow = body.follow !== false;
@@ -1160,7 +1162,8 @@ async function team(env, slug, me) {
   }
   const none = Promise.resolve([]);
   const [
-    members, channels, requests, memberRequests, portal, follows, techs, suggestions,
+    members, channels, requests, memberRequests, portal, follows, followsBy, techs, topics,
+    suggestions,
   ] = await Promise.all([
     rows(env, `SELECT p.id, p.name, p.email, p.staff, m.role FROM team_members m
       JOIN people p ON p.id = m.person WHERE m.team = ? ORDER BY p.name`, slug),
@@ -1169,7 +1172,12 @@ async function team(env, slug, me) {
     t ? listMemberRequests(env, { teams: [slug], limit: 50 }) : none,
     t ? listPortalRequests(env, { teams: [slug], limit: 50 }) : none,
     t ? teamFollows(env, slug) : none,
+    t ? teamFollowsBy(env, slug) : none,
     t ? followable(env, slug) : none,
+    // The areas a team may follow: those on somewhere, by the admin team's name first.
+    t ? rows(env, `SELECT id, name FROM (SELECT id, name, ROW_NUMBER() OVER (PARTITION BY id
+        ORDER BY team = 'admin' DESC, team) AS n FROM areas WHERE enabled = 1) WHERE n = 1
+      ORDER BY name`) : none,
     isAdmin(me) && t && slug !== ADMIN_TEAM ? suggestionsFor(env, slug) : Promise.resolve({}),
   ]);
   return json({
@@ -1186,8 +1194,10 @@ async function team(env, slug, me) {
     // The customers in the portal who picked a technology the team follows.
     portal,
     portalBound: portalBound(env),
-    // The technologies it follows (src/follows.js), and what it may follow.
-    ...(t ? { follows, followable: techs } : {}),
+    // The technologies and areas it follows (src/follows.js), and what it may follow.
+    ...(t ? {
+      follows, followsBy, followable: techs, areas: topics,
+    } : {}),
     // The admin team decides which channels a team gets: what it might want of the admin
     // team's channels.
     ...suggestions,

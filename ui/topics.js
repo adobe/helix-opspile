@@ -14,7 +14,8 @@
  * Topics: the topic map (src/topicmap.js) for every internal user (on an ops team, or `staff`
  * on none, who find what to follow here), over GET /api/topics
  * (src/topicsapi.js), with the areas (src/areas.js) the teams author and what the viewer follows:
- * a Follow on a person, customer, area or product puts its threads in their personal view, and
+ * a Follow on a person, customer, area or product (ui/follow.js, as everywhere; with who follows
+ * it, for whom manages a team) puts its threads in their personal view, and
  * the admin team and team managers add, rename, describe and delete areas in the panel. What
  * the channel threads are about, found from what was said in them (the topics), drawn in three
  * dimensions (ui/topicview.js) as three kinds of bubbles, each a hierarchy (ui/topicgraph.js):
@@ -77,9 +78,9 @@ const state = {
   me: null,
   latest: null,
   available: false,
-  // Every team's areas (src/areas.js), what the viewer follows, and what they may change.
+  // Every team's areas (src/areas.js), and what the viewer may change; what they follow is
+  // ui/follow.js's.
   areas: [],
-  follows: { me: [], teams: {}, by: { org: [], person: [], area: [] } },
   may: { areas: [], rebuild: false },
   // The area being added (`{ new: true }`) or changed (`{ team, id }`), and the answer to it.
   editArea: null,
@@ -468,29 +469,8 @@ function followOf(n) {
   return null;
 }
 
-/** Whether the viewer follows `f` (followOf). */
-function follows(f) {
-  if (!f) return false;
-  if (f.kind === 'tech') return (state.follows.me || []).includes(f.target);
-  return (state.follows.by?.[f.kind] || []).map(String).includes(String(f.target));
-}
-
-const followButton = (f, label, { strong = false } = {}) => (f && (state.me.teams?.length || state.me.staff)
-  ? `<button class="follow${strong && !follows(f) ? ' primary' : ''}" data-follow="${esc(f.kind)}" data-target="${esc(f.target)}" aria-pressed="${follows(f)}"
-      title="${follows(f) ? `Stop following ${esc(label)}: its threads leave your personal view` : `Follow ${esc(label)}: its threads are in your personal view`}">${follows(f) ? 'Unfollow' : 'Follow'}</button>`
-  : '');
-
-async function toggleFollow(kind, target) {
-  const f = { kind, target };
-  const body = kind === 'tech' ? { tech: target, follow: !follows(f) } : { kind, target, follow: !follows(f) };
-  const res = await fetch('/api/follows', {
-    method: 'PUT', credentials: 'same-origin', redirect: 'manual', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  }).catch(() => null);
-  const out = res ? await res.json().catch(() => ({})) : {};
-  if (res && res.ok) state.follows = { ...state.follows, ...out };
-  else state.note = { err: true, text: out.error || 'Could not change what you follow.' };
-  renderPanel();
-}
+/** Node `n`'s Follow (ui/follow.js), as everywhere it is shown: '' for a topic, or before /api/topics. */
+const followButton = (f, label) => (f ? Follow.button({ kind: f.kind, id: f.target, name: label }) : '');
 
 /** Every area once, as Clef asks it: the admin team's, else the first team's, that is on. */
 function areaList() {
@@ -585,7 +565,7 @@ function details(n) {
     ? `<p class="sub facts"><a href="/inbox/admin?${new URLSearchParams({ tab: 'teams', team: teamSlug })}">${esc(n.type === 'team' ? 'The team\'s overview in Teams' : `${teamLabel(teamSlug)}'s overview in Teams`)}</a></p>` : '';
   return `<div class="head"><span class="dot" data-type="${dotType(n)}"></span><div><div class="sub">${esc(n.one)}${parent ? ` in ${esc(parent.label)}` : ''}</div>
       <h2>${esc(n.label)}</h2></div><button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
-    ${followButton(followOf(n), n.label) || foldButton(n) || team ? `<div class="acts">${followButton(followOf(n), n.label, { strong: true })}${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
+    ${followButton(followOf(n), n.label) || foldButton(n) || team ? `<div class="acts">${followButton(followOf(n), n.label)}${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
     ${area && state.editArea && !state.editArea.new && state.editArea.id === area.id ? areaForm() : ''}
     ${area?.what ? `<p class="theme">Clef is asked: is this thread about ${esc(area.what)}?</p>` : ''}
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
@@ -813,7 +793,7 @@ async function load() {
     state.latest = body.latest;
     state.available = body.available;
     state.areas = body.areas || [];
-    state.follows = body.follows || state.follows;
+    Follow.set(body.follows || null);
     state.may = body.may || state.may;
     state.teams = body.teams || {};
     state.members = body.members || null;
@@ -917,8 +897,6 @@ function wire() {
       // Its button, made again, keeps the focus, and the page stays where it was.
       $('panel')?.querySelector(`button.${kind}[data-fold="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
     }
-    const follow = ev.target.closest('button[data-follow]');
-    if (follow) toggleFollow(follow.dataset.follow, follow.dataset.target);
     const edit = ev.target.closest('button[data-edit-area]');
     if (edit) {
       const [team, id] = edit.dataset.editArea.split('|');
@@ -981,6 +959,9 @@ function wire() {
     return;
   }
   state.me = me;
+  // What they follow (ui/follow.js): every Follow button here, and your menu's Following.
+  Follow.init({ me, readonly: Boolean(me.readonly) });
+  Follow.set(me.follows || null);
   Header.user(me, Header.role(me));
   Header.init(me);
   if (!me.teams?.length && !me.staff) {

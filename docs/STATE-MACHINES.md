@@ -90,7 +90,9 @@ and the label job tells the rooms of the teams that follow those (`announceFollo
 `src/normalizer.js`), best effort, as every room's.
 
 **Following a technology.** not followed → followed → not followed: a row in `team_follows` or
-`person_follows` (migration 0072), nothing else. Configuration, like the shares: whose inbox has a
+`person_follows` (migration 0072), nothing else. A team's area is the same, a row in
+`team_follows_by` (migration 0103), worked out with `thread_areas` each time as the technologies are
+with `thread_tech`. Configuration, like the shares: whose inbox has a
 thread is worked out from it, its thread's `thread_tech` and its group each time
 (`followingTeams`, `followersOf`), never stored, so a relabel, a re-threading or a follow taken back
 moves the thread in or out of the inboxes at once, and nothing has to be undone. A person's row
@@ -99,17 +101,20 @@ who may no longer sign in (off every team, outside `SIGNIN_DOMAINS`) keeps the r
 nothing, as nothing of theirs is asked for, and `entryFollowers` leaves them out. A relabel's room event names the technologies it gained or lost (`tech`), so
 a person whose thread no longer shows what they follow still hears of it, and their inbox lets it go.
 
-**Customer marks.** none → unstarred and/or muted → (undone) none (`customer_marks`, migration 0099,
-`setMark` in `src/standing.js`). One row per person and customer, each mark the time it was last
-set: setting it again moves it on, an undo puts back the time it answered (`was`), and a row with
-neither left goes. Nothing is ever cleared by what happens later; what a mark does is worked out from
-its time each time. `unstarred_at`: their messages there before it do not count toward their regulars
-(they may become one again by what they post after). `muted_at`: before it, their messages and
-mentions there do not put its channels in their personal view's list (`listedChannels` in
-`src/shares.js`), nor do their follows its threads (`inPersonalInbox`); a channel comes back as soon
-as they post or are mentioned in it after the mute, a followed thread once it has activity after it,
-and their messages before it do not count toward their regulars or being active. Muting changes the
-list only, not what they may see or work (`inPersonalView`, `mayWork`).
+**Customer marks.** none → unstarred and/or muted → (undone, or acted on) none (`customer_marks`,
+migration 0099, `setMark` in `src/standing.js`). One row per person and customer, each mark the time
+it was last set: setting it again moves it on, an undo puts back the time it answered (`was`), an
+unmute (`PUT /api/follows { mute: false }`) clears it, and a row with neither left goes. Nothing is
+cleared by what happens later; what a mark does is worked out from its time each time.
+`unstarred_at`: their messages there before it do not count toward their regulars (they may become
+one again by what they post after). `muted_at`: the mute holds until they act on the customer, a
+message of theirs in any of its threads after it (`mutedOrgs`); while it holds, none of the
+customer's threads are in their personal view's list, neither by their channels nor by what they
+follow (`inPersonalInbox` in `src/shares.js`), whoever else posts or mentions them. Their messages
+before it do not count toward their regulars or being active. Muting changes the list only, not what
+they may see or work (`inPersonalView`, `mayWork`). A mute and their follow of the customer are one
+or the other (`changeFollow` in `src/following.js`): following it clears `muted_at`, and muting it
+deletes the follow, in the same request; the Undo of either puts back both.
 
 **Label review.** applies to the current label → history only. A review holds while its
 `labeled_through` matches the label's (`src/review.js`).

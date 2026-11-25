@@ -68,8 +68,8 @@ globalThis.Tour = (() => {
         id: 'views',
         title: 'Your views',
         html: teams
-          ? '<p><b>Personal</b> has the threads you posted in or were mentioned in. Beside it, each of your teams has its inbox: every thread in the team\'s channels and about the technologies it follows, what needs you most first.</p>'
-          : '<p><b>Personal</b> has the threads you posted in or were mentioned in, and those about the products, topics and customers you follow. Once you are in a team, its inbox is beside it: every thread in its channels, what needs you most first.</p>',
+          ? '<p><b>Personal</b> has the threads you posted in or were mentioned in. Beside it, each of your teams has its inbox: every thread in the team\'s channels and about the technologies and topics it follows, what needs you most first.</p>'
+          : '<p><b>Personal</b> has the threads you posted in or were mentioned in, and those about the products, topics, customers and people you follow. Once you are in a team, its inbox is beside it: every thread in its channels, what needs you most first.</p>',
         at: ['#threads .order'],
       },
       {
@@ -131,7 +131,7 @@ globalThis.Tour = (() => {
       out.push({
         id: 'follow',
         title: 'Follow what you work on',
-        html: `<p>Follow a product, a topic or a customer: its threads come into <b>Personal</b>, from every team's channels.${teams ? '' : ' On no team, this is how threads come here.'} ${empty ? 'These are suggested from the channels you are in and what is talked about lately; <b>Find something to follow</b>, in your menu, has them too.' : '<b>Find something to follow</b>, in your menu, suggests some from the channels you are in and what is talked about lately.'}</p>`,
+        html: `<p>Follow a product, a topic, a customer or a person wherever you see one: its threads come into <b>Personal</b>, from every team's channels.${teams ? '' : ' On no team, this is how threads come here.'} ${empty ? 'These are suggested from the channels you are in and what is talked about lately; <b>Find something to follow</b>, in your menu, has them too.' : '<b>Find something to follow</b>, in your menu, suggests some from the channels you are in and what is talked about lately.'}</p>`,
         at: ['#threads .getstarted', '#user'],
       });
     }

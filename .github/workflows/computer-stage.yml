@@ -106,6 +106,7 @@ on:
       - 'src/slackurl.js'
       - 'src/sources.js'
       - 'src/stack.js'
+      - 'src/standing.js'
       - 'src/stacktech.js'
       - 'src/suggest.js'
       - 'src/teamsbot.js'

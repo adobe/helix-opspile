@@ -242,6 +242,7 @@ header .note { white-space: nowrap; }
   --s2-icon-checkmark: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0iTTcuODY0MjYsMTUuNzM0MzhjLS4yMjI2NiwwLS40MzM1OS0uMDk4NjMtLjU3NjE3LS4yNjk1M2wtMy43NDcwNy00LjQ5ODA1Yy0uMjY1NjItLjMxODM2LS4yMjE2OC0uNzkxOTkuMDk1Ny0xLjA1NjY0LjMxNzM4LS4yNjU2Mi43OTAwNC0uMjIzNjMsMS4wNTY2NC4wOTU3bDMuMTUzMzIsMy43ODYxMyw3LjQzOTQ1LTkuNDY4NzVjLjI1NTg2LS4zMjYxNy43Mjg1Mi0uMzgxODQsMS4wNTI3My0uMTI2OTUuMzI2MTcuMjU1ODYuMzgyODEuNzI3NTQuMTI2OTUsMS4wNTI3M2wtOC4wMTE3MiwxMC4xOTgyNGMtLjEzOTY1LjE3ODcxLS4zNTI1NC4yODQxOC0uNTc5MS4yODcxMWgtLjAxMDc0WiIvPjwvc3ZnPg==");
   --s2-icon-search: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE4LjUzIDE3LjQ3LTUuMDgzLTUuMDg0QzE0LjQxNyAxMS4xODYgMTUgOS42NiAxNSA4YzAtMy44Ni0zLjE0LTctNy03UzEgNC4xNCAxIDhzMy4xNCA3IDcgN2MxLjY2IDAgMy4xODUtLjU4NCA0LjM4Ni0xLjU1M2w1LjA4NCA1LjA4M2MuMTQ2LjE0Ny4zMzguMjIuNTMuMjJzLjM4NC0uMDczLjUzLS4yMmMuMjkzLS4yOTMuMjkzLS43NjcgMC0xLjA2TTggMTMuNWMtMy4wMzIgMC01LjUtMi40NjgtNS41LTUuNVM0Ljk2OCAyLjUgOCAyLjVzNS41IDIuNDY4IDUuNSA1LjUtMi40NjggNS41LTUuNSA1LjUiLz48L3N2Zz4=");
   --s2-icon-close: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTExLjA2MDYxLDEwbDUuMjA2NDgtNS4yMDYwNWMuMjkyOTctLjI5Mjk3LjI5Mjk3LS43Njc1OCwwLTEuMDYwNTVzLS43Njc1OC0uMjkyOTctMS4wNjA1NSwwbC01LjIwNjU0LDUuMjA2MDVMNC43OTM0NiwzLjczMzRjLS4yOTI5Ny0uMjkyOTctLjc2NzU4LS4yOTI5Ny0xLjA2MDU1LDBzLS4yOTI5Ny43Njc1OCwwLDEuMDYwNTVsNS4yMDY0OCw1LjIwNjA1LTUuMjA2NDgsNS4yMDYwNWMtLjI5Mjk3LjI5Mjk3LS4yOTI5Ny43Njc1OCwwLDEuMDYwNTUuMTQ2NDguMTQ2NDguMzM4MzguMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNsNS4yMDY1NC01LjIwNjA1LDUuMjA2NTQsNS4yMDYwNWMuMTQ2NDguMTQ2NDguMzM4MzguMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNjLjI5Mjk3LS4yOTI5Ny4yOTI5Ny0uNzY3NTgsMC0xLjA2MDU1bC01LjIwNjQ4LTUuMjA2MDVaIi8+PC9zdmc+");
+  --s2-icon-volume-off: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMCAyMCI+PHBhdGggZD0ibTE4Ljc4MDI3LDE3LjczOTI2TDIuMjgwMjcsMS4yMzkyNmMtLjI5Mjk3LS4yOTI5Ny0uNzY3NTgtLjI5Mjk3LTEuMDYwNTUsMHMtLjI5Mjk3Ljc2NzU4LDAsMS4wNjA1NWwyLjcyMTY4LDIuNzIxNjhoLS42OTE0MWMtMS4yNDAyMywwLTIuMjUsMS4wMDk3Ny0yLjI1LDIuMjV2NS41YzAsMS4yNDAyMywxLjAwOTc3LDIuMjUsMi4yNSwyLjI1aDEuNjI4OTFjLjE5ODI0LDAsLjM5MTYuMDgwMDguNTMwMjcuMjE4NzVsMi42MDM1MiwyLjYwNDQ5Yy4zMzU5NC4zMzU5NC43ODEyNS41MTM2NywxLjIzNTM1LjUxMzY3LjIyNTU5LDAsLjQ1MzEyLS4wNDM5NS42NzA5LS4xMzQ3Ny42NTcyMy0uMjcxNDgsMS4wODEwNS0uOTA2MjUsMS4wODEwNS0xLjYxNzE5di00LjUyNjM3bDYuNzE5NzMsNi43MTk3M2MuMTQ2NDguMTQ2NDguMzM3ODkuMjE5NzMuNTMwMjcuMjE5NzNzLjM4Mzc5LS4wNzMyNC41MzAyNy0uMjE5NzNjLjI5Mjk3LS4yOTI5Ny4yOTI5Ny0uNzY3NTgsMC0xLjA2MDU1Wm0tOS4yODAyNy0xLjEzMjgxYzAsLjE0NTUxLS4wOTY2OC4yMDgwMS0uMTU0My4yMzE0NS0uMDU4NTkuMDI0NDEtLjE3MDkuMDQ2ODgtLjI3MjQ2LS4wNTM3MWwtMi42MDM1Mi0yLjYwNDQ5Yy0uNDI0OC0uNDI0OC0uOTg5MjYtLjY1ODItMS41OTA4Mi0uNjU4MmgtMS42Mjg5MWMtLjQxMzA5LDAtLjc1LS4zMzY5MS0uNzUtLjc1di01LjVjMC0uNDEzMDkuMzM2OTEtLjc1Ljc1LS43NWgyLjE5MTQxbDQuMDU4NTksNC4wNTg1OXY2LjAyNjM3WiIvPjxwYXRoIGQ9Im04LjI1ODc5LDQuMDczMjRsLjgxNDQ1LS44MTQ0NWMuMTA0NDktLjEwMjU0LjIxNTgyLS4wNzYxNy4yNzI0Ni0uMDU0NjkuMDcwMzEuMDI5My4xNTQzLjA5Mjc3LjE1NDMuMjMxNDV2Mi41OTA4MmMwLC40MTQwNi4zMzU5NC43NS43NS43NXMuNzUtLjMzNTk0Ljc1LS43NXYtMi41OTA4MmMwLS43MDk5Ni0uNDIzODMtMS4zNDQ3My0xLjA4MDA4LTEuNjE3MTktLjY1NzIzLS4yNzA1MS0xLjQwNDMtLjEyMjA3LTEuOTA3MjMuMzc5ODhsLS44MTQ0NS44MTQ0NWMtLjI5Mjk3LjI5Mjk3LS4yOTI5Ny43Njc1OCwwLDEuMDYwNTVzLjc2NzU4LjI5Mjk3LDEuMDYwNTUsMFoiLz48cGF0aCBkPSJtMTMuMjIyNjYsOS44MjUyYy4wNDAwNC4zODU3NC4zNjUyMy42NzI4NS43NDUxMi42NzI4NS4wMjUzOSwwLC4wNTE3Ni0uMDAwOTguMDc4MTItLjAwMzkxLjQxMjExLS4wNDI5Ny43MTE5MS0uNDExMTMuNjY4OTUtLjgyMzI0LS4wOTk2MS0uOTYyODktLjU3MzI0LTEuNzkzOTUtMS4yOTg4My0yLjI3NzM0LS4zNDQ3My0uMjI4NTItLjgxMDU1LS4xMzU3NC0xLjA0MDA0LjIwODAxLS4yMjk0OS4zNDQ3My0uMTM2NzIuODEwNTUuMjA4MDEsMS4wNDAwNC4zNDc2Ni4yMzE0NS41ODU5NC42NzM4My42Mzg2NywxLjE4MzU5WiIvPjxwYXRoIGQ9Im0xNy4yNSwxMC4wMTc1OGMwLC44NjYyMS0uMjg0MTgsMS42ODY1Mi0uODAwNzgsMi4zMDk1Ny0uMjYzNjcuMzE5MzQtLjIxODc1Ljc5MTk5LjA5OTYxLDEuMDU2NjQuMTQwNjIuMTE1MjMuMzA5NTcuMTcxODguNDc4NTIuMTcxODguMjE0ODQsMCwuNDI5NjktLjA5Mjc3LjU3ODEyLS4yNzE0OC43MzgyOC0uODkyNTgsMS4xNDQ1My0yLjA1MjczLDEuMTQ0NTMtMy4yNjY2LDAtMS42ODU1NS0uNzk3ODUtMy4yNjU2Mi0yLjA4MzAxLTQuMTI0MDItLjM0NzY2LS4yMjk0OS0uODExNTItLjEzNjcyLTEuMDQxMDIuMjA3MDMtLjIyOTQ5LjM0NDczLS4xMzY3Mi44MTA1NS4yMDcwMywxLjA0MTAyLjg3NDAyLjU4MzAxLDEuNDE2OTksMS42ODU1NSwxLjQxNjk5LDIuODc1OThaIi8+PC9zdmc+");
   /* Overlays in the content color, so they show on light and dark alike: faint for a selected
      or hovered list row, stronger for a Menu item under the pointer or a pressed row (Spectrum
      CSS Menu's item hover). */
@@ -780,6 +781,146 @@ header .note { white-space: nowrap; }
 .spectrum .s2-chevron { transition: rotate var(--s2-ease); }
 .spectrum .s2-chevron.right { rotate: -90deg; }
 .spectrum .s2-chevron.right:dir(rtl) { rotate: 90deg; }
+
+/* What to follow, suggested (ui/followsuggest.js): where an empty personal view would be, and in
+   a dialog from your menu's Following on every page (ui/follow.js). */
+dialog.followsheet .top { display: flex; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); }
+dialog.followsheet .close { flex: none; display: grid; place-items: center; padding: 0; border: 0; cursor: pointer; }
+.spectrum .fs-lead { margin: 0; font-size: var(--spectrum-font-size-100); line-height: var(--spectrum-line-height-200); color: var(--spectrum-neutral-subdued-content-color-default); }
+dialog.followsheet { width: min(calc(var(--spectrum-spacing-100) * 70), 94vw); max-height: 86vh; padding: 0; overflow: hidden; }
+dialog.followsheet form { display: flex; flex-direction: column; max-height: 86vh; }
+dialog.followsheet .fs-body { overflow: auto; }
+.fs { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); }
+.fs-list { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); }
+.fs-kind ul { margin: 0; padding: 0; list-style: none; }
+.fs-row { display: flex; align-items: center; gap: var(--spectrum-spacing-200); }
+.fs-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.spectrum dialog.followsheet { color: var(--ink); background: var(--spectrum-background-layer-2-color); border: 0; border-radius: var(--spectrum-corner-radius-extra-large-default); box-shadow: var(--s2-elevated); }
+.spectrum dialog.followsheet::backdrop { background: var(--spectrum-overlay-color); }
+.spectrum dialog.followsheet .top { padding: var(--spectrum-spacing-400) var(--spectrum-spacing-400) var(--spectrum-spacing-200); }
+.spectrum dialog.followsheet h2 { margin: 0; font-size: var(--spectrum-font-size-300); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum dialog.followsheet .close { width: var(--spectrum-spacing-600); height: var(--spectrum-spacing-600); border-radius: var(--s2-radius); color: var(--spectrum-neutral-content-color-default); background: transparent; }
+.spectrum dialog.followsheet .close:hover { background: var(--spectrum-gray-200); }
+.spectrum dialog.followsheet .fs-body { padding: 0 var(--spectrum-spacing-400) var(--spectrum-spacing-400); }
+.spectrum .fs-kind h3 { margin: 0 0 var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fs-row { min-height: var(--s2-ctl); padding: var(--spectrum-spacing-75) 0; border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .fs-row:last-child { border-bottom: 0; }
+.spectrum .fs-nm { font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .fs-of, .spectrum .fs-why { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fs-note { margin: 0; font-size: var(--spectrum-font-size-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+
+/* Following and muting (ui/follow.js), every page's: Follow a ToggleButton, quiet and small, or a
+   split one whose chevron opens who follows it (a Menu of checkable rows); Mute a ToggleButton
+   beside it, with S2's volume-off icon. Selected, each is filled, as a ToggleButton is. */
+.spectrum .fo { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); flex: none; vertical-align: middle; }
+.spectrum .fo .fo-follow { display: inline-flex; gap: 0; }
+.spectrum .fo :is(.fo-b, .fo-more, .fo-mute) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-75);
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  border: var(--spectrum-border-width-100) solid var(--spectrum-gray-300);
+  border-radius: var(--s2-pill);
+  background: transparent;
+  font: inherit;
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  white-space: nowrap;
+  color: var(--spectrum-neutral-content-color-default);
+  cursor: pointer;
+  transition: background-color var(--s2-ease), color var(--s2-ease), border-color var(--s2-ease);
+}
+.spectrum .fo-follow.split .fo-b { border-start-end-radius: 0; border-end-end-radius: 0; }
+.spectrum .fo-follow.split .fo-more {
+  margin-inline-start: calc(-1 * var(--spectrum-border-width-100));
+  padding: 0 var(--spectrum-spacing-75);
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+.spectrum .fo :is(.fo-b, .fo-more, .fo-mute):hover { background: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .fo :is(.fo-b, .fo-more, .fo-mute):focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
+.spectrum .fo :is(.fo-b, .fo-mute)[aria-pressed="true"] { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-selected-default); border-color: transparent; }
+.spectrum .fo :is(.fo-b, .fo-mute)[aria-pressed="true"]:hover { background: var(--spectrum-neutral-background-color-selected-hover); }
+.spectrum .fo :is(.fo-b, .fo-more, .fo-mute):disabled { cursor: progress; }
+.spectrum .fo .fo-more[aria-expanded="true"] .s2-chevron { rotate: 180deg; }
+.spectrum .fo .fo-n {
+  min-width: var(--spectrum-spacing-300);
+  padding: 0 var(--spectrum-spacing-50);
+  border-radius: var(--s2-pill);
+  background: var(--spectrum-accent-background-color-default);
+  color: var(--spectrum-white);
+  font-size: var(--spectrum-font-size-50);
+  text-align: center;
+}
+.spectrum .fo-ico {
+  display: inline-block;
+  flex: none;
+  width: var(--spectrum-workflow-icon-size-50);
+  height: var(--spectrum-workflow-icon-size-50);
+  background: currentColor;
+  mask: var(--s2-icon-volume-off) center / contain no-repeat;
+}
+.spectrum .menu.fo-pop {
+  position: fixed;
+  inset: auto;
+  width: auto;
+  min-width: calc(var(--spectrum-spacing-100) * 30);
+  max-width: calc(100vw - var(--spectrum-spacing-400));
+  margin: 0;
+}
+.spectrum .menu .fo-h { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .menu .fo-h.sub { padding-bottom: 0; }
+.spectrum .fo-pop .fo-sep { margin: var(--spectrum-spacing-75) 0; border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .menu .item[role="menuitemcheckbox"] .ck { visibility: hidden; }
+.spectrum .menu .item[role="menuitemcheckbox"][aria-checked="true"] .ck { visibility: visible; }
+.spectrum .menu .item:disabled { cursor: default; color: var(--spectrum-disabled-content-color); }
+.spectrum .menu .item .fo-who { flex: 1; text-align: start; }
+.spectrum .menu .item .fo-ico { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .menu .item small { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .fo-pop .fo-another { display: grid; gap: var(--spectrum-spacing-50); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); }
+.spectrum .fo-pop .fo-find { min-height: var(--s2-ctl); }
+.spectrum .fo-pop .fo-hint { margin: var(--spectrum-spacing-75) var(--spectrum-spacing-100) var(--spectrum-spacing-50); max-width: calc(var(--spectrum-spacing-100) * 34); font-size: var(--spectrum-font-size-75); }
+/* What a change did, where the page has no note of its own (ui/follow.js): S2's Toast. */
+.spectrum .fo-toast {
+  position: fixed;
+  z-index: 50;
+  bottom: var(--spectrum-spacing-300);
+  left: 50%;
+  translate: -50% 0px;
+  display: flex;
+  align-items: center;
+  gap: var(--spectrum-spacing-300);
+  max-width: calc(100vw - var(--spectrum-spacing-400));
+  min-height: var(--spectrum-toast-height);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-100) var(--spectrum-spacing-300);
+  font-size: var(--spectrum-font-size-100);
+  color: var(--spectrum-white);
+  background: var(--spectrum-neutral-subdued-background-color-default);
+  border-radius: var(--spectrum-corner-radius-large-default);
+  box-shadow: var(--s2-elevated);
+  transition: opacity var(--s2-pop-in), translate var(--s2-pop-in);
+}
+@starting-style {
+  .spectrum .fo-toast { opacity: 0; translate: -50% var(--spectrum-spacing-200); }
+}
+.spectrum .fo-toast button {
+  flex: none;
+  min-height: var(--spectrum-component-height-75);
+  padding: 0 var(--spectrum-component-edge-to-text-75);
+  border: var(--spectrum-border-width-200) solid var(--spectrum-white);
+  border-radius: var(--s2-pill);
+  background: transparent;
+  font: inherit;
+  font-size: var(--spectrum-font-size-75);
+  font-weight: var(--spectrum-bold-font-weight);
+  color: var(--spectrum-white);
+  cursor: pointer;
+}
+.spectrum .fo-toast button:hover { background: var(--spectrum-transparent-white-200); }
+@media (forced-colors: active) {
+  .spectrum .fo-ico { background: CanvasText; }
+}
 
 /* Folds (<details>) open as S2's Disclosure does: the panel grows from nothing and fades in
    (ease-out), and folds away faster (ease-in). This is ::details-content, so a browser without

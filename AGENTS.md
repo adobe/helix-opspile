@@ -85,6 +85,13 @@ code and docs, is the decision model that labels threads and channels.
   that `ui/admin.js` makes, which keeps the address (`view=`, `path=`). Before anything replaces
   what it shows, `ui/admin.js` awaits `Agent.leave()` (it saves, or asks). Its styles are
   `ui/spectrum-agent.css`, all under `.agent`. `/inbox/kb`, the page it was, redirects there.
+- **Following and muting is one component, `ui/follow.js`** (the global `Follow`, its look in
+  `ui/spectrum.css`, `.fo`): whatever may be followed (a product, a topic, a customer, a person) gets
+  `Follow.button({ kind, id, name })` wherever a page shows it, never a button of its own; for whoever
+  manages a team it is a split button whose chevron picks who follows (you, or the team). A mute is
+  always your own, and only of a customer. Every page sets it from `GET /api/follows` (or `/api/me`'s
+  `follows`) and every change goes through `PUT /api/follows` (`src/following.js`); your menu's
+  Following is its too. A page reacts to a change with `Follow.on`.
 - `ui/writing.js` (the global `Writing`) is the markdown formatting of a text box and the keys
   that format, the inbox's and the portal's: change a shortcut there, not in either page. The
   portal's box is rich text (`ui/richtext.js`, the global `RichText`): it sends HTML, and

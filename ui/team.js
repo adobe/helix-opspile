@@ -28,8 +28,9 @@
  *   catalog has (its knowledge base's products/) and what else Clef sees in its threads, which the
  *   tabs above them pick. Then its knowledge base by type, and its stack drawing where it has one.
  *
- * A person's card is drawn with what the inbox's profile card is (ui/person.js). Everything in it
- * is a name, a number or a picture, written escaped.
+ * A person's card is drawn with what the inbox's profile card is (ui/person.js). A person and a
+ * technology have their Follow where the page gives one (`ctx.follow`, ui/follow.js). Everything
+ * in it is a name, a number or a picture, written escaped.
  */
 globalThis.TeamView = (() => {
   const {
@@ -63,7 +64,7 @@ globalThis.TeamView = (() => {
       team: p.team.slug, teamName: p.team.name, description: m.profile.description, href: ctx.kbHref(m.profile.path),
     }]) : '';
     return `<article class="tv-person ps-card" data-person="${m.id}">
-      <header>${face(m.name, m.avatar, 'big')}<div class="who"><b>${name}</b>${role}${m.title ? `<span class="sub">${esc(m.title)}</span>` : ''}</div></header>
+      <header>${face(m.name, m.avatar, 'big')}<div class="who"><b>${name}</b>${role}${m.title ? `<span class="sub">${esc(m.title)}</span>` : ''}</div>${ctx.follow?.({ kind: 'person', id: m.id, name: m.name }) || ''}</header>
       ${profile}
       ${Person.freq(m.name, m, p.weeks.length)}
       ${knows || '<p class="sub tv-none">Nothing Clef tagged in their threads yet.</p>'}
@@ -130,7 +131,9 @@ globalThis.TeamView = (() => {
       const follow = t.followed ? ' <span class="tag tv-follow" title="Followed: its threads are in the team\'s inbox">Followed</span>' : '';
       const sub = [t.vendor !== t.name && t.vendor, t.kind && t.kind !== 'Product' ? t.kind.toLowerCase() : '',
         t.catalog ? 'in its catalog' : ''].filter(Boolean).join(' · ');
-      return `<li><span class="tv-name"><span class="tv-line">${name}${follow}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
+      // And its Follow (ui/follow.js), with the team in its chevron for whoever manages it.
+      const button = ctx.follow?.({ kind: 'tech', id: t.tech, name: t.name }) || '';
+      return `<li><span class="tv-name"><span class="tv-line">${name}${follow}${button}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
         <span class="tv-meter">${bar(t.threads / most)}<span class="sub">${esc(plural(t.threads, 'thread'))}</span></span>${spark(t.weekly, { cls: 'tech', label: 'messages in its threads, week by week' })}</li>`;
     };
     return Overview.layers(p.tech.filter((t) => techIn(t, tab)), p.layers, row);

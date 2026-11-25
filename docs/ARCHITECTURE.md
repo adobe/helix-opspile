@@ -130,6 +130,21 @@ them. A follow rule's shares are rows here too (`added_by` `rule:<id>`, `src/fol
 written after every rule change and on the cron, taken away once the rule no longer matches, and
 not removed by hand.
 
+**Following.** One concept, everywhere (`src/following.js`, `ui/follow.js`): who (you, or a team
+you may act for: one you manage, any team but the holding ones for the admin team), what (follow, or
+mute) and what of: a product (`tech`), a topic (`area`), a customer (`org`) or a person (`person`).
+A team follows products, topics and customers, never a person; a mute is always your own, and only
+of a customer. Wherever one of these is shown (a thread's tech stack and topics, a profile card, a
+team's overview, a customer's page, the Topics page, the suggestions) it has the same Follow
+button, Follow / Following, for you; for whoever may follow for a team its chevron opens who follows
+it, you and each of those teams, to check or uncheck. A customer has a Mute beside it. Following a
+customer and muting it are one or the other: following it lifts the mute, muting it ends the follow.
+A mute lifts itself once you act on the customer: a message of yours in any of its threads after it
+(`mutedOrgs` in `src/standing.js`); nobody else's message, a mention of you, or what you follow does
+not bring it back. `GET /api/follows` (and `/api/me`'s `follows`) is one state for every page, with
+the names of what is in it; `PUT /api/follows` takes every change, `team` for a team's. Your menu's
+Following lists what you follow and mute, on every page.
+
 **Following technologies.** A team follows technologies of the tech stack (`team_follows`, migration
 0072; its managers and the admin team pick them on its page, `PUT /api/admin/follows`), and so does a
 person (`person_follows`; from a thread's tech stack dropdown, or the Following section of their menu,
@@ -157,11 +172,14 @@ A person also follows a **customer**, a **person** or an **area** (`person_follo
 0087; `PUT /api/follows { kind, target }`): the customer's conversations, the threads the person
 posted in, and those Clef puts in the area (`thread_areas`, by index, written with the label, as
 `thread_tech` is) are in their personal view the same way, and in `followersOf` for live updates
-and notifications. A team follows a customer too (on the customer's page in Customers, its managers
-and the admin team; `PUT /api/admin/org-follows`): a follow rule of field `org` (migration 0098),
+and notifications. A team follows an **area** too (`team_follows_by`, migration 0103): the threads
+Clef puts in it are in the team's inbox as those that show a technology it follows are
+(`followedByTeam`, `followingTeams`; the relabel's room event names the areas it joined or left,
+`teamsFollowing`). A team follows a customer too (its managers and the admin team, with Follow's
+chevron or `PUT /api/admin/org-follows`): a follow rule of field `org` (migration 0098),
 which matches the org the other rules file a channel under, and the org's that were merged into it,
 so every channel of the customer is shared with the team, now and later, as any follow rule's
-channels are. On the customer's page everyone on a team follows it themselves, a manager gives a
+channels are. On the customer's page everyone on a team follows or mutes it themselves, a manager gives a
 channel of their team back to the admin team (`POST /api/admin/release`) or takes it out of their
 team's inbox where it is shared by hand, and asks for one of another team's (a request with `move`).
 
@@ -174,7 +192,7 @@ less what they follow already; customers only from their own channels. With `q`,
 topic and customer whose name has its words. Names and counts only, never a thread; the trending
 counts are the same for everyone, and an isolate keeps them an hour. The inbox shows them in place of
 an empty personal view (where someone on no team starts), and in a dialog from the Following
-section of the menu (`ui/followsuggest.js`).
+section of the menu on every page (`ui/followsuggest.js`), each with its Follow button.
 
 An org is a slug. What it is called, its icon (a domain, whose favicon is shown, or an image
 URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an org without

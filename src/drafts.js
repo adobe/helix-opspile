@@ -41,16 +41,20 @@ const PREVIEW = 140;
 /**
  * SQL, `?1` the thread: `WITH t AS (the thread, `k` its entry's key) SELECT t.*, shares, follows`
  * (the teams its channel is shared with, as JSON, in `sharesOf`'s order, and the teams that
- * follow a technology the entry shows, in `followingTeams`'), for `entryFields`; more columns
- * may follow, then `FROM t`.
+ * follow a technology the entry shows or an area it is in, in `followingTeams`'), for
+ * `entryFields`; more columns may follow, then `FROM t`.
  */
 export const ENTRY_ROW = `WITH t AS (SELECT thread, org, team, logical_thread, source, tenant,
       channel_id, COALESCE(logical_thread, thread) AS k FROM threads WHERE thread = ?1)
   SELECT t.*, (SELECT json_group_array(c.team ORDER BY c.added_at, c.team) FROM channel_teams c
       WHERE c.source = t.source AND c.channel_id = t.channel_id) AS shares,
-    (SELECT json_group_array(team) FROM (SELECT DISTINCT f.team FROM threads x
+    (SELECT json_group_array(team) FROM (SELECT f.team FROM threads x
       JOIN thread_tech g ON g.thread = x.thread JOIN team_follows f ON f.tech = g.tech
-      WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel' ORDER BY f.team))
+      WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel'
+      UNION SELECT f.team FROM threads x
+      JOIN thread_areas a ON a.thread = x.thread
+      JOIN team_follows_by f ON f.kind = 'area' AND f.target = a.area
+      WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel' ORDER BY 1))
       AS follows`;
 
 /** An entry from an `ENTRY_ROW` row, without its members' keys. */

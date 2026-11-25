@@ -63,7 +63,7 @@ let cache = new WeakMap();
 /**
  * SQL: the team's threads (`thread`), `?1` the team, `?2` the first day counted: the
  * conversations filed under it, in the channels shared with it, and those that show a
- * technology it follows, with a message by a person since.
+ * technology it follows or that Clef puts in an area it follows, with a message by a person since.
  */
 const SCOPE = `scope AS (
     SELECT h.thread FROM threads h WHERE h.team = ?1 AND h.kind = 'channel' AND h.last_at >= ?2
@@ -71,7 +71,10 @@ const SCOPE = `scope AS (
       AND h.channel_id = s.channel_id WHERE s.team = ?1 AND h.kind = 'channel' AND h.last_at >= ?2
     UNION SELECT x.thread FROM team_follows f JOIN thread_tech g ON g.tech = f.tech
       JOIN threads x ON x.thread = g.thread
-      WHERE f.team = ?1 AND x.kind = 'channel' AND x.last_at >= ?2)`;
+      WHERE f.team = ?1 AND x.kind = 'channel' AND x.last_at >= ?2
+    UNION SELECT x.thread FROM team_follows_by f JOIN thread_areas a ON a.area = f.target
+      JOIN threads x ON x.thread = a.thread
+      WHERE f.team = ?1 AND f.kind = 'area' AND x.kind = 'channel' AND x.last_at >= ?2)`;
 
 /** SQL: the platform accounts of the team's members (`person`, `key` as messages.author_key). */
 const KEYS = `keys AS (SELECT DISTINCT i.person, i.source || ':' || i.tenant || ':' || i.user_id AS key
