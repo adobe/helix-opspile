@@ -322,9 +322,15 @@ function cardPerson(person) {
     orgIcon: (slug, icon) => (icon ? favImg(icon) : ''),
   };
   // A few of each: the card is small; their team's overview has the rest.
-  const { knows, keys } = Person.work(w, ctx, { most: 3 });
+  const { knows, keys } = Person.work(w, ctx, { most: 3, more: true });
   return `<div class="ps-part">${profile}${w.messages ? Person.freq(person.name, w, w.weeks) : ''}${knows}${keys}</div>`;
 }
+
+/**
+ * Where an Adobe person's part will be while the knowledge bases are asked: as tall as it about
+ * is, so that the card does not grow under the pointer, or jump above the name, once it comes.
+ */
+const CARD_WAIT = '<div class="ps-part ps-wait" aria-hidden="true"><span class="ps-w-act"></span><span></span><span></span></div>';
 
 function cardHtml(p, ctx, found) {
   // An Adobe person as their team's overview shows them: the best of their accounts' name,
@@ -355,7 +361,7 @@ function cardHtml(p, ctx, found) {
     ${rows.length ? `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : ''}
     ${other ? `<div class="note">Not the usual customer domain in this channel (${esc(ctx.customerDomain)}).</div>` : ''}
     ${p.local ? '<div class="note">No account details known yet.</div>' : ''}
-    ${cardPerson(person)}
+    ${found?.pending && rel === 'adobe' ? CARD_WAIT : cardPerson(person)}
     ${cardKb(found)}
     ${mayAskAbout(ctx.thread, p) ? `<button type="button" class="ask-about" data-ask-about title="Ask in the sidebar: only your team sees it, nothing is posted">${SIDE_ICON}What should I know about ${esc(p.name)}?</button>` : ''}`;
 }
