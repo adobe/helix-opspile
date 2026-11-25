@@ -16,7 +16,7 @@ import {
 import { AGENT_EMAIL } from './draftevents.js';
 import { entryOf } from './drafts.js';
 import { channelOwner } from './mcpadmin.js';
-import { managesTeam } from './review.js';
+import { managesTeam } from './roles.js';
 import { readSettings } from './settings.js';
 
 /**

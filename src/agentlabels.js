@@ -25,8 +25,6 @@ import { QUESTIONS } from './label.js';
  *   rarely changes, and Clef's answer can flip from one message to the next.
  * - `urgency` and `next_actor`: replaced until a person posts after `at` (`threads.last_at`):
  *   both change with the conversation, and Clef reads the new message then.
- *
- * A person's label review of the current label (src/review.js) wins over the agent's.
  */
 
 /** The urgency the agent gives, by name, as Clef's score (`labels.urgency`, 0 to 3). */
@@ -34,7 +32,7 @@ export const URGENCY = {
   low: 0, normal: 1, high: 2, critical: 3,
 };
 
-/** What the agent may answer, per question: as label review's (src/review.js ANSWERS). */
+/** What the agent may answer, per question. */
 export const AGENT_ANSWERS = {
   kind: Object.keys(QUESTIONS.kind.criteria),
   next_actor: Object.keys(QUESTIONS.next_actor.criteria),

@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
+import { setAgentLabels } from '../src/agentlabels.js';
 import { render } from '../src/channels.js';
 import {
   attachmentsOf, EXPORT_DELAY_SECONDS, exportThreads, queueExport, SWEEP_JOB, sweepExports,
@@ -354,7 +355,7 @@ describe('klickhaus export', () => {
     assert.equal(env.DB.rows('SELECT COUNT(*) AS n FROM threads WHERE exported_at IS NOT NULL')[0].n, 2);
   });
 
-  it('takes a reviewer\'s answer over Clef\'s, and says alert for alert channels', async () => {
+  it('takes the agent\'s answer over Clef\'s, and says alert for alert channels', async () => {
     const env = setup();
     const ALERT = 'slack:E1:C1:3.1';
     thread(env);
@@ -364,9 +365,7 @@ describe('klickhaus export', () => {
       key: ALERT, user: 'B1', person: null, counted: 0, kind: 'bot',
     });
     label(env, KEY, { urgency: 0.3 });
-    env.DB.sqlite.prepare(`INSERT INTO label_reviews (thread, question, value, agrees,
-      labeled_through, reviewer, created_at) VALUES (?, 'urgency', '3', 0, ?, 7, ?)`)
-      .run(KEY, iso(10), iso(40));
+    await setAgentLabels(env.DB, KEY, [KEY], { urgency: 3 }, 'x', new Date(iso(40)));
     await exportThreads(env, [KEY, ALERT], { now: NOW });
     const rows = rowsOf(posts[0]);
     const byThread = Object.fromEntries(rows.map((x) => [x.thread, x]));
@@ -511,9 +510,7 @@ describe('klickhaus export', () => {
     assert.deepEqual(await sweepExports(env, now), { queued: 0, jobs: 0 });
     message(env, '10.2', 30, { key: keys[0] });
     label(env, keys[1], { at: iso(65) });
-    env.DB.sqlite.prepare(`INSERT INTO label_reviews (thread, question, value, agrees,
-      labeled_through, reviewer, created_at) VALUES (?, 'kind', 'question', 0, ?, 7, ?)`)
-      .run(keys[2], iso(10), iso(61));
+    await setAgentLabels(env.DB, keys[2], [keys[2]], { kind: 'question' }, 'x', new Date(iso(61)));
     env.DB.sqlite.prepare('UPDATE threads SET rethreaded_at = ? WHERE thread = ?').run(iso(62), keys[3]);
     env.DB.sqlite.prepare('UPDATE threads SET exported_through = NULL WHERE thread = ?').run(keys[4]);
     await sweepExports(env, now);

@@ -101,7 +101,7 @@ on:
       - 'src/resolve.js'
       - 'src/response-model.js'
       - 'src/rethread.js'
-      - 'src/review.js'
+      - 'src/roles.js'
       - 'src/rules.js'
       - 'src/search.js'
       - 'src/scripttools.js'

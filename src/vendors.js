@@ -31,13 +31,13 @@
  * No message text leaves the Worker.
  */
 
-import { agentLabelsFor } from './agentlabels.js';
+import { agentLabelsFor, applyAgentLabels } from './agentlabels.js';
 import { underlying } from './d1batch.js';
 import { TECH_MIN } from './label.js';
 import {
   isResolved, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
-import { effectiveLabel, managesTeam, reviewsFor } from './review.js';
+import { managesTeam } from './roles.js';
 import {
   CACHE_MS, WEEK, WEEKS, zeros,
 } from './teamprofile.js';
@@ -111,10 +111,9 @@ async function entriesOfChunk(env, rows) {
   if (!keys.length) {
     return new Map();
   }
-  const [{ results: labels }, reviews, agent, checks, signals] = await Promise.all([
+  const [{ results: labels }, agent, checks, signals] = await Promise.all([
     env.DB.prepare(`SELECT thread, next_actor, kind, urgency, resolved_p, labeled_through, title
       FROM labels WHERE thread IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(keys)).all(),
-    reviewsFor(env.DB, keys),
     agentLabelsFor(env.DB, keys),
     resolutionFacts(env, keys),
     signalFacts(env, keys),
@@ -127,15 +126,10 @@ async function entriesOfChunk(env, rows) {
     return m;
   };
   const labelOf = new Map((labels || []).map((l) => [l.thread, l]));
-  const reviewsOf = group(reviews);
   const agentOf = group(agent);
   const out = new Map();
   for (const r of rows) {
-    const label = effectiveLabel(
-      labelOf.get(r.thread) || null,
-      reviewsOf.get(r.thread) || [],
-      agentOf.get(r.thread) || [],
-    );
+    const label = applyAgentLabels(labelOf.get(r.thread) || null, agentOf.get(r.thread) || []);
     const verdict = resolution(checks.get(r.thread), label, null)?.verdict;
     out.set(r.thread, {
       waiting: waitingOn({ ...r, label, signals: signals.get(r.thread) || [] }),
@@ -150,7 +144,7 @@ async function entriesOfChunk(env, rows) {
 
 /**
  * What the inbox shows of thread rows (`thread`, `kind`, `last_staff`, `last_at`, `any_at`,
- * `imported`, `org_type`, `title`): their label with the agent's answers and the reviews, who
+ * `imported`, `org_type`, `title`): their label with the agent's answers, who
  * they wait on (src/threads.js waitingOn), whether they are resolved (a staff ✅, else Clef), their
  * urgency, kind and title. A Map by thread.
  */

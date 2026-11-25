@@ -17,7 +17,7 @@ import { listImages } from './agent/image.js';
 import { setTeamImage, teamImage } from './agent/kernel.js';
 import { json } from './http.js';
 import { channelOwner, ownerOf } from './mcpadmin.js';
-import { isAdmin, managesTeam } from './review.js';
+import { isAdmin, managesTeam } from './roles.js';
 import { secretAdmin, secretsOf } from './secretadmin.js';
 
 /**

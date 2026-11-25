@@ -33,7 +33,7 @@
  * (they cost a few hundred milliseconds of D1 for the biggest team).
  */
 
-import { ADMIN_TEAM, managesTeam } from './review.js';
+import { ADMIN_TEAM, managesTeam } from './roles.js';
 import { underlying } from './d1batch.js';
 import { activeSince } from './listactivity.js';
 import { mayRead } from './kbaccess.js';

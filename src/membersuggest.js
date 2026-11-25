@@ -11,7 +11,7 @@
  */
 
 import { isStaffDomain } from './lookup.js';
-import { ADMIN_TEAM } from './review.js';
+import { ADMIN_TEAM } from './roles.js';
 import { UNASSIGNED } from './rules.js';
 import { topicIndex } from './topicindex.js';
 

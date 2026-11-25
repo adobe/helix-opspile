@@ -197,7 +197,7 @@ describe('Spectrum 2', () => {
       assert.doesNotMatch(text, /class="ck">|class="ck[^"]*"[^>]*>✓/, name);
     }
     assert.match(PAGES['inbox.html'], /<span class="ck s2-check" aria-hidden="true"><\/span>When someone mentions me/);
-    // The header's mode (reviewing labels, viewing as someone) is one row: icon, label, cross.
+    // The header's mode (viewing as someone) is one row: icon, label, cross.
     assert.match(shared, /header \.mode \{ display: inline-flex; align-items: center;/);
     // The checkbox is drawn here, in tokens, in place of the browser's.
     assert.match(shared, /input:where\(\[type="checkbox"\]\) \{\s*appearance: none;/);

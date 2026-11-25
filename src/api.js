@@ -46,7 +46,7 @@ import {
 } from './lookup.js';
 import { appRule, readPost } from './attach.js';
 import { openPortalFile, portalFetch, portalFileOf } from './portalsource.js';
-import { agentLabelsFor } from './agentlabels.js';
+import { agentLabelsFor, applyAgentLabels } from './agentlabels.js';
 import { react, resolve } from './react.js';
 import {
   mergeFacts, resolution, resolutionFacts, signalFacts,
@@ -60,9 +60,7 @@ import { mentionedPeople, profiles, relationOf } from './profiles.js';
 import { channelLinks, channelRefs, nameChannelIds } from './channelrefs.js';
 import { slackMessageLinks } from './slacklinks.js';
 import { json, text } from './http.js';
-import {
-  ANSWERS, effectiveLabel, isAdmin, isManager, reviewQueue, reviewsFor, reviewStats, submitReview,
-} from './review.js';
+import { isAdmin, isManager } from './roles.js';
 import {
   inPersonalInbox, mayPost, mayReply, maySee, mayWork, memberOf, roomsOf, sharedWith, teamsOf,
   viewTeam,
@@ -574,7 +572,7 @@ export async function inbox(env, me, team, {
   const keys = JSON.stringify(threadKeys);
   const [
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
-    { results: posted }, { results: named }, resolved, signals, reviews, { results: names },
+    { results: posted }, { results: named }, resolved, signals, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
     { results: techRows }, stacks, techVocab, elsewhere, yours, unseen, agentLabels, standing,
   ] = await Promise.all([
@@ -613,8 +611,6 @@ export async function inbox(env, me, team, {
       WHERE n.thread IN (SELECT value FROM json_each(?))`).bind(keys).all(),
     resolutionFacts(env, threadKeys),
     signalFacts(env, threadKeys),
-    // Reviews of any of the threads; only those of labelled ones are used.
-    reviewsFor(env.DB, threadKeys),
     // Names of everyone posting or mentioned (for "involves"): the people of the two queries
     // above, asked for in the same round.
     env.DB.prepare(`SELECT id, name, staff, email FROM people WHERE id IN (
@@ -665,11 +661,7 @@ export async function inbox(env, me, team, {
   const namedBy = by(named, (r) => ({ person: r.person, staff: Boolean(r.staff) }));
   const labelBy = new Map((labels || []).map(({ topics, ...l }) => [
     l.thread, {
-      ...effectiveLabel(
-        l,
-        reviews.filter((r) => r.thread === l.thread),
-        agentLabels.filter((r) => r.thread === l.thread),
-      ),
+      ...applyAgentLabels(l, agentLabels.filter((r) => r.thread === l.thread)),
       topics: topicList(topics),
     },
   ]));
@@ -900,10 +892,10 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   // Everything below depends only on the group: ask D1 and R2 at once, not one by one
   // (opening a thread waited for some fifteen round trips in a row).
   const [
-    link, files, { results: idx }, { results: rx }, { results: marks }, model, reviews,
-    reviewed, facts, anchorLabel, { results: found }, drafts, rowOrgs,
-    { results: appPosts }, agentOn, { results: memberTech }, { results: rootLinks }, place,
-    bashRequests, sidebar, toolRequests, agentLabels,
+    link, files, { results: idx }, { results: rx }, { results: marks }, model, facts,
+    anchorLabel, { results: found }, drafts, rowOrgs, { results: appPosts }, agentOn,
+    { results: memberTech }, { results: rootLinks }, place, bashRequests, sidebar, toolRequests,
+    agentLabels,
   ] = await Promise.all([
     // The first thread's root, else its first message, else (all of it deleted) the group's.
     env.DB.prepare(`SELECT permalink FROM messages
@@ -930,12 +922,6 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       FROM watermarks w JOIN team_members m ON m.person = w.person AND m.team = ?
       WHERE w.thread IN (SELECT value FROM json_each(?))`).bind(readers, keys).all(),
     env.DB.prepare('SELECT * FROM labels WHERE thread = ?').bind(labelKey).first(),
-    isAdmin(me) ? env.DB.prepare(`SELECT r.question, r.model_value, r.value,
-        r.agrees, r.labeled_through, r.note, r.created_at, p.name AS reviewer
-      FROM label_reviews r JOIN people p ON p.id = r.reviewer
-      WHERE r.thread = ? ORDER BY r.created_at DESC`).bind(labelKey).all()
-      .then((r) => r.results || []) : [],
-    reviewsFor(env.DB, [labelKey]),
     resolutionFacts(env, group.map((m) => m.thread)),
     env.DB.prepare('SELECT title FROM labels WHERE thread = ?').bind(key).first(),
     env.DB.prepare(`SELECT DISTINCT source, field, value, confidence
@@ -1013,7 +999,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
       };
     })
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
-  const label = effectiveLabel(model, model ? reviewed : [], agentLabels);
+  const label = applyAgentLabels(model, agentLabels);
   const bodies = messages.filter((m) => !m.deletedAt).map((m) => m.body);
   // Slack permalinks the messages name, in this thread's workspace. Profiles wait for the
   // authors those links add; the mention and channel lookups run alongside the link lookup.
@@ -1078,7 +1064,6 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     watermarks: marks || [],
     label,
     model,
-    reviews,
     facts: found || [],
     resolution: resolution(mergeFacts([...facts.values()]), label, me.id),
     draft: draftOf(drafts, entryKeys),
@@ -1264,7 +1249,7 @@ async function route(request, env, url, {
       questions: await openQuestions(env, me.email),
     });
   }
-  // Looking as someone else is read-only: no reads, replies, reviews or connections.
+  // Looking as someone else is read-only: no reads, replies or connections.
   const writes = request.method !== 'GET' || /^\/api\/auth\//.test(url.pathname);
   if (me.readonly && writes) {
     return json({ error: 'read-only while viewing as someone else' }, 403);
@@ -1721,22 +1706,6 @@ async function route(request, env, url, {
       return json({ error: 'changing the agents is for the admin team and team managers' }, 403);
     }
     return (await kbAdmin(request, env, url, me)) || json({ error: 'not found' }, 404);
-  }
-  if (url.pathname.startsWith('/api/review')) {
-    if (!isAdmin(me)) {
-      return json({ error: 'label review is for the admin team' }, 403);
-    }
-    if (url.pathname === '/api/review/queue') {
-      return json({ answers: ANSWERS, queue: await reviewQueue(env.DB) });
-    }
-    if (url.pathname === '/api/review/stats') {
-      return json({ stats: await reviewStats(env.DB) });
-    }
-    if (url.pathname === '/api/review' && request.method === 'POST') {
-      const result = await submitReview(env.DB, me, await request.json().catch(() => ({})));
-      return json(result, result.error ? 400 : 200);
-    }
-    return json({ error: 'not found' }, 404);
   }
   if (url.pathname === '/api/rank/pick' && request.method === 'POST') {
     const res = await recordPick(env, me, await request.json().catch(() => null));

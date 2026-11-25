@@ -17,7 +17,7 @@
  * their inboxes, and their members read, reply, react, resolve and draft there.
  */
 
-import { ADMIN_TEAM, isAdmin } from './review.js';
+import { ADMIN_TEAM, isAdmin } from './roles.js';
 import { UNASSIGNED } from './rules.js';
 import { mutedOrgs } from './standing.js';
 import {

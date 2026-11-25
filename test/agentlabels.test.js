@@ -22,7 +22,6 @@ import { agentLabelsFor, applyAgentLabels, setAgentLabels } from '../src/agentla
 import { inbox } from '../src/api.js';
 import { resolve } from '../src/react.js';
 import { resolution, resolutionFacts } from '../src/resolve.js';
-import { effectiveLabel } from '../src/review.js';
 import { d1 } from './d1.js';
 import { quiet } from './fakes.js';
 
@@ -67,18 +66,12 @@ describe('the agent\'s labels', () => {
     const e = env();
     await setAgentLabels(e.DB, SLACK, [SLACK], { kind: 'access', urgency: 3, next_actor: 'customer' }, 'x', new Date('2026-10-21T10:01:00Z'));
     const model = e.DB.rows('SELECT * FROM labels')[0];
-    let label = effectiveLabel(model, [], await agentLabelsFor(e.DB, [SLACK]));
+    let label = applyAgentLabels(model, await agentLabelsFor(e.DB, [SLACK]));
     assert.deepEqual([label.kind, label.urgency, label.next_actor, label.agent], ['access', 3, 'customer', ['kind', 'next_actor', 'urgency']]);
 
     posts(e, '1.2', '2026-10-21T10:05:00Z', 1);
-    label = effectiveLabel(model, [], await agentLabelsFor(e.DB, [SLACK]));
+    label = applyAgentLabels(model, await agentLabelsFor(e.DB, [SLACK]));
     assert.deepEqual([label.kind, label.urgency, label.next_actor, label.agent], ['access', 1, 'us', ['kind']]);
-
-    // A person's review of the label wins over the agent's.
-    label = effectiveLabel(model, [{
-      question: 'kind', value: 'request', labeled_through: model.labeled_through, created_at: '2026-10-21T10:03:00Z',
-    }], await agentLabelsFor(e.DB, [SLACK]));
-    assert.deepEqual([label.kind, label.reviewed, label.agent], ['request', ['kind'], []]);
     // No label of Clef's yet: nothing to show.
     assert.equal(applyAgentLabels(null, [{ question: 'kind', value: 'access' }]), null);
   });

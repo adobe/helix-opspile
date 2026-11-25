@@ -1208,7 +1208,7 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   the browser blocks them, the menu says how to allow them again. Once the browser allows them,
   the inbox sends "Notifications are on" once in a tab and once as the installed app, with a
   toast asking whether it popped up. `/inbox?notify=help` opens the troubleshooter.
-- The toolbar is the same on the inbox and the admin pages: the pages and label review on the
+- The toolbar is the same on the inbox and the admin pages: the pages on the
   left, and on the right whoever is signed in, with the view on screen under their name. Their
   name opens a menu with "View as" (admin team; while it is on, a chip next to the name says
   whose inbox this is and leaves it in one click), the notifications, the keyboard shortcuts, and **Log out**,
@@ -1246,7 +1246,7 @@ kind (channels the rules ignore never get there).
   urgency and its level, `resolved_p`) and the facts (tickets, sites, CVEs, URLs, the problem). Its `url` opens the
   thread in the inbox's personal view.
 - **As the inbox shows it.** The label, title, resolution and facts are the inbox entry's: a
-  re-threaded group's latest member's label (with its agent's answers and reviews), its first
+  re-threaded group's latest member's label (with its agent's answers), its first
   thread's title, the facts of every member, and resolved by a staff ✅ on a member's root or
   its agent (until a customer writes again)
   or else by Clef (`resolved_p` ≥ 0.5). Who it waits on is the inbox's `waiting_on`: Clef's
@@ -1270,7 +1270,7 @@ kind (channels the rules ignore never get there).
   and a re-file. A job queued before the thread's latest export is dropped, so a burst exports
   once. Each thread remembers what was exported (`threads.exported_through`, the row's
   `updated_at`, and `exported_at`); the cron enqueues up to 1,500 threads a run, newest first,
-  whose rows are behind: a message written since, a label, a review or re-threading since the
+  whose rows are behind: a message written since, a label, an agent's answer or re-threading since the
   export, or a re-file (which clears the watermark). That is the backfill too, and the retry: a
   failed insert leaves the watermark as it was. Without the `CLICKHOUSE_*` bindings nothing is
   exported.
@@ -1566,12 +1566,6 @@ and an unchanged thread is never labeled twice):
   Clef's added three points of recall and nothing to F1. The `product` facts from before stay
   until a thread is labeled again; a topic map built before lists the names no entry covered as
   gaps.
-
-**Label review.** Members of the admin team can review labels in the inbox: a queue of
-current labels nobody has reviewed, least confident first, and per question the right
-answer. A review is calibration data (Clef's agreement rate and most common corrections per
-question) and overrides the model's answer for that label version; when the thread changes
-and is labeled again, the model answers again and the old review only counts as history.
 
 ### Topic maps
 
@@ -3447,11 +3441,10 @@ Clef would otherwise guess: `resolve_thread` marks the thread resolved (see [Res
 inbox calls it), with a reason, and without arguments shows Clef's and its own. Both write
 `agent_labels` (`src/agentlabels.js`, one row per platform thread and question, on the entry's
 latest member, whose label the inbox shows), and nothing goes to the platform, so they work in
-the sidebar too. `effectiveLabel` (`src/review.js`) puts the agent's answers in place of Clef's
+the sidebar too. `applyAgentLabels` (`src/agentlabels.js`) puts the agent's answers in place of Clef's
 while they hold: a kind until the agent changes it (what a thread is about rarely changes, and
 Clef's answer can flip from one message to the next), the urgency and the next actor until a
-person posts after them (`threads.last_at`), when Clef reads the thread anew. A label review of
-the current label wins over the agent's. The label lists the questions the agent's answers
+person posts after them (`threads.last_at`), when Clef reads the thread anew. The label lists the questions the agent's answers
 replaced (`agent`). The open inboxes hear of a change at once (the room's `thread` event), and
 the export sends it to ClickHouse. Both are on for every team (migration 0091, `newTeams`).
 

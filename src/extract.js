@@ -49,7 +49,7 @@ import { isTechId, MAX_TECH_ID } from './techid.js';
  * SCRIPT_MS; without LOADER, scripts do not run.
  */
 
-/** The team whose rules and technologies apply to every channel (src/review.js ADMIN_TEAM). */
+/** The team whose rules and technologies apply to every channel (src/roles.js ADMIN_TEAM). */
 export const GLOBAL_TEAM = 'admin';
 export const MAX_PER_FIELD = 20;
 export const MAX_RULES = 100;

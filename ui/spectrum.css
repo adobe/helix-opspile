@@ -70,16 +70,7 @@ header .count:not(.total), .pagemenu .count { cursor: pointer; }
  }
 .pagemenu .count[hidden] { display: none; }
 
-/* A page's tools (the inbox's label review), after a divider. */
-header .divider { width: var(--spectrum-border-width-100); flex: none; }
-header .divider[hidden] { display: none; }
-header .tool { display: inline-flex; align-items: center; height: var(--ctl); flex: none;
- white-space: nowrap; }
-header .tool[hidden] { display: none; }
-header .tool:hover { color: var(--ink); background: var(--hover); }
-header .tool svg, header .mode svg { flex: none; }
-
-/* The modes a page is in (reviewing labels, viewing as someone): a pill each, on the right,
+/* The modes a page is in (viewing as someone): a pill each, on the right,
    with the ✕ that leaves it. */
 header .mode { display: inline-flex; align-items: center; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); height: var(--ctl);
   flex: none; white-space: nowrap; }
@@ -161,7 +152,7 @@ header .note { white-space: nowrap; }
 @media (max-width: 699px) {
   header { padding: 0 var(--spectrum-spacing-100) 0 var(--spectrum-spacing-200); }
   header h1 { margin: 0; }
-  header h1 a, header .tool { font-size: 0; }
+  header h1 a { font-size: 0; }
 
   header .divider { display: none; }
   nav.pages a:not([aria-current]) { display: none; }
@@ -665,19 +656,6 @@ header .note { white-space: nowrap; }
   position: static; flex: none; padding: 0; color: inherit; background: none;
   width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200);
 }
-/* The page's tools stand apart from the pages by the space alone: S2's app chrome has no Divider. */
-.spectrum header .divider { height: var(--spectrum-component-height-75); }
-/* The page's tools: quiet ActionButtons. */
-.spectrum header .tool {
-  gap: var(--spectrum-text-to-visual-100);
-  padding: 0 var(--spectrum-component-edge-to-text-100);
-  color: var(--spectrum-neutral-content-color-default);
-  background: transparent;
-  border: 0;
-  border-radius: var(--s2-radius);
-}
-.spectrum header .tool:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-100); }
-.spectrum header .tool svg, .spectrum header .mode svg { width: var(--spectrum-workflow-icon-size-50); height: var(--spectrum-workflow-icon-size-50); }
 /* The modes a page is in: Spectrum 2's Tag, with its clear button. */
 .spectrum header .mode {
   padding: 0 var(--spectrum-spacing-75) 0 var(--spectrum-component-edge-to-text-75);
@@ -685,16 +663,11 @@ header .note { white-space: nowrap; }
   border-radius: var(--s2-radius);
   color: var(--spectrum-neutral-content-color-default);
 }
-.spectrum header .mode.review {
-  background: var(--spectrum-accent-subtle-background-color-default);
-  border-color: var(--spectrum-accent-visual-color);
-}
 .spectrum header .mode.as {
   background: var(--spectrum-notice-subtle-background-color-default);
   border-color: var(--spectrum-notice-visual-color);
 }
 .spectrum header .mode:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); }
-.spectrum header .mode.review:hover:not(:disabled) { background: var(--spectrum-accent-subtle-background-color-default); }
 .spectrum header .mode.as:hover:not(:disabled) { background: var(--spectrum-notice-subtle-background-color-default); }
 .spectrum header .mode .x {
   width: var(--spectrum-component-height-50);

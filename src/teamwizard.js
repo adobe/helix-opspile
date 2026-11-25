@@ -11,7 +11,7 @@
  */
 
 import { isStaffDomain } from './lookup.js';
-import { ADMIN_TEAM } from './review.js';
+import { ADMIN_TEAM } from './roles.js';
 import { slug as toSlug, UNASSIGNED } from './rules.js';
 
 /**

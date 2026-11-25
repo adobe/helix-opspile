@@ -29,7 +29,7 @@ import { QUESTIONS, topicNames, vocab } from './label.js';
 import {
   config, deleteRule, deleteTech, saveRule, saveTech, testRule,
 } from './extract.js';
-import { inTeam, isAdmin, managesTeam } from './review.js';
+import { inTeam, isAdmin, managesTeam } from './roles.js';
 import { resolveConflict, techConflicts } from './techconflicts.js';
 import {
   mayPost, mayReply, mayWork, memberOf, teamless,

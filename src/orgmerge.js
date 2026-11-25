@@ -21,7 +21,7 @@ import { CLEF } from './label.js';
 import { domainList, loadRules } from './lookup.js';
 import { platformName } from './platforms.js';
 import { announceRequest } from './requestkeys.js';
-import { isAdmin } from './review.js';
+import { isAdmin } from './roles.js';
 import { mergeRule, UNASSIGNED } from './rules.js';
 import { ownedCustomers } from './shares.js';
 

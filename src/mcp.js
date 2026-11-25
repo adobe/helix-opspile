@@ -13,7 +13,7 @@
 import { accessEmail } from './access.js';
 import { personById, viewer } from './api.js';
 import { bearerPerson, challenge } from './oauth.js';
-import { isAdmin } from './review.js';
+import { isAdmin } from './roles.js';
 import { mayUse, TOOLS, toolList } from './mcp-tools.js';
 import { SCRIPT_TOOL_NAMES } from './scripttools.js';
 import { batchedDatabase } from './d1batch.js';

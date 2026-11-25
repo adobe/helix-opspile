@@ -41,7 +41,7 @@
  * customer's numbers are kept CACHE_MS per isolate.
  */
 
-import { ADMIN_TEAM } from './review.js';
+import { ADMIN_TEAM } from './roles.js';
 import { underlying } from './d1batch.js';
 import { mayRead } from './kbaccess.js';
 import { weeksTo } from './trends.js';

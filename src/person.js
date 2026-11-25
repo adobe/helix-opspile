@@ -28,7 +28,7 @@
  */
 
 import { access } from './kbaccess.js';
-import { ADMIN_TEAM } from './review.js';
+import { ADMIN_TEAM } from './roles.js';
 import { CONTACTS, personSlug } from './agent/okf.js';
 import { AVATAR, NAME, TITLE } from './personsql.js';
 import { teamProfile } from './teamprofile.js';

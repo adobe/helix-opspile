@@ -26,7 +26,7 @@
  * in the editor and through its agent's sidebar (src/kbchat.js), where whoever looks may talk.
  */
 
-import { isAdmin, managedTeams, managesTeam } from './review.js';
+import { isAdmin, managedTeams, managesTeam } from './roles.js';
 import { ownedCustomers, ownsCustomer } from './shares.js';
 
 const teamsOf = (me) => ((me && me.teams) || []).map((t) => t.slug);
