@@ -115,6 +115,7 @@ import { weeksTo } from '../src/trends.js';
 import { latestTopicMap } from '../src/topicmap.js';
 import { trendsFixture } from './dev-ui-topics.mjs';
 import { findPerson } from '../src/kbpeople.js';
+import { pathOwner } from '../src/agent/kbwrite.js';
 import {
   AGENT, createStore, kbChats, TRANSLATIONS,
 } from './dev-ui-fixtures.mjs';
@@ -1644,7 +1645,8 @@ async function kbApi(req, res, url) {
     return json(res, { error: 'no such knowledge base' }, 404);
   }
   // Its files, but systemprompt.md, are everyone's on the team (src/kbaccess.js `mayWrite`).
-  const content = url.pathname === '/api/kb/file' && String(body.path || '').replace(/^\/+/, '') !== 'systemprompt.md';
+  const content = url.pathname === '/api/kb/file'
+    && pathOwner(String(body.path || '').replace(/^\/+/, '')) === 'member';
   if (req.method !== 'GET' && !(content ? listing.write ?? listing.may : listing.may)) {
     return json(res, { error: content ? 'the people on its team change it' : 'the admin team and the managers of the teams it belongs to change it' }, 403);
   }

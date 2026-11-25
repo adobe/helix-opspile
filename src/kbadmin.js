@@ -13,7 +13,7 @@
 import {
   agentChannels, agentStates, setAgent, setTeamDefault, teamDefault,
 } from './agent/enabled.js';
-import { writeKnowledge } from './agent/kbwrite.js';
+import { isCanonicalPath, pathOwner, writeKnowledge } from './agent/kbwrite.js';
 import {
   isEntry, scalar, splitFrontmatter, SYSTEM_PROMPT,
 } from './agent/okf.js';
@@ -510,9 +510,13 @@ export async function kbAdmin(request, env, url, me) {
   if (!base || !await mayRead(env, me, base)) {
     return json({ error: 'no such knowledge base' }, 404);
   }
-  // Its files, but systemprompt.md, are everyone's on the team (src/kbaccess.js `mayWrite`).
-  const content = url.pathname === '/api/kb/file'
-    && String(body.path || '').replace(/^\/+/, '') !== SYSTEM_PROMPT;
+  // Its files are everyone's on the team (src/kbaccess.js `mayWrite`), but its instructions and
+  // areas (`pathOwner`); a path is taken only as it is, so `./systemprompt.md` is not another file.
+  const path = String(body.path || '').replace(/^\/+/, '');
+  if (url.pathname === '/api/kb/file' && request.method !== 'GET' && !isCanonicalPath(path)) {
+    return json({ error: 'give the file\'s path as it is, without ./, ../ or //' }, 400);
+  }
+  const content = url.pathname === '/api/kb/file' && pathOwner(path) === 'member';
   if (request.method !== 'GET' && !await (content ? mayWrite : mayEdit)(env, me, base)) {
     return json({
       error: content ? 'the people on its team change it'

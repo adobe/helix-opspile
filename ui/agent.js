@@ -53,9 +53,11 @@ const mayEdit = () => Boolean(base()?.may);
  * Whether you write file `path` of the open knowledge base: its agent instructions are
  * `mayEdit`'s, every other file everyone's on its team (`write`, src/kbaccess.js `mayWrite`).
  */
-const mayWrite = (path) => (path === SYSTEM_PROMPT ? mayEdit() : Boolean(base()?.write ?? base()?.may));
+// Its agent instructions and its Clef areas are the managers' (src/agent/kbwrite.js `pathOwner`).
+const managed = (path) => path === SYSTEM_PROMPT || String(path || '').startsWith('areas/');
+const mayWrite = (path) => (managed(path) ? mayEdit() : Boolean(base()?.write ?? base()?.may));
 /** Who writes the files of the open knowledge base, for the read-only. */
-const whoWrites = (path) => (path === SYSTEM_PROMPT ? whoEdits() : (base()?.kind === 'team' ? `the people of ${base().name}` : 'the people of its ops teams'));
+const whoWrites = (path) => (managed(path) ? whoEdits() : (base()?.kind === 'team' ? `the people of ${base().name}` : 'the people of its ops teams'));
 /** Who changes the open knowledge base, for the read-only. */
 const whoEdits = () => (base()?.kind === 'team' ? `the admin team and the managers of ${base().name}` : 'the admin team and the managers of its ops teams');
 

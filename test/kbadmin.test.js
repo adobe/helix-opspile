@@ -47,6 +47,10 @@ describe('system prompts', () => {
     assert.equal(checkChanges(change, { staff: true }), null);
     assert.match(checkChanges([{ path: 'systemprompt.md', content: 'x'.repeat(17 * 1024) }], { staff: true }), /at most 16 KB/);
     assert.equal(checkChanges([{ path: 'systemprompt.md', delete: true }], { staff: true }), null);
+    // Only a path as it is: none that names a file another way, a delete neither.
+    for (const path of ['./systemprompt.md', 'x/../systemprompt.md', 'a//b.md', '', 'a\\b.md']) {
+      assert.match(checkChanges([{ path, delete: true }]), /without \.\/, \.\.\/ or \/\//, path);
+    }
   });
 });
 
@@ -126,6 +130,21 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       // Its files are theirs to write, as their team's: what is wrong here is the content.
       const own = await call(env, MEMBER, 'PUT', '/api/kb/file', { repo: 'kb-team-helix', path: 'a.md', content: 'x' });
       assert.equal(own.status, 400);
+      // But its instructions and its areas, however their path is written: a path is taken as
+      // it is, so `./systemprompt.md` is refused rather than checked as another file.
+      for (const [method, path] of [['PUT', 'areas/cdn.md'], ['DELETE', 'areas/cdn.md'],
+        ['DELETE', 'systemprompt.md']]) {
+        // eslint-disable-next-line no-await-in-loop
+        const r = await call(env, MEMBER, method, '/api/kb/file', { repo: 'kb-team-helix', path, content: 'x' });
+        assert.equal(r.status, 403, `${method} ${path}`);
+      }
+      for (const path of ['./systemprompt.md', 'a/../systemprompt.md', 'areas//cdn.md', 'a\\b.md', '.']) {
+        for (const method of ['PUT', 'DELETE']) {
+          // eslint-disable-next-line no-await-in-loop
+          const r = await call(env, MEMBER, method, '/api/kb/file', { repo: 'kb-team-helix', path, content: 'x' });
+          assert.equal(r.status, 400, `${method} ${path}`);
+        }
+      }
       // Nothing else changes: its instructions, its agents, tools and servers.
       for (const [path, body] of [
         ['/api/kb/file', { repo: 'kb-team-helix', path: 'systemprompt.md', content: 'x' }],

@@ -168,11 +168,16 @@ globalThis.KbChat = (() => {
     return `${list || working ? `${list}${working}` : blank()}${error}`;
   }
 
+  /** What is typed in the box, kept for the knowledge base the panel shows (`data-repo`). */
+  function keepDraft() {
+    const typed = panel && panel.querySelector('#kbcText');
+    if (typed && typed.dataset.repo) state.draft.set(typed.dataset.repo, typed.value);
+  }
+
   function render({ focus = false } = {}) {
     if (!panel || !state.base) return;
     const b = state.base;
-    const typed = panel.querySelector('#kbcText');
-    if (typed) state.draft.set(b.repo, typed.value);
+    keepDraft();
     const scroller = panel.querySelector('.kbc-scroll');
     const atEnd = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
     panel.innerHTML = `<div class="kbc-head"><img class="kbc-av" src="${ICON}" alt="">
@@ -184,6 +189,7 @@ globalThis.KbChat = (() => {
       <form class="kbc-box" id="kbcForm"><textarea id="kbcText" rows="3" maxlength="${MAX}" aria-label="Ask the ${NAME}"></textarea>
         <div class="kbc-foot"><span class="sub">${touch() ? '' : 'Enter asks, Shift+Enter is a new line'}</span><button type="submit" class="kbc-ask" id="kbcAsk">Ask</button></div></form>`;
     const box = panel.querySelector('#kbcText');
+    box.dataset.repo = b.repo;
     box.value = state.draft.get(b.repo) || '';
     const s = panel.querySelector('.kbc-scroll');
     if (atEnd) s.scrollTop = s.scrollHeight;
@@ -344,7 +350,9 @@ globalThis.KbChat = (() => {
     state.messages = state.messages.filter((m) => m !== pending);
     if (!res.ok) {
       state.error = res.body.error || 'The agent did not take it. Try again.';
-      state.draft.set(b.repo, text);
+      // Back into the box, unless something was typed meanwhile.
+      const now = panel.querySelector('#kbcText');
+      if (now && !now.value) now.value = text;
       render({ focus: true });
       return;
     }
@@ -405,6 +413,9 @@ globalThis.KbChat = (() => {
     mount();
     const b = base && base.repo ? base : null;
     if ((b && b.repo) === (state.base && state.base.repo)) return;
+    // What was typed for the knowledge base it showed stays that one's, and its panel goes.
+    keepDraft();
+    panel.innerHTML = '';
     clearTimeout(state.timer);
     state.turn += 1;
     Object.assign(state, {

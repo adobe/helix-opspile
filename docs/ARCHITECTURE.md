@@ -875,7 +875,7 @@ ui/admin.js) have their agent's sections (ui/agent.js) after their own: **Thread
 history beside an editor for `systemprompt.md` and the concepts. Beside every section, whoever may look
 at the knowledge base talks to its agent (see "The knowledge base's sidebar", under Thread agents). Members of the admin team, and
 team managers for the knowledge bases of their teams and of the customers their teams own,
-change them there. The files of a knowledge base but `systemprompt.md` are everyone's on its team
+change them there. The files of a knowledge base but `systemprompt.md` and its Clef areas (`areas/`) are everyone's on its team (`pathOwner`, src/agent/kbwrite.js, which takes a path only as it is: `./systemprompt.md` is refused)
 (`mayWrite`, `write` on each knowledge base of `GET /api/kb`): a team's members write their team's,
 and the members of the teams that own a customer the customer's. The members of every ops team see every team's agent there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
