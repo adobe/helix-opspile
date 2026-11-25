@@ -295,6 +295,18 @@ the thread view (`accountAuthor`). Only an account that is staff by itself and t
 address links is linked, and only to a staff person, so no customer's account becomes Adobe's.
 Looking the account up again keeps the link; giving no address takes it back.
 
+**A customer's people with two accounts.** The customers' people are no person of D1, so the
+customers' overviews and the topic map count them by account. The accounts of one mail address
+are one person there (on Slack Connect, a guest account in Adobe's workspace and the one of their
+own workspace that takes over). Two accounts outside Adobe of different mail addresses, named the
+same (without accents, case or punctuation), of which both posted, may be one person too: a new
+job, the agency's address and the customer's, a second address. A name alone merges nobody, so
+each such pair is a thread of the admin team's inbox ("Requests as threads", below; kind
+`person`, `src/accountpairs.js`), which says one person or two people (`PUT
+/api/admin/account-pairs`, `account_pairs`, migration 0106); what it said stays, also once the
+names differ again. One person's accounts count as one, as those of one mail address do, with the
+name of the first account (`sameAccounts`).
+
 **Alert bots.** A bot may also only post alerts (`identities.alerts`, migration 0090, set in its
 thread of the admin team's inbox, whatever its side): a thread it starts is an alert (`threads.kind =
 'alert'`), also in a channel the rules make a conversation, so a channel can hold people's
@@ -442,7 +454,7 @@ portal](#customer-portal).
 **Requests as threads.** What waits for the admin team is a thread of its inbox
 (`src/requestthreads.js`, `GET /api/requests`), not a page of the admin pages: a channel request,
 a membership request, a customer in the portal, a merge of customers, a bot or an admin account
-nobody said whose it is, a conflict between the teams' technologies or their rules. Its key is
+nobody said whose it is, two accounts of a customer's that may be one person, a conflict between the teams' technologies or their rules. Its key is
 `request:<kind>:<id>` (`src/requestkeys.js`: the row's id, a bot's or an account's identity key,
 a conflict's key), and the inbox lists it in the admin team's view only, with the team's own
 threads, under a "customer" of its kind (Channel requests, Bots, Rule conflicts, …), of kind
@@ -1593,7 +1605,8 @@ twice its share of all the map's threads). The lift keeps what is
   `people.id` where they are a person of D1, else, as every customer's person in production, by
   their platform account, `a:<author_key>`, named as `identities` has it, and not followed from
   the page; the accounts of one mail address are one, the first of them: a customer's guest
-  account and the one of their own workspace, on Slack Connect; bots are nobody), who each
+  account and the one of their own workspace, on Slack Connect; and so are those the admin team
+  said are one person, "A customer's people with two accounts"; bots are nobody), who each
   person is to group them by (`peopleOf`: Adobe's by the team they are on whose threads they
   posted in most, or none when they are on no team, the others by the customer of most of their threads), the customer (`orgs`), Clef's topics (`labels.topics`), the **tags** on the page,
   and the **products**: the technologies Clef says the thread is about (`thread_tech.about`), or,

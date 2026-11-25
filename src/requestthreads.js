@@ -13,6 +13,7 @@
 import { admin, channelLabel } from './admin.js';
 import { json } from './http.js';
 import { listAccounts } from './accountlinks.js';
+import { listAccountPairs } from './accountpairs.js';
 import { isStaffDomain } from './lookup.js';
 import { getMemberRequest, listMemberRequests } from './memberrequests.js';
 import { getMergeRequest, listMergeRequests } from './orgmerge.js';
@@ -29,9 +30,10 @@ import { advanceWatermark, readState } from './threads.js';
 /**
  * The admin team's requests as threads of its inbox. What waits for the admin team (a channel a
  * team asked for, a person to add to a team, a customer in the portal, a merge of customers, a
- * bot nobody said whose it is, an admin account nobody linked, a conflict between technologies
- * or between team rules) is an inbox entry there, keyed `request:<kind>:<id>`
- * (src/requestkeys.js), and decided ones stay as resolved entries. Its thread is the request,
+ * bot nobody said whose it is, an admin account nobody linked, two accounts of a customer's that
+ * may be one person, a conflict between technologies or between team rules) is an inbox entry
+ * there, keyed `request:<kind>:<id>` (src/requestkeys.js), and decided ones stay as resolved
+ * entries. Its thread is the request,
  * as whoever asked said it, then what the admin team writes about it (`note`s, its decision
  * log, `request_log`, migration 0100), and what was decided; the thread view offers what can be
  * decided (`actions`), and deciding runs the same `/api/admin/*` route the admin pages did, as
@@ -56,11 +58,12 @@ export const KIND_NAMES = {
   merge: 'Customer merges',
   bot: 'Bots',
   account: 'Admin accounts',
+  person: 'Two accounts, one person?',
   tech: 'Technology conflicts',
   rule: 'Rule conflicts',
 };
 /** The kinds without a row that says when they waited from: `request_threads` does. */
-const TRACKED = new Set(['bot', 'account', 'tech', 'rule']);
+const TRACKED = new Set(['bot', 'account', 'person', 'tech', 'rule']);
 /** The kinds that are worked out each time, and gone once settled. */
 const COMPUTED = new Set(['tech', 'rule']);
 /** The kinds whose decisions are only in the log: a bot's, an account's, a conflict's. */
@@ -557,6 +560,60 @@ const accountKind = {
   },
 };
 
+/** One side of a pair of accounts, as its thread lists it. */
+function sideText(s, n) {
+  const where = s.orgs.slice(0, 4).map((o) => `${md(n.org(o.org))} (${o.n})`).join(', ');
+  return `- **${md(s.name)}** · ${PLATFORM[s.source] || md(s.source)} · ${s.mails.length ? s.mails.map(code).join(', ') : 'no mail address'}${s.keys.length > 1 ? ` · ${plural(s.keys.length, 'account')}` : ''}\n  ${s.messages ? `${plural(s.messages, 'message')}${where ? `, for ${where}` : ''}${s.orgs.length > 4 ? ' and more' : ''}, the latest ${md(String(s.last).slice(0, 10))}` : 'No messages'}`;
+}
+
+const personKind = {
+  list: (env) => listAccountPairs(env),
+  async get(env, id) {
+    return (await listAccountPairs(env)).find((p) => p.id === id) || null;
+  },
+  id: (p) => p.id,
+  describe(p, n) {
+    // As the busier of the two writes it.
+    const { name } = p.b.messages > p.a.messages ? p.b : p.a;
+    const open = p.same === null;
+    const shared = p.orgs.length
+      ? `Both posted for ${md(p.orgs.map(n.org).join(', '))}.`
+      : 'They posted for different customers.';
+    const say = (same) => ({
+      id: same ? 'same' : 'apart',
+      label: same ? 'One person' : 'Two people',
+      tone: same ? 'accent' : undefined,
+      pressed: p.same === same,
+      hint: same ? 'The customers\' overviews and the topic map count the two as one person, with the name of the first.'
+        : 'They stay two people, and this is not asked again.',
+      run: () => ({ method: 'PUT', path: 'account-pairs', body: { a: p.a.key, b: p.b.key, same } }),
+      done: () => (same ? `${md(name)}: one person.` : `${md(name)}: two people.`),
+    });
+    return {
+      title: `${name}: one person?`,
+      open,
+      status: open ? 'waiting' : ({ true: 'one person', false: 'two people' })[p.same],
+      askedAt: null,
+      askedBy: null,
+      body: `Two accounts outside Adobe are named **${md(name)}**, with different mail addresses: one person (a new job, the agency's address and the customer's, a second address), or two? Accounts of one mail address are one already; a name alone merges nobody. ${shared}\n\n${sideText(p.a, n)}\n${sideText(p.b, n)}`,
+      decidedAt: p.decidedAt,
+      decidedBy: p.decidedBy ? { email: p.decidedBy } : null,
+      decision: open ? null : `**${p.same ? 'One person' : 'Two people'}**, said ${md(p.decidedBy || 'an admin')}`,
+      actions: [
+        say(true),
+        say(false),
+        ...(open ? [] : [{
+          id: 'undo',
+          label: 'Ask again',
+          hint: 'Takes back what was said: they count as two until someone says otherwise.',
+          run: () => ({ method: 'PUT', path: 'account-pairs', body: { a: p.a.key, b: p.b.key, same: null } }),
+          done: () => `${md(name)}: asked again.`,
+        }]),
+      ],
+    };
+  },
+};
+
 const FIELD_NAMES = {
   name: 'name', description: 'what Clef is asked', layer: 'layer', product: 'product', enabled: 'on or off',
 };
@@ -720,6 +777,7 @@ const KIND = {
   merge: mergeKind,
   bot: botKind,
   account: accountKind,
+  person: personKind,
   tech: techKind,
   rule: ruleKind,
 };
