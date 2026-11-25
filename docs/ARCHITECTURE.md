@@ -2555,10 +2555,10 @@ written by people outside its control.
 | `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB and 8000 pixels a side, read from their headers) go to the model as images, larger ones through the Markdown conversion; an image the model would refuse never reaches it (`src/agent/images.js`), since the API refuses the whole request and the image would stay in the history: the provider also leaves such images out of every request (over 2000 pixels a side when it has more than 20 images); plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
 | `raw_message` | a message of the entry, or with `thread` of another conversation of its channel, as its platform sent it: the newest version in pile 1 (`src/agent/rawmessage.js`), only what the message says (the Teams body as HTML, its attachments and `eventDetail`; Slack's text, blocks, attachments and files, the edited message for an edit; Discord's content, embeds, attachments, components and poll), not the envelope, in parts of 30,000 characters (`offset`). It is not checked for prompt injection again: the agent is told it is data, not instructions. A withheld message stays withheld. A message whose markdown dropped something (`dropped`, see "Pile 2") says so where the agent reads it, naming the tool; under `read_any_thread`, which it cannot read, not |
-| `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` |
-| `read_any_thread` | only where it is turned on (see "Agent tools"): any thread of the inbox, by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
-| `find_channels` | with `read_any_thread`: the inbox's channels, on every platform, that a customer's name, a channel's or Teams team's name, a domain's name, or a site or repository (`owner/name`, or an Edge Delivery host) names, best first, the agent's own left out: id, platform and name, customer, ops teams, conversations and latest activity, why it matched, and the channel's link on its platform |
-| `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for any channel, by its id from `find_channels`, a link to it, or a thread key or message link in it |
+| `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` (its customer's, or any) |
+| `read_any_thread` | with `org_threads` (on by default) a thread of the customer's other channels, with `any_thread` (see "Agent tools") any thread of the inbox: by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld |
+| `find_channels` | with `org_threads`: the customer's other channels, all of them, those a query names first; with `any_thread`: the inbox's channels, on every platform, that a customer's name, a channel's or Teams team's name, a domain's name, or a site or repository (`owner/name`, or an Edge Delivery host) names, best first, the agent's own left out: id, platform and name, customer, ops teams, conversations and latest activity, why it matched, and the channel's link on its platform |
+| `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for another channel (with `org_threads` the customer's, and of it the customer's threads only), by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `channel_assignment`, `list_teams`, `request_channel_reassignment`, `request_team_membership` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"), which the admin team decides; or a membership request: add its author, or someone they name, to an ops team (see "Membership requests"), which an admin or that team's managers decide |
 | `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
@@ -2807,9 +2807,10 @@ pile 3 (git history); replaying pile 1 pokes them, but they find nothing past th
 
 ### Agent tools
 
-Eight tools are off until they are turned on (a new team starts with `computer`,
-`extraction_rules`, `web_search`, `resolve` and `label` on for the team; migration 0077 turned
-`web_search` on for every team before it, and migration 0091 `resolve` and `label`). All but `any_thread` by the admin team or a team's managers, as
+Nine tools are off until they are turned on (a new team starts with `computer`,
+`extraction_rules`, `org_threads`, `web_search`, `resolve` and `label` on for the team; migration
+0077 turned `web_search` on for every team before it, migration 0091 `resolve` and `label`, and
+migration 0102 `org_threads`). All but `any_thread` by the admin team or a team's managers, as
 the global MCP servers are: for an ops team or a single channel (`agent_tool_switches`; a channel's switch wins
 over its team's), on the team's or the customer's page (**Tools and MCP servers**, `src/agent/agenttools.js`).
 Before an agent is told anything it reads the switches of its thread's team and channel; the
@@ -3121,6 +3122,26 @@ runs code in a Dynamic Worker, so it is for those who may save the rule, as savi
 labeling of a thread; it cannot change the admin team's, which apply to every channel. Its
 section of the prompt asks it to add a rule only for what recurs and the existing rules miss,
 to test it first, and never to put a customer's name or a secret into one.
+
+**`org_threads`.** A customer often has more than one channel (one per project, or one on Slack
+and one on Teams), and a question in one is worked, or was settled, in another. With this tool,
+on for every team by default, the agent has `read_any_thread`, `find_channels` and
+`list_any_channel_threads`, as with `any_thread`, but the boundary is its customer, the org its
+thread is filed under, not the inbox: `find_channels` lists the org's other channels (a channel
+counts when its latest thread is filed under the org, as everywhere in `src/agent/channelfind.js`;
+a query only orders them), `list_any_channel_threads` takes only such a channel, and lists only its
+threads of the org (a channel can have older threads of another), and `read_any_thread` reads only
+an entry whose threads are all filed under the org (`resolveAnyThread` with `org`). Another org's
+channel or thread is refused with the error a missing one gets. Each call asks again where the
+agent may read (`readScope`), so an agent that had `any_thread` reads only its customer's once that
+is off. It is not on in an org of type `internal` (Adobe's own channels, which are about every
+customer: reading those is `any_thread`'s) nor under an internal slug (`_unassigned`, many
+customers' channels), so the agent never reads across customers. Its section of the prompt keeps
+what it learns there in kb-org (never kb-team) and another customer's details out of the
+knowledge bases, the draft and its posts. A team's managers turn it off for the team, or opt one
+channel out; a thread can be granted it for a day, as other tools. Where `any_thread` is on too,
+that one's tools and section stand for both. Every thread it reads is kept in
+`agent_thread_reads`.
 
 **`any_thread`.** Agents read only their own channel's threads, but staff in an internal channel
 paste links to customers' threads elsewhere. With this tool the agent has `read_any_thread`:
@@ -3648,7 +3669,9 @@ of its teams, labeled, re-threaded, searched and worked by thread agents. What d
   `post_message` and `add_reaction`, and `POST /api/post/app`, where **Post messages** is on).
 - **The tenant is the lobby**, the customer's mail domain: accounts, mentions and the people a
   reply can name stay within one customer. The channel is `shared` (customers are in it), so the
-  agents' `any_thread` tool, which is for internal channels, is never on in it.
+  agents' `any_thread` tool, which is for internal channels, is never on in it; `org_threads`
+  is, as in the customer's other channels: its agent reads the org's Slack, Teams and Discord
+  channels, and theirs the lobby, never another org's.
 - **Files stay in the portal.** A message's event names its files by their address there
   (`https://<portal>/api/file/<id>/<name>`), and pile 2 lists them as every platform's files
   are. Nobody of the inbox can open that address, so the inbox opens it through the portal's

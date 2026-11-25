@@ -18,9 +18,10 @@ import { likePattern as like } from '../like.js';
  * The channel's earlier conversations, for a thread agent (list_channel_threads, and
  * read_thread with a `thread`): only the threads of its own channel, the one its inbox entry
  * is in, so that an agent never reads another customer's or team's channel. A re-threaded
- * group is one conversation, under its first thread's key. The exception is an agent with the
- * `any_thread` tool (src/agent/agenttools.js), which resolves a thread anywhere
- * (`resolveAnyThread`) and lists any channel's (`threadsIn`, src/agent/channelfind.js).
+ * group is one conversation, under its first thread's key. The exceptions are an agent with the
+ * `org_threads` tool (src/agent/agenttools.js), which resolves a thread of its customer's
+ * channels (`resolveAnyThread` with `org`) and lists their threads (`threadsIn` with `org`,
+ * src/agent/channelfind.js), and one with `any_thread`, which does so anywhere.
  */
 
 export const MAX_LIST = 50;
@@ -69,13 +70,17 @@ async function similarRoots(env, here, query) {
 
 /**
  * As channelThreads, for the channel `here` (`{ source, tenant, channel_id, keys }`), without
- * the threads of `keys`: an agent with the `any_thread` tool lists any channel's this way
- * (src/agent/channelfind.js).
+ * the threads of `keys`: an agent with the `any_thread` or `org_threads` tool lists another
+ * channel's this way (src/agent/channelfind.js). With `org`, only the threads filed under it: a
+ * channel of a customer can have older threads of another, which are not that customer's.
  */
-export async function threadsIn(env, here, { query = '', before = null, limit = DEFAULT_LIST } = {}) {
+export async function threadsIn(env, here, {
+  query = '', before = null, limit = DEFAULT_LIST, org = null,
+} = {}) {
   const n = Math.min(Math.max(Number(limit) || DEFAULT_LIST, 1), MAX_LIST);
-  const bind = [here.channel_id, here.source, here.tenant, JSON.stringify(here.keys || [])];
-  const notHere = 'AND t.thread NOT IN (SELECT value FROM json_each(?))';
+  const bind = [here.channel_id, here.source, here.tenant, JSON.stringify(here.keys || []),
+    ...(org ? [String(org)] : [])];
+  const notHere = `AND t.thread NOT IN (SELECT value FROM json_each(?))${org ? ' AND t.org = ?' : ''}`;
   const q = String(query || '').trim();
   if (!q) {
     const { results } = await env.DB.prepare(`SELECT ${COLUMNS} ${FROM}
@@ -235,14 +240,24 @@ async function linkedThread(env, link) {
 
 /**
  * The inbox entry key that `ref` names, in any channel: a thread key, or a link to one of its
- * messages. `{ key }`, or `{ error }`. A channel the rules ignore has no threads to read.
+ * messages. `{ key }`, or `{ error }`. A channel the rules ignore has no threads to read. With
+ * `org`, only an entry whose threads are all filed under it: another customer's is none, and
+ * the error says no more than for a thread that does not exist.
  */
-export async function resolveAnyThread(env, ref) {
+export async function resolveAnyThread(env, ref, { org = null } = {}) {
   const s = String(ref || '').trim();
   const known = s && await env.DB.prepare('SELECT 1 FROM threads WHERE thread = ?').bind(s).first();
   const thread = known ? s : await linkedThread(env, parseLink(s));
   const row = thread && await env.DB.prepare('SELECT kind FROM threads WHERE thread = ?')
     .bind(thread).first();
   const entry = row && row.kind !== 'ignore' && await entryOf(env, thread);
+  if (entry && org) {
+    const { results } = await env.DB.prepare(`SELECT DISTINCT org FROM threads
+      WHERE thread IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(entry.keys)).all();
+    const orgs = (results || []).map((r) => r.org);
+    if (!orgs.length || orgs.some((o) => o !== org)) {
+      return { error: 'no thread of your customer\'s channels has that key or link' };
+    }
+  }
   return entry ? { key: entry.key } : { error: 'no thread has that key or link' };
 }

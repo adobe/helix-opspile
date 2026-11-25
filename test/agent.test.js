@@ -34,6 +34,7 @@ import {
 import { seed, seedNote, seedPin } from '../src/agent/seed.js';
 import { dream, dreamOf } from '../src/agent/dream.js';
 import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
+import { toolsFor } from '../src/agent/agenttools.js';
 import {
   agentStatus, decideBash, decideTool, pokeAgent, sawSidebar, seedAgent, talkToAgent,
   tellDiscarded,
@@ -1313,6 +1314,111 @@ describe('the earlier conversations of the channel', () => {
       assert.match((await resolveAnyThread(e, 'https://acme.slack.com/archives/C404/p1792584060000200')).error, /no thread/);
       assert.match((await resolveAnyThread(e, 'whatever')).error, /no thread/);
       assert.match((await resolveAnyThread(e, '')).error, /no thread/);
+    });
+  });
+
+  describe('with org_threads', () => {
+    const AT = '2026-10-21T10:00:00Z';
+    const OWN = 'slack:E1:C5:1792590000.000100';
+    const OLD = 'slack:E1:C1:1700000000.000100';
+    const ELSEWHERE = 'slack:E1:C2:1792500000.000100';
+
+    /**
+     * An agent in C5, a second channel of acme, with the tool on for its team: C1 is acme's
+     * other channel (with an old thread of another customer in it), C2 another customer's.
+     */
+    async function customer(tools = ['org_threads']) {
+      const { e } = await setup();
+      const add = e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id,
+          root_id, org, team, kind, channel_name, path, root_at, last_at, messages, updated_at)
+        VALUES (?, 'slack', 'E1', ?, ?, ?, 'helix', 'channel', ?, 'channels/x/', ?, ?, 1, ?)`);
+      add.run(OWN, 'C5', '1792590000.000100', 'acme', 'acme-launch', AT, AT, AT);
+      const LONG_AGO = '2023-11-14T00:00:00Z';
+      add.run(OLD, 'C1', '1700000000.000100', 'other', 'aem-acme', LONG_AGO, LONG_AGO, AT);
+      e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+        VALUES ('org_threads', 'team', 'helix', 1, ?)`).run(AT);
+      const target = {
+        key: OWN, team: 'helix', org: 'acme', orgName: 'Acme', threads: [OWN], source: 'slack', tenant: 'E1', channelId: 'C5',
+      };
+      const ext = agentToolsExtension({
+        env: e,
+        hasThread: true,
+        target: async () => target,
+        verdicts: async (messages) => new Map(await Promise.all(
+          messages.filter(untrusted).map(async (m) => [m.id, await screen(e, m)]),
+        )),
+      }, tools);
+      const call = async (name, args) => {
+        const res = await ext.tools.find((t) => t.name === name).execute(args, {});
+        return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
+      };
+      return {
+        e, ext, call, target,
+      };
+    }
+
+    it('is on for a customer\'s channel, and off in an internal org, an unassigned one, or where a channel turns it off', async () => {
+      const { e, target } = await customer();
+      assert.deepEqual(await toolsFor(e, target), ['org_threads']);
+      assert.deepEqual(await toolsFor(e, { ...target, org: '_unassigned' }), []);
+      assert.deepEqual(await toolsFor(e, { ...target, org: null }), []);
+      e.DB.sqlite.prepare('INSERT INTO orgs (slug, type, updated_at) VALUES (\'acme\', \'internal\', ?)').run(AT);
+      assert.deepEqual(await toolsFor(e, target), []);
+      e.DB.sqlite.exec('UPDATE orgs SET type = \'partner\'');
+      assert.deepEqual(await toolsFor(e, target), ['org_threads']);
+      e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+        VALUES ('org_threads', 'channel', 'C5', 0, ?)`).run(AT);
+      assert.deepEqual(await toolsFor(e, target), []);
+    });
+
+    it('lists, lists the threads of and reads the customer\'s other channels, never another customer\'s', async () => {
+      const { e, ext, call } = await customer();
+      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads']);
+      assert.equal(ext.sections.length, 1);
+
+      // Without a query: all of the customer's other channels; the agent's own, and C2, not.
+      const found = await call('find_channels', {});
+      assert.equal(found.error, false);
+      assert.match(found.text, /^- slack:E1:C1 \| Slack #aem-acme \| customer acme \|/);
+      assert.equal(found.text.split('\n').length, 1);
+      // Another customer's name finds nothing of theirs.
+      assert.doesNotMatch((await call('find_channels', { query: 'other' })).text, /C2/);
+
+      const listed = await call('list_any_channel_threads', { channel: 'slack:E1:C1' });
+      assert.equal(listed.error, false);
+      assert.match(listed.text, /^slack:E1:C1 \| Slack #aem-acme \|/);
+      // Of acme's channel, acme's threads only.
+      assert.doesNotMatch(listed.text, /1700000000/);
+      assert.match(listed.text, new RegExp(THREAD.replace(/\./g, '\\.')));
+      const refused = await call('list_any_channel_threads', { channel: ELSEWHERE });
+      assert.equal(refused.error, true);
+      assert.match(refused.text, /none of your customer's channels/);
+
+      const read = await call('read_any_thread', { thread: THREAD });
+      assert.equal(read.error, false);
+      assert.match(read.text, /CDN purge takes forever/);
+      for (const other of [ELSEWHERE, OLD]) {
+        // eslint-disable-next-line no-await-in-loop
+        const no = await call('read_any_thread', { thread: other });
+        assert.equal(no.error, true, other);
+        assert.match(no.text, /no thread of your customer's channels/);
+      }
+      assert.deepEqual(
+        e.DB.rows('SELECT agent_thread, thread FROM agent_thread_reads'),
+        [{ agent_thread: OWN, thread: THREAD }],
+      );
+
+      // The team turns it off for the channel: at once.
+      e.DB.sqlite.prepare(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
+        VALUES ('org_threads', 'channel', 'C5', 0, ?)`).run(AT);
+      assert.equal((await call('read_any_thread', { thread: THREAD })).error, true);
+      assert.equal((await call('find_channels', {})).error, true);
+    });
+
+    it('reads only the customer\'s, when installed for the whole inbox but any_thread is off', async () => {
+      const { call } = await customer(['any_thread', 'org_threads']);
+      assert.equal((await call('read_any_thread', { thread: ELSEWHERE })).error, true);
+      assert.equal((await call('read_any_thread', { thread: THREAD })).error, false);
     });
   });
 });
