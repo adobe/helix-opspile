@@ -357,6 +357,7 @@ describe('draft line', () => {
       send: async (k, thread, out) => { sent.push(['me', out.body, out.updated_at, out.mentions]); },
       toast: () => {},
       renderDraftBar: () => {},
+      draftFiles: async () => [],
     });
     const part = { body: 'Thanks @Sam Reyes', mentions: d.mentions };
     await sendDraft('k', true, part);
@@ -367,6 +368,47 @@ describe('draft line', () => {
       ['me', 'Thanks @Sam Reyes', d.updated_at, d.mentions],
       ['me', d.body, d.updated_at, d.mentions],
     ]);
+  });
+
+  it('sends its pictures with it, where the channel takes them, and nothing where it does not', async () => {
+    const shot = { name: 'shot.png', type: 'image/png', size: 9 };
+    const d = {
+      ...draft,
+      files: [{
+        id: 'df_1', name: 'shot.png', type: 'image/png', size: 9,
+      }],
+    };
+    const sent = [];
+    const refused = [];
+    let problem = null;
+    const globals = {
+      state: {
+        cache: new Map([['k', { data: { draft: d, thread: { source: 'slack' } } }]]),
+        me: { attach: { slack: { count: 10 }, app: { slack: { count: 10 } } } },
+      },
+      $: () => null,
+      getSelection: () => ({ removeAllRanges: () => {} }),
+      sendAsApp: async (k, text, base, { files }) => {
+        sent.push(['bot', files.map((f) => f.name)]);
+        return {};
+      },
+      send: async (k, thread, out) => { sent.push(['me', out.attached.map((a) => a.file.name)]); },
+      toast: () => {},
+      renderDraftBar: () => {},
+      draftFiles: async (k, x) => x.files.map(() => shot),
+      attachRule: (thread) => globals.state.me.attach[thread.source],
+      attachProblem: () => problem,
+      attachRefused: (rule, text) => refused.push(text),
+      NO_RULE: { count: 0 },
+      URL: { createObjectURL: () => 'blob:x' },
+    };
+    const { sendDraft } = piece('async function sendDraft', '/**\n * Where the selection', 'sendDraft', globals);
+    await sendDraft('k', true);
+    await sendDraft('k', false);
+    problem = 'Up to 0 files per message.';
+    await sendDraft('k', false);
+    assert.deepEqual(sent, [['bot', ['shot.png']], ['me', ['shot.png']]]);
+    assert.deepEqual(refused, ['Nothing was sent: Up to 0 files per message.']);
   });
 
   it('labels its buttons for the part selected, and back for all of it', () => {

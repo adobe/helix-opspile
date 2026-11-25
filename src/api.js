@@ -22,7 +22,7 @@ import { keptTurn } from './agent/kept.js';
 import { sidebarFor, unseenAnswers } from './sidebar.js';
 import { toolRequestsFor } from './toolrequests.js';
 import {
-  discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, saveDraft,
+  discardDraft, draftOf, draftsFor, draftSource, draftSummary, getDraft, getDraftFile, saveDraft,
 } from './drafts.js';
 import { requestsFor } from './bashrequests.js';
 import { teamsBotIcon } from './bots.js';
@@ -1472,6 +1472,9 @@ async function route(request, env, url, {
       }
     }
     return res;
+  }
+  if (url.pathname === '/api/draft/file' && request.method === 'GET') {
+    return getDraftFile(env, url.searchParams.get('thread'), url.searchParams.get('id'), seeing);
   }
   if (url.pathname === '/api/draft/source' && request.method === 'GET') {
     return draftSource(env, url.searchParams.get('thread'), url.searchParams.get('url'), seeing, {

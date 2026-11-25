@@ -14,6 +14,7 @@ import { json } from './http.js';
 import { linkedMessage, messageRef } from './messagelinks.js';
 import { notifyRoom } from './notify.js';
 import { cleanSources, lookAt, sourcesOf } from './sources.js';
+import { draftFileResponse, filesOf, savedFiles } from './draftfiles.js';
 import {
   AGENT_EMAIL, changeOf, keepForUndo, recordDraftEvent, textHash, undoneDiscard,
 } from './draftevents.js';
@@ -103,6 +104,8 @@ const shape = (r) => ({
   body: r.body,
   mentions: mentionsOf(r.mentions),
   sources: sourcesOf(r.sources),
+  // Pictures that go with it when it is sent (src/draftfiles.js).
+  files: filesOf(r.files),
   by: { id: r.person, name: r.name || null },
   // Who saved its first version (src/draftevents.js).
   origin: r.origin ?? null,
@@ -178,15 +181,28 @@ export async function getDraft(env, key, canSee) {
 }
 
 /**
- * PUT /api/draft `{ thread, text, mentions?, sources?, base }`: saves the entry's draft as the
- * signed-in person. `base` is the `updated_at` of the draft the text was written from (null
- * if there was none); if the draft is no longer that version, nothing is saved and the
- * answer is 409 with the current draft, or null when it is gone. `sources` (src/sources.js)
- * replaces the draft's; left out, they stay, as when a person edits the text.
+ * GET /api/draft/file?thread=&id=: a file of the entry's draft (src/draftfiles.js).
  */
-export async function saveDraft(env, me, request, inTeam) {
+export async function getDraftFile(env, key, id, canSee) {
+  const e = await entryOf(env, key);
+  if (!e || !await canSee(e.teams, e)) {
+    return json({ error: 'not found' }, 404);
+  }
+  return draftFileResponse(env, draftOf(await draftsFor(env, e.keys), e.keys), id);
+}
+
+/**
+ * PUT /api/draft `{ thread, text, mentions?, sources?, files?, base }`: saves the entry's draft
+ * as the signed-in person. `base` is the `updated_at` of the draft the text was written from
+ * (null if there was none); if the draft is no longer that version, nothing is saved and the
+ * answer is 409 with the current draft, or null when it is gone. `sources` (src/sources.js)
+ * replaces the draft's; left out, they stay, as when a person edits the text. `files`, the ids
+ * of the draft's files to keep (src/draftfiles.js), takes the others off; left out, they stay.
+ * `added` are files stored for it just now (the agent's, `storeDraftFile`), after those.
+ */
+export async function saveDraft(env, me, request, inTeam, { added = [] } = {}) {
   const {
-    thread: key, text, mentions, sources, base = null,
+    thread: key, text, mentions, sources, files: keep, base = null,
   } = request || {};
   const body = String(text || '');
   if (!body.trim() || body.length > MAX_TEXT) {
@@ -210,9 +226,14 @@ export async function saveDraft(env, me, request, inTeam) {
       error: 'This draft was discarded or sent meanwhile', conflict: true, draft: null,
     }, 409);
   }
+  const pictures = savedFiles(current?.files || [], keep, added);
+  if (pictures.error) {
+    return json({ error: pictures.error }, 400);
+  }
   const version = nextVersion(current && current.updated_at);
   const picked = JSON.stringify(cleanMentions(mentions));
   const cited = JSON.stringify(given ? given.sources : (current?.sources || []));
+  const attached = JSON.stringify(pictures.files);
   // Undo of a discard saves the same text again: the draft goes on as the one it was.
   const undone = current ? null : await undoneDiscard(env, me, e.keys, body);
   // Who saved the first version, and the latest text they saved: what is sent is compared with it.
@@ -221,10 +242,11 @@ export async function saveDraft(env, me, request, inTeam) {
   let changes;
   if (current && current.thread === e.key) {
     ({ meta: { changes } } = await env.DB.prepare(`UPDATE drafts SET body = ?, mentions = ?,
-        sources = ?, person = ?, updated_at = ?,
+        sources = ?, files = ?, person = ?, updated_at = ?,
         origin_body = CASE WHEN origin = ? THEN ? ELSE origin_body END
       WHERE thread = ? AND updated_at = ?`)
-      .bind(body, picked, cited, me.id, version, me.id, body, e.key, current.updated_at).run());
+      .bind(body, picked, cited, attached, me.id, version, me.id, body, e.key, current.updated_at)
+      .run());
   } else {
     // A draft saved under a thread that has since been folded into a group moves to the
     // group's key. One that comes back by an Undo is still compared with its origin's text.
@@ -237,9 +259,10 @@ export async function saveDraft(env, me, request, inTeam) {
         .bind(current.thread, current.updated_at).run();
     }
     ({ meta: { changes } } = await env.DB.prepare(`INSERT INTO drafts (thread, body, mentions,
-        sources, person, created_at, updated_at, origin, origin_body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        sources, files, person, created_at, updated_at, origin, origin_body)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (thread) DO NOTHING`)
-      .bind(e.key, body, picked, cited, me.id, created, version, origin, proposed)
+      .bind(e.key, body, picked, cited, attached, me.id, created, version, origin, proposed)
       .run());
   }
   if (!changes) {

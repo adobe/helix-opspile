@@ -131,3 +131,47 @@ export function computerEnv(workspace, { id = 'computer' } = {}) {
     createTempFile: unsupported,
   };
 }
+
+/**
+ * The path of a file of the computer as the agent names it: under COMPUTER_CWD (relative to it,
+ * or absolute), without `..` out of it. Null for anything else: the Workspace has nothing else.
+ */
+export function workspacePath(path) {
+  const given = String(path || '').trim();
+  if (!given) {
+    return null;
+  }
+  const parts = [];
+  for (const part of (given.startsWith('/') ? given : `${COMPUTER_CWD}/${given}`).split('/')) {
+    if (part === '..') {
+      parts.pop();
+    } else if (part && part !== '.') {
+      parts.push(part);
+    }
+  }
+  const full = `/${parts.join('/')}`;
+  return full.startsWith(`${COMPUTER_CWD}/`) ? full : null;
+}
+
+/**
+ * Reads a file of the computer's Workspace (`fs`, a Workspace's), for what the agent does with
+ * it outside the shell (view_image, a draft's or a post's files): `{ path, name, bytes }`, or
+ * `{ error }`. At most `max` bytes.
+ */
+export async function readComputerFile(fs, path, { max = 10 * 1024 * 1024 } = {}) {
+  const full = workspacePath(path);
+  if (!full) {
+    return { error: `${path} is not a file of your working directory (${COMPUTER_CWD})` };
+  }
+  const stat = await fs.stat(full).catch(() => null);
+  if (!stat || !stat.isFile) {
+    return { error: `there is no file ${full}` };
+  }
+  if (stat.size > max) {
+    return { error: `${full} is ${Math.ceil(stat.size / 1024 / 1024)} MB, over ${max / 1024 / 1024} MB` };
+  }
+  const read = await fs.readFile(full);
+  const bytes = read instanceof Uint8Array
+    ? read : new Uint8Array(await new Response(read).arrayBuffer());
+  return { path: full, name: full.split('/').pop(), bytes };
+}

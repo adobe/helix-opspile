@@ -694,7 +694,7 @@ describe('the agent\'s switchable tools', () => {
     const ext = agentToolsExtension({ env: env(), hasThread: true }, []);
     assert.deepEqual((ext.tools || []).map((t) => t.name), []);
     const seed = agentToolsExtension({ env: env(), hasThread: false }, ['post_message', 'computer']);
-    assert.deepEqual((seed.tools || []).map((t) => t.name), ['bash']);
+    assert.deepEqual((seed.tools || []).map((t) => t.name), ['bash', 'view_image']);
     const on = agentToolsExtension({ env: env(), hasThread: true }, ['post_message']);
     assert.deepEqual((on.tools || []).map((t) => t.name), ['post_message', 'add_reaction']);
   });

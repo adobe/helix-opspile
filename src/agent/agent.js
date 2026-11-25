@@ -41,7 +41,7 @@ import { dream, dreamOf, dreamState } from './dream.js';
 import { setWakeup, wakeupDue } from './wakeups.js';
 import { armCompact, compactIdle } from './idlecompact.js';
 import {
-  COMPUTER_CWD, computerEnv, ensureCwd, KERNEL_OUTPUT_DIR,
+  COMPUTER_CWD, computerEnv, ensureCwd, KERNEL_OUTPUT_DIR, readComputerFile,
 } from './computer.js';
 import {
   commandsOf, DEFAULT_IMAGE, IMAGE_COMMANDS, IMAGE_ROOT, imageDriver, imageTree, readImage,
@@ -201,6 +201,8 @@ export class ThreadAgent extends Agent {
           wakeup: (kind, args) => setWakeup(this, kind, args),
           // What the computer's shell is and has, for the agent's prompt.
           shell: () => this.shellInfo(),
+          // A file of the computer, for the tools that take one (src/agent/computer.js).
+          computerFile: (path, options) => this.computerFile(path, options),
         };
         this.agentContext = agent;
         // In this order, which is the system prompt's: opspile, the tools the team turned on,
@@ -372,6 +374,18 @@ export class ThreadAgent extends Agent {
     }
     const { name, tools, commands } = this.imageInfo;
     return { image: name, ...(tools ? { tools, commands } : {}) };
+  }
+
+  /**
+   * A file of the computer's working directory, for a tool that takes one (view_image, a
+   * draft's or a post's files): `{ path, name, bytes }`, or `{ error }`. Only where the team
+   * turned the computer on.
+   */
+  async computerFile(path, options) {
+    if (!(await this.currentTools()).includes('computer')) {
+      return { error: 'you have no computer in this channel' };
+    }
+    return readComputerFile((await this.readyWorkspace()).fs, path, options);
   }
 
   /** The agent's computer, as pi's environment: a Workspace in this object, made on first use. */
