@@ -20,6 +20,7 @@ import { COMPUTER_CWD } from './computer.js';
 import { agentEnabled } from './enabled.js';
 import { timedOut } from './kernel.js';
 import { modelProblem } from './model.js';
+import { tellChat } from './kbchat.js';
 import { executeScript, scriptOutcomeText } from './scriptrequest.js';
 import {
   agentScope, escapes, secretsFor, shellEnv,
@@ -76,13 +77,19 @@ export function hider(values) {
 
 /**
  * The agent's `request_bash`: stores the request and tells the team's inboxes. `ctx` is the
- * tools' context (`env`, `target`, `schedule`). Resolves to `{ request }` or `{ error }`.
+ * tools' context (`env`, `target`, `schedule`, and a knowledge-base agent's `name`). `chat`: the
+ * conversation of a knowledge base's sidebar it is asked in (`chatOf`, src/agent/kbchat.js), a
+ * knowledge-base agent's only way to ask; its person decides it there. Resolves to
+ * `{ request }` or `{ error }`.
  */
-export async function requestBash(ctx, args, now = new Date()) {
+export async function requestBash(ctx, args, now = new Date(), chat = null) {
   const { env } = ctx;
   const t = await ctx.target();
+  if (!t.key && !(chat && ctx.name)) {
+    return { error: 'request_bash is only for a thread, or a conversation on a knowledge base\'s page.' };
+  }
   // Asked again each time: the tools an agent has are only as new as its latest message.
-  if (!t.key || !(await toolsFor(env, t)).includes('computer')) {
+  if (!(await toolsFor(env, t)).includes('computer')) {
     return { error: 'request_bash is not available in this channel (any more).' };
   }
   const request = cleanRequest(args, now);
@@ -95,18 +102,25 @@ export async function requestBash(ctx, args, now = new Date()) {
   if (kept) {
     return { error: `${kept.name} is a secret the team keeps for you: the command has it as $${kept.name} anyway, so leave it out of env. Nothing was requested.` };
   }
-  if (await openCount(env, t.key, now) >= MAX_OPEN) {
+  const owner = t.key || ctx.name;
+  if (await openCount(env, owner, now) >= MAX_OPEN) {
     return { error: `${MAX_OPEN} of your requests are waiting for a person already. Nothing was requested: say in your note that they wait.` };
   }
   const id = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
   // Armed before the request exists: a deadline with no request does nothing, a request with
   // no deadline would wait for ever.
   await ctx.schedule(new Date(request.deadline), 'bashDeadline', { id });
-  // Asked while it answers a sidebar message: the inbox shows it in that conversation.
-  const sidebar = ctx.sidebarMessage ? await ctx.sidebarMessage() : null;
-  const stored = await insertRequest(env, id, t.key, { ...request, sidebar }, now);
-  log({ action: 'requested', id, team: t.team });
-  await announce(env, t.key);
+  // Asked while it answers a sidebar message: the inbox shows it in that conversation. A
+  // knowledge-base agent's is shown in the conversation of its page it was asked in (`chat`).
+  const sidebar = !chat && ctx.sidebarMessage ? await ctx.sidebarMessage() : null;
+  const where = chat ? chat.chat : null;
+  const stored = await insertRequest(env, id, owner, { ...request, sidebar }, now, where);
+  log({
+    action: 'requested', id, team: t.team, ...(chat ? { chat: true } : {}),
+  });
+  if (t.key) {
+    await announce(env, t.key);
+  }
   return { request: stored };
 }
 
@@ -162,6 +176,17 @@ export function outcomeText(request, outcome) {
  */
 async function tell(agent, request, outcome) {
   const { env } = agent;
+  // Asked in a conversation of a knowledge base's sidebar: told there, where its person sees it.
+  if (request.chat) {
+    if (modelProblem(env)) {
+      return { result: 'skip', reason: 'no agent' };
+    }
+    const r = await tellChat(agent, request, outcome, outcomeText(request, outcome));
+    if (r.result === 'told') {
+      await markTold(env, request.id);
+    }
+    return r;
+  }
   const t = await agent.target();
   if (!t.key || modelProblem(env) || !await agentEnabled(env, t.channelId, t.team)) {
     return { result: 'skip', reason: 'no agent' };
@@ -318,9 +343,10 @@ export async function runBash(agent, { id, values, by }) {
   if (request.status !== 'pending') {
     return decided(request);
   }
-  // The agent that asked has to be there still, to be told what came of it, and its computer.
+  // The agent that asked has to be there still, to be told what came of it, and its computer. A
+  // knowledge-base agent is there as long as its conversation is.
   const t = await agent.target();
-  if (!t.key || !await agentEnabled(env, t.channelId, t.team)) {
+  if (t.key ? !await agentEnabled(env, t.channelId, t.team) : !request.chat) {
     return { error: 'The agent is turned off for this channel: nothing ran', status: 409 };
   }
   await agent.syncTools();

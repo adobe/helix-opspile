@@ -497,7 +497,18 @@ async function pickRow(sel) {
  * Redraws the list on the left, which every change does for its counts, keeping what is
  * being typed in its fields (a new team's name, say) and where the cursor is.
  */
+/**
+ * The knowledge base's sidebar (ui/kbchat.js): the agent of the team or the customer picked,
+ * where it has a knowledge base you may change; else none.
+ */
+function showChat() {
+  const { tab, sel } = state;
+  const b = sel && agented(tab, sel) && sel !== UNASSIGNED ? baseOf(tab, sel) : null;
+  KbChat.show(b && { ...b, name: tab === 'teams' ? teamLabel(sel) : orgLabel(sel) });
+}
+
 function renderList() {
+  showChat();
   const typed = [...$('list').querySelectorAll('input[id], select[id]')].map((el) => ({
     id: el.id, value: el.value, touched: el.dataset.touched,
   }));
@@ -3956,6 +3967,8 @@ function wireOrgMerge(slug) {
     onWrite: forget,
   });
   wireWarm();
+  // The knowledge base's agent answered in its sidebar, and may have changed it: as it is now.
+  KbChat.init({ onAnswer: (repo) => Agent.changed(repo) });
   // An icon that does not load: Google has no favicon for the domain (or the image is gone).
   // The org is then shown without one, and counts as one without an icon.
   let redraw = 0;

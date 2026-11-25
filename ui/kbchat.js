@@ -1,0 +1,436 @@
+/*
+ * Copyright 2026 Adobe. All rights reserved.
+ * This file is licensed to you under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License. You may obtain a copy
+ * of the License at https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under
+ * the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR REPRESENTATIONS
+ * OF ANY KIND, either express or implied. See the License for the specific language
+ * governing permissions and limitations under the License.
+ */
+
+/*
+ * The knowledge base's sidebar (src/kbchat.js), on a team's or a customer's page (ui/admin.js):
+ * whoever may look at its knowledge base talks there to its knowledge-base agent, which reads the
+ * knowledge bases and every thread of the inbox, and for the people on its team (`write`)
+ * changes that knowledge base and runs commands on its computer, some of which it asks you to run
+ * (a card in the conversation, with Run and Deny: POST /api/kb/chat/bash). It is
+ * a panel beside the page (`#kbchat`), on every section of it, opened and closed by its tab at
+ * the page's edge (`#kbchatTab`) and kept open or closed in the browser; on a narrow screen it
+ * comes over the page. Each conversation is yours alone: **New conversation** starts another,
+ * and the earlier ones are a pick away. Over GET and POST /api/kb/chat; while the agent works
+ * on an answer the panel asks every few seconds, shows what it is doing, and when it answers,
+ * the page shows the knowledge base as it is now (`onAnswer`, Agent.changed). What it says is
+ * markdown (ui/markdown.js), rendered as the inbox renders messages; nothing else is HTML.
+ */
+globalThis.KbChat = (() => {
+  const NAME = 'Knowledge Base Agent';
+  const ICON = '/icon-192.png';
+  const KEEP = 'opspile.kbchat';
+  const POLL_MS = 3000;
+  // Past this, the panel stops asking; a message or opening it asks again.
+  const WAIT_MS = 15 * 60 * 1000;
+  const MAX = 8000;
+  const CHAT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
+  const EXAMPLES = {
+    team: [
+      'What does the knowledge base say about our most common issues, and what is missing?',
+      'Look through this month\'s threads for fixes the knowledge base does not have yet, and add them.',
+      'Find duplicate or misfiled concepts, and merge or move them.',
+    ],
+    org: [
+      'What do we know about this customer\'s sites and setup? What is out of date?',
+      'Read the customer\'s recent threads and add what the knowledge base is missing.',
+      'Check the contacts: who is who, and is anyone missing?',
+    ],
+  };
+  // For who may ask but not have it changed.
+  const QUESTIONS = {
+    team: [
+      'What does the knowledge base say about our most common issues?',
+      'Who on this team knows the most about forms?',
+      'Which threads of this month does the knowledge base not cover yet?',
+    ],
+    org: [
+      'What do we know about this customer\'s sites and setup?',
+      'Who is who on this customer\'s side?',
+      'Which of its open questions came up in its recent threads?',
+    ],
+  };
+
+  const state = {
+    base: null, chat: null, fresh: false, messages: [], bash: [], chats: [], working: null, error: '',
+    loading: false, sending: false, turn: 0, timer: 0, since: 0, draft: new Map(), write: false,
+    // The values typed into a command's fields, by request and name, kept across redraws.
+    values: new Map(), deciding: new Set(),
+  };
+  const host = { onAnswer: () => {} };
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+  const touch = () => matchMedia('(hover: none) and (pointer: coarse)').matches;
+  const md = (src) => (globalThis.Markdown ? Markdown.render(String(src || '')) : `<p>${esc(src)}</p>`);
+  const when = (at) => {
+    if (!at) return '';
+    const d = new Date(at);
+    const today = new Date().toDateString() === d.toDateString();
+    return today ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  };
+  const wasOpen = () => {
+    try { return localStorage.getItem(KEEP) === 'open'; } catch { return false; }
+  };
+  const keepOpen = (shown) => {
+    try { localStorage.setItem(KEEP, shown ? 'open' : 'closed'); } catch { /* private mode */ }
+  };
+
+  let panel = null;
+  let tab = null;
+  const main = () => document.querySelector('main');
+  const isOpen = () => Boolean(panel && !panel.hidden);
+
+  function mount() {
+    if (panel) return;
+    panel = document.createElement('aside');
+    panel.id = 'kbchat';
+    panel.hidden = true;
+    panel.setAttribute('aria-label', NAME);
+    tab = document.createElement('button');
+    tab.id = 'kbchatTab';
+    tab.type = 'button';
+    tab.hidden = true;
+    tab.innerHTML = `${CHAT_ICON}<span>Ask the agent</span>`;
+    tab.onclick = () => open();
+    main().append(panel, tab);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && isOpen() && panel.contains(document.activeElement)) close();
+    });
+  }
+
+  // ---- what it shows -----------------------------------------------------------------------
+
+  function message(m) {
+    if (m.role === 'agent') {
+      return `<div class="kbc-m agent${m.state === 'failed' ? ' failed' : ''}"><img class="kbc-av" src="${ICON}" alt="">
+        <div class="col"><div class="who"><b>${NAME}</b> · ${esc(when(m.at))}</div><div class="bubble">${md(m.body)}</div></div></div>`;
+    }
+    return `<div class="kbc-m you${m.pending ? ' pending' : ''}">
+      <div class="col"><div class="who">${m.pending ? 'Sending…' : `You · ${esc(when(m.at))}`}</div><div class="bubble">${md(m.body)}</div></div></div>`;
+  }
+
+  // A command the agent asked you to run (request_bash): what, why, the values it needs, and
+  // Run and Deny while it waits; how it ended after.
+  const STATUS = {
+    pending: 'Waiting for you', running: 'Running…', done: 'Ran', timeout: 'Stopped at its timeout', failed: 'Failed', denied: 'Denied', expired: 'Expired',
+  };
+  function command(r) {
+    const asks = r.status === 'pending' && state.write;
+    const busy = state.deciding.has(r.id);
+    const fields = asks ? r.env.map((v) => `<label class="kbc-var"><span><code>$${esc(v.name)}</code>${v.description ? ` ${esc(v.description)}` : ''}</span>
+      <input type="password" autocomplete="off" data-var="${esc(r.id)}" data-name="${esc(v.name)}" value="${esc(state.values.get(`${r.id}|${v.name}`) || '')}"></label>`).join('') : '';
+    const ended = r.status === 'done' ? ` · exit code ${esc(r.exit_code)}` : '';
+    const who = r.by && r.by.name && !asks ? ` by ${esc(r.by.name)}` : '';
+    return `<div class="kbc-cmd ${esc(r.status)}"><div class="kbc-cmd-head"><b>The agent asks you to run a command</b><span class="kbc-st">${esc(STATUS[r.status] || r.status)}${who}${ended}</span></div>
+      <div class="kbc-why">${esc(r.reason)}</div><pre><code>${esc(r.command)}</code></pre>${fields}
+      ${asks ? `<div class="kbc-acts"><button type="button" class="kbc-run" data-run="${esc(r.id)}"${busy ? ' disabled' : ''}>Run</button><button type="button" class="kbc-deny" data-deny="${esc(r.id)}"${busy ? ' disabled' : ''}>Deny</button><span class="sub">until ${esc(when(r.deadline))}</span></div>` : ''}</div>`;
+  }
+
+  function blank() {
+    const b = state.base;
+    const ex = (state.write ? EXAMPLES : QUESTIONS)[b.kind] || (state.write ? EXAMPLES : QUESTIONS).team;
+    const writes = state.write ? 'and writes only this knowledge base, with the threads it learned from as sources'
+      : `and answers you, but changes this knowledge base only for the people of ${b.kind === 'team' ? esc(b.name || b.repo) : 'its ops teams'}`;
+    return `<div class="kbc-blank"><img class="kbc-av big" src="${ICON}" alt="">
+      <p><b>Ask about ${esc(b.name || b.repo)}'s knowledge base${state.write ? ', or tell the agent what to change' : ''}.</b></p>
+      <p class="sub">It reads every knowledge base and every thread of the inbox, ${writes}. Only you see this conversation.</p>
+      <div class="kbc-ex">${ex.map((t) => `<button type="button" class="kbc-try" data-try="${esc(t)}">${esc(t)}</button>`).join('')}</div></div>`;
+  }
+
+  function chatsPick() {
+    const list = state.chats.filter((c) => c.chat !== state.chat);
+    if (!list.length) return '';
+    return `<label class="kbc-earlier"><span>Earlier</span><select id="kbcEarlier" aria-label="Earlier conversations">
+      <option value="">${state.chat && !state.fresh ? 'This conversation' : 'New conversation'}</option>
+      ${list.map((c) => `<option value="${esc(c.chat)}">${esc(when(c.at))} · ${esc(c.first.slice(0, 60) || 'Conversation')}</option>`).join('')}
+    </select></label>`;
+  }
+
+  function body() {
+    if (state.loading && !state.messages.length) return '<div class="kbc-wait">Loading…</div>';
+    // The commands between the messages, where they were asked.
+    const items = [...state.messages.map((m) => ({ at: m.at || '\uffff', html: message(m) })),
+      ...state.bash.map((r) => ({ at: r.created_at, html: command(r) }))];
+    const list = items.sort((a, b) => String(a.at).localeCompare(String(b.at))).map((x) => x.html).join('');
+    const working = state.working ? `<div class="kbc-m agent working"><img class="kbc-av" src="${ICON}" alt="">
+      <div class="col"><div class="who"><b>${NAME}</b></div><div class="bubble"><span class="spin" aria-hidden="true"></span>${esc(state.working)}…</div></div></div>` : '';
+    const error = state.error ? `<div class="kbc-err" role="alert">${esc(state.error)}</div>` : '';
+    return `${list || working ? `${list}${working}` : blank()}${error}`;
+  }
+
+  function render({ focus = false } = {}) {
+    if (!panel || !state.base) return;
+    const b = state.base;
+    const typed = panel.querySelector('#kbcText');
+    if (typed) state.draft.set(b.repo, typed.value);
+    const scroller = panel.querySelector('.kbc-scroll');
+    const atEnd = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    panel.innerHTML = `<div class="kbc-head"><img class="kbc-av" src="${ICON}" alt="">
+        <div class="kbc-what"><b>${NAME}</b><small>${esc(b.name || b.repo)} · only you see this${state.write ? '' : ' · read only'}</small></div>
+        <button type="button" class="kbc-new" id="kbcNew" title="Start a new conversation"${!state.messages.length ? ' disabled' : ''}>New</button>
+        <button type="button" class="kbc-close" id="kbcClose" title="Close (Esc)" aria-label="Close the agent"><span class="s2-cross" aria-hidden="true"></span></button></div>
+      ${chatsPick()}
+      <div class="kbc-scroll"><div class="kbc-body" aria-live="polite">${body()}</div></div>
+      <form class="kbc-box" id="kbcForm"><textarea id="kbcText" rows="3" maxlength="${MAX}" aria-label="Ask the ${NAME}"></textarea>
+        <div class="kbc-foot"><span class="sub">${touch() ? '' : 'Enter asks, Shift+Enter is a new line'}</span><button type="submit" class="kbc-ask" id="kbcAsk">Ask</button></div></form>`;
+    const box = panel.querySelector('#kbcText');
+    box.value = state.draft.get(b.repo) || '';
+    const s = panel.querySelector('.kbc-scroll');
+    if (atEnd) s.scrollTop = s.scrollHeight;
+    wire();
+    if (focus) box.focus();
+  }
+
+  function wire() {
+    panel.querySelector('#kbcClose').onclick = () => close();
+    panel.querySelector('#kbcNew').onclick = () => fresh();
+    const pick = panel.querySelector('#kbcEarlier');
+    if (pick) pick.onchange = () => { if (pick.value) load({ chat: pick.value }); };
+    const box = panel.querySelector('#kbcText');
+    box.addEventListener('keydown', (e) => {
+      // On a phone's keyboard Enter is a new line; Ask asks.
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !touch()) {
+        e.preventDefault();
+        send();
+      }
+    });
+    panel.querySelector('#kbcForm').onsubmit = (e) => { e.preventDefault(); send(); };
+    panel.querySelectorAll('[data-try]').forEach((b) => {
+      b.onclick = () => {
+        box.value = b.dataset.try;
+        box.focus();
+      };
+    });
+    panel.querySelectorAll('[data-var]').forEach((el) => {
+      el.oninput = () => state.values.set(`${el.dataset.var}|${el.dataset.name}`, el.value);
+    });
+    panel.querySelectorAll('[data-run]').forEach((b) => { b.onclick = () => decide(b.dataset.run, true); });
+    panel.querySelectorAll('[data-deny]').forEach((b) => { b.onclick = () => decide(b.dataset.deny, false); });
+  }
+
+  /** Runs or denies command `id` the agent asked for, with the values typed for it. */
+  async function decide(id, run) {
+    const b = state.base;
+    const r = state.bash.find((x) => x.id === id);
+    if (!b || !r || state.deciding.has(id)) return;
+    const env = run ? Object.fromEntries(r.env.map((v) => [v.name, state.values.get(`${id}|${v.name}`) || ''])) : undefined;
+    state.deciding.add(id);
+    state.error = '';
+    render();
+    let res;
+    try {
+      const f = await fetch('/api/kb/chat/bash', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          repo: b.repo, chat: state.chat, id, run, ...(env ? { env } : {}),
+        }),
+      });
+      res = { ok: f.ok, body: await f.json().catch(() => ({})) };
+    } catch (e) {
+      res = { ok: false, body: { error: e.message } };
+    }
+    state.deciding.delete(id);
+    if (state.base !== b) return;
+    if (!res.ok) state.error = res.body.error || 'It did not go through. Try again.';
+    else for (const v of r.env) state.values.delete(`${id}|${v.name}`);
+    state.since = Date.now();
+    load({ chat: state.chat, quiet: true });
+  }
+
+  // ---- talking -----------------------------------------------------------------------------
+
+  const waiting = () => {
+    const last = state.messages[state.messages.length - 1];
+    return Boolean(last && last.role === 'person' && !last.pending
+      && !state.messages.some((m) => m.reply_to === last.id));
+  };
+
+  function poll() {
+    clearTimeout(state.timer);
+    const running = state.bash.some((r) => r.status === 'running');
+    if (!isOpen() || !(waiting() || running) || Date.now() - state.since > WAIT_MS) return;
+    state.timer = setTimeout(() => load({ chat: state.chat, quiet: true }), POLL_MS);
+  }
+
+  async function load({ chat = null, quiet = false } = {}) {
+    const b = state.base;
+    if (!b) return;
+    const turn = ++state.turn;
+    if (!quiet) {
+      state.loading = true;
+      state.error = '';
+      render();
+    }
+    const q = new URLSearchParams({ repo: b.repo });
+    if (chat) q.set('chat', chat);
+    let res;
+    try {
+      const r = await fetch(`/api/kb/chat?${q}`, { credentials: 'same-origin' });
+      res = { ok: r.ok, body: await r.json().catch(() => ({})) };
+    } catch (e) {
+      res = { ok: false, body: { error: e.message } };
+    }
+    if (turn !== state.turn || state.base !== b) return;
+    state.loading = false;
+    if (!res.ok) {
+      state.error = res.body.error || 'Could not read the conversation.';
+      render();
+      if (quiet) state.timer = setTimeout(() => load({ chat: state.chat, quiet: true }), POLL_MS * 2);
+      return;
+    }
+    const before = state.messages.filter((m) => m.role === 'agent').length;
+    state.error = '';
+    state.chat = res.body.chat;
+    state.fresh = !res.body.chat;
+    state.messages = res.body.messages || [];
+    state.bash = res.body.bash || [];
+    state.write = Boolean(res.body.write);
+    state.chats = res.body.chats || [];
+    state.working = res.body.working || (waiting() ? 'Reading your message' : null);
+    render();
+    const after = state.messages.filter((m) => m.role === 'agent').length;
+    if (quiet && after > before) host.onAnswer(b.repo);
+    poll();
+  }
+
+  async function send() {
+    const b = state.base;
+    const box = panel && panel.querySelector('#kbcText');
+    const text = box ? box.value.trim() : '';
+    if (!b || !text || state.sending) return;
+    if (waiting()) {
+      state.error = 'The agent is still answering: ask once it has.';
+      render();
+      return;
+    }
+    state.sending = true;
+    state.error = '';
+    state.turn += 1;
+    const pending = {
+      id: `pending-${Date.now()}`, role: 'person', body: text, pending: true,
+    };
+    state.messages = [...state.messages, pending];
+    state.draft.set(b.repo, '');
+    box.value = '';
+    render();
+    let res;
+    try {
+      const r = await fetch('/api/kb/chat', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          repo: b.repo, text, ...(state.fresh || !state.chat ? { fresh: state.fresh } : { chat: state.chat }),
+        }),
+      });
+      res = { ok: r.ok, body: await r.json().catch(() => ({})) };
+    } catch (e) {
+      res = { ok: false, body: { error: e.message } };
+    }
+    state.sending = false;
+    if (state.base !== b) return;
+    state.messages = state.messages.filter((m) => m !== pending);
+    if (!res.ok) {
+      state.error = res.body.error || 'The agent did not take it. Try again.';
+      state.draft.set(b.repo, text);
+      render({ focus: true });
+      return;
+    }
+    state.chat = res.body.chat;
+    state.fresh = false;
+    state.messages = [...state.messages, res.body.message];
+    state.working = 'Reading your message';
+    state.since = Date.now();
+    render({ focus: true });
+    poll();
+  }
+
+  /** A new conversation: the next message starts it. */
+  function fresh() {
+    clearTimeout(state.timer);
+    state.turn += 1;
+    if (state.chat && !state.chats.some((c) => c.chat === state.chat) && state.messages.length) {
+      state.chats = [{
+        chat: state.chat, at: state.messages[state.messages.length - 1].at, first: state.messages[0].body,
+      }, ...state.chats];
+    }
+    state.chat = null;
+    state.fresh = true;
+    state.messages = [];
+    state.bash = [];
+    state.working = null;
+    state.error = '';
+    render({ focus: true });
+  }
+
+  // ---- the panel ---------------------------------------------------------------------------
+
+  function open({ focus = true } = {}) {
+    if (!state.base) return;
+    keepOpen(true);
+    panel.hidden = false;
+    tab.hidden = true;
+    main().classList.add('kbchatting');
+    state.since = Date.now();
+    render({ focus });
+    load({ chat: state.chat });
+  }
+
+  function close() {
+    keepOpen(false);
+    clearTimeout(state.timer);
+    panel.hidden = true;
+    tab.hidden = !state.base;
+    main().classList.remove('kbchatting');
+    if (state.base) tab.focus();
+  }
+
+  /**
+   * The knowledge base on the page (`{ repo, kind, slug, name, write }` of GET /api/kb: every one
+   * you see), or null where there is none: the tab and the panel go.
+   */
+  function show(base) {
+    mount();
+    const b = base && base.repo ? base : null;
+    if ((b && b.repo) === (state.base && state.base.repo)) return;
+    clearTimeout(state.timer);
+    state.turn += 1;
+    Object.assign(state, {
+      base: b, chat: null, fresh: false, messages: [], bash: [], chats: [], working: null, error: '', write: Boolean(b && (b.write ?? b.may)),
+    });
+    if (!b) {
+      panel.hidden = true;
+      tab.hidden = true;
+      main().classList.remove('kbchatting');
+      return;
+    }
+    if (wasOpen()) open({ focus: false });
+    else {
+      panel.hidden = true;
+      tab.hidden = false;
+      main().classList.remove('kbchatting');
+    }
+  }
+
+  return {
+    /** `onAnswer(repo)`: the agent answered, and may have changed the knowledge base. */
+    init({ onAnswer } = {}) {
+      if (onAnswer) host.onAnswer = onAnswer;
+    },
+    show,
+    open,
+    close,
+  };
+})();

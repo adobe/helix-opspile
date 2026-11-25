@@ -135,6 +135,74 @@ const SYSTEM = {
 export const AGENT = { id: 900, name: 'opspile agent' };
 
 /**
+ * The knowledge base's sidebar (ui/kbchat.js) of kb-team-platform, as GET /api/kb/chat answers:
+ * a conversation of yours, the agent's answer with what it changed, and an earlier one.
+ */
+export function kbChats(now = Date.now()) {
+  const at = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
+  const ask = 'sb_00000000-0000-4000-8000-000000000001';
+  return {
+    'kb-team-platform': [
+      {
+        chat: 'kc_00000000-0000-4000-8000-000000000001',
+        // What the agent asked to have run, a token of yours in it (request_bash).
+        bash: [{
+          id: 'b0000000cdn1',
+          chat: 'kc_00000000-0000-4000-8000-000000000001',
+          command: 'curl -s -H "Fastly-Key: $FASTLY_TOKEN" "https://api.fastly.com/service/$SERVICE/version/active" | jq \'{number, updated_at}\'',
+          reason: 'To see when the shared service\'s configuration last changed: two threads say the purge delay was fixed in October, a later one that it is back.',
+          env: [{ name: 'FASTLY_TOKEN', description: 'A read-only Fastly API token of yours' }, { name: 'SERVICE', description: 'The shared service\'s id' }],
+          timeout: 60,
+          deadline: at(-60 * 24),
+          status: 'pending',
+          created_at: at(8),
+          by: null,
+        }],
+        messages: [
+          {
+            id: ask,
+            role: 'person',
+            state: 'done',
+            reply_to: null,
+            at: at(12),
+            body: 'We keep answering questions about CDN purges taking long. Is that in the knowledge base? If not, add it.',
+          },
+          {
+            id: `${ask}:answer`,
+            role: 'agent',
+            state: 'done',
+            reply_to: ask,
+            at: at(9),
+            body: 'It was not: `issues/` had nothing on purges, and `playbooks/cdn-purge.md` only covers purging by URL.\n\nI read the **6 threads** of the last two months that ask about it ([the latest](https://example.slack.com/archives/C1/p1)), and wrote:\n\n- `issues/cdn-purge-delay.md` (new): purges by surrogate key take up to 10 minutes on the shared CDN; what to tell the customer, and when to escalate. Sources: 4 threads.\n- `playbooks/cdn-purge.md`: a section on purging by key, linked to the issue.\n\nTwo threads said the delay was fixed in October, and a later one says it is back, so I kept it as a known issue rather than *resolved*.',
+          },
+        ],
+      },
+      {
+        chat: 'kc_00000000-0000-4000-8000-000000000002',
+        messages: [
+          {
+            id: 'sb_00000000-0000-4000-8000-000000000002',
+            role: 'person',
+            state: 'done',
+            reply_to: null,
+            at: at(60 * 26),
+            body: 'Who on the team knows the most about forms?',
+          },
+          {
+            id: 'sb_00000000-0000-4000-8000-000000000002:answer',
+            role: 'agent',
+            state: 'done',
+            reply_to: 'sb_00000000-0000-4000-8000-000000000002',
+            at: at(60 * 26 - 2),
+            body: 'Lena Berg: her profile (`contacts/lena-berg.md`) lists forms, and she answered 9 of the 12 forms threads this quarter.',
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
  * The made-up model of the preview's translations (GET /api/translate, scripts/dev-ui.mjs): the
  * Japanese thread's messages in English. Anything else in Japanese is marked, not translated.
  */

@@ -43,6 +43,7 @@ import trendViewJs from '../ui/trendview.js' with { type: 'text' };
 import overviewJs from '../ui/overview.js' with { type: 'text' };
 import teamJs from '../ui/team.js' with { type: 'text' };
 import customerJs from '../ui/customer.js' with { type: 'text' };
+import kbchatJs from '../ui/kbchat.js' with { type: 'text' };
 import personJs from '../ui/person.js' with { type: 'text' };
 import sideNavJs from '../ui/sidenav.js' with { type: 'text' };
 // Spectrum 2's look of every page (README, "Spectrum 2").
@@ -51,6 +52,7 @@ import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
 import spectrumInboxCss from '../ui/spectrum-inbox.css' with { type: 'text' };
 import spectrumAdminCss from '../ui/spectrum-admin.css' with { type: 'text' };
 import spectrumAgentCss from '../ui/spectrum-agent.css' with { type: 'text' };
+import spectrumKbchatCss from '../ui/spectrum-kbchat.css' with { type: 'text' };
 import spectrumOverviewCss from '../ui/spectrum-overview.css' with { type: 'text' };
 import spectrumCogsCss from '../ui/spectrum-cogs.css' with { type: 'text' };
 import spectrumTopicsCss from '../ui/spectrum-topics.css' with { type: 'text' };
@@ -80,6 +82,7 @@ export const SCRIPTS = {
   'overview.js': overviewJs,
   'team.js': teamJs,
   'customer.js': customerJs,
+  'kbchat.js': kbchatJs,
   'person.js': personJs,
   'sidenav.js': sideNavJs,
   'spectrum-fonts.css': spectrumFontsCss,
@@ -87,6 +90,7 @@ export const SCRIPTS = {
   'spectrum-inbox.css': spectrumInboxCss,
   'spectrum-admin.css': spectrumAdminCss,
   'spectrum-agent.css': spectrumAgentCss,
+  'spectrum-kbchat.css': spectrumKbchatCss,
   'spectrum-overview.css': spectrumOverviewCss,
   'spectrum-cogs.css': spectrumCogsCss,
   'spectrum-topics.css': spectrumTopicsCss,

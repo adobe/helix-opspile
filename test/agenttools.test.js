@@ -96,6 +96,10 @@ describe('agent tools', () => {
     const e = env();
     const slack = target(SLACK, 'slack', 'C1');
     assert.deepEqual(await toolsFor(e, slack), []);
+    // A knowledge-base agent's are no channel's: what works here, a team's extraction rules too.
+    assert.deepEqual(await toolsFor(e, { key: null, team: 'helix', org: null }), ['computer', 'extraction_rules']);
+    assert.deepEqual(await toolsFor(e, { key: null, team: null, org: 'acme' }), ['computer']);
+    assert.deepEqual(await toolsFor(e, { key: null, team: null, org: null }), []);
 
     let res = await call(e, manager, 'PUT', '/api/kb/tools', { tool: 'computer', team: 'helix', enabled: true });
     assert.equal(res.status, 200);
@@ -118,8 +122,9 @@ describe('agent tools', () => {
     assert.deepEqual(await toolsFor(e, teams), ['computer']);
     assert.deepEqual(await toolsFor({ ...e, ...TEAMS_BOT }, teams), ['computer', 'post_message']);
     assert.deepEqual(await toolsFor({ ...e, LOADER: undefined }, slack), ['post_message']);
-    // An agent without a thread (filing seeded knowledge) gets none.
-    assert.deepEqual(await toolsFor(e, { ...slack, key: null }), []);
+    // A knowledge-base agent (no thread) gets its own, whatever the switches say: they are for the
+    // conversations of its knowledge base's page (src/kbchat.js), and refused anywhere else.
+    assert.deepEqual(await toolsFor(e, { ...slack, key: null }), ['computer', 'extraction_rules']);
   });
 
   it('switch an internal tool per channel, by the admin team, in internal channels only', async () => {

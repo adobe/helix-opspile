@@ -29,6 +29,7 @@ import createTlsEngine from '@ai-ecoverse/wasm-tls-engine';
 import tlsWasm from '@ai-ecoverse/wasm-tls-engine/slicc-tls-engine.wasm';
 import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
 import { entryOf } from '../drafts.js';
+import { customerTeams } from '../shares.js';
 import { armModel, armTags, cacheRetention } from '../experiments.js';
 import { pinnedArm } from './arms.js';
 import { toolsFor } from './agenttools.js';
@@ -56,9 +57,14 @@ import { forward } from './secrets.js';
 import { DOH, socketUplink } from './uplink.js';
 import { seed, seedPin } from './seed.js';
 import {
+  chatOf, chatState, keepChats, talkInChat,
+} from './kbchat.js';
+import {
   currentSidebar, inSidebar, keepAnswers, talk,
 } from './sidebar.js';
-import { agentToolsExtension, opspileExtension, staffExtension } from './tools.js';
+import {
+  agentToolsExtension, kbChatExtension, opspileExtension, staffExtension,
+} from './tools.js';
 import {
   keepThreadFiles, mountList, UPLOADS_DIR, uploadsMount,
 } from '../threadfiles.js';
@@ -196,6 +202,8 @@ export class ThreadAgent extends Agent {
           pinned: (session) => seedPin(this, session),
           // Which dream a session is, if one (src/agent/dream.js).
           dreamOf: (session) => dreamOf(this, session),
+          // Which conversation of its knowledge base's sidebar a session is (src/agent/kbchat.js).
+          chatOf: (session) => chatOf(this, session),
           // For request_bash and request_codemode: the deadline of what it asks for.
           schedule: (when, callback, payload) => this.schedule(when, callback, payload),
           // wakeup_after and wakeup_after_idle (src/agent/wakeups.js).
@@ -210,6 +218,11 @@ export class ThreadAgent extends Agent {
         // code mode, the MCP servers, and the staff's instructions last. A reinstall replaces
         // an extension in place.
         this.registry.install(opspileExtension(agent));
+        // A knowledge-base agent talks on its knowledge base's page too, and reads every thread
+        // there (src/kbchat.js).
+        if (!agent.hasThread) {
+          this.registry.install(kbChatExtension(agent));
+        }
         await this.currentArm();
         await this.currentImage();
         this.registry.install(agentToolsExtension(agent, await this.currentTools()));
@@ -643,8 +656,18 @@ export class ThreadAgent extends Agent {
     let value;
     const kb = /^kb:([^:]*):(.*)$/.exec(this.name);
     if (kb) {
+      const about = kb[2] && await this.env.DB.prepare('SELECT name, type FROM orgs WHERE slug = ?')
+        .bind(kb[2]).first().catch(() => null);
       value = {
-        key: null, team: kb[1] || null, org: kb[2] || null, threads: [],
+        key: null,
+        team: kb[1] || null,
+        org: kb[2] || null,
+        threads: [],
+        ...(about ? { orgName: about.name || null, orgType: about.type || 'customer' } : {}),
+        // A customer's own agent (its page's, `kb::<org>`): the teams that work with it, whose
+        // knowledge bases it reads first (src/agent/repos.js).
+        ...(!kb[1] && kb[2]
+          ? { owners: await customerTeams(this.env, kb[2]).catch(() => []) } : {}),
       };
     } else {
       const entry = await entryOf(this.env, this.name);
@@ -754,6 +777,19 @@ export class ThreadAgent extends Agent {
   /** Where a dream stands (src/agent/dream.js). */
   async dreamState(query) {
     return dreamState(this, query);
+  }
+
+  /**
+   * A person talks to the knowledge-base agent on its knowledge base's page, in a conversation
+   * of their own (src/agent/kbchat.js).
+   */
+  async chat(note) {
+    return talkInChat(this, note);
+  }
+
+  /** What the knowledge-base agent is doing in a conversation of its page (src/agent/kbchat.js). */
+  async chatState(query) {
+    return chatState(this, query);
   }
 
   /** A person on the team talks to the agent in the inbox's sidebar (src/agent/sidebar.js). */
@@ -902,10 +938,18 @@ export class ThreadAgent extends Agent {
    * woken object does not write it again. A turn that answers a sidebar message is the
    * sidebar's (src/agent/sidebar.js): the turn kept for the thread stays the one before it.
    * Every finished sidebar answer in the transcript is kept first, also while a turn queued
-   * behind it works. A turn a compaction cut off (`cut`) stays as it was kept.
+   * behind it works. A turn a compaction cut off (`cut`) stays as it was kept. A
+   * knowledge-base agent has no thread to keep a turn for: it keeps the answers of its
+   * knowledge base's sidebar instead (src/agent/kbchat.js), and notes whether one still works
+   * (`chatsWorking`), for keepTurnSoon to look again.
    */
   async keepTurn(turn, at = new Date().toISOString(), { cut = false } = {}) {
     if (this.name.startsWith('kb:')) {
+      const chats = await keepChats(this).catch((e) => {
+        console.log(JSON.stringify({ route: 'agent', keep: 'chats failed', error: e.message }));
+        return { working: false };
+      });
+      this.chatsWorking = chats.working;
       return;
     }
     await keepAnswers(this).catch((e) => console.log(JSON.stringify({ route: 'agent', keep: 'sidebar failed', error: e.message })));
@@ -962,7 +1006,7 @@ export class ThreadAgent extends Agent {
         const { turn, cut } = await this.latestTurn();
         // The sidebar answers before it, even while the turn behind them works.
         await this.keepTurn(turn, at, { cut });
-        working = Boolean(turn && turn.state === 'working');
+        working = Boolean(turn && turn.state === 'working') || Boolean(this.chatsWorking);
         if (!working) {
           await this.armCompact();
         }
