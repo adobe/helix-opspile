@@ -369,6 +369,7 @@ function wanted(url) {
   const legacy = Boolean(q.get('repo') || q.get('path'));
   let section = SECTIONS.includes(view) ? view : null;
   if (view === 'manage') section = 'own';
+  if (view === 'vendors' && tab === 'teams') section = 'vendors';
   if (view === 'file' || (!section && legacy)) section = 'kb';
   // Back from an MCP server's sign-in (src/mcpadmin.js): said once, on the servers' section.
   let flash = null;
@@ -837,6 +838,8 @@ function sectionsOf(tab, slug) {
     // A team's and a customer's overview, everyone's (ui/team.js, ui/customer.js); then what
     // changes them.
     ...(slug !== UNASSIGNED ? ['overview'] : []),
+    // A team's vendors, everyone's too (ui/team.js `TeamView.vendors`).
+    ...(tab === 'teams' && slug !== UNASSIGNED ? ['vendors'] : []),
     ...(own ? ['own'] : []),
     ...(b ? ['agents', 'mcp', ...(b.kind === 'team' ? ['extraction'] : []), 'kb', 'history'] : []),
   ];
@@ -846,11 +849,14 @@ function sectionsOf(tab, slug) {
 function sectionTabs() {
   const b = baseOf(state.tab, state.sel);
   const tags = b ? Agent.tags(b.repo) : {};
-  const label = { overview: 'Overview', own: 'Manage', ...SECTION_LABEL };
+  const label = {
+    overview: 'Overview', vendors: 'Vendors', own: 'Manage', ...SECTION_LABEL,
+  };
   const orgTitle = state.me.admin ? 'Its name, icon, type, channels and who follows it' : 'Its channels and who follows it';
   const title = {
     overview: state.tab === 'teams' ? 'Its people, customers, collaborators, technologies and knowledge base'
       : 'Its people, Adobe\'s people and teams on it, what it asks about, its channels, technologies and knowledge base',
+    vendors: 'The vendors it works with: their cases, how soon they answer, and what waits on them',
     own: state.tab === 'teams' ? 'Its members, rules, channels and technologies: for its managers and the admin team' : orgTitle,
     ...SECTION_TITLE,
   };
@@ -902,9 +908,10 @@ function showPicked({ channel = null, flash = null, fresh = false } = {}) {
       <div class="empty">${tab === 'teams' ? 'This team has no knowledge base yet.' : 'None of your teams works with this customer, or its agents have not started a knowledge base yet.'}</div>`;
     return;
   }
-  if (section === 'overview' || section === 'own') {
+  if (section === 'overview' || section === 'own' || section === 'vendors') {
     let shown;
-    if (section === 'overview' && tab === 'teams') shown = showOverview(sel);
+    if (section === 'vendors') shown = showVendors(sel);
+    else if (section === 'overview' && tab === 'teams') shown = showOverview(sel);
     else if (section === 'overview') shown = showOrgOverview(sel);
     else if (tab === 'teams') shown = showTeam(sel);
     else shown = showOrg(sel);
@@ -929,6 +936,8 @@ const READS = {
   overview: (tab, sel) => (tab === 'teams' ? `/api/teams/profile?team=${encodeURIComponent(sel)}`
     : `/api/customers/profile?org=${encodeURIComponent(sel)}`),
   own: (tab, sel) => `/api/admin/${tab === 'teams' ? 'team' : 'org'}?slug=${encodeURIComponent(sel)}`,
+  // A team's Vendors section (src/vendors.js).
+  vendors: (tab, sel) => `/api/teams/vendors?team=${encodeURIComponent(sel)}`,
 };
 /** The people suggested for a team, which its Manage section shows (not the admin team's). */
 const suggestPath = (slug) => `/api/admin/member-suggestions?team=${encodeURIComponent(slug)}`;
@@ -948,6 +957,8 @@ function warm(tab, sel, section, { agent = false } = {}) {
     cached(READS.overview(tab, sel)).then((r) => {
       if (r.ok && (tab === 'teams' ? r.body.kb?.stack : r.body.kb?.drawing)) cached(stackPath(tab, sel));
     });
+  } else if (s === 'vendors') {
+    cached(READS.vendors(tab, sel));
   } else if (s === 'own') {
     cached(READS.own(tab, sel));
     if (tab === 'teams' && sel !== 'admin' && sel !== UNASSIGNED) cached(suggestPath(sel));
@@ -2128,6 +2139,55 @@ async function showOverview(slug) {
   if (p.kb?.stack) drawTeamStack(slug, current);
 }
 
+// ---- a team's vendors -----------------------------------------------------------------------
+//
+// The second section of a team's page, everyone's: the vendors it works with and what waits on
+// them, from GET /api/teams/vendors (src/vendors.js), which ui/team.js draws (`TeamView.vendors`).
+// Its managers and the admin team follow a vendor whose channels are not in its inbox yet (PUT
+// /api/admin/org-follows, as on the vendor's page in Customers).
+
+async function showVendors(slug) {
+  const current = loadingPage();
+  const r = await cached(READS.vendors('teams', slug));
+  if (!current()) return;
+  state.view = { target: 'vendors', value: slug };
+  const title = (name) => `<div class="title">${backButton()}<h1 class="fill">${esc(name)}</h1><span class="sub mono">${esc(slug)}</span></div>`;
+  if (!r.ok) {
+    $('detail').innerHTML = `${title(teamLabel(slug))}${sectionsNav()}<div class="empty">${esc(r.body.error || 'Could not load.')}</div>`;
+    tabInView();
+    return;
+  }
+  const p = r.body;
+  const ctx = {
+    orgHref: (org) => address({ tab: 'orgs', sel: org, section: 'overview' }),
+    orgName: (org, name) => name || orgLabel(org),
+    orgIcon: (org, icon) => {
+      const o = state.orgs.find((x) => x.slug === org);
+      return ico(icon || o?.icon || null, o?.domain || null);
+    },
+  };
+  const draw = () => {
+    $('overview').innerHTML = TeamView.vendors(p, ctx);
+    for (const b of $('overview').querySelectorAll('[data-follow]')) {
+      const org = b.dataset.follow;
+      b.onclick = () => hold(b, `orgfollow:${slug}:${org}`, async () => {
+        const res = await call('/api/admin/org-follows', 'PUT', { team: slug, org, follow: true });
+        if (!res.ok) { failed(`${teamLabel(slug)}: follow ${orgLabel(org)}`, res); return; }
+        const v = p.vendors.find((x) => x.slug === org);
+        if (v) Object.assign(v, { follows: true, inInbox: true });
+        status('ok', `${teamLabel(slug)} follows ${orgLabel(org)}: its channels are in ${teamLabel(slug)}'s inbox, shared.`);
+        if (state.view?.target === 'vendors' && state.view.value === slug && $('overview')) draw();
+      });
+    }
+  };
+  $('detail').innerHTML = `${title(p.team.name)}${sectionsNav()}
+    <div class="status" id="status"></div>
+    <div class="ov" id="overview"></div>`;
+  showStatus();
+  tabInView();
+  draw();
+}
+
 async function showTeam(slug) {
   const current = loadingPage();
   const r = await cached(READS.own('teams', slug));
@@ -2907,6 +2967,12 @@ async function showOrgOverview(slug) {
     kbHref: (path) => (base && p.kb?.readable ? address({ section: 'kb', path }) : null),
     // A node of the Topics page, picked, as a team's overview links them.
     topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
+    // A vendor's page lists the customers of its products.
+    orgHref: (org) => address({ tab: 'orgs', sel: org, section: 'overview' }),
+    orgIcon: (org, icon) => {
+      const o = state.orgs.find((x) => x.slug === org);
+      return ico(icon || o?.icon || null, o?.domain || null);
+    },
   };
   const name = p.org.name || p.org.slug;
   const inbox = orgInbox(slug, p.teams);

@@ -152,7 +152,9 @@ describe('a customer\'s overview', () => {
     assert.equal(sum(p.activity.messages), 12);
     assert.equal(sum(p.activity.staff), 6);
     // a1 and a2 were started by its people, answered in 2 h and in 30 min; a3 by Adobe.
-    assert.deepEqual(p.answers, { asked: 2, answered: 2, median: 75 });
+    assert.deepEqual(p.answers, {
+      by: 'adobe', asked: 2, answered: 2, median: 75,
+    });
   });
 
   it('has its people, Adobe\'s and the teams that work it', async () => {

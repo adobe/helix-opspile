@@ -1097,7 +1097,7 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   `src/room.js`). Someone on no team (no-team mode, `SIGNIN_DOMAINS`) has only this view.
   A **team's** view
   (`team=<slug>`) puts what needs you most first and has every facet card. First comes the
-  status (unseen and critical, unseen and hot, you, waiting too long, customer silent, team on it,
+  status (unseen and critical, unseen and hot, you, waiting too long, they went silent, team on it,
   the rest); within a status, the score of `ui/rank.js`, boosted trees over what the inbox knows
   of a thread (how long ago, who is waited on, urgency, resolved, kind, …) learned from Clef's
   pairwise judgements of production threads, from what people open in the list and from which
@@ -1266,12 +1266,15 @@ The inbox sorts every thread into one pile, most pressing first: **critical** (c
 urgency, nobody at Adobe has seen it), **hot** (high urgency, unseen by Adobe), **you** (you
 posted or were mentioned, and the customer spoke last or you were mentioned), **waiting**
 (waiting on us longer than 15 min / 1 h / 3 h for critical / high / normal), **silent**
-(waiting on the customer or vendor longer than 30 min / 1 h / 1 day: follow up or close; for
-normal and low urgency, Saturdays and Sundays in the viewer's time zone do not count),
-**team** (your team is in it and all is well) and **quiet**. Who a thread waits on is Clef's
-`next_actor`, except that a thread where Adobe posted last never waits on us (the label can
+(waiting on the customer or a vendor longer than 30 min / 1 h / 1 day: follow up, chase the
+vendor, or close; for normal and low urgency, Saturdays and Sundays in the viewer's time zone do
+not count), **team** (your team is in it and all is well) and **quiet**. Who a thread waits on is
+Clef's `next_actor`, except that a thread where Adobe posted last never waits on us (the label can
 be stale or wrong), and an unlabeled thread waits on us when the customer posted last; the
-API sends it as `waiting_on`. Admins can look at the inbox as another person, read-only.
+API sends it as `waiting_on` (`us`, `customer`, `vendor`, `nobody`), and the inbox's Waiting on
+card has Us, Customer, Vendor and Nobody. In a vendor's thread (see "Vendors") the other side is
+the vendor: one that waits on someone outside Adobe waits on the vendor, whatever its label
+calls them. Admins can look at the inbox as another person, read-only.
 
 ### Attention
 
@@ -1347,7 +1350,9 @@ and an unchanged thread is never labeled twice):
   kind of thread it is (`incident`, `security`, `question`, `request`, `access`, `people`,
   `meeting`, `other`; alerts are `alert` without asking), urgency (0–3) and whether it is
   resolved. The state it reads is the thread as text, with every author marked as Adobe staff
-  or customer. `access` is about permissions and getting into tools; people joining, leaving,
+  or customer. A vendor's thread is asked the other way round (`VENDOR_QUESTIONS`, see
+  "Vendors"): its authors outside Adobe are the vendor's, and who acts next is `us`, `vendor` or
+  `nobody`. `access` is about permissions and getting into tools; people joining, leaving,
   being introduced or away are `people`; scheduling and sharing a call's notes are `meeting`.
 - In the same call, Clef answers a yes/no question per **area** (a topic, in the code and the
   inbox's Topic filter). Areas are authored: each is a file at `areas/<id>.md` of a team's
@@ -3609,6 +3614,51 @@ Names, numbers, pictures and titles only: no message text and no mail address. T
 customer's numbers cost under a tenth of a second of D1, and are kept five minutes per isolate.
 `GET /api/customers` lists every customer for Adobe's people on no team, who do not get
 `/api/admin/orgs`.
+
+### Vendors
+
+An org of type `vendor` (`orgs.type`) is a company whose products or services Adobe uses: a CDN,
+an observability or a translation service, a model provider. In its channels Adobe is the
+customer: the team asks, and the vendor answers, investigates and fixes. So:
+
+- **Clef** reads a vendor's thread with its header saying so (`Vendor: <slug> (Adobe is its customer
+  here)`) and its people as the vendor's, and is asked `VENDOR_QUESTIONS` (src/label.js): who acts
+  next is Adobe (reply, test, send logs, decide) or the vendor (answer, investigate, fix,
+  escalate), urgency counts production impact at Adobe or its customers, and a ✅ by Adobe staff
+  says it is resolved. The same questions in the same order: the topics were measured with a
+  customer's. Its thread agent is told so too.
+- **Who it waits on** (`waitingOn`, src/threads.js) is the vendor, `vendor`, whenever it waits on
+  someone outside Adobe: labels from before say `customer`, and need no relabel. The inbox's
+  status pile for one that waits too long is the silent one, its hint "chase them".
+- Its **status posts** (a status page's bot, its newsletters) are alerts when an admin says their
+  bot only posts alerts (`identities.alerts`, src/alertbots.js): nobody is waited on in them.
+- Its **page** in Customers is the customer overview the other way round (`vendorNumbers`,
+  src/vendors.js; ui/customer.js): its numbers are its open cases (its conversations of the window
+  that are not resolved and wait on the vendor or on Adobe), how soon it **answers** what Adobe
+  starts (the median wait from Adobe's first message to its first post; `answers.by` is `them`),
+  its status posts and the customers on its products; then its open cases and its latest status
+  posts, the customers whose threads of the window show one of its products (a technology whose
+  catalog id is its slug or under it: `fastly/cdn` is Fastly's, as `products/<vendor>/` names
+  it, src/catalog.js), by how many, and those of their threads that Clef says wait on a third
+  party. The rest is a customer's.
+- A team's **Vendors** section in Teams (`view=vendors`, `GET /api/teams/vendors?team=`,
+  `teamVendors`; `TeamView.vendors` in ui/team.js), everyone's as the overview: the vendors the
+  team files a channel of, shares or follows one of, whose threads its members posted in, or whose
+  products its customers' threads show, each with its open cases, how soon it answers and whether
+  its channels are in the team's inbox; a vendor's whose are not has a Follow for the team's
+  managers and the admin team (`PUT /api/admin/org-follows`, a follow rule: every channel of it
+  shared with the team). Above them what waits on a vendor in the team's inbox (the vendors' cases,
+  and its customers' threads that wait on a third party), and the vendors' cases that wait on
+  Adobe.
+
+Who files a vendor's channel is the team that owns what Adobe uses it for: the one that is paged
+when it breaks, or that builds the integration; the others follow it. A vendor Adobe is buying or
+trying has a champion rather than a team: they follow it themselves. The counts on these pages are
+everyone's at Adobe; a thread's title and its link only for whoever works it, on the team it is
+filed under or one it is shared with (`visible`, src/vendors.js), so the lists say how many more
+there are. Every conversation of the window that may wait on someone is read for the cases, however
+many newer ones are resolved. A team's vendors are kept five minutes per isolate, as its overview,
+and forgotten when a team starts or stops following one.
 
 ## Customer portal
 

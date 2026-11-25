@@ -70,6 +70,7 @@ import {
   getPortalRequest, listPortalRequests, portalOpenCount, recordDeclined, recordOpened,
   reopenDeclined,
 } from './portalrequests.js';
+import { resetTeamVendors } from './vendors.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -1978,7 +1979,12 @@ async function adminRoute(request, env, url, me) {
     case 'PUT orgs': return saveOrg(env, body, false);
     case 'DELETE orgs': return deleteOrg(env, body);
     case 'GET org': return org(env, q('slug'), me);
-    case 'PUT org-follows': return followOrg(env, me, body);
+    case 'PUT org-follows': {
+      // A team's Vendors section says whom it follows (src/vendors.js): not the kept answer.
+      const res = await followOrg(env, me, body);
+      resetTeamVendors();
+      return res;
+    }
     case 'POST release': return releaseChannel(env, me, body);
     case 'GET org-duplicates': return orgDuplicates(env, me, { pair: q('pair'), fresh: Boolean(q('fresh')) });
     case 'POST org-duplicates/dismiss': return dismissPair(env, me, body);

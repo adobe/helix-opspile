@@ -91,6 +91,7 @@ import {
   changeArea, rebuildTopics, topicsPage, trendsApi,
 } from './topicsapi.js';
 import { teamDirectory, teamProfile } from './teamprofile.js';
+import { teamVendors } from './vendors.js';
 import { orgDirectory, orgProfile } from './orgprofile.js';
 import { drawDiagram } from './diagrams.js';
 import { isRequestKey } from './requestkeys.js';
@@ -1313,7 +1314,7 @@ async function route(request, env, url, {
   }
   // Every team's overview, its first section in Teams (src/teamprofile.js): for every internal
   // user, as the Topics page; what changes a team stays its managers' and the admin team's.
-  if (url.pathname === '/api/teams' || url.pathname === '/api/teams/profile') {
+  if (['/api/teams', '/api/teams/profile', '/api/teams/vendors'].includes(url.pathname)) {
     if (!internal(env, me)) {
       return json({ error: 'the teams are for Adobe\'s people' }, 403);
     }
@@ -1323,7 +1324,10 @@ async function route(request, env, url, {
     if (url.pathname === '/api/teams') {
       return json({ teams: await teamDirectory(env) });
     }
-    const profile = await teamProfile(env, me, url.searchParams.get('team'));
+    // A team's vendors, its Vendors section (src/vendors.js).
+    const profile = url.pathname === '/api/teams/vendors'
+      ? await teamVendors(env, me, url.searchParams.get('team'))
+      : await teamProfile(env, me, url.searchParams.get('team'));
     return profile.error ? json({ error: profile.error }, profile.status || 400) : json(profile);
   }
   // Every customer's overview, its first section in Customers (src/orgprofile.js): for every

@@ -14,6 +14,7 @@
  * - the technologies: Tabs (quiet, compact) over a list per layer of a stack; a followed one a
  *   Badge in the accent color.
  * - the knowledge base: a grid of Cards, one per type of entry, with its count and its entries.
+ * - a vendor's cases and a team's vendors: ListViews of rows, who has a thread's next move a Badge.
  */
 
 /* ==== The layout ================================================================================ */
@@ -118,7 +119,29 @@
 .ov .tv-kbtype li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ov .tv-drawing { margin-top: var(--spectrum-spacing-500); }
 
+/* A list of threads (a vendor's cases, what waits on a vendor): its title over where it is, who
+   has the next move at the right. */
+.ov .tv-threads { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.ov .tv-threads li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--spectrum-spacing-50) var(--spectrum-spacing-200); padding: var(--spectrum-spacing-100); }
+.ov .tv-threads .tv-name { display: flex; flex-direction: column; min-width: 0; }
+.ov .tv-threads .tv-name > :first-child, .ov .tv-threads .tv-name > .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov .cv-status { display: flex; align-items: center; gap: var(--spectrum-spacing-200); margin-bottom: var(--spectrum-spacing-200); }
+
+/* A team's vendors: a favicon, the name over how the team meets it, its answer and Follow at the
+   right; its open cases under the name. */
+.ov .tv-vendors { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.ov .tv-vendors li { display: grid; grid-template-columns: auto minmax(0, 1fr) 7em 7em; grid-template-areas: "lead name answer act" ". cases cases cases";
+  align-items: center; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-300); padding: var(--spectrum-spacing-100); }
+.ov .tv-vendors li > .ico { grid-area: lead; }
+.ov .tv-vendors .tv-name { grid-area: name; display: flex; flex-direction: column; min-width: 0; }
+.ov .tv-vendors .tv-name > a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov .tv-vendors .tv-cases { grid-area: cases; display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75); }
+.ov .tv-vendors .tv-answer { grid-area: answer; display: flex; flex-direction: column; align-items: flex-end; }
+.ov .tv-vendors .tv-act { grid-area: act; display: flex; justify-content: flex-end; }
+
 @media (max-width: 699px) {
+  .ov .tv-vendors li { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "lead name act" ". answer answer" ". cases cases"; }
+  .ov .tv-vendors .tv-answer { align-items: flex-start; }
   .ov .tv-rank li { grid-template-columns: 1.5em auto minmax(0, 1fr) 5em; grid-template-areas: "i lead name meter" ". . tail tail"; }
   .ov .tv-rank .ps-spark { display: none; }
   .ov .tv-layer li { grid-template-columns: minmax(0, 1fr) 5em; }
@@ -235,6 +258,19 @@
 .spectrum .ov .tv-layer h3 { padding-bottom: var(--spectrum-spacing-75); border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
 .spectrum .ov .tv-layer .tv-name a { color: var(--link); text-decoration: none; }
 .spectrum .ov .tv-layer .tv-name a:hover { text-decoration: underline; }
+
+/* The lists of threads and of vendors: rows that light under the pointer; who has the next move
+   a Badge, the vendor's in purple (as the inbox's "they went silent"), Adobe's in red (as "waiting
+   too long"). */
+.spectrum .ov :is(.tv-threads, .tv-vendors) li { border-radius: var(--s2-radius); }
+.spectrum .ov :is(.tv-threads, .tv-vendors) li:hover { background: var(--spectrum-gray-100); }
+.spectrum .ov :is(.tv-threads, .tv-vendors) .tv-name a { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-medium-font-weight); text-decoration: none; }
+.spectrum .ov :is(.tv-threads, .tv-vendors) .tv-name a:hover { color: var(--link); text-decoration: underline; }
+.spectrum .ov .tv-vendors .tv-name a { font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .ov .tv-vendors .tv-answer b { color: var(--spectrum-heading-color); font-weight: var(--spectrum-bold-font-weight); font-variant-numeric: tabular-nums; }
+.spectrum .ov .tag.tv-them { flex: none; color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-purple-subtle-background-color-default); border-color: transparent; }
+.spectrum .ov .tag.tv-us { flex: none; color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-negative-subtle-background-color-default); border-color: transparent; }
+.spectrum .ov .ps-spark.status polyline { stroke: var(--spectrum-purple-visual-color); }
 
 /* The knowledge base's tiles, on layer 2. */
 .spectrum .ov .tv-kbtype { padding: var(--spectrum-spacing-300); background: var(--card); border-radius: var(--spectrum-corner-radius-large-default); box-shadow: var(--content-shadow); }
