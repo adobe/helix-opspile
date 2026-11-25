@@ -87,3 +87,47 @@ describe('a team\'s overview, drawn', () => {
     assert.match(html, /<span class="ps-chip" title="Caching: 2 threads of theirs">Caching<\/span>/);
   });
 });
+
+describe('a team\'s vendors, drawn', () => {
+  const p = {
+    team: { slug: 'edge', name: 'Edge ops' },
+    weeks,
+    vendors: [{
+      slug: 'cdnco', name: 'CDN <Co>', icon: null, filed: 1, shared: 0, follows: false, inInbox: true, channels: 1, posted: 4, people: 1, products: 2, threads: 3, cases: { open: 2, them: 1, us: 1 }, answers: { asked: 3, answered: 3, median: 60 }, last: '2026-11-24T00:00:00Z',
+    }, {
+      slug: 'xlate', name: null, icon: null, filed: 0, shared: 0, follows: false, inInbox: false, channels: 1, posted: 0, people: 0, products: 3, threads: 1, cases: { open: 0, them: 0, us: 0 }, answers: { asked: 0, answered: 0, median: null }, last: null,
+    }, {
+      slug: 'nochan', name: 'No Channel', icon: null, filed: 0, shared: 0, follows: false, inInbox: false, channels: 0, posted: 0, people: 0, products: 1, threads: 0, cases: { open: 0, them: 0, us: 0 }, answers: { asked: 0, answered: 0, median: null }, last: null,
+    }],
+    waiting: [{
+      thread: 't:c', org: 'acme', title: 'Stale <pages>', channel: 'aem-acme', urgency: 'normal', kind: 'incident', waiting: 'vendor', third: true, last: '2026-11-24T00:00:00Z', inbox: '/inbox?team=edge&t=t%3Ac',
+    }],
+    waitingCount: 2,
+    waitingHidden: 1,
+    ours: [],
+    oursCount: 0,
+    oursHidden: 0,
+    may: { follow: true },
+  };
+
+  it('lists its vendors, their cases and answers, and a Follow where its channels are not in the inbox', () => {
+    const html = TeamView.vendors(p, ctx);
+    assert.match(html, /<a href="\/org\/cdnco">CDN &lt;Co&gt;<\/a><span class="sub">1 channel filed here · the team posted 4 messages there · in 2 customer threads/);
+    assert.match(html, /<span class="tag tv-them"[^>]*>1 waits on them<\/span><span class="tag tv-us"[^>]*>1 waits on Adobe<\/span>/);
+    assert.match(html, /<b>1 h<\/b><span class="sub">first answer<\/span>/);
+    assert.match(html, /<button type="button" class="ofollow" data-follow="xlate"/);
+    // One without a channel has nothing to follow; nobody but a manager follows.
+    assert.equal([...html.matchAll(/data-follow=/g)].length, 1);
+    assert.match(html, /no channel/);
+    assert.doesNotMatch(TeamView.vendors({ ...p, may: { follow: false } }, ctx), /data-follow=/);
+  });
+
+  it('lists what waits on a vendor, a customer\'s thread as waiting on a third party', () => {
+    const html = TeamView.vendors(p, ctx);
+    const waiting = html.slice(html.indexOf('id="tvWaiting"'), html.indexOf('id="tvOurs"'));
+    assert.match(waiting, /<a href="\/inbox\?team=edge&amp;t=t%3Ac" title="Open it in the inbox">Stale &lt;pages&gt;<\/a><span class="sub">acme · #aem-acme · normal urgency · incident · /);
+    assert.match(waiting, />Waiting on a third party<\/span>/);
+    assert.match(waiting, /And 1 more thread in channels of teams you are not on\./);
+    assert.match(html, /No vendor waits on Adobe\./);
+  });
+});

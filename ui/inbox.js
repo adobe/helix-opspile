@@ -916,7 +916,9 @@ const STATUS_ICON = {
 };
 const RESOLVED_ICON = { open: 'circle', resolved: 'checkmark-circle', '(none)': 'cancel' };
 const DRAFT_ICON = { mine: 'edit', team: 'user-edit', none: 'edit-no' };
-const WAITING_ICON = { Us: 'call-center', Customer: 'clock', Nobody: 'pause-circle' };
+const WAITING_ICON = {
+  Us: 'call-center', Customer: 'clock', Vendor: 'clock', Nobody: 'pause-circle',
+};
 const TYPE_ICON = { conversation: 'chat', alert: 'bell' };
 const PLATFORM_SITE = { Slack: 'slack.com', Teams: 'teams.microsoft.com', Discord: 'discord.com', Portal: 'adobe.com' };
 const kindOf = (t) => (t.kind === 'alert' ? 'alert' : (t.label?.label_kind && t.label.label_kind !== 'other' ? t.label.label_kind : 'other'));
@@ -942,15 +944,23 @@ function inPass(fn) {
   try { return fn(); } finally { pass = null; }
 }
 /**
- * Us, Customer (customer or vendor), Nobody. The API works it out (`waitingOn` in
- * src/threads.js): Clef's label, except that a thread where Adobe posted last never waits on
- * us, and without a label, a thread waits on us when the customer posted last.
+ * Us, Customer, Vendor, Nobody. The API works it out (`waitingOn` in src/threads.js): Clef's
+ * label, except that a thread where Adobe posted last never waits on us, and without a label, a
+ * thread waits on us when the customer posted last. Vendor is a vendor's thread that waits on
+ * the vendor (Adobe is its customer there), or a customer's that waits on a third party.
  */
 const waitingOn = (t) => {
   const n = t.waiting_on;
   if (n === 'us') return 'Us';
-  if (n === 'customer' || n === 'vendor') return 'Customer';
+  if (n === 'customer') return 'Customer';
+  if (n === 'vendor') return 'Vendor';
   return 'Nobody';
+};
+const WAITING_HINT = {
+  Us: 'Adobe has the next move',
+  Customer: 'The customer has the next move',
+  Vendor: 'A vendor has the next move: in a vendor\'s channel the vendor, where Adobe is the customer; in a customer\'s, a partner, agency or vendor who is neither Adobe nor the customer',
+  Nobody: 'Nothing is pending',
 };
 
 // How long a thread may wait before it turns yellow, by urgency.
@@ -1038,24 +1048,29 @@ function computeStatus(t) {
     && (!WEEKDAYS_ONLY.has(u) || waitedFor(since, now) > limit);
   const on = waitingOn(t);
   if (!alert && !checked(t) && on === 'Us' && late(WAIT_US[u])) return 'waiting';
-  if (!alert && !checked(t) && on === 'Customer' && late(WAIT_THEM[u])) return 'silent';
+  if (!alert && !checked(t) && (on === 'Customer' || on === 'Vendor') && late(WAIT_THEM[u])) return 'silent';
   const team = teamIds();
   if ((t.posters || []).some((p) => team.has(p)) && !t.mentionedMe) return 'team';
   return 'quiet';
 }
 const STATUS_ORDER = ['critical', 'hot', 'you', 'waiting', 'silent', 'team', 'quiet'];
 const STATUS_LABEL = {
-  critical: 'Critical, unseen', hot: 'Hot, unseen', you: 'You', waiting: 'Waiting too long', silent: 'Customer silent', team: 'Team on it', quiet: 'Everything else',
+  critical: 'Critical, unseen', hot: 'Hot, unseen', you: 'You', waiting: 'Waiting too long', silent: 'They went silent', team: 'Team on it', quiet: 'Everything else',
 };
 const STATUS_HINT = {
   critical: 'Critical urgency and nobody at Adobe has seen it',
   hot: 'High urgency and nobody at Adobe has seen it',
   you: 'You posted, were mentioned or put 👀 on it, and the customer spoke last or you were mentioned (not once resolved with ✅); or a colleague asked for help with 🛟',
   waiting: 'Waiting on us for too long (15 min critical, 1 h high, 3 h normal, weekends not counted for normal), and Adobe did not post last',
-  silent: 'Waiting on the customer or vendor for too long (30 min critical, 1 h high, 1 day normal, weekends not counted for normal): follow up or close',
+  silent: 'Waiting on the customer or a vendor for too long (30 min critical, 1 h high, 1 day normal, weekends not counted for normal): follow up, chase the vendor, or close',
   team: 'Your team is in it (or a colleague put 👀 on it), you were not mentioned, all is well',
   quiet: 'Everything else',
 };
+
+/** What a thread's status means for it: a vendor's silence is the vendor's to break. */
+const statusHint = (t, status) => (status === 'silent' && waitingOn(t) === 'Vendor'
+  ? 'Waiting on the vendor for too long (30 min critical, 1 h high, 1 day normal, weekends not counted for normal): chase them, or close'
+  : STATUS_HINT[status]);
 
 /** Who a thread involves, from the viewer's point of view. */
 function involvement(t) {
@@ -1177,8 +1192,8 @@ const FACETS = [
     face: (v) => tile(vocabName('topics', v)) },
   { id: 'tech', title: 'Tech stack', value: techOf, multi: true, labelFn: (v) => vocabName('tech', v), limit: 12,
     face: (v) => tile(vocabName('tech', v)) },
-  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Nobody'], glyph: (v) => WAITING_ICON[v],
-    color: colorOf({ Us: 'c-red', Customer: 'c-silent' }) },
+  { id: 'next', title: 'Waiting on', value: waitingOn, order: ['Us', 'Customer', 'Vendor', 'Nobody'], hint: WAITING_HINT,
+    glyph: (v) => WAITING_ICON[v], color: colorOf({ Us: 'c-red', Customer: 'c-silent', Vendor: 'c-silent' }) },
   { id: 'involves', title: 'Involves', value: involvement, multi: true, labelFn: involvesLabel, color: involvesColor,
     face: involvesFace,
     order: () => ['me', ...Object.keys(state.data?.teams || {}).map((s) => `team:${s}`),
@@ -1745,7 +1760,7 @@ function statusMark(t, status) {
   }
   if (isResolved(t)) behind.push({ cls: 'ok', say: 'Resolved', icon: 'checkmark-circle' });
   if (ourMove(t)) behind.push({ cls: 'us', say: 'Our move', icon: 'call-center' });
-  const front = `${cap(k)}${t.unread ? ', unread' : ''} · ${STATUS_HINT[status]}`;
+  const front = `${cap(k)}${t.unread ? ', unread' : ''} · ${statusHint(t, status)}`;
   const say = [front, ...behind.map((x) => x.say)].join(' · ');
   const chips = behind.map((x) => `<span class="mi ${x.cls}" title="${esc(x.hint || x.say)}">${wf(x.icon)}</span>`).join('');
   return `<span class="mks"><span class="mk" role="img" aria-label="${esc(say)}"><span class="mi k s-${status}${t.unread ? ' ring' : ''}" title="${esc(front)}">${wf(KIND_ICON[k] || KIND_ICON.other, t.unread)}</span>${chips}</span></span>`;
@@ -8881,7 +8896,7 @@ async function reloadChanged() {
   if (state.open && state.open !== early && touched(state.open)) openThread(state.open, { live: true });
 }
 const STATUS_TICK_MS = 60 * 1000;
-// A thread's status depends on the time too (waiting too long, customer silent), and nothing
+// A thread's status depends on the time too (waiting too long, they went silent), and nothing
 // announces that: the list is looked at again every minute while it is on screen.
 setInterval(() => { if (!hidden() && state.data) render(); }, STATUS_TICK_MS);
 // Away from the inbox (its tab hidden, or another window in front) for AWAY_MS, unread only lets go
@@ -11485,7 +11500,7 @@ const FILTER_ARGS = {
 const VOCAB_ARGS = { topic: 'topics', tech: 'tech' };
 const FILTER_VALUES = {
   status: STATUS_ORDER, type: ['conversation', 'alert'], platform: ['slack', 'teams', 'discord', 'portal'], resolved: ['open', 'resolved'],
-  waiting_on: ['us', 'customer', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_ICON),
+  waiting_on: ['us', 'customer', 'vendor', 'nobody'], urgency: ['critical', 'high', 'normal', 'low'], kind: Object.keys(KIND_ICON),
   draft: ['mine', 'team', 'none'],
 };
 const cap = (v) => v[0].toUpperCase() + v.slice(1);
@@ -11581,7 +11596,7 @@ function fillReply(text) {
 
 // filter_threads' filters, which it also takes in `exclude`.
 const FILTER_PROPS = {
-  status: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.status }, description: 'critical/hot: urgent and unseen by Adobe; you: needs the viewer; waiting: waits on us too long; silent: customer silent too long' },
+  status: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.status }, description: 'critical/hot: urgent and unseen by Adobe; you: needs the viewer; waiting: waits on us too long; silent: the customer or a vendor silent too long' },
   waiting_on: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.waiting_on }, description: 'Who has the next move' },
   urgency: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.urgency } },
   kind: { type: 'array', items: { type: 'string', enum: FILTER_VALUES.kind } },

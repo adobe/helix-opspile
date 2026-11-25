@@ -417,6 +417,10 @@ export function opspileExtension(ctx) {
       const lines = [`Ops team: ${t.team || 'unknown'}`];
       if (t.key || t.org) {
         lines.push(`${ORG_TYPE[t.orgType] || 'Customer'}: ${t.orgName ? `${t.orgName} (${t.org})` : (t.org || 'unknown')}`);
+        if (t.orgType === 'vendor') {
+          // The other way round: Adobe asks, the vendor answers (src/label.js VENDOR_QUESTIONS).
+          lines.push('In a vendor\'s channel Adobe is the customer: Adobe uses its products or services, the team asks, and the vendor answers, investigates and fixes. What you call the customer elsewhere is the vendor here, and waiting on it is `vendor`.');
+        }
       }
       if (t.key) {
         lines.push(

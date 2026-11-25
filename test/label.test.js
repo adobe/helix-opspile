@@ -14,7 +14,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   askClef, clairicFacts, FIELDS, MAX_QUESTIONS, TOPIC_MIN, TOPICS,
-  garbled, isTitle, mangled, namedIn, QUESTIONS, stateOf, topicList, topicsOf, writeTitle,
+  garbled, isTitle, mangled, namedIn, QUESTIONS, questionsFor, stateOf, topicList, topicsOf,
+  VENDOR_QUESTIONS, writeTitle,
 } from '../src/label.js';
 
 // Made-up thread and people only.
@@ -38,6 +39,33 @@ describe('what the models read', () => {
     const state = stateOf(thread, messages, reactions);
     assert.match(state, /Fixed it\nReactions: ✅ by Cy \(customer\), 👀 by Bo \(Adobe staff\)/);
     assert.doesNotMatch(state, /broken\nReactions/);
+  });
+
+  it('says a vendor\'s thread is a vendor\'s, whose people are the vendor\'s', () => {
+    const thread = {
+      source: 'slack', channel_name: 'cdnco-support', org: 'cdnco', org_type: 'vendor', root_at: '2026-10-21T10:00:00Z',
+    };
+    const messages = [{
+      id: '1.1', at: '2026-10-21T10:00:00Z', body: 'Looking into it', author: { kind: 'person', name: 'Vic', org: 'cdnco' },
+    }];
+    const reactions = new Map([['1.1', [{ emoji: 'eyes', name: 'Vic', staff: false }]]]);
+    const state = stateOf(thread, messages, reactions);
+    assert.match(state, /^Channel: cdnco-support on Slack\nVendor: cdnco \(Adobe is its customer here\)/);
+    assert.match(state, /Vic \(vendor, cdnco\):\nLooking into it\nReactions: 👀 by Vic \(vendor\)/);
+    assert.doesNotMatch(state, /customer\b(?! here)/);
+  });
+});
+
+describe('a vendor\'s questions', () => {
+  it('asks who acts next the other way round, in the same order as a customer\'s', () => {
+    assert.equal(questionsFor('vendor'), VENDOR_QUESTIONS);
+    assert.equal(questionsFor('customer'), QUESTIONS);
+    assert.equal(questionsFor(undefined), QUESTIONS);
+    assert.deepEqual(Object.keys(VENDOR_QUESTIONS), Object.keys(QUESTIONS));
+    assert.deepEqual(Object.keys(VENDOR_QUESTIONS.next_actor.criteria), ['us', 'vendor', 'nobody']);
+    assert.match(VENDOR_QUESTIONS.next_actor.instructions, /Adobe is the customer/);
+    assert.equal(VENDOR_QUESTIONS.urgency.criteria.length, QUESTIONS.urgency.criteria.length);
+    assert.equal(VENDOR_QUESTIONS.kind, QUESTIONS.kind);
   });
 });
 

@@ -23,6 +23,8 @@
  * - `ranked`: a ranking, each row with its rank, a face or an icon, a meter and a line.
  * - `tabs` and `layers`: tabs over a list, and a list of technologies by the layer of a stack.
  * - `knowledge`: a knowledge base's entries by type, a tile each.
+ * - `threads` and `waitTag`: a list of threads (a vendor's cases, what waits on a vendor), each
+ *   with who has the next move.
  * - `wire`: what the chart and the tabs do.
  *
  * Everything in them is a name, a number or a picture, written escaped.
@@ -195,7 +197,8 @@ globalThis.Overview = (() => {
 
   /**
    * A ranked list: `rows` of `{ n, of, lead, name, sub, weekly, tail, count }`, `count` the words
-   * under the meter ("12 messages" without it), `of` the second part of its bar.
+   * under the meter ("12 messages" without it), `of` the second part of its bar; a row without
+   * `weekly` has no line.
    */
   function ranked(rows, weeks) {
     const most = Math.max(...rows.map((r) => r.n), 1);
@@ -203,8 +206,46 @@ globalThis.Overview = (() => {
       <span class="tv-i">${i + 1}</span>${r.lead || '<span class="tv-lead"></span>'}
       <span class="tv-name">${r.name}${r.sub ? `<span class="sub">${r.sub}</span>` : ''}</span>
       <span class="tv-meter">${bar(r.n / most, r.of ?? null)}<span class="sub">${esc(r.count || plural(r.n, 'message'))}</span></span>
-      ${spark(r.weekly, { label: `week by week, the last ${weeks} weeks` })}
+      ${r.weekly ? spark(r.weekly, { label: `week by week, the last ${weeks} weeks` }) : ''}
       <span class="tv-tail">${r.tail || ''}</span></li>`).join('')}</ol>`;
+  }
+
+  /** Who has a thread's next move (`waiting`, src/threads.js), as a tag; null for nobody. */
+  const WAIT = {
+    vendor: ['tv-them', 'Waiting on them', 'The vendor has the next move: chase them if it takes too long'],
+    third: ['tv-them', 'Waiting on a third party', 'Someone who is neither Adobe nor the customer has the next move: a vendor, a partner or an agency'],
+    customer: ['tv-them', 'Waiting on them', 'The customer has the next move'],
+    us: ['tv-us', 'Waiting on Adobe', 'Adobe has the next move'],
+  };
+  const waitTag = (waiting, third = false) => {
+    const w = WAIT[third && waiting === 'vendor' ? 'third' : waiting];
+    return w ? `<span class="tag ${w[0]}" title="${esc(w[2])}">${esc(w[1])}</span>` : '';
+  };
+
+  /**
+   * A list of threads (src/vendors.js): `rows` of `{ title, inbox, org, channel, urgency, kind,
+   * waiting, third, last }` (`third`: a customer's thread, which waits on a third party), each its title (a link into the inbox) over its customer, channel and
+   * latest activity, who has the next move at the right. `orgName(slug)` names a row's org where
+   * `withOrg`. `hidden` more of them are in channels of teams the viewer is not on: counted, not
+   * listed. `empty` is what an empty list says.
+   */
+  function threads(rows, {
+    hidden = 0, empty, withOrg = false, orgName = (x) => x,
+  } = {}) {
+    const item = (r) => {
+      const title = esc(r.title || 'A thread without a title');
+      const sub = [
+        withOrg && r.org ? orgName(r.org) : '',
+        r.channel ? `#${r.channel}` : '',
+        r.urgency && r.urgency !== 'low' ? `${r.urgency} urgency` : '',
+        r.kind && r.kind !== 'other' ? r.kind : '',
+        r.last ? ago(r.last) : '',
+      ].filter(Boolean).join(' · ');
+      return `<li><span class="tv-name">${r.inbox ? `<a href="${esc(r.inbox)}" title="Open it in the inbox">${title}</a>` : `<span>${title}</span>`}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>${waitTag(r.waiting, r.third)}</li>`;
+    };
+    const more = hidden ? `<p class="sub tv-more">And ${esc(plural(hidden, 'more thread'))} in channels of teams you are not on.</p>` : '';
+    if (!rows.length) return `${hidden ? '' : `<div class="empty">${esc(empty || 'None.')}</div>`}${more}`;
+    return `<ul class="tv-threads">${rows.map(item).join('')}</ul>${more}`;
   }
 
   /** Tabs (quiet buttons) over a list: `[{ id, label, hint, n }]` (`n` optional), `on` the picked one. */
@@ -283,6 +324,6 @@ globalThis.Overview = (() => {
 
   return {
     esc, face, plural, ago, often, wait, link, spark, bar, chart, bars, wireBars, stats, chip, teamChips, ranked, tabs,
-    layers, knowledge, wire,
+    layers, knowledge, wire, threads, waitTag,
   };
 })();

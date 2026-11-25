@@ -225,6 +225,15 @@ const SEED = {
         'aliases: [Fastly CDN, Compute@Edge]', 'layer: edge', 'moved_from: [fastly]', '---', '',
         'Customers who bring their own Fastly service in front of the site.', '',
       ].join('\n'),
+      // Two vendors' products (dev-ui-vendor.mjs): the vendors' pages list their customers.
+      'products/initech/edge.md': [
+        '---', 'type: Product', 'title: Initech Edge', 'description: Initech\'s edge network in front of the site',
+        'layer: edge', '---', '', 'A few customers run it in front of Edge Delivery.', '',
+      ].join('\n'),
+      'products/vandelay/translate.md': [
+        '---', 'type: Product', 'title: Vandelay Translate', 'description: Vandelay\'s translation service',
+        'layer: content', '---', '', 'Translations of customers\' pages, through its connector.', '',
+      ].join('\n'),
       'products/adobe/aem-sites.md': [
         '---', 'type: Product', 'title: Experience Manager Sites',
         'description: Adobe Experience Manager Sites', '---', '', 'Its features, one file each.', '',

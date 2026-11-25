@@ -1704,6 +1704,8 @@ describe('inbox page', () => {
       assert.equal(computeStatus(t({ on: 'Customer', last: at(6, 10) })), 'quiet');
       Date.now = () => at(9, 11);
       assert.equal(computeStatus(t({ on: 'Customer', last: at(6, 10) })), 'silent');
+      // A vendor that has not answered for as long has gone silent too: chase it.
+      assert.equal(computeStatus(t({ on: 'Vendor', last: at(6, 10) })), 'silent');
     } finally {
       Date.now = real;
     }

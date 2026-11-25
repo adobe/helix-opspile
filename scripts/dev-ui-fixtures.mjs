@@ -1118,6 +1118,21 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
     },
   });
 
+  // A case Adobe opened with Initech, a vendor: Initech asked for headers, Dana sent them a day
+  // and a half ago, and it has said nothing since. It waits on the vendor, too long: chase them.
+  seed({
+    ch: CHANNELS.initech,
+    messages: [
+      ['dana', 60 * 40, 'Our purge of `/products` did not clear the Frankfurt edge. Can you check what happened there?'],
+      ['jonas', 60 * 38, 'Looking into it. Can you send the response headers of a stale hit?'],
+      ['dana', 60 * 36, 'Here they are: `x-cache: HIT`, `age: 5402`, served by the FRA edge after the purge returned 200.'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'incident', next_actor: 'vendor', urgency: 1.2, resolved_p: 0.1, topics: ['cdn'],
+    },
+  });
+
   seed({
     ch: CHANNELS.initech,
     messages: [

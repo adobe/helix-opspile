@@ -153,6 +153,12 @@ code and docs, is the decision model that labels threads and channels.
   `SELECT * FROM rules`, or a merged org comes back. The duplicate search, the merge and its
   requests are src/orgmerge.js.
 
+- **A vendor's threads are the other way round** (an org of type `vendor`): Adobe is the customer
+  there. Clef is asked `VENDOR_QUESTIONS` (src/label.js), `waitingOn` (src/threads.js) says
+  `vendor` for what waits on the other side whatever the label says, and src/vendors.js is a
+  vendor's page and a team's Vendors section, whose thread titles go only to those who work the
+  thread (`visible`). docs/ARCHITECTURE.md, "Vendors".
+
 - **Most lifecycles here are implicit:** a nullable timestamp, a watermark, whether a row exists.
   [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md) lists them, with the rules they follow. Read the
   entry before changing one, and add one for anything new with a lifecycle.

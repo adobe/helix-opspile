@@ -1117,6 +1117,36 @@ describe('backfill, mentions and labels', () => {
     assert.deepEqual([...stored.values()].map((v) => v.metadata.type).sort(), ['message', 'thread']);
   });
 
+  it('asks Clef of a vendor\'s thread the other way round', async () => {
+    const calls = [];
+    const AI = {
+      async run(model, input) {
+        calls.push({ model, input });
+        return model.endsWith('/clef') ? {
+          model: 'clef',
+          answers: { next_actor: { type: 'choice', choice: 'vendor', probabilities: { vendor: 0.8 } } },
+        } : { model: 'clairic', answers: {} };
+      },
+    };
+    const root = 'slack/E1/C1/2026/10/21/1.1-a.json';
+    const e = env({
+      [root]: event({
+        type: 'message', channel: 'C1', user: 'U2', ts: '1.1', text: 'we are looking into the purge',
+      }),
+    }, { AI });
+    await processKey(e, root);
+    const [{ org }] = e.DB.rows('SELECT org FROM threads');
+    e.DB.sqlite.prepare(`INSERT INTO orgs (slug, type, updated_at) VALUES (?, 'vendor', ?)
+      ON CONFLICT (slug) DO UPDATE SET type = 'vendor'`).run(org, NOW_ISO);
+    const r = await labelThread(e, 'slack:E1:C1:1.1', new Date(NOW_ISO));
+    assert.equal(r.next_actor, 'vendor');
+    const first = calls.find((c) => c.model.endsWith('/clef') && c.input.questions.next_actor);
+    assert.match(first.input.questions.next_actor.instructions, /Adobe is the customer/);
+    assert.deepEqual(Object.keys(first.input.questions.next_actor.criteria), ['us', 'vendor', 'nobody']);
+    assert.match(first.input.state, /\nVendor: .* \(Adobe is its customer here\)\n/);
+    assert.match(first.input.state, /Cy \(vendor, customer\.example\):/);
+  });
+
   it('labels a thread with Clef and keeps confident Clairic facts', async () => {
     const calls = [];
     const AI = {

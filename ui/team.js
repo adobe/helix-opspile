@@ -30,6 +30,11 @@
  *
  * A person's card is drawn with what the inbox's profile card is (ui/person.js). Everything in it
  * is a name, a number or a picture, written escaped.
+ *
+ * Its second section, Vendors (`vendors`, GET /api/teams/vendors, src/vendors.js): the vendors
+ * the team works with, each with its open cases and how soon it answers, a Follow for the team's
+ * managers where its channels are not in the team's inbox; and what waits on a vendor in the
+ * team's inbox, and the vendors' cases that wait on Adobe, titles only of the threads you work.
  */
 globalThis.TeamView = (() => {
   const {
@@ -167,5 +172,71 @@ globalThis.TeamView = (() => {
     Overview.wire(el, p, { onTab: (b) => { el.querySelector('#tvTechRows').innerHTML = techRows(p, ctx, b.dataset.tab); } });
   }
 
-  return { html, wire };
+  // ---- its vendors ---------------------------------------------------------------------------
+
+  /** How a vendor and the team meet, in words. */
+  function relation(v) {
+    return [
+      v.filed ? `${plural(v.filed, 'channel')} filed here` : '',
+      v.shared ? `${plural(v.shared, 'channel')} shared` : '',
+      v.posted ? `the team posted ${plural(v.posted, 'message')} there` : '',
+      v.products ? `in ${plural(v.products, 'customer thread')}` : '',
+    ].filter(Boolean).join(' · ');
+  }
+
+  function vendorRow(v, p, ctx) {
+    const cases = v.cases.open ? [
+      v.cases.them ? `<span class="tag tv-them" title="Its cases that wait on it">${esc(plural(v.cases.them, 'waits', 'wait'))} on them</span>` : '',
+      v.cases.us ? `<span class="tag tv-us" title="Its cases that wait on Adobe">${esc(plural(v.cases.us, 'waits', 'wait'))} on Adobe</span>` : '',
+    ].join('') : '<span class="sub">no open case</span>';
+    const a = v.answers;
+    const answer = a.answered ? `<span class="tv-answer" title="How long its first answer took in the threads Adobe started there, the middle of them"><b>${esc(Overview.wait(a.median))}</b><span class="sub">first answer</span></span>`
+      : '<span class="tv-answer"><span class="sub">no answer yet</span></span>';
+    let inbox = '';
+    if (v.follows) inbox = '<span class="tag tv-follow" title="Every channel of it is in the team\'s inbox, shared, now and later">Followed</span>';
+    else if (!v.inInbox && !v.channels) inbox = '<span class="sub" title="It has no channel the inbox knows of: nothing to follow yet">no channel</span>';
+    else if (!v.inInbox && p.may.follow) inbox = `<button type="button" class="ofollow" data-follow="${esc(v.slug)}" title="Follow it: every channel of it goes into the team's inbox, shared, now and later">Follow</button>`;
+    else if (!v.inInbox) inbox = '<span class="sub" title="Its channels are not in the team\'s inbox; the team\'s managers can follow it">not in the inbox</span>';
+    return `<li>${ctx.orgIcon(v.slug, v.icon)}
+      <span class="tv-name"><a href="${esc(ctx.orgHref(v.slug))}">${esc(ctx.orgName(v.slug, v.name))}</a><span class="sub">${esc(relation(v) || 'none of its channels is here')}${v.last ? ` · ${esc(ago(v.last))}` : ''}</span></span>
+      ${answer}<span class="tv-act">${inbox}</span><span class="tv-cases">${cases}</span></li>`;
+  }
+
+  /**
+   * The team's Vendors section, from GET /api/teams/vendors (`p`), as HTML: `ctx` as for `html`.
+   */
+  function vendors(p, ctx) {
+    const inInbox = p.vendors.filter((v) => v.inInbox).length;
+    const open = p.vendors.reduce((s, v) => s + v.cases.open, 0);
+    const them = p.vendors.reduce((s, v) => s + v.cases.them, 0);
+    const numbers = Overview.stats([
+      [p.vendors.length, p.vendors.length === 1 ? 'vendor' : 'vendors', `${inInbox} in its inbox`],
+      [open, open === 1 ? 'open case' : 'open cases', `${them} waiting on the vendor`],
+      [p.waitingCount, 'waiting on a vendor', 'in its inbox: cases and customers\' threads'],
+      [p.oursCount, 'waiting on Adobe', 'vendors\' cases where Adobe has the next move'],
+    ]);
+    const list = p.vendors.length ? `<ol class="tv-vendors">${p.vendors.map((v) => vendorRow(v, p, ctx)).join('')}</ol>`
+      : '<div class="empty">The team works with no vendor yet: none of its channels is a vendor\'s, its people posted in none, and its customers\' threads show no vendor\'s product.</div>';
+    const orgName = (slug) => ctx.orgName(slug, null);
+    return `<div class="tv">
+      <section class="tv-sec tv-hero" aria-label="Vendors">${numbers}</section>
+      <div class="tv-two">
+        <section class="tv-sec" aria-labelledby="tvWaiting"><h2 id="tvWaiting">Waiting on a vendor <span class="sub">${esc(plural(p.waitingCount, 'thread'))}</span></h2>
+          ${Overview.threads(p.waiting, {
+    hidden: p.waitingHidden, withOrg: true, orgName, empty: 'Nothing in the team\'s inbox waits on a vendor.',
+  })}
+          <p class="hint">The vendors' cases in the team's inbox that wait on the vendor, and its customers' threads that Clef says wait on a third party, the latest first. Chase the vendor where one waits too long.</p></section>
+        <section class="tv-sec" aria-labelledby="tvOurs"><h2 id="tvOurs">Waiting on Adobe <span class="sub">${esc(plural(p.oursCount, 'case'))}</span></h2>
+          ${Overview.threads(p.ours, {
+    hidden: p.oursHidden, withOrg: true, orgName, empty: 'No vendor waits on Adobe.',
+  })}
+          <p class="hint">The cases of these vendors where Adobe has the next move: the vendor asked for logs, a test or a decision.</p></section>
+      </div>
+      <section class="tv-sec" aria-labelledby="tvVendors"><h2 id="tvVendors">Vendors <span class="sub">${esc(plural(p.vendors.length, 'vendor'))}, those in its inbox first</span></h2>
+        ${list}
+        <p class="hint">The vendors whose channels are filed under the team, shared with it or followed by it, those its people post in, and those whose products its customers' threads show (the last ${p.weeks.length} weeks). A vendor whose channels are not in the team's inbox can be followed: every channel of it is then shared with the team.</p></section>
+    </div>`;
+  }
+
+  return { html, wire, vendors };
 })();

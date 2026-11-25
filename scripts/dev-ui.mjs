@@ -108,6 +108,7 @@ import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { areaFile, compileAreas, isArea } from '../src/areas.js';
 import { topicsPage } from '../src/topicsapi.js';
 import { teamDirectory, teamProfile } from '../src/teamprofile.js';
+import { teamVendors } from '../src/vendors.js';
 import { orgDirectory, orgProfile } from '../src/orgprofile.js';
 import { personCard } from '../src/person.js';
 import { weeksTo } from '../src/trends.js';
@@ -1741,6 +1742,11 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/teams/profile') {
     const r = await teamProfile(adminApi.env, topicsViewer(), url.searchParams.get('team'));
+    return json(res, r.error ? { error: r.error } : r, r.error ? r.status || 400 : 200);
+  }
+  // A team's vendors (src/vendors.js), the same way: Initech's half year (dev-ui-vendor.mjs).
+  if (url.pathname === '/api/teams/vendors') {
+    const r = await teamVendors(adminApi.env, topicsViewer(), url.searchParams.get('team'));
     return json(res, r.error ? { error: r.error } : r, r.error ? r.status || 400 : 200);
   }
   // A customer's overview (src/orgprofile.js), the same way: the customers' half year of

@@ -216,9 +216,13 @@ export function latestMember(members) {
  * `label`) answers it, but a label can be stale or wrong: when Adobe posted last, the thread
  * does not wait on us, whatever the label says. Without a label, a thread waits on us when
  * someone outside Adobe posted last. Alerts, threads nobody posted in and imported threads (the
- * history import's, src/history.js: over before the inbox began) wait on nobody.
+ * history import's, src/history.js: over before the inbox began) wait on nobody. In a vendor's
+ * thread (`org_type` 'vendor') the other side is the vendor: a thread that waits on someone
+ * outside Adobe waits on the vendor, whatever the label calls them (labels from before Clef was
+ * asked of vendors the other way round, src/label.js VENDOR_QUESTIONS, say `customer`).
  *
- * @param {object} t a thread with `kind`, `last_staff` (1, 0, or null), `label` and `imported`
+ * @param {object} t a thread with `kind`, `last_staff` (1, 0, or null), `label`, `imported`
+ *   and `org_type`
  */
 export function waitingOn(t) {
   if (t.kind === 'alert' || t.last_staff == null || Number(t.imported)) {
@@ -234,7 +238,10 @@ export function waitingOn(t) {
   if (!actor || actor === 'us') {
     return ours ? 'nobody' : 'us';
   }
-  return actor === 'customer' || actor === 'vendor' ? actor : 'nobody';
+  if (actor !== 'customer' && actor !== 'vendor') {
+    return 'nobody';
+  }
+  return t.org_type === 'vendor' ? 'vendor' : actor;
 }
 
 function group(rows) {
