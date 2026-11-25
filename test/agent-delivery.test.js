@@ -226,6 +226,27 @@ describe('telling a thread agent', () => {
     assert.equal(agent.schedules[1].payload.mark, agent.kept.get('mark'));
   });
 
+  it('reads the target again once a root was folded into its entry', async () => {
+    const e = env(clef(fine));
+    await quiet(() => ingest(e, [{ ts: ROOT, user: 'U2', text: 'Please help' }]));
+    const agent = fakeAgent(e);
+    agent.target = async () => ({
+      key: THREAD, kind: 'channel', channelId: 'C1', team: 'helix', threads: [THREAD],
+    });
+    let forgot = 0;
+    agent.forgetTarget = () => {
+      forgot += 1;
+    };
+    await quiet(() => deliver(agent));
+    assert.equal(forgot, 0);
+    // A message of its own in the channel, which the inbox folds into the entry.
+    await quiet(() => ingest(e, [{ ts: NEXT, user: 'U2', text: 'And add a colleague, please' }]));
+    e.DB.sqlite.prepare('UPDATE threads SET logical_thread = ? WHERE root_id = ?').run(THREAD, NEXT);
+    await quiet(() => deliver(agent));
+    assert.equal(forgot, 1);
+    assert.match(agent.submitted[1][0], /add a colleague/);
+  });
+
   it('tells overlapping pokes about a message once', async () => {
     const e = env(clef(fine));
     await quiet(() => ingest(e, [{ ts: ROOT, user: 'U2', text: 'Please help' }]));

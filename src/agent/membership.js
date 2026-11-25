@@ -47,13 +47,15 @@ export const membershipOn = {
 };
 
 /**
- * Who wrote message `id` of the agent's entry (`threads`: its platform threads): `{ name, email,
- * userId }`, their platform user id when opspile knows it, or null when no such message is there.
+ * Who wrote message `id` of the agent's entry: `{ name, email, userId }`, their platform user id
+ * when opspile knows it, or null when no such message is there. `threads` are the entry's
+ * platform threads as the agent last read them; the roots folded into it since (src/rethread.js)
+ * count too, so a message the agent was just told of is found though its list is older.
  * The email and user id are the person's (opspile's people, staff and those in a team), else the
  * author's platform account's: most customers are no person of opspile's, and the admins who
  * approve want to see who asked, by address, as when a person asks the admins' bot.
  */
-async function askedBy(env, t, threads, id) {
+async function askedBy(env, t, key, threads, id) {
   const m = await env.DB.prepare(`SELECT m.author, m.person, p.name, p.email,
       i.user_id AS author_id, i.kind AS author_kind, i.name AS author_name,
       i.email AS author_email
@@ -61,8 +63,9 @@ async function askedBy(env, t, threads, id) {
       LEFT JOIN people p ON p.id = m.person
       LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
     WHERE m.source = ? AND m.tenant = ? AND m.id = ? AND m.deleted = 0
-      AND m.thread IN (SELECT value FROM json_each(?))`)
-    .bind(t.source, t.tenant, String(id || ''), JSON.stringify(threads)).first();
+      AND (m.thread IN (SELECT value FROM json_each(?))
+        OR m.thread IN (SELECT thread FROM threads WHERE logical_thread = ?))`)
+    .bind(t.source, t.tenant, String(id || ''), JSON.stringify(threads), key).first();
   if (!m) {
     return null;
   }
@@ -75,6 +78,34 @@ async function askedBy(env, t, threads, id) {
     email: m.email || (account && m.author_email) || null,
     userId: account || (who ? who.user_id : null),
   };
+}
+
+/**
+ * The platform id of a message as the agent may give it: as read_thread prints it, after
+ * "message" (a Slack `ts`, a Teams message id), or with that word, as get_thread's `key|id`, or
+ * as a link to it (a Slack permalink or its `p…` part, a Teams message link).
+ */
+export function messageIdOf(raw) {
+  let s = String(raw || '').trim().replace(/^message\s+/i, '');
+  if (s.includes('|')) {
+    s = s.slice(s.lastIndexOf('|') + 1).trim();
+  }
+  const slack = /(?:^|\/)p(\d{10})(\d{6})(?:[?#].*)?$/.exec(s);
+  if (slack) {
+    return `${slack[1]}.${slack[2]}`;
+  }
+  const teams = /\/l\/message\/[^/]+\/(\d+)/.exec(s);
+  return teams ? teams[1] : s;
+}
+
+/** The ids of the latest messages of the entry, as `askedBy` finds them, for an example. */
+async function latestIds(env, t, key, threads) {
+  const { results } = await env.DB.prepare(`SELECT id FROM messages
+    WHERE source = ? AND tenant = ? AND deleted = 0
+      AND (thread IN (SELECT value FROM json_each(?))
+        OR thread IN (SELECT thread FROM threads WHERE logical_thread = ?))
+    ORDER BY at DESC LIMIT 3`).bind(t.source, t.tenant, JSON.stringify(threads), key).all();
+  return (results || []).map((r) => r.id);
 }
 
 /** The addresses given, lower case and once each, or `{ error }`. */
@@ -194,10 +225,14 @@ export async function requestMembership(env, target, args) {
   if (!membershipOn[t.source] || !membershipOn[t.source](env)) {
     return { error: `membership requests are not set up for ${t.source} here` };
   }
-  const asker = await askedBy(env, t, target.threads && target.threads.length
-    ? target.threads : [target.key], args.message);
+  const threads = target.threads && target.threads.length ? target.threads : [target.key];
+  const id = messageIdOf(args.message);
+  const asker = await askedBy(env, t, target.key, threads, id);
   if (!asker) {
-    return { error: 'give the id of the message in your thread that asked for it ("message <id>")' };
+    const latest = await latestIds(env, t, target.key, threads).catch(() => []);
+    return {
+      error: `${id ? `no message ${id} is in your thread` : 'no message was given'}: give the id of the message in your thread that asked for it, as read_thread shows it after "message"${latest.length ? ` (its latest: ${latest.join(', ')})` : ''}`,
+    };
   }
   const message = `${asker.name || 'Someone'} asked in the thread: ${action} ${people.list.join(', ')}`;
   try {

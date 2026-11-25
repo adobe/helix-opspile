@@ -24,6 +24,7 @@ import { toolsFor } from '../src/agent/agenttools.js';
 import { COMPUTER_CWD, computerEnv } from '../src/agent/computer.js';
 import { commandsOf } from '../src/agent/image.js';
 import { imageFor } from '../src/agent/kernel.js';
+import { messageIdOf } from '../src/agent/membership.js';
 import { build } from '../scripts/computer-images.mjs';
 import { appReaction, postAsApp, reactAsApp } from '../src/agent/posting.js';
 import { agentToolsExtension, opspileExtension } from '../src/agent/tools.js';
@@ -872,11 +873,46 @@ describe('requesting channel members', () => {
     assert.match(r.text, /do not see #general: tell them in your reply/);
   });
 
+  it('finds a message of a root folded into the thread since the agent read its threads', async () => {
+    const { e, calls, run } = setup();
+    const folded = 'slack:E1:C1:1792584100.000200';
+    e.DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org,
+        team, kind, channel_name, path, any_at, updated_at, logical_thread)
+      VALUES (?, 'slack', 'E1', 'C1', '1792584100.000200', 'acme', 'helix', 'channel', 'aem-acme',
+        'channels/x/', ?, ?, ?)`).run(folded, '2026-10-21T10:02:00Z', '2026-10-21T10:02:00Z', SLACK);
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author,
+        person) VALUES ('slack', 'E1', 'C1', '1792584100.000200', ?, ?, 'Bo', 2)`)
+      .run(folded, '2026-10-21T10:02:00Z');
+    // The agent's target was read before the fold: its own root only.
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['guest@client.example'], message: '1792584100.000200',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.equal(calls.slack.length, 1);
+  });
+
+  it('takes the message as read_thread prints it, with "message", or as a link to it', async () => {
+    assert.equal(messageIdOf('1792584000.000100'), '1792584000.000100');
+    assert.equal(messageIdOf(' message 1792584000.000100 '), '1792584000.000100');
+    assert.equal(messageIdOf(`${SLACK}|1792584000.000100`), '1792584000.000100');
+    assert.equal(messageIdOf('https://acme.slack.example/archives/C1/p1792584000000100'), '1792584000.000100');
+    assert.equal(messageIdOf('https://acme.slack.example/archives/C1/p1792584000000100?thread_ts=1792583000.000100&cid=C1'), '1792584000.000100');
+    assert.equal(messageIdOf('p1792584000000100'), '1792584000.000100');
+    assert.equal(messageIdOf('https://teams.microsoft.com/l/message/19:abc@thread.tacv2/1792584000000?tenantId=TN1'), '1792584000000');
+    assert.equal(messageIdOf('1792584000000'), '1792584000000');
+    const { calls, run } = setup();
+    const r = await run(target(SLACK, 'slack', 'C1'), {
+      action: 'add', emails: ['guest@client.example'], message: 'https://acme.slack.example/archives/C1/p1792584000000100',
+    });
+    assert.equal(r.error, false, r.text);
+    assert.equal(calls.slack.length, 1);
+  });
+
   it('asks nothing for a message that is not in the thread, a bad address, or a tool switched off', async () => {
     const { e, calls, run } = setup();
     const teams = target(TEAMS, 'teams', '19:abc@thread.tacv2');
     let r = await run(teams, { action: 'add', emails: ['a@client.example'], message: '999' });
-    assert.match(r.text, /Nothing was requested: give the id of the message/);
+    assert.equal(r.text, 'Nothing was requested: no message 999 is in your thread: give the id of the message in your thread that asked for it, as read_thread shows it after "message" (its latest: 1792584000000)');
     r = await run(teams, { action: 'add', emails: ['not an address'], message: '1792584000000' });
     assert.match(r.text, /not an email address: not an address/);
     r = await run(teams, { action: 'add', emails: [], message: '1792584000000' });

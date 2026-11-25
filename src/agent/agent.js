@@ -707,6 +707,11 @@ export class ThreadAgent extends Agent {
     return value;
   }
 
+  /** The target is read again next time: its threads changed (a root was folded into it). */
+  forgetTarget() {
+    this.cachedTarget = null;
+  }
+
   /** Clef verdicts for the untrusted ones among `messages` (src/agent/delivery.js). */
   async verdicts(messages) {
     return verdictsOf(this, messages);
