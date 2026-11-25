@@ -16,9 +16,10 @@ import { likePattern as like } from '../like.js';
 import { channelOf, resolveAnyThread } from './history.js';
 
 /**
- * The inbox's channels, for a thread agent with the `any_thread` tool (src/agent/agenttools.js):
- * which channels are a customer's (`findChannels`, the agent's find_channels), and which channel
- * an id or a link names (`resolveChannel`, for list_any_channel_threads). A colleague relays a
+ * The inbox's channels, for a thread agent with the `any_thread` or the `org_threads` tool
+ * (src/agent/agenttools.js): which channels are a customer's (`findChannels`, the agent's
+ * find_channels), and which channel an id or a link names (`resolveChannel`, for
+ * list_any_channel_threads). A colleague relays a
  * customer's question into an internal channel, and the customer has a channel of its own, on
  * Slack, Teams or Discord: the agent finds it by the customer's name, the name of the channel,
  * or a site or repository its threads are about, instead of only by a link someone saved.
@@ -26,6 +27,10 @@ import { channelOf, resolveAnyThread } from './history.js';
  * Only what the rules and the labels say of a channel: its customer (the org its latest thread
  * is filed under, and that org's name), its name (on Teams, and its team's), and the `site` and
  * `repo` facts of its threads. A channel the rules ignore is nobody's to find.
+ *
+ * With `org_threads` the agent finds its own customer's channels only (`org`): a channel is the
+ * customer's when its latest thread is filed under the customer, as everywhere here, and of a
+ * channel only the customer's threads are listed (`threadsIn` with `org`, src/agent/history.js).
  */
 
 export const MAX_CHANNELS = 25;
@@ -144,6 +149,13 @@ async function details(env, keys) {
   }));
 }
 
+/** The channels with threads filed under `org`, but those the rules ignore. */
+async function byOrg(env, org) {
+  const { results } = await env.DB.prepare(`SELECT DISTINCT source, tenant, channel_id FROM threads
+    WHERE org = ? AND kind != 'ignore' LIMIT ${MAX_CANDIDATES}`).bind(String(org)).all();
+  return results || [];
+}
+
 /** `{ sql, bind }`: any of `columns` has any of the words. */
 const anyLike = (columns, words) => ({
   sql: words.flatMap(() => columns.map((c) => `${c} LIKE ? ESCAPE '\\'`)).join(' OR '),
@@ -184,20 +196,25 @@ async function byCustomer(env, words) {
  * Per channel and site or repository, how many of its threads are about one of `sites`, or one
  * owned by one of the words: `[{ source, tenant, channel_id, value, n }]`.
  */
-async function bySite(env, words, sites) {
+async function bySite(env, words, sites, org = null) {
   if (!words.length && !sites.length) {
     return [];
   }
+  const own = org ? 'AND t.org = ?' : '';
   const ranges = words.map(() => '(f.value >= ? AND f.value < ?)');
   const exact = sites.length ? ['f.value IN (SELECT value FROM json_each(?))'] : [];
   const { results } = await env.DB.prepare(`SELECT t.source, t.tenant, t.channel_id, f.value,
       COUNT(DISTINCT f.thread) AS n
     FROM facts f JOIN threads t ON t.thread = f.thread
-    WHERE f.field IN ('site', 'repo') AND t.kind != 'ignore'
+    WHERE f.field IN ('site', 'repo') AND t.kind != 'ignore' ${own}
       AND (${[...exact, ...ranges].join(' OR ')})
     GROUP BY t.source, t.tenant, t.channel_id, f.value ORDER BY n DESC LIMIT ${MAX_CANDIDATES}`)
     // '0' is the character after '/': `acme/` up to it is every site of acme.
-    .bind(...(sites.length ? [JSON.stringify(sites)] : []), ...words.flatMap((w) => [`${w}/`, `${w}0`]))
+    .bind(
+      ...(org ? [String(org)] : []),
+      ...(sites.length ? [JSON.stringify(sites)] : []),
+      ...words.flatMap((w) => [`${w}/`, `${w}0`]),
+    )
     .all();
   return results || [];
 }
@@ -211,15 +228,22 @@ async function bySite(env, words, sites) {
  * repositories its threads are about (`[{ value, threads }]`). A word matches at the start of a
  * word of a name. A channel of an internal org or a vendor is found by its name or its org's,
  * not by a site someone asked about there.
+ *
+ * With `org`, only the channels of that customer, all of them, those `query` names first (it
+ * may be empty): what an agent with `org_threads` finds. Another org's never.
  */
-export async function findChannels(env, query, { here = null, limit = DEFAULT_CHANNELS } = {}) {
+export async function findChannels(env, query, {
+  here = null, limit = DEFAULT_CHANNELS, org = null,
+} = {}) {
   const { words, sites } = queryParts(query);
   const n = Math.min(Math.max(Number(limit) || DEFAULT_CHANNELS, 1), MAX_CHANNELS);
-  if (!words.length && !sites.length) {
+  if (!org && !words.length && !sites.length) {
     return { words, sites, channels: [] };
   }
   const [named, customers, sited] = await Promise.all([
-    byName(env, words), byCustomer(env, words), bySite(env, words, sites),
+    org ? byOrg(env, org) : byName(env, words),
+    org ? [] : byCustomer(env, words),
+    bySite(env, words, sites, org),
   ]);
   const own = here ? `${here.source}:${here.tenant}:${here.channelId}` : null;
   // At the start of a word of the name: "acme" is in aem-acme and Acme Corp, not in megacme.
@@ -241,8 +265,10 @@ export async function findChannels(env, query, { here = null, limit = DEFAULT_CH
   }
   const guess = (c) => 2 * c.words.size + Math.sign(c.sites);
   const likeliest = [...first.values()].sort((a, b) => guess(b) - guess(a))
-    .slice(0, Math.max(3 * n, MIN_DETAILS));
-  const rows = await details(env, likeliest.map((c) => c.key));
+    .slice(0, org ? MAX_CANDIDATES : Math.max(3 * n, MIN_DETAILS));
+  // The customer's channel is the one whose latest thread is filed under it.
+  const rows = (await details(env, likeliest.map((c) => c.key)))
+    .filter((r) => !org || r.org === org);
   const found = rows.map((r) => {
     const siteRows = sited.filter((s) => channelKey(s) === channelKey(r));
     const matched = {
@@ -259,7 +285,7 @@ export async function findChannels(env, query, { here = null, limit = DEFAULT_CH
       score += 1 + Math.min(siteThreads, 10) / 10 + exactSite;
     }
     return { ...shown(r), matched, score };
-  }).filter((r) => r.score > 0)
+  }).filter((r) => org || r.score > 0)
     .sort((a, b) => b.score - a.score || String(b.at || '').localeCompare(String(a.at || '')));
   return {
     words,

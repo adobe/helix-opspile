@@ -961,6 +961,10 @@ const TOOL_CONFIRM = {
     on: (where) => `From their next message, the agents of ${where} have a bash shell with a working directory of their own per thread (Cloudflare Computer), and curl, which reaches the internet without a filter.`,
     off: (where) => `Agents of ${where} lose their shell with their next message. The files they made stay in their threads.`,
   },
+  org_threads: {
+    on: (where) => `From their next message, the agents of ${where} can list and read the other channels of their thread's customer, on every platform, never another customer's, and what they read can reach their drafts, notes, the customer's knowledge base and their posts.`,
+    off: (where) => `Agents of ${where} stop reading the customer's other channels at once. What they read before stays in their transcripts.`,
+  },
   any_thread: {
     on: (where) => `From their next message, the agents of ${where} can read any thread of the inbox, of any channel, team or customer, and find any customer's channels, and what they read can reach their drafts, notes, knowledge bases and their other tools.`,
     off: (where) => `Agents of ${where} stop reading other channels' threads at once. What they read before stays in their transcripts.`,
@@ -987,7 +991,7 @@ const TOOL_CONFIRM = {
 function toolsSection() {
   const b = base();
   if (!state.tools) return '<div class="empty">Could not list the agent tools.</div>';
-  const note = b.kind === 'team' ? `Built-in tools: on or off for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). New teams start with Computer, Extraction rules, Web search, Resolve threads and Label threads on.`
+  const note = b.kind === 'team' ? `Built-in tools: on or off for every channel of ${b.name}, or for one of its channels (a channel's own switch wins). New teams start with Computer, Extraction rules, Read the customer's channels, Web search, Resolve threads and Label threads on.`
     : `Built-in tools: turned on for a whole team on its page in Teams, or here for one of ${b.name}'s channels.`;
   return `<h3 class="group">Tools</h3><div class="sub intro">${esc(note)}</div>${state.tools.map(toolRow).join('')}`;
 }

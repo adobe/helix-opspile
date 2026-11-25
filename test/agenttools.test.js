@@ -11,6 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   afterEach, beforeEach, describe, it,
 } from 'node:test';
@@ -170,6 +171,26 @@ describe('agent tools', () => {
     e.DB.sqlite.exec(`INSERT INTO agent_tool_switches (tool, scope, target, enabled, changed_at)
       VALUES ('any_thread', 'team', 'helix', 1, '2026-10-21T10:00:00Z')`);
     assert.deepEqual(await toolsFor(e, slack), []);
+  });
+
+  it('read the customer\'s other channels by default: on for every team there is, off per channel', async () => {
+    const e = env();
+    const slack = target(SLACK, 'slack', 'C1');
+    // What migration 0102 does, for the teams of this database (made after its migrations).
+    e.DB.sqlite.exec(readFileSync(new URL('../migrations/0102_org_threads.sql', import.meta.url), 'utf8'));
+    assert.deepEqual(e.DB.sqlite.prepare(`SELECT target FROM agent_tool_switches
+      WHERE tool = 'org_threads' AND scope = 'team' AND enabled = 1 ORDER BY target`).all()
+      .map((r) => r.target), ['admin', 'edge', 'helix']);
+    assert.deepEqual(await toolsFor(e, slack), ['org_threads']);
+    // A team's manager opts one channel out; the team's switch stays.
+    const res = await call(e, manager, 'PUT', '/api/kb/tools', { tool: 'org_threads', channel: 'C1', enabled: false });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await toolsFor(e, slack), []);
+    const listed = await call(e, manager, 'GET', '/api/kb/tools?repo=kb-team-helix');
+    const row = listed.body.tools.find((t) => t.tool === 'org_threads');
+    assert.equal(row.internal, false);
+    assert.equal(row.team.enabled, true);
+    assert.equal(row.channels.C1.enabled, false);
   });
 
   it('are listed and switched by the admin team and the team\'s managers only', async () => {
