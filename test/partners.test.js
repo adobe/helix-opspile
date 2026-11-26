@@ -20,6 +20,7 @@ import {
   partnerDomains,
 } from '../src/partners.js';
 import { Meter } from '../src/cogs/meter.js';
+import { UNDERLYING } from '../src/d1batch.js';
 import { profiles } from '../src/profiles.js';
 import { d1 } from './d1.js';
 
@@ -359,6 +360,49 @@ describe('partnerDomains', () => {
       // Then it holds for the hour.
       e.DB.sqlite.exec('UPDATE orgs SET name = \'Agency Inc\' WHERE slug = \'agency\'');
       assert.equal((await partnerDomains(e)).get('agency.example').name, 'Agency Co');
+    } finally {
+      clock.mock.restore();
+      console.error = quiet;
+    }
+  });
+
+  it('looks anew after another request\'s look that never ends, once it is LOOK_MS old', async () => {
+    const e = world();
+    const quiet = console.error;
+    console.error = () => {};
+    const now = Date.now();
+    const clock = mock.method(Date, 'now', () => now);
+    // A request whose look hangs, as one does when its request ended and took its I/O along.
+    let unhang;
+    const hung = new Promise((resolve) => {
+      unhang = () => resolve({ results: [] });
+    });
+    const prepare = e.DB.prepare.bind(e.DB);
+    const stuck = {
+      ...e,
+      DB: {
+        ...e.DB,
+        [UNDERLYING]: e.DB, // another request's wrapper of the same binding
+        prepare: (sql) => (/COUNT\(DISTINCT m\.thread\)/.test(sql)
+          ? { bind: () => ({ all: () => hung }) } : prepare(sql)),
+      },
+    };
+    try {
+      assert.equal((await partnerDomains(e)).get('agency.example').name, 'The Agency');
+      e.DB.sqlite.exec('UPDATE orgs SET name = \'Agency Co\' WHERE slug = \'agency\'');
+      clock.mock.mockImplementation(() => now + DERIVED_MS + 1);
+      const waiting = partnerDomains(stuck);
+      await new Promise((r) => {
+        setImmediate(r);
+      });
+      // While it is young, the others answer what was found before.
+      const other = { ...e, DB: { ...e.DB, [UNDERLYING]: e.DB, prepare } };
+      assert.equal((await partnerDomains(other)).get('agency.example').name, 'The Agency');
+      // Once it is LOOK_MS old, the next request looks itself.
+      clock.mock.mockImplementation(() => now + DERIVED_MS + 21 * 1000);
+      assert.equal((await partnerDomains(other)).get('agency.example').name, 'Agency Co');
+      unhang();
+      await waiting;
     } finally {
       clock.mock.restore();
       console.error = quiet;
