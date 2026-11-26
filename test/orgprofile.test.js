@@ -245,6 +245,26 @@ describe('a customer\'s overview', () => {
     assert.equal(p.kb.drawing, true);
   });
 
+  it('lists the public channels its people posted in, by the threads with them', async () => {
+    const e = seed();
+    e.DB.sqlite.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('community', 'Public', 'public', '${day(0)}');
+      INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name,
+        path, root_at, last_at, any_at, messages, updated_at) VALUES
+        ('t:p1', 'discord', 'G', 'D1', 'p1', 'community', 'edge', 'channel', 'aem-chat', 'p/', '${day(3)}', '${day(3)}', '${day(3)}', 1, '${day(3)}'),
+        ('t:p2', 'discord', 'G', 'D1', 'p2', 'community', 'edge', 'channel', 'aem-chat', 'p/', '${day(2)}', '${day(2)}', '${day(2)}', 1, '${day(2)}'),
+        ('t:p3', 'discord', 'G', 'D1', 'p3', 'community', 'edge', 'channel', 'aem-chat', 'p/', '${day(1)}', '${day(1)}', '${day(1)}', 1, '${day(1)}');
+      INSERT INTO thread_orgs (thread, org, role, p, via, found_at, dismissed_at) VALUES
+        ('t:p1', 'acme', 'customer', 1, 'posters', '${day(3)}', NULL),
+        ('t:p2', 'acme', 'customer', 1, 'posters', '${day(2)}', NULL),
+        ('t:p3', 'acme', 'customer', 1, 'posters', '${day(1)}', '${day(0)}')`);
+    const p = await orgNumbers(e, 'acme', { now: NOW });
+    assert.deepEqual(p.public.map((c) => ({ ...c })), [{
+      source: 'discord', channel: 'D1', name: 'aem-chat', threads: 2, last: day(2),
+    }]);
+    // The public org's own page is no customer's: it has none of it.
+    assert.equal((await orgNumbers(e, 'community', { now: NOW })).public, undefined);
+  });
+
   it('is everyone\'s at Adobe, its knowledge base too', async () => {
     const e = seed();
     const outsider = {

@@ -59,6 +59,7 @@ import {
   partnerDomains, partnerForViewer, partnerNumbers, UNLINKED_MIN,
 } from './partners.js';
 import { customersOf, partnersOf } from './orgpartners.js';
+import { ABOUT_MIN } from './threadlinks.js';
 import { personSlug } from './agent/okf.js';
 import { mailDomains } from './orgmerge.js';
 import { activeSince } from './listactivity.js';
@@ -99,6 +100,27 @@ const AUTHORS = `a AS (SELECT g.author_key AS key, g.staff, ${WEEK('g.at')} AS w
       COUNT(DISTINCT g.thread) AS threads, MAX(g.at) AS last
     FROM scope JOIN messages g ON g.thread = scope.thread AND g.at >= ?2
     WHERE g.deleted = 0 AND g.counted = 1 AND g.author_key IS NOT NULL GROUP BY 1, 2, 3)`;
+
+/** The public channels a customer's page lists at most. */
+export const MAX_PUBLIC = 8;
+
+/**
+ * The public channels (of an org of type `public`: a community's, an event's) whose threads of
+ * the weeks since `since` the people of customer `slug` posted in, by their mail domain
+ * (`thread_orgs` of role `customer`, src/threadlinks.js), for its page: `[{ source, channel,
+ * name, threads, last }]`, the busiest first. Its threads' titles stay in the inbox, where its
+ * followers have them; a public channel's name is no secret.
+ */
+async function publicHere(env, slug, since) {
+  const { results } = await env.DB.prepare(`SELECT h.source, h.channel_id AS channel,
+      MAX(h.channel_name) AS name, COUNT(DISTINCT x.thread) AS threads, MAX(h.last_at) AS last
+    FROM thread_orgs x JOIN threads h ON h.thread = x.thread
+    WHERE x.org = ?1 AND x.role = 'customer' AND x.dismissed_at IS NULL AND x.p >= ?3
+      AND h.kind = 'channel' AND h.last_at >= ?2
+    GROUP BY 1, 2 ORDER BY threads DESC, last DESC LIMIT ?4`)
+    .bind(slug, since, ABOUT_MIN, MAX_PUBLIC).all();
+  return results || [];
+}
 
 /**
  * The partners of customer `slug`, for its page: those that work for it, confirmed or likely
@@ -727,6 +749,8 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     // A partner's customers, people and what waits (src/partners.js), a customer's partners.
     ...(orgType === PARTNER ? { partner: await partnerHere(env, slug, weeks) } : {}),
     ...(orgType === 'customer' ? { partners: await partnersHere(env, slug, authors, threadsBy, partnerFor) } : {}),
+    // The public channels its people posted in (a community's, an event's).
+    ...(orgType === 'customer' ? { public: await publicHere(env, slug, since) } : {}),
     people: topTheirs.map(personOut),
     peopleCount: theirs.length,
     partnerCount: theirs.filter(([, e]) => partnerFor(e.domain)).length,

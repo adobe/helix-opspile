@@ -185,6 +185,14 @@ describe('duplicate candidates', () => {
     orgs.set('agency', worker('agency', 'customer'));
     assert.deepEqual(candidates({ orgs, members: null }).map((c) => [c.a, c.b]), [['agency', 'globex']]);
   });
+
+  it('never lists a public org: people of every org meet there', () => {
+    const orgs = new Map([
+      ['globex', org('globex', { domains: ['globex.example'] })],
+      ['globex-community', org('globex-community', { type: 'public', domains: ['globex.example'] })],
+    ]);
+    assert.deepEqual(candidates({ orgs, members: null }), []);
+  });
 });
 
 describe('admin: duplicate customers', () => {

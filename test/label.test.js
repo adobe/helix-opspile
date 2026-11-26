@@ -56,6 +56,22 @@ describe('what the models read', () => {
   });
 });
 
+describe('a public thread', () => {
+  it('says its people are of many orgs, and whoever asks is answered as a customer', () => {
+    const thread = {
+      source: 'discord', channel_name: 'aem-chat', org: 'public', org_type: 'public', root_at: '2026-10-21T10:00:00Z',
+    };
+    const messages = [{
+      id: '1', at: '2026-10-21T10:00:00Z', body: 'How do I preview?', author: { kind: 'person', name: 'Max' },
+    }];
+    const state = stateOf(thread, messages);
+    assert.match(state, /^Channel: aem-chat on Discord\nPublic channel: anyone may join and post\./);
+    assert.match(state, /Max \(community member\):\nHow do I preview\?/);
+    assert.doesNotMatch(state, /Customer: public/);
+    assert.equal(questionsFor('public'), QUESTIONS);
+  });
+});
+
 describe('a vendor\'s questions', () => {
   it('asks who acts next the other way round, in the same order as a customer\'s', () => {
     assert.equal(questionsFor('vendor'), VENDOR_QUESTIONS);

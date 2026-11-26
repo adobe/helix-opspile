@@ -38,6 +38,11 @@
  * With --channel <id>, only that channel's roots, one after the other, oldest first: in
  * conversations, a root is decided from the decisions about the roots before it.
  *
+ * --link links every live channel thread again (src/threadlinks.js: the customers a partner's
+ * thread is about, the partners in a customer's, who is in a public one, and the threads possibly
+ * about the same issue), spread out; with --org <slug>, only that org's threads (after making an
+ * org public, `--link --org <slug>`).
+ *
  * --clear deletes pile 2 (the channels bucket) first. Use it after changing the rules:
  * a file's path depends on its org and team, so a replay alone would leave the files
  * filed under the old ones.
@@ -64,6 +69,8 @@ const rethreadAll = args.includes('--rethread');
 const relabelAll = args.includes('--relabel');
 const vectorizeAll = args.includes('--vectorize');
 const indexAll = args.includes('--index');
+const linkAll = args.includes('--link');
+const org = opt('org', null);
 const channel = opt('channel', null);
 const imported = args.includes('--imported');
 const limit = Number(opt('limit', 0));
@@ -111,6 +118,9 @@ if (!queue) {
 if ((imported || limit) && !(relabelAll || vectorizeAll || indexAll)) {
   throw new Error('--imported and --limit go with --relabel, --vectorize or --index');
 }
+if (org !== null && (!linkAll || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(org))) {
+  throw new Error('--org takes an org slug, and goes with --link');
+}
 if (!(every > 0)) {
   throw new Error('--every takes a number of seconds');
 }
@@ -120,7 +130,7 @@ if (args.includes('--limit') && !(limit > 0)) {
 
 const dir = mkdtempSync(join(tmpdir(), 'opspile-replay-'));
 
-if (rethreadAll || relabelAll || vectorizeAll || indexAll) {
+if (rethreadAll || relabelAll || vectorizeAll || indexAll || linkAll) {
   const db = items(cf('d1', 'list')).find((d) => d.name === `helix-opspile${suffix}`);
   if (channel && (!rethreadAll || !/^[\w:@.-]+$/.test(channel))) {
     throw new Error('--channel takes a channel id, and goes with --rethread');
@@ -137,6 +147,10 @@ if (rethreadAll || relabelAll || vectorizeAll || indexAll) {
     sql = `SELECT thread FROM threads WHERE kind = 'channel' AND last_at IS NOT NULL${mine} ORDER BY any_at DESC`;
   } else if (indexAll) {
     sql = `SELECT thread FROM threads WHERE kind = 'channel' AND last_at IS NOT NULL${mine} AND (indexed_through IS NULL OR indexed_through != any_at) ORDER BY any_at DESC`;
+  } else if (linkAll) {
+    // Each entry once, by its key; not the history import's (nobody works those).
+    const of = org ? ` AND org = '${org}'` : '';
+    sql = `SELECT COALESCE(logical_thread, thread) AS thread FROM threads WHERE kind = 'channel' AND last_at IS NOT NULL AND imported = 0${of} GROUP BY 1 ORDER BY MAX(any_at) DESC`;
   }
   sql += first;
   // With --limit, only those are reset.
@@ -165,7 +179,8 @@ if (rethreadAll || relabelAll || vectorizeAll || indexAll) {
     writeFileSync(file, JSON.stringify(keys.slice(i, i + size)
       .map((thread) => ({
         body: (rethreadAll && { rethread: thread, force: true })
-          || ((vectorizeAll || indexAll) && { vectorize: thread }) || { label: thread },
+          || ((vectorizeAll || indexAll) && { vectorize: thread })
+          || (linkAll && { link: thread }) || { label: thread },
         content_type: 'json',
       }))));
     if (!dryRun) {
@@ -184,7 +199,7 @@ if (rethreadAll || relabelAll || vectorizeAll || indexAll) {
     }
   }
   const what = (rethreadAll && 're-thread') || (vectorizeAll && 'vectorize')
-    || (indexAll && 'index') || 'relabel';
+    || (indexAll && 'index') || (linkAll && 'link') || 'relabel';
   console.log(`${dryRun ? 'would' : 'will'} ${what} ${keys.length} thread(s)`);
   rmSync(dir, { recursive: true, force: true });
   process.exit(0);

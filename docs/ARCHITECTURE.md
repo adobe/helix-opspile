@@ -174,7 +174,8 @@ OR <shared channel> OR <followed>` stays a search by index (`teamsOf`, `mayWork`
 inbox's `inInbox`). A thread's agent writes the knowledge bases of the teams that follow it, as those
 of its channel's shares (`accessibleRepos`, `via: 'follow'`).
 A person also follows a **customer**, a **person** or an **area** (`person_follows_by`, migration
-0087; `PUT /api/follows { kind, target }`): the customer's conversations, the threads the person
+0087; `PUT /api/follows { kind, target }`): the customer's conversations (and the public threads
+its people posted in, "Public channels"), the threads the person
 posted in, and those Clef puts in the area (`thread_areas`, by index, written with the label, as
 `thread_tech` is) are in their personal view the same way, and in `followersOf` for live updates
 and notifications. And (migration 0107) an **account**, a customer's person known by their identity
@@ -188,7 +189,8 @@ Clef puts in it are in the team's inbox as those that show a technology it follo
 chevron or `PUT /api/admin/org-follows`): a follow rule of field `org` (migration 0098),
 which matches the org the other rules file a channel under, and the org's that were merged into it,
 so every channel of the customer is shared with the team, now and later, as any follow rule's
-channels are. On the customer's page everyone on a team follows or mutes it themselves, a manager gives a
+channels are. The public threads the customer's people posted in are in the team's inbox too, as
+those that show a technology it follows are (`followedByTeam`, `entryFollows`' `{ team, org }`). On the customer's page everyone on a team follows or mutes it themselves, a manager gives a
 channel of their team back to the admin team (`POST /api/admin/release`) or takes it out of their
 team's inbox where it is shared by hand, and asks for one of another team's (a request with `move`).
 
@@ -204,9 +206,10 @@ an empty personal view (where someone on no team starts), and in a dialog from t
 section of the menu on every page (`ui/followsuggest.js`), each with its Follow button.
 
 An org is a slug. What it is called, its icon (a domain, whose favicon is shown, or an image
-URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an org without
-one is a customer shown by its slug and the favicon of its usual mail domain. The inbox and
-the agents show the name and the type.
+URL) and whether it is a customer, a partner, a vendor, Adobe's own (`internal`) or public
+(`public`, "Public channels") are a row in `orgs`; an org without one is a customer shown by its
+slug and the favicon of its usual mail domain. The inbox and the agents show the name and the
+type.
 
 The org list in the admin pages shows each org with the icon the inbox resolves for it (its
 own, else the favicon of its usual mail domain: the most common one among the people outside
@@ -418,6 +421,9 @@ two. A minute after each labelling of a thread (the normalizer queues `{ link: t
   for each;
 - **the partners in a customer's thread** (role `partner`, `p` 1, `via` `posters`): the partner
   orgs whose people posted in it, by their mail domain (`partnerDomains`, "Partner domains");
+- **who is in a public thread** (roles `partner` and `customer`, `p` 1, `via` `posters`; "Public
+  channels"): the partners and the customers whose people posted in it, by their mail domain, and
+  nothing more: a public thread is related to no other (no `thread_links`), and no agent is told;
 - **possibly the same issue** (`thread_links`): the threads of the linked orgs' channels active
   in the last 14 days (`RELATED_DAYS`) whose thread vectors (`CONTENT`, `type: thread`, by `org`)
   are at least 0.75 alike (`RELATED_MIN`, cosine), by inbox entry. The linked orgs are, for a
@@ -443,6 +449,7 @@ not their teams', nor their personal view's) is named by its customer, team and 
 never its title or link. Whoever may work the thread says a link is wrong there (`POST
 /api/thread/about/dismiss`, `/related/dismiss`, with `undo`): a dismissed row stays, and the job
 leaves it so. The MCP server's `get_thread` has them (`about_customers`, `with_partners`,
+`with_customers` for a public thread's,
 `possibly_same_issue`, a title only where the person may see that thread), and its
 `search_threads`, `/api/search` (`org=`) and a knowledge-base chat's `search_threads` take a
 customer filter that includes its partners' threads about it (`aboutThreads`).
@@ -457,6 +464,45 @@ prompt keeps what a linked org's thread says out of its channel unless someone a
 
 `npm run partners:threads` (README, "Measure the thread links") counts on production, read-only,
 how many partner threads get a customer and how surely.
+
+**Public channels.** An org of type `public` (migration 0113) is where people of many orgs meet,
+and of none: a community's Discord server, an event's or a course's Slack channel. One org,
+`public`, has them all; the rules file a channel there (the Discord servers by a rule, an event's
+channel by hand). Its threads are worked as any customer's: who asks is the one the team
+answers, and Adobe's people answer for Adobe, staff by their mail domain, their Discord role or
+their connected account, whether on an ops team or not. But a public org is no side of anything:
+
+- it is not a customer: not in a partner's candidates (`org_partners`) nor its customers, not in
+  the partner domains' "a customer's own domain" (`derive` reads customers' and partners'
+  threads only), never a duplicate (`candidates`, src/orgmerge.js), and not among a team's or a
+  person's customers on its overview; its Customers page is its own, with no partners;
+- Clef is told the thread is a public channel's, whose people are of many orgs or of none, and
+  calls them community members (`stateOf`, src/label.js); a thread agent is told everything it
+  posts there is public, and never to name a customer or partner of Adobe's there, nor anything
+  from another channel, a ticket or a customer's knowledge base (`PUBLIC_GUIDE`, src/agent/tools.js);
+- its people are told apart by their mail domain, where the platform has it (Slack, Teams; the
+  Discord servers share none): a partner's (`partnerDomains`) are the partner's, a customer's own
+  (`customerDomains`, src/partners.js) are the customer's, and the others are the community. A
+  customer's own domains are, of each customer, the one most of its people write from in its
+  own threads that is no partner's (a partner's people may be all who post in a customer's
+  channel), and the org part of its icon's; a domain the top one of two customers is the one's
+  with more of its people there. They are found with the partner domains, from the same rows,
+  and kept as long ("Partner domains"); free mail, tenant and staff domains are nobody's;
+- the link job ("Thread links") writes, for each public thread, the partners and customers whose
+  people posted in it (`thread_orgs`, roles `partner` and `customer`), which the inbox shows as
+  "With …" on its row and in its header, dismissed as the others are, and the profile cards
+  ("People") name the customer of each of its people, or say Community;
+- a public thread with a customer's people is where the customer's threads go: in the personal
+  view of whoever follows the customer and the inbox of a team that does (`followedByPerson`,
+  `followedByTeam`, src/follows.js, and so `followersOf`, `followingTeams` and `teamsOf`: live
+  updates, notifications, working it as a followed thread), in the search's customer filter
+  (`aboutThreads`), and on the customer's page, which lists the public channels its people posted
+  in, with how many threads (`public`, src/orgprofile.js; ui/customer.js "In public channels");
+- an agent of a public thread is told whose people post in it, for the team (`relatedNote`), and
+  `get_thread` says it (`with_customers`).
+
+After making an org public, `node scripts/replay.mjs --link --org <slug>` links its threads at
+once; the link job links each again at its next labelling anyway.
 
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
 (an agent that provisions access, say) would show on the customer's side of a thread. Every bot
@@ -3902,6 +3948,9 @@ domain, ops teams, the channel's org, and above all who they are to us:
   integrators; "Partner domains" below), and the card names the partner;
 - **Customer**: anyone else; the card notes when their domain is not the usual customer
   domain of the channel, which is how an unlisted partner shows up;
+- in a public channel ("Public channels"), **Customer: Acme** for someone of a customer's own
+  mail domain (`customer` on the card, `customerDomains`), and **Community** for anyone else
+  outside Adobe and its partners;
 - **Bot**.
 
 The cards travel with the inbox and thread payloads (`profiles`, keyed by
@@ -4007,7 +4056,7 @@ the admin team; its agent's sections follow. The overview is the team's last 26 
   key customers are those they posted the most for, and their profile on the team, their Contact in
   its knowledge base, is under their name (for whoever may read it). Those who did not post are
   listed after;
-- its **customers** (no internal org) and its **collaborators** (Adobe's people not on the team,
+- its **customers** (no internal or public org) and its **collaborators** (Adobe's people not on the team,
   a person's accounts as one, no workflow or bot account), ranked by what they said in its
   threads, each with their weeks;
 - its **technologies**, by the layer of a stack: those it follows, those of its catalog, and the

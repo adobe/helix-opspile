@@ -95,13 +95,14 @@ main > section { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .c-accent { background: var(--accent) !important; }
 /*
  * Facet colours beyond status. Who: me blue, my teams green, their members light green,
- * the rest of Adobe slate, customers orange, partners magenta, vendors cyan (the Customer
- * card groups orgs the same way). Platforms in their brand colours; urgency and kind in
+ * the rest of Adobe slate, customers orange, partners magenta, vendors cyan, public channels
+ * seafoam (the Customer card groups orgs the same way). Platforms in their brand colours; urgency and kind in
  * the colours of their emoji.
  */
 .c-me, .c-blue { background: var(--accent) !important; } .c-member { background: var(--lime) !important; }
 .c-adobe { background: var(--slate) !important; } .c-customer, .c-orange { background: var(--orange) !important; }
 .c-partner, .c-pink { background: var(--pink) !important; } .c-vendor { background: var(--cyan) !important; }
+.c-public { background: var(--spectrum-seafoam-background-color-default) !important; }
 .c-gold { background: var(--gold) !important; } .c-brown { background: var(--brown) !important; }
 .c-crimson { background: var(--crimson) !important; } .c-msteams { background: var(--teams) !important; }
 
@@ -1471,6 +1472,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 .pcard .rel { font-size: var(--spectrum-font-size-50); font-weight: 650; padding: var(--spectrum-border-width-100) calc(var(--spectrum-spacing-100) - var(--spectrum-border-width-100)); border: var(--spectrum-border-width-100) solid transparent; border-radius: var(--spectrum-corner-radius-600); color: var(--spectrum-white); }
 .pcard .rel.adobe { background: var(--me); } .pcard .rel.partner { background: var(--spectrum-purple-background-color-default); }
 .pcard .rel.customer { background: var(--spectrum-orange-background-color-default); } .pcard .rel.bot { background: var(--faint); }
+.pcard .rel.community { background: var(--spectrum-seafoam-background-color-default); }
 .pcard dl { display: grid; grid-template-columns: auto 1fr; gap: calc(var(--spectrum-spacing-50) + var(--spectrum-border-width-100)) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)); margin: 0; }
 .pcard dt { color: var(--faint); }
 .pcard dd { margin: 0; min-width: 0; display: flex; gap: calc(var(--spectrum-spacing-75) + var(--spectrum-border-width-100)); align-items: center; overflow-wrap: anywhere; }
@@ -2664,6 +2666,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .pcard .rel.partner { background: var(--spectrum-purple-background-color-default); }
 .spectrum .pcard .rel.customer { background: var(--spectrum-cinnamon-background-color-default); }
 .spectrum .pcard .rel.bot { background: var(--spectrum-gray-background-color-default); }
+/* Someone of no known org in a public channel, and a public org's card: the community. */
+.spectrum .pcard .rel.community { background: var(--spectrum-seafoam-background-color-default); }
 /* Its knowledge-base part under a divider, the Contact's description as body text and where it
    is a quiet link; the question to the agent a quiet button in the sidebar's purple. */
 .spectrum .pcard .kb { border-top-color: var(--spectrum-gray-200); }

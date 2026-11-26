@@ -190,6 +190,13 @@ code and docs, is the decision model that labels threads and channels.
   vendor's page and a team's Vendors section, whose thread titles go only to those who work the
   thread (`visible`). docs/ARCHITECTURE.md, "Vendors".
 
+- **A public org's channels are no customer's** (an org of type `public`: a community's Discord
+  server, an event's Slack channel; docs/ARCHITECTURE.md, "Public channels"): it is left out of
+  whatever reads customers (partners, duplicates, customer domains), and its threads are linked
+  with the customers and partners whose people post there (`thread_orgs` roles `customer` and
+  `partner`, src/threadlinks.js), by mail domain (`customerDomains`, `partnerDomains` in
+  src/partners.js), which puts them where those customers' followers have their threads.
+
 - **Which customers a partner works for is `org_partners`** (src/orgpartners.js, docs/ARCHITECTURE.md,
   "Partners"): candidates from signals, Clef's verdict, the admin team's confirm or dismiss. Read
   it through `partnersOf` and `customersOf` (confirmed and likely, merged orgs left out), never

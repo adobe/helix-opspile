@@ -18,7 +18,9 @@ import { CLEF, stateOf, threadMessages } from './label.js';
 import {
   customersOf, OWNER_SPREAD, ownerOf, partnersOf,
 } from './orgpartners.js';
-import { iconDomain, partnerDomains } from './partners.js';
+import {
+  customerDomains, customerOf, iconDomain, partnerDomains,
+} from './partners.js';
 import { platformName } from './platforms.js';
 import { partnerOf } from './profiles.js';
 import { inParts } from './search.js';
@@ -36,6 +38,10 @@ import { inParts } from './search.js';
  *   text's words, and Clef's answer when asked about each (`aboutScores`, `aboutOf`);
  * - **the partners in a customer's thread** (role `partner`): those whose people posted in it,
  *   by their mail domain (src/partners.js `partnerDomains`, the one source of who is a partner's);
+ * - **who is in a public thread** (an org of type `public`: a community's or an event's channel,
+ *   where people of many orgs post): the partners whose people posted in it (role `partner`), and
+ *   the customers (role `customer`), by their mail domain too (`customerDomains`, a customer's
+ *   own); its people of no known org are the community, and link it with nobody;
  * - **"possibly the same issue"** (`thread_links`): the threads of the last RELATED_DAYS days in
  *   the linked orgs' channels (the customers it is about, else all the partner's; a customer's
  *   partners) whose thread vectors are like this one's (CONTENT, src/vectors.js), Clef deciding
@@ -328,32 +334,54 @@ async function aboutCustomers(env, {
   return aboutOf(scores, clef);
 }
 
-/** The partners whose people posted in a customer's entry: `[{ org, p, via, people }]`. */
-async function postingPartners(env, { keys, anchor }) {
-  const [list, domains] = await Promise.all([
+/**
+ * The partners whose people posted in an entry, and with `customers` (a public thread's) the
+ * customers whose people did, by their mail domain: `{ partners, customers }`, each `[{ org, p,
+ * via, people }]`. A domain that is a partner's (or named no partner's, `excluded`) is no
+ * customer's.
+ */
+async function postingOrgs(env, { keys, anchor, customers: withCustomers = false }) {
+  const [list, domains, own] = await Promise.all([
     rows(env, `SELECT DISTINCT LOWER(i.email) AS email FROM messages m
       JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
       WHERE m.thread IN (SELECT value FROM json_each(?)) AND m.staff = 0 AND m.deleted = 0
         AND m.counted = 1 AND i.email LIKE '%_@_%' AND COALESCE(i.staff, 0) = 0`, JSON.stringify(keys)),
     partnerDomains(env),
+    withCustomers ? customerDomains(env) : new Map(),
   ]);
-  const by = new Map();
+  const partners = new Map();
+  const customers = new Map();
   for (const { email } of list) {
-    const p = partnerOf(String(email).split('@')[1], domains);
+    const domain = String(email).split('@')[1];
+    const p = partnerOf(domain, domains);
+    const c = !p && withCustomers && !domains.has(domain) ? customerOf(domain, own) : null;
     if (p && p.org && p.org !== anchor.org) {
-      by.set(p.org, (by.get(p.org) || 0) + 1);
+      partners.set(p.org, (partners.get(p.org) || 0) + 1);
+    } else if (c && c.org !== anchor.org) {
+      customers.set(c.org, (customers.get(c.org) || 0) + 1);
     }
   }
-  if (!by.size) {
-    return [];
+  if (!partners.size && !customers.size) {
+    return { partners: [], customers: [] };
   }
-  // Only orgs that are partners now (a domain may name one retyped since).
-  const typed = await rows(env, `SELECT slug FROM orgs WHERE type = 'partner'
-    AND slug IN (SELECT value FROM json_each(?))`, JSON.stringify([...by.keys()]));
-  const ok = new Set(typed.map((r) => r.slug));
-  return [...by].filter(([org]) => ok.has(org)).map(([org, people]) => ({
-    org, p: 1, via: 'posters', people,
-  }));
+  // Only orgs that are partners now (a domain may name one retyped since), and customers: of no
+  // other type (an org of no row is one), not merged.
+  const typed = await rows(
+    env,
+    `SELECT slug, type FROM orgs
+    WHERE slug IN (SELECT value FROM json_each(?1))
+    UNION SELECT slug, 'merged' FROM org_merges WHERE slug IN (SELECT value FROM json_each(?1))`,
+    JSON.stringify([...partners.keys(), ...customers.keys()]),
+  );
+  const typeOf = new Map();
+  for (const r of typed) {
+    typeOf.set(r.slug, typeOf.get(r.slug) === 'merged' ? 'merged' : r.type);
+  }
+  const out = (by, type) => [...by].filter(([org]) => (typeOf.get(org) || 'customer') === type)
+    .map(([org, people]) => ({
+      org, p: 1, via: 'posters', people,
+    }));
+  return { partners: out(partners, 'partner'), customers: out(customers, 'customer') };
 }
 
 /**
@@ -374,7 +402,10 @@ async function writeOrgs(env, key, role, found, now) {
 
 // ---- linked orgs -----------------------------------------------------------------------------
 
-/** The `about` and `partner` rows of entry keys `keys` that are shown: not dismissed, likely. */
+/**
+ * The `about`, `partner` and `customer` rows of entry keys `keys` that are shown: not dismissed,
+ * likely.
+ */
 async function shownOrgs(env, keys) {
   return rows(env, `SELECT x.thread, x.org, x.role, x.p, x.via, o.name, o.icon
     FROM thread_orgs x LEFT JOIN orgs o ON o.slug = x.org
@@ -677,7 +708,7 @@ export async function linkThread(env, key, now = new Date()) {
     return { result: 'skip', reason: anchor ? anchor.kind : 'no thread' };
   }
   const type = anchor.org_type;
-  if (type !== 'partner' && type !== 'customer') {
+  if (type !== 'partner' && type !== 'customer' && type !== 'public') {
     return { result: 'skip', reason: type };
   }
   const at = now.toISOString();
@@ -688,8 +719,25 @@ export async function linkThread(env, key, now = new Date()) {
       entry, anchor, keys: entry.keys, partner: anchor.org_name || anchor.org,
     });
     await writeOrgs(env, entry.key, 'about', orgs, at);
+  } else if (type === 'public') {
+    // Who is in it, and nothing more: a public thread is related to no customer's own.
+    const posting = await postingOrgs(env, { keys: entry.keys, anchor, customers: true });
+    await writeOrgs(env, entry.key, 'partner', posting.partners, at);
+    await writeOrgs(env, entry.key, 'customer', posting.customers, at);
+    return {
+      result: 'linked',
+      role: 'customer',
+      orgs: posting.partners.length + posting.customers.length,
+      partners: posting.partners.length,
+      customers: posting.customers.length,
+      linked: 0,
+      candidates: 0,
+      asked: 0,
+      related: 0,
+      told: 0,
+    };
   } else {
-    orgs = await postingPartners(env, { keys: entry.keys, anchor });
+    orgs = (await postingOrgs(env, { keys: entry.keys, anchor })).partners;
     await writeOrgs(env, entry.key, 'partner', orgs, at);
   }
   const was = new Set(before.map((r) => `${r.role}:${r.org}`));
@@ -723,13 +771,19 @@ export async function linkThread(env, key, now = new Date()) {
 // ---- what the inbox reads --------------------------------------------------------------------
 
 const orgEntry = (r) => ({
-  slug: r.org, name: r.name || null, icon: r.icon || null, p: r.p, via: String(r.via || '').split(',').filter(Boolean),
+  slug: r.org,
+  name: r.name || null,
+  icon: r.icon || null,
+  role: r.role,
+  p: r.p,
+  via: String(r.via || '').split(',').filter(Boolean),
 });
 
 /**
  * The linked orgs of inbox entries, for the list: `Map<key, { about, with }>`, `about` the
- * customers a partner's thread is about, `with` the partners in a customer's thread, each
- * `{ slug, name, icon, p, via }`. `keys` are the threads the list has (members too).
+ * customers a partner's thread is about, `with` the partners in a customer's thread, and the
+ * partners and customers in a public one (`role` says which), each `{ slug, name, icon, role, p,
+ * via }`. `keys` are the threads the list has (members too).
  */
 export async function linkedOrgsOf(env, keys) {
   const out = new Map();
@@ -807,17 +861,23 @@ export async function entryLinks(env, keys, canSee) {
 }
 
 /**
- * Of `keys` (inbox entries' keys), those a customer filter for `org` takes in: its own, and the
- * partners' threads about it.
+ * Of `keys` (inbox entries' keys), those a customer filter for `org` takes in: its own, the
+ * partners' threads about it, and the public threads its people posted in.
  */
 export async function aboutThreads(env, org, keys) {
   if (!keys.length || !org) {
     return new Set();
   }
-  const list = await rows(env, `SELECT thread FROM threads WHERE org = ?1
+  const list = await rows(
+    env,
+    `SELECT thread FROM threads WHERE org = ?1
       AND thread IN (SELECT value FROM json_each(?2))
-    UNION SELECT thread FROM thread_orgs WHERE org = ?1 AND role = 'about' AND dismissed_at IS NULL
-      AND p >= ?3 AND thread IN (SELECT value FROM json_each(?2))`, String(org), JSON.stringify(keys), ABOUT_MIN);
+    UNION SELECT thread FROM thread_orgs WHERE org = ?1 AND role IN ('about', 'customer')
+      AND dismissed_at IS NULL AND p >= ?3 AND thread IN (SELECT value FROM json_each(?2))`,
+    String(org),
+    JSON.stringify(keys),
+    ABOUT_MIN,
+  );
   return new Set(list.map((r) => r.thread));
 }
 
@@ -838,7 +898,7 @@ async function entryKey(env, thread) {
 export async function dismissAbout(env, me, body) {
   const key = await entryKey(env, body.thread);
   const org = clean(body.org, 80);
-  const role = body.role === 'partner' ? 'partner' : 'about';
+  const role = ['partner', 'customer'].includes(body.role) ? body.role : 'about';
   if (!key || !SLUG.test(org)) {
     return { error: 'give a thread and an org', status: 400 };
   }
