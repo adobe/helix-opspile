@@ -3487,7 +3487,7 @@ const DOMAIN_STATE = {
 /** The row in Customers that opens them, the admin team's. */
 const domainsRow = (f) => (state.me.admin && (!f || 'partner domains'.includes(f))
   ? SideNav.todo({
-    sel: DOMAINS, on: isDomains(state.sel), label: 'Partner domains', title: 'The mail domains whose people are partners\', found in the partners\' threads or set by hand',
+    sel: DOMAINS, on: isDomains(state.sel), label: 'Partner domains', title: 'Mail domains of partners\' people',
   }) : '');
 
 async function showDomains({ fresh = false } = {}) {
@@ -3511,9 +3511,9 @@ function domainForm(v, d = {}) {
   const org = d.manual ? d.manual.org : d.org;
   const name = d.manual ? d.manual.name : '';
   return `<form class="form" id="pdForm">
-    <label class="fld grow"><span>Mail domain (agency.example)</span><input id="pdDomain" class="mono" value="${esc(d.domain || '')}" required></label>
+    <label class="fld grow"><span>Mail domain</span><input id="pdDomain" class="mono" value="${esc(d.domain || '')}" required></label>
     <label class="fld"><span>Partner</span><select id="pdOrg"><option value="">None: by name</option>${v.partners.map((p) => `<option value="${esc(p.slug)}"${p.slug === org ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
-    <label class="fld grow"><span>Name (optional with a partner)</span><input id="pdName" value="${esc(name || '')}"></label>
+    <label class="fld grow"><span>Name (optional)</span><input id="pdName" value="${esc(name || '')}"></label>
     <button class="primary">Save</button>
   </form>`;
 }
@@ -3521,7 +3521,7 @@ function domainForm(v, d = {}) {
 function drawDomains(v) {
   const rows = v.domains.map((d) => {
     const [cls, label] = DOMAIN_STATE[d.state];
-    const found = d.found ? `${d.found.people} ${d.found.people === 1 ? 'person' : 'people'} in ${d.found.threads} ${d.found.threads === 1 ? 'thread' : 'threads'} of ${esc(d.found.name)}` : '';
+    const found = d.found ? `${d.found.people} ${d.found.people === 1 ? 'person' : 'people'}, ${d.found.threads} ${d.found.threads === 1 ? 'thread' : 'threads'}` : '';
     const by = d.manual && d.manual.by ? `${esc(d.manual.by)}${d.manual.at ? `, ${esc(ago(d.manual.at))}` : ''}` : '';
     const key = `pd:${d.domain}`;
     const acts = [
@@ -3533,16 +3533,15 @@ function drawDomains(v) {
       <td><span class="tag${cls ? ` ${cls}` : ''}">${label}</span>${by ? `<div class="sub">${by}</div>` : ''}</td><td class="sub">${found}</td><td class="picks-cell">${acts}</td></tr>`;
   }).join('');
   const left = (v.left || []).map((d) => `<tr><td class="mono">${esc(d.domain)}</td><td>${partnerLink(d.org, d.name)}</td><td>${partnerLink(d.customer, orgLabel(d.customer))}</td>
-    <td class="sub">${d.people} ${d.people === 1 ? 'person' : 'people'}</td><td><button class="link" data-pd-take="${esc(d.domain)}" data-org="${esc(d.org)}"${off(`pd:${d.domain}`)}>The partner's</button></td></tr>`).join('');
+    <td class="sub">${d.people} ${d.people === 1 ? 'person' : 'people'}</td><td><button class="link" data-pd-take="${esc(d.domain)}" data-org="${esc(d.org)}"${off(`pd:${d.domain}`)}>Partner's</button></td></tr>`).join('');
   $('detail').innerHTML = `<div class="title">${backButton()}<span class="ico none"></span><h1 class="fill">Partner domains</h1>
-      <button id="pdFresh" title="Look in the threads again">Find again</button></div>
+      <button id="pdFresh">Find again</button></div>
     <div class="status" id="status"></div>
     <div class="card"><h2>Add or change one</h2><div id="pdSlot">${domainForm(v)}</div>
-      <p class="hint">People who write from one of these domains, or from a domain under one, are shown as the partner's wherever the inbox tells people apart: their profile card, a customer's people and its "Who". A partner org's domain shows its display name.</p></div>
-    <div class="card"><h2>Partners' mail domains</h2>${rows ? `<table><tr><th>Domain</th><th>Partner</th><th>From</th><th>In the threads</th><th></th></tr>${rows}</table>` : '<div class="empty">None found, none set.</div>'}
-      <p class="hint">Found: the usual mail domains of the people outside Adobe who post in each partner org's threads${v.at ? `, looked for ${esc(ago(v.at))}` : ''}. Free mail, tenant and staff domains never count, and neither does a customer's own domain. "Not a partner" leaves a domain out, and the domains under it; "Back to found" takes back what was set by hand.</p></div>
-    ${left ? `<div class="card"><h2>Left out as a customer's</h2><table><tr><th>Domain</th><th>Its people post for</th><th>The customer</th><th></th><th></th></tr>${left}</table>
-      <p class="hint">Domains a partner's people write from that name a customer, or that most of a customer's people write from: the customer's own, most likely, and not the partner's.</p></div>` : ''}`;
+      <p class="hint">People from these domains and their subdomains show as the partner's.</p></div>
+    <div class="card"><h2>Domains</h2>${rows ? `<table><tr><th>Domain</th><th>Partner</th><th>Source</th><th>Posters</th><th></th></tr>${rows}</table>` : '<div class="empty">None found, none set.</div>'}
+      <p class="hint">Found in partner orgs' threads${v.at ? ` ${esc(ago(v.at))}` : ''}.</p></div>
+    ${left ? `<div class="card"><h2>Left out as a customer's</h2><table><tr><th>Domain</th><th>Seen at</th><th>Customer</th><th>Posters</th><th></th></tr>${left}</table></div>` : ''}`;
   showStatus();
   wireDomains(v);
 }
@@ -3583,13 +3582,13 @@ function wireDomains(v) {
     };
   }
   for (const b of $('detail').querySelectorAll('[data-pd-exclude]')) {
-    b.onclick = () => press(b, () => saveDomain(v, { domain: b.dataset.pdExclude, excluded: true }, `${b.dataset.pdExclude} is not a partner's`));
+    b.onclick = () => press(b, () => saveDomain(v, { domain: b.dataset.pdExclude, excluded: true }, b.dataset.pdExclude));
   }
   for (const b of $('detail').querySelectorAll('[data-pd-undo]')) {
     b.onclick = () => press(b, () => saveDomain(v, { domain: b.dataset.pdUndo, remove: true }, b.dataset.pdUndo));
   }
   for (const b of $('detail').querySelectorAll('[data-pd-take]')) {
-    b.onclick = () => press(b, () => saveDomain(v, { domain: b.dataset.pdTake, org: b.dataset.org }, `${b.dataset.pdTake} is the partner's`));
+    b.onclick = () => press(b, () => saveDomain(v, { domain: b.dataset.pdTake, org: b.dataset.org }, b.dataset.pdTake));
   }
 }
 
