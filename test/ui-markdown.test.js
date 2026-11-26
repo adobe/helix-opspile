@@ -138,6 +138,8 @@ describe('ui markdown', () => {
 
   it('breaks lines like chat does, but not in code or between blocks', () => {
     assert.equal(render('one\ntwo **b**\nthree', opts), '<p>one<br />\ntwo <strong>b</strong><br />\nthree</p>');
+    // A knowledge base's file, wrapped at a line length: a line break is a space there.
+    assert.equal(render('one\ntwo\n\n- a\n- b', { ...opts, soft: true }), '<p>one\ntwo</p>\n\n<ul>\n<li>a</li>\n<li>b</li>\n</ul>');
     assert.equal(render('```\na\nb\n```\nafter', opts), '<pre><code>a\nb\n</code></pre>\n\n<p>after</p>');
     assert.equal(md('> one\n> two'), '<blockquote><p>one<br />two</p></blockquote>');
     assert.equal(md('- a\n- b\n\n1. c'), '<ul><li>a</li><li>b</li></ul><ol><li>c</li></ol>');

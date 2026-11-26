@@ -101,7 +101,16 @@ globalThis.TopicView = (() => {
 
   // ---- the scene --------------------------------------------------------------------------
 
-  async function mount(host, handlers) {
+  /**
+   * Mounts the map in `host`, once: whether it can draw (it needs WebGL). A draw asked for while
+   * three.js loads (a link picks a node in a group, which opens it) waits for the same mount.
+   */
+  function mount(host, handlers) {
+    if (v.host !== host || !v.mounting) v.mounting = mountIn(host, handlers);
+    return v.mounting;
+  }
+
+  async function mountIn(host, handlers) {
     if (v.host === host) return Boolean(v.renderer);
     dispose();
     v.host = host;

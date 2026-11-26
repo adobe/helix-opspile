@@ -28,6 +28,10 @@
  * on an answer the panel asks every few seconds, shows what it is doing, and when it answers,
  * the page shows the knowledge base as it is now (`onAnswer`, Agent.changed). What it says is
  * markdown (ui/markdown.js), rendered as the inbox renders messages; nothing else is HTML.
+ *
+ * On the Topics page (ui/topics.js) it is the agent of what is picked there (a product's, the
+ * team's whose catalog has it), offered only (`init({ auto: false })`): a knowledge base `about`
+ * something has `examples` of its own, and `ask` opens it with a question in its box.
  */
 globalThis.KbChat = (() => {
   const NAME = 'Knowledge Base Agent';
@@ -83,7 +87,9 @@ globalThis.KbChat = (() => {
     // Whether a knowledge base was shown before on this page.
     seen: false,
   };
-  const host = { onAnswer: () => {} };
+  // `auto`: whether the panel shows by itself where there is room (Teams and Customers); the
+  // Topics page offers it only, on its tab and the panel's Ask (ui/topics.js).
+  const host = { onAnswer: () => {}, auto: true };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
@@ -105,7 +111,8 @@ globalThis.KbChat = (() => {
   };
   /** Whether the panel shows by itself: beside the page where you left it open, and where the
    * page is wide enough unless you closed it. Never where it comes over the page. */
-  const shows = () => BESIDE.matches && (kept() === 'open' || (ROOM.matches && kept() !== 'closed'));
+  const shows = () => host.auto && BESIDE.matches
+    && (kept() === 'open' || (ROOM.matches && kept() !== 'closed'));
 
   let panel = null;
   let tab = null;
@@ -290,11 +297,13 @@ globalThis.KbChat = (() => {
 
   function blank() {
     const b = state.base;
-    const ex = (state.write ? EXAMPLES : QUESTIONS)[b.kind] || (state.write ? EXAMPLES : QUESTIONS).team;
+    // What it is asked about on the page (a product on the Topics page), with its own examples.
+    const own = b.examples && (state.write ? b.examples.write : b.examples.read);
+    const ex = own || (state.write ? EXAMPLES : QUESTIONS)[b.kind] || (state.write ? EXAMPLES : QUESTIONS).team;
     const writes = state.write ? 'and writes only this knowledge base, with the threads it learned from as sources'
       : `and answers you, but changes this knowledge base only for the people of ${b.kind === 'team' ? esc(b.name || b.repo) : 'its ops teams'}`;
     return `<div class="kbc-blank"><img class="kbc-av big" src="${ICON}" alt="">
-      <p><b>Ask about ${esc(b.name || b.repo)}'s knowledge base${state.write ? ', or tell the agent what to change' : ''}.</b></p>
+      <p><b>${b.about ? `Ask ${esc(b.name || b.repo)}'s knowledge base about ${esc(b.about)}` : `Ask about ${esc(b.name || b.repo)}'s knowledge base`}${state.write ? ', or tell the agent what to change' : ''}.</b></p>
       <p class="sub">It reads every knowledge base and every thread of the inbox, ${writes}. Only you see this conversation.</p>
       <div class="kbc-ex">${ex.map((t) => `<button type="button" class="kbc-try" data-try="${esc(t)}">${esc(t)}</button>`).join('')}</div></div>`;
   }
@@ -575,7 +584,14 @@ globalThis.KbChat = (() => {
   function show(base) {
     mount();
     const b = base && base.repo ? base : null;
-    if ((b && b.repo) === (state.base && state.base.repo)) return;
+    if ((b && b.repo) === (state.base && state.base.repo)) {
+      // The same knowledge base, about something else on the page: its examples are that one's.
+      if (b && (b.about !== state.base.about || b.examples !== state.base.examples)) {
+        state.base = { ...state.base, about: b.about, examples: b.examples };
+        if (!panel.hidden && !state.messages.length) render();
+      }
+      return;
+    }
     // What was typed for the knowledge base it showed stays that one's, and its panel goes.
     keepDraft();
     const was = isOpen();
@@ -597,13 +613,28 @@ globalThis.KbChat = (() => {
     state.seen = true;
   }
 
+  /** Opens the panel with `text` in its box, to send or change first (the Topics page's asks). */
+  function ask(text) {
+    if (!state.base) return;
+    state.draft.set(state.base.repo, String(text || ''));
+    // What the box has now is kept as the draft as the panel is drawn again: it is this, too.
+    const box = panel && panel.querySelector('#kbcText');
+    if (box) box.value = String(text || '');
+    open();
+  }
+
   return {
-    /** `onAnswer(repo)`: the agent answered, and may have changed the knowledge base. */
-    init({ onAnswer } = {}) {
+    /**
+     * `onAnswer(repo)`: the agent answered, and may have changed the knowledge base. `auto`
+     * false: the panel never shows by itself, only when its tab or `open` opens it.
+     */
+    init({ onAnswer, auto } = {}) {
       if (onAnswer) host.onAnswer = onAnswer;
+      if (auto !== undefined) host.auto = Boolean(auto);
     },
     show,
     open,
     close,
+    ask,
   };
 })();
