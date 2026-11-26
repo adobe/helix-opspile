@@ -688,6 +688,8 @@ function productAsks(n, info) {
     },
     rule: `Suggest an extraction rule that detects ${name}${ids.length ? ` (${ids.join(', ')})` : ''} in messages: a link, a hostname, a header or an error that only it has. Try it on its recent threads before you add it.`,
     entry: `Read the recent threads about ${name} and write what the knowledge base is missing about it: its known issues, how customers set it up, and who knows it.`,
+    // The record of it: its catalog file, written out (its frontmatter is what Clef is asked).
+    record: (path, team) => `Write ${path}, the catalog entry for ${name} in ${team}'s knowledge base, as the record of what we know of it: what it is and what customers use it for with Adobe's products, how it is usually set up, its known issues and their fixes, who knows it best, and links to the entries of the knowledge base about it. Read the recent threads about ${name} first. Keep its frontmatter as it is: Clef is asked its description.`,
     catalog: `${name} comes up in threads but no catalog entry names it. Find the threads that name it, and add it to the catalog (products/) as what it is, or its name to the aliases of the entry that covers it.`,
   };
 }
@@ -755,23 +757,100 @@ function askButton(n) {
   return `<button class="ask" id="askAgent" title="${esc(title)}">
     <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>Ask the agent</button>`;
 }
-/** A button that opens the agent with `text` in its box. */
-const askFor = (n, text, label) => (agentOf(n)
+/**
+ * A button that opens the agent with `text` in its box: a change to its knowledge base, so only
+ * for who may have it changed (its team, src/kbaccess.js `mayWrite`).
+ */
+const askFor = (n, text, label) => (agentOf(n)?.write
   ? `<button class="link askfor" data-ask="${esc(text)}">${esc(label)}</button>` : '');
 
-/** Whose catalog has it: each team (its overview), and its file there (in its editor). */
-function teamsLine(teams, file) {
-  const one = (t) => `${linkTo(adminHref('team', t.team), t.name, `${t.name}'s overview`)}${t.path ? `: ${file(t, t.path, t.path)}` : ''}${t.enabled ? '' : ' (off there)'}`;
-  return `In the catalog of ${teams.map(one).join('; ')}`;
+/** "Edge ops'", "Admin's". */
+const poss = (name) => `${name}${/s$/i.test(name) ? '\'' : '\'s'}`;
+
+// A catalog entry that says no more than the tech stack did, before the catalog (src/catalog.js).
+const STUB = /as the tech stack had it before the catalog\.?/i;
+/** Whether a catalog entry's markdown says little: what an agent should write. */
+const thin = (body) => String(body || '').replace(STUB, '').replace(/[#*_`>\-\s]+/g, ' ').trim().length < 160;
+
+/** Where a link of file `from` in a knowledge base goes: another of its files, or null for elsewhere. */
+function kbLink(href, from) {
+  if (!href || /^[a-z][a-z0-9+.-]*:|^\/\/|^#/i.test(href)) return null;
+  const [path] = href.split('#');
+  if (!/\.(md|dot)$/i.test(path)) return null;
+  // Rooted (`/reference/x.md`, or `products/…` as the catalog writes them), else beside it.
+  const top = path.startsWith('/') || /^(products|issues|reference|playbooks|decisions|incidents|contacts|sites|projects|customer|tech-stack|product-areas|areas)\//.test(path);
+  const segs = top ? [] : from.split('/').slice(0, -1);
+  for (const seg of path.replace(/^\//, '').split('/')) {
+    if (seg === '..') segs.pop();
+    else if (seg && seg !== '.') segs.push(seg);
+  }
+  return segs.join('/');
 }
 
-/** What the catalog says of it: what Clef is asked, its names, and the teams' files of it. */
-function catalogSection(n, info) {
+/**
+ * A knowledge base's file as the panel shows it: its markdown rendered as a file is (its lines
+ * wrapped, ui/markdown.js `soft`), its links to other files of it into its editor, no images
+ * (theirs are paths of the knowledge base).
+ */
+function fileHtml(body, { kind, slug, path }) {
+  if (!globalThis.Markdown) return `<p>${esc(body)}</p>`;
+  return Markdown.render(String(body || '').replace(/^#[ \t]+.*(?:\r?\n)+/, ''), { soft: true })
+    .replace(/<img\b[^>]*>/g, '')
+    .replace(/<a [^>]*href="([^"]*)"[^>]*>/g, (m, href) => {
+      const to = kbLink(href.replace(/&amp;/g, '&'), path);
+      return to ? `<a href="${esc(kbHref(kind, slug, to))}" title="${esc(to)}">` : m;
+    });
+}
+
+/**
+ * What a team's catalog file of it says, the record of it in that knowledge base: its markdown,
+ * folded past a few lines, and where it is. `ask`: what the agent is asked when it says little.
+ */
+function record(team, entry, { n, ask }) {
+  const path = entry.path || team.path;
+  const where = `${linkTo(adminHref('team', team.team), team.name, `${poss(team.name)} overview`)}${/s$/i.test(team.name) ? '\'' : '\'s'} catalog · ${linkTo(kbHref('team', team.team, path), path, `Open it in ${team.name}'s knowledge base`)}`;
+  const little = thin(entry.body);
+  const body = little && STUB.test(entry.body) ? '' : fileHtml(entry.body, { kind: 'team', slug: team.team, path });
+  return `<div class="tk-record">
+    <p class="sub tk-where">${where}${team.enabled === false ? ' (off there)' : ''}</p>
+    ${body ? `<div class="tk-md${little ? '' : ' folded'}" id="rec-${esc(team.team)}">${body}</div>
+      ${little ? '' : `<button class="link tk-more" data-unfold="rec-${esc(team.team)}">Show all</button>`}
+      ${entry.truncated ? `<p class="sub">${linkTo(kbHref('team', team.team, path), 'Open it for the rest')}</p>` : ''}` : ''}
+    ${little ? `<p class="hint">${body ? 'It says little yet' : 'Its file says nothing of it yet'}: it is where the team keeps what it knows of ${esc(n.label)}. ${ask ? askFor(n, ask, 'Ask the agent to write it') : ''}</p>` : ''}
+  </div>`;
+}
+
+/** The teams whose catalog has it, with their records: the agent's own first. */
+/**
+ * The team whose record of it the panel shows first: the one that says the most, of those that
+ * say something; else the agent's, to have it written; else the first.
+ */
+function firstRecord(teams, agent, entryOf = (t) => t.entry) {
+  const withEntry = teams.filter((t) => entryOf(t));
+  const said = withEntry.filter((t) => !thin(entryOf(t).body))
+    .sort((a, b) => entryOf(b).body.length - entryOf(a).body.length);
+  return said[0] || withEntry.find((t) => t.team === agent?.slug) || withEntry[0] || null;
+}
+
+function records(n, teams, { agent, ask, entryOf = (t) => t.entry }) {
+  const withEntry = teams.filter((t) => entryOf(t));
+  const first = firstRecord(teams, agent, entryOf);
+  if (!first) {
+    // Files of knowledge bases the viewer does not read: whose they are, no more.
+    return teams.length ? `<p class="sub facts">In the catalog of ${teams.map((t) => esc(t.name)).join(', ')}</p>` : '';
+  }
+  const others = withEntry.filter((t) => t !== first);
+  const unread = teams.filter((t) => !entryOf(t) && t !== first);
+  // The record the agent asked writes is its own knowledge base's.
+  return `${record(first, entryOf(first), { n, ask: first.team === agent?.slug ? ask(first) : null })}
+    ${others.map((t) => `<details class="tk-other"><summary>${esc(poss(t.name))} own entry, for its channels</summary>${record(t, entryOf(t), { n, ask: null })}</details>`).join('')}
+    ${unread.length ? `<p class="sub facts">Also in the catalog of ${unread.map((t) => esc(t.name)).join(', ')}</p>` : ''}`;
+}
+
+/** What the catalog says of it: what Clef is asked, its names, and the teams' records of it. */
+function catalogSection(n, info, asks) {
   const leaf = info.tech.length === 1 && !n.children?.length ? info.tech[0] : null;
-  const file = (team, path, text) => {
-    const href = team.readable && path ? kbHref('team', team.team, path) : null;
-    return linkTo(href, text, href ? `Open ${path} in ${team.name}'s knowledge base` : '');
-  };
+  const agent = info.agents?.[0];
   if (leaf) {
     const names = leaf.aliases.filter((a) => a.toLowerCase() !== leaf.name.toLowerCase());
     const facts = [
@@ -780,14 +859,17 @@ function catalogSection(n, info) {
       leaf.product && leaf.product !== leaf.name && `in ${leaf.product}`,
       leaf.layer && `${leaf.layer} layer`,
     ].filter(Boolean);
+    // What Clef is asked, as the record shown words it: each team's file of it is its own.
+    const shown = firstRecord(leaf.teams, agent) || leaf.teams[0];
+    const asked = shown.description || leaf.description;
     return `<section class="tk-cat"><h3>In the catalog</h3>
-      ${leaf.description ? `<p class="theme">Clef is asked whether a thread shows ${esc(leaf.description)}.</p>` : ''}
+      ${records(n, leaf.teams, { agent, ask: (t) => asks.record(t.path, t.name) })}
+      ${asked ? `<p class="theme">Clef is asked whether a thread shows ${esc(asked)}${leaf.teams.length > 1 ? ` <span class="sub">(in ${esc(poss(shown.name))} words)</span>` : ''}.</p>` : ''}
       ${names.length ? `<p class="chips facts"><span class="sub">Also called</span>${names.map((a) => `<span class="ps-chip tech">${esc(a)}</span>`).join('')}</p>` : ''}
-      <p class="sub facts">${esc(facts.join(' · '))}</p>
-      <p class="sub facts">${teamsLine(leaf.teams, file)}</p></section>`;
+      ${facts.length ? `<p class="sub facts">${esc(facts.join(' · '))}</p>` : ''}</section>`;
   }
   if (!info.tech.length) return '';
-  // A product of features: its file, and whose catalogs its features are in.
+  // A product of features: its record, and whose catalogs its features are in.
   const teams = new Map();
   for (const t of info.tech) {
     for (const x of t.teams) {
@@ -797,10 +879,12 @@ function catalogSection(n, info) {
     }
   }
   const p = info.product;
-  const pTeam = p && { team: p.team, name: p.teamName, readable: p.readable };
+  const pTeam = p && {
+    team: p.team, name: p.teamName, readable: p.readable, path: p.path, enabled: true,
+  };
   return `<section class="tk-cat"><h3>In the catalog <span class="sub">${plural(info.tech.length, 'technology', 'technologies')}</span></h3>
+    ${p ? records(n, [pTeam], { agent, ask: (t) => asks.record(t.path, t.name), entryOf: () => p.entry }) : ''}
     ${p?.description && p.description !== p.title ? `<p class="theme">${esc(p.description)}</p>` : ''}
-    ${p ? `<p class="sub facts">${teamsLine([{ ...pTeam, path: p.path, enabled: true }], file)}</p>` : ''}
     <p class="sub facts">Its features are in the catalog of ${[...teams.values()].sort((a, b) => b.n - a.n)
     .map((t) => `${linkTo(adminHref('team', t.team), t.name)} <span class="n">${t.n}</span>`).join(', ')}</p></section>`;
 }
@@ -861,7 +945,7 @@ function productSections(n) {
     ${askFor(n, asks.catalog, 'Ask the agent to add it')}</p>` : '';
   // A rule detects a technology of the catalog: none without one.
   const rules = info.tech.length || info.rules.length ? rulesSection(n, info, asks) : '';
-  return `${gap}${catalogSection(n, info)}${knowledgeSection(n, info, asks)}${rules}${whoSection(info)}`;
+  return `${gap}${catalogSection(n, info, asks)}${knowledgeSection(n, info, asks)}${rules}${whoSection(info)}`;
 }
 
 function details(n) {
@@ -1224,6 +1308,11 @@ function wire() {
     if (ev.target.closest('#unpick')) pick('');
     // The agent's sidebar, about what is picked: opened, or with a question in its box.
     if (ev.target.closest('#askAgent')) KbChat.open();
+    const unfold = ev.target.closest('button[data-unfold]');
+    if (unfold) {
+      $(unfold.dataset.unfold)?.classList.remove('folded');
+      unfold.remove();
+    }
     const asking = ev.target.closest('button[data-ask]');
     if (asking) KbChat.ask(asking.dataset.ask);
     if (ev.target.closest('#unweek')) {

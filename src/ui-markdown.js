@@ -15,7 +15,7 @@
  * micromark, CommonMark with GitHub's strike-through, tables, task lists and bare links,
  * plus what chat needs on top of it:
  *
- * - a single line break is a break, as in Slack and Teams
+ * - a single line break is a break, as in Slack and Teams (`soft`: a space, for a file)
  * - no raw HTML (shown as text), no indented code (chat indents prose), no footnotes
  * - links open in a new tab; Slack and Teams images go through the inbox's media proxy
  * - `@Full Name` mentions and `:emoji:` codes (characters or images), outside code; `emojiLookup`
@@ -555,11 +555,13 @@ const highlighted = (html, highlight) => (typeof highlight !== 'function' ? html
  *   it names none); null leaves it plain text
  * @param {(name: string) => string|undefined} [options.person] the profile card a mentioned
  *   name shows (its key, as `data-p`); without one the mention is text
+ * @param {boolean} [options.soft] a single line break is a space, as CommonMark has it, not a
+ *   break: a knowledge base's files are wrapped at a line length (the Topics page shows them)
  */
 export function render(src, {
   mentions = null, emoji = () => undefined, proxy = (u) => u, kindOf = () => undefined,
   channel = () => undefined, fileUrl = () => undefined, slack = null, highlight = null,
-  channelUrl = null, person = () => undefined,
+  channelUrl = null, person = () => undefined, soft = false,
 } = {}) {
   const mark = (_, before, at) => {
     const name = decode(at.slice(1));
@@ -577,7 +579,7 @@ export function render(src, {
     : String(src || '').replaceAll(BREAK, '');
   const quoted = new Set();
   const lookup = typeof slack === 'function' ? slack : null;
-  const marked = highlighted(cards(toHtml(body, '<br />\n'), lookup, quoted), highlight);
+  const marked = highlighted(cards(toHtml(body, soft ? '\n' : '<br />\n'), lookup, quoted), highlight);
   const html = channelUrls(marked, channelUrl);
   const channelLink = (m, before, token) => {
     const c = channel(token);

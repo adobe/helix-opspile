@@ -82,6 +82,10 @@ describe('a technology on the Topics page', () => {
     assert.deepEqual(r.tech[0].aliases, ['Sketchy', 'Sketchy MCP']);
     assert.equal(r.tech[0].teams[0].repo, 'kb-team-design');
     assert.equal(r.tech[0].teams[0].readable, true);
+    // What its team's catalog file says: the record of it.
+    assert.deepEqual(r.tech[0].teams[0].entry, {
+      title: 'Sketchy', description: 'Sketchy for designs', body: 'Sketchy.', truncated: false,
+    });
     assert.equal(r.product, null);
     // The catalog's own file is not "knowledge"; the entries about it are, a customer's too.
     assert.deepEqual(r.knowledge.map((k) => k.path).sort(), ['issues/sketchy-import.md', 'tech-stack/design.md']);
@@ -105,6 +109,7 @@ describe('a technology on the Topics page', () => {
     assert.deepEqual(r.tech.map((t) => t.name), ['Delivery', 'Editor']);
     assert.equal(r.product.path, 'products/acme-cloud/sites.md');
     assert.equal(r.product.teamName, 'Edge ops');
+    assert.equal(r.product.entry.body, 'Sites.');
     assert.deepEqual(r.rules.map((x) => x.name), ['Delivery host']);
     assert.deepEqual(r.agents.map((a) => [a.slug, a.write]), [['edge', true]]);
   });
@@ -115,6 +120,7 @@ describe('a technology on the Topics page', () => {
     const r = await techInfo(env, as(NOBODY), { tech: ['sketchy/sketchy'], name: 'Sketchy' });
     assert.equal(r.tech[0].name, 'Sketchy');
     assert.equal(r.tech[0].teams[0].readable, false);
+    assert.equal(r.tech[0].teams[0].entry, null);
     assert.deepEqual(r.knowledge, []);
     assert.deepEqual(r.rules, []);
     assert.equal(r.hiddenRules, 1);

@@ -223,7 +223,19 @@ const SEED = {
       'products/fastly/cdn.md': [
         '---', 'type: Product', 'title: Fastly', 'description: Fastly as CDN, run by the customer',
         'aliases: [Fastly CDN, Compute@Edge]', 'layer: edge', 'moved_from: [fastly]', '---', '',
-        'Customers who bring their own Fastly service in front of the site.', '',
+        // The record of it, wrapped as the agents write files: the Topics page shows it.
+        '# Fastly', '',
+        'Customers who bring their own Fastly service in front of the site. It asks our CDN for the',
+        'pages, so a purge has to reach both: ours first, then theirs.', '',
+        '## How it is set up', '',
+        '- The service\'s origin is the site\'s live host, with the host header set to it.',
+        '- A **push invalidation** key lets us purge their service when an author publishes.',
+        '- `X-Forwarded-Host` carries the customer\'s domain, for redirects and the sitemap.', '',
+        '## Known issues', '',
+        '- Pages stay stale after publishing when the purge key is missing: see',
+        '  [the purge playbook](../../playbooks/cdn-purge.md).',
+        '- A VCL that strips `Cache-Control` keeps HTML for a day.', '',
+        'Dana knows it best; ACME and Globex run it.', '',
       ].join('\n'),
       // Two vendors' products (dev-ui-vendor.mjs): the vendors' pages list their customers.
       'products/initech/edge.md': [

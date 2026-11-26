@@ -16,8 +16,10 @@
  * internal user, as the map.
  *
  * - `tech`: its entries of the teams' catalogs (`tech_stack`, src/catalog.js): what Clef is asked,
- *   the names it goes by, its layer, and the teams whose knowledge base has its file.
- * - `product`: the file of the product the features are part of (`products/<vendor>/<product>.md`).
+ *   the names it goes by, its layer, and the teams whose knowledge base has its file, with what
+ *   that file says (`entry`, from `kb_concepts`): the team's record of it, for who reads it.
+ * - `product`: the file of the product the features are part of (`products/<vendor>/<product>.md`),
+ *   with what it says the same way.
  * - `knowledge`: the entries about it in the knowledge bases the viewer reads, as the inbox's
  *   search finds them (src/kbsearch.js, by its name's words and by meaning); not the catalog's.
  * - `rules`: the extraction rules that detect it (`target` tech, src/extract.js), of the teams
@@ -35,6 +37,7 @@
 
 import { resolveTech, techMoves } from './catalog.js';
 import { access } from './kbaccess.js';
+import { MAX_BODY } from './kbindex.js';
 import { findKnowledge } from './kbsearch.js';
 import { queryVector, terms } from './search.js';
 import { isTechId } from './techid.js';
@@ -66,6 +69,8 @@ function techOf(rows, bases, may) {
       team: r.team,
       name: r.team_name || r.team,
       enabled: Boolean(r.enabled),
+      // What Clef is asked in its channels: its own file's words.
+      description: r.description || '',
       path: r.path || null,
       repo: base ? base.repo : null,
       readable: Boolean(base && may.read(base)),
@@ -167,16 +172,34 @@ export async function techInfo(env, me, { tech = [], name = '' } = {}) {
     }
   }
   const productKeys = [...productAt.keys()];
-  const [products, knowledge] = await Promise.all([
-    productKeys.length ? db.prepare(`SELECT repo, path, title, description FROM kb_concepts
+  // Each team's file of it, the record of it in that knowledge base, as the search keeps it.
+  const fileKeys = techs.flatMap((t) => t.teams.filter((x) => x.repo && x.path)
+    .map((x) => `${x.repo}|${x.path}`));
+  const keys = [...new Set([...productKeys, ...fileKeys])];
+  const [files, knowledge] = await Promise.all([
+    keys.length ? db.prepare(`SELECT repo, path, title, description, body FROM kb_concepts
       WHERE repo || '|' || path IN (SELECT value FROM json_each(?1))`)
-      .bind(JSON.stringify(productKeys)).all() : { results: [] },
+      .bind(JSON.stringify(keys)).all() : { results: [] },
     terms(q).length ? findKnowledge(env, me, [...bases.keys()], q, {
       vector: queryVector(env, q), limit: MAX_KNOWLEDGE + techs.length + 2,
     }) : [],
   ]);
   const teamOfRepo = new Map([...bases.values()].map((b) => [b.repo, b]));
-  const product = (products.results || [])
+  const fileAt = new Map((files.results || []).map((r) => [`${r.repo}|${r.path}`, r]));
+  // What a file says, for who reads its knowledge base: its description and its markdown, which
+  // the index keeps the first MAX_BODY characters of (`truncated`: open it for the rest).
+  const said = (r, b) => (r && b && may.read(b) ? {
+    title: r.title,
+    description: r.description || null,
+    body: r.body || '',
+    truncated: String(r.body || '').length >= MAX_BODY,
+  } : null);
+  for (const t of techs) {
+    for (const x of t.teams) {
+      x.entry = x.path ? said(fileAt.get(`${x.repo}|${x.path}`), bases.get(x.team)) : null;
+    }
+  }
+  const product = productKeys.map((k) => fileAt.get(k)).filter(Boolean)
     .sort((a, b) => (productAt.get(`${b.repo}|${b.path}`) || 0) - (productAt.get(`${a.repo}|${a.path}`) || 0))
     .map((r) => {
       const b = teamOfRepo.get(r.repo);
@@ -188,6 +211,7 @@ export async function techInfo(env, me, { tech = [], name = '' } = {}) {
         team: b.slug,
         teamName: b.name,
         readable: Boolean(may.read(b)),
+        entry: said(r, b),
       };
     })[0] || null;
 

@@ -1698,9 +1698,13 @@ topics with the share of their threads Clef tagged at all, the fewest first on a
 topics Clef rarely tags are what its topic questions miss.
 
 A **product or technology** picked says what the rest of the inbox knows of it, beside its threads
-(`GET /api/topics/tech`, `src/techinfo.js`, read as the viewer may): its catalog entry (what Clef
-is asked, the names it also goes by, its layer, and each team's file of it, a link into that
-knowledge base's editor), or a product's file and whose catalogs its features are in; the
+(`GET /api/topics/tech`, `src/techinfo.js`, read as the viewer may): first its record, the team's
+catalog file of it (`products/…`), which is where a team keeps what it knows of a product: its
+markdown as `kb_concepts` has it, links to other files into the editor, the one that says the
+most first and other teams' own below it, and, where it says little (the stub the catalog's
+first compile wrote), an ask to its team's agent to write it; then what Clef is asked (in that
+file's words), the names it also goes by and its layer, or for a product of features its own
+file and whose catalogs they are in; the
 knowledge bases' entries about it, as the inbox's search finds them (by its name's words and by
 meaning), each a link into its editor; the extraction rules that detect it, each a link to its
 team's rules; the teams that follow it; and the customers whose stack drawing names it, of

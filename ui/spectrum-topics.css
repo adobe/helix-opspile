@@ -80,6 +80,13 @@ main > .page { min-width: 0; min-height: 0; display: flex; flex-direction: colum
 .panel .chips { display: flex; flex-wrap: wrap; align-items: center; }
 .panel ul.kbhits, .panel ul.rules { list-style: none; margin: 0; padding: 0; }
 .panel ul.rules code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A team's catalog file of it: its markdown, folded past a few lines until Show all. */
+.panel .tk-md { overflow-wrap: anywhere; }
+.panel .tk-md.folded { max-height: calc(var(--spectrum-spacing-100) * 28); overflow: hidden;
+  mask-image: linear-gradient(to bottom, black 70%, transparent); }
+.panel .tk-md pre { overflow: auto; white-space: pre-wrap; }
+.panel .tk-md table { display: block; overflow-x: auto; border-collapse: collapse; }
+.panel details.tk-other > summary { cursor: pointer; }
 .panel .head > div { flex: 1; min-width: 0; }
 .panel .head .dot { flex: none; }
 .panel > .acts { display: flex; flex-wrap: wrap; }
@@ -288,6 +295,28 @@ p.trend { display: flex; align-items: center; }
 .spectrum .panel ul.rules li.off a { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .panel .tk-cat .n { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .panel .tk-wait { margin: var(--spectrum-spacing-300) 0 0; }
+/* The record: Body text on a well (layer 1 in the card), its headings small, its code the
+   code font; where it is a Detail above it. */
+.spectrum .panel .tk-record { margin: var(--spectrum-spacing-100) 0 var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) var(--spectrum-spacing-300);
+  background: var(--spectrum-background-layer-1-color); border-radius: var(--spectrum-corner-radius-200); }
+.spectrum .panel .tk-where { margin: 0 0 var(--spectrum-spacing-100); }
+.spectrum .panel .tk-where a { color: var(--spectrum-accent-content-color-default); text-decoration: none; }
+.spectrum .panel .tk-where a:hover { text-decoration: underline; }
+.spectrum .panel .tk-md { font-size: var(--spectrum-font-size-100); line-height: var(--spectrum-line-height-200); color: var(--spectrum-neutral-content-color-default); }
+.spectrum .panel .tk-md > :first-child { margin-top: 0; }
+.spectrum .panel .tk-md > :last-child { margin-bottom: 0; }
+.spectrum .panel .tk-md p, .spectrum .panel .tk-md :is(ul, ol) { margin: var(--spectrum-spacing-100) 0; }
+.spectrum .panel .tk-md :is(ul, ol) { padding-left: var(--spectrum-spacing-400); }
+.spectrum .panel .tk-md :is(h1, h2, h3, h4, h5, h6) { margin: var(--spectrum-spacing-300) 0 var(--spectrum-spacing-75); font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .panel .tk-md code { font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); }
+.spectrum .panel .tk-md pre { margin: var(--spectrum-spacing-100) 0; padding: var(--spectrum-spacing-100); background: var(--spectrum-gray-100); border-radius: var(--spectrum-corner-radius-100); }
+.spectrum .panel .tk-md :is(th, td) { padding: var(--spectrum-spacing-50) var(--spectrum-spacing-100); font-size: var(--spectrum-font-size-75); }
+.spectrum .panel .tk-md a { color: var(--spectrum-accent-content-color-default); }
+.spectrum .panel .tk-md blockquote { margin: var(--spectrum-spacing-100) 0; padding-left: var(--spectrum-spacing-200); border-left: var(--spectrum-border-width-200) solid var(--spectrum-gray-300); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .panel .tk-more { margin-top: var(--spectrum-spacing-75); }
+.spectrum .panel .tk-record .hint { margin: var(--spectrum-spacing-100) 0 0; }
+.spectrum .panel details.tk-other { margin: 0 0 var(--spectrum-spacing-100); }
+.spectrum .panel details.tk-other > summary { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 /* What it is joined to: ListView rows, quiet, each with a Meter of its share. */
 .spectrum .panel .pickr {
   gap: var(--spectrum-spacing-100);
