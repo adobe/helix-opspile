@@ -34,6 +34,7 @@ import {
 import { seed, seedNote, seedPin } from '../src/agent/seed.js';
 import { dream, dreamOf } from '../src/agent/dream.js';
 import { setAgent, setTeamDefault } from '../src/agent/enabled.js';
+import { agentEnv } from '../src/agent/agentenv.js';
 import { toolsFor } from '../src/agent/agenttools.js';
 import {
   agentStatus, decideBash, decideTool, pokeAgent, sawSidebar, seedAgent, talkToAgent,
@@ -51,6 +52,7 @@ import {
   keepLive, keepTurn, keptTurn, liveDue, liveTurn,
 } from '../src/agent/kept.js';
 import { inbox, thread as inboxThread } from '../src/api.js';
+import { underlying } from '../src/d1batch.js';
 import { discardDraft, saveDraft } from '../src/drafts.js';
 import { processKey } from '../src/normalizer.js';
 import { d1 } from './d1.js';
@@ -987,7 +989,8 @@ describe('the earlier conversations of the channel', () => {
     },
   ];
 
-  async function setup() {
+  /** The agent's tools on the thread, with the env `envOf(e)` (the test's own, else). */
+  async function setup(envOf = (e) => e) {
     const e = env({ AI: clef });
     await quiet(() => ingest(e, [...EARLIER, ...MESSAGES]));
     // Another channel's thread, which the agent must not read.
@@ -1000,7 +1003,7 @@ describe('the earlier conversations of the channel', () => {
       key: THREAD, team: 'helix', org: 'acme', threads: [THREAD], channelName: 'aem-acme', source: 'slack', tenant: 'E1', channelId: 'C1',
     };
     const agent = {
-      env: e,
+      env: envOf(e),
       hasThread: true,
       target: async () => target,
       verdicts: async (messages) => new Map(await Promise.all(
@@ -1014,6 +1017,57 @@ describe('the earlier conversations of the channel', () => {
     };
     return { e, run, tools };
   }
+
+  it('read again once when D1 turned them away as overloaded, as /api/* and /mcp do', async () => {
+    const BUSY = 'D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window.';
+    // D1 turns the next `n` reads away, as it does for a few seconds at a time when overloaded.
+    const turned = [];
+    let left = 0;
+    const busy = (DB) => {
+      const wrap = (stmt, sql) => {
+        const ask = (how) => (...a) => {
+          if (left > 0) {
+            left -= 1;
+            turned.push(sql);
+            return Promise.reject(new Error(BUSY));
+          }
+          return stmt[how](...a);
+        };
+        return {
+          ...stmt, bind: (...a) => wrap(stmt.bind(...a), sql), all: ask('all'), first: ask('first'),
+        };
+      };
+      return { ...DB, prepare: (sql) => wrap(DB.prepare(sql), sql) };
+    };
+    const waits = [];
+    // The thread agent's env (src/agent/agent.js), made of its object's.
+    const { run } = await setup((e) => agentEnv({ ...e, DB: busy(e.DB) }, () => THREAD, {
+      pause: async (ms) => waits.push(ms),
+    }).env);
+    left = 1;
+    const listed = await run('list_channel_threads', {});
+    assert.equal(listed.error, false);
+    assert.match(listed.text, /^- slack:E1:C1:1792510000\.000100 \| Purges are slow again \|/);
+    assert.equal(turned.length, 1);
+    assert.equal(waits.length, 1);
+    assert.ok(waits[0] >= 500 && waits[0] <= 1500, `waited ${waits[0]} ms`);
+    // Once, not more: still overloaded, the tool fails with it.
+    left = 2;
+    await assert.rejects(run('list_channel_threads', {}), /D1 DB is overloaded/);
+    assert.equal(waits.length, 2);
+    // On the bare binding, as before, the first one failed the tool.
+    const bare = await setup((e) => ({ ...e, DB: busy(e.DB) }));
+    left = 1;
+    await assert.rejects(bare.run('list_channel_threads', {}), /D1 DB is overloaded/);
+  });
+
+  it('keep the D1 binding under their env, which what is kept by the database is keyed by', () => {
+    const e = env();
+    assert.equal(underlying(agentEnv(e, () => THREAD).env.DB), e.DB);
+    // Without D1 (an agent's computer by itself, scripts/dev-computer/worker.mjs), as it is.
+    const none = { AGENTS: {} };
+    assert.equal(agentEnv(none).env, none);
+  });
 
   it('says who is a member of the channel, and when it cannot tell', async () => {
     const { e, run } = await setup();
@@ -1332,7 +1386,7 @@ describe('the earlier conversations of the channel', () => {
         )),
         chatOf: async (session) => (session === 'chat-1' ? CHAT : null),
       });
-      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads', 'search_threads', 'read_file', 'list_topics', 'list_experts']);
+      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads', 'search_threads', 'read_file', 'list_topics', 'list_experts', 'request_partner_link']);
       const call = async (name, args, conversationId) => {
         const res = await ext.tools.find((t) => t.name === name).execute(args, { conversationId });
         return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
@@ -1340,7 +1394,8 @@ describe('the earlier conversations of the channel', () => {
       // A seed's or a dream's session reads no thread.
       for (const [name, args] of [['read_any_thread', { thread: THREAD }], ['search_threads', { query: 'acme' }],
         ['find_channels', { query: 'acme' }], ['list_any_channel_threads', { channel: 'slack:E1:C1' }],
-        ['read_file', { thread: THREAD, file: 'F1' }], ['list_topics', {}], ['list_experts', { thread: THREAD }]]) {
+        ['read_file', { thread: THREAD, file: 'F1' }], ['list_topics', {}], ['list_experts', { thread: THREAD }],
+        ['request_partner_link', { action: 'link', partner: 'agency', note: 'x' }]]) {
         // eslint-disable-next-line no-await-in-loop
         const refused = await call(name, args, 'seed-1');
         assert.equal(refused.error, true, name);
@@ -2100,6 +2155,14 @@ describe('seeds with a chosen knowledge base', () => {
 });
 
 describe('the ThreadAgent class', () => {
+  it('runs with the agent\'s env, whose D1 reads again once when overloaded', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../src/agent/agent.js', import.meta.url), 'utf8');
+    assert.match(src, /const cogs = agentEnv\(rawEnv,/);
+    assert.match(src, /super\(ctx, env\)/);
+    assert.doesNotMatch(src, /objectMeter|batchedDatabase/);
+  });
+
   it('leaves the Agents SDK its own this.mcp', async () => {
     // The SDK keeps its MCP client manager in `this.mcp` and calls it (listPrompts) at start.
     const { readFile } = await import('node:fs/promises');

@@ -124,7 +124,8 @@ async function publicHere(env, slug, since) {
 
 /**
  * The partners of customer `slug`, for its page: those that work for it, confirmed or likely
- * (src/orgpartners.js `partnersOf`, with what links them), and those whose people posted in its
+ * (src/orgpartners.js `partnersOf`, with what links them and since when), then its former ones
+ * (`until`), and those whose people posted in its
  * threads of the weeks (from `UNLINKED_MIN` threads or people on), each with how many of its
  * threads (`threads`) and how many of its people (`people`) that is. `authors` and `threadsBy` are
  * `orgNumbers`' rows of who posted, `partnerFor` the partner of a mail domain.
@@ -170,11 +171,15 @@ async function partnersHere(env, slug, authors, threadsBy, partnerFor) {
     icon: x.icon,
     linked: linkOf.has(x.slug),
     confirmed: x.confirmed,
+    // Since when it works for them, and a former partner's end (src/orgpartners.js `linked`).
+    since: x.since || null,
+    until: x.until || null,
     p: x.p,
     signals: x.signals,
     threads: (threads.get(x.slug) || new Set()).size,
     people: (people.get(x.slug) || new Set()).size,
-  })).sort((a, b) => Number(b.confirmed) - Number(a.confirmed)
+  })).sort((a, b) => Number(Boolean(a.until)) - Number(Boolean(b.until))
+    || Number(b.confirmed) - Number(a.confirmed)
     || Number(b.linked) - Number(a.linked) || b.threads - a.threads || (b.p ?? 0) - (a.p ?? 0)
     || a.slug.localeCompare(b.slug));
 }

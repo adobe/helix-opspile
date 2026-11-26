@@ -214,7 +214,9 @@ src/partners.js). Found is no row: an isolate derives the domains from every mes
 them an hour (`DERIVED_MS`), and with them each customer's mail domains (`customerMail`, whose
 own domain `customerDomains` picks with the partner domains of the moment); the first request after the hour derives them again and waits for it
 (a refresh nobody awaits could be cancelled with the response, and the old domains trusted for
-another hour). Requests that come together share one derivation. Whatever changes what they are
+another hour). A request shares only its own derivation (src/isolatecache.js: in Workers, one
+request may not await another's I/O); while another's is on its way, it answers what was found
+before, and the first time derives them itself. Whatever changes what they are
 derived from in this Worker forgets them in its isolate (`forgetPartnerDomains`, as `forgetFacts`
 for the duplicate search): an org's name, type or icon saved or reset, a portal customer's org
 made, a merge or its undoing, and every edit of `partner_domains`; its next request derives them
@@ -248,10 +250,32 @@ or was slow) a `sync` writes, deletes and asks nothing and answers the rows as t
 (`skipped`): the partners' people would be nobody's, and every pair would drop and lose its
 verdict. What a look found before counts as found while the next one fails.
 
+A pair's span (`first_at`, `last_at`, migration 0112) is what the threads show: every `sync` writes
+it where it changed, a decided pair's too. Over the decision: confirmed → ended (`until`, with
+`ended_by` and `ended_at`: a former partner; `POST /api/admin/org-partners/end`, which confirms
+one nobody had) → confirmed again (a confirmation clears `until`; `/end` with `undo` too). A
+confirmation keeps `since` unless it gives one; a dismissal clears `since` and `until`.
+
+**Partner request.** open → confirmed, ended or dismissed (the pair decided), declined (the pair
+left as it is) or withdrawn (`org_partner_requests`, migration 0112, src/partnerrequests.js), a
+thread of the admin team's inbox (`request:partner:<id>`) in either. One waits per pair and action
+(`link`, `end`: a partial unique index): asking again answers 409 with the one that waits. A
+decision on the pair, from the thread or the pair's page, closes the requests it settles
+(`settleRequests`): a confirmation the `link` ones (`confirmed`), an end the `end` ones (`ended`), a
+dismissal both (`dismissed`); an `end` that waits stays open over a confirmation, and a `link` over
+an end. Whoever asked takes theirs back, the admin team any; a merge withdraws the merged org's
+that wait, saying into which org (an undo does not bring them back). Clef's (`requested_by` `clef`, filed by
+each `sync` from `partnerWants`) carry the `fingerprint` of what they were found on: one waits per
+pair and action as any; one declined or withdrawn is not filed again on the same fingerprint; and
+Clef withdraws its own that wait once the sync does not want them (a pair no longer likely or a
+candidate, a lapsed partner posting again), with why in `reason`. Without the partner domains, a
+`sync` files and withdraws nothing. Filing one announces it to the admin team's room (Clef's, once
+a sync).
+
 **Org overview kept.** not kept → kept → stale or forgotten (`cache`, `forgotten` in
 src/orgprofile.js). A customer's, vendor's or partner's overview (`orgNumbers`) is kept per isolate
 by the D1 binding for `CACHE_MS` (five minutes). A decision on a pair of a customer and a partner
-(`POST /api/admin/org-partners/confirm`, `/dismiss`, with `undo` too) forgets both orgs' once it is
+(`POST /api/admin/org-partners/confirm`, `/dismiss`, `/end`, with `undo` too) forgets both orgs' once it is
 written (`forgetOrgProfiles`): each counts its forgets, and numbers read before the last forget of
 their org are not used, so one read while the decision was written is not kept as fresh. The other
 isolates keep theirs up to `CACHE_MS` (five minutes), as they do for a new thread, and show the
@@ -261,7 +285,7 @@ decision after that; nothing else forgets them.
 (`thread_orgs`, migration 0111, src/threadlinks.js). A row per inbox entry (its key at the time),
 org and role (`about`: the customer a partner's thread is about; `partner`: a partner whose people
 post in a customer's or a public thread; `customer`: a customer whose people post in a public
-thread, migration 0112, which puts the thread where the customer's followers have its threads).
+thread, migration 0113, which puts the thread where the customer's followers have its threads).
 Every link job (`{ link }`, a minute after a `labeled` result) writes
 what it finds for its role and deletes the rows of that role it no longer finds, unless dismissed;
 `found_at` moves only when `p` or `via` changed. Shown is not dismissed, `p` at least `ABOUT_MIN`,
@@ -299,7 +323,9 @@ added to: the notes, and the decisions taken from the thread of a kind without a
 a kind with a row shows the row's decision, so one taken elsewhere (a manager withdraws it, an
 assignment answers it) shows too. A decision is taken by the request's admin route, as the person,
 only when the request still offers it (the action is looked up in what it offers now), so a request
-decided meanwhile refuses it as the route does (`WHERE status = 'open'`).
+decided meanwhile refuses it as the route does (`WHERE status = 'open'`). Whoever decides has the
+thread read up to the decision (their watermark, written before the room is told), as a note of
+theirs is: it does not come back unread for them.
 
 **Question.** open → answered, passed or unknown; open → expired (`questions.status`, migration
 0104, `src/questions.js`, `src/agent/question.js`). The agent asks (`ask_teammate`), and only the

@@ -25,6 +25,7 @@ import {
 import {
   accountRows, meterRows, replaceDay, replaceHours, resources, rollupCogs, seatRows, volumeRows,
 } from '../src/cogs/rollup.js';
+import { underlying } from '../src/d1batch.js';
 import { AGENT_EMAIL } from '../src/drafts.js';
 import { assignedArm, MODEL } from '../src/experiments.js';
 import { jobSubject } from '../src/normalizer.js';
@@ -147,6 +148,21 @@ describe('cogs: meter', () => {
     const m = new Meter(env);
     assert.equal(m.env({ thread: 't' }), env);
     assert.deepEqual(await m.flush(), { points: 0 });
+  });
+
+  it('keeps the D1 binding under it, so what is kept by the database lasts across requests', () => {
+    const binding = metaDb();
+    const base = { DB: binding, USAGE: { writeDataPoint() {} } };
+    const one = new Meter(base).env({ thread: 't' });
+    const two = new Meter(base).env({});
+    assert.notEqual(one.DB, binding, 'metered');
+    assert.equal(underlying(one.DB), binding);
+    assert.equal(underlying(two.DB), underlying(one.DB));
+    // A request's session (src/d1session.js) too.
+    const s = { prepare() {}, batch() {} };
+    const replicated = { ...base, DB: { ...binding, withSession: () => s } };
+    const session = new Meter(replicated).env({}).DB.withSession();
+    assert.equal(underlying(session), s);
   });
 
   it('reaches AI Search over RPC, where every property is a method of the other side', async () => {

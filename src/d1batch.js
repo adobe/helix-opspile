@@ -32,6 +32,10 @@
  * So a read asked for alongside a write (in one `Promise.all`) reaches D1 after it, and sees
  * it: separate requests never promised an order either, and nothing may rely on one. A batch
  * answers all at once, so a slow read holds back the reads asked with it.
+ *
+ * The thread agents' D1 (`patientDatabase`, src/agent/agentenv.js) asks a read again in the
+ * same way, once, 0.5–1.5 s after D1 turned it away as overloaded, but batches nothing: each
+ * query goes to D1 when it is asked, as from the bare binding.
  */
 
 const READ = /^\s*(?:--[^\n]*\n\s*)*(?:SELECT|WITH)\b/i;
@@ -58,7 +62,7 @@ const sleep = (ms) => new Promise((resolve) => {
 
 /** `ask()`, and once more after `pause(wait())` if D1 was overloaded. */
 function patiently(ask, { pause, wait }) {
-  return ask().catch((e) => {
+  return Promise.resolve(ask()).catch((e) => {
     if (!overloaded(e)) {
       throw e;
     }
@@ -88,11 +92,6 @@ function alone(q, retry) {
 }
 
 /**
- * `db` (a D1 binding, or anything shaped like one) whose concurrent reads go as one batch.
- * At most `most` statements a batch. A read D1 turned away as overloaded is asked again once,
- * after `pause(wait())` (for tests: `pause` resolves after that many ms).
- */
-/**
  * Asked of a wrapper of the database (this one, src/timing.js's): the binding under it. Each
  * request wraps the binding anew, so what is kept across requests is kept by it (`underlying`).
  */
@@ -101,6 +100,11 @@ export const UNDERLYING = Symbol('underlying database');
 /** The D1 binding under the wrappers `db` may be in. */
 export const underlying = (db) => (db && db[UNDERLYING]) || db;
 
+/**
+ * `db` (a D1 binding, or anything shaped like one) whose concurrent reads go as one batch.
+ * At most `most` statements a batch. A read D1 turned away as overloaded is asked again once,
+ * after `pause(wait())` (for tests: `pause` resolves after that many ms).
+ */
 export function batchedDatabase(db, {
   most = 100, defer = (fn) => setTimeout(fn, 0), pause = sleep, wait = backoff,
 } = {}) {
@@ -176,6 +180,78 @@ export function batchedDatabase(db, {
       }
       const v = Reflect.get(target, prop);
       return typeof v === 'function' ? v.bind(target) : v;
+    },
+  });
+}
+
+/** What a statement is asked with: all of them answer a read without writing anything. */
+const ASKS = new Set(['all', 'first', 'raw', 'run']);
+
+/**
+ * `db` (a D1 binding, or anything shaped like one) whose reads D1 turned away as overloaded are
+ * asked again once, after `pause(wait())`, and nothing else changed: each query goes to D1 when
+ * it is asked, on its own. A statement whose SQL only reads (`batchable`) is asked again however
+ * it is asked (`all()`, `first()`, `raw()`, `run()`), and so is a `batch()` of such statements
+ * only; a write, or a batch with one, is not (see above). A session (`withSession`) is wrapped
+ * as the database is, and `UNDERLYING` answers the binding under it.
+ */
+export function patientDatabase(db, { pause = sleep, wait = backoff } = {}) {
+  if (!db || typeof db.prepare !== 'function') {
+    return db;
+  }
+  const retry = { pause, wait };
+  // Each statement of this wrapper: the one under it, and whether it reads.
+  const own = new WeakMap();
+  const statement = (stmt, reads) => {
+    if (!stmt || typeof stmt !== 'object') {
+      return stmt;
+    }
+    const proxy = new Proxy(stmt, {
+      get(target, prop) {
+        const v = Reflect.get(target, prop);
+        if (typeof v !== 'function') {
+          return v;
+        }
+        if (prop === 'bind') {
+          return (...args) => statement(Reflect.apply(v, target, args), reads);
+        }
+        if (reads && ASKS.has(prop)) {
+          return (...args) => patiently(() => Reflect.apply(v, target, args), retry);
+        }
+        return v.bind(target);
+      },
+    });
+    own.set(proxy, { stmt, reads });
+    return proxy;
+  };
+  return new Proxy(db, {
+    get(target, prop) {
+      if (prop === UNDERLYING) {
+        return underlying(target);
+      }
+      const v = Reflect.get(target, prop);
+      if (typeof v !== 'function') {
+        return v;
+      }
+      if (prop === 'prepare') {
+        return (sql, ...rest) => statement(
+          Reflect.apply(v, target, [sql, ...rest]),
+          batchable(sql),
+        );
+      }
+      if (prop === 'batch') {
+        return (stmts, ...rest) => {
+          const reads = stmts.length > 0 && stmts.every((s) => own.has(s) && own.get(s).reads);
+          // D1 wants its own statements back.
+          const under = stmts.map((s) => (own.has(s) ? own.get(s).stmt : s));
+          const ask = () => Reflect.apply(v, target, [under, ...rest]);
+          return reads ? patiently(ask, retry) : ask();
+        };
+      }
+      if (prop === 'withSession') {
+        return (...args) => patientDatabase(Reflect.apply(v, target, args), retry);
+      }
+      return v.bind(target);
     },
   });
 }

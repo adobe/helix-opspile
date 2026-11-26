@@ -369,6 +369,8 @@
 /* A customer and a partner: confirmed by the admin team in green, likely (Clef's) in yellow. */
 .spectrum .ov .tag.tv-confirmed { flex: none; color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); border-color: transparent; }
 .spectrum .ov .tag.tv-likely { flex: none; color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); border-color: transparent; }
+/* A former partner: a partner until then, as the admin team said. */
+.spectrum .ov .tag.tv-former { flex: none; color: var(--spectrum-neutral-subdued-content-color-default); background: var(--spectrum-gray-100); border-color: transparent; }
 
 /* Avatars: the initials in white on the hue (ui/spectrum.css), small and bold. */
 

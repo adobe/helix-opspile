@@ -27,7 +27,8 @@ import { connect } from 'cloudflare:sockets';
 import createTlsEngine from '@ai-ecoverse/wasm-tls-engine';
 // wrangler compiles a `.wasm` import when it builds the Worker: a WebAssembly.Module.
 import tlsWasm from '@ai-ecoverse/wasm-tls-engine/slicc-tls-engine.wasm';
-import { agentSubject, modelUsage, objectMeter } from '../cogs/meter.js';
+import { modelUsage } from '../cogs/meter.js';
+import { agentEnv } from './agentenv.js';
 import { entryOf } from '../drafts.js';
 import { customerTeams } from '../shares.js';
 import { armModel, armTags, cacheRetention } from '../experiments.js';
@@ -158,18 +159,10 @@ const cogsExtension = (agent) => defineExtension({
 export class ThreadAgent extends Agent {
   constructor(ctx, rawEnv) {
     // Its work is counted for COGS as its thread's (src/cogs/meter.js): the bindings, and the
-    // model's tokens (`meterModel`).
+    // model's tokens (`meterModel`). Its D1 asks a read again once when D1 is overloaded
+    // (src/agent/agentenv.js).
     const self = {};
-    const cogs = objectMeter(rawEnv, {
-      via: 'agent',
-      subject: () => {
-        try {
-          return agentSubject(self.agent && self.agent.name);
-        } catch {
-          return {};
-        }
-      },
-    });
+    const cogs = agentEnv(rawEnv, () => self.agent && self.agent.name);
     const { env } = cogs;
     super(ctx, env);
     self.agent = this;

@@ -322,11 +322,13 @@ let kept = null;
  * The domains found (`derive`), as this isolate found them in the last hour (`DERIVED_MS`). After
  * the hour, the request that asks looks again and waits for it (a fraction of a second, once an
  * hour): a look nobody awaits could be cancelled with the response, and the old domains would be
- * trusted for another hour. Requests that come together share a look. Kept by the D1 binding under
- * the request's wrappers (`underlying`). `at` moves only when a look succeeds: one that fails or
- * takes longer than `LOOK_MS` answers what was found before (none, the first time). After a
- * failure, so do the requests of the next minute (`RETRY_MS`), so that an overloaded D1 is not
- * asked for every message again by each of them; the first after it looks again.
+ * trusted for another hour. A request shares only its own look: another's (src/isolatecache.js
+ * says why) is not awaited, and what was found before is answered meanwhile. Kept by the D1
+ * binding under the request's wrappers (`underlying`). `at` moves only when a look succeeds:
+ * one that fails or takes longer than `LOOK_MS` answers what was found before (none, the first
+ * time). After a failure, so do the requests of the next minute (`RETRY_MS`), so that an
+ * overloaded D1 is not asked for every message again by each of them; the first after it looks
+ * again.
  */
 export async function derivedDomains(env, { fresh = false } = {}) {
   const db = underlying(env.DB);
@@ -342,8 +344,15 @@ export async function derivedDomains(env, { fresh = false } = {}) {
   if (!fresh && !k.look && Date.now() < k.retry) {
     return k.done || NONE;
   }
-  if (fresh || !k.look || Date.now() - k.look.started >= LOOK_MS) {
-    const next = { started: Date.now() };
+  // A look is shared only within the request that started it (`env.DB`): in Workers, another
+  // request's could end with it, and its awaiting requests wait forever. Meanwhile the others
+  // answer what was found before, or look themselves the first time.
+  const shared = Boolean(k.look) && k.look.owner === env.DB;
+  if (!fresh && k.look && !shared && k.done) {
+    return k.done;
+  }
+  if (fresh || !shared || Date.now() - k.look.started >= LOOK_MS) {
+    const next = { started: Date.now(), owner: env.DB };
     next.value = Promise.all([loadRows(env), loadIcons(env), loadPartners(env)]).then(([rows,
       icons, partners]) => {
       const derived = derive(env, rows, icons, partners);
@@ -531,7 +540,8 @@ const isCustomer = (o) => (o ? (o.type || 'customer') === 'customer' : true);
  * `partnerForViewer` filters:
  *
  * - `customers`: the customers it works for, confirmed and likely (src/orgpartners.js
- *   `customersOf`, with what links them), and those whose threads its people posted in, each with
+ *   `customersOf`, with what links them and since when), then those it worked for (`until`), and
+ *   those whose threads its people posted in, each with
  *   how many of the customer's threads its people are in (`theirs`) and how many of its own the
  *   customer's people are in (`ours`: the people outside Adobe of its threads who post in the
  *   customer's too); one nothing links yet from `UNLINKED_MIN` threads or people on;
@@ -745,6 +755,9 @@ export async function partnerNumbers(env, slug, weeks, { customers: linked = [] 
       icon: (row && row.icon) || (l && l.icon) || null,
       linked: Boolean(l),
       confirmed: Boolean(l && l.confirmed),
+      // A former partner of theirs (`until`), and since when it works for them.
+      since: (l && l.since) || null,
+      until: (l && l.until) || null,
       p: l ? l.p : null,
       signals: l ? l.signals : {},
       theirs: c ? c.threads.size : 0,
@@ -754,7 +767,8 @@ export async function partnerNumbers(env, slug, weeks, { customers: linked = [] 
       waiting: waitingOf.get(o) || 0,
       last: c ? c.last : null,
     };
-  }).sort((a, b) => Number(b.confirmed) - Number(a.confirmed) || Number(b.linked) - Number(a.linked)
+  }).sort((a, b) => Number(Boolean(a.until)) - Number(Boolean(b.until))
+    || Number(b.confirmed) - Number(a.confirmed) || Number(b.linked) - Number(a.linked)
     || b.theirs - a.theirs || (b.p ?? 0) - (a.p ?? 0) || a.slug.localeCompare(b.slug));
 
   const ranked = [...people.values()].sort((a, b) => b.messages - a.messages

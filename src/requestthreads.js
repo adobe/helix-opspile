@@ -17,6 +17,8 @@ import { listAccountPairs } from './accountpairs.js';
 import { isStaffDomain } from './lookup.js';
 import { getMemberRequest, listMemberRequests } from './memberrequests.js';
 import { getMergeRequest, listMergeRequests } from './orgmerge.js';
+import { LIKELY } from './orgpartners.js';
+import { getPartnerRequest, listPartnerRequests, otherPartners } from './partnerrequests.js';
 import { getBot, listBots } from './ourbots.js';
 import { getPortalRequest, listPortalRequests } from './portalrequests.js';
 import {
@@ -71,6 +73,7 @@ export const KIND_NAMES = {
   integration: 'Integration access',
   embed: 'Integration channels',
   merge: 'Customer merges',
+  partner: 'Partners of customers',
   bot: 'Bots',
   account: 'Admin accounts',
   person: 'Two accounts, one person?',
@@ -172,7 +175,7 @@ const CHANNEL_DONE = {
 /** What a decided request's row says of it: by whom, and what came of it. */
 function rowDecision(r, did = '') {
   const word = {
-    confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged', approved: 'Approved',
+    confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged', approved: 'Approved', ended: 'Ended', dismissed: 'Not partners',
   }[r.status] || r.status;
   const reason = r.reason ? `: ${md(r.reason)}` : '';
   return `**${word}** by ${md(who(r.decidedBy))}${did ? `: ${did}` : reason}`;
@@ -627,6 +630,168 @@ const mergeKind = {
           done: () => `Declined the merge of ${md(from)} into ${md(into)}.`,
         },
       ] : [],
+    };
+  },
+};
+
+/** A date as the threads say it: `2026-10-24`, `2026-10`, the day of an ISO time. */
+const dayOf = (s) => String(s || '').slice(0, 10);
+/** A date field's value: a month is its first day, as a date input takes it. */
+const dateValue = (s) => (s && s.length === 7 ? `${s}-01` : s || '');
+
+/** A customer's other partner, as a partner request's thread lists it. */
+function otherLine(o, n) {
+  let what = 'likely, says Clef';
+  if (o.until) {
+    what = `a former partner, until ${o.until}`;
+  } else if (o.confirmed) {
+    what = 'confirmed';
+  } else if (o.p !== null) {
+    what = `${Math.round(o.p * 100)}% likely, says Clef`;
+  }
+  const seen = o.last ? `, its people last posted ${dayOf(o.last)}` : '';
+  return `  - **${md(o.name || n.org(o.slug))}** ${code(o.slug)}: ${what}${seen}`;
+}
+
+/** The pair as it is now, for a partner request's thread. */
+function pairNow(r) {
+  const x = r.pair;
+  if (!x) {
+    return 'nothing links them in the inbox yet';
+  }
+  if (x.dismissed) {
+    return `not partners, dismissed by ${md(x.dismissed.by)}`;
+  }
+  if (x.until) {
+    return `a former partner, until ${x.until}`;
+  }
+  if (x.confirmed) {
+    return `confirmed by ${md(x.confirmed.by)}${x.since ? `, since ${x.since}` : ''}`;
+  }
+  return x.p === null ? 'not decided, and Clef has not said yet' : `not decided; Clef says ${Math.round(x.p * 100)}%`;
+}
+
+/**
+ * A partner request (src/partnerrequests.js): that a partner works for a customer, or no longer
+ * does, with the pair as it is now, the customer's other partners and what Clef found; decided
+ * through the routes of the Customers page (src/orgpartners.js), which close it.
+ */
+const partnerKind = {
+  async list(env, me) {
+    const list = await listPartnerRequests(env, me, { limit: LIMIT });
+    const others = await otherPartners(env, [...new Set(list.map((r) => r.customer))], LIKELY);
+    return list.map((r) => ({
+      ...r, others: (others.get(r.customer) || []).filter((o) => o.slug !== r.partner),
+    }));
+  },
+  async get(env, id) {
+    const r = await getPartnerRequest(env, id);
+    if (!r) {
+      return null;
+    }
+    const others = await otherPartners(env, [r.customer], LIKELY);
+    return { ...r, others: (others.get(r.customer) || []).filter((o) => o.slug !== r.partner) };
+  },
+  id: (r) => r.id,
+  describe(r, n) {
+    const P = n.org(r.partner);
+    const C = n.org(r.customer);
+    const open = r.status === 'open';
+    const again = r.action === 'link' && r.pair && r.pair.until;
+    let title = `${P} works for ${C}?`;
+    if (r.action === 'end') {
+      title = `${P} no longer works for ${C}?`;
+    } else if (again) {
+      title = `${P} works for ${C} again?`;
+    }
+    const asks = r.action === 'end'
+      ? `Asks to record that **${md(P)}** ${code(r.partner)} no longer works for **${md(C)}** ${code(r.customer)}: a former partner of theirs${r.until ? `, until ${r.until}` : ''}.`
+      : `Asks to confirm that **${md(P)}** ${code(r.partner)} works for **${md(C)}** ${code(r.customer)}${r.since ? `, since ${r.since}` : ''}: a partner of theirs, for everyone at Adobe.`;
+    const thread = r.thread ? `/inbox?team=${encodeURIComponent(r.threadTeam || ADMIN_TEAM)}&t=${encodeURIComponent(r.thread)}` : null;
+    let source = '';
+    if (r.requestedBy.kind === 'agent' && thread) {
+      source = `\n\nThe agent read it in [a thread](${thread}).`;
+    } else if (r.viaAgent && thread) {
+      source = `\n\nAsked in [the sidebar of a thread](${thread}), through its agent.`;
+    }
+    const x = r.pair;
+    const facts = [
+      `- Now: ${pairNow(r)}`,
+      x && x.first ? `- ${md(poss(P))} people in ${md(poss(C))} threads: first ${dayOf(x.first)}, last ${dayOf(x.last)}, as far back as the inbox reads` : '',
+      r.others.length ? `- ${md(poss(C))} other partners:\n${r.others.map((o) => otherLine(o, n)).join('\n')}` : `- No other partner of ${md(C)} is known.`,
+      `- [What links them](/inbox/admin?tab=orgs&org=${encodeURIComponent(`partner:${r.customer}:${r.partner}`)})`,
+    ].filter(Boolean).join('\n');
+    const both = { customer: r.customer, partner: r.partner };
+    const decline = (label, hint) => ({
+      id: 'decline',
+      label,
+      tone: r.action === 'end' ? undefined : 'negative',
+      hint,
+      fields: [reasonField('Reason, for whoever asked (optional)')],
+      run: (v) => ({ method: 'POST', path: 'org-partner-requests/decline', body: { id: r.id, reason: v.reason || undefined } }),
+      done: () => 'Declined; the pair stays as it is.',
+    });
+    const link = [
+      {
+        id: 'confirm',
+        label: again ? 'A partner again' : 'Confirm',
+        tone: 'accent',
+        hint: `Everyone at Adobe sees ${md(P)} as a partner of ${md(C)}, whatever Clef says.`,
+        fields: [{
+          name: 'since', label: 'Since (optional)', type: 'date', value: dateValue(r.since),
+        }],
+        run: (v) => ({ method: 'POST', path: 'org-partners/confirm', body: { ...both, since: v.since || undefined } }),
+        done: (a, v) => `Confirmed ${md(P)} as a partner of ${md(C)}${v.since ? `, since ${v.since}` : ''}.`,
+      },
+      {
+        id: 'dismiss',
+        label: 'Not partners',
+        tone: 'negative',
+        hint: `Nobody at Adobe sees ${md(P)} as a partner of ${md(C)}, whatever Clef says.`,
+        run: () => ({ method: 'POST', path: 'org-partners/dismiss', body: both }),
+        done: () => `${md(P)} is no partner of ${md(C)}.`,
+      },
+      decline('Decline', 'Leaves the pair as it is.'),
+    ];
+    const end = [
+      {
+        id: 'end',
+        label: 'End',
+        tone: 'accent',
+        hint: `${md(P)} is listed as a former partner of ${md(C)}, until then.`,
+        fields: [{
+          name: 'until', label: 'Until', type: 'date', value: dateValue(r.until), required: true,
+        }],
+        run: (v) => ({ method: 'POST', path: 'org-partners/end', body: { ...both, until: v.until } }),
+        done: (a, v) => `${md(P)} is a former partner of ${md(C)}, until ${v.until}.`,
+      },
+      {
+        id: 'dismiss',
+        label: 'Not partners',
+        tone: 'negative',
+        hint: `It never was: nobody at Adobe sees ${md(P)} as a partner of ${md(C)}, now or before.`,
+        run: () => ({ method: 'POST', path: 'org-partners/dismiss', body: both }),
+        done: () => `${md(P)} is no partner of ${md(C)}.`,
+      },
+      decline('Still a partner', `Leaves ${md(P)} a partner of ${md(C)}.`),
+    ];
+    const person = r.requestedBy.kind === 'person' ? r.requestedBy : null;
+    let actions = [];
+    if (open) {
+      actions = r.action === 'end' ? end : link;
+    }
+    return {
+      title,
+      open,
+      status: open ? 'waiting' : r.status,
+      askedAt: r.requestedAt,
+      askedBy: person,
+      ...(person ? {} : { author: { name: r.requestedBy.name, kind: 'app', staff: true } }),
+      body: `${asks}${r.note ? `\n\n${quote(r.note)}` : ''}${source}\n\n${facts}`,
+      decidedAt: open ? null : r.decidedAt,
+      decidedBy: r.decidedBy,
+      decision: open ? null : rowDecision(r),
+      actions,
     };
   },
 };
@@ -1141,6 +1306,7 @@ const KIND = {
   integration: integrationKind,
   embed: embedKind,
   merge: mergeKind,
+  partner: partnerKind,
   bot: botKind,
   account: accountKind,
   person: personKind,
@@ -1521,6 +1687,29 @@ async function logEntry(env, me, key, type, body) {
   return at;
 }
 
+/**
+ * Request `key`'s thread as it is now that `me` decided it, read by them up to its end: what they
+ * decided is the thread's latest message, and theirs, so it is not unread for them once the room
+ * says it changed (as a note of theirs is not).
+ */
+async function decidedThread(env, me, key) {
+  const thread = await requestThread(env, me, key);
+  const at = thread && thread.thread.last_at;
+  if (!at || !me.id || me.readonly) {
+    return thread;
+  }
+  await advanceWatermark(env.DB, me.id, key, at, 'post');
+  const others = thread.watermarks.filter((w) => w.person !== me.id);
+  const mine = thread.watermarks.find((w) => w.person === me.id);
+  const readAt = mine && mine.read_at > at ? mine.read_at : at;
+  return {
+    ...thread,
+    watermarks: [...others, {
+      ...mine, person: me.id, read_at: readAt, thread: key,
+    }],
+  };
+}
+
 const announce = (env, key, x = null) => {
   const parsed = parseRequestKey(key);
   const teams = x && x.d && x.d.team ? [x.d.team] : [];
@@ -1582,17 +1771,18 @@ export async function resolveRequest(env, me, body) {
       return json({ error: 'read-only while viewing as someone else' }, 403);
     }
     const done = await action.act(env, me, values);
-    await announce(env, key, x);
     if (done.error) {
+      await announce(env, key, x);
       const thread = await requestThread(env, me, key);
       return json({ error: done.error, thread }, done.status || 409);
     }
+    // Read up to the decision before the room says the thread changed.
+    const thread = await decidedThread(env, me, key);
+    await announce(env, key, x);
     console.log(JSON.stringify({
       route: 'requests', resolved: x.kind, action: action.id, by: me.id,
     }));
-    return json({
-      ok: true, done: action.done(done, values), thread: await requestThread(env, me, key),
-    });
+    return json({ ok: true, done: action.done(done, values), thread });
   }
   const call = action.run(values, dryRun || undefined);
   const url = new URL(`https://opspile.internal/api/admin/${call.path}`);
@@ -1619,8 +1809,10 @@ export async function resolveRequest(env, me, body) {
   console.log(JSON.stringify({
     route: 'requests', resolved: x.kind, action: action.id.split(':')[0], by: me.id,
   }));
+  // Read up to the decision before the room says the thread changed.
+  const thread = await decidedThread(env, me, key);
   await announce(env, key);
-  return json({ ok: true, done, thread: await requestThread(env, me, key) });
+  return json({ ok: true, done, thread });
 }
 
 /** Whether `me` may see the requests' threads and decide them: the admin team. */
