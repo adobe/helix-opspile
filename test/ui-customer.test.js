@@ -393,6 +393,21 @@ describe('a partner\'s overview, and a customer\'s partners, drawn', () => {
     assert.ok(!CustomerView.html({ ...profile, partners: [row()] }, pctx).includes('tv-review'));
   });
 
+  it('lists the public channels a customer\'s people posted in, names escaped, and none if none', () => {
+    const html = CustomerView.html({
+      ...profile,
+      public: [{
+        source: 'discord', channel: 'D1', name: 'aem-<chat>', threads: 3, last: '2026-11-24T00:00:00Z',
+      }],
+    }, pctx);
+    const list = html.slice(html.indexOf('id="cvPublic"'));
+    assert.match(list, /In public channels <span class="sub">1 channel<\/span>/);
+    assert.match(list, /#aem-&lt;chat&gt;<\/span><span class="sub">Discord, /);
+    assert.match(list, /3 threads with their people/);
+    assert.ok(!CustomerView.html({ ...profile, public: [] }, pctx).includes('cvPublic'));
+    assert.ok(!CustomerView.html(profile, pctx).includes('cvPublic'));
+  });
+
   it('says so when no partner is known to work for a customer', () => {
     const html = CustomerView.html({ ...profile, partners: [] }, pctx);
     assert.match(html, /No agency or system integrator is known to work for ACME\./);

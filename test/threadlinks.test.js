@@ -302,6 +302,74 @@ describe('the link job', () => {
   });
 });
 
+describe('a public thread', () => {
+  const PUB = 'slack:E1:CC:4.1';
+  /**
+   * The community's channel (an org of type `public`): Lee of the agency, Gus of Globex (whose
+   * people write from globex.example in its own channel too), and Max of free mail post there.
+   */
+  function world() {
+    const e = env();
+    const sql = e.DB.sqlite;
+    sql.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('community', 'Public', 'public', '${AT}')`);
+    sql.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+        channel_name, title, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES (?, 'slack', 'E1', 'CC', '4.1', 'community', 'helix', 'channel', 'aem-community',
+        'How do I preview?', 'channels/community/helix/slack-CC/4.1/', ?, ?, ?, 3, ?)`)
+      .run(PUB, AT, AT, AT, AT);
+    const person = (id, name, email) => sql.prepare(`INSERT INTO identities (source, tenant, user_id,
+        kind, name, email, fetched_at) VALUES ('slack', 'E1', ?, 'person', ?, ?, ?)`).run(id, name, email, AT);
+    person('U5', 'Gus', 'gus@globex.example');
+    person('U6', 'Max', 'max@gmail.com');
+    const post = (thread, channel, id, user) => sql.prepare(`INSERT INTO messages (source, tenant,
+        channel_id, id, thread, at, staff, counted, author_key) VALUES ('slack', 'E1', ?, ?, ?, ?, 0, 1, ?)`)
+      .run(channel, id, thread, AT, `slack:E1:${user}`);
+    post(G2, 'CG', '2.6', 'U5');
+    post(G1, 'CG', '2.7', 'U5');
+    post(PUB, 'CC', '4.1', 'U9');
+    post(PUB, 'CC', '4.2', 'U5');
+    post(PUB, 'CC', '4.3', 'U6');
+    return e;
+  }
+
+  it('is linked with the customers and partners whose people post in it, and nothing else', async () => {
+    const e = world();
+    const r = await linkThread(e, PUB);
+    assert.equal(r.result, 'linked');
+    assert.equal(r.customers, 1);
+    assert.deepEqual(e.DB.sqlite.prepare('SELECT org, role, p, via FROM thread_orgs WHERE thread = ? ORDER BY role')
+      .all(PUB).map((x) => ({ ...x })), [
+      {
+        org: 'globex', role: 'customer', p: 1, via: 'posters',
+      },
+      {
+        org: 'agency', role: 'partner', p: 1, via: 'posters',
+      },
+    ]);
+    // No thread is related to it, and no agent is told: a public thread is no customer's own.
+    assert.deepEqual(e.DB.sqlite.prepare('SELECT * FROM thread_links').all(), []);
+    assert.deepEqual(e.told, []);
+    const linked = (await linkedOrgsOf(e, [PUB])).get(PUB);
+    assert.deepEqual(linked.about, []);
+    assert.deepEqual(linked.with.map((o) => [o.slug, o.role]), [['agency', 'partner'], ['globex', 'customer']]);
+    // The customer's filter takes it in; a dismissed customer is off it.
+    assert.ok((await aboutThreads(e, 'globex', [PUB, G1])).has(PUB));
+    assert.equal((await dismissAbout(e, ADA, { thread: PUB, org: 'globex', role: 'customer' })).ok, true);
+    assert.equal((await aboutThreads(e, 'globex', [PUB])).has(PUB), false);
+  });
+
+  it('tells the agent whose people they are, and not to say so in the channel', async () => {
+    const e = world();
+    await linkThread(e, PUB);
+    const note = await relatedNote(e, {
+      key: PUB, threads: [PUB], org: 'community', orgType: 'public', team: 'helix', channelId: 'CC', kind: 'channel', source: 'slack',
+    });
+    assert.match(note, /People of the customer Globex Corp \(globex\) post in this public thread/);
+    assert.match(note, /never say in the channel whose people they are/);
+    assert.match(note, /People of the partner Agency Co/);
+  });
+});
+
 describe('what the inbox shows of the links', () => {
   it('names a linked thread only to who may see it, and a dismissed link to nobody', async () => {
     const e = env();

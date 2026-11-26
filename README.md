@@ -635,6 +635,7 @@ node scripts/replay.mjs --rethread          # redo re-threading for every root (
 node scripts/replay.mjs --rethread --channel <id>   # redo one channel's, oldest root first
 node scripts/replay.mjs --relabel           # label every thread again (titles, Clef, tech stack)
 node scripts/replay.mjs --vectorize         # embed every channel thread and its messages again
+node scripts/replay.mjs --link --org <slug> # link an org's threads again (after making it public)
 ```
 
 The threads a channel had before the inbox did come in through the **history import**

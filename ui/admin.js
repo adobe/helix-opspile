@@ -634,7 +634,7 @@ function listFrame() {
 }
 
 const ORG_TYPE_LABEL = {
-  customer: 'Customers', partner: 'Partners', vendor: 'Vendors', internal: 'Internal',
+  customer: 'Customers', partner: 'Partners', vendor: 'Vendors', internal: 'Internal', public: 'Public',
 };
 const orgTypeLabel = (t) => ORG_TYPE_LABEL[t] || `${t[0].toUpperCase()}${t.slice(1)}`;
 /** The org types there are, as the filter offers them. */

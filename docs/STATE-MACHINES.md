@@ -211,7 +211,8 @@ merge.
 **Partner domain.** found ⇄ not found, and over either the admin team's row: set by hand
 (a name, a partner org) or excluded, ⇄ none (`partner_domains`, migrations 0013 and 0109;
 src/partners.js). Found is no row: an isolate derives the domains from every message and keeps
-them an hour (`DERIVED_MS`); the first request after the hour derives them again and waits for it
+them an hour (`DERIVED_MS`), and with them each customer's mail domains (`customerMail`, whose
+own domain `customerDomains` picks with the partner domains of the moment); the first request after the hour derives them again and waits for it
 (a refresh nobody awaits could be cancelled with the response, and the old domains trusted for
 another hour). Requests that come together share one derivation. Whatever changes what they are
 derived from in this Worker forgets them in its isolate (`forgetPartnerDomains`, as `forgetFacts`
@@ -259,7 +260,9 @@ decision after that; nothing else forgets them.
 **Thread org.** found → found again (its `p` and `via` move) or gone; dismissed ⇄ shown
 (`thread_orgs`, migration 0111, src/threadlinks.js). A row per inbox entry (its key at the time),
 org and role (`about`: the customer a partner's thread is about; `partner`: a partner whose people
-post in a customer's thread). Every link job (`{ link }`, a minute after a `labeled` result) writes
+post in a customer's or a public thread; `customer`: a customer whose people post in a public
+thread, migration 0112, which puts the thread where the customer's followers have its threads).
+Every link job (`{ link }`, a minute after a `labeled` result) writes
 what it finds for its role and deletes the rows of that role it no longer finds, unless dismissed;
 `found_at` moves only when `p` or `via` changed. Shown is not dismissed, `p` at least `ABOUT_MIN`,
 and an org not merged. A dismissed row (`dismissed_at`, by whoever may work the thread) is kept

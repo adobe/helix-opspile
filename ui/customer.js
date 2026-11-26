@@ -48,7 +48,8 @@
  * customers'; under them the
  * customers it works for (confirmed, likely, or where its people post) with what links them, what
  * waits on Adobe, and its people with where they post. A customer's lists its partners
- * (`p.partners`), each a link to its page, with what links them.
+ * (`p.partners`), each a link to its page, with what links them, and the public channels its
+ * people posted in (`p.public`).
  *
  * Everything in it is a name, a number or a picture, written escaped.
  */
@@ -461,6 +462,23 @@ globalThis.CustomerView = (() => {
       ${rows.length ? ranked(rows, p.weeks.length) : `<div class="empty">No agency or system integrator is known to work for ${esc(nameOf(p))}.</div>`}</section>`;
   }
 
+  /**
+   * The public channels a customer's people posted in (`p.public`: a community's, an event's;
+   * src/orgprofile.js), by their mail domain; none where they posted in none.
+   */
+  function publicChannels(p) {
+    const rows = (p.public || []).map((c) => ({
+      n: c.threads,
+      count: `${plural(c.threads, 'thread')} with their people`,
+      name: `<span>${esc(c.name ? `#${c.name}` : 'A channel')}</span>`,
+      sub: esc([PLATFORM[c.source] || c.source, c.last ? ago(c.last) : ''].filter(Boolean).join(', ')),
+    }));
+    if (!rows.length) return '';
+    return `<section class="tv-sec" aria-labelledby="cvPublic"><h2 id="cvPublic">In public channels <span class="sub">${esc(plural(rows.length, 'channel'))}</span></h2>
+      <p class="sub">Community and event channels where people of ${esc(nameOf(p))}'s mail domains posted in these weeks. Their threads are in the inbox of whoever follows ${esc(nameOf(p))}.</p>
+      ${ranked(rows, p.weeks.length)}</section>`;
+  }
+
   function people(p, ctx) {
     const more = p.peopleCount - p.people.length;
     return `<section class="tv-sec" aria-labelledby="tvPeople"><h2 id="tvPeople">${p.partner ? 'People in its channels' : 'Their people'} <span class="sub">${esc(plural(p.peopleCount, 'person', 'people'))}</span></h2>
@@ -581,6 +599,7 @@ globalThis.CustomerView = (() => {
       ${partnerPeople(p, ctx)}` : ''}
       ${people(p, ctx)}
       ${p.partners ? customerPartners(p, ctx) : ''}
+      ${publicChannels(p)}
       <div class="tv-two">${staff(p, ctx)}${teams(p, ctx)}</div>
       <div class="tv-two">${areas(p, ctx)}${channels(shown)}</div>
       ${tech(p, ctx, 'all')}

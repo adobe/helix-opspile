@@ -16,8 +16,8 @@ import {
 } from 'node:test';
 import { api } from '../src/api.js';
 import {
-  DERIVED_MS, derive, derivedDomains, domainOf, forgetPartnerDomains, iconDomain, namesOrg,
-  partnerDomains,
+  customerDomains, customerMail, customerOf, DERIVED_MS, derive, derivedDomains, domainOf,
+  forgetPartnerDomains, iconDomain, namesOrg, partnerDomains,
 } from '../src/partners.js';
 import { profiles } from '../src/profiles.js';
 import { d1 } from './d1.js';
@@ -261,6 +261,45 @@ describe('partnerDomains', () => {
       VALUES ('agencyholding', 'other', 'ada', '2026-10-21')`);
     forgetPartnerDomains();
     assert.deepEqual([...await partnerDomains(e)], [['agency.example', { name: 'Studio', org: 'studio' }]]);
+  });
+
+  it('finds the customers\' own domains, and names a public channel\'s people by them', async () => {
+    const e = world();
+    e.DB.sqlite.exec(`INSERT INTO orgs (slug, name, type, icon, updated_at) VALUES
+        ('initech', 'Initech', 'customer', 'initech.example', '2026-10-01'),
+        ('community', 'Public', 'public', 'community.example', '2026-10-01');
+      INSERT INTO identities (source, tenant, user_id, kind, name, email, fetched_at) VALUES
+        ('slack', 'E1', 'U5', 'person', 'Max', 'max@gmail.com', '2026-10-21'),
+        ('slack', 'E1', 'U6', 'person', 'Ina', 'ina@eu.initech.example', '2026-10-21')`);
+    // Acme's people outnumber the agency's in its channel; a partner's domain is no customer's
+    // whatever its count, a public org's posters are nobody's, and Initech is known by its icon.
+    const domains = await customerDomains(e);
+    assert.deepEqual([...domains], [
+      ['acme.example', { org: 'acme', name: 'Acme' }],
+      ['initech.example', { org: 'initech', name: 'Initech' }],
+    ]);
+    assert.deepEqual(customerOf('eu.initech.example', domains), { domain: 'initech.example', org: 'initech', name: 'Initech' });
+    assert.equal(customerOf('gmail.com', domains), null);
+    const cards = await profiles(e, ['slack:E1:U1', 'slack:E1:U3', 'slack:E1:U5', 'slack:E1:U6']);
+    assert.equal(cards['slack:E1:U1'].customer, null);
+    assert.deepEqual(cards['slack:E1:U3'].customer, { org: 'acme', name: 'Acme' });
+    assert.equal(cards['slack:E1:U5'].customer, null);
+    assert.deepEqual(cards['slack:E1:U6'].customer, { org: 'initech', name: 'Initech' });
+  });
+
+  it('gives a customer the most of its people\'s domain that is no partner\'s', () => {
+    const list = customerMail(ENV, [
+      row('acme', 'customer', 'agency.example', 5),
+      row('acme', 'customer', 'acme.example', 2),
+      row('acme', 'customer', 'gmail.com', 9),
+      row('community', 'public', 'acme.example', 1),
+    ], [{ slug: 'acme', name: 'Acme', icon: 'https://www.acme-group.example/' }]);
+    assert.deepEqual(list, [{
+      org: 'acme',
+      name: 'Acme',
+      domains: [{ domain: 'agency.example', people: 5 }, { domain: 'acme.example', people: 2 }],
+      icon: 'acme-group.example',
+    }]);
   });
 
   it('keeps what it found for the isolate, until it is forgotten', async () => {

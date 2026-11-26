@@ -237,6 +237,46 @@ export function derive(env, rows, icons = [], partners = []) {
   return { found: [...found.values()].sort(order), left: [...left.values()].sort(order) };
 }
 
+/**
+ * The customers' mail domains, for telling apart the people of a public channel (an org of type
+ * `public`, where people of many orgs post; docs/ARCHITECTURE.md, "Public channels"): from
+ * `derive`'s `rows` and `icons`, `[{ org, name, domains, icon }]`, `domains` those its people
+ * write from, the most people's first (`{ domain, people }`), `icon` the org part of its icon's
+ * domain. Free mail, tenant and staff domains are nobody's (`orgDomain`). Which one is its own
+ * is `customerDomains`'s to say, with the partner domains as they are then.
+ */
+export function customerMail(env, rows, icons = []) {
+  const by = new Map();
+  const of = (slug, name) => {
+    if (!by.has(slug)) {
+      by.set(slug, {
+        org: slug, name: name || null, domains: [], icon: null,
+      });
+    }
+    return by.get(slug);
+  };
+  for (const r of rows || []) {
+    const domain = String(r.domain || '').toLowerCase();
+    if ((r.type || 'customer') === 'customer' && r.org && r.org !== UNASSIGNED
+      && orgDomain(env, domain)) {
+      of(r.org, r.name).domains.push({ domain, people: r.people || 0, threads: r.threads || 0 });
+    }
+  }
+  for (const { slug, name, icon } of icons || []) {
+    const d = iconDomain(env, icon);
+    if (d && orgDomain(env, d)) {
+      const c = of(slug, name);
+      c.icon = d;
+      c.name = c.name || name || null;
+    }
+  }
+  return [...by.values()].map((c) => ({
+    ...c,
+    domains: [...c.domains].sort((a, b) => b.people - a.people || b.threads - a.threads
+      || a.domain.localeCompare(b.domain)).map(({ domain, people }) => ({ domain, people })),
+  }));
+}
+
 /** Every org's people's mail domains, partners' and customers', as `derive` reads them. */
 async function loadRows(env) {
   const { results } = await env.DB.prepare(`SELECT t.org, COALESCE(o.type, 'customer') AS type,
@@ -255,7 +295,7 @@ async function loadRows(env) {
 
 /** The customers' icons, as `derive` reads them. */
 async function loadIcons(env) {
-  const { results } = await env.DB.prepare(`SELECT slug, icon FROM orgs
+  const { results } = await env.DB.prepare(`SELECT slug, name, icon FROM orgs
     WHERE COALESCE(type, 'customer') = 'customer' AND icon IS NOT NULL
       AND slug NOT IN (SELECT slug FROM org_merges)`).all();
   return results || [];
@@ -268,7 +308,9 @@ async function loadPartners(env) {
   return results || [];
 }
 
-const NONE = Object.freeze({ found: [], left: [], at: null });
+const NONE = Object.freeze({
+  found: [], left: [], customers: [], at: null,
+});
 /** How long a request waits for a look; one that takes longer is looked for anew by the next. */
 const LOOK_MS = 20 * 1000;
 /** After a look that failed, the next one is this much later: what was found before until then. */
@@ -304,7 +346,12 @@ export async function derivedDomains(env, { fresh = false } = {}) {
     const next = { started: Date.now() };
     next.value = Promise.all([loadRows(env), loadIcons(env), loadPartners(env)]).then(([rows,
       icons, partners]) => {
-      const done = { ...derive(env, rows, icons, partners), at: new Date().toISOString() };
+      const derived = derive(env, rows, icons, partners);
+      const done = {
+        ...derived,
+        customers: customerMail(env, rows, icons),
+        at: new Date().toISOString(),
+      };
       k.done = done;
       k.at = Date.now();
       k.retry = 0;
@@ -403,6 +450,51 @@ export function partnerOf(domain, partners) {
       return typeof p === 'object'
         ? { domain: d, name: p.name || d, org: p.org || null }
         : { domain: d, name: p || d, org: null };
+    }
+  }
+  return null;
+}
+
+/**
+ * The customers' own mail domains: `Map<domain, { org, name }>`, from `customerMail` (found with
+ * the partner domains, and kept as long) and the partner domains as they are now. A customer's is
+ * the domain most of its people write from that is no partner's (`partnerOf`: a partner's people
+ * may be all who post in a customer's channel), and the org part of its icon's, unless a partner's;
+ * a domain two customers have is the one's with more of its people there, and a customer's own
+ * is no other's icon's. The people of a public channel are told apart by them.
+ */
+export async function customerDomains(env) {
+  const [{ customers = [] }, partners] = await Promise.all([
+    derivedDomains(env), partnerDomains(env),
+  ]);
+  const own = new Map();
+  for (const c of customers) {
+    const top = c.domains.find((d) => !partnerOf(d.domain, partners));
+    const was = top && own.get(top.domain);
+    if (top && (!was || top.people > was.people)) {
+      own.set(top.domain, { org: c.org, name: c.name || c.org, people: top.people });
+    }
+  }
+  for (const c of customers) {
+    if (c.icon && !own.has(c.icon) && !partnerOf(c.icon, partners)) {
+      own.set(c.icon, { org: c.org, name: c.name || c.org, people: 0 });
+    }
+  }
+  return new Map([...own].map(([d, { org, name }]) => [d, { org, name }]));
+}
+
+/**
+ * The customer whose people write from mail domain `domain` or a parent of it, `{ domain, org,
+ * name }`, or null: `customers` is `customerDomains`. A partner's domain is no customer's: ask
+ * `partnerOf` first.
+ */
+export function customerOf(domain, customers) {
+  const parts = String(domain || '').toLowerCase().split('.');
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const d = parts.slice(i).join('.');
+    const c = customers && customers.get(d);
+    if (c) {
+      return { domain: d, org: c.org, name: c.name || c.org };
     }
   }
   return null;

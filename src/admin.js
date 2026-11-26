@@ -148,7 +148,7 @@ const FOLLOW_FIELDS = [...FIELDS, 'org'];
 const ORG_FOLLOW_NOTE = 'follows the customer';
 const TARGETS = ['team', 'org', 'kind', 'follow'];
 const KINDS = ['channel', 'alert', 'ignore'];
-const TYPES = ['customer', 'partner', 'vendor', 'internal'];
+const TYPES = ['customer', 'partner', 'vendor', 'internal', 'public'];
 const ICON = /^(https:\/\/\S{1,500}|[a-z0-9.-]+\.[a-z]{2,})$/i;
 const MAX_TEXT = 200;
 

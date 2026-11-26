@@ -23,7 +23,8 @@ import { readable } from './watches.js';
 /**
  * What a thread agent is told of its thread's links across a partner and its customers
  * (src/threadlinks.js): the customers a partner's thread is about, the partners in a customer's,
- * and the threads possibly about the same issue in their channels. In its first input
+ * the partners and customers in a public one, and the threads possibly about the same issue in
+ * their channels. In its first input
  * (src/agent/delivery.js), in an input of its own when one is found (`relatedUpdate`), and on
  * asking (`related_threads`, src/agent/tools.js). A linked thread is named, with its title, only
  * where the agent may read it with its tools (`readable`: its channel, `org_threads` within its
@@ -69,8 +70,14 @@ export async function relatedNote(env, t) {
     lines.push(`This partner's thread is about the customer ${names(links.about)}`
       + ` (${links.about.map((o) => `${o.via.join(', ') || 'clef'}, ${pct(o.p)}`).join('; ')}).`);
   }
-  if (links.with.length) {
-    lines.push(`People of the partner ${names(links.with)} (an agency or system integrator) post in this thread.`);
+  const partners = links.with.filter((o) => o.role !== 'customer');
+  const customers = links.with.filter((o) => o.role === 'customer');
+  if (partners.length) {
+    lines.push(`People of the partner ${names(partners)} (an agency or system integrator) post in this thread.`);
+  }
+  if (customers.length) {
+    lines.push(`People of the customer ${names(customers)} post in this public thread, by their mail`
+      + ' domain. That is for the team: never say in the channel whose people they are.');
   }
   if (links.related.length) {
     const may = links.related.filter((r) => r.can_see);

@@ -210,7 +210,9 @@ function setHtml(el, html) {
 // the favicon of the customer's usual mail domain. `favicon()` takes either.
 const orgName = (t) => t.org_name || t.org;
 const orgIcon = (t) => t.org_icon || t.customerDomain || null;
-const ORG_TYPE = { partner: 'Partner', vendor: 'Vendor', internal: 'Internal' };
+const ORG_TYPE = {
+  partner: 'Partner', vendor: 'Vendor', internal: 'Internal', public: 'Public',
+};
 const backlink = (t, label) => (t.permalink
   ? `<a class="back" href="${esc(t.permalink)}" target="_blank" rel="noopener" title="Open in ${platform(t)}">${esc(label || `↗ ${platform(t)}`)}</a>` : '');
 
@@ -248,12 +250,25 @@ function profileKey(key, { name, staff, kind, domain, avatar: url, platform: sou
   }
   return k;
 }
-const RELATION_LABEL = { adobe: 'Adobe', partner: 'Partner', customer: 'Customer', bot: 'Bot' };
+const RELATION_LABEL = {
+  adobe: 'Adobe', partner: 'Partner', customer: 'Customer', community: 'Community', bot: 'Bot',
+};
 const RELATION_HINT = {
   adobe: 'Adobe staff',
   partner: 'Works for an Adobe partner',
   customer: 'Not Adobe staff or a known partner',
+  community: 'In a public channel, of no known customer or partner',
   bot: 'An app or integration',
+};
+/**
+ * Who someone is in a thread: their card's relation, except in a public channel (an org of type
+ * `public`, where people of many orgs post), where a customer's person is the customer's they
+ * are by their mail domain (`customer`, src/profiles.js), and anyone else outside Adobe and its
+ * partners is the community.
+ */
+const relationIn = (p, ctx) => {
+  const rel = p.relation || 'customer';
+  return rel === 'customer' && ctx.type === 'public' && !p.customer ? 'community' : rel;
 };
 
 /** The thread a name or avatar belongs to: its row in the list, or the open thread. */
@@ -263,6 +278,7 @@ function cardContext(el) {
   const th = state.cache.get(key)?.data?.thread || {};
   return {
     thread: key || null, slug: t.org || th.org || null, org: orgName(t.org ? t : th), icon: orgIcon(t.org ? t : th), customerDomain: t.customerDomain || null, channel: t.channel_name || th.channel_name,
+    type: t.org_type || th.org_type || null,
   };
 }
 
@@ -351,8 +367,10 @@ function cardHtml(p, ctx, found, key = null) {
   const name = person?.name || p.name;
   const title = person?.title || p.title;
   const role = [title, p.company].filter(Boolean).join(', ');
-  const rel = p.relation || 'customer';
-  const label = rel === 'partner' && p.partner ? `Partner: ${p.partner}` : RELATION_LABEL[rel];
+  const rel = relationIn(p, ctx);
+  let label = RELATION_LABEL[rel];
+  if (rel === 'partner' && p.partner) label = `Partner: ${p.partner}`;
+  else if (rel === 'customer' && ctx.type === 'public' && p.customer) label = `Customer: ${p.customer.name}`;
   const where = PLATFORM[p.platform] ? `${PLATFORM[p.platform]} account` : '';
   const rows = [];
   const ico = (d) => favImg(d);
@@ -365,8 +383,9 @@ function cardHtml(p, ctx, found, key = null) {
     const org = cardOrg(ctx.slug) ? `<a href="${esc(orgHref(ctx.slug))}" title="Open in Customers">${esc(ctx.org)}</a>` : esc(ctx.org);
     rows.push(['Channel', `${ico(ctx.icon)}${org}${ctx.channel ? `, ${esc(ctx.channel)}` : ''}`]);
   }
-  // A customer from another domain than the channel's customer may be a partner nobody listed.
-  const other = rel === 'customer' && p.domain && ctx.customerDomain && p.domain !== ctx.customerDomain;
+  // A customer from another domain than the channel's customer may be a partner nobody listed;
+  // a public channel has no customer of its own.
+  const other = rel === 'customer' && ctx.type !== 'public' && p.domain && ctx.customerDomain && p.domain !== ctx.customerDomain;
   // Someone the inbox knows (a person of D1), but not you: followed, the threads they post in
   // are in your personal view (ui/follow.js). A customer's person, of no person of D1, by their
   // account (the card's key), once it is known that they are none.
@@ -462,7 +481,7 @@ function waitWords(min) {
   return `${Math.round(h / 24)} days`;
 }
 const ORG_REL = {
-  customer: ['customer', 'Customer'], partner: ['partner', 'Partner'], vendor: ['vendor', 'Vendor'], internal: ['adobe', 'Internal'],
+  customer: ['customer', 'Customer'], partner: ['partner', 'Partner'], vendor: ['vendor', 'Vendor'], internal: ['adobe', 'Internal'], public: ['community', 'Public'],
 };
 /** The part of the card from its overview: how much it says, how soon it is answered, who and what. */
 function orgCardOverview(name, found) {
@@ -1370,9 +1389,9 @@ const involvesColor = (v) => {
 // Orgs by the type the admin team set (customer unless set); "other" for threads not filed
 // under an org yet (`_unassigned`). Not guessed from who posted: a customer's new
 // conversation that only Adobe has written in yet is still the customer's.
-const ORG_GROUPS = ['partner', 'vendor', 'customer', 'internal', 'other'];
+const ORG_GROUPS = ['partner', 'vendor', 'customer', 'public', 'internal', 'other'];
 const ORG_GROUP_LABEL = {
-  partner: 'Partners', vendor: 'Vendors', customer: 'Customers', internal: 'Internal', other: 'Other',
+  partner: 'Partners', vendor: 'Vendors', customer: 'Customers', public: 'Public', internal: 'Internal', other: 'Other',
 };
 function orgGroup(org) {
   if (!org || org.startsWith('_')) return 'other';
@@ -1380,7 +1399,7 @@ function orgGroup(org) {
   return ORG_GROUPS.includes(type) && type !== 'other' ? type : 'customer';
 }
 const ORG_COLOR = {
-  partner: 'c-partner', vendor: 'c-vendor', customer: 'c-customer', internal: 'c-none', other: 'c-none',
+  partner: 'c-partner', vendor: 'c-vendor', customer: 'c-customer', public: 'c-public', internal: 'c-none', other: 'c-none',
 };
 const URGENCY_COLOR = {
   critical: 'c-red', high: 'c-gold', normal: 'c-blue', low: 'c-none',
@@ -2095,7 +2114,8 @@ const oneCustomer = () => state.sel.customer?.size === 1;
 /**
  * What a thread is linked with across a partner and its customers (src/threadlinks.js): on a
  * partner's thread the customers it is about, on a customer's the partners whose people post in
- * it, as `{ label, title }` for its row and its header; null where it has neither.
+ * it, on a public one the customers and partners whose people do, as `{ label, title }` for its
+ * row and its header; null where it has neither.
  */
 function linkedLabel(linked) {
   const about = linked?.about || [];
@@ -2109,9 +2129,12 @@ function linkedLabel(linked) {
     };
   }
   if (withs.length) {
+    const of = (role) => withs.filter((o) => (o.role === 'customer') === (role === 'customer')).map(name);
+    const said = [of('partner').length ? `the partner ${of('partner').join(', ')}` : '',
+      of('customer').length ? `the customer ${of('customer').join(', ')}` : ''].filter(Boolean);
     return {
       label: `With ${name(withs[0])}${more(withs)}`,
-      title: `People of the partner ${withs.map(name).join(', ')} post in this thread`,
+      title: `People of ${said.join(' and of ')} post in this thread`,
     };
   }
   return null;
@@ -3963,7 +3986,7 @@ function linkedMenu(data, key) {
     return `<div class="hmi lkrel">${favImg(r.org_icon, { cls: 'fav', fallback: '<span class="fav"></span>' })}${body}${x}</div>`;
   };
   const list = hmSection('About', (linked.about || []).map((o) => orgRow(o, 'about')))
-    + hmSection('With', (linked.with || []).map((o) => orgRow(o, 'partner')))
+    + hmSection('With', (linked.with || []).map((o) => orgRow(o, o.role === 'customer' ? 'customer' : 'partner')))
     + hmSection('Possibly the same issue', related.map(relRow));
   const n = tag && related.length ? `<span class="n">· ${related.length} related</span>` : '';
   const label = tag ? tag.label : `${related.length} possibly related`;
