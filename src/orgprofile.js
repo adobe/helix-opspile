@@ -37,6 +37,13 @@
  * (`answers.by` 'them'), and `vendor`, its cases, status posts and the customers on its products
  * (src/vendors.js), whose lists are filtered per viewer.
  *
+ * A partner's (`orgs.type` 'partner', an agency or a system integrator) adds `partner`: the
+ * customers it works for, its people wherever they post, what waits on Adobe in its channels and
+ * in the customers' threads its people are in, and how soon Adobe answers them (src/partners.js
+ * `partnerNumbers`); its own people are its, not "partners'". A customer's adds `partners`: the
+ * partners that work for it (src/orgpartners.js `partnersOf`) and those whose people posted in
+ * its threads, with what links them. A decision on a pair forgets both pages (`forgetOrgProfiles`).
+ *
  * "Its threads" are the channel conversations filed under it, active in the window. Names,
  * numbers, pictures and titles only: no message text, and no mail address, leaves the Worker. A
  * customer's numbers are kept CACHE_MS per isolate.
@@ -48,7 +55,8 @@ import { mayRead } from './kbaccess.js';
 import { weeksTo } from './trends.js';
 import { LAYERS, STACK_PATH } from './stack.js';
 import { partnerOf } from './profiles.js';
-import { partnerDomains } from './partners.js';
+import { partnerDomains, partnerForViewer, partnerNumbers } from './partners.js';
+import { customersOf, partnersOf } from './orgpartners.js';
 import { personSlug } from './agent/okf.js';
 import { mailDomains } from './orgmerge.js';
 import { activeSince } from './listactivity.js';
@@ -72,6 +80,13 @@ export const MAX_SEEN = 15;
 export const MAX_PARTS = 7;
 
 let cache = new WeakMap();
+/**
+ * Each org's numbers forgotten (`forgetOrgProfiles`): the count of forgets when they last were.
+ * Numbers read before that are not used.
+ */
+let forgotten = new Map();
+let forgets = 0;
+const PARTNER = 'partner';
 
 /** SQL: the customer's threads (`thread`), `?1` the org, `?2` the first day counted. */
 const SCOPE = `scope AS (SELECT h.thread FROM threads h
@@ -82,6 +97,62 @@ const AUTHORS = `a AS (SELECT g.author_key AS key, g.staff, ${WEEK('g.at')} AS w
       COUNT(DISTINCT g.thread) AS threads, MAX(g.at) AS last
     FROM scope JOIN messages g ON g.thread = scope.thread AND g.at >= ?2
     WHERE g.deleted = 0 AND g.counted = 1 AND g.author_key IS NOT NULL GROUP BY 1, 2, 3)`;
+
+/**
+ * The partners of customer `slug`, for its page: those that work for it, confirmed or likely
+ * (src/orgpartners.js `partnersOf`, with what links them), and those whose people posted in its
+ * threads of the weeks, each with how many of its threads (`threads`) and how many of its people
+ * (`people`) that is. `authors` and `threadsBy` are `orgNumbers`' rows of who posted, `partnerFor`
+ * the partner of a mail domain.
+ */
+async function partnersHere(env, slug, authors, threadsBy, partnerFor) {
+  const linked = await partnersOf(env, slug);
+  const orgOfKey = new Map();
+  const people = new Map();
+  for (const r of authors.filter((x) => !x.staff)) {
+    const p = partnerFor(r.domain);
+    if (p && p.org) {
+      orgOfKey.set(r.key, p.org);
+      people.set(p.org, (people.get(p.org) || new Set()).add(r.person ? `p:${r.person}` : r.mail || r.key));
+    }
+  }
+  const threads = new Map();
+  for (const r of threadsBy) {
+    const o = orgOfKey.get(r.key);
+    if (o) {
+      threads.set(o, (threads.get(o) || new Set()).add(r.thread));
+    }
+  }
+  const linkOf = new Map(linked.map((x) => [x.slug, x]));
+  const others = [...people.keys()].filter((o) => !linkOf.has(o));
+  const { results: rows } = others.length ? await env.DB.prepare(`SELECT slug, name, type, icon
+    FROM orgs WHERE slug IN (SELECT value FROM json_each(?)) AND slug NOT IN (SELECT slug FROM org_merges)`)
+    .bind(JSON.stringify(others)).all() : { results: [] };
+  const orgOf = new Map((rows || []).map((o) => [o.slug, o]));
+  return [...linked, ...others.filter((o) => orgOf.has(o)).map((o) => ({
+    slug: o,
+    name: orgOf.get(o).name || null,
+    type: orgOf.get(o).type || PARTNER,
+    icon: orgOf.get(o).icon || null,
+    confirmed: false,
+    p: null,
+    score: 0,
+    signals: {},
+  }))].map((x) => ({
+    slug: x.slug,
+    name: x.name,
+    type: x.type,
+    icon: x.icon,
+    linked: linkOf.has(x.slug),
+    confirmed: x.confirmed,
+    p: x.p,
+    signals: x.signals,
+    threads: (threads.get(x.slug) || new Set()).size,
+    people: (people.get(x.slug) || new Set()).size,
+  })).sort((a, b) => Number(b.confirmed) - Number(a.confirmed)
+    || Number(b.linked) - Number(a.linked) || b.threads - a.threads || (b.p ?? 0) - (a.p ?? 0)
+    || a.slug.localeCompare(b.slug));
+}
 
 /** The middle of `values` (a sorted copy), or null for none. */
 export function median(values) {
@@ -511,10 +582,15 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
 
   // Its people, a card each: their Contact in its knowledge base, where it has one.
   const contacts = concepts.filter((c) => String(c.type || '').toLowerCase() === 'contact');
+  // A partner's own people are its, not a partner's: on its page they are "their people".
+  const partnerFor = (domain) => {
+    const x = partnerOf(domain, partners);
+    return x && x.org !== slug ? x : null;
+  };
   const personOut = ([w, e]) => {
     const p = e.person ? who.get(e.person) : null;
     const name = (p && p.name) || e.name || null;
-    const partner = partnerOf(e.domain, partners);
+    const partner = partnerFor(e.domain);
     return {
       id: e.person,
       // Without a person of D1, the account they are known by (an identity key), to follow.
@@ -560,7 +636,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     nameOf,
     { fixed, rest },
   );
-  const partnerKey = (r) => (partnerOf(r.domain, partners) ? 'partners' : 'theirs');
+  const partnerKey = (r) => (partnerFor(r.domain) ? 'partners' : 'theirs');
   const posters = authors.filter((r) => (r.kind || 'person') === 'person');
   const nameOfPerson = new Map(theirs.map(([w, e]) => [w, (e.person && who.get(e.person)?.name)
     || e.name || 'Someone']));
@@ -595,7 +671,8 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
 
   // How soon Adobe answers what its people start: the wait for Adobe's first post, in minutes.
   // A vendor is the other way round: how soon it answers what Adobe starts.
-  const vendor = row && row.type === VENDOR;
+  const orgType = (row && row.type) || 'customer';
+  const vendor = orgType === VENDOR;
   const asked = firsts.filter((f) => Boolean(Number(f.staff)) === vendor);
   const waits = asked.filter((f) => f.answered)
     .map((f) => (Date.parse(f.answered) - Date.parse(f.first)) / 60000);
@@ -632,9 +709,14 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     },
     // A vendor's cases, status posts and the customers' threads of its products (src/vendors.js).
     ...(vendor ? { vendor: await vendorNumbers(env, slug, weeks) } : {}),
+    // A partner's customers, people and what waits (src/partners.js), a customer's partners.
+    ...(orgType === PARTNER ? {
+      partner: await partnerNumbers(env, slug, weeks, { customers: await customersOf(env, slug) }),
+    } : {}),
+    ...(orgType === 'customer' ? { partners: await partnersHere(env, slug, authors, threadsBy, partnerFor) } : {}),
     people: topTheirs.map(personOut),
     peopleCount: theirs.length,
-    partnerCount: theirs.filter(([, e]) => partnerOf(e.domain, partners)).length,
+    partnerCount: theirs.filter(([, e]) => partnerFor(e.domain)).length,
     staff: topOurs.map(staffOut),
     staffCount: ours.length,
     teams: teams.slice(0, MAX_TEAMS),
@@ -672,11 +754,13 @@ export async function orgProfile(env, me, slug, { now = new Date() } = {}) {
   }
   const kept = cache.get(db);
   const hit = kept.get(key);
-  let numbers = hit && now.getTime() - hit.at < CACHE_MS ? hit.numbers : null;
+  const fresh = hit && now.getTime() - hit.at < CACHE_MS && hit.seen >= (forgotten.get(key) ?? 0);
+  let numbers = fresh ? hit.numbers : null;
   if (!numbers) {
+    const seen = forgets;
     numbers = await orgNumbers(env, key, { now });
     if (numbers) {
-      kept.set(key, { at: now.getTime(), numbers });
+      kept.set(key, { at: now.getTime(), numbers, seen });
     }
   }
   if (!numbers) {
@@ -704,6 +788,7 @@ export async function orgProfile(env, me, slug, { now = new Date() } = {}) {
       drawing: readable && numbers.kb.drawing,
     },
     ...(numbers.vendor ? { vendor: vendorForViewer(me, numbers.vendor) } : {}),
+    ...(numbers.partner ? { partner: partnerForViewer(me, numbers.partner) } : {}),
     may: { read: readable },
   };
 }
@@ -731,7 +816,20 @@ export async function orgDirectory(env) {
   return (results || []).map((o) => ({ ...o, domain: (domains.get(o.slug) || [])[0] || null }));
 }
 
+/**
+ * Forgets the kept numbers of the orgs `slugs` in this isolate: a pair of a customer and a partner
+ * was confirmed or dismissed (src/orgpartners.js `decidePartner`), so both pages say so at once
+ * here; the other isolates' within CACHE_MS.
+ */
+export function forgetOrgProfiles(...slugs) {
+  forgets += 1;
+  for (const s of slugs.filter(Boolean)) {
+    forgotten.set(String(s), forgets);
+  }
+}
+
 /** Clears the kept numbers (tests). */
 export function resetOrgProfiles() {
   cache = new WeakMap();
+  forgotten = new Map();
 }

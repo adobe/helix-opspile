@@ -33,6 +33,7 @@ import { seedTopicMap } from './dev-ui-topics.mjs';
 import { seedTeamProfile } from './dev-ui-team.mjs';
 import { seedCustomerProfile } from './dev-ui-customer.mjs';
 import { seedVendorProfile } from './dev-ui-vendor.mjs';
+import { seedPartnerProfile } from './dev-ui-partner.mjs';
 import { fakeBucket } from '../test/fakes.js';
 import { fakeMcpServers } from '../test/mcp-server.js';
 
@@ -1005,6 +1006,8 @@ export function createAdmin(store, {
     ('acme-co', 'ACME Corporation', 'customer', 'acme.example', '2026-10-20T09:00:00Z'),
     ('wonkaindustries', 'Wonka Industries Ltd', 'customer', NULL, '2026-10-20T09:00:00Z')`);
   seedPartnerPairs(DB);
+  // And Pied Piper's half year, a partner's page (dev-ui-partner.mjs).
+  seedPartnerProfile(DB);
   // Channels Lena (a member of Edge ops) asked the admin team for: one the admin team holds
   // (confirming moves it), one Platform ops holds (confirming shares it), and one declined; and
   // one her thread's agent asked to move for her.

@@ -247,6 +247,14 @@ or was slow) a `sync` writes, deletes and asks nothing and answers the rows as t
 (`skipped`): the partners' people would be nobody's, and every pair would drop and lose its
 verdict. What a look found before counts as found while the next one fails.
 
+**Org overview kept.** not kept → kept → stale or forgotten (`cache`, `forgotten` in
+src/orgprofile.js). A customer's, vendor's or partner's overview (`orgNumbers`) is kept per isolate
+by the D1 binding for `CACHE_MS` (five minutes). A decision on a pair of a customer and a partner
+(`POST /api/admin/org-partners/confirm`, `/dismiss`, with `undo` too) forgets both orgs' once it is
+written (`forgetOrgProfiles`): each counts its forgets, and numbers read before the last forget of
+their org are not used, so one read while the decision was written is not kept as fresh. The other
+isolates keep theirs up to `CACHE_MS`, as they do for a new thread; nothing else forgets them.
+
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status
 = 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.

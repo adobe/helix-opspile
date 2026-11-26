@@ -56,13 +56,13 @@ export const MAX_WAITING = 25;
  */
 const CHUNK = 200;
 /** SQL: a conversation of thread `h` that may wait on someone (src/threads.js waitingOn). */
-const MAY_WAIT = (h) => `${h}.imported = 0 AND ${h}.last_staff IS NOT NULL`;
+export const MAY_WAIT = (h) => `${h}.imported = 0 AND ${h}.last_staff IS NOT NULL`;
 
 const URGENCY = ['low', 'normal', 'high', 'critical'];
 const urgencyName = (u) => (u == null ? 'low' : URGENCY[Math.min(3, Math.max(0, Math.round(u)))]);
 
 /** The middle of `values`, or null for none. */
-function middle(values) {
+export function middle(values) {
   const v = [...values].sort((a, b) => a - b);
   if (!v.length) {
     return null;
@@ -160,7 +160,7 @@ export async function entriesOf(env, rows) {
 }
 
 /** The teams each channel is shared with: `Map<"source:channelId", team[]>`, for `rows`. */
-async function sharesOf(env, rows) {
+export async function sharesOf(env, rows) {
   const ids = [...new Set(rows.map((r) => r.channel_id))];
   if (!ids.length) {
     return new Map();
@@ -177,14 +177,14 @@ async function sharesOf(env, rows) {
 }
 
 /** SQL: what a thread row needs for `entriesOf` and a list, of threads `h`. */
-const ROW = `h.thread, h.source, h.channel_id, h.org, h.team, h.kind, h.title, h.channel_name,
+export const ROW = `h.thread, h.source, h.channel_id, h.org, h.team, h.kind, h.title, h.channel_name,
   h.root_at, h.last_at, h.any_at, h.last_staff, h.imported`;
 
 /**
  * A row of a list: what it is, who it waits on, and its teams; `third` for a customer's thread,
  * whose `vendor` is a third party (src/label.js QUESTIONS), not a vendor's case.
  */
-const listRow = (r, e, shares) => ({
+export const listRow = (r, e, shares) => ({
   thread: r.thread,
   org: r.org,
   third: r.org_type !== VENDOR,

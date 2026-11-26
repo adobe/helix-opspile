@@ -321,7 +321,33 @@ Everyone at Adobe reads an org's confirmed and likely pairs (Clef's probability 
 src/orgpartners.js, and `GET /api/customers/partners?org=` with both, `{ org, partners, customers }`.
 Each is `{ slug, name, type, icon, confirmed, p, score, signals }`, `signals` the count of each kind
 (`{ posters: 12, owners: 1 }`): names and numbers, no message text, domain or owner. Merged orgs are
-left out. `partner_domains` (src/profiles.js) is apart from this, and empty.
+left out. Who is a partner's person is apart from this: their mail domain is one of `partnerDomains`
+(src/partners.js, "Partner domains" under "People").
+
+A partner's **page** in Customers is its customer overview with its own numbers first
+(`partnerNumbers`, src/partners.js, in its `partner`; ui/customer.js), everyone's at Adobe:
+
+- its **customers**: those it works for, confirmed and likely (`customersOf`, with what links
+  them), then those whose threads of the window its people posted in, nothing linking them yet;
+  each with how many of the customer's threads its people are in, how many of its own threads the
+  customer's people are in (the people outside Adobe of its threads who post in the customer's
+  too), and how many of those wait on Adobe;
+- its **people**: the accounts of its mail domains (`partnerDomains`; a person's accounts, and
+  those of one mail address, as one), wherever they posted in the window: in its own channels and
+  in customers', how much, and for whom;
+- what **waits on Adobe** in its channels and in the customers' threads its people are in (who a
+  thread waits on as the inbox says it, `waitingOn`; a resolved one does not), and how soon Adobe
+  **answers**: the median wait for Adobe's first post, in its threads started outside Adobe, and
+  in customers' threads its people started.
+
+Counts are everyone's; a thread's title and link only for whoever works it (`forViewer`, as a
+vendor's, "Vendors"). In its overview its own people are "their people", not a partner's. A
+customer's page lists its **partners** (`partners`): those that work for it (`partnersOf`) and
+those whose people posted in its threads of the window, each a link to the partner's page, with
+what links them (the signals' counts, in words), how many of its threads their people are in and
+whether it is confirmed or likely. The overviews are kept five minutes per isolate, and a decision
+on a pair (`POST /api/admin/org-partners/confirm`, `/dismiss`) forgets both orgs' in its isolate
+(`forgetOrgProfiles`, src/orgprofile.js).
 
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
 (an agent that provisions access, say) would show on the customer's side of a thread. Every bot
@@ -3887,8 +3913,9 @@ channel threads filed under it, from D1:
   start: the
   median wait from their first message to Adobe's first post, over the threads started in the
   window (with how many of those have an answer);
-- its **people**, a card each: their picture and title, a partner's marked (its mail domain a
-  partner's, src/partners.js `partnerDomains`, as the profile cards have it), how often they post (in its threads, a line of their
+- its **people**, a card each: their picture and title, a partner's marked (its mail domain
+  another partner's than its own, src/partners.js `partnerDomains`, as the profile cards have it),
+  how often they post (in its threads, a line of their
   weeks), what they ask about (Clef's areas and technologies of their threads, ranked by their
   lift over the rest of its people, as a team's members are), and their profile there: their
   Contact in its knowledge base (`contacts/`, found by their name as src/kbpeople.js finds one),
@@ -3904,7 +3931,13 @@ channel threads filed under it, from D1:
   parts of its stack drawing (`org_stacks`) for whoever may read its knowledge base;
 - its **knowledge base**, its entries by type (`kb_concepts`, the catalog left out), listed for
   whoever may read it (src/kbaccess.js) and counted for everyone else, and its stack drawing
-  (`GET /api/kb/stack?org=`).
+  (`GET /api/kb/stack?org=`);
+- its **partners**, the agencies and system integrators that work for it (confirmed and likely,
+  src/orgpartners.js `partnersOf`) or whose people posted in its threads, each a link to its page
+  with what links them ("Partners").
+
+A vendor's page is the other way round ("Vendors"), and a partner's has its customers, its people
+wherever they post and what waits on Adobe first ("Partners").
 
 Names, numbers, pictures and titles only: no message text and no mail address. The biggest
 customer's numbers cost under a tenth of a second of D1, and are kept five minutes per isolate.
@@ -3954,7 +3987,9 @@ everyone's at Adobe; a thread's title and its link only for whoever works it, on
 filed under or one it is shared with (`visible`, src/vendors.js), so the lists say how many more
 there are. Every conversation of the window that may wait on someone is read for the cases, however
 many newer ones are resolved. A team's vendors are kept five minutes per isolate, as its overview,
-and forgotten when a team starts or stops following one.
+and forgotten when a team starts or stops following one. A partner's page ("Partners") lists what
+waits on Adobe the same way (`entriesOf`, `listRow` and `forViewer` of src/vendors.js), in its
+channels and in the customers' threads its people are in.
 
 ## Customer portal
 

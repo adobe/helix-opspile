@@ -248,6 +248,9 @@
 .spectrum .ov a.tv-contact { color: var(--link); font-size: var(--spectrum-font-size-75); text-decoration: none; }
 .spectrum .ov a.tv-contact:hover { text-decoration: underline; }
 .spectrum .ov .tag.tv-follow { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
+/* A customer and a partner: confirmed by the admin team in green, likely (Clef's) in yellow. */
+.spectrum .ov .tag.tv-confirmed { flex: none; color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); border-color: transparent; }
+.spectrum .ov .tag.tv-likely { flex: none; color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); border-color: transparent; }
 
 /* Avatars: the initials in white on the hue (ui/spectrum.css), small and bold. */
 
