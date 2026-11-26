@@ -126,6 +126,16 @@ describe('partner requests', () => {
     }));
     assert.equal(r.status, 200);
     assert.deepEqual([r.body.request.action, r.body.request.since, r.body.request.requestedBy.email], ['link', '2026-09', 'bo@staff.example']);
+    // Bo is no admin: what he is answered has none of the admin team's evidence.
+    await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners'));
+    const agency = await quiet(() => call(e, BO, 'POST', '/api/admin/org-partner-requests', { customer: 'globex', partner: 'agency', action: 'link' }));
+    assert.equal(agency.status, 409);
+    assert.equal(agency.body.request.requestedBy.name, 'Clef');
+    assert.ok(agency.body.request.pair && agency.body.request.pair.p === 0.9);
+    assert.ok(!('signals' in agency.body.request.pair) && !('fingerprint' in agency.body.request));
+    assert.ok(!JSON.stringify(agency.body).includes('agency.example'));
+    const admin = await quiet(() => call(e, ADA, 'POST', '/api/admin/org-partner-requests', { customer: 'globex', partner: 'agency', action: 'link' }));
+    assert.ok(admin.body.request.pair.signals.length);
     const again = await call(e, BO, 'POST', '/api/admin/org-partner-requests', { customer: 'globex', partner: 'studio', action: 'link' });
     assert.equal(again.status, 409);
     assert.equal(again.body.request.id, r.body.request.id);
@@ -164,7 +174,7 @@ describe('partner requests', () => {
     const key = requestKey('partner', r.body.request.id);
     const t = await call(e, ADA, 'GET', `/api/thread?thread=${encodeURIComponent(key)}`);
     assert.equal(t.body.thread.title, 'The Agency no longer works for Globex?');
-    assert.deepEqual(t.body.request.actions.map((a) => [a.id, a.label]), [['end', 'End'], ['decline', 'Still a partner']]);
+    assert.deepEqual(t.body.request.actions.map((a) => [a.id, a.label]), [['end', 'End'], ['dismiss', 'Not partners'], ['decline', 'Still a partner']]);
     // Its other partner, and the agency's people's span.
     assert.match(t.body.messages[0].body, /Globex's other partners:\n {2}- \*\*Studio\*\* `studio`: confirmed/);
     assert.match(t.body.messages[0].body, /The Agency's people in Globex's threads/);

@@ -4174,7 +4174,7 @@ function drawLink(v) {
     <div class="card"><h2>Why ${esc(p)} may work for ${esc(c)}</h2><p>${clef}</p>${evidence}</div>
     <div class="card"><h2>Partner of the customer</h2>${linkState(pair, p, c)}${listed}${ask}
       ${mine ? `<div class="form"><button id="lWithdraw"${off(key)}>Take my request back</button></div>` : ''}
-      <p class="hint">The admin team decides in its inbox: confirmed, everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}; ended, as a former one; dismissed, as none, whatever Clef says.</p></div>`;
+      <p class="hint">The admin team decides in its inbox: confirmed, everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}; ended, as a former one; not partners, as none, whatever Clef says. A partner confirmed by mistake is undone there too: ask that it no longer works for them, and decide Not partners.</p></div>`;
   showStatus();
   if ($('lAction')) {
     $('lAction').onchange = () => {

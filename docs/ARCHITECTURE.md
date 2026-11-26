@@ -324,16 +324,17 @@ dismissing a pair clears its dates, as it never was one.
 The admin team decides the pairs in its inbox, where each request to is a thread
 (`request:partner:<id>`, `org_partner_requests`, src/partnerrequests.js): that a partner works for a
 customer (`link`, since when), or no longer does (`end`, until when). Its actions are Confirm (with
-since), Not partners (dismiss) and Decline for a `link`; End (with until) and Still a partner
-(decline) for an `end`; each runs the route the pair's page had (`POST
+since), Not partners (dismiss) and Decline for a `link`; End (with until), Not partners (a
+confirmation that was a mistake) and Still a partner (decline) for an `end`; each runs the route the pair's page had (`POST
 /api/admin/org-partners/confirm`, `/dismiss`, `/end`, each with `undo`), which closes the pair's
 open requests it settles: a confirmation the `link` ones, an end the `end` ones, a dismissal all.
 The thread shows the pair as it is now, its span, and the customer's other partners. Three ask:
 
-- anyone on an ops team, on a pair's page in Customers ("Likely partners", `GET
+- the admin team, on a pair's page in Customers ("Likely partners", `GET
   /api/admin/org-partners`, which shows both orgs, a customer's mail domains its own and none of a
-  partner's, the evidence, Clef's verdict, the pair's dates and requests), `POST
-  /api/admin/org-partner-requests`;
+  partner's, the evidence, Clef's verdict, the pair's dates and requests), and anyone on an ops team
+  through `POST /api/admin/org-partner-requests`, whose answers to them leave the admin team's
+  evidence out (the signals' text, which names domains, site owners and knowledge-base entries);
 - an agent (`request_partner_link`): a thread's, on its own when the thread says a partner started
   or stopped working for the customer, or for the person in its sidebar who tells it; a
   knowledge base's, for the person in its conversation. The request names the thread. Unlike a

@@ -765,6 +765,14 @@ const partnerKind = {
         run: (v) => ({ method: 'POST', path: 'org-partners/end', body: { ...both, until: v.until } }),
         done: (a, v) => `${md(P)} is a former partner of ${md(C)}, until ${v.until}.`,
       },
+      {
+        id: 'dismiss',
+        label: 'Not partners',
+        tone: 'negative',
+        hint: `It never was: nobody at Adobe sees ${md(P)} as a partner of ${md(C)}, now or before.`,
+        run: () => ({ method: 'POST', path: 'org-partners/dismiss', body: both }),
+        done: () => `${md(P)} is no partner of ${md(C)}.`,
+      },
       decline('Still a partner', `Leaves ${md(P)} a partner of ${md(C)}.`),
     ];
     const person = r.requestedBy.kind === 'person' ? r.requestedBy : null;

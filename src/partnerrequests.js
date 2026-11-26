@@ -21,7 +21,9 @@ import { isAdmin } from './roles.js';
  * actions decide the pair through src/orgpartners.js (`decidePartner`, `endPartner`), which
  * closes the pair's open requests it settles. Nothing changes a pair until then.
  *
- * Who asks: anyone on an ops team, on the pair's page in Customers; a thread's agent
+ * Who asks: the admin team, on the pair's page in Customers; anyone on an ops team through the API
+ * (`requestPartner`; what it answers them leaves the admin team's evidence out, `requestFor`) or
+ * an agent: a thread's agent
  * (`request_partner_link`, src/agent/partnerrequest.js), on its own from what a thread says, or for
  * the person in its sidebar; and Clef, from the pairs' sync (src/orgpartners.js): a likely pair
  * nobody decided, a confirmed one whose people stopped posting while the customer's go on, an ended
@@ -108,6 +110,28 @@ export const requestOf = (r) => ({
     } : null,
   } : {}),
 });
+
+/**
+ * A request as `me` may read it: the admin team all of it; anyone else without the pair's signals
+ * (their text names domains, site owners and knowledge-base entries, the admin team's only), and
+ * without Clef's note (which says them) and fingerprint.
+ */
+export function requestFor(me, r) {
+  if (!r || isAdmin(me)) {
+    return r;
+  }
+  const rest = { ...r };
+  delete rest.fingerprint;
+  // Clef's note says what it found, in the signals' words.
+  if (rest.requestedBy && rest.requestedBy.kind === 'clef') {
+    rest.note = null;
+  }
+  if (rest.pair) {
+    rest.pair = { ...rest.pair };
+    delete rest.pair.signals;
+  }
+  return rest;
+}
 
 /** The requests, with the pair as it is now and the team of the thread they were asked from. */
 const SELECT = `SELECT q.*, x.customer AS pair_customer, x.confirmed_by, x.confirmed_at,
@@ -302,8 +326,10 @@ export async function requestPartner(env, me, body) {
   const asker = { email: me.email || String(me.id), name: me.name };
   const res = await createPartnerRequest(env, asker, body);
   return res.error
-    ? json({ error: res.error, ...(res.request ? { request: res.request } : {}) }, res.status)
-    : json({ ok: true, request: res.request });
+    ? json({
+      error: res.error, ...(res.request ? { request: requestFor(me, res.request) } : {}),
+    }, res.status)
+    : json({ ok: true, request: requestFor(me, res.request) });
 }
 
 /**
@@ -329,7 +355,7 @@ export async function closePartnerRequest(env, me, body, status) {
       status === 'declined' ? clean(body.reason, MAX_NOTE) || null : null,
       id,
     ).run();
-  const now = await getPartnerRequest(env, id);
+  const now = requestFor(me, await getPartnerRequest(env, id));
   if (!meta.changes) {
     return json({ error: `this request is ${now.status} already`, request: now }, 409);
   }
