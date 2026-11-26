@@ -75,6 +75,7 @@ import {
 import { keepLive, keepTurn, liveDue } from './kept.js';
 import { traceSteps } from './trace.js';
 import { latestTurn } from './turn.js';
+import { individualOf } from '../individual.js';
 
 /**
  * One agent per inbox entry (a thread, or a re-threaded group under its first thread's key),
@@ -691,6 +692,11 @@ export class ThreadAgent extends Agent {
         // The teams that follow a technology the thread shows (src/follows.js), whose knowledge
         // bases it has as those of the teams its channel is shared with.
         follows: entry ? entry.follows : [],
+        // In an individual channel, the end user: their knowledge base instead of the org's, and
+        // their threads only (src/individual.js). Null in a shared one.
+        individual: row ? await individualOf(this.env, {
+          source: row.source, tenant: row.tenant, channelId: row.channel_id,
+        }, entry.keys) : null,
       };
     }
     this.cachedTarget = { at: Date.now(), value };

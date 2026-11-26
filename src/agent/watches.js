@@ -21,6 +21,7 @@ import {
 } from './globals.js';
 import { grantsOf } from '../toolrequests.js';
 import { resolveAnyThread } from './history.js';
+import { wroteIn } from '../individual.js';
 import { modelProblem } from './model.js';
 
 /**
@@ -120,7 +121,15 @@ export async function readable(env, target, key) {
   ]);
   if (here && there && here.source === there.source && here.tenant === there.tenant
     && here.channel_id === there.channel_id) {
+    // In an individual channel, only a thread of its end user's (src/individual.js).
+    if (target.individual) {
+      const entry = await entryOf(env, key);
+      return entry && await wroteIn(env, target.individual.accounts, entry.keys) ? 'channel' : null;
+    }
     return 'channel';
+  }
+  if (target.individual) {
+    return null;
   }
   const scope = readScope(await toolsFor(env, target), target);
   if (!scope) {

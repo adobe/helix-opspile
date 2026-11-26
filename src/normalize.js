@@ -733,11 +733,16 @@ export function normalizePortal(key, event) {
   }
   const ch = e.channel || {};
   const channelHint = { name: ch.name, topic: ch.topic || null, company: ch.company || null };
+  // Who sees the channel's threads (portal migration 0008), by the event's number in the portal's
+  // outbox: a message's says so of an individual channel only; a channel event either way, but
+  // the one a channel is made with, which says nothing (src/individual.js `recordAudience`).
+  const audience = (e.type === 'channel' ? ch.audience : ch.audience || 'shared') || null;
+  const heard = audience ? { audience: { audience, seq: Number(e.seq) || 0 } } : {};
   if (e.type === 'channel') {
     return {
       op: 'channel',
       channel: {
-        source: 'portal', tenant, channelId: ch.id, name: ch.name, at: e.at,
+        source: 'portal', tenant, channelId: ch.id, name: ch.name, at: e.at, ...heard,
       },
     };
   }
@@ -796,6 +801,7 @@ export function normalizePortal(key, event) {
     version: String(Number(m.rev) || 0).padStart(9, '0'),
     authorRef,
     format: 'portal',
+    ...heard,
     text: m.text || '',
     files: files ? `Attachments:\n${files}` : undefined,
     // No link to it: the portal is its customers', and nobody of the inbox can open it there.

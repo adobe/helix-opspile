@@ -47,8 +47,11 @@ const MAX_SYSTEM_PROMPT = 16 * 1024;
 
 const enc = new TextEncoder();
 
-/** `org` or `team`: the kind of knowledge base an Artifacts repo is, or null. */
-export const kindOf = (artifact) => (/^kb-(org|team)-/.exec(String(artifact)) || [])[1] || null;
+/**
+ * `org`, `team` or `person` (an individual channel's end user's, src/individual.js): the kind of
+ * knowledge base an Artifacts repo is, or null.
+ */
+export const kindOf = (artifact) => (/^kb-(org|team|person)-/.exec(String(artifact)) || [])[1] || null;
 
 /**
  * Whether `path` names a file of a knowledge base as it is: relative, with no empty, `.` or `..`

@@ -596,7 +596,7 @@ const embedKind = {
         id: 'audience',
         label: 'Set audience',
         off: bound ? null : 'The customer portal is not connected to this inbox yet (PORTAL_WORKER).',
-        hint: 'Individual: each member sees only the threads they started, wrote in or were added to, and hears of no other member\'s (not their titles, counts or changes). Shared: every member sees every thread. Switching moves no thread, and the team sees them all either way.',
+        hint: 'Individual: each member sees only the threads they started, wrote in or were added to, and hears of no other member\'s (not their titles, counts or changes); the thread agent learns about each into a knowledge base of their own and reads only their threads. Shared: every member sees every thread. Switching moves no thread, and the team sees them all either way.',
         fields: [{
           name: 'individual', label: 'Individual customers: each person sees only their own threads', type: 'check', value: c.audience === 'individual',
         }],

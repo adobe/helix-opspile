@@ -19,6 +19,7 @@ import { PLATFORMS } from './platforms.js';
 import { json } from './http.js';
 import { likePattern } from './like.js';
 import { ensureKnowledgeBase } from './kb.js';
+import { recordAudience } from './individual.js';
 import { setTeamDefault } from './agent/enabled.js';
 import { AGENT_TOOLS, setToolSwitch } from './agent/agenttools.js';
 import { GLOBAL_SERVERS, setGlobalSwitch } from './agent/globals.js';
@@ -1231,6 +1232,11 @@ async function approveIntegration(env, me, body) {
       return portalRefused(reserved);
     }
     channel = { ...reserved.channel, existing: Boolean(reserved.existing) };
+    if (reserved.channel.audience === 'individual') {
+      await recordAudience(env, {
+        tenant: `${channel.id}.embed.invalid`, channelId: channel.id, audience: 'individual',
+      });
+    }
     if (!reserved.existing) {
       // The channel as the inbox knows it, its customer and its route, before anyone can post.
       const tenant = `${channel.id}.embed.invalid`;
@@ -1355,6 +1361,10 @@ async function setIntegrationAudience(env, me, body) {
   if (res.error) {
     return portalRefused(res);
   }
+  // The inbox's agents work it so from now on, not from the event (src/individual.js).
+  await recordAudience(env, {
+    tenant: res.channel.lobby, channelId: res.channel.id, audience, seq: res.seq || 0,
+  });
   console.log(JSON.stringify({
     route: 'admin', integration: 'audience', by: me.id, audience,
   }));
