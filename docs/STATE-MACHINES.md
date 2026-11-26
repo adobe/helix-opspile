@@ -422,7 +422,8 @@ the next connection it refuses forgets the id and makes another, once, and a sec
 fails the connection. Connections at once share one making (the promise is set before anything
 is awaited). A new image ends it (`DELETE`, and the id goes), also one an evicted object left in
 storage without a host to end it (`computerBrowser`'s `end`): else the next kernel, back on the
-browser image while it lives, would find its tabs.
+browser image while it lives, would find its tabs. A kernel that fails to boot only lets its host
+go (`detach`): the image is the same, and the next one finds the tabs, as after an eviction.
 
 **Agent turn.** working → done or failed. Worked out from the transcript (`src/agent/turn.js`). A turn
 that stopped half way with no run pending counts as failed after 15 minutes. A finished one is kept

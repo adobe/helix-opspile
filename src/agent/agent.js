@@ -457,7 +457,7 @@ export class ThreadAgent extends Agent {
   }
 
   /**
-   * Ends the computer's browser, with its kernel: its Chromium session, also the one an evicted
+   * Ends the computer's browser, with its image: its Chromium session, also the one an evicted
    * object left in storage, before this object attached a host.
    */
   async endBrowser() {
@@ -535,7 +535,8 @@ export class ThreadAgent extends Agent {
           imageDriver(this.env.IMAGES, tree),
         ));
       } catch (e) {
-        await this.endBrowser();
+        // The image did not change: the next boot finds the browser's tabs, as after an eviction.
+        this.computerCdp().detach();
         kernel.terminate();
         throw e;
       }

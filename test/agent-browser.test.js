@@ -170,14 +170,29 @@ describe('the computer\'s browser (Browser Run over CDP)', () => {
     const run = fakeBrowserRun();
     const store = fakeStore();
     await store.put('s7');
-    // An evicted object's kernel boots the browser image again and is ended before a program
-    // connects: its host has no session in memory, the store has one.
+    // An evicted object's kernel booted the browser image again, and the image changes before a
+    // program connected: its host has no session in memory, the store has one.
     const browser = computerBrowser(ENV, { fetch: run.fetch, store });
     browser.attach(BROWSER_IMAGE);
     await browser.end();
     assert.equal(browser.attached, false);
     assert.deepEqual(run.calls.map((c) => `${c.method} ${c.url}`), [`DELETE ${ROOT}/s7`]);
     assert.equal(store.kept.has('id'), false);
+  });
+
+  it('keeps the stored session for the next kernel when one fails to boot', async () => {
+    const run = fakeBrowserRun();
+    const store = fakeStore();
+    await store.put('s4');
+    const browser = computerBrowser(ENV, { fetch: run.fetch, store });
+    browser.attach(BROWSER_IMAGE);
+    // Mounting the image failed: the host goes, the session does not.
+    browser.detach();
+    assert.equal(browser.attached, false);
+    assert.deepEqual(run.calls, []);
+    assert.equal(store.kept.get('id'), 's4');
+    await quiet(() => browser.attach(BROWSER_IMAGE).cdp({}));
+    assert.deepEqual(run.calls.map((c) => `${c.method} ${c.url}`), [`GET ${ROOT}/s4`]);
   });
 
   it('attaches no host for an image without the programs, or without Browser Run', async () => {

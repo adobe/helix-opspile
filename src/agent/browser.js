@@ -246,9 +246,10 @@ export function browserHost(env, {
  * `cdp` option of the kernel about to boot `image`: a host for an image with the browser's
  * programs (`hasBrowser`) where the deployment has Browser Run (`browserConfigured`), else none
  * (`{}`), and `attached` says whether there is one. `end()` ends the computer's Chromium
- * session, with its kernel or its image: the attached host's, or else the one in the store. An
- * object evicted since has no host, but the session lives on, and a kernel back on the browser
- * image within its keep-alive would find its tabs.
+ * session, with its image: the attached host's, or else the one in the store. An object evicted
+ * since has no host, but the session lives on, and a kernel back on the browser image within its
+ * keep-alive would find its tabs. `detach()` lets the host go and keeps the session, for a
+ * kernel that failed to boot: the next one finds its tabs in the store, as after an eviction.
  */
 export function computerBrowser(env, options = {}) {
   let host = null;
@@ -263,6 +264,9 @@ export function computerBrowser(env, options = {}) {
       const made = browserHost(env, options);
       host = made;
       return { cdp: (request) => made.hook(request) };
+    },
+    detach() {
+      host = null;
     },
     async end() {
       const ending = host || browserHost(env, options);
