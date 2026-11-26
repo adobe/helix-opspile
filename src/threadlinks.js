@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
-import { underlying } from './d1batch.js';
+import { isolateCache } from './isolatecache.js';
 import { entryOf } from './drafts.js';
 import { entryRows, vectorOf } from './expertise.js';
 import { registrable } from './favicons.js';
@@ -117,7 +117,7 @@ const named = (text, c) => namesOf(c).some((n) => text.includes(`-${n}-`));
 
 // ---- owners ----------------------------------------------------------------------------------
 
-let ownersKept = null;
+const ownersKept = isolateCache(OWNERS_MS);
 
 /**
  * Which orgs that are not partners each GitHub or aem.live owner is named by, in their threads'
@@ -143,24 +143,12 @@ async function loadOwners(env) {
 }
 
 async function ownerIndex(env) {
-  const db = underlying(env.DB);
-  const k = ownersKept;
-  if (k && k.db === db && Date.now() - k.at < OWNERS_MS) {
-    return k.owners;
-  }
-  const kept = { db, at: Date.now(), owners: loadOwners(env) };
-  ownersKept = kept;
-  kept.owners.catch(() => {
-    if (ownersKept === kept) {
-      ownersKept = null;
-    }
-  });
-  return kept.owners;
+  return ownersKept.get(env, loadOwners);
 }
 
 /** Forgets the owners kept (for tests). */
 export function forgetOwners() {
-  ownersKept = null;
+  ownersKept.forget();
 }
 
 // ---- which customer ----------------------------------------------------------------------------

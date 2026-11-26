@@ -15,7 +15,7 @@ import { MAX_CHANGES, writeKnowledge } from './agent/kbwrite.js';
 import { isEntry } from './agent/okf.js';
 import { orgDomain } from './favicons.js';
 import { json } from './http.js';
-import { underlying } from './d1batch.js';
+import { isolateCache } from './isolatecache.js';
 import { ensureKnowledgeBase, repoName } from './kb.js';
 import { CLEF } from './label.js';
 import { domainList, loadRules } from './lookup.js';
@@ -207,33 +207,20 @@ async function loadFacts(env) {
   return { orgs, members };
 }
 
-let cachedFacts = null;
+const factsKept = isolateCache(FACTS_MS);
 
 /**
- * The facts (`loadFacts`), from this isolate's last five minutes when it has them. Kept by the
- * D1 binding under the request's wrappers (`underlying`): each request wraps it anew, so kept by
- * the wrapper they were never found again, and every list loaded them all. The promise is kept,
- * so requests that come together load them once.
+ * The facts (`loadFacts`), from this isolate's last five minutes when it has them
+ * (src/isolatecache.js): every request of the isolate finds them, and the queries of one request
+ * that ask for them together load them once.
  */
 export async function facts(env, { fresh = false } = {}) {
-  const db = underlying(env.DB);
-  const c = cachedFacts;
-  if (!fresh && c && c.db === db && Date.now() - c.at < FACTS_MS) {
-    return c.facts;
-  }
-  const kept = { db, at: Date.now(), facts: loadFacts(env) };
-  cachedFacts = kept;
-  kept.facts.catch(() => {
-    if (cachedFacts === kept) {
-      cachedFacts = null;
-    }
-  });
-  return kept.facts;
+  return factsKept.get(env, loadFacts, { fresh });
 }
 
 /** Forgets the facts kept (after a merge, and for tests). */
 export function forgetFacts() {
-  cachedFacts = null;
+  factsKept.forget();
 }
 
 // ---- candidates ------------------------------------------------------------------------------

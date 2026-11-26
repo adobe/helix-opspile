@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
+import { underlying, UNDERLYING } from '../d1batch.js';
 import { DIMENSIONS } from './prices.js';
 
 /*
@@ -105,6 +106,12 @@ function d1(db, scope) {
   };
   return new Proxy(db, {
     get(target, prop) {
+      // The binding under it: what is kept across requests by the database (src/partners.js,
+      // the trends, the profiles' facts) is kept by the binding, and each request is metered
+      // anew, so a key of this proxy would be a new one every request.
+      if (prop === UNDERLYING) {
+        return underlying(target);
+      }
       const v = Reflect.get(target, prop);
       if (typeof v !== 'function') {
         return v;
