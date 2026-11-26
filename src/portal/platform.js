@@ -17,6 +17,7 @@ import {
 import {
   declineAccess, enrollAccess, listAccess, reserveAccess,
 } from './integration-requests.js';
+import { listChannels, setAuto } from './integration-auto.js';
 import {
   channelOf, declineLobby, editMessage, ensureBot, ensureUser, openChannel, reactTo, resend,
   setTyping, writeMessage,
@@ -194,3 +195,11 @@ export const accessRequests = (env, args = {}) => listAccess(env, args);
 export const reserve = (env, args = {}, now = Date.now()) => reserveAccess(env, args, now);
 export const enroll = (env, args = {}, now = Date.now()) => enrollAccess(env, args, now);
 export const declineRequest = (env, args = {}, now = Date.now()) => declineAccess(env, args, now);
+
+/**
+ * The channels of the integration's user-token hosts and their auto-approval
+ * (src/portal/integration-auto.js): `accessChannels({ channel? })` lists them, `setAutoApprove({
+ * channel, on?, tenants?, domains?, by })` turns it on or off and sets what else they catch.
+ */
+export const accessChannels = (env, args = {}, now = Date.now()) => listChannels(env, args, now);
+export const autoApprove = (env, args = {}, now = Date.now()) => setAuto(env, args, now);

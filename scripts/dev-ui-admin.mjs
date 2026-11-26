@@ -1058,10 +1058,33 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   const sec = (days) => Math.floor((Date.now() - days * 86400000) / 1000);
   portalDb.sqlite.prepare(`INSERT INTO integration_hosts (id, service_id, issuer, jwks, scopes,
       identity, product) VALUES ('panel-prod', 'made-up.access', 'https://ims-na1.adobelogin.com',
-      '{"keys":[]}', '["threads:create","threads:read","threads:reply","changes:read"]', NULL, 'agents')`).run();
+      '{"keys":[]}', '["threads:create","threads:read","threads:reply","changes:read"]', ?, 'agents')`)
+    .run(JSON.stringify({
+      provider: 'adobe-ims',
+      environment: 'prod',
+      issuer: 'https://ims-na1.adobelogin.com',
+      keys: 'https://ims-na1.adobelogin.com/ims/keys',
+      clientIds: ['made-up-panel'],
+      tenant: 'profile.ownerOrg',
+      subject: 'token.user_id',
+      email: 'profile.email',
+    }));
   const { channel: wonkaChannel } = portalDb.sqlite.prepare(`INSERT INTO integration_customers
       (host, tenant, customer, name, enabled) VALUES ('panel-prod', '0000000000000000000000B0@AdobeOrg',
       'agents-wonka', 'agents-wonka', 1) RETURNING channel`).get();
+  // Wonka's channel auto-approves its people, and whoever has a verified wonka.example address;
+  // two were auto-approved (src/portal/integration-auto.js), one by its domain.
+  portalDb.sqlite.prepare(`UPDATE integration_customers SET auto_approve = 1, auto_by = 'priya@example.com',
+      auto_at = ? WHERE channel = ?`).run(sec(3), wonkaChannel);
+  portalDb.sqlite.prepare(`INSERT INTO integration_catches (host, channel, kind, value, added_by, added_at)
+      VALUES ('panel-prod', ?, 'domain', 'wonka.example', 'priya@example.com', ?)`).run(wonkaChannel, sec(3));
+  for (const [i, name, email, via, days] of [[1, 'Augustus Gloop', null, null, 2], [2, 'Violet Beauregarde', 'violet@wonka.example', 'domain:wonka.example', 0.1]]) {
+    const { actor } = portalDb.sqlite.prepare(`INSERT INTO integration_actors (channel, name, verified_email)
+      VALUES (?, ?, ?) RETURNING actor`).get(wonkaChannel, name, email);
+    portalDb.sqlite.prepare(`INSERT INTO integration_members (channel, subject, actor, approved_by,
+        approved_at, via, auto) VALUES (?, ?, ?, 'priya@example.com', ?, ?, 1)`)
+      .run(wonkaChannel, `00000000000000000000B00${i + 1}@AdobeID`, actor, sec(days), via);
+  }
   for (const [target, value] of [['team', 'edge'], ['org', 'wonka']]) {
     DB.sqlite.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note)
       VALUES (?, 10, 'portal', 'channel_id', ?, ?, 'manual assignment')`).run(target, `^${wonkaChannel}$`, value);
@@ -1139,6 +1162,8 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       reserveAccess: (a) => portalPlatform.reserve({ DB: portalDb }, a),
       enrollAccess: (a) => portalPlatform.enroll({ DB: portalDb }, a),
       declineAccess: (a) => portalPlatform.declineRequest({ DB: portalDb }, a),
+      accessChannels: (a) => portalPlatform.accessChannels({ DB: portalDb }, a),
+      setAutoApprove: (a) => portalPlatform.autoApprove({ DB: portalDb }, a),
     },
     AGENT_MODEL: 'dev',
     AGENT_CHANNELS: 'C0ACMEAEM',

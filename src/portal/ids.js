@@ -30,6 +30,40 @@ export function domainOf(email) {
   return m ? m[1] : null;
 }
 
+/** Mail domains of everyone: they say nothing of a company, and never catch anyone. */
+const PUBLIC_MAIL = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com',
+  'msn.com', 'yahoo.com', 'ymail.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'proton.me',
+  'protonmail.com', 'pm.me', 'gmx.com', 'gmx.net', 'gmx.de', 'web.de', 'yandex.com', 'yandex.ru',
+  'mail.ru', 'qq.com', '163.com', '126.com', 'zoho.com', 'hey.com', 'fastmail.com', 'mail.com',
+  't-online.de', 'orange.fr', 'free.fr', 'libero.it', 'naver.com', 'tutanota.com', 'tuta.io',
+  'mailbox.org', 'posteo.de', 'seznam.cz', 'rediffmail.com', 'yahoo.co.jp', 'daum.net']);
+/** The same providers' country domains (`yahoo.co.uk`, `gmx.at`, `outlook.de`). */
+const PUBLIC_BRANDS = new Set(['gmail', 'googlemail', 'outlook', 'hotmail', 'live', 'yahoo', 'gmx',
+  'yandex', 'icloud', 'protonmail', 'proton', 'aol', 'msn']);
+/** Second-level labels of country domains (`acme.co.uk`): the company is the label before. */
+const SECOND_LEVEL = new Set(['co', 'com', 'ac', 'gov', 'org', 'net', 'edu', 'ne', 'or', 'gv', 'ltd', 'plc']);
+
+/**
+ * A mail domain's labels and where its company label is (`mail.acme.co.uk`: `acme`), or null
+ * for what is not a domain.
+ */
+export function domainParts(domain) {
+  const labels = String(domain || '').toLowerCase().split('.');
+  if (labels.length < 2 || labels.some((l) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(l))) {
+    return null;
+  }
+  const at = labels.length >= 3 && SECOND_LEVEL.has(labels[labels.length - 2])
+    && labels[labels.length - 1].length === 2 ? labels.length - 3 : labels.length - 2;
+  return { labels, at };
+}
+
+/** Whether a mail domain is everyone's (gmail.com, outlook.com, yahoo.co.uk, …). */
+export function isPublicMail(domain) {
+  const parts = domainParts(domain);
+  return !parts || PUBLIC_MAIL.has(parts.labels.slice(parts.at).join('.'))
+    || PUBLIC_MAIL.has(parts.labels.join('.')) || PUBLIC_BRANDS.has(parts.labels[parts.at]);
+}
+
 /**
  * A person's account id in the portal: `u` and a hash of their mail address. The inbox works
  * it out for the person who replies or reacts from there, as the portal does when they do.

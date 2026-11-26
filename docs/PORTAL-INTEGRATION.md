@@ -88,7 +88,10 @@ chat platform, email domain or channel naming convention.
    can enroll a new subject.
 
    A member linked by email must also present the same issuer-verified email on every call.
-   A matching email alone never authorizes anything. Change `integration_members.active` to `0` to
+   A matching email alone never authorizes anything. There is one exception, explicit and opt-in:
+   a domain the admin team lists on an auto-approving channel of a user-token host
+   ([Auto-approval](#auto-approval)), and only for an address the provider verified, matched
+   exactly. Change `integration_members.active` to `0` to
    revoke, `integration_customers.enabled` to `0` to suspend, or empty a host's scopes to disable
    it. Don't delete and reassign identities. These are configuration changes, not host-specific
    code or deploys. Reads, retries and polls recheck enrollment.
@@ -187,8 +190,10 @@ organization, and the sign-in is where they pick one; each has its own `user_id`
 different subject. Memberships listed by `/ims/organizations` (an Adobe ID added to other
 organizations, administrators of several) never choose the tenant: nothing the host sends can
 choose among them. The list is only read for the name of the `ownerOrg` itself, on an
-[access request](#access-requests). A profile without `ownerOrg` (a personal Adobe ID, or a sign-in without the
-`additional_info.ownerOrg` scope) gets `403 not_enrolled`. With Directory Trust the owner is the
+[access request](#access-requests). A profile without `ownerOrg` (a personal Adobe ID, or a
+sign-in without the `additional_info.ownerOrg` scope) gets `403 not_enrolled`. The exception is
+a verified address at a domain an auto-approving channel lists
+([Auto-approval](#auto-approval)). With Directory Trust the owner is the
 organization that owns the directory; enroll that one.
 
 **Request headers.** The same as with assertions, except the bearer token:
@@ -279,9 +284,74 @@ still works:
 | --- | --- |
 | `{"error":{"code":"not_enrolled","request":"pending"}}` | Recorded (or refreshed), waiting for approval. |
 | `{"error":{"code":"not_enrolled","request":"declined","reason":"…"}}` | Declined; `reason` only when the admin gave one (plain text, for the person). |
-| `{"error":{"code":"not_enrolled"}}` | Nothing recorded: an assertion host, a scope the host lacks, a profile without `ownerOrg`, a member row (revoked or another email), or the bounds reached. |
+| `{"error":{"code":"not_enrolled"}}` | Nothing recorded: an assertion host, a scope the host lacks, a profile without `ownerOrg` that no listed domain places, a member row (revoked or another email), or the bounds reached. |
 
 Once approved, the person's next call is admitted as any member's.
+
+## Auto-approval
+
+Once an organization is onboarded, the admin team can let its people in without a request each.
+A channel of a user-token host can be marked **auto-approving**: from then on, a verified caller
+of that host who lands in the channel is enrolled on their **first call**, and the call goes on
+as a member's. The admin turns it on when approving the organization's first request (*Auto-approve
+future members of this organization*), or later on the channel's thread in the admin team's inbox
+(*Integration channels*, *Set auto-approval*), or with `PUT /api/admin/portal/integration/auto`
+(README). It is off by default, and assertion hosts never have it.
+
+**Who lands in a channel.** Tried in this order; the first match decides:
+
+1. The caller's tenant (the profile's `ownerOrg`) is the channel's own tenant.
+2. The caller's tenant is one of the channel's **extra organization IDs**. This lands another IMS
+   organization of the same customer in the same channel.
+3. Only if the tenant lands in no channel of the host: the caller's email is one the provider
+   marks **verified**, and its domain is one of the channel's **mail domains**, matched exactly.
+   A subdomain matches only when it is listed itself. This catches people who sign in with a
+   personal profile, or another organization's, but a company address. An unverified address
+   never matches.
+
+Each organization ID and domain belongs to at most one channel per host. An ID can't be another
+channel's own tenant either. A conflict is refused with `409`, naming the channel that holds the
+value. Free-mail domains (`gmail.com`, `outlook.com`, `yahoo.co.uk`, …) are refused as catch
+domains.
+
+**What an auto-approval does.** It enrolls as an approval does:
+
+- A new actor, for that subject only, named as the provider names them. It never links an
+  existing portal user, staff or bot, and never touches a subject with a member row on the host
+  (in any channel or state).
+- The member is recorded as auto-approved (`integration_members.auto`), with the rule that
+  matched (`via`: none for the channel's tenant, `org:<id>` or `domain:<domain>`) and the admin
+  who set that rule (`approved_by`).
+- A member caught by a domain is bound to that verified address, as an alias enrollment is
+  (step 5). Every later call must present it, verified.
+- A pending request of theirs, if any, is marked approved.
+- The admin team sees every auto-approval on the channel's thread, as an entry at its time, with
+  the member counts.
+
+Auto-approval never enrolls into a disabled or suspended channel. It enrolls at most 30 people per
+channel per hour. Beyond that cap, or when anything else stops it, the caller gets a pending
+[access request](#access-requests) as before. Turning it off stops new auto-enrollments. Existing
+members stay until they are revoked (`integration_members.active = 0`).
+
+**Resolution.** On a host with an identity provider, a member is found by subject (the provider's
+user ID). A subject is a member of at most one channel per host; the database refuses a second.
+The call is admitted when:
+
+- the caller's tenant is the channel's own tenant,
+- or it is one of the channel's organization IDs,
+- or the member was caught by a domain and presents its bound verified address.
+
+Reads, writes and `/changes` all resolve this way. Assertion hosts keep resolving by
+`(tenant, subject)`.
+
+An operator can set the same with SQL (bound parameters):
+
+```sql
+UPDATE integration_customers SET auto_approve = 1, auto_by = :admin_email, auto_at = unixepoch()
+  WHERE channel = :channel;
+INSERT INTO integration_catches(host, channel, kind, value, added_by, added_at)
+  VALUES (:host, :channel, 'domain', :lowercase_domain, :admin_email, unixepoch());
+```
 
 ## HTTPS/JSON contract
 

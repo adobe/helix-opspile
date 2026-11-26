@@ -13,6 +13,7 @@
 import { accessClaims, signedClaims } from '../access.js';
 import { hostIdentity, tokenUser, UpstreamError } from './integration-identity.js';
 import { captureAccess, pruneAccess } from './integration-requests.js';
+import { autoEnroll } from './integration-auto.js';
 
 export const BASE = '/integrations/portal/v1';
 export const WEEK = 7 * 24 * 60 * 60;
@@ -71,10 +72,11 @@ async function userToken(identity, host, jwt, scope, options, invalid) {
   if (!c) {
     invalid();
   }
-  if (!id(c.tenant)) {
-    fail(403, 'not_enrolled');
-  }
-  return { ...c, jti: `token:${crypto.randomUUID()}`, organization: user.organization };
+  // A profile without an organization (a personal Adobe ID) is let through to enrollment: only
+  // a member placed by a caught mail domain, with that verified address, can be one.
+  return {
+    ...c, tenant: id(c.tenant) ? c.tenant : null, jti: `token:${crypto.randomUUID()}`, organization: user.organization,
+  };
 }
 
 /** Only Access's signed service identity selects the host and therefore how it names users. */
@@ -108,26 +110,47 @@ export async function authorize(request, env, scope, options = {}) {
     ? await userToken(identity, host, jwt, scope, options, invalid)
     : await assertion(request, host, aud, jwt, scope, now, invalid);
 
-  const member = await env.DB.prepare(`SELECT c.channel, c.name AS channelName,
+  // A provider's subject is its user ID, one per host (portal migration 0007): it resolves to its
+  // channel when its tenant is the channel's or one it lists, or, for a member a caught domain
+  // placed, with its verified address (checked below). An assertion's subject is the tenant's.
+  const find = () => env.DB.prepare(`SELECT c.channel, c.name AS channelName,
       m.actor, m.cursor_key, a.verified_email, u.name FROM integration_customers c
     JOIN integration_members m ON m.channel = c.channel
     JOIN integration_actors a ON a.channel = m.channel AND a.actor = m.actor
     JOIN users u ON u.id = m.actor
-    WHERE c.host = ? AND c.tenant = ? AND c.enabled = 1 AND m.subject = ? AND m.active = 1
-      AND u.kind = 'customer' AND u.email IS NULL`).bind(host.id, c.tenant, c.sub).first();
-  if (!member || (member.verified_email !== null && (c.email_verified !== true
-    || !id(c.email) || c.email.trim().toLowerCase() !== member.verified_email))) {
+    WHERE c.host = ?1 AND c.enabled = 1 AND m.subject = ?3 AND m.active = 1
+      AND u.kind = 'customer' AND u.email IS NULL AND (c.tenant = ?2 ${identity ? `
+        OR m.via = 'org:' || ?2 OR EXISTS (SELECT 1 FROM integration_catches k WHERE k.host = ?1
+          AND k.channel = c.channel AND k.kind = 'tenant' AND k.value = ?2)
+        OR (m.via LIKE 'domain:%' AND a.verified_email IS NOT NULL)` : ''})
+    LIMIT 1`).bind(host.id, c.tenant || '', c.sub).first();
+  const admitted = (m) => m && (m.verified_email === null || (c.email_verified === true
+    && id(c.email) && c.email.trim().toLowerCase() === m.verified_email));
+  const announce = (what) => {
+    const told = Promise.resolve()
+      .then(() => env.OPSPILE?.accessRequested?.(what))
+      .catch(() => console.warn('portal integration: access request not announced'));
+    options.waitUntil?.(told);
+  };
+  let member = await find();
+  if (!member && identity) {
+    // An organization the admin team onboarded: enrolled on their first call.
+    const enrolled = await autoEnroll(env, host, c, {
+      now: options.now ?? Date.now(), notify: announce,
+    })
+      .catch(() => {
+        console.warn('portal integration: auto-approval failed');
+        return false;
+      });
+    member = enrolled ? await find() : null;
+  }
+  if (!admitted(member)) {
     // A verified caller of a provider host asks for access by calling: recorded for the admin
     // team, and the body says how it stands. An assertion host enrolls its users by hand.
     const detail = identity ? await captureAccess(env, host, c, {
       now: options.now ?? Date.now(),
       organization: c.organization,
-      notify: (requestId) => {
-        const told = Promise.resolve()
-          .then(() => env.OPSPILE?.accessRequested?.({ id: requestId }))
-          .catch(() => console.warn('portal integration: access request not announced'));
-        options.waitUntil?.(told);
-      },
+      notify: (requestId) => announce({ id: requestId }),
     }).catch(() => {
       console.warn('portal integration: access request not recorded');
       return null;

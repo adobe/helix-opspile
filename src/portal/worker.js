@@ -35,8 +35,8 @@ import { BASE, pruneIntegration } from './integration-auth.js';
 import { deliver, pruneEvents } from './events.js';
 import { pruneFiles } from './files.js';
 import {
-  accessRequests, again, avatar, decline, declineRequest, edit, enroll, file, logo, open, post,
-  react, reserve, typing, upload,
+  accessChannels, accessRequests, again, autoApprove, avatar, decline, declineRequest, edit, enroll,
+  file, logo, open, post, react, reserve, typing, upload,
 } from './platform.js';
 import { refreshTech, techStale } from './tech.js';
 
@@ -194,5 +194,15 @@ export class PortalPlatform extends WorkerEntrypoint {
   /** `{ id, reason?, by }`: declines an access request. */
   declineAccess(args) {
     return declineRequest(this.env, args);
+  }
+
+  /** `{ channel? }`: the user-token hosts' channels, with their auto-approval and members. */
+  accessChannels(args) {
+    return accessChannels(this.env, args);
+  }
+
+  /** `{ channel, on?, tenants?, domains?, by }`: a channel's auto-approval. */
+  setAutoApprove(args) {
+    return autoApprove(this.env, args);
   }
 }

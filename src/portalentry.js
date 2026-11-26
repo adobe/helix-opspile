@@ -55,12 +55,18 @@ export class PortalSource extends WorkerEntrypoint {
 
   /**
    * `{ id }`: someone asked for access through a host of the integration (src/portal/
-   * integration-requests.js), or asked again: the admin team's inboxes load their requests.
-   * The request stays the portal's; nothing of it is stored here.
+   * integration-requests.js), or asked again; `{ channel }`: someone was auto-approved into a
+   * channel (src/portal/integration-auto.js). The admin team's inboxes load their requests. The
+   * request stays the portal's; nothing of it is stored here.
    */
   async accessRequested(args) {
     const id = Number(args && args.id);
-    await announceRequest(this.env, 'integration', Number.isSafeInteger(id) && id > 0 ? id : null);
+    const channel = String((args && args.channel) || '');
+    if (/^c[0-9a-z]{12}$/.test(channel)) {
+      await announceRequest(this.env, 'embed', channel);
+    } else {
+      await announceRequest(this.env, 'integration', Number.isSafeInteger(id) && id > 0 ? id : null);
+    }
     return { ok: true };
   }
 }

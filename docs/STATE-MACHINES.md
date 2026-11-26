@@ -911,6 +911,18 @@ decline is conditional on `pending`, and a later call after 30 days makes the ro
 with the decision cleared. Decided rows and pending rows not seen for 180 days are pruned by the
 cron, a thousand at a time.
 
+**Auto-approval of an integration channel.** off ⇄ on (`integration_customers.auto_approve`,
+who and when in `auto_by`, `auto_at`; what else lands there in `integration_catches`, primary key
+`(host, kind, value)`, so an org ID or domain is one channel's per host, and triggers refuse a
+catch of a mapped tenant and a mapping of a caught one). On, a verified caller with no member row
+on the host whose tenant, extra org ID or, failing both, exact verified mail domain lands in the
+enabled channel is enrolled in one batch: the actor only if the channel is still enabled and on
+and fewer than 30 were auto-approved in the last hour, the member only if that actor exists, and
+their request approved only if that member exists. Anything that stops it (off, disabled, cap, a
+uniqueness conflict) leaves a pending request instead. Off stops new ones; members stay. A
+provider host's subject is one member per host (trigger `integration_member_host`), resolved by
+subject; a domain-caught member (`via` `domain:…`) is bound to its verified address.
+
 **Managed channel and member.** Reserved → enabled ⇄ suspended (`integration_customers`).
 Reserve the channel ID, pre-file it by that ID in the inbox, then enable the tenant. The first
 create materializes its lobby and channel with the root and its events; racing creates reuse

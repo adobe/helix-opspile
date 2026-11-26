@@ -25,6 +25,11 @@
  * or bot, and never moves a subject that has (or had) a member row.
  */
 
+import { domainOf } from './ids.js';
+import {
+  memberOnHost, resolveChannel, verifiedEmail,
+} from './integration-auto.js';
+
 /** Unix seconds a pending request is refreshed after at the earliest. */
 const REFRESH = 15 * 60;
 /** After this long, a declined request is pending again on the person's next call. */
@@ -42,13 +47,17 @@ const iso = (s) => (Number.isFinite(s) && s > 0 ? new Date(s * 1000).toISOString
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const fail = (error, status = 400) => ({ error, status });
 
-/** The tenant's mapping on the host, and whether `subject` has a member row in it (any state). */
-async function mappingOf(db, host, tenant, subject) {
-  return db.prepare(`SELECT c.channel, c.name, c.customer, c.enabled, c.enabled_at,
-      c.approved_by, EXISTS (SELECT 1 FROM integration_members m WHERE m.channel = c.channel
-        AND m.subject = ?3) AS member
-    FROM integration_customers c WHERE c.host = ?1 AND c.tenant = ?2`)
-    .bind(host, tenant, subject).first();
+/**
+ * The channel a request's (or a caller's) tenant or verified address lands in on the host
+ * (src/portal/integration-auto.js `resolveChannel`), and whether `subject` has a member row on
+ * the host, in any channel and state.
+ */
+async function mappingOf(db, host, { tenant, email }, subject) {
+  const [m, member] = await Promise.all([
+    resolveChannel(db, host, { tenant, domain: email && domainOf(email) }),
+    memberOnHost(db, host, subject),
+  ]);
+  return m || member ? { ...m, member: Boolean(member), mapped: Boolean(m) } : null;
 }
 
 /** A mapping an approval made and never enabled: approving again finishes it. */
@@ -67,14 +76,20 @@ export async function captureAccess(env, host, c, {
 } = {}) {
   const db = env.DB;
   const sec = Math.floor(now / 1000);
-  const mapping = await mappingOf(db, host.id, c.tenant, c.sub);
+  const email = verifiedEmail(c);
+  const mapping = await mappingOf(db, host.id, { tenant: c.tenant, email }, c.sub);
   if (mapping && mapping.member) {
     // Revoked, or enrolled under another verified email: for a human, not for a request.
     return null;
   }
+  // Without an organization (a personal profile) only a caught mail domain can place them.
+  if (!c.tenant && !(mapping && mapping.mapped)) {
+    return null;
+  }
+  const tenant = c.tenant || '';
   const row = await db.prepare(`SELECT id, status, seen_at, decided_at, reason
     FROM integration_requests WHERE host = ? AND tenant = ? AND subject = ?`)
-    .bind(host.id, c.tenant, c.sub).first();
+    .bind(host.id, tenant, c.sub).first();
   if (row && row.status === 'approved') {
     // Its member row was removed by hand: the operator decides.
     return null;
@@ -85,10 +100,9 @@ export async function captureAccess(env, host, c, {
   if (row && row.status === 'pending' && row.seen_at > sec - REFRESH) {
     return { request: 'pending' };
   }
-  const email = c.email_verified === true && typeof c.email === 'string' && c.email.length <= 254
-    ? c.email.trim().toLowerCase() || null : null;
   const name = clean(c.name, 120) || null;
-  const orgName = clean(await organization(c.tenant).catch(() => null), 200) || null;
+  const orgName = c.tenant ? clean(await organization(c.tenant).catch(() => null), 200) || null
+    : null;
   if (row) {
     const again = row.status === 'declined';
     await db.prepare(`UPDATE integration_requests SET name = COALESCE(?2, name), email = ?3,
@@ -115,14 +129,14 @@ export async function captureAccess(env, host, c, {
     AND NOT EXISTS (SELECT 1 FROM integration_requests WHERE host = ?1 AND requested_at > ?7 - 3600
       LIMIT 1 OFFSET ${HOST_HOURLY - 1})
     ON CONFLICT DO NOTHING RETURNING id`)
-    .bind(host.id, c.tenant, c.sub, name, email, orgName, sec).first();
+    .bind(host.id, tenant, c.sub, name, email, orgName, sec).first();
   if (inserted) {
     notify(inserted.id);
     return { request: 'pending' };
   }
   // Another call of the same person won the race, or the bounds are reached.
   const raced = await db.prepare(`SELECT status FROM integration_requests WHERE host = ?
-    AND tenant = ? AND subject = ?`).bind(host.id, c.tenant, c.sub).first();
+    AND tenant = ? AND subject = ?`).bind(host.id, tenant, c.sub).first();
   return raced && raced.status !== 'approved' ? { request: raced.status } : null;
 }
 
@@ -132,16 +146,20 @@ function shape(r) {
     channel: r.m_channel,
     name: r.m_name,
     customer: r.m_customer,
+    tenant: r.m_tenant,
     enabled: Boolean(r.m_enabled),
     resumable: resumable({
       enabled: r.m_enabled, enabled_at: r.m_enabled_at, approved_by: r.m_approved_by,
     }),
+    autoApprove: Boolean(r.m_auto),
+    // How the request lands in it: its tenant (null), an extra org ID, or a caught domain.
+    via: r.m_via || null,
   } : null;
   return {
     id: r.id,
     host: r.host,
     product: r.product || null,
-    tenant: r.tenant,
+    tenant: r.tenant || null,
     orgName: r.org_name || null,
     subject: r.subject,
     name: r.name || null,
@@ -159,11 +177,22 @@ function shape(r) {
   };
 }
 
+// The channel each lands in, as `resolveChannel` finds it: the tenant's, an extra org ID's, else
+// the verified address's domain's.
 const SELECT = `SELECT r.*, h.product, c.channel AS m_channel, c.name AS m_name,
-    c.customer AS m_customer, c.enabled AS m_enabled, c.enabled_at AS m_enabled_at,
-    c.approved_by AS m_approved_by
-  FROM integration_requests r JOIN integration_hosts h ON h.id = r.host
-  LEFT JOIN integration_customers c ON c.host = r.host AND c.tenant = r.tenant`;
+    c.customer AS m_customer, c.tenant AS m_tenant, c.enabled AS m_enabled,
+    c.enabled_at AS m_enabled_at, c.approved_by AS m_approved_by, c.auto_approve AS m_auto,
+    CASE WHEN c.tenant = r.tenant THEN NULL WHEN r.caught_org IS NOT NULL THEN 'org:' || r.tenant
+      WHEN c.channel IS NOT NULL THEN 'domain:' || r.domain END AS m_via
+  FROM (SELECT q.*, substr(q.email, instr(q.email, '@') + 1) AS domain,
+      (SELECT k.channel FROM integration_catches k WHERE k.host = q.host AND k.kind = 'tenant'
+        AND k.value = q.tenant) AS caught_org FROM integration_requests q) r
+  JOIN integration_hosts h ON h.id = r.host
+  LEFT JOIN integration_customers c ON c.channel = COALESCE(
+    (SELECT o.channel FROM integration_customers o WHERE o.host = r.host AND o.tenant = r.tenant),
+    r.caught_org,
+    (SELECT k.channel FROM integration_catches k WHERE k.host = r.host AND k.kind = 'domain'
+      AND k.value = r.domain))`;
 
 async function requestById(db, id) {
   const r = await db.prepare(`${SELECT} WHERE r.id = ?`).bind(Number(id) || 0).first();
@@ -232,6 +261,9 @@ export async function reserveAccess(env, args = {}, now = Date.now()) {
     return fail('say who approves: by { email, name }');
   }
   const m = r.mapping;
+  if (!m && !r.tenant) {
+    return fail('this person signed in without an organization: list their mail domain on a channel first', 409);
+  }
   if (m) {
     if (m.enabled || m.resumable) {
       return {
@@ -276,6 +308,26 @@ export async function reserveAccess(env, args = {}, now = Date.now()) {
   return fail('could not reserve a channel; try again', 503);
 }
 
+/** The approval's one transaction: the claim, then the actor, the member and the enable. */
+function enrollBatch(db, {
+  r, m, actor, name, bound, by, sec, enable, mine,
+}) {
+  return db.batch([
+    db.prepare(`UPDATE integration_requests SET status = 'approved', decided_at = ?, decided_by = ?,
+        decided_name = ?, reason = NULL, channel = ?, actor = ? WHERE id = ? AND status = 'pending'`)
+      .bind(sec, by.email, by.name, m.channel, actor, r.id),
+    db.prepare(`INSERT INTO integration_actors(channel, actor, name, verified_email)
+        SELECT ?3, ?2, ?4, ?5 WHERE ${mine}`)
+      .bind(r.id, actor, m.channel, name, bound),
+    db.prepare(`INSERT INTO integration_members(channel, subject, actor, approved_by, approved_at,
+        via) SELECT ?3, ?4, ?2, ?5, ?6, ?7 WHERE ${mine}`)
+      .bind(r.id, actor, m.channel, r.subject, by.email, sec, m.via),
+    ...(enable ? [db.prepare(`UPDATE integration_customers SET enabled = 1 WHERE channel = ?3
+        AND enabled = 0 AND enabled_at IS NULL AND approved_by IS NOT NULL AND ${mine}`)
+      .bind(r.id, actor, m.channel)] : []),
+  ]);
+}
+
 /**
  * `{ id, name, by, enable? }`: enrolls the person of pending request `id` in its tenant's channel
  * (a new actor, without an email, named `name`), records who approved it, and with `enable`
@@ -293,8 +345,8 @@ export async function enrollAccess(env, args = {}, now = Date.now()) {
   if (!by.email || !name) {
     return fail('say who approves (by { email, name }) and the name the person is shown by');
   }
-  const m = await mappingOf(db, r.host, r.tenant, r.subject);
-  if (!m) {
+  const m = await mappingOf(db, r.host, { tenant: r.tenant, email: r.email }, r.subject);
+  if (!m || !m.mapped) {
     return fail('the organization has no channel on this host yet: reserve one first', 409);
   }
   if (m.member) {
@@ -309,19 +361,20 @@ export async function enrollAccess(env, args = {}, now = Date.now()) {
   // The claim first: everything after it happens only for this claim of this request.
   const mine = `EXISTS (SELECT 1 FROM integration_requests WHERE id = ?1 AND actor = ?2
     AND status = 'approved')`;
-  const results = await db.batch([
-    db.prepare(`UPDATE integration_requests SET status = 'approved', decided_at = ?, decided_by = ?,
-        decided_name = ?, reason = NULL, channel = ?, actor = ? WHERE id = ? AND status = 'pending'`)
-      .bind(sec, by.email, by.name, m.channel, actor, r.id),
-    db.prepare(`INSERT INTO integration_actors(channel, actor, name) SELECT ?3, ?2, ?4 WHERE ${mine}`)
-      .bind(r.id, actor, m.channel, name),
-    db.prepare(`INSERT INTO integration_members(channel, subject, actor, approved_by, approved_at)
-        SELECT ?3, ?4, ?2, ?5, ?6 WHERE ${mine}`)
-      .bind(r.id, actor, m.channel, r.subject, by.email, sec),
-    ...(enable ? [db.prepare(`UPDATE integration_customers SET enabled = 1 WHERE channel = ?3
-        AND enabled = 0 AND enabled_at IS NULL AND approved_by IS NOT NULL AND ${mine}`)
-      .bind(r.id, actor, m.channel)] : []),
-  ]);
+  // Placed by a caught domain: bound to that verified address, as an alias enrollment is.
+  const bound = m.via && m.via.startsWith('domain:') ? r.email : null;
+  let results;
+  try {
+    results = await enrollBatch(db, {
+      r, m, actor, name, bound, by, sec, enable, mine,
+    });
+  } catch (e) {
+    if (!/UNIQUE|enrolled on this host/i.test(String(e.message || e))) {
+      throw e;
+    }
+    // Enrolled meanwhile, or their address is another actor's in the channel.
+    return fail('this person, or their address, is in a channel of this host already: an operator decides', 409);
+  }
   if (!results[0].meta.changes) {
     return { ...fail('decided meanwhile', 409), request: await requestById(db, r.id) };
   }

@@ -75,7 +75,8 @@ import {
 } from './portalrequests.js';
 import { resetTeamVendors } from './vendors.js';
 import {
-  getIntegrationRequest, integrationOpenCount, listIntegrationRequests, mailCompany,
+  getIntegrationChannel, getIntegrationRequest, integrationOpenCount, listIntegrationChannels,
+  listIntegrationRequests, mailCompany,
 } from './integrationrequests.js';
 
 /**
@@ -1180,7 +1181,8 @@ const portalRefused = (res, extra = {}) => json(
  * default `<product>-<customer>`), it is filed under `team` and the customer `org` by hand (the
  * manual rules of `portal/open`: source `portal`, field `channel_id`, `^<id>$`), and only then is
  * the person enrolled and the channel enabled, so no message arrives before its route. A channel
- * suspended, or set up by hand and never enabled, is for an operator.
+ * suspended, or set up by hand and never enabled, is for an operator. With `auto`, the channel
+ * auto-approves the organization's next members from then on (`portal/integration/auto`).
  */
 async function approveIntegration(env, me, body) {
   const { request: r, error } = await pendingIntegration(env, body.id);
@@ -1253,6 +1255,10 @@ async function approveIntegration(env, me, body) {
   if (enrolled.error) {
     return portalRefused(enrolled, { channel: { source: 'portal', channelId: channel.id } });
   }
+  // Auto-approve the organization's next members: best effort, the person is in either way.
+  const auto = body.auto ? await portalCall(env, 'setAutoApprove', {
+    channel: channel.id, on: true, by,
+  }) : null;
   console.log(JSON.stringify({
     route: 'admin', integration: 'approved', by: me.id, id: r.id, existing: channel.existing,
   }));
@@ -1267,8 +1273,46 @@ async function approveIntegration(env, me, body) {
       existing: channel.existing,
       team: route && route.team,
       org: route && route.org,
+      ...(auto ? { autoApprove: Boolean(auto.ok && auto.channel?.autoApprove) } : {}),
     },
+    ...(auto && auto.error ? { autoError: auto.error } : {}),
   });
+}
+
+/** A list in a request body: an array, or text separated by spaces, commas or lines. */
+const listOf = (v) => {
+  if (v === undefined || v === null) {
+    return undefined;
+  }
+  return (Array.isArray(v) ? v : String(v).split(/[\s,]+/)).map((x) => clean(x, 253)).filter(Boolean);
+};
+
+/**
+ * PUT /api/admin/portal/integration/auto `{ channel, on?, tenants?, domains? }`: the admin team
+ * turns a user-token host's channel's auto-approval on or off, and sets the extra organization IDs
+ * and the mail domains it catches (each list replaces the channel's; one left out stays). A
+ * verified caller of that host who lands in it is then enrolled on their first call, within a cap
+ * an hour. Off stops new auto-enrollments; the members stay. An org ID or domain another channel
+ * of the host holds is refused (409, naming it), and so is everyone's mail (gmail.com, …).
+ */
+async function setIntegrationAuto(env, me, body) {
+  if (!portalBound(env)) {
+    return json({ error: 'the customer portal is not connected to this inbox' }, 409);
+  }
+  const res = await portalCall(env, 'setAutoApprove', {
+    channel: clean(body.channel, 20),
+    on: body.on === undefined ? undefined : Boolean(body.on),
+    tenants: listOf(body.tenants),
+    domains: listOf(body.domains),
+    by: { email: me.email || String(me.id), name: me.name || null },
+  });
+  if (res.error) {
+    return portalRefused(res, res.conflict ? { conflict: res.conflict } : {});
+  }
+  console.log(JSON.stringify({
+    route: 'admin', integration: 'auto', by: me.id, on: res.channel && res.channel.autoApprove,
+  }));
+  return json({ ok: true, channel: await getIntegrationChannel(env, res.channel.channel) });
 }
 
 /**
@@ -2157,6 +2201,10 @@ async function adminRoute(request, env, url, me) {
     case 'POST portal/decline': return declinePortal(env, me, body);
     case 'POST portal/integration/approve': return approveIntegration(env, me, body);
     case 'POST portal/integration/decline': return declineIntegration(env, me, body);
+    case 'GET portal/integration/channels': return json({
+      channels: await listIntegrationChannels(env), portalBound: portalBound(env),
+    });
+    case 'PUT portal/integration/auto': return setIntegrationAuto(env, me, body);
     case 'POST conflicts': return settleConflict(env, me, body);
     case 'POST rule-conflicts': return settleRuleConflict(env, me, body);
     // Channel threads labeled again though they did not change (src/label.js queueRelabel).
@@ -2203,7 +2251,8 @@ async function adminRoute(request, env, url, me) {
  */
 const DECIDING = new Set(['DELETE requests', 'POST member-requests/confirm',
   'POST member-requests/decline', 'POST portal/open', 'POST portal/decline',
-  'POST portal/integration/approve', 'POST portal/integration/decline', 'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
+  'POST portal/integration/approve', 'POST portal/integration/decline',
+  'PUT portal/integration/auto', 'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
   'DELETE org-merge', 'POST members', 'POST assign', 'DELETE assign', 'POST rules', 'PUT rules',
   'DELETE rules', 'PUT bots', 'PUT accounts', 'PUT account-pairs', 'POST conflicts',
   'POST rule-conflicts']);

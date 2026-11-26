@@ -11,6 +11,7 @@
  */
 
 import { slug as toSlug } from './rules.js';
+import { domainOf, domainParts, isPublicMail } from './portal/ids.js';
 import { portalBound, portalCall } from './portalsource.js';
 
 /**
@@ -28,17 +29,6 @@ import { portalBound, portalCall } from './portalsource.js';
  * verified mail domain or the organization's name.
  */
 
-/** Mail domains of everyone: they say nothing of the company. */
-const PUBLIC_MAIL = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com',
-  'msn.com', 'yahoo.com', 'ymail.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'proton.me',
-  'protonmail.com', 'pm.me', 'gmx.com', 'gmx.net', 'gmx.de', 'web.de', 'yandex.com', 'yandex.ru',
-  'mail.ru', 'qq.com', '163.com', '126.com', 'zoho.com', 'hey.com', 'fastmail.com', 'mail.com',
-  't-online.de', 'orange.fr', 'free.fr', 'libero.it', 'naver.com']);
-/** The same providers' country domains (`yahoo.co.uk`, `gmx.at`). */
-const PUBLIC_BRANDS = new Set(['gmail', 'googlemail', 'outlook', 'hotmail', 'live', 'yahoo', 'gmx',
-  'yandex', 'icloud', 'protonmail', 'proton']);
-/** Second-level labels of country domains (`acme.co.uk`): the company is the label before. */
-const SECOND_LEVEL = new Set(['co', 'com', 'ac', 'gov', 'org', 'net', 'edu', 'ne', 'or', 'gv', 'ltd', 'plc']);
 /** Words of a company's name that are not its name. */
 const NOISE = new Set(['inc', 'incorporated', 'corp', 'corporation', 'co', 'company', 'llc', 'llp',
   'ltd', 'limited', 'gmbh', 'ag', 'se', 'sa', 'sas', 'sarl', 'srl', 'spa', 'bv', 'nv', 'oy', 'ab',
@@ -51,20 +41,13 @@ const LIMIT = 100;
 
 const clean = (v, n = 200) => String(v ?? '').trim().slice(0, n);
 
-/** `domain`'s company label (`mail.acme.co.uk` → `acme`), or '' for a public mail domain. */
+/** An address's company label (`mail.acme.co.uk` → `acme`), or '' for a public mail domain. */
 export function mailCompany(email) {
-  const domain = String(email || '').toLowerCase().split('@')[1] || '';
-  const labels = domain.split('.').filter(Boolean);
-  if (labels.length < 2) {
+  const parts = domainParts(domainOf(email));
+  if (!parts || isPublicMail(parts.labels.join('.'))) {
     return '';
   }
-  const at = labels.length >= 3 && SECOND_LEVEL.has(labels[labels.length - 2])
-    && labels[labels.length - 1].length === 2 ? labels.length - 3 : labels.length - 2;
-  const company = labels[at];
-  if (PUBLIC_MAIL.has(labels.slice(at).join('.')) || PUBLIC_BRANDS.has(company)) {
-    return '';
-  }
-  const part = toSlug(company);
+  const part = toSlug(parts.labels[parts.at]);
   return /[a-z]/.test(part) && part.length >= 2 && part.length <= SHORT ? part : '';
 }
 
@@ -175,4 +158,35 @@ export async function integrationOpenCount(env) {
   }
   const res = await portalCall(env, 'accessRequests', { count: true });
   return res.ok ? Number(res.pending) || 0 : 0;
+}
+
+/**
+ * The channels of the integration's user-token hosts, as the portal answers them
+ * (src/portal/integration-auto.js `listChannels`): each with its auto-approval, the org IDs and
+ * mail domains it also catches, its members and the latest auto-approved ones, and where the
+ * inbox files it (`route`). [] when the portal is not bound.
+ */
+export async function listIntegrationChannels(env) {
+  if (!portalBound(env)) {
+    return [];
+  }
+  const res = await portalCall(env, 'accessChannels', {});
+  if (!res.ok) {
+    throw new Error(res.error || 'the portal did not list its integration channels');
+  }
+  return Promise.all((res.channels || []).map(async (c) => ({
+    ...c, route: await routeOf(env, c.channel),
+  })));
+}
+
+/** One channel, as `listIntegrationChannels` has it, or null. */
+export async function getIntegrationChannel(env, channel) {
+  if (!portalBound(env) || !/^c[0-9a-z]{12}$/.test(clean(channel))) {
+    return null;
+  }
+  const res = await portalCall(env, 'accessChannels', { channel: clean(channel) });
+  if (!res.ok || !res.channel) {
+    return null;
+  }
+  return { ...res.channel, route: await routeOf(env, res.channel.channel) };
 }
