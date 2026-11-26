@@ -601,6 +601,7 @@ export async function getIdentity(env, ref, now = Date.now()) {
     const same = row && row.name === (ref.name || null)
       && (row.email || null) === (ref.email || null)
       && (ref.mergeEmail === undefined || (row.merge_email || null) === ref.mergeEmail)
+      && (ref.mergeAt === undefined || (row.merge_at || null) === ref.mergeAt)
       && (ref.avatar === undefined || (ref.avatar ? row.avatar === ref.avatar
         : !String(row.avatar || '').startsWith('/api/portal/avatar/')));
     if (same && fresh(row, now)) {
@@ -628,6 +629,7 @@ export async function getIdentity(env, ref, now = Date.now()) {
         // person of D1 and makes nobody staff, whatever its domain. A reference that says nothing
         // of it keeps the row's.
         merge_email: ref.mergeEmail || (row && row.merge_email) || null,
+        merge_at: (ref.mergeEmail && ref.mergeAt) || (row && row.merge_at) || null,
       };
     } else if (ref.source === 'slack') {
       f = await fetchSlackUser(env, ref.userId);
@@ -683,14 +685,15 @@ export async function getIdentity(env, ref, now = Date.now()) {
   const aliases = f.aliases ? JSON.stringify(f.aliases) : null;
   await env.DB.prepare(`INSERT INTO identities
     (source, tenant, user_id, kind, name, email, home, person, fetched_at, avatar, title, company,
-     staff, aliases, guest, merge_email)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     staff, aliases, guest, merge_email, merge_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, user_id) DO UPDATE SET kind = excluded.kind,
       name = excluded.name, email = excluded.email, home = excluded.home,
       person = excluded.person, fetched_at = excluded.fetched_at, avatar = excluded.avatar,
       title = excluded.title, company = excluded.company, staff = excluded.staff,
       aliases = COALESCE(excluded.aliases, identities.aliases), guest = excluded.guest,
-      merge_email = COALESCE(excluded.merge_email, identities.merge_email)`)
+      merge_email = COALESCE(excluded.merge_email, identities.merge_email),
+      merge_at = COALESCE(excluded.merge_at, identities.merge_at)`)
     .bind(
       ref.source,
       ref.tenant,
@@ -708,6 +711,7 @@ export async function getIdentity(env, ref, now = Date.now()) {
       aliases,
       typeof f.guest === 'boolean' ? Number(f.guest) : null,
       ref.source === 'portal' ? f.merge_email || null : null,
+      ref.source === 'portal' ? f.merge_at || null : null,
     )
     .run();
   const identity = {
