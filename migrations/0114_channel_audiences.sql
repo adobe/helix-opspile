@@ -14,3 +14,10 @@ CREATE TABLE channel_audiences (
   at TEXT NOT NULL,
   PRIMARY KEY (source, tenant, channel_id)
 );
+
+-- Whose an end user's knowledge base (kind `person`) is, for the COGS rollup (src/cogs/rollup.js):
+-- the org and the owning team of the channel its thread agent last worked it from. A person is no
+-- team, so its Artifacts costs are that channel's customer's and team's, as kb-org's would be.
+-- Null for the other kinds, whose `slug` is their org or team.
+ALTER TABLE knowledge_bases ADD COLUMN owner_org TEXT;
+ALTER TABLE knowledge_bases ADD COLUMN owner_team TEXT;

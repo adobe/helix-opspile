@@ -17,6 +17,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { processKey } from '../src/normalizer.js';
+import { normalizePortal } from '../src/normalize.js';
 import { receive } from '../src/portalsource.js';
 import { deliver } from '../src/portal/events.js';
 import {
@@ -103,7 +104,11 @@ async function targetOf(env, key) {
     threads: [key],
     follows: [],
     individual: await individualOf(env, {
-      source: row.source, tenant: row.tenant, channelId: row.channel_id,
+      source: row.source,
+      tenant: row.tenant,
+      channelId: row.channel_id,
+      org: row.org,
+      team: row.team,
     }, [key]),
   };
 }
@@ -134,8 +139,11 @@ describe('the agents of an individual channel', () => {
     assert.equal(adaToo.individual.kb, ada.individual.kb);
     assert.notEqual(bo.individual.kb, ada.individual.kb);
     assert.match(ada.individual.kb, /^kb-person-p[0-9a-f]{24}$/);
-    const kinds = w.inbox.DB.rows("SELECT repo, kind FROM knowledge_bases WHERE kind = 'person' ORDER BY repo");
+    const kinds = w.inbox.DB.rows(`SELECT repo, owner_org, owner_team FROM knowledge_bases
+      WHERE kind = 'person' ORDER BY repo`);
     assert.deepEqual(kinds.map((k) => k.repo).sort(), [ada.individual.kb, bo.individual.kb].sort());
+    // Whose their costs are: the channel's customer and team (src/cogs/rollup.js).
+    assert.ok(kinds.every((k) => k.owner_org === 'mill' && k.owner_team === 'agents'));
 
     // What each agent may name: the team's, and its end user's, never the org's or another's.
     const reposA = await accessibleRepos(w.inbox, ada);
@@ -243,6 +251,25 @@ describe('the agents of an individual channel', () => {
     const who = await endUserOf(w.inbox, [keys.bo]);
     assert.deepEqual([who.name, who.mail], ['Bo Example', 'bo@mill.example']);
     assert.equal(await endUserOf(w.inbox, ['portal:nowhere.example:c1:m1']), null);
+  });
+
+  it('writes nothing for a shared channel\'s messages, which say no audience', () => {
+    const event = (audience) => normalizePortal('k', {
+      type: 'message',
+      domain: 'cx.embed.invalid',
+      seq: 7,
+      channel: { id: 'cx', name: 'x', ...(audience ? { audience } : {}) },
+      author: { id: 'u1', kind: 'customer', name: 'Ada' },
+      message: {
+        id: 'm1', root: 'm1', at: '2026-01-01T00:00:00Z', text: 'hi',
+      },
+    });
+    assert.equal(event(null).message.audience, undefined);
+    assert.deepEqual(event('individual').message.audience, { audience: 'individual', seq: 7 });
+    const channel = normalizePortal('k', {
+      type: 'channel', domain: 'cx.embed.invalid', seq: 8, channel: { id: 'cx', name: 'x', audience: 'shared' },
+    });
+    assert.deepEqual(channel.channel.audience, { audience: 'shared', seq: 8 });
   });
 
   it('lays an end user\'s knowledge base out as a customer\'s', () => {

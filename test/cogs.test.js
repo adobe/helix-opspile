@@ -416,6 +416,11 @@ describe('cogs: rollup', () => {
     message(DB, 'slack:E1:C1:2.1', '2.1', '2026-11-01T09:00:00Z', 'item-2');
     DB.sqlite.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at)
       VALUES ('kb-org-acme', 'org', 'acme', 'r', '2026-10-01T00:00:00Z')`).run();
+    // End users' knowledge bases (src/individual.js): their channel's customer's and team's, or
+    // nobody's before an agent said which; never a team named after the person.
+    DB.sqlite.prepare(`INSERT INTO knowledge_bases (repo, kind, slug, remote, created_at, owner_org,
+      owner_team) VALUES ('kb-person-p1', 'person', 'p1', 'r', '2026-10-01T00:00:00Z', 'acme', 'helix'),
+      ('kb-person-p2', 'person', 'p2', 'r', '2026-10-01T00:00:00Z', NULL, NULL)`).run();
     DB.sqlite.prepare(`INSERT INTO cogs_objects (name, org, team, bytes, at)
       VALUES ('slack:E1:C1:1.1', 'acme', 'helix', 4096, '2026-11-02T00:00:00Z')`).run();
     const ANALYTICS = analytics({
@@ -450,7 +455,8 @@ describe('cogs: rollup', () => {
           log: 'cf-worker', type: 'fetch', events: 20, cpu: 0,
         },
       ],
-      'events.artifactsEventsByNamespaceAccount': [{ repo: 'kb-org-acme', n: 12 }, { repo: 'gh-x', n: 3 }],
+      'events.artifactsEventsByNamespaceAccount': [{ repo: 'kb-org-acme', n: 12 }, { repo: 'gh-x', n: 3 },
+        { repo: 'kb-person-p1', n: 5 }, { repo: 'kb-person-p2', n: 2 }],
       'states.r2CombinedStorage': [{ bucket: 'ops-raw', payload: 1e9, meta: 1e6 }],
       'states.vectorizeStorage': [{ idx: 'ops-roots', vectors: 1000 }],
     });
@@ -473,7 +479,9 @@ describe('cogs: rollup', () => {
     assert.equal(q('account', 'workers', 'cpu_ms'), 250);
     assert.equal(q('account', 'workers_logs', 'events'), 35);
     assert.equal(q('account', 'artifacts', 'operations', 'acme'), 12);
-    assert.equal(q('account', 'artifacts', 'operations'), 3);
+    assert.equal(q('account', 'artifacts', 'operations', 'acme', 'helix'), 5);
+    assert.equal(q('account', 'artifacts', 'operations'), 3 + 2);
+    assert.ok(!rows.some((r) => /^p\d$/.test(r.team)));
     assert.equal(q('account', 'r2', 'stored_bytes', '', '', 'ops-raw'), 1e9 + 1e6);
     assert.equal(q('account', 'vectorize', 'stored_dims', '', '', 'ops-roots'), 768000);
     assert.equal(q('d1', 'volume', 'messages', 'acme', 'helix'), 2);

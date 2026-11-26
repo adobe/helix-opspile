@@ -734,9 +734,10 @@ export function normalizePortal(key, event) {
   const ch = e.channel || {};
   const channelHint = { name: ch.name, topic: ch.topic || null, company: ch.company || null };
   // Who sees the channel's threads (portal migration 0008), by the event's number in the portal's
-  // outbox: a message's says so of an individual channel only; a channel event either way, but
-  // the one a channel is made with, which says nothing (src/individual.js `recordAudience`).
-  const audience = (e.type === 'channel' ? ch.audience : ch.audience || 'shared') || null;
+  // outbox: a channel event either way (but the one a channel is made with, which says nothing),
+  // a message only of an individual channel. A shared channel's messages say nothing, so they
+  // write nothing: the channel event that made it shared again did (src/individual.js).
+  const audience = (e.type === 'channel' || ch.audience === 'individual') ? ch.audience || null : null;
   const heard = audience ? { audience: { audience, seq: Number(e.seq) || 0 } } : {};
   if (e.type === 'channel') {
     return {

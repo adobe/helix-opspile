@@ -1040,10 +1040,16 @@ at once too, with the number of the event the portal answered. The thread agents
 turn (their target, src/agent/agent.js), so a switch changes the next turn's knowledge base and
 what it may read; what an agent filed before stays where it was.
 
+The agent's "their threads" are those one of the end user's accounts wrote in: narrower than the
+portal's `thread_members`, which also has the threads Adobe added them to and the inbox never hears
+of, so a thread they were added to joins their agent's reach once they write in it.
+
 **An end user's knowledge base.** absent → made (`knowledge_bases`, kind `person`): by the first
 turn of a thread of an individual channel with a customer author, keyed by who they are
 (`personSlug`). An end user whose address their provider verifies only later starts a second one
-(the key moves from the account to the address); nothing merges the two yet.
+(the key moves from the account to the address); nothing merges the two yet. Its owner for the
+COGS rollup (`owner_org`, `owner_team`) is the channel's customer and team it was last worked from,
+written by the agent's turn when it changed.
 
 **Thread member.** absent → in (`thread_members` in the portal). A customer is in a thread from
 their first message in it (a trigger on `messages`, `INSERT OR IGNORE`), and the migration put

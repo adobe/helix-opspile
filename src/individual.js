@@ -31,6 +31,11 @@ import { sha256 } from './raw.js';
  * The end user of a thread is its first customer author (`endUserOf`): who started it, unless
  * Adobe wrote first. A thread with none yet has no person: its agent gets no `kb-person`, and
  * reads no other thread.
+ *
+ * The agent's "their threads" is narrower than the portal's on purpose: threads one of their
+ * accounts wrote in. The portal also shows a customer a thread Adobe added them to
+ * (`thread_members`), which the inbox never hears of; until they write in it, their agent does
+ * not list or read it, so it errs towards reading less.
  */
 
 export const AUDIENCES = ['shared', 'individual'];
@@ -122,12 +127,13 @@ export async function accountsOf(env, tenant, person) {
 }
 
 /**
- * What a thread agent of channel `{ source, tenant, channelId }` and inbox entry `keys` works with
- * in an individual channel, or null in a shared one: `{ name, mail?, slug, kb, accounts }`, the
- * end user, their knowledge base (made in Artifacts when first needed; null where it cannot be)
- * and their accounts; `{ name: null, slug: null, kb: null, accounts: [] }` before any of them
- * wrote.
- * `ensure: false` makes no knowledge base, for who only asks whose threads are whose.
+ * What a thread agent of channel `{ source, tenant, channelId, org?, team? }` (`org` and `team`
+ * the channel's, which the knowledge base's costs are counted under) and inbox entry `keys`
+ * works with in an individual channel, or null in a shared one: `{ name, mail?, slug, kb,
+ * accounts }`, the end user, their knowledge base (made in Artifacts when first needed; null
+ * where it cannot be) and their accounts; `{ name: null, slug: null, kb: null, accounts: [] }`
+ * before any of them wrote. `ensure: false` makes no knowledge base, for who only asks whose
+ * threads are whose.
  */
 export async function individualOf(env, channel, keys, { ensure = true } = {}) {
   if (!await isIndividualChannel(env, channel)) {
@@ -144,6 +150,14 @@ export async function individualOf(env, channel, keys, { ensure = true } = {}) {
     console.warn(JSON.stringify({ route: 'agent', kb: 'person', error: e.message }));
     return null;
   }) : null;
+  if (made && (channel.org || channel.team)) {
+    // Whose its costs are (src/cogs/rollup.js): the channel's customer and team. Written only when
+    // that changed.
+    await env.DB.prepare(`UPDATE knowledge_bases SET owner_org = ?2, owner_team = ?3 WHERE repo = ?1
+        AND (owner_org IS NOT ?2 OR owner_team IS NOT ?3)`)
+      .bind(made.repo, channel.org || null, channel.team || null).run()
+      .catch((e) => console.warn(JSON.stringify({ route: 'agent', kb: 'person owner', error: e.message })));
+  }
   return {
     name: person.name,
     slug,

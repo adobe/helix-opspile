@@ -695,7 +695,11 @@ export class ThreadAgent extends Agent {
         // In an individual channel, the end user: their knowledge base instead of the org's, and
         // their threads only (src/individual.js). Null in a shared one.
         individual: row ? await individualOf(this.env, {
-          source: row.source, tenant: row.tenant, channelId: row.channel_id,
+          source: row.source,
+          tenant: row.tenant,
+          channelId: row.channel_id,
+          org: row.org,
+          team: entry.team,
         }, entry.keys) : null,
       };
     }

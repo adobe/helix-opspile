@@ -3780,7 +3780,10 @@ token) for what the Worker cannot see, about opspile's own resources only, by na
 - The Worker's CPU time and log events (`logs.workersLogs`): CPU from the invocations' own
   events (fetch, queue, scheduled), shared.
 - Artifacts operations per repository (`events.artifactsEventsByNamespaceAccount`, without token
-  minting): a knowledge base's are its customer's or team's (`knowledge_bases`), the mirrors shared.
+  minting): a knowledge base's are its customer's or team's (`knowledge_bases`), an end user's
+  (kind `person`) those of the channel's customer and owning team it was last worked from
+  (`owner_org`, `owner_team`, migration 0114; shared until an agent recorded them), the mirrors
+  shared.
 - What the buckets (`states.r2CombinedStorage`) and indexes (`states.vectorizeStorage`, times 768
   dimensions) hold, per day.
 
