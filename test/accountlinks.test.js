@@ -261,6 +261,30 @@ describe('the host tenant\'s admin accounts', () => {
     assert.deepEqual(await authors(e), { 5: ['Cy', false], 6: ['BO', true] });
   });
 
+  it('restores the account name in GET /api/thread for messages written while linked', async () => {
+    const e = env();
+    await quiet(() => call(e, ADA, 'PUT', '/api/admin/accounts', { key: OWNER, email: 'bo@staff.example' }));
+    // Simulate a message posted while linked (frontmatter records colleague name 'Bo Ops').
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author,
+        staff, counted, person, author_key, author_kind)
+      VALUES ('teams', 'T', '19:c', '7', ?, '2026-10-21T10:02:00Z', 'Bo Ops', 1, 1, 2, ?, 'person')`)
+      .run(THREAD, OWNER);
+    await e.CHANNELS.put('q/5/7.md', render({
+      source: 'teams',
+      thread: THREAD,
+      id: '7',
+      at: '2026-10-21T10:02:00Z',
+      author: {
+        kind: 'person', name: 'Bo Ops', org: HOST, staff: true,
+      },
+    }, 'message 7'));
+    assert.deepEqual(await authors(e), { 5: ['Cy', false], 6: ['Bo Ops', true], 7: ['Bo Ops', true] });
+
+    const back = await quiet(() => call(e, ADA, 'PUT', '/api/admin/accounts', { key: OWNER, email: null }));
+    assert.equal(back.status, 200);
+    assert.deepEqual(await authors(e), { 5: ['Cy', false], 6: ['BO', true], 7: ['BO', true] });
+  });
+
   it('link to a colleague of a staff domain not seen yet', async () => {
     const e = env();
     const r = await quiet(() => call(e, ADA, 'PUT', '/api/admin/accounts', { key: OWNER, email: 'dee@staff.example' }));
