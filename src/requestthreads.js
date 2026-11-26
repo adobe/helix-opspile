@@ -19,6 +19,9 @@ import { getMemberRequest, listMemberRequests } from './memberrequests.js';
 import { getMergeRequest, listMergeRequests } from './orgmerge.js';
 import { getBot, listBots } from './ourbots.js';
 import { getPortalRequest, listPortalRequests } from './portalrequests.js';
+import {
+  getIntegrationChannel, getIntegrationRequest, listIntegrationChannels, listIntegrationRequests,
+} from './integrationrequests.js';
 import { portalBound } from './portalsource.js';
 import { announceRequest, parseRequestKey, requestKey } from './requestkeys.js';
 import { getRequest, listRequests } from './requests.js';
@@ -65,6 +68,8 @@ export const KIND_NAMES = {
   channel: 'Channel requests',
   member: 'Membership requests',
   portal: 'Portal customers',
+  integration: 'Integration access',
+  embed: 'Integration channels',
   merge: 'Customer merges',
   bot: 'Bots',
   account: 'Admin accounts',
@@ -79,8 +84,9 @@ export const PERSONAL = new Set(['question']);
 const TRACKED = new Set(['bot', 'account', 'person', 'tech', 'rule']);
 /** The kinds that are worked out each time, and gone once settled. */
 const COMPUTED = new Set(['tech', 'rule']);
-/** The kinds whose decisions are only in the log: a bot's, an account's, a conflict's. */
-const LOGGED = TRACKED;
+/** The kinds whose decisions are only in the log: a bot's, an account's, a conflict's, and a
+ * channel's. */
+const LOGGED = new Set([...TRACKED, 'embed']);
 const MAX_NOTE = 4000;
 const MAX_FIELD = 8000;
 /** How many of each kind's decided requests the inbox lists (the open ones are all there). */
@@ -166,7 +172,7 @@ const CHANNEL_DONE = {
 /** What a decided request's row says of it: by whom, and what came of it. */
 function rowDecision(r, did = '') {
   const word = {
-    confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged',
+    confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged', approved: 'Approved',
   }[r.status] || r.status;
   const reason = r.reason ? `: ${md(r.reason)}` : '';
   return `**${word}** by ${md(who(r.decidedBy))}${did ? `: ${did}` : reason}`;
@@ -391,6 +397,189 @@ const portalKind = {
       decidedBy: r.decidedBy,
       decision: open ? null : rowDecision(r, r.status === 'opened' && c ? `filed under ${md(n.team(c.team))}` : ''),
       actions,
+    };
+  },
+};
+
+/** Where an integration request comes from: its host, and the product it calls its channels. */
+const hostOf = (r) => (r.product ? `${r.host} (${r.product})` : r.host);
+
+const integrationKind = {
+  list: (env) => listIntegrationRequests(env, { limit: LIMIT }),
+  get: (env, id) => getIntegrationRequest(env, id),
+  id: (r) => r.id,
+  describe(r, n, { portalBound: bound = false } = {}) {
+    const person = r.name || r.email || 'Someone';
+    const org = r.orgName || r.tenant || (r.email ? r.email.split('@')[1] : 'no organization');
+    const open = r.status === 'pending';
+    const m = r.mapping;
+    const into = m && m.enabled;
+    const caught = m && m.via ? ` (it lists ${m.via.startsWith('domain:') ? 'their mail domain' : 'their organization ID'} ${code(m.via.slice(m.via.indexOf(':') + 1))})` : '';
+    const where = m
+      ? `#${md(m.name)} ${code(m.channel)}${m.route && (m.route.team || m.route.org) ? `, filed under **${md(n.team(m.route.team))}**, customer **${md(n.org(m.route.org))}**` : ''}${m.enabled ? '' : ' (not enabled)'}${caught}`
+      : '';
+    const facts = [
+      `- Host ${code(r.host)}${r.product ? `, product ${code(r.product)}` : ''}`,
+      r.tenant ? `- Organization **${md(org)}** ${code(r.tenant)}${r.orgName ? '' : ' (its name was not readable)'}` : '- Signed in without an organization (a personal profile)',
+      `- ${md(person)}, ${r.email ? `${md(r.email)} (verified)` : 'no verified mail address'}, user ${code(r.subject)}`,
+      `- First asked ${md(String(r.requestedAt || '').slice(0, 16).replace('T', ' '))}${r.attempts > 1 ? `, ${plural(r.attempts, 'call')} since` : ''}`,
+      into || m ? `- ${into ? 'Joins' : 'Its channel:'} ${where}` : '- New organization for this host: approving makes its channel',
+    ].join('\n');
+    const teams = n.teams.filter((t) => t.slug !== ADMIN_TEAM);
+    const first = r.suggest.team || teams[0]?.slug || '';
+    let off = null;
+    if (!bound) {
+      off = 'The customer portal is not connected to this inbox yet (PORTAL_WORKER): nobody can be enrolled from here.';
+    } else if (m && !m.enabled && !m.resumable) {
+      off = 'This organization\'s channel on the host is suspended, or was set up by hand and is not enabled: an operator enables it first.';
+    } else if (!into && !teams.length) {
+      off = 'There is no team to file its channel under.';
+    }
+    const personField = {
+      name: 'person', label: 'Their name, as the channel shows it', type: 'text', max: 120, required: true, value: r.suggest.person,
+    };
+    const autoField = m && m.autoApprove ? [] : [{
+      name: 'auto', label: 'Auto-approve future members of this organization', type: 'check', value: false,
+    }];
+    const fields = into ? [personField, ...autoField] : [
+      {
+        name: 'name', label: 'Channel name', type: 'text', max: 80, required: true, value: m ? m.name : r.suggest.name,
+      },
+      {
+        name: 'org', label: `Customer${r.suggest.known ? `: ${r.suggest.orgName || r.suggest.org}` : ' (new)'}`, type: 'text', max: 63, required: true, value: (m && m.route && m.route.org) || r.suggest.org,
+      },
+      {
+        name: 'team',
+        label: 'Team',
+        type: 'select',
+        value: (m && m.route && m.route.team) || first,
+        options: teams.map((t) => ({ value: t.slug, label: t.name })),
+      },
+      personField,
+      ...autoField,
+    ];
+    const actions = open ? [
+      {
+        id: 'approve',
+        label: into ? `Add to #${m.name}` : 'Approve',
+        tone: 'accent',
+        off,
+        hint: into
+          ? `Enrolls ${md(person)} in the channel ${md(org)} has on ${md(r.host)}: they see its threads and write there. Recorded as approved by you.`
+          : 'Makes the organization\'s channel in the portal, files it under the team and the customer by hand (a channel-id rule with priority 10 each), then enrolls the person and enables the channel, in that order. Recorded as approved by you.',
+        fields,
+        run: (v) => ({
+          method: 'POST',
+          path: 'portal/integration/approve',
+          body: {
+            id: r.id,
+            person: v.person,
+            auto: Boolean(v.auto),
+            ...(into ? {} : { name: v.name, org: v.org, team: v.team }),
+          },
+        }),
+        done: (a) => `${md(person)} is enrolled in #${md(a.channel?.name || '')}${a.channel && !a.channel.existing ? `, filed under ${md(n.team(a.channel.team))}` : ''}${a.channel?.autoApprove ? '; its organization\'s next members are auto-approved' : ''}${a.autoError ? `; auto-approval was not turned on (${md(a.autoError)})` : ''}.`,
+      },
+      {
+        id: 'decline',
+        label: 'Decline',
+        tone: 'negative',
+        fields: [reasonField('Reason, which the person is shown (optional)')],
+        run: (v) => ({ method: 'POST', path: 'portal/integration/decline', body: { id: r.id, reason: v.reason || undefined } }),
+        done: () => `Declined ${md(person)}.`,
+      },
+    ] : [];
+    const status = { pending: 'waiting', approved: 'approved', declined: 'declined' }[r.status] || r.status;
+    return {
+      title: `${person} (${org.length > 40 ? `${org.slice(0, 39).trim()}…` : org}) asks for ${r.product || r.host}`,
+      open,
+      status,
+      askedAt: r.requestedAt,
+      askedBy: { name: r.name, email: r.email, customer: true },
+      body: `Asks to use Enterprise Support in ${md(hostOf(r))}, signed in with the host's identity provider, which verified who they are. Nobody has enrolled them yet.\n\n${facts}`,
+      decidedAt: open ? null : r.decidedAt,
+      decidedBy: r.decidedBy,
+      decision: open ? null : rowDecision(r, r.status === 'approved' ? `enrolled${r.channel ? ` in ${code(r.channel)}` : ''}` : ''),
+      actions,
+    };
+  },
+};
+
+/** How an auto-approved member was matched, in words. */
+const viaText = (via) => {
+  if (!via || via === 'tenant') {
+    return 'the channel\'s organization';
+  }
+  const at = via.indexOf(':');
+  const value = code(via.slice(at + 1));
+  return via.startsWith('domain:') ? `the mail domain ${value}` : `the organization ID ${value}`;
+};
+
+const embedKind = {
+  list: (env) => listIntegrationChannels(env),
+  get: (env, id) => getIntegrationChannel(env, id),
+  id: (c) => c.channel,
+  describe(c, n, { portalBound: bound = false } = {}) {
+    const route = c.route || {};
+    const list = (xs) => (xs.length ? xs.map((x) => code(x.value)).join(', ') : 'none');
+    const auto = c.autoApprove
+      ? `**on**, set by ${md(c.autoBy || 'an admin')}${c.autoAt ? ` ${md(c.autoAt.slice(0, 10))}` : ''}`
+      : `off${c.autoBy ? `, said ${md(c.autoBy)}` : ''}`;
+    const facts = [
+      `- Host ${code(c.host)}${c.product ? `, product ${code(c.product)}` : ''}, organization ${code(c.tenant)}`,
+      `- Filed under **${md(n.team(route.team))}**, customer **${md(n.org(route.org))}**`,
+      `- ${c.enabled ? 'Enabled' : '**Not enabled**: nobody is admitted or auto-approved'}${c.approvedBy ? `, approved by ${md(c.approvedBy)}` : ', set up by hand'}`,
+      `- ${plural(c.members, 'member')}, ${c.autoMembers} of them auto-approved (${c.autoLastHour} in the last hour, of at most ${c.autoHourly})`,
+      `- Auto-approval ${auto}`,
+      `- Also catches organization IDs ${list(c.tenants)}; mail domains ${list(c.domains)}`,
+    ].join('\n');
+    const events = (c.autoApproved || []).filter((x) => x.at).map((x, i) => ({
+      id: `auto-${x.at}-${i}`,
+      at: x.at,
+      body: `**Auto-approved** ${md(x.name || 'someone')}${x.email ? ` (${md(x.email)})` : ''} by ${viaText(x.via)}, a rule of ${md(x.by || 'an admin')}${x.active ? '' : '; revoked since'}`,
+    }));
+    return {
+      title: `#${c.name} on ${c.host}`,
+      open: false,
+      status: (!c.enabled && 'disabled') || (c.autoApprove ? 'auto-approving' : 'by request'),
+      // From the earliest it says: approved, enabled, auto-approving, or its first auto-approval.
+      askedAt: [c.approvedAt, c.enabledAt, c.autoAt, ...events.map((e) => e.at)]
+        .filter(Boolean).sort()[0] || null,
+      askedBy: null,
+      body: `A channel of the portal's integration, for an organization signed in through ${md(c.host)}. Its people get in by request, which the admin team approves, or, with auto-approval on, on their first call: whoever the host's identity provider says is of the channel's organization, of one of the organization IDs below, or has a verified address at one of the mail domains below, exactly (a subdomain only when listed).\n\n${facts}`,
+      events,
+      decidedAt: null,
+      decidedBy: null,
+      decision: null,
+      actions: [{
+        id: 'auto',
+        label: 'Set auto-approval',
+        tone: c.autoApprove ? undefined : 'accent',
+        off: bound ? null : 'The customer portal is not connected to this inbox yet (PORTAL_WORKER).',
+        hint: `On: a verified caller of ${md(c.host)} who lands here is enrolled on their first call (at most ${c.autoHourly} an hour; beyond, they wait as a request), recorded as auto-approved with the rule that matched. Off stops new ones; the members stay until revoked. An organization ID or domain belongs to one channel of the host; everyone's mail (gmail.com, outlook.com, …) catches nobody.`,
+        fields: [
+          {
+            name: 'on', label: 'Auto-approve its members', type: 'check', value: c.autoApprove,
+          },
+          {
+            name: 'tenants', label: 'Also these organization IDs (one a line)', type: 'textarea', rows: 2, max: 4000, value: c.tenants.map((x) => x.value).join('\n'),
+          },
+          {
+            name: 'domains', label: 'And whoever has a verified address at these mail domains (one a line)', type: 'textarea', rows: 2, max: 4000, value: c.domains.map((x) => x.value).join('\n'),
+          },
+        ],
+        run: (v) => ({
+          method: 'PUT',
+          path: 'portal/integration/auto',
+          body: {
+            channel: c.channel, on: Boolean(v.on), tenants: v.tenants, domains: v.domains,
+          },
+        }),
+        done: (a) => {
+          const x = a.channel || c;
+          return `Auto-approval of #${md(x.name)} is ${x.autoApprove ? 'on' : 'off'}; it also catches ${list(x.tenants || [])} and ${list(x.domains || [])}.`;
+        },
+      }],
     };
   },
 };
@@ -949,6 +1138,8 @@ const KIND = {
   channel: channelKind,
   member: memberKind,
   portal: portalKind,
+  integration: integrationKind,
+  embed: embedKind,
   merge: mergeKind,
   bot: botKind,
   account: accountKind,
@@ -1054,6 +1245,12 @@ function messagesOf(key, d, log, {
       body: d.decision,
       ...(by ? { mine: by.email === String(me.email || '').toLowerCase() } : {}),
       reactions: [],
+    });
+  }
+  // What happened to it that nobody decided here (a channel's auto-approvals).
+  for (const e of d.events || []) {
+    out.push({
+      thread: key, id: e.id, at: e.at, source: 'request', author: { kind: 'system', name: '' }, body: e.body, reactions: [],
     });
   }
   for (const x of log) {

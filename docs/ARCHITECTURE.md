@@ -3936,7 +3936,10 @@ assertion identifies its enrolled tenant and member, or, for a host that registe
 identity provider (Adobe IMS), the user's own token and the provider's profile do. Each host/customer has one reserved channel
 ID for team/customer routing and its own `<channel>.embed.invalid` lobby, never a sign-in domain.
 It uses the same messages, inbox outbox and staff reply binding as the standalone portal. A
-separate resumable feed contains public invalidations only, not the outbox or staff status.
+separate resumable feed contains public invalidations only, not the outbox or staff status. A
+user-token host's caller who is not enrolled becomes an access request in the portal's database,
+which the admin team approves or declines in its inbox as it does a lobby's
+([access requests](PORTAL-INTEGRATION.md#access-requests), `src/integrationrequests.js`).
 
 **Signing in.** The standalone portal is behind its own Cloudflare Access application, whose only login
 method is a one-time code by mail: a customer signs in with their work mail address, with no

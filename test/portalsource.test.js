@@ -95,6 +95,7 @@ function world({ bound = true } = {}) {
       avatar: (a) => platform.avatar(portal, a),
       logo: (a) => platform.logo(portal, a),
       typing: (a) => platform.typing(portal, a),
+      accessRequests: (a) => platform.accessRequests(portal, a),
     };
   }
   const results = [];

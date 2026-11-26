@@ -22,13 +22,15 @@ export const PREFIX = 'request:';
 
 /**
  * The kinds: channel (src/requests.js), member (src/memberrequests.js), portal
- * (src/portalrequests.js), merge (src/orgmerge.js), bot (src/ourbots.js), account
- * (src/accountlinks.js), person (src/accountpairs.js), tech (src/techconflicts.js) and rule
- * (src/ruleconflicts.js); and question (src/questions.js), a thread agent's question to one
- * person, which is theirs, in whichever inbox they are, not the admin team's.
+ * (src/portalrequests.js), integration and embed (src/integrationrequests.js: an access request,
+ * and a channel of a user-token host with its auto-approval), merge (src/orgmerge.js), bot
+ * (src/ourbots.js), account (src/accountlinks.js), person (src/accountpairs.js), tech
+ * (src/techconflicts.js) and rule (src/ruleconflicts.js); and question (src/questions.js), a
+ * thread agent's question to one person, which is theirs, in whichever inbox they are, not the
+ * admin team's.
  */
-export const KINDS = ['channel', 'member', 'portal', 'merge', 'bot', 'account', 'person', 'tech',
-  'rule', 'question'];
+export const KINDS = ['channel', 'member', 'portal', 'integration', 'embed', 'merge', 'bot',
+  'account', 'person', 'tech', 'rule', 'question'];
 
 /** The team whose inbox has them (src/roles.js ADMIN_TEAM). */
 const ADMIN_TEAM = 'admin';

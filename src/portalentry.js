@@ -14,6 +14,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { Meter } from './cogs/meter.js';
 import { portalTechnologies, receive } from './portalsource.js';
 import { portalStatus } from './portalstatus.js';
+import { announceRequest } from './requestkeys.js';
 
 /**
  * Where the customer portal (src/portal/worker.js) reaches the inbox: its `OPSPILE` binding is
@@ -50,5 +51,22 @@ export class PortalSource extends WorkerEntrypoint {
    */
   async status(args) {
     return portalStatus(this.env, args, { waitUntil: (p) => this.ctx.waitUntil(p) });
+  }
+
+  /**
+   * `{ id }`: someone asked for access through a host of the integration (src/portal/
+   * integration-requests.js), or asked again; `{ channel }`: someone was auto-approved into a
+   * channel (src/portal/integration-auto.js). The admin team's inboxes load their requests. The
+   * request stays the portal's; nothing of it is stored here.
+   */
+  async accessRequested(args) {
+    const id = Number(args && args.id);
+    const channel = String((args && args.channel) || '');
+    if (/^c[0-9a-z]{12}$/.test(channel)) {
+      await announceRequest(this.env, 'embed', channel);
+    } else {
+      await announceRequest(this.env, 'integration', Number.isSafeInteger(id) && id > 0 ? id : null);
+    }
+    return { ok: true };
   }
 }

@@ -25,7 +25,8 @@ import {
   addNote, requestEntries, requestThread, resolveRequest,
 } from '../src/requestthreads.js';
 import { isRequestKey } from '../src/requestkeys.js';
-import { d1 } from '../test/d1.js';
+import { d1, PORTAL as PORTAL_MIGRATIONS } from '../test/d1.js';
+import * as portalPlatform from '../src/portal/platform.js';
 import { IMAGES, layerNames } from './computer-images.mjs';
 import { seedCogs } from './dev-ui-cogs.mjs';
 import { seedTopicMap } from './dev-ui-topics.mjs';
@@ -1096,6 +1097,94 @@ export function createAdmin(store, {
     id: 'u5', name: 'Duffman', email: 'duffman@duff.example', joined: true,
   }], ago(9), 'declined', ['priya@example.com', 'Priya Nair', ago(8), 'You have a Slack channel with us: ask there.']);
 
+  // People a host of the portal's integration signed in with its identity provider, waiting
+  // for access (src/integrationrequests.js): one of an organization new to the host, one of an
+  // organization that has its channel there already, and one declined. The portal's own database,
+  // in memory, with its real code behind the made-up PORTAL binding below.
+  const portalDb = d1({ migrations: PORTAL_MIGRATIONS });
+  const sec = (days) => Math.floor((Date.now() - days * 86400000) / 1000);
+  portalDb.sqlite.prepare(`INSERT INTO integration_hosts (id, service_id, issuer, jwks, scopes,
+      identity, product) VALUES ('panel-prod', 'made-up.access', 'https://ims-na1.adobelogin.com',
+      '{"keys":[]}', '["threads:create","threads:read","threads:reply","changes:read"]', ?, 'agents')`)
+    .run(JSON.stringify({
+      provider: 'adobe-ims',
+      environment: 'prod',
+      issuer: 'https://ims-na1.adobelogin.com',
+      keys: 'https://ims-na1.adobelogin.com/ims/keys',
+      clientIds: ['made-up-panel'],
+      tenant: 'profile.ownerOrg',
+      subject: 'token.user_id',
+      email: 'profile.email',
+    }));
+  const { channel: wonkaChannel } = portalDb.sqlite.prepare(`INSERT INTO integration_customers
+      (host, tenant, customer, name, enabled) VALUES ('panel-prod', '0000000000000000000000B0@AdobeOrg',
+      'agents-wonka', 'agents-wonka', 1) RETURNING channel`).get();
+  // Wonka's channel auto-approves its people, and whoever has a verified wonka.example address;
+  // two were auto-approved (src/portal/integration-auto.js), one by its domain.
+  portalDb.sqlite.prepare(`UPDATE integration_customers SET auto_approve = 1, auto_by = 'priya@example.com',
+      auto_at = ? WHERE channel = ?`).run(sec(3), wonkaChannel);
+  portalDb.sqlite.prepare(`INSERT INTO integration_catches (host, channel, kind, value, added_by, added_at)
+      VALUES ('panel-prod', ?, 'domain', 'wonka.example', 'priya@example.com', ?)`).run(wonkaChannel, sec(3));
+  for (const [i, name, email, via, days] of [[1, 'Augustus Gloop', null, null, 2], [2, 'Violet Beauregarde', 'violet@wonka.example', 'domain:wonka.example', 0.1]]) {
+    const { actor } = portalDb.sqlite.prepare(`INSERT INTO integration_actors (channel, name, verified_email)
+      VALUES (?, ?, ?) RETURNING actor`).get(wonkaChannel, name, email);
+    portalDb.sqlite.prepare(`INSERT INTO integration_members (channel, subject, actor, approved_by,
+        approved_at, via, auto) VALUES (?, ?, ?, 'priya@example.com', ?, ?, 1)`)
+      .run(wonkaChannel, `00000000000000000000B00${i + 1}@AdobeID`, actor, sec(days), via);
+  }
+  for (const [target, value] of [['team', 'edge'], ['org', 'wonka']]) {
+    DB.sqlite.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note)
+      VALUES (?, 10, 'portal', 'channel_id', ?, ?, 'manual assignment')`).run(target, `^${wonkaChannel}$`, value);
+  }
+  const access = portalDb.sqlite.prepare(`INSERT INTO integration_requests (host, tenant, subject,
+      name, email, org_name, status, requested_at, seen_at, attempts, decided_at, decided_by,
+      decided_name, reason) VALUES ('panel-prod', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  access.run(
+    '0000000000000000000000A0@AdobeOrg',
+    '00000000000000000000A001@AdobeID',
+    'Lucius Fox',
+    'lucius.fox@wayne.example',
+    'Wayne Enterprises International Holdings Inc. - Applied Sciences (Prod)',
+    'pending',
+    sec(0.2),
+    sec(0.05),
+    7,
+    null,
+    null,
+    null,
+    null,
+  );
+  access.run(
+    '0000000000000000000000B0@AdobeOrg',
+    '00000000000000000000B001@AdobeID',
+    'Charlie Bucket',
+    'charlie@wonka.example',
+    'Wonka Industries',
+    'pending',
+    sec(1.2),
+    sec(1),
+    2,
+    null,
+    null,
+    null,
+    null,
+  );
+  access.run(
+    '0000000000000000000000C0@AdobeOrg',
+    '00000000000000000000C001@AdobeID',
+    'Homer Simpson',
+    null,
+    null,
+    'declined',
+    sec(12),
+    sec(12),
+    1,
+    sec(11),
+    'priya@example.com',
+    'Priya Nair',
+    'Ask your account team for a Slack channel.',
+  );
+
   // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
   // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
   for (const b of bases) {
@@ -1116,6 +1205,12 @@ export function createAdmin(store, {
       }),
       post: async () => ({ ok: true, id: `m${Date.now().toString(36).padStart(15, '0')}` }),
       decline: async () => ({ ok: true }),
+      accessRequests: (a) => portalPlatform.accessRequests({ DB: portalDb }, a),
+      reserveAccess: (a) => portalPlatform.reserve({ DB: portalDb }, a),
+      enrollAccess: (a) => portalPlatform.enroll({ DB: portalDb }, a),
+      declineAccess: (a) => portalPlatform.declineRequest({ DB: portalDb }, a),
+      accessChannels: (a) => portalPlatform.accessChannels({ DB: portalDb }, a),
+      setAutoApprove: (a) => portalPlatform.autoApprove({ DB: portalDb }, a),
     },
     AGENT_MODEL: 'dev',
     AGENT_CHANNELS: 'C0ACMEAEM',
