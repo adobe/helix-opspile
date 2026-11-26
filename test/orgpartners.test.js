@@ -20,6 +20,7 @@ import {
   refreshPartners,
 } from '../src/orgpartners.js';
 import { d1 } from './d1.js';
+import { quiet } from './fakes.js';
 
 // Made-up people, channels, sites and slugs only.
 const ADA = {
@@ -370,33 +371,53 @@ describe('admin: partners', () => {
     assert.deepEqual(initech, ['initech', ['posters:1', 'members:2']]);
   });
 
-  it('stores no verdict when Clef times out, and asks again the next time', async (t) => {
+  it('writes, deletes and asks nothing without the partner domains', async () => {
+    const e = env();
+    await refreshPartners(e);
+    const before = e.DB.rows('SELECT * FROM org_partners');
+    assert.equal(before.length, 1);
+    // Every look for the partner domains fails (D1 overloaded), from the isolate's first.
+    forgetPartnerDomains();
+    forgetEvidence();
+    const prepare = e.DB.prepare.bind(e.DB);
+    e.DB.prepare = (sql) => {
+      if (sql.includes('COUNT(DISTINCT LOWER(i.email)) AS people, COUNT(DISTINCT m.thread)')) {
+        throw new Error('D1 DB is overloaded');
+      }
+      return prepare(sql);
+    };
+    const asked = e.AI.asked.length;
+    assert.deepEqual(await quiet(() => refreshPartners(e)), { skipped: true });
+    // An admin team's load shows the pairs as they were, and says so.
+    const r = await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners?fresh=1'));
+    assert.equal(r.body.skipped, true);
+    assert.deepEqual(r.body.pairs.map((x) => [x.customer, x.p]), [['globex', 0.9]]);
+    assert.deepEqual(e.DB.rows('SELECT * FROM org_partners'), before);
+    assert.equal(e.AI.asked.length, asked);
+    // Found again, it goes on as before.
+    e.DB.prepare = prepare;
+    forgetPartnerDomains();
+    assert.deepEqual(await refreshPartners(e), { pairs: 1, likely: 1, unchecked: 0 });
+  });
+
+  it('stores no verdict when Clef times out, and asks again the next time', async () => {
     const e = env();
     const row = () => e.DB.rows("SELECT p, fingerprint FROM org_partners WHERE customer = 'globex'")[0];
-    // Clef never answers: the ask gives up after its timeout.
-    const silent = async (run) => {
-      e.AI = { run: () => new Promise(() => {}) };
-      t.mock.timers.enable({ apis: ['setTimeout'] });
-      const done = run();
-      try {
-        for (let i = 0; i < 100; i += 1) {
-          // eslint-disable-next-line no-await-in-loop
-          await new Promise(setImmediate);
-          t.mock.timers.tick(10000);
-        }
-        return await done;
-      } finally {
-        t.mock.timers.reset();
-      }
+    // Clef never answers: the ask gives up after its timeout, made short here. (Fake timers hung
+    // the run where the ask set its timer after the last tick.)
+    const never = { run: () => new Promise(() => {}) };
+    const silent = () => {
+      e.AI = never;
+      return refreshPartners(e, { wait: 20 });
     };
-    assert.deepEqual(await silent(() => refreshPartners(e)), { pairs: 1, likely: 0, unchecked: 1 });
+    assert.deepEqual(await silent(), { pairs: 1, likely: 0, unchecked: 1 });
     assert.deepEqual(row(), { p: null, fingerprint: null });
     e.AI = fakeAI();
     assert.deepEqual(await refreshPartners(e), { pairs: 1, likely: 1, unchecked: 0 });
     assert.equal(row().p, 0.9);
     // Shown something else, a timeout keeps the verdict it had, stale, for the next ask.
     e.DB.sqlite.exec("UPDATE org_partners SET fingerprint = 'before'");
-    assert.deepEqual(await silent(() => refreshPartners(e)), { pairs: 1, likely: 1, unchecked: 1 });
+    assert.deepEqual(await silent(), { pairs: 1, likely: 1, unchecked: 1 });
     assert.deepEqual(row(), { p: 0.9, fingerprint: 'before' });
     e.AI = fakeAI();
     await refreshPartners(e);

@@ -4063,7 +4063,9 @@ function linkSection(f) {
   const open = d.pairs.filter((x) => !reviewLink(x) && !x.confirmed && !x.dismissed && match(x));
   const done = d.pairs.filter((x) => (x.confirmed || x.dismissed) && match(x));
   if (!top.length && !open.length && !done.length && !d.unchecked) return '';
-  const checking = d.unchecked ? `<div class="navnote">Clef is looking at ${d.unchecked} more…</div>` : '';
+  let checking = d.unchecked ? `<div class="navnote">Clef is looking at ${d.unchecked} more…</div>` : '';
+  // The partner domains could not be read (src/orgpartners.js `sync`): the pairs as they were.
+  if (d.skipped) checking = '<div class="navnote">The partner domains could not be read: the pairs as they were found before.</div>';
   const holds = (list) => list.some((x) => state.sel === linkSel(x.customer, x.partner));
   const fold = (key, label, list) => (list.length ? SideNav.group({
     key, label, body: list.map(linkRow).join(''), holds: holds(list),

@@ -284,10 +284,13 @@ async function overrides(env) {
 }
 
 /**
- * The partner domains: `Map<domain, { name, org } | null>`, the domains found and then the admin
- * team's rows over them; `null` is a domain that is not a partner's (src/profiles.js `partnerOf`).
+ * The partner domains and whether they were found (`{ domains, found }`): `domains` is
+ * `partnerDomains`'s, `found` false when no look ever succeeded in this isolate (the first failed
+ * or is late, `NONE`), so `domains` has the admin team's rows only. What a look found before, kept
+ * while the next one fails, is found. A caller that writes from them (src/orgpartners.js) waits
+ * for found ones; one that only shows them takes what there is.
  */
-export async function partnerDomains(env) {
+export async function partnerDomainLookup(env) {
   const [derived, rows] = await Promise.all([derivedDomains(env), overrides(env)]);
   const out = new Map(derived.found.map((d) => [d.domain, { name: d.name, org: d.org }]));
   for (const r of rows) {
@@ -298,7 +301,15 @@ export async function partnerDomains(env) {
       org: r.org || (was && was.org) || null,
     });
   }
-  return out;
+  return { domains: out, found: derived.at !== null };
+}
+
+/**
+ * The partner domains: `Map<domain, { name, org } | null>`, the domains found and then the admin
+ * team's rows over them; `null` is a domain that is not a partner's (src/profiles.js `partnerOf`).
+ */
+export async function partnerDomains(env) {
+  return (await partnerDomainLookup(env)).domains;
 }
 
 // ---- partner domains: the admin team's editor ------------------------------------------------

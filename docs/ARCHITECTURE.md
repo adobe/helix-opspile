@@ -285,7 +285,8 @@ alone (Clef found most such pairs unlikely):
   threads and people). The domains come from one place, `partnerMailDomains`: src/partners.js
   `partnerDomains` ("Partner domains"), by the partner org each is of, so the admin team's
   overrides and exclusions change the pairs too; a subdomain counts as its parent, unless it is
-  listed itself (an excluded one is nobody's);
+  listed itself (an excluded one is nobody's). Without them (no look for them succeeded yet in the
+  isolate), a load or cron run changes nothing in `org_partners` and the list says so (`skipped`);
 - `guests`: people from the customer's usual mail domain posted in the partner's threads (1 or 2);
 - `members`: people from the partner's mail domains are in the customer's channels
   (`channel_members`, 1 to 2);

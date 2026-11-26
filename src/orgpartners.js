@@ -15,7 +15,7 @@ import { orgDomain } from './favicons.js';
 import { json } from './http.js';
 import { CLEF } from './label.js';
 import { facts as orgFacts } from './orgmerge.js';
-import { partnerDomains } from './partners.js';
+import { partnerDomainLookup } from './partners.js';
 import { platformName } from './platforms.js';
 import { isAdmin } from './roles.js';
 import { UNASSIGNED } from './rules.js';
@@ -258,20 +258,21 @@ function postedDomains(orgs, ev) {
 }
 
 /**
- * Whose people write from each partner domain, `Map<domain, partner | null>`: the one place the
- * `posters`, `guests` and `members` signals get them. From src/partners.js `partnerDomains`, the
+ * Whose people write from each partner domain, `{ domains: Map<domain, partner | null>, found }`:
+ * the one place the `posters`, `guests` and `members` signals get them. From src/partners.js
+ * `partnerDomainLookup` (`found` is its: false when no look for them succeeded yet), the
  * domains found and the admin team's rows over them, by the partner org each is of (`orgs`, not
  * merged); `null` is a domain that is no partner's (excluded), or of no partner org here, which
  * keeps its subdomains from counting as their parent's (`domainPartner`).
  */
 export async function partnerMailDomains(env, orgs) {
-  const all = await partnerDomains(env);
+  const { domains, found } = await partnerDomainLookup(env);
   const out = new Map();
-  for (const [domain, d] of all) {
+  for (const [domain, d] of domains) {
     const org = d && d.org && orgs.get(d.org);
     out.set(domain, org && org.type === 'partner' ? org.slug : null);
   }
-  return out;
+  return { domains: out, found };
 }
 
 /** The partner whose people write from `domain` or a parent of it, or null (as `partnerOf`). */
@@ -567,10 +568,10 @@ async function fingerprintOf(text) {
 }
 
 /** Clef's probability that the partner of `state` works for its customer, or null. */
-async function askPair(env, state) {
+async function askPair(env, state, wait = ASK_TIMEOUT_MS) {
   let timer;
   const timeout = new Promise((resolve) => {
-    timer = setTimeout(() => resolve(null), ASK_TIMEOUT_MS);
+    timer = setTimeout(() => resolve(null), wait);
   });
   try {
     const res = await Promise.race([env.AI.run(CLEF, {
@@ -632,8 +633,14 @@ const decided = (r) => Boolean(r && (r.confirmed_at || r.dismissed_at));
  * missing or was given on other signals (`fingerprint`), `ask` of them, strongest first; and the
  * rows of pairs that are no candidate any more and that nobody decided go. Returns the pairs,
  * each `pairOf`, the candidates first, and how many Clef was not asked about yet (`unchecked`).
+ *
+ * Without the partner domains (`partnerMailDomains` not `found`: D1 failed or was slow for the
+ * isolate's first look), the partners' people would be nobody's: pairs would stop being
+ * candidates, their rows pruned and their fingerprints changed, every verdict lost for a slow
+ * minute. So it writes, deletes and asks nothing then, and answers the rows as they are
+ * (`skipped`). `wait` is how long Clef is waited for (tests wait less).
  */
-async function sync(env, { fresh = false, ask = ASK_PER_LIST } = {}) {
+async function sync(env, { fresh = false, ask = ASK_PER_LIST, wait = ASK_TIMEOUT_MS } = {}) {
   const [f, ev, kept, merges] = await Promise.all([
     orgFacts(env, { fresh }),
     evidence(env, { fresh }),
@@ -643,7 +650,16 @@ async function sync(env, { fresh = false, ask = ASK_PER_LIST } = {}) {
   // The facts may be from before a merge another isolate made.
   const merged = new Set(merges.map((r) => r.slug));
   const orgs = new Map([...f.orgs].filter(([slug]) => !merged.has(slug)));
-  const ctx = contextOf(orgs, ev, await partnerMailDomains(env, orgs));
+  const mail = await partnerMailDomains(env, orgs);
+  const ctx = contextOf(orgs, ev, mail.domains);
+  if (!mail.found) {
+    console.error(JSON.stringify({ route: 'orgpartners', skipped: 'no partner domains' }));
+    const pairs = kept.filter((r) => !merged.has(r.customer) && !merged.has(r.partner))
+      .map((r) => ({ ...pairOf(r), candidate: !decided(r) }));
+    return {
+      pairs, unchecked: 0, orgs, ctx, ev, skipped: true,
+    };
+  }
   const found = partnerCandidates({ ...f, orgs }, ev, ctx);
   const keptBy = new Map(kept.map((r) => [keyOf(r.customer, r.partner), r]));
   const writes = [];
@@ -689,7 +705,7 @@ async function sync(env, { fresh = false, ask = ASK_PER_LIST } = {}) {
   await pool(asking, ASK_PARALLEL, async ({
     pair, state, fingerprint, c,
   }) => {
-    const p = await askPair(env, state);
+    const p = await askPair(env, state, wait);
     if (p === null) {
       return;
     }
@@ -704,9 +720,15 @@ async function sync(env, { fresh = false, ask = ASK_PER_LIST } = {}) {
   };
 }
 
-/** The cron's: the pairs brought up to date, and Clef asked about a few (see `sync`). */
-export async function refreshPartners(env) {
-  const { pairs, unchecked } = await sync(env, { fresh: true });
+/**
+ * The cron's: the pairs brought up to date, and Clef asked about a few (see `sync`); `{ skipped:
+ * true }` and nothing written without the partner domains. `wait` as `sync`'s.
+ */
+export async function refreshPartners(env, { wait } = {}) {
+  const { pairs, unchecked, skipped } = await sync(env, { fresh: true, wait });
+  if (skipped) {
+    return { skipped: true };
+  }
   return {
     pairs: pairs.length,
     likely: pairs.filter((x) => !x.dismissed && (x.confirmed || (x.p ?? 0) >= LIKELY)).length,
@@ -742,7 +764,8 @@ const likely = (x) => Boolean(x.confirmed) || (!x.dismissed && x.p !== null && x
  * score, p, checked, stale, candidate, confirmed, dismissed }`, with the orgs in `orgs`; the
  * undecided likely ones first, then the rest by Clef's probability and the signals, the decided
  * last. `unchecked` counts the pairs Clef was not asked about yet. `pair` answers that one pair,
- * whatever its signals.
+ * whatever its signals. `skipped`: the partner domains could not be read, so these are the pairs
+ * as they were kept (`sync`).
  */
 export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
   if (!isAdmin(me)) {
@@ -797,7 +820,7 @@ export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
     }
   }
   return json({
-    pairs: list, orgs, unchecked: s.unchecked, likely: LIKELY,
+    pairs: list, orgs, unchecked: s.unchecked, likely: LIKELY, skipped: Boolean(s.skipped),
   });
 }
 

@@ -241,7 +241,11 @@ the kept org had only the decision is written. Undoing it deletes the rows it ad
 decision it wrote on the others (their signals, Clef's verdict and fingerprint stay), and the merged
 org's own rows, kept all along, count again. A decision by hand since makes the row the kept org's.
 A verdict Clef did not give (a timeout, an error, no number) is not written: `p` and the
-`fingerprint` stay as they were, and the next load or run asks again.
+`fingerprint` stay as they were, and the next load or run asks again. Without the partner domains
+(src/partners.js `partnerDomainLookup` not `found`: no look succeeded in the isolate yet, D1 failed
+or was slow) a `sync` writes, deletes and asks nothing and answers the rows as they are
+(`skipped`): the partners' people would be nobody's, and every pair would drop and lose its
+verdict. What a look found before counts as found while the next one fails.
 
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status
