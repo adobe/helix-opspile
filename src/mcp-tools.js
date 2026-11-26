@@ -714,6 +714,7 @@ const RULE_PROPS = {
   kind: { type: 'string', enum: ['regex', 'script'], description: 'regex (the default), or script: an ES module whose default export gets the thread ({ text, messages: [{ at, author, staff, bot, text }], channel, platform, customer }) and returns [{ field, value }] facts and [{ tech }] detections; it runs without network access' },
   target: { type: 'string', enum: ['fact', 'tech'], description: 'fact (the default): write `field`; tech: detect the technology whose id is `field`' },
   field: { type: 'string', description: 'Fact field (site, ticket, url, …; lower case, digits and _) or technology id' },
+  label: { type: 'string', description: 'target fact: what the inbox calls the field, a word or two (Site, Support case); the first rule of a field that has one names it, the team\'s before the admin team\'s. Left out, the inbox shows the field as it is. A technology is named in the tech stack (save_tech) instead' },
   pattern: { type: 'string', description: 'JavaScript regular expression (always global)' },
   flags: { type: 'string', description: 'Any of i, m, s, u' },
   value: { type: 'string', description: 'Template of the value: $0 the match (the default), $1… its groups' },
@@ -1069,7 +1070,7 @@ export const TOOLS = [
   {
     name: 'list_extraction_rules',
     title: 'List extraction rules',
-    description: 'Returns an ops team\'s extraction rules (regular expressions or scripts that find facts such as sites, tickets and URLs in its threads, or detect a technology the customer uses) and its tech stack (the technologies Clef asks about in every thread, with the description it is asked), and the admin team\'s, which apply to every channel too. A change applies from the next labeling of a thread.',
+    description: 'Returns an ops team\'s extraction rules (regular expressions or scripts that find facts such as sites, tickets and URLs in its threads, each with the label the inbox shows for its field, or detect a technology the customer uses) and its tech stack (the technologies Clef asks about in every thread, with the description it is asked), and the admin team\'s, which apply to every channel too. A change applies from the next labeling of a thread.',
     inputSchema: {
       type: 'object', properties: { team: TEAM_ARG }, required: ['team'], additionalProperties: false,
     },

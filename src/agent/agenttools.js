@@ -112,8 +112,9 @@ export const AGENT_TOOLS = [
     names: ['list_extraction_rules', 'test_extraction_rule', 'save_extraction_rule',
       'delete_extraction_rule', 'save_tech', 'delete_tech'],
     description: 'The agent defines detection and extraction rules for its team: regular'
-      + ' expressions or scripts that find facts (sites, tickets, URLs, …) in threads or detect a'
-      + ' technology the customer uses, and the tech stack Clef asks about',
+      + ' expressions or scripts that find facts (sites, tickets, URLs, …) in threads, with the'
+      + ' label the inbox shows for them, or detect a technology the customer uses, and the tech'
+      + ' stack Clef asks about',
     note: 'What the agent saves applies to every channel of its team, from the next labeling of'
       + ' a thread, and shows on this page, attributed to the agent. It cannot change the admin'
       + ' team\'s rules.',

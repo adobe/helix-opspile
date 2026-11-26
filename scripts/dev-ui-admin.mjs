@@ -1161,14 +1161,19 @@ export function createAdmin(store, { manager = false, member = false, bases = []
   // The admin team gave platform ops' computers the image for working on data.
   DB.sqlite.exec(`INSERT INTO agent_tool_options (tool, team, name, value, changed_by, changed_at)
     VALUES ('computer', 'platform', 'image', 'data', 'Dana', '2026-10-27T09:00:00Z')`);
-  // Platform ops' own extraction rules, one saved by its agent, and its own tech stack: one
-  // technology of its own, and one of the admin team's turned off for its channels.
-  DB.sqlite.exec(`INSERT INTO extraction_rules (team, name, kind, target, field, pattern, flags, value,
-      position, changed_by, changed_at) VALUES
-    ('platform', 'Order ids in checkout errors', 'regex', 'fact', 'order', '\\bORD-\\d{6}\\b', '', '', 10,
-      'Dana Ops', '2026-10-26T09:00:00Z'),
-    ('platform', 'Release numbers', 'regex', 'fact', 'release', '\\bRelease (\\d+)\\b', 'i', '$1', 20,
-      'opspile-agent/dev', '2026-10-27T15:00:00Z');
+  // Platform ops' own extraction rules, one saved by its agent (without a label: the inbox shows
+  // its field as it is), and its own tech stack: one technology of its own, and one of the admin
+  // team's turned off for its channels. The admin team's rule for Figma files, added after
+  // migration 0043, with the label the inbox shows for its facts.
+  DB.sqlite.exec(`INSERT INTO extraction_rules (team, name, kind, target, field, label, pattern, flags,
+      value, position, changed_by, changed_at) VALUES
+    ('platform', 'Order ids in checkout errors', 'regex', 'fact', 'order', 'Order id', '\\bORD-\\d{6}\\b', '',
+      '', 10, 'Dana Ops', '2026-10-26T09:00:00Z'),
+    ('platform', 'Release numbers', 'regex', 'fact', 'release', NULL, '\\bRelease (\\d+)\\b', 'i', '$1', 20,
+      'opspile-agent/dev', '2026-10-27T15:00:00Z'),
+    ('admin', 'Figma file', 'regex', 'fact', 'figma_file', 'Figma file',
+      '\\bfigma\\.com/(?:file|design|proto|board)/([A-Za-z0-9]{10,})', '', '$1', 300, 'Dana',
+      '2026-11-20T09:00:00Z');
     INSERT INTO tech_stack (team, tech, name, description, enabled, changed_by, changed_at) VALUES
       ('platform', 'sitecore', 'Sitecore', 'Sitecore as the CMS before the migration', 1, 'Dana Ops', '2026-10-26T09:00:00Z'),
       ('platform', 'gdrive', 'Google Drive', 'Google Drive or Google Docs as the content source', 0, 'Dana Ops',

@@ -35,7 +35,8 @@ import { isTechId, MAX_TECH_ID } from './techid.js';
  * A regex rule has a `pattern` (JavaScript, always global; `flags` adds i, m, s or u), a `value`
  * template (`$0` the match, `$1`… its groups; `$0` when empty), a `transform` (lower or upper)
  * and an `exclude` pattern: values it matches are dropped. It writes a fact (`target` fact, its
- * `field`) or detects a technology (`target` tech, `field` its id).
+ * `field`) or detects a technology (`target` tech, `field` its id). A fact's rule has a `label`
+ * too (migration 0108): what the inbox calls its field, "Site" for `site` (`factLabels`).
  *
  * A script rule is an ES module whose default export gets the thread and returns what it found:
  *
@@ -58,6 +59,8 @@ export const MAX_PATTERN = 600;
 export const MAX_SCRIPT = 20000;
 const MAX_VALUE = 300;
 const MAX_NAME = 80;
+/** A fact's label: a word or two, as the inbox shows it next to the value. */
+export const MAX_LABEL = 40;
 const MAX_DESCRIPTION = 300;
 /** Matches a rule looks at before it stops, whatever it found. */
 const MAX_MATCHES = 500;
@@ -354,6 +357,7 @@ const ruleOut = (r) => ({
   kind: r.kind,
   target: r.target,
   field: r.field,
+  label: r.label || '',
   pattern: r.pattern || '',
   flags: r.flags || '',
   value: r.value || '',
@@ -475,6 +479,26 @@ export async function techNames(env, team = null) {
 }
 
 /**
+ * What the inbox calls the facts of every field a rule labels, by field: the first label of
+ * `team`'s rules, else of the admin team's, else of another team's, in the order they run,
+ * those turned off too (the facts they found stay). A field no rule labels is not in it.
+ */
+export async function factLabels(env, team = null) {
+  if (!env || !env.DB) {
+    return {};
+  }
+  const { results: rows } = await env.DB.prepare(`SELECT field, label FROM extraction_rules
+    WHERE target = 'fact' AND field IS NOT NULL AND label IS NOT NULL AND label != ''
+    ORDER BY team = ? DESC, team = ? DESC, team, position, id`)
+    .bind(team || GLOBAL_TEAM, GLOBAL_TEAM).all();
+  const out = {};
+  for (const r of rows || []) {
+    out[r.field] = out[r.field] || r.label;
+  }
+  return out;
+}
+
+/**
  * The layer of every technology any team has, by id (src/stack.js), as techNames names them:
  * `team`'s own, else the admin team's, else another team's; a row without one takes the next.
  */
@@ -496,6 +520,7 @@ export function checkRule(input, old = {}) {
     kind: clean(get('kind') || 'regex', 10),
     target: clean(get('target') || 'fact', 10),
     field: clean(get('field'), MAX_TECH_ID),
+    label: clean(get('label'), MAX_LABEL).replace(/\s+/g, ' '),
     pattern: String(get('pattern') ?? '').trim(),
     flags: clean(get('flags'), 8),
     value: clean(get('value'), 120),
@@ -525,7 +550,16 @@ export function checkRule(input, old = {}) {
     }
     return {
       rule: {
-        ...rule, target: 'fact', field: rule.field || null, pattern: '', flags: '', value: '', transform: '', exclude: '',
+        // A script's facts may be of any field: its label names the one it gives, if any.
+        ...rule,
+        target: 'fact',
+        field: rule.field || null,
+        label: rule.field ? rule.label : '',
+        pattern: '',
+        flags: '',
+        value: '',
+        transform: '',
+        exclude: '',
       },
     };
   }
@@ -545,7 +579,8 @@ export function checkRule(input, old = {}) {
   if (compiled.error) {
     return { error: compiled.error };
   }
-  return { rule: { ...rule, script: '' } };
+  // A technology is named in the tech stack, not by its rule.
+  return { rule: { ...rule, label: rule.target === 'tech' ? '' : rule.label, script: '' } };
 }
 
 /** A technology from what someone gave, checked: `{ tech }` or `{ error }`. */
@@ -606,13 +641,14 @@ export async function saveRule(env, team, input, by) {
   const at = new Date().toISOString();
   if (old) {
     await env.DB.prepare(`UPDATE extraction_rules SET name = ?, kind = ?, target = ?, field = ?,
-        pattern = ?, flags = ?, value = ?, transform = ?, exclude = ?, script = ?, enabled = ?,
-        changed_by = ?, changed_at = ? WHERE id = ?`)
+        label = ?, pattern = ?, flags = ?, value = ?, transform = ?, exclude = ?, script = ?,
+        enabled = ?, changed_by = ?, changed_at = ? WHERE id = ?`)
       .bind(
         rule.name,
         rule.kind,
         rule.target,
         rule.field,
+        rule.label || null,
         rule.pattern,
         rule.flags,
         rule.value,
@@ -632,15 +668,16 @@ export async function saveRule(env, team, input, by) {
     }
     const { p } = await env.DB.prepare(`SELECT COALESCE(MAX(position), 0) + 10 AS p
       FROM extraction_rules WHERE team = ?`).bind(team).first();
-    await env.DB.prepare(`INSERT INTO extraction_rules (team, name, kind, target, field, pattern,
-        flags, value, transform, exclude, script, position, enabled, created_by, changed_by,
-        changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    await env.DB.prepare(`INSERT INTO extraction_rules (team, name, kind, target, field, label,
+        pattern, flags, value, transform, exclude, script, position, enabled, created_by,
+        changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(
         team,
         rule.name,
         rule.kind,
         rule.target,
         rule.field,
+        rule.label || null,
         rule.pattern,
         rule.flags,
         rule.value,

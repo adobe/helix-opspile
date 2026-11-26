@@ -14,7 +14,7 @@ import { platformName } from './platforms.js';
 import { recordDead, sweepDelay, sweepsNow } from './deadjobs.js';
 import { fileCache, folderFiles } from './filecache.js';
 import {
-  extract, rulesFor, techFor, techLayerMap, techNames,
+  extract, factLabels, rulesFor, techFor, techLayerMap, techNames,
 } from './extract.js';
 import { isStaffDomain } from './lookup.js';
 import { LAYERS } from './stack.js';
@@ -324,25 +324,46 @@ export const topicNames = () => Object.fromEntries(Object.entries(TOPICS)
 /** The names the inbox shows for area ids: every team's (src/areas.js), else the built-in ones. */
 export const areaNamesOf = (env) => areaNames(env, topicNames());
 
-/**
- * The names the inbox shows for tech stack and topic ids, the layer of the stack each
- * technology is in (`layers`), and the layers, top to bottom (`stack`, src/stack.js).
- */
-export const vocab = async (env, team = null) => {
-  const [tech, layers, topics] = await Promise.all([
-    techNames(env, team), techLayerMap(env, team), areaNamesOf(env),
-  ]);
-  return {
-    tech, topics, layers, stack: LAYERS.map(({ id, name }) => ({ id, name })),
-  };
-};
-
 export const FIELDS = {
   problem: { type: 'text', instructions: "The customer's problem or request, in their own words" },
   affected_url: { type: 'text', instructions: 'URL of the affected page, site or environment' },
   error: { type: 'text', instructions: 'An error message, status code or failing behaviour quoted in the thread' },
   deadline: { type: 'date', instructions: 'Date by which the customer needs this answered or done' },
   go_live: { type: 'date', instructions: 'Planned go-live or launch date' },
+};
+
+/**
+ * What the inbox calls Clairic's facts, by field: those of FIELDS, and `product`, which it was
+ * asked before the tech stack said which products a thread is about (src/topicmap.js reads
+ * them). The extraction rules' facts are named by their rules (src/extract.js `factLabels`),
+ * which `vocab` puts over these.
+ */
+export const FIELD_LABELS = {
+  problem: 'Problem',
+  affected_url: 'Affected URL',
+  error: 'Error',
+  deadline: 'Deadline',
+  go_live: 'Go-live',
+  product: 'Product',
+};
+
+/**
+ * The names the inbox shows for tech stack and topic ids, and for the fields of facts
+ * (`facts`: the labels of the extraction rules that write them, src/extract.js `factLabels`,
+ * and Clairic's, FIELD_LABELS), the layer of the stack each technology is in (`layers`), and
+ * the layers, top to bottom (`stack`, src/stack.js).
+ */
+export const vocab = async (env, team = null) => {
+  const [tech, layers, topics, labels] = await Promise.all([
+    techNames(env, team), techLayerMap(env, team), areaNamesOf(env), factLabels(env, team),
+  ]);
+  return {
+    tech,
+    topics,
+    facts: { ...FIELD_LABELS, ...labels },
+    layers,
+    stack: LAYERS.map(({ id, name }) => ({ id, name })),
+  };
 };
 
 /**

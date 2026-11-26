@@ -2375,13 +2375,6 @@ function marked(text, words) {
     .map((part, i) => (i % 2 ? `<mark>${emojify(part)}</mark>` : emojify(part))).join('');
 }
 const MATCHED = { title: 'Title', place: 'Channel or customer', fact: 'Facts', text: 'Words in a message', topic: 'About this' };
-// Fact fields of the admin team's rules (migration 0043) and Clairic's; a team's own show as they are named.
-const FACT_LABEL = {
-  url: 'URL', cve: 'CVE', ticket: 'Ticket', site: 'Site', repo: 'Repository', problem: 'Problem', error: 'Error', deadline: 'Deadline',
-  go_live: 'Go-live', affected_url: 'Affected URL', admin_api: 'Admin API', aemcs_env: 'AEM environment', doc: 'Docs', tool: 'Tool',
-  config_file: 'Config file', http_status: 'Status', header: 'Header', case: 'Support case',
-  product: 'Product',
-};
 /** A result's third line: the message that matched, else the fact, else why it matched. */
 function hitLine(hit) {
   const words = state.search.words;
@@ -2390,7 +2383,8 @@ function hitLine(hit) {
     return `<div class="l3" title="${esc(s.text)}">${s.author ? `<b>${esc(s.author)}</b> ` : ''}${marked(s.text, words)}</div>`;
   }
   if (hit.fact) {
-    return `<div class="l3"><span class="tag">${esc(FACT_LABEL[hit.fact.field] || hit.fact.field)}</span> ${marked(hit.fact.value, words)}</div>`;
+    // What the rule that writes the field calls it (or Clairic's name for it): src/label.js vocab.
+    return `<div class="l3"><span class="tag">${esc(vocabName('facts', hit.fact.field))}</span> ${marked(hit.fact.value, words)}</div>`;
   }
   return `<div class="l3 dim">${esc(hit.matched.map((m) => MATCHED[m] || m).join(' · '))} matches</div>`;
 }
@@ -3633,7 +3627,8 @@ const HEAD_POSTS = 12; // the posts a group's list shows: its first and the late
 // Hosts that documentation and code live on: a link there is a reference, not the customer's
 // page (a site's own host, `main--site--org.aem.live`, has `--` in it).
 const REFERENCE_HOST = /(?:^|\.)(?:aem\.live|github\.com|adobe\.com)$/;
-const ID_FIELDS = { ticket: 'Ticket', cve: 'CVE', case: 'Support case' };
+// The fields of facts that are ids, named as the API names them (`vocab.facts`).
+const ID_FIELDS = ['ticket', 'cve', 'case'];
 const LINK_GROUPS = {
   mentioned: 'Mentioned in the thread', site: 'Site', reference: 'References', id: 'Tickets and ids',
 };
@@ -3680,11 +3675,12 @@ function asUrl(v) {
 /**
  * The links of a thread's facts, the most relevant first: the pages mentioned in it (the one
  * Clairic says is affected first), then each Edge Delivery site's production URL, then links to
- * documentation and code, then tickets, CVEs and support cases. `{ group, href, host, text, note }`,
+ * documentation and code, then tickets, CVEs and support cases, each named by `names` (the
+ * labels of the fields, `vocab.facts`; else the field). `{ group, href, host, text, note }`,
  * each once: a link that only differs in how it is written, or that Clairic cut off where the
  * whole of it is there too, is left out.
  */
-function headLinks(facts = []) {
+function headLinks(facts = [], names = {}) {
   const out = [];
   const seen = new Set();
   const add = (group, href, text, note = '') => {
@@ -3713,9 +3709,9 @@ function headLinks(facts = []) {
     if (org && site) add('site', `https://main--${site}--${org}.aem.live/`, `main--${site}--${org}.aem.live`, 'Production');
   }
   for (const u of urls) if (reference(u.href)) add('reference', u.href, shortUrl(u.href));
-  for (const [field, name] of Object.entries(ID_FIELDS)) {
+  for (const field of ID_FIELDS) {
     for (const f of facts.filter((x) => x.field === field)) {
-      add('id', field === 'cve' ? `https://www.cve.org/CVERecord?id=${encodeURIComponent(f.value)}` : null, f.value, name);
+      add('id', field === 'cve' ? `https://www.cve.org/CVERecord?id=${encodeURIComponent(f.value)}` : null, f.value, names[field] || field);
     }
   }
   return out;
@@ -3868,8 +3864,8 @@ const linkIcon = (l) => favImg(l.host, { cls: 'fav', fallback: '<span class="fav
  * The links dropdown: the pill names the first link's host (its whole address is the tooltip),
  * the list has a line for each, its favicon, then the address, cut in the middle where it is long.
  */
-function linksMenu(facts) {
-  const links = headLinks(facts);
+function linksMenu(facts, names) {
+  const links = headLinks(facts, names);
   if (!links.length) return '';
   const text = (l) => {
     // An id is named as it is (a CVE's link is to its record).
@@ -5339,7 +5335,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     ? Follow.button({ kind: 'thread', id: key, name: thread.title || 'this thread' }) : '';
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
       <div class="l1">${lead}${follow ? `<span class="ph-follow">${follow}</span>` : ''}</div>
-      <div class="l2">${techMenu(data)}${stackButton(data)}${linksMenu(facts)}${expertsHtml(key)}</div></div>`;
+      <div class="l2">${techMenu(data)}${stackButton(data)}${linksMenu(facts, data.vocab?.facts)}${expertsHtml(key)}</div></div>`;
   const reply = sideInline(key) ? sideComposer(key, thread)
     : composer(thread, resolveButton(thread, resolution), key);
   // Drawn meanwhile by another call (a page opened at a thread draws it twice at once, as it
