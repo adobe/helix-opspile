@@ -549,8 +549,9 @@ async function askPair(env, state) {
     const res = await Promise.race([env.AI.run(CLEF, {
       model: 'clef', state, questions: { works: { type: 'noul', instructions: QUESTION } },
     }), timeout]);
-    const p = Number(res && res.answers && res.answers.works && res.answers.works.noul);
-    return Number.isFinite(p) ? p : null;
+    // A timeout answers null, and Number(null) is 0: only a number Clef gave is a verdict.
+    const p = res && res.answers && res.answers.works && res.answers.works.noul;
+    return typeof p === 'number' && Number.isFinite(p) ? p : null;
   } catch (e) {
     console.log(JSON.stringify({ route: 'orgpartners', clef: 'failed', error: String(e && e.message) }));
     return null;
@@ -798,7 +799,7 @@ export async function decidePartner(env, me, body, what) {
   const clear = body.undo ? '' : `, ${other}_by = NULL, ${other}_at = NULL`;
   await env.DB.prepare(`INSERT INTO org_partners (customer, partner, ${set}_by, ${set}_at)
     VALUES (?, ?, ?, ?) ON CONFLICT (customer, partner) DO UPDATE SET ${set}_by = excluded.${set}_by,
-      ${set}_at = excluded.${set}_at${clear}, merged_from = NULL`).bind(customer, partner, by, at).run();
+      ${set}_at = excluded.${set}_at${clear}, merged_from = NULL, merged_new = NULL`).bind(customer, partner, by, at).run();
   const row = await env.DB.prepare('SELECT * FROM org_partners WHERE customer = ? AND partner = ?')
     .bind(customer, partner).first();
   console.log(JSON.stringify({

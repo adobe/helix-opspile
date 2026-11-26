@@ -345,6 +345,62 @@ describe('admin: partners', () => {
     assert.equal((await call(e, BO, 'GET', '/api/customers/partners?org=globex')).body.partners[0].confirmed, true);
   });
 
+  it('stores no verdict when Clef times out, and asks again the next time', async (t) => {
+    const e = env();
+    const row = () => e.DB.rows("SELECT p, fingerprint FROM org_partners WHERE customer = 'globex'")[0];
+    // Clef never answers: the ask gives up after its timeout.
+    const silent = async (run) => {
+      e.AI = { run: () => new Promise(() => {}) };
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const done = run();
+      try {
+        for (let i = 0; i < 100; i += 1) {
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise(setImmediate);
+          t.mock.timers.tick(10000);
+        }
+        return await done;
+      } finally {
+        t.mock.timers.reset();
+      }
+    };
+    assert.deepEqual(await silent(() => refreshPartners(e)), { pairs: 1, likely: 0, unchecked: 1 });
+    assert.deepEqual(row(), { p: null, fingerprint: null });
+    e.AI = fakeAI();
+    assert.deepEqual(await refreshPartners(e), { pairs: 1, likely: 1, unchecked: 0 });
+    assert.equal(row().p, 0.9);
+    // Shown something else, a timeout keeps the verdict it had, stale, for the next ask.
+    e.DB.sqlite.exec("UPDATE org_partners SET fingerprint = 'before'");
+    assert.deepEqual(await silent(() => refreshPartners(e)), { pairs: 1, likely: 1, unchecked: 1 });
+    assert.deepEqual(row(), { p: 0.9, fingerprint: 'before' });
+    e.AI = fakeAI();
+    await refreshPartners(e);
+    assert.notEqual(row().fingerprint, 'before');
+  });
+
+  it('writes only the decision on a pair the org kept had, and an undo leaves its row', async () => {
+    const e = env();
+    e.DB.sqlite.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('globex-two', NULL, 'customer', '${AT}')`);
+    // Globex's pair with the agency is a candidate Clef judged; Globex Two's was confirmed.
+    await refreshPartners(e);
+    const before = e.DB.rows("SELECT score, signals, fingerprint, p FROM org_partners WHERE customer = 'globex'")[0];
+    assert.equal(before.p, 0.9);
+    await call(e, ADA, 'POST', '/api/admin/org-partners/confirm', { customer: 'globex-two', partner: 'agency' });
+    assert.equal((await call(e, ADA, 'POST', '/api/admin/org-merge', { from: 'globex-two', into: 'globex' })).status, 200);
+    const merged = e.DB.rows(`SELECT score, signals, fingerprint, p, confirmed_by, merged_from, merged_new
+      FROM org_partners WHERE customer = 'globex'`)[0];
+    assert.deepEqual(merged, {
+      ...before, confirmed_by: 'ada@staff.example', merged_from: 'globex-two', merged_new: 0,
+    });
+    await call(e, ADA, 'DELETE', '/api/admin/org-merge', { slug: 'globex-two' });
+    assert.deepEqual(e.DB.rows(`SELECT score, signals, fingerprint, p, confirmed_at, merged_from, merged_new
+      FROM org_partners WHERE customer = 'globex'`), [{
+      ...before, confirmed_at: null, merged_from: null, merged_new: null,
+    }]);
+    // The merged org's own decision counts again.
+    assert.ok((await customersOf(e, 'agency')).some((x) => x.slug === 'globex-two' && x.confirmed));
+  });
+
   it('moves a merged org\'s decisions to the org kept, and back with an undo', async () => {
     const e = env();
     // Globex Two is Globex: its decisions go along, unless Globex has its own.

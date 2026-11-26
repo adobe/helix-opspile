@@ -481,8 +481,9 @@ async function askPair(env, state) {
     const res = await Promise.race([env.AI.run(CLEF, {
       model: 'clef', state, questions: { one: { type: 'noul', instructions: QUESTION } },
     }), timeout]);
-    const p = Number(res && res.answers && res.answers.one && res.answers.one.noul);
-    return Number.isFinite(p) ? p : null;
+    // A timeout answers null, and Number(null) is 0: only a number Clef gave is a verdict.
+    const p = res && res.answers && res.answers.one && res.answers.one.noul;
+    return typeof p === 'number' && Number.isFinite(p) ? p : null;
   } catch (e) {
     console.log(JSON.stringify({ route: 'orgmerge', clef: 'failed', error: String(e && e.message) }));
     return null;
@@ -948,19 +949,21 @@ export async function mergeOrgs(env, me, body, { applyRules }) {
         env.DB.prepare("DELETE FROM person_follows_by WHERE kind = 'org' AND target = ?").bind(from),
         env.DB.prepare('DELETE FROM org_pairs WHERE a = ?1 OR b = ?1').bind(from),
         // Its partners' and customers' decisions (src/orgpartners.js) are the org kept's too,
-        // where it has none of its own; its own rows stay, for an undo.
+        // where it has none of its own; its own rows stay, for an undo. A row the merge adds is
+        // `merged_new`; on a row the kept org had (a candidate nobody decided), only the decision
+        // is written, so an undo clears it and leaves the row, Clef's verdict and all.
         env.DB.prepare(`INSERT INTO org_partners (customer, partner, score, signals, signals_at,
-            confirmed_by, confirmed_at, dismissed_by, dismissed_at, merged_from)
+            confirmed_by, confirmed_at, dismissed_by, dismissed_at, merged_from, merged_new)
           SELECT CASE WHEN customer = ?1 THEN ?2 ELSE customer END,
             CASE WHEN partner = ?1 THEN ?2 ELSE partner END, score, signals, signals_at,
-            confirmed_by, confirmed_at, dismissed_by, dismissed_at, ?1
+            confirmed_by, confirmed_at, dismissed_by, dismissed_at, ?1, 1
           FROM org_partners WHERE (customer = ?1 OR partner = ?1)
             AND (confirmed_at IS NOT NULL OR dismissed_at IS NOT NULL)
             AND (CASE WHEN customer = ?1 THEN ?2 ELSE customer END)
               != (CASE WHEN partner = ?1 THEN ?2 ELSE partner END)
           ON CONFLICT (customer, partner) DO UPDATE SET confirmed_by = excluded.confirmed_by,
             confirmed_at = excluded.confirmed_at, dismissed_by = excluded.dismissed_by,
-            dismissed_at = excluded.dismissed_at, merged_from = excluded.merged_from
+            dismissed_at = excluded.dismissed_at, merged_from = excluded.merged_from, merged_new = 0
           WHERE org_partners.confirmed_at IS NULL AND org_partners.dismissed_at IS NULL`)
           .bind(from, into),
         env.DB.prepare(`UPDATE org_merge_requests SET status = 'merged', decided_by = ?, decided_at = ?
@@ -1007,8 +1010,12 @@ export async function unmergeOrg(env, me, body, { applyRules }) {
     write: async () => {
       await env.DB.batch([
         env.DB.prepare('DELETE FROM org_merges WHERE slug = ?').bind(slug),
-        // The decisions the merge copied to the other org (src/orgpartners.js) go with it.
-        env.DB.prepare('DELETE FROM org_partners WHERE merged_from = ?').bind(slug),
+        // The decisions the merge copied to the other org (src/orgpartners.js) go with it: the
+        // rows it added, and the decision it wrote on a row the other org had (which stays).
+        env.DB.prepare('DELETE FROM org_partners WHERE merged_from = ? AND merged_new = 1').bind(slug),
+        env.DB.prepare(`UPDATE org_partners SET confirmed_by = NULL, confirmed_at = NULL,
+            dismissed_by = NULL, dismissed_at = NULL, merged_from = NULL, merged_new = NULL
+          WHERE merged_from = ?`).bind(slug),
         ...(m.name || m.icon || m.type ? [env.DB.prepare(`INSERT INTO orgs (slug, name, type, icon, updated_at)
           VALUES (?, ?, ?, ?, ?) ON CONFLICT (slug) DO NOTHING`)
           .bind(slug, m.name, m.type || 'customer', m.icon, new Date().toISOString())] : []),

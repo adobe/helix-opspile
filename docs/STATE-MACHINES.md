@@ -236,8 +236,12 @@ decided pair is not asked about and stays whatever its signals; one nobody decid
 first `sync` that does not find it a candidate (its signals fell under `CANDIDATE` or to one
 `kb` or `place` signal alone, a partner's mail domains changed, an org was retyped or merged). Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
 dismissed with `p` at least `LIKELY`. A merge copies the merged org's decided rows to the org kept
-(`merged_from`), not over a decision of its own; undoing it deletes the rows of that `merged_from`,
-and the merged org's own rows, kept all along, count again.
+(`merged_from`), not over a decision of its own: a row it adds is `merged_new`, and on a candidate
+the kept org had only the decision is written. Undoing it deletes the rows it added, clears the
+decision it wrote on the others (their signals, Clef's verdict and fingerprint stay), and the merged
+org's own rows, kept all along, count again. A decision by hand since makes the row the kept org's.
+A verdict Clef did not give (a timeout, an error, no number) is not written: `p` and the
+`fingerprint` stay as they were, and the next load or run asks again.
 
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status

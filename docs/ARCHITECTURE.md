@@ -311,8 +311,8 @@ more and that nobody decided. The admin team reviews them in Customers ("Likely 
 owners and entry paths) and Clef's verdict, and confirms or dismisses it (`POST
 /api/admin/org-partners/confirm`, `/dismiss`, either with `undo`). A confirmed pair stays whatever
 the signals say later; a dismissed one is never shown as partners. A merge copies the merged org's
-decisions to the org kept, where it has none of its own (`merged_from`), and undoing it deletes the
-copies.
+decisions to the org kept, where it has none of its own (`merged_from`), and undoing it takes the
+copies back: the rows it added go, a row the kept org had keeps its signals and Clef's verdict.
 
 Everyone at Adobe reads an org's confirmed and likely pairs (Clef's probability at least `LIKELY`,
 0.5, not dismissed): `partnersOf(env, customer)` and `customersOf(env, partner)` in
