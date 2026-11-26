@@ -479,7 +479,7 @@ export function fileCard({
   const nm = href
     ? `<a class="file-name" href="${href}" target="_blank" rel="noopener" title="${title}">${name}</a>`
     : `<span class="file-name">${name}</span>`;
-  const sub = note || [label, home].filter(Boolean).join(' · ');
+  const sub = note || [label, home].filter(Boolean).join(', ');
   const viewable = preview && href && (kind === 'table' || kind === 'text');
   const act = viewable
     ? `<button type="button" class="file-act" data-preview="${kind}" aria-expanded="false" title="${kind === 'table' ? 'Show the table here' : 'Show the text here'}">Preview</button>`

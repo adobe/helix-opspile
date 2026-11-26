@@ -127,7 +127,7 @@ describe('draft line', () => {
     const html = draftLine(draft, { editable: true, asMe: true, asBot: true });
     const parts = [...html.matchAll(/data-draft="(\w+)"[^>]*data-part="([^"]+)" data-part-title="([^"]+)"/g)];
     assert.deepEqual(parts.map((m) => [m[1], m[2]]), [['edit', 'Edit selection'], ['bot', 'Send selection as bot'], ['me', 'Send selection as me']]);
-    assert.ok(parts.slice(1).every((m) => /drop the rest/.test(m[3])));
+    assert.ok(parts.slice(1).every((m) => /discard the rest/.test(m[3])));
     assert.match(draftLine(draft, { editable: true, own: true }), /data-part="Add selection to reply"/);
     assert.doesNotMatch(html.match(/data-draft="view"[^>]*>/)[0], /data-part/);
   });

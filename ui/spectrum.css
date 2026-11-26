@@ -1061,7 +1061,7 @@ dialog.followsheet .fs-body { overflow: auto; }
 .stk .stk-svg:empty { display: none; }
 .stk .stk-svg { overflow: auto; }
 .stk .stk-layer { position: relative; display: grid; grid-template-columns: 8em 1fr; align-items: start; gap: var(--spectrum-spacing-200); }
-.stk .stk-ln { padding-top: var(--spectrum-spacing-100); color: var(--faint); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); text-transform: uppercase; letter-spacing: 0.04em; }
+.stk .stk-ln { padding-top: var(--spectrum-spacing-100); color: var(--faint); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
 .stk .stk-parts { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-200); }
 .stk .stk-part { --layer: var(--faint); position: relative; display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 7em; max-width: 14em;
   padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); background: var(--card); border: var(--spectrum-border-width-100) solid var(--line);

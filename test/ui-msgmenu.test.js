@@ -221,7 +221,7 @@ describe('a message\'s menu', () => {
     assert.match(js, /<button class="acts" data-acts="1" aria-haspopup="menu" aria-expanded="false" title="More actions \(m\)" aria-label="More actions">/);
     assert.match(js, /button\.setAttribute\('aria-expanded', 'true'\);/);
     assert.match(js, /if \(\(e\.key === 'm' && !e\.shiftKey\) \|\| e\.key === 'ContextMenu' \|\| \(e\.key === 'F10' && e\.shiftKey\)\)/);
-    assert.match(js, /\['Its menu: copy its link', 'm'\]/);
+    assert.match(js, /\['Message menu', 'm'\]/);
     // The bar stays while it is open: its ⋮ says so (aria-expanded), which keeps it shown.
     assert.match(css, /\.msg \.quick:has\(\[aria-expanded="true"\]\)/);
   });

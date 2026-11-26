@@ -242,9 +242,9 @@ function profileKey(key, { name, staff, kind, domain, avatar: url, platform: sou
 const RELATION_LABEL = { adobe: 'Adobe', partner: 'Partner', customer: 'Customer', bot: 'Bot' };
 const RELATION_HINT = {
   adobe: 'Adobe staff',
-  partner: 'Works for a partner of Adobe (their mail domain is a known partner domain)',
-  customer: 'Not Adobe staff and not from a known partner domain',
-  bot: 'An app or integration posting automatically',
+  partner: 'Works for an Adobe partner',
+  customer: 'Not Adobe staff or a known partner',
+  bot: 'An app or integration',
 };
 
 /** The thread a name or avatar belongs to: its row in the list, or the open thread. */
@@ -341,20 +341,20 @@ function cardHtml(p, ctx, found, key = null) {
   const person = found?.person || null;
   const name = person?.name || p.name;
   const title = person?.title || p.title;
-  const role = [title, p.company].filter(Boolean).join(' · ');
+  const role = [title, p.company].filter(Boolean).join(', ');
   const rel = p.relation || 'customer';
-  const label = rel === 'partner' && p.partner ? `Partner · ${p.partner}` : RELATION_LABEL[rel];
+  const label = rel === 'partner' && p.partner ? `Partner: ${p.partner}` : RELATION_LABEL[rel];
   const where = PLATFORM[p.platform] ? `${PLATFORM[p.platform]} account` : '';
   const rows = [];
   const ico = (d) => favImg(d);
   if (p.domain) rows.push(['Mail', `${ico(p.domain)}${esc(p.domain)}`]);
   if (person?.teams.length) {
-    const team = (t) => `<a href="/inbox/admin?${new URLSearchParams({ tab: 'teams', team: t.slug })}" title="${esc(`${t.name}'s overview in Teams`)}">${esc(t.name)}</a>${t.role === 'manager' ? ' <span class="tag">Manager</span>' : ''}`;
+    const team = (t) => `<a href="/inbox/admin?${new URLSearchParams({ tab: 'teams', team: t.slug })}" title="Open in Teams">${esc(t.name)}</a>${t.role === 'manager' ? ' <span class="tag">Manager</span>' : ''}`;
     rows.push(['Ops teams', `<span class="teams">${person.teams.map(team).join(', ')}</span>`]);
   } else if (p.teams?.length) rows.push(['Ops teams', esc(p.teams.join(', '))]);
   if (ctx.org) {
-    const org = cardOrg(ctx.slug) ? `<a href="${esc(orgHref(ctx.slug))}" title="${esc(`${ctx.org}'s profile in Customers`)}">${esc(ctx.org)}</a>` : esc(ctx.org);
-    rows.push(['Channel', `${ico(ctx.icon)}${org}${ctx.channel ? ` <span style="color:var(--faint)">· ${esc(ctx.channel)}</span>` : ''}`]);
+    const org = cardOrg(ctx.slug) ? `<a href="${esc(orgHref(ctx.slug))}" title="Open in Customers">${esc(ctx.org)}</a>` : esc(ctx.org);
+    rows.push(['Channel', `${ico(ctx.icon)}${org}${ctx.channel ? `, ${esc(ctx.channel)}` : ''}`]);
   }
   // A customer from another domain than the channel's customer may be a partner nobody listed.
   const other = rel === 'customer' && p.domain && ctx.customerDomain && p.domain !== ctx.customerDomain;
@@ -373,7 +373,7 @@ function cardHtml(p, ctx, found, key = null) {
     ${p.local ? '<div class="note">No account details known yet.</div>' : ''}
     ${found?.pending && rel === 'adobe' ? CARD_WAIT : cardPerson(person)}
     ${cardKb(found)}
-    ${mayAskAbout(ctx.thread, p) ? `<button type="button" class="ask-about" data-ask-about title="Ask in the sidebar: only your team sees it, nothing is posted">${SIDE_ICON}What should I know about ${esc(p.name)}?</button>` : ''}`;
+    ${mayAskAbout(ctx.thread, p) ? `<button type="button" class="ask-about" data-ask-about title="Ask the agent in the sidebar. Nothing is posted.">${SIDE_ICON}What should I know about ${esc(p.name)}?</button>` : ''}`;
 }
 
 // ---------------------------------------------------------------- customer cards
@@ -458,7 +458,7 @@ const ORG_REL = {
 /** The part of the card from its overview: how much it says, how soon it is answered, who and what. */
 function orgCardOverview(name, found) {
   if (!found || found.failed) return '';
-  if (found.pending) return '<div class="kb pending">Looking up its overview\u2026</div>';
+  if (found.pending) return '<div class="kb pending">Loading\u2026</div>';
   const { p } = found;
   const messages = (p.activity?.messages || []).reduce((s, v) => s + v, 0);
   const last = (p.channels || []).map((c) => c.last).filter(Boolean).sort().pop() || null;
@@ -472,10 +472,10 @@ function orgCardOverview(name, found) {
   const people = (p.people || []).slice(0, 5);
   if (people.length) {
     const more = (p.peopleCount || 0) - people.length;
-    rows.push(['People', `<span class="oc-faces">${people.map((x) => Person.face(x.name, x.avatar, { cls: 'small', attrs: ` role="img" aria-label="${esc(x.name)}" title="${esc([x.name, x.title].filter(Boolean).join(' \u00b7 '))}"` })).join('')}${more > 0 ? `<span class="oc-more">+${more}</span>` : ''}</span>`]);
+    rows.push(['People', `<span class="oc-faces">${people.map((x) => Person.face(x.name, x.avatar, { cls: 'small', attrs: ` role="img" aria-label="${esc(x.name)}" title="${esc([x.name, x.title].filter(Boolean).join(', '))}"` })).join('')}${more > 0 ? `<span class="oc-more">+${more}</span>` : ''}</span>`]);
   }
   const teams = (p.teams || []).slice(0, 3);
-  if (teams.length) rows.push(['Teams', `<span class="teams">${teams.map((t) => `<a href="${esc(`/inbox/admin?${new URLSearchParams({ tab: 'teams', team: t.slug })}`)}" title="${esc(`${t.name}'s overview in Teams`)}">${esc(t.name)}</a>`).join(', ')}</span>`]);
+  if (teams.length) rows.push(['Teams', `<span class="teams">${teams.map((t) => `<a href="${esc(`/inbox/admin?${new URLSearchParams({ tab: 'teams', team: t.slug })}`)}" title="Open in Teams">${esc(t.name)}</a>`).join(', ')}</span>`]);
   const list = rows.length ? `<dl class="oc-rows">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : '';
   // What its threads are about and show, as a person's card has theirs: each to the Topics page.
   const topic = (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`;
@@ -499,14 +499,14 @@ function orgCardHtml(org, local, found, ctx = {}, open = null) {
   const icon = local.icon || o.icon || o.domain;
   const [rel, label] = ORG_REL[o.type || local.type] || ORG_REL.customer;
   const channels = found?.p ? found.p.channelCount || 0 : null;
-  const sub = [channels ? Person.plural(channels, 'channel') : '', o.domain || ''].filter(Boolean).join(' \u00b7 ');
+  const sub = [channels ? Person.plural(channels, 'channel') : '', o.domain || ''].filter(Boolean).join(', ');
   const rows = [];
   if (local.threads) {
     const parts = [Person.plural(local.threads, 'thread'), local.us ? `${local.us} waiting on us` : '', local.unread ? `${local.unread} unread` : ''];
-    rows.push(['Here', esc(parts.filter(Boolean).join(' \u00b7 '))]);
+    rows.push(['Here', esc(parts.filter(Boolean).join(', '))]);
   }
   if (ctx.slug === org && ctx.channel) {
-    const there = open ? ` <a href="${esc(open.href)}" target="_blank" rel="noopener" title="${esc(`Open the thread in ${open.platform}`)}">Open in ${esc(open.platform)}</a>` : '';
+    const there = open ? ` <a href="${esc(open.href)}" target="_blank" rel="noopener">Open in ${esc(open.platform)}</a>` : '';
     rows.push(['Channel', `${esc(ctx.channel)}${there}`]);
   }
   if (local.latest) rows.push(['Active', esc(Person.ago(local.latest))]);
@@ -516,7 +516,7 @@ function orgCardHtml(org, local, found, ctx = {}, open = null) {
     <div class="chips"><span class="rel ${rel}">${label}</span>${Follow.button({ kind: 'org', id: org, name })}</div>
     ${rows.length ? `<dl class="oc-here">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : ''}
     ${orgCardOverview(name, found)}
-    <div class="oc-acts"><a class="oc-act primary" href="${esc(orgHref(org))}" title="${esc(`${name}'s overview in Customers`)}">Open profile</a><button type="button" class="oc-act" data-org-only="${only ? '' : esc(org)}" title="${esc(only ? 'Every customer\'s threads again' : `Only ${name}'s threads in the inbox`)}">${only ? 'All customers' : 'Only its threads'}</button></div>`;
+    <div class="oc-acts"><a class="oc-act primary" href="${esc(orgHref(org))}">Open profile</a><button type="button" class="oc-act" data-org-only="${only ? '' : esc(org)}">${only ? 'All customers' : `Only ${esc(name)}`}</button></div>`;
 }
 /** Picks only `org` in the filters, or (empty) all customers again. */
 function onlyOrg(org) {
@@ -840,7 +840,7 @@ function emojiHtml(name, { slack = true, alone = true } = {}) {
   if (c) return esc(c);
   if (/^\p{Extended_Pictographic}/u.test(bare)) return esc(bare);
   const near = ownEmoji.closest.get(base);
-  if (near) return `<span class="emoji-near" title=":${esc(base)}: has no image here. Closest emoji, picked by Clef">${esc(emojiByName(near))}</span>`;
+  if (near) return `<span class="emoji-near" title=":${esc(base)}: (closest match)">${esc(emojiByName(near))}</span>`;
   if (alone) wantClosest(base);
   return undefined;
 }
@@ -851,11 +851,11 @@ const emojiChip = (name, source = 'slack') => emojiHtml(name, { slack: source ==
 const QUICK = ['white_check_mark', 'eyes', 'pray', '+1', 'grinning', 'rocket', 'ring_buoy'];
 const PICKER = [...QUICK, 'heavy_check_mark', 'heart', 'joy', 'open_mouth', 'tada'];
 const SIGNAL_HINT = {
-  white_check_mark: 'resolved (also goes on the first message)',
-  heavy_check_mark: 'resolved (also goes on the first message)',
-  eyes: 'seen: you are on it (lower for the rest of the team, higher for you)',
-  pray: 'thanks: nothing is pending any more',
-  ring_buoy: 'help: the rest of the team should look',
+  white_check_mark: 'resolve',
+  heavy_check_mark: 'resolve',
+  eyes: 'I\'m on it',
+  pray: 'thanks, nothing pending',
+  ring_buoy: 'ask the team for help',
 };
 
 // Markdown: micromark, with chat's line breaks, mentions and emoji (src/ui-markdown.js, put
@@ -924,7 +924,7 @@ function channelLink(c) {
   const where = c.org ? `${customerName(c.org)} in ` : '';
   if (inPersonal) return { name: c.name, href: `/inbox?view=personal&filters=1${customer}`, inbox: true, title: `${name}: ${where}Personal` };
   if (team) return { name: c.name, href: `/inbox?team=${encodeURIComponent(team)}&filters=1${customer}`, inbox: true, title: `${name}: ${where}${viewName(team)}` };
-  return c.url ? { name: c.name, href: c.url, title: `${name} is not in your inbox: open it in ${platform(c)}` } : undefined;
+  return c.url ? { name: c.name, href: c.url, title: `Open ${name} in ${platform(c)}` } : undefined;
 }
 function setChannelRefs(list) {
   channelRefs = new Map();
@@ -1175,7 +1175,7 @@ const waitingOn = (t) => {
 const WAITING_HINT = {
   Us: 'Adobe has the next move',
   Customer: 'The customer has the next move',
-  Vendor: 'A vendor has the next move: in a vendor\'s channel the vendor, where Adobe is the customer; in a customer\'s, a partner, agency or vendor who is neither Adobe nor the customer',
+  Vendor: 'A vendor, partner or agency has the next move',
   Nobody: 'Nothing is pending',
 };
 
@@ -1274,18 +1274,18 @@ const STATUS_LABEL = {
   critical: 'Critical, unseen', hot: 'Hot, unseen', you: 'You', waiting: 'Waiting too long', silent: 'They went silent', team: 'Team on it', quiet: 'Everything else',
 };
 const STATUS_HINT = {
-  critical: 'Critical urgency and nobody at Adobe has seen it',
-  hot: 'High urgency and nobody at Adobe has seen it',
-  you: 'You posted, were mentioned or put 👀 on it, and the customer spoke last or you were mentioned (not once resolved with ✅); or a colleague asked for help with 🛟',
-  waiting: 'Waiting on us for too long (15 min critical, 1 h high, 3 h normal, weekends not counted for normal), and Adobe did not post last',
-  silent: 'Waiting on the customer or a vendor for too long (30 min critical, 1 h high, 1 day normal, weekends not counted for normal): follow up, chase the vendor, or close',
-  team: 'Your team is in it (or a colleague put 👀 on it), you were not mentioned, all is well',
+  critical: 'Critical and unseen by Adobe',
+  hot: 'High urgency and unseen by Adobe',
+  you: 'Needs your reply',
+  waiting: 'Waiting on Adobe too long',
+  silent: 'Waiting on the customer or a vendor too long',
+  team: 'Your team is on it',
   quiet: 'Everything else',
 };
 
 /** What a thread's status means for it: a vendor's silence is the vendor's to break. */
 const statusHint = (t, status) => (status === 'silent' && waitingOn(t) === 'Vendor'
-  ? 'Waiting on the vendor for too long (30 min critical, 1 h high, 1 day normal, weekends not counted for normal): chase them, or close'
+  ? 'Waiting on the vendor too long'
   : STATUS_HINT[status]);
 
 /** Who a thread involves, from the viewer's point of view. */
@@ -1322,8 +1322,8 @@ const involvesLabel = (v) => {
 const draftState = (t) => (t.draft ? (t.draft.by?.id === viewerId() ? 'mine' : 'team') : 'none');
 const DRAFT_LABEL = { mine: 'By you', team: 'By a colleague', none: 'No draft' };
 const DRAFT_HINT = {
-  mine: 'A reply waits as a draft, and you saved it last',
-  team: 'A reply waits as a draft, saved last by someone else on the team',
+  mine: 'Draft saved by you',
+  team: 'Draft saved by a colleague',
   none: 'No draft',
 };
 const draftBy = (d) => (d.by?.id === viewerId() ? 'you' : (d.by?.name || 'a colleague'));
@@ -1637,7 +1637,7 @@ const youCount = (t) => (t.unread
 const sideSeen = new Set();
 const sideCount = (t) => (t.sideNew || []).filter((id) => !sideSeen.has(id)).length;
 const sideTitle = (n, t = null) => (t && isQuestionKey(t.thread)
-  ? `${AGENT_NAME} asks you: answer it here`
+  ? `${AGENT_NAME} has a question for you`
   : `${n} new ${n === 1 ? 'answer' : 'answers'} from ${AGENT_NAME} to you in the sidebar`);
 const sideBadge = (n, t = null) => (n ? `<b class="sidebadge" title="${esc(sideTitle(n, t))}" aria-label="${esc(sideTitle(n, t))}">${SIDE_ICON}${n > 99 ? '99+' : n}</b>` : '');
 /**
@@ -1663,9 +1663,9 @@ const byName = new Intl.Collator(undefined, { sensitivity: 'base' });
  * are 1 while the inbox has not said.
  */
 const SECTIONS = [
-  { cls: 'regular', title: 'One of your regulars: you send most of your messages here' },
+  { cls: 'regular', title: 'Regular: you send most of your messages here' },
   { cls: '', title: '' },
-  { cls: 'quiet', title: 'Inactive: you have not posted here or been mentioned in two weeks' },
+  { cls: 'quiet', title: 'Inactive for two weeks' },
 ];
 /**
  * A customer's mark in the column (markCustomer): a regular's star, which takes it out of your
@@ -1674,8 +1674,8 @@ const SECTIONS = [
 const markButton = (section) => {
   if (!state.data?.standing || state.as) return section === 0 ? wf('star') : '';
   return section === 0
-    ? `<button class="mk star" type="button" data-mark="unstar" title="One of your regulars: you send most of your messages here. Click to take it out of them" aria-label="Take out of your regulars">${wf('star')}</button>`
-    : `<button class="mk mute" type="button" data-mark="mute" title="Mute: its threads leave your inbox until you post or are mentioned there again, or a thread you follow comes up there" aria-label="Mute">${wf('volume-off')}</button>`;
+    ? `<button class="mk star" type="button" data-mark="unstar" title="Regular. Click to remove from your regulars" aria-label="Remove from your regulars">${wf('star')}</button>`
+    : `<button class="mk mute" type="button" data-mark="mute" title="Mute until you post or are mentioned here" aria-label="Mute">${wf('volume-off')}</button>`;
 };
 function sectionOf(v) {
   const s = state.data?.standing;
@@ -2073,8 +2073,8 @@ function statusMark(t, status) {
   }
   if (isResolved(t)) behind.push({ cls: 'ok', say: 'Resolved', icon: 'checkmark-circle' });
   if (ourMove(t)) behind.push({ cls: 'us', say: 'Our move', icon: 'call-center' });
-  const front = `${cap(k)}${t.unread ? ', unread' : ''} · ${statusHint(t, status)}`;
-  const say = [front, ...behind.map((x) => x.say)].join(' · ');
+  const front = `${cap(k)}${t.unread ? ', unread' : ''}: ${statusHint(t, status)}`;
+  const say = [front, ...behind.map((x) => x.say)].join(', ');
   const chips = behind.map((x) => `<span class="mi ${x.cls}" title="${esc(x.hint || x.say)}">${wf(x.icon)}</span>`).join('');
   return `<span class="mks"><span class="mk" role="img" aria-label="${esc(say)}"><span class="mi k s-${status}${t.unread ? ' ring' : ''}" title="${esc(front)}">${wf(KIND_ICON[k] || KIND_ICON.other, t.unread)}</span>${chips}</span></span>`;
 }
@@ -2277,11 +2277,11 @@ function placeStack(el, anchor) {
 }
 /** The drawing's frame: who drew it and when, and where to change it. */
 function stackFoot(res) {
-  if (!res) return '<span>Only the ops teams that work with this customer see its knowledge base.</span>';
+  if (!res) return '<span>Only the customer\'s ops teams can see this.</span>';
   const edit = kbFileHref(res.repo, res.path);
   if (!res.drawing) {
-    const why = res.error ? `The drawing in the knowledge base cannot be drawn: ${esc(res.error)}.` : 'No drawing yet. The thread agents draw one as they learn the stack from the threads.';
-    return `<span>${why}</span>${res.hash ? `<a href="${esc(edit)}">Fix it in its knowledge base</a>` : ''}`;
+    const why = res.error ? `The drawing in the knowledge base cannot be drawn: ${esc(res.error)}.` : 'No drawing yet.';
+    return `<span>${why}</span>${res.hash ? `<a href="${esc(edit)}">Fix in the knowledge base</a>` : ''}`;
   }
   const who = /^human:/.test(res.by || '') ? res.by.slice(6) : 'a thread agent';
   const since = res.at ? ago(res.at) : '';
@@ -2289,7 +2289,7 @@ function stackFoot(res) {
   if (since === 'now') when = ' just now';
   else if (/^\d+[mhd]$/.test(since)) when = ` ${since} ago`;
   else if (since) when = ` on ${since}`;
-  return `<span>Drawn by ${esc(who)}${esc(when)}.</span><a href="${esc(edit)}">${res.may ? 'Edit it in its knowledge base' : 'Open it in its knowledge base'}</a>`;
+  return `<span>Drawn by ${esc(who)}${esc(when)}.</span><a href="${esc(edit)}">${res.may ? 'Edit in the knowledge base' : 'Open in the knowledge base'}</a>`;
 }
 /** Shows the customer's stack under `anchor`; a second click on the same one closes it. */
 async function showStack(org, anchor) {
@@ -2386,7 +2386,7 @@ function hitLine(hit) {
     // What the rule that writes the field calls it (or Clairic's name for it): src/label.js vocab.
     return `<div class="l3"><span class="tag">${esc(vocabName('facts', hit.fact.field))}</span> ${marked(hit.fact.value, words)}</div>`;
   }
-  return `<div class="l3 dim">${esc(hit.matched.map((m) => MATCHED[m] || m).join(' · '))} matches</div>`;
+  return `<div class="l3 dim">${esc(hit.matched.map((m) => MATCHED[m] || m).join(', '))} matches</div>`;
 }
 
 /** How many knowledge-base entries a search shows before "N more". */
@@ -2489,9 +2489,9 @@ function searchRows(box) {
   else if (!loading && data) said = `${hits.length}${hits.length < all.length ? ` of ${all.length}` : ''} ${all.length === 1 ? 'result' : 'results'}`;
   const kb = data?.kb || [];
   // And the knowledge bases' entries (kbSection), above them.
-  if (!loading && kb.length) said += ` · ${kb.length} ${kb.length === 1 ? 'entry' : 'entries'}`;
+  if (!loading && kb.length) said += `, ${kb.length} ${kb.length === 1 ? 'entry' : 'entries'}`;
   // The view switch stays: a search is of the view on screen, a team's or the personal one.
-  const ctl = `<span class="lead">${filt}<span class="found" aria-live="polite">${esc(said)}</span><button class="clearq" data-clearq title="Back to the inbox (Esc in the search box)">Clear</button></span><span class="sort">${viewSwitch()}</span>`;
+  const ctl = `<span class="lead">${filt}<span class="found" aria-live="polite">${esc(said)}</span><button class="clearq" data-clearq title="Clear search (Esc)">Clear</button></span><span class="sort">${viewSwitch()}</span>`;
   const head = box.querySelector('.ctl');
   if (head.__html !== ctl) { head.innerHTML = ctl; head.__html = ctl; }
   const list = box.querySelector('.rows');
@@ -2841,11 +2841,11 @@ const seenSoon = () => { if (!seenFrame) seenFrame = requestAnimationFrame(() =>
 function viewSwitch() {
   const mine = personal();
   const views = [{
-    slug: '', name: 'Personal', on: mine, hint: 'Personal: the channels you posted or were mentioned in, latest activity first',
+    slug: '', name: 'Personal', on: mine,
   }, ...(state.teams || []).map((t) => ({
-    slug: t.slug, name: t.name, on: !mine && t.slug === state.team, hint: `${t.name}: the team's channels, what needs you most first, with every filter`,
+    slug: t.slug, name: t.name, on: !mine && t.slug === state.team,
   }))];
-  return `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}" title="${esc(v.hint)}">${esc(v.name)}</button>`).join('')}</span>`;
+  return `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}">${esc(v.name)}</button>`).join('')}</span>`;
 }
 /**
  * The view switch on a phone scrolls sideways when its views do not fit (see the styles): the
@@ -2932,10 +2932,9 @@ function gettingStarted() {
   if ((state.data?.threads || []).length || state.data?.page?.next) return '';
   if (viewFacets().some((f) => filterCount(f.id))) return '';
   const teams = (state.teams || []).length;
-  const why = teams ? 'Your teams\' inboxes are beside it.'
-    : 'You are on no ops team, so following is how threads come here.';
+  const why = teams ? '' : ' You are not on an ops team, so following is how threads come here.';
   return `<div class="getstarted"><h2>Follow what you work on</h2>
-    <p>Your personal view has the threads you post in or are mentioned in, on Slack, Teams, Discord and the customer portal, and the threads about what you follow. ${why}</p>
+    <p>Personal shows the threads you post in, are mentioned in, or follow.${why}</p>
     <div class="fs-mount"></div>
     <button type="button" class="primary gs-done" hidden>Show their threads</button></div>`;
 }
@@ -3080,7 +3079,7 @@ function threadRows() {
   // Filters (narrow screens) and unread only on the left, the view switch on the right.
   // The bell: notifications for this view, with its filters (not while viewing as someone).
   const rung = bellOn();
-  const bell = state.as ? '' : `<button class="bell" data-bell aria-pressed="${rung}" title="${rung ? 'Notifying you of new messages in this view: click to stop' : 'Notify me of new messages in this view, with these filters'}" aria-label="Notifications for this view">${BELL}</button>`;
+  const bell = state.as ? '' : `<button class="bell" data-bell aria-pressed="${rung}" title="${rung ? 'Stop notifications for this view' : 'Notify me of new messages in this view'}" aria-label="Notifications for this view">${BELL}</button>`;
   // Start a thread (not while viewing as someone: that is read-only).
   const post = state.as ? '' : `<button class="newpost" data-compose aria-pressed="${Boolean(state.compose)}" title="Start a new thread" aria-label="Start a new thread">${COMPOSE}</button>`;
   const count = `<span class="lead">${filt}${unread}${bell}${post}</span><span class="sort">${sorter}</span>`;
@@ -3254,9 +3253,9 @@ function resolveButton(thread, r) {
   // Without the first message there is nothing to put the ✅ on; the agent's needs none.
   if (!agent && (!thread.root_at || (thread.kind === 'alert' && !r) || thread.source === 'discord')) return '';
   const mine = undoable(r);
-  const undo = agent ? '✅ Resolved by the agent · reopen' : '✅ Resolved · undo';
-  const title = agent ? 'The agent resolved it, in the inbox only: open it again' : 'Take your ✅ off the first message again';
-  return `<button class="resolve" id="resolve" aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" data-mine="${mine ? '1' : ''}" data-undo="${esc(undo)}" title="${mine ? title : 'Add ✅ to the first message, as you: resolved'} (e)">${mine ? undo : '✅ Resolve'}</button>`;
+  const undo = agent ? '✅ Resolved by the agent, reopen' : '✅ Resolved, undo';
+  const title = agent ? 'Reopen' : 'Undo resolve';
+  return `<button class="resolve" id="resolve" aria-pressed="${Boolean(mine)}" aria-keyshortcuts="e" data-mine="${mine ? '1' : ''}" data-undo="${esc(undo)}" title="${mine ? title : 'Resolve'} (e)">${mine ? undo : '✅ Resolve'}</button>`;
 }
 
 /** Whether `m` goes on from `prev`: same author, same post and day, within five minutes. */
@@ -3284,20 +3283,20 @@ function message(m, prev, fresh, followed = false, dated = false) {
   const a = m.author || {};
   const id = `${m.thread}|${m.id}`;
   const enter = fresh ? 'enter' : '';
-  if (a.kind === 'system') return `<div class="sys ${enter}" data-id="${esc(id)}">${md(m.body, m.thread)} · ${timeTag(m.at)}</div>`;
+  if (a.kind === 'system') return `<div class="sys ${enter}" data-id="${esc(id)}">${md(m.body, m.thread)} ${timeTag(m.at)}</div>`;
   const adobe = Boolean(a.staff);
   // Yours (blue), or a colleague's (grey, like the customer's), as in iMessage. A reply being
   // sent as the bot looks like the bot's.
   const own = Boolean(m.mine || (m.pending && !m.app));
   const cont = continues(prev, m);
   const key = authorCardKey(m);
-  const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' && !m.unnamed ? ' bot' : ''} · ${timeTag(m.at, dated)}`;
+  const who = `<b data-p="${esc(key)}" role="button" tabindex="0">${esc(a.name || 'unknown')}</b>${a.kind === 'bot' && !m.unnamed ? ' bot' : ''} ${timeTag(m.at, dated)}`;
   const face = `<span class="face">${avatar(a.name || '?', m.avatar, '', { key })}${!adobe && a.org ? authorBadge(a.org, m.thread) : ''}</span>`;
   // Reactions, on the bubble's bottom edge: who reacted on hover; a click adds yours, or takes
   // it off again.
   const can = canReact(m);
   const rx = (m.reactions || []).map((r) => {
-    const tip = esc(`${r.names.join(', ') || r.emoji}${can ? (r.mine ? ' · click to take yours off' : ' · click to add yours') : ''}`);
+    const tip = esc(`${r.names.join(', ') || r.emoji}${can ? (r.mine ? '. Click to remove yours' : '. Click to add yours') : ''}`);
     // The count once more than one has left it: a single one is just the emoji.
     const chip = `${emojiChip(r.emoji, m.source)}${r.count > 1 ? ` ${r.count}` : ''}`;
     return can ? `<button class="${r.mine ? 'mine' : ''}" data-emoji="${esc(r.emoji)}" data-mine="${r.mine ? '1' : ''}" aria-pressed="${Boolean(r.mine)}" title="${tip}">${chip}</button>`
@@ -3309,7 +3308,7 @@ function message(m, prev, fresh, followed = false, dated = false) {
     ? `<button class="edit" data-edit="1" title="${m.editable === 'app' ? 'Edit, as the bot' : 'Edit your message'}" aria-label="Edit">✎</button>` : '';
   const picks = can ? `${QUICK.map((n) => {
     const mine = (m.reactions || []).some((r) => r.mine && emoji(r.emoji) === emoji(n));
-    return `<button data-pick="${n}" aria-pressed="${mine}" title="${esc(`${emoji(n)} ${SIGNAL_HINT[n] || `:${n}:`}${mine ? ' · click to take yours off' : ''}`)}">${emoji(n)}</button>`;
+    return `<button data-pick="${n}" aria-pressed="${mine}" title="${esc(`${emoji(n)} ${SIGNAL_HINT[n] || `:${n}:`}${mine ? '. Click to remove yours' : ''}`)}">${emoji(n)}</button>`;
   }).join('')}<button class="more" data-picker="1" aria-haspopup="true" aria-expanded="false" title="More reactions">☺</button>` : '';
   // ⋮, last: the message's menu (its links, openMessageMenu), on every message that has come in,
   // also where one may not react.
@@ -3321,10 +3320,10 @@ function message(m, prev, fresh, followed = false, dated = false) {
   // The editor's text is set when it is shown (wireEditor), so typing does not change the HTML.
   const bubble = editing
     ? `<div class="bubble editing"><ul class="mentions s2-float s2-up" id="edit-mention-list" role="listbox" hidden></ul><textarea class="editbox" rows="1" role="combobox" aria-autocomplete="list" aria-controls="edit-mention-list" aria-expanded="false" aria-label="Edit the message"></textarea>
-      <div class="edithint">Enter to save · Esc to cancel${m.editable === 'app' ? ' · as the bot' : ''} <button data-edit-save="1">Save</button> <button data-edit-cancel="1">Cancel</button></div></div>`
+      <div class="edithint">${m.editable === 'app' ? 'As the bot ' : ''}<button data-edit-save="1">Save</button> <button data-edit-cancel="1">Cancel</button></div></div>`
     : `<div class="bubble">${m.deletedAt ? 'This message was deleted.' : md(m.body, m.thread)}${m.pending && m.files?.length ? pendingFiles(m.files) : ''}</div>`;
   const notes = [m.saving ? 'saving…' : '', m.editedAt && !m.pending ? '(edited)' : '',
-    m.translatedFrom ? `<span class="trnote" title="Translated from ${esc(languageName(m.translatedFrom))} by a language model">translated</span>` : ''].filter(Boolean).join(' ');
+    m.translatedFrom ? `<span class="trnote" title="Machine-translated from ${esc(languageName(m.translatedFrom))}">translated</span>` : ''].filter(Boolean).join(' ');
   return `<div class="msg ${adobe ? 'adobe' : ''} ${own ? 'mine' : ''} ${cont ? 'cont' : ''} ${followed ? 'followed' : ''} ${m.deletedAt ? 'deleted' : ''} ${m.pending ? 'pending' : ''} ${editing ? 'editing' : ''} ${enter}" data-id="${esc(id)}">
     ${face}
     <div class="col"><div class="head"><div class="who">${who}</div>${quick}</div>
@@ -3418,17 +3417,17 @@ function translationBar(tr, shown) {
   if (!tr) return '';
   const from = languageName(tr.from);
   const to = languageName(tr.to);
-  const never = `<button class="linkish" data-tr="never" title="Your settings: threads in ${esc(from)} show as written, everywhere">Don't translate ${esc(from)}</button>`;
+  const never = `<button class="linkish" data-tr="never">Don't translate ${esc(from)}</button>`;
   if (tr.original) {
-    return `<div class="sys translated">Shown as written, in ${esc(from)} · <button class="linkish" data-tr="translate">Translate into ${esc(to)}</button></div>`;
+    return `<div class="sys translated">Shown as written, in ${esc(from)}. <button class="linkish" data-tr="translate">Translate into ${esc(to)}</button></div>`;
   }
   const count = shown.filter((m) => m.translatedFrom).length;
   if (!count) {
     if (tr.loading) return `<div class="sys translated" aria-live="polite">Translating from ${esc(from)} into ${esc(to)}…</div>`;
-    if (tr.failedAt) return `<div class="sys translated">Could not translate this thread from ${esc(from)} · <button class="linkish" data-tr="retry">Try again</button></div>`;
+    if (tr.failedAt) return `<div class="sys translated">Could not translate this thread from ${esc(from)}. <button class="linkish" data-tr="retry">Try again</button></div>`;
     return '';
   }
-  return `<div class="sys translated" title="By a language model: the wording may be off">Translated from ${esc(from)} into ${esc(to)}${tr.loading ? '…' : ''} · <button class="linkish" data-tr="original">Show as written</button> · ${never}</div>`;
+  return `<div class="sys translated" title="Machine translation">Translated from ${esc(from)} into ${esc(to)}${tr.loading ? '…' : ''}. <button class="linkish" data-tr="original">Show as written</button> ${never}</div>`;
 }
 
 /** A click on the bar's buttons. */
@@ -3440,7 +3439,7 @@ function translationAct(key, act) {
   if (act === 'never') {
     const from = tr.from;
     saveSettings({ noTranslate: [...new Set([...(state.settings.noTranslate || []), from])] })
-      .then((ok) => { if (ok) toast(`Threads in ${languageName(from)} show as written. Your menu has the languages you read.`); });
+      .then((ok) => { if (ok) toast(`Threads in ${languageName(from)} show as written.`); });
   }
 }
 
@@ -3454,7 +3453,7 @@ function renderTranslate() {
   $('translateLabel').textContent = `Translate threads into ${languageName(readerLanguage())}`;
   $('translateList').innerHTML = (s.noTranslate || []).map((l) => `<div class="bell"><span>${esc(`As written: ${languageName(l)}`)}</span><button type="button" data-retranslate="${esc(l)}" title="Translate threads in ${esc(languageName(l))} again" aria-label="Translate threads in ${esc(languageName(l))} again">✕</button></div>`).join('');
   $('translateHint').textContent = s.translate === false ? 'Every thread shows as it was written.'
-    : `Where Clef reads another language than this browser's. A language model translates; ${s.noTranslate?.length ? 'the languages above show as written.' : 'the bar above a thread can keep its language as written.'}`;
+    : 'Threads in other languages are machine-translated.';
 }
 function wireTranslate() {
   $('translateOn').onclick = () => saveSettings({ translate: state.settings.translate === false });
@@ -3522,7 +3521,7 @@ function agentItem(key) {
   // A note is about the thread as it was: someone posted since (or is sending), it is gone.
   if (turn.state !== 'working' && latest && latest > (turn.endedAt || turn.startedAt)) return '';
   const body = turn.state === 'working' ? `${HALO}${esc(turn.text)}…` : md(turn.text);
-  const label = turn.state === 'working' ? 'The thread agent is working' : 'The thread agent\'s note on its latest turn';
+  const label = turn.state === 'working' ? 'The thread agent is working' : 'The thread agent\'s latest note';
   const href = agentHref(key);
   const team = threadRow(key)?.team;
   const teamName = state.teams?.find((t) => t.slug === team)?.name || team;
@@ -3827,7 +3826,7 @@ function techMenu(data) {
   // drawing (stackButton); else here, which says there is none yet.
   const drawing = org && !headStack(data).length ? `<div class="hms"><button type="button" class="hmi stk-open" data-stack="${esc(org)}"><span>${esc(customer)}'s stack drawing</span></button></div>` : '';
   // Where its whole stack and what it asks about are: its overview in Customers.
-  const profile = org ? `<div class="hms"><a class="hmi foot" href="${esc(orgHref(org))}" title="${esc(`${customer}'s overview in Customers: its whole stack, its people and what it asks about`)}"><span>${esc(customer)}'s profile</span><small>Customers</small></a></div>` : '';
+  const profile = org ? `<div class="hms"><a class="hmi foot" href="${esc(orgHref(org))}"><span>${esc(customer)}'s profile</span><small>Customers</small></a></div>` : '';
   const list = hmSection('In this thread', here.map(item))
     + hmSection(here.length ? `Also used by ${customer}` : `Used by ${customer}`, also.map(item))
     + hmSection('Topics of the thread', topics.map(topic)) + drawing + profile;
@@ -3901,7 +3900,7 @@ function headSource(thread, members, entry) {
   const face = favImg(icon, { cls: 'org', fallback: avatar(name || '?', null, 'org') });
   const p = platform(thread);
   const badge = favImg(PLATFORM_SITE[p], { cls: 'plat' });
-  const who = [name, type].filter(Boolean).join(' · ');
+  const who = [name, type].filter(Boolean).join(', ');
   const linked = members.filter((m) => m.permalink);
   if (members.length > 1 && linked.length > 1) {
     const { posts, skipped } = headPosts(members);
@@ -3910,7 +3909,7 @@ function headSource(thread, members, entry) {
       const text = `<span>${emojify(channelNames(m.title) || '(no text)')}</span><small>${esc(when)}</small>`;
       const gap = skipped && i === 1 ? `<div class="hmnote">${skipped.toLocaleString()} more ${skipped === 1 ? 'post' : 'posts'} in between</div>` : '';
       return gap + (m.permalink
-        ? `<a class="hmi member" href="${esc(m.permalink)}" target="_blank" rel="noopener" title="Open this post in ${p}">${text}</a>`
+        ? `<a class="hmi member" href="${esc(m.permalink)}" target="_blank" rel="noopener" title="Open in ${p}">${text}</a>`
         : `<div class="hmi member">${text}</div>`);
     });
     const label = `${members.length.toLocaleString()} posts folded into one thread: open one in ${p}`;
@@ -3918,7 +3917,7 @@ function headSource(thread, members, entry) {
       + `<div class="hmpop s2-float" role="group" aria-label="${esc(label)}" hidden><div class="hms"><div class="hmh">${members.length.toLocaleString()} posts folded into one thread</div>${rows.join('')}</div></div></div>`;
   }
   const link = thread.permalink || linked[0]?.permalink;
-  const title = `${who ? `${who} · ` : ''}${link ? `Open in ${p}` : p}`;
+  const title = `${who ? `${who}: ` : ''}${link ? `Open in ${p}` : p}`;
   // A customer's icon shows its card (which says where it opens) instead of a tooltip.
   const org = cardOrg(thread.org) ? ` data-org="${esc(thread.org)}"` : '';
   const tip = org ? '' : ` title="${esc(title)}"`;
@@ -4031,7 +4030,7 @@ const side = {
   pulling: false,
 };
 const SIDE_ICON = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
-const SIDE_HINT = `Talk to ${AGENT_NAME} in the sidebar: only your team sees it, nothing is posted (A)`;
+const SIDE_HINT = `Ask ${AGENT_NAME} in the sidebar (A)`;
 
 /** Whether the open thread `key` has an agent to talk to, and you may. */
 const canSide = (key) => Boolean(state.cache.get(key)?.data?.agent) && !state.data?.me?.readonly;
@@ -4052,15 +4051,15 @@ const canPost = (key) => state.cache.get(key)?.data?.can_post !== false;
 /** Why you cannot talk to the agent of thread `key` in its sidebar, or null when you can. */
 function sideOff(key) {
   if (canSide(key)) return null;
-  if (state.data?.me?.readonly) return `You view the inbox as someone else, so ${AGENT_NAME} cannot be asked for them here.`;
-  return `${AGENT_NAME} is off in this channel now, so it cannot be asked here.`;
+  if (state.data?.me?.readonly) return `${AGENT_NAME} is not available while viewing as someone else.`;
+  return `${AGENT_NAME} is off in this channel.`;
 }
 
 /** Who sees thread `key`'s sidebar, said under its name: your team, or its team and you. */
 const sideAudience = (key, where) => `${canWork(key) ? 'Only your team sees this.' : 'Only the thread\'s team and you see this.'} Nothing goes to ${where}.`;
 
 /** What a card the agent asked for says to someone who may not work the thread: whose it is. */
-const onlyTeam = (what) => `Only the thread's team can ${what}: it is filed under a team you are not on.`;
+const onlyTeam = (what) => `Only the thread's team can ${what}.`;
 
 /** Whether thread `key` is in sidebar mode in the thread itself: its reply box is the sidebar's. */
 const sideInline = (key) => !side.wide && side.key === key && canSide(key);
@@ -4166,11 +4165,11 @@ function sideTo(key, run) {
 function sideMessage(key, m) {
   if (m.role === 'agent') {
     return `<div class="sm agent ${m.state === 'failed' ? 'failed' : ''}"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
-      <div class="col"><div class="who"><b>${AGENT_NAME}</b> · ${timeTag(m.at)}</div><div class="bubble">${md(m.body, key)}</div></div></div>`;
+      <div class="col"><div class="who"><b>${AGENT_NAME}</b> ${timeTag(m.at)}</div><div class="bubble">${md(m.body, key)}</div></div></div>`;
   }
   const name = m.by?.name || 'Someone';
   return `<div class="sm person ${m.by?.id === state.me.id ? 'mine' : ''} ${m.pending ? 'pending' : ''}"><span class="face">${avatar(name, faceOf(name))}</span>
-    <div class="col"><div class="who"><b>${esc(name)}</b> · ${m.pending ? 'sending…' : timeTag(m.at)}</div><div class="bubble">${md(m.body, key)}</div></div></div>`;
+    <div class="col"><div class="who"><b>${esc(name)}</b> ${m.pending ? 'sending…' : timeTag(m.at)}</div><div class="bubble">${md(m.body, key)}</div></div></div>`;
 }
 
 /** Whether the agent is seen working on its answer in `run` (`last`: the thread's latest run). */
@@ -4192,9 +4191,9 @@ const TOOL_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" strok
 /** How tool request `r` stands, once it is not waiting: a few words. */
 function toolState(r) {
   const who = (p) => (p?.id === viewerId() ? 'you' : (p?.name || 'a colleague'));
-  if (r.status === 'granted') return `Granted by ${who(r.by)} · ${timeLeft(r.expires_at)} left`;
-  if (r.status === 'ended') return `Granted by ${who(r.by)} · ended ${ago(r.expires_at)}`;
-  if (r.status === 'revoked') return `Granted by ${who(r.by)} · ended early by ${who(r.revoked_by)}`;
+  if (r.status === 'granted') return `Granted by ${who(r.by)}, ${timeLeft(r.expires_at)} left`;
+  if (r.status === 'ended') return `Granted by ${who(r.by)}, ended ${ago(r.expires_at)}`;
+  if (r.status === 'revoked') return `Granted by ${who(r.by)}, ended early by ${who(r.revoked_by)}`;
   if (r.status === 'denied') return `Denied by ${who(r.by)}`;
   return 'Expired: nobody decided';
 }
@@ -4209,12 +4208,12 @@ function toolCard(key, r) {
   const about = r.about ? `<p class="tq-about">${esc(r.about)}</p>` : '';
   let foot;
   if (r.status === 'pending') {
-    const note = `<span class="tq-note" title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can grant it">For this thread, a day, in every turn of the agent · open for ${timeLeft(r.deadline)}</span>`;
+    const note = `<span class="tq-note" title="Expires ${esc(new Date(r.deadline).toLocaleString())}">For one day in this thread. Open for ${timeLeft(r.deadline)}</span>`;
     const acts = decide ? `<span class="acts"><button type="button" class="deny" data-tool-act="deny"${off}>Deny</button><button type="button" class="grant" data-tool-act="grant"${off}>Grant for a day</button></span>`
       : (others && `<span class="tq-note">${esc(onlyTeam('grant it'))}</span>`) || '';
     foot = `${note}${acts}`;
   } else {
-    const end = r.status === 'granted' && decide ? `<button type="button" class="end" data-tool-act="revoke" title="The agent goes without it from its next message"${off}>End now</button>` : '';
+    const end = r.status === 'granted' && decide ? `<button type="button" class="end" data-tool-act="revoke"${off}>End now</button>` : '';
     foot = `<span class="tq-st">${esc(toolState(r))}</span>${end}`;
   }
   return `<div class="tq ${esc(r.status)}" data-tool-request="${esc(r.id)}">${head}<p class="tq-why">${esc(r.reason)}</p>${about}<div class="tq-foot">${foot}</div></div>`;
@@ -4266,7 +4265,7 @@ function sideRun(key, run, last) {
   const waiting = last && !working && run.at(-1).role === 'person' && !run.at(-1).failed;
   const doing = working ? [`<div class="sm agent working" aria-live="polite"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}</span>
     <div class="col"><div class="who"><b>${AGENT_NAME}</b></div><div class="bubble"><span class="spin" aria-hidden="true"></span>${esc(state.agents.get(key).side.text)}…</div></div></div>`] : [];
-  const queued = waiting ? [`<div class="sc-wait">${AGENT_NAME} answers once it is done with what it is doing.</div>`] : [];
+  const queued = waiting ? [`<div class="sc-wait">${AGENT_NAME} answers when it finishes the current task.</div>`] : [];
   return [...run.flatMap((m) => [sideMessage(key, m), ...toolCards(key, run, m), ...bashSideCards(key, run, m)]), ...doing, ...queued];
 }
 
@@ -4279,7 +4278,7 @@ function sideRun(key, run, last) {
 function sideGroup(key, run, { last, trailing }) {
   if (!run.length) {
     // Sidebar mode, with nothing said since the thread's latest message: where it will show.
-    return `<div class="sidechat open live blank"><div class="sc-body"><div class="sc-wait">${SIDE_ICON}What you and ${AGENT_NAME} say here shows in the thread, folded, for your team only. It is never posted.</div></div></div>`;
+    return `<div class="sidechat open live blank"><div class="sc-body"><div class="sc-wait">${SIDE_ICON}Only your team sees this conversation. It is never posted.</div></div></div>`;
   }
   const id = run[0].id;
   const paneled = sidePaneled(key);
@@ -4296,7 +4295,7 @@ function sideGroup(key, run, { last, trailing }) {
   let what = working ? `${esc(who)} ${who === 'You' ? 'are' : 'is'} in a sidebar conversation with <b>${AGENT_NAME}</b>`
     : `${esc(who)} had a sidebar conversation with <b>${AGENT_NAME}</b>`;
   if (followup) what = `<b>${AGENT_NAME}</b> followed up with ${esc(sideTo(key, run))} in the sidebar`;
-  const meta = `${n} ${n === 1 ? 'message' : 'messages'} · ${clock(run.at(-1).at)} · not posted`;
+  const meta = `${n} ${n === 1 ? 'message' : 'messages'}, ${clock(run.at(-1).at)}, not posted`;
   // Folded, with an answer to you in it that you have not seen: the list's purple badge here too.
   const fresh = open || paneled ? 0 : run.filter(unseenByMe).length;
   const badge = fresh ? `<b class="sidebadge" title="${esc(sideTitle(fresh))}">New</b>` : '';
@@ -4359,7 +4358,7 @@ function sideComposer(key, thread) {
   return `<div class="composer sidebar" role="group" aria-label="Sidebar with ${AGENT_NAME}">
     <div class="side-bar"><span class="face">${avatar(AGENT_NAME, '/icon-192.png')}${SIDE_ICON}</span>
       <span class="side-what"><b>Sidebar with ${AGENT_NAME}</b><small>${esc(sideAudience(key, where))}</small></span>
-      <button type="button" class="side-exit" data-side-exit title="Back to replying in the thread (Esc)">✕ Exit sidebar</button></div>
+      <button type="button" class="side-exit" data-side-exit title="Exit sidebar (Esc)">✕ Exit sidebar</button></div>
     <textarea id="side-reply" rows="1" aria-label="Message to ${AGENT_NAME}, not posted"></textarea>
     <button class="send ask" id="side-send" type="button">Ask</button>${LINES}</div>`;
 }
@@ -4379,10 +4378,10 @@ function sidePanelHead(key, thread) {
  */
 function sidePanelItems(key, runs) {
   if (!runs.length) {
-    return [{ html: `<div class="sc-wait blank">${SIDE_ICON}What you and ${AGENT_NAME} say here stays with the thread, for your team only. It is never posted.</div>` }];
+    return [{ html: `<div class="sc-wait blank">${SIDE_ICON}Only your team sees this conversation. It is never posted.</div>` }];
   }
   return runs.flatMap(({ run, last }) => [
-    `<div class="sp-when" data-run="${esc(run[0].id)}"><span>${esc(`${dayLabel(run[0].at)} · ${clock(run[0].at)}`)}</span></div>`,
+    `<div class="sp-when" data-run="${esc(run[0].id)}"><span>${esc(`${dayLabel(run[0].at)}, ${clock(run[0].at)}`)}</span></div>`,
     ...sideRun(key, run, last),
   ]).map((html) => ({ html }));
 }
@@ -4841,7 +4840,7 @@ async function askSide(key, said = null) {
   if (!res.ok) {
     if (!side.typed.get(key)) side.typed.set(key, text);
     if (state.open === key && side.key === key && !$('side-reply')?.value) { $('side-reply').value = text; growReply($('side-reply')); }
-    toast(`${AGENT_NAME} did not get it: ${res.data.error || `the inbox answered ${res.status}`}.`);
+    toast(`Could not send to ${AGENT_NAME}: ${res.data.error || `the inbox answered ${res.status}`}.`);
     showSide(key);
     return;
   }
@@ -4868,8 +4867,8 @@ function expertsHtml(key) {
   const open = state.expertsOpen === key;
   const top = list[0];
   const more = list.length > 1 ? `<button class="more" data-experts-more aria-haspopup="listbox" aria-expanded="${open}" aria-label="More colleagues the agent suggests" title="More colleagues the agent suggests"><span class="s2-chevron" aria-hidden="true"></span></button>` : '';
-  const rows = open ? `<ul class="expertlist s2-float" role="listbox" aria-label="Colleagues the agent suggests">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${esc(e.reasons.join(' · '))}</small></span></button></li>`).join('')}</ul>` : '';
-  return `<div class="experts" id="experts"><button class="top" data-expert="0" title="Agent: ${esc(top.reasons.join(' · '))}. Mention them in your reply">${avatar(top.name, top.avatar)}<span>${esc(`Agent suggests ${top.name}`)}</span></button>${more}${rows}</div>`;
+  const rows = open ? `<ul class="expertlist s2-float" role="listbox" aria-label="Colleagues the agent suggests">${list.map((e, i) => `<li role="option" aria-selected="false"><button data-expert="${i}">${avatar(e.name, e.avatar)}<span><b>${esc(e.name)}</b><small>${esc(e.reasons.join(', '))}</small></span></button></li>`).join('')}</ul>` : '';
+  return `<div class="experts" id="experts"><button class="top" data-expert="0" title="${esc(top.reasons.join(', '))}">${avatar(top.name, top.avatar)}<span>${esc(`Agent suggests ${top.name}`)}</span></button>${more}${rows}</div>`;
 }
 
 /** Puts the suggestions on screen without touching the rest of the header. */
@@ -4996,8 +4995,8 @@ function composer(thread, resolve = '', key = thread.thread) {
   // The agent's icon: the sidebar, where you talk to it instead of the channel.
   const agent = sideButton(key);
   // Seen, not worked (an admin's, or a sidebar you talked in before it moved): the sidebar only.
-  if (!canWork(key)) return `<div class="composer">${agent}<span class="connect">Filed under a team you are not on: only its team replies.${canSide(key) ? ` You can ask ${AGENT_NAME} in the sidebar.` : ''}</span>${LINES}</div>`;
-  if (!canPost(key)) return `<div class="composer">${agent}<span class="connect">You follow this thread: in the customer portal, only its team and the people of its channel reply.${canSide(key) ? ` You can ask ${AGENT_NAME} in the sidebar.` : ''}</span>${LINES}</div>`;
+  if (!canWork(key)) return `<div class="composer">${agent}<span class="connect">Only the thread's team can reply.${canSide(key) ? ` You can ask ${AGENT_NAME} in the sidebar.` : ''}</span>${LINES}</div>`;
+  if (!canPost(key)) return `<div class="composer">${agent}<span class="connect">Only the thread's team can reply in the customer portal.${canSide(key) ? ` You can ask ${AGENT_NAME} in the sidebar.` : ''}</span>${LINES}</div>`;
   if (p === 'discord') {
     // Discord lets only bots post through its API, and opspile posts as the person or not at
     // all: the reply is written in Discord. Connecting the account makes its posts count as yours.
@@ -5007,14 +5006,14 @@ function composer(thread, resolve = '', key = thread.thread) {
   }
   if (!state.me.connected?.[p]) {
     // Nobody connects an account for the customer portal: its Worker is bound to the inbox, or not.
-    const how = p === 'portal' ? 'The customer portal is not connected to this inbox: nothing can be posted there.'
+    const how = p === 'portal' ? 'The customer portal is not connected.'
       : `To reply as yourself, <a href="/api/auth/${p}/start">connect your ${name} account</a>.`;
     return `<div class="composer">${agent}<span class="connect">${how}</span>${LINES}</div>`;
   }
   return `<div class="composer"><ul class="mentions s2-float s2-up" id="mention-list" role="listbox" hidden></ul>
     <div class="tray" id="tray" hidden></div>${attachButton(thread)}${agent}
     <textarea id="reply" rows="1" role="combobox" aria-label="Reply in thread" aria-autocomplete="list" aria-controls="mention-list" aria-expanded="false"></textarea>
-    <span class="sendwrap"><span class="hold s2-float s2-up" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the thread's draft: everyone on the team sees it, and can send it (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${LINES}</div>`;
+    <span class="sendwrap"><span class="hold s2-float s2-up" id="hold" hidden><button class="savedraft" id="savedraft" title="Save as the team's draft (⌘S)">✎ Save draft</button>${resolve}</span><button class="send" id="send">Send</button></span>${LINES}</div>`;
 }
 
 const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -5303,7 +5302,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     sideUntil(i);
     if (gaps.has(m.thread) && (!i || m.thread !== shown[i - 1].thread)) { items.push(leftOut(gaps.get(m.thread))); gaps.delete(m.thread); }
     if (dayLabel(m.at) !== day) { day = dayLabel(m.at); items.push({ html: `<div class="day"><span>${esc(day)}</span></div>` }); prev = null; }
-    if (group && prev && prev.thread !== m.thread) { items.push({ html: `<div class="post"><span>new post · ${timeTag(m.at)}</span></div>` }); prev = null; }
+    if (group && prev && prev.thread !== m.thread) { items.push({ html: `<div class="post"><span>new post ${timeTag(m.at)}</span></div>` }); prev = null; }
     if (!group && i === 1 && thread.root_at && replies) { items.push({ html: `<div class="divider">${replies} ${replies === 1 ? 'reply' : 'replies'}</div>` }); prev = null; }
     if (last && continues(prev, m)) { last.followed = true; last.item.html = message(last.m, last.prev, false, true); }
     const item = { html: message(m, prev, false), enter: fresh(m) };
@@ -5516,7 +5515,7 @@ function rqForm(a) {
   const p = rq.preview[a.id];
   let tried = '';
   if (a.preview) {
-    if (!p || p.loading) tried = '<div class="rq-preview sub">Trying it…</div>';
+    if (!p || p.loading) tried = '<div class="rq-preview sub">Checking…</div>';
     else tried = p.error ? `<div class="rq-preview err">${esc(p.error)}</div>` : `<div class="rq-preview">${md(p.text)}</div>`;
   }
   const ready = !a.preview || (p && !p.loading && !p.error);
@@ -5532,7 +5531,7 @@ function rqCard(key, req) {
   const acts = req.actions || [];
   const st = `<span class="rq-st ${req.open ? 'open' : 'done'}">${esc(RQ_LABEL[req.status] || req.status)}</span>`;
   const question = req.kind === 'question';
-  const none = question ? 'Nothing to answer: it is closed. The agent has what you said above.' : 'Nothing to decide: it is closed. What the admin team wrote stays above.';
+  const none = 'Closed.';
   if (!acts.length) return `<div class="rq" data-request="${esc(key)}"><div class="rq-head"><b>${esc(req.kindName)}</b>${st}</div><p class="rq-none">${none}</p></div>`;
   const open = acts.find((a) => a.id === rq.open);
   const head = question ? 'Answer the agent' : (req.open ? 'Decide' : 'Change the decision');
@@ -5634,7 +5633,7 @@ async function rqTry(key, a, values) {
     method: 'POST', credentials: 'same-origin', redirect: 'manual', body: JSON.stringify({ key, action: a.id, values, dryRun: true }),
   }).then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => ({})) })).catch((e) => ({ ok: false, body: { error: e.message } }));
   if (seq !== rq.tries || rq.key !== key) return;
-  rq.preview[a.id] = res.ok ? { text: res.body.preview || '' } : { error: res.body.error || 'Could not try it.' };
+  rq.preview[a.id] = res.ok ? { text: res.body.preview || '' } : { error: res.body.error || 'Preview failed.' };
   redrawRequest(key);
 }
 
@@ -5653,7 +5652,7 @@ async function rqDecide(key, a, values) {
     Object.assign(rq, { open: null, values: {}, preview: {} });
     toast(plain(res.body.done || 'Done.'));
   } else {
-    rq.error = res.body.error || 'It did not go through.';
+    rq.error = res.body.error || 'Something went wrong. Try again.';
   }
   rqList.at = 0;
   redrawRequest(key);
@@ -5674,7 +5673,7 @@ async function rqNote(key) {
   // The box is kept as it is drawn (its HTML has not changed): free again.
   if ($('rqsend')) $('rqsend').disabled = false;
   if (!res.ok) {
-    toast(`Not written: ${res.body.error || 'it did not go through'}.`);
+    toast(`Not saved: ${res.body.error || 'something went wrong'}.`);
     return;
   }
   state.composers.delete(key);
@@ -5967,7 +5966,7 @@ function sourcesLine(d, thread = '') {
   const files = draftFilesLine(d, thread);
   if (!d.sources?.length) return files ? `<span class="srcs">${files}</span>` : '';
   const links = d.sources.map((s, i) => sourceLink(s.url, esc(s.title || hostOf(s.url)), 'src', ` data-source="${i}" title="${esc(s.url)}"`));
-  return `<span class="srcs">${files}<span class="lb" title="For checking the draft. Only your team sees them: they are not sent.">Sources</span>${links.join('')}</span>`;
+  return `<span class="srcs">${files}<span class="lb" title="Not sent to the customer">Sources</span>${links.join('')}</span>`;
 }
 
 // The draft's pictures (src/draftfiles.js), such as a screenshot the agent took: they go with it
@@ -5977,8 +5976,8 @@ const draftFileUrl = (thread, f) => `/api/draft/file?thread=${encodeURIComponent
 /** The draft's pictures on its line: each opens in a new tab. */
 function draftFilesLine(d, thread) {
   if (!d.files?.length || !thread) return '';
-  const pics = d.files.map((f) => `<a class="dfile" href="${esc(draftFileUrl(thread, f))}" target="_blank" rel="noopener" title="${esc(`${f.name} · ${fileSize(f.size)}`)}"><img src="${esc(draftFileUrl(thread, f))}" alt="${esc(f.name)}" loading="lazy"></a>`);
-  return `<span class="lb" title="They go with the draft when it is sent: the customer sees them.">Sent with it</span>${pics.join('')}`;
+  const pics = d.files.map((f) => `<a class="dfile" href="${esc(draftFileUrl(thread, f))}" target="_blank" rel="noopener" title="${esc(`${f.name}, ${fileSize(f.size)}`)}"><img src="${esc(draftFileUrl(thread, f))}" alt="${esc(f.name)}" loading="lazy"></a>`);
+  return `<span class="lb" title="Sent to the customer with the draft">Attachments</span>${pics.join('')}`;
 }
 
 /** The draft's pictures as files, to send or put in the tray; null when one could not be had. */
@@ -5987,7 +5986,7 @@ async function draftFiles(key, d) {
   try {
     return await Promise.all(d.files.map(async (f) => {
       const res = await fetch(draftFileUrl(key, f), { credentials: 'same-origin', redirect: 'manual' });
-      if (!res.ok) throw new Error(res.status === 404 ? `${f.name} is gone (a draft keeps its files for 30 days)` : `${f.name} could not be had (${res.status})`);
+      if (!res.ok) throw new Error(res.status === 404 ? `${f.name} expired (draft files are kept for 30 days)` : `${f.name} could not be loaded (${res.status})`);
       return new File([await res.blob()], f.name, { type: f.type });
     }));
   } catch (e) {
@@ -6024,7 +6023,7 @@ function sourceBody(v) {
     return `<iframe src="${esc(v.url)}" title="The source" sandbox="allow-scripts allow-same-origin allow-popups" credentialless referrerpolicy="no-referrer"></iframe>`;
   }
   if (v.view === 'markdown') return `<div class="bubble">${md(v.text)}</div>`;
-  return `<p class="none">${esc(v.reason || 'This page cannot be shown here.')} ${sourceLink(v.url, 'Open it in a new tab')}.</p>`;
+  return `<p class="none">${esc(v.reason || 'This page cannot be shown here.')} ${sourceLink(v.url, 'Open in a new tab')}.</p>`;
 }
 
 /** The popover, under the page's body; made when first used. */
@@ -6159,10 +6158,10 @@ const DRAFT_ICONS = {
 };
 // What the draft line's buttons say with a part of the draft selected (`markPart`).
 const DRAFT_PART = {
-  add: ['Add selection to reply', 'Add selection to reply: the part of the draft you selected, after what you wrote; sending it uses up the draft'],
-  edit: ['Edit selection', 'Edit selection: put the part of the draft you selected in the reply box; sending it uses up the draft'],
-  bot: ['Send selection as bot', 'Post the part of the draft you selected in the thread, as the bot, and drop the rest'],
-  me: ['Send selection as me', 'Post the part of the draft you selected in the thread, as you, and drop the rest'],
+  add: ['Add selection to reply', 'Add the selected part of the draft to your reply'],
+  edit: ['Edit selection', 'Put the selected part of the draft in the reply box'],
+  bot: ['Send selection as bot', 'Post the selected part as the bot and discard the rest'],
+  me: ['Send selection as me', 'Post the selected part as you and discard the rest'],
 };
 const draftPartLabels = (k) => ` data-part="${DRAFT_PART[k][0]}" data-part-title="${DRAFT_PART[k][1]}"`;
 /** A quiet, icon-only button of the draft line: what it does is its label (and tooltip). */
@@ -6181,19 +6180,19 @@ function draftLine(d, {
 } = {}) {
   const view = ` aria-expanded="${open}" aria-controls="draft-text"`;
   let tools;
-  if (open && peek) tools = [draftTool('view', 'pin', 'Keep draft open', 'Keep draft open: all of it stays, wherever the pointer goes, until you hide it', `${view} aria-pressed="false"`)];
-  else if (open) tools = [draftTool('view', 'hide', 'Hide draft', 'Hide draft: show only how it starts', view)];
-  else tools = [draftTool('view', 'view', 'View draft', 'View draft: all of it, here, until you hide it', view)];
+  if (open && peek) tools = [draftTool('view', 'pin', 'Keep draft open', 'Keep draft open', `${view} aria-pressed="false"`)];
+  else if (open) tools = [draftTool('view', 'hide', 'Hide draft', 'Hide draft', view)];
+  else tools = [draftTool('view', 'view', 'View draft', 'View the whole draft', view)];
   if (editable) {
     tools.push(own
-      ? draftTool('edit', 'add', 'Add to reply', 'Add to reply: the draft after what you wrote, to edit it', draftPartLabels('add'))
+      ? draftTool('edit', 'add', 'Add to reply', 'Add the draft to your reply', draftPartLabels('add'))
       : draftTool('edit', 'edit', 'Edit', 'Edit: put the draft in the reply box', draftPartLabels('edit')));
   }
   if (discard) tools.push(draftTool('discard', 'discard', 'Discard', 'Discard: throw the draft away, for everyone on the team'));
   const sends = [];
-  if (asBot) sends.push(`<button data-draft="bot" class="asbot" title="Post the draft in the thread as it is, as the bot"${draftPartLabels('bot')}>${DRAFT_ICONS.bot}<span>Send as bot</span></button>`);
-  if (asMe) sends.push(`<button data-draft="me" class="asme" title="Post the draft in the thread as it is, as you"${draftPartLabels('me')}>${DRAFT_ICONS.me}<span>Send as me</span></button>`);
-  return `<div class="dl"><div class="head"><span class="pen">${DRAFT_ICONS.draft}Draft</span><span class="by">by ${esc(draftBy(d))} · ${ago(d.updated_at)}${note}</span></div>
+  if (asBot) sends.push(`<button data-draft="bot" class="asbot" title="Post as the bot"${draftPartLabels('bot')}>${DRAFT_ICONS.bot}<span>Send as bot</span></button>`);
+  if (asMe) sends.push(`<button data-draft="me" class="asme" title="Post as you"${draftPartLabels('me')}>${DRAFT_ICONS.me}<span>Send as me</span></button>`);
+  return `<div class="dl"><div class="head"><span class="pen">${DRAFT_ICONS.draft}Draft</span><span class="by">by ${esc(draftBy(d))}, ${ago(d.updated_at)}${note}</span></div>
       <div class="pv" id="draft-text">${viewedDraft(d, thread, open)}</div>${sourcesLine(d, thread)}
       <span class="tools">${tools.join('')}</span>${sends.length ? `<span class="sends">${sends.join('')}</span>` : ''}</div>`;
 }
@@ -6226,8 +6225,8 @@ function renderDraftBar(key, force = false) {
   if (d) {
     const took = box && tookDraft(c, d);
     let note = '';
-    if (took) note = c.text === d.body ? ' · in the reply box' : ' · in the reply box, edited';
-    else if (c?.base && box && c.text.trim()) note = ' · changed since you took it';
+    if (took) note = c.text === d.body ? ', in the reply box' : ', in the reply box, edited';
+    else if (c?.base && box && c.text.trim()) note = ', changed since you copied it';
     html = draftLine(d, {
       thread: key,
       open: draftOpen.has(key),
@@ -6461,7 +6460,7 @@ async function sendDraft(key, asApp, part = null) {
   if (asApp) {
     const sendIt = async (again = false) => {
       const sent = await sendAsApp(key, out.body, out.updated_at, { mentions: out.mentions || [], files, again });
-      if (sent.unsure) toast(`It may have been sent: ${sent.error}.`, { label: 'Send again', run: () => sendIt(true) });
+      if (sent.unsure) toast(`May have been sent: ${sent.error}.`, { label: 'Send again', run: () => sendIt(true) });
       else toast(sent.error ? `Nothing was sent: ${sent.error}.` : ['Sent as the bot.', sent.invited].filter(Boolean).join(' '), null, { stay: sent.missed });
     };
     await sendIt();
@@ -6580,7 +6579,7 @@ async function saveDraft(key, text, base, { fromBox = false, sources } = {}) {
   if (res.status === 409 && res.data.conflict) {
     // Gone meanwhile: saving what you wrote is your call, and then it is a new draft.
     setCachedDraft(key, null);
-    toast(`${res.data.error}.`, { label: 'Save it anyway', run: () => saveDraft(key, text, null, { fromBox, sources }) });
+    toast(`${res.data.error}.`, { label: 'Save anyway', run: () => saveDraft(key, text, null, { fromBox, sources }) });
     return { error: res.data.error, gone: true };
   }
   if (!res.ok) {
@@ -6602,7 +6601,7 @@ async function saveDraft(key, text, base, { fromBox = false, sources } = {}) {
   // In the personal view: the team it is filed under.
   const slug = personal() ? state.data?.threads.find((t) => t.thread === key)?.team : state.team;
   const team = state.data?.teams?.[slug]?.name || 'the team';
-  toast(`Draft saved. Everyone in ${team} sees it.`);
+  toast(`Draft saved for ${team}.`);
   return { ok: true, draft: d };
 }
 
@@ -6612,7 +6611,7 @@ async function discardDraft(key) {
   const res = await request('DELETE', '/api/draft', { thread: key, base: d.updated_at });
   if (res.status === 409 && res.data.draft) {
     setCachedDraft(key, res.data.draft);
-    toast(`${res.data.error}; it is still there.`);
+    toast(`${res.data.error}. The draft is unchanged.`);
     return;
   }
   if (!res.ok) { toast(res.data.error || `could not discard the draft (${res.status})`); return; }
@@ -6754,26 +6753,26 @@ function timeLeft(iso, now = Date.now()) {
  */
 function bashState(r) {
   const who = r.by?.id === viewerId() ? 'you' : (r.by?.name || 'a colleague');
-  const by = ` · by ${who} · ${ago(r.finished_at)}`;
+  const by = `, by ${who}, ${ago(r.finished_at)}`;
   if (isScript(r)) return scriptState(r, who, by);
   const told = 'The agent was told what the command printed.';
-  if (r.status === 'running') return { text: `Running, started by ${who}`, hint: 'On the agent\'s computer. The agent is told what it prints.' };
+  if (r.status === 'running') return { text: `Running, started by ${who}`, hint: 'The agent gets the output.' };
   if (r.status === 'done') return { text: `Ran, exit code ${r.exit_code}`, rest: by, bad: r.exit_code !== 0, hint: told };
-  if (r.status === 'timeout') return { text: `Stopped after ${r.timeout} s, its timeout`, rest: by, bad: true, hint: told };
-  if (r.status === 'failed') return { text: `Did not run to its end: ${r.error || 'the computer failed'}`, rest: by, bad: true, hint: 'The agent was told.' };
-  if (r.status === 'denied') return { text: `Denied by ${who}`, rest: ` · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
-  return { text: `Expired at ${clock(r.deadline)}: nobody ran it`, hint: 'It did not run. The agent was told.' };
+  if (r.status === 'timeout') return { text: `Timed out after ${r.timeout} s`, rest: by, bad: true, hint: told };
+  if (r.status === 'failed') return { text: `Failed: ${r.error || 'the computer failed'}`, rest: by, bad: true, hint: 'The agent was told.' };
+  if (r.status === 'denied') return { text: `Denied by ${who}`, rest: `, ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
+  return { text: `Expired at ${clock(r.deadline)}`, hint: 'It did not run. The agent was told.' };
 }
 /** How a script request that is no longer waiting stands, as bashState says it of a command. */
 function scriptState(r, who, by) {
   const told = 'The agent was told what the script output.';
-  if (r.status === 'running') return { text: `Running as ${who}`, hint: 'In the agent\'s code mode, calling the inbox as them. The agent is told what it outputs.' };
+  if (r.status === 'running') return { text: `Running as ${who}`, hint: 'The agent gets the output.' };
   if (r.status === 'done' && r.error) return { text: `Ran, and threw: ${r.error}`, rest: by, bad: true, hint: told };
   if (r.status === 'done') return { text: 'Ran', rest: by, hint: told };
-  if (r.status === 'timeout') return { text: `Stopped after ${r.timeout} s, its timeout`, rest: by, bad: true, hint: told };
-  if (r.status === 'failed') return { text: `Did not run to its end: ${r.error || 'the sandbox failed'}`, rest: by, bad: true, hint: 'The agent was told.' };
-  if (r.status === 'denied') return { text: `Denied by ${who}`, rest: ` · ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
-  return { text: `Expired at ${clock(r.deadline)}: nobody ran it`, hint: 'It did not run. The agent was told.' };
+  if (r.status === 'timeout') return { text: `Timed out after ${r.timeout} s`, rest: by, bad: true, hint: told };
+  if (r.status === 'failed') return { text: `Failed: ${r.error || 'the sandbox failed'}`, rest: by, bad: true, hint: 'The agent was told.' };
+  if (r.status === 'denied') return { text: `Denied by ${who}`, rest: `, ${ago(r.finished_at)}`, hint: 'It did not run. The agent was told.' };
+  return { text: `Expired at ${clock(r.deadline)}`, hint: 'It did not run. The agent was told.' };
 }
 
 /** The inbox's tools a script calls as whoever runs it, as a row of their names. */
@@ -6790,13 +6789,13 @@ function bashCard(r, {
   decide = false, busy = false, kept = [], earlier = 0, all = false, why = null, side: run = null,
 } = {}) {
   const script = isScript(r);
-  const head = (line) => `<div class="head"><span class="what">${script ? `${SCRIPT_ICON}Script` : `${BASH_ICON}Command`}</span><code class="id" title="This request's id: the agent names it in its notes">${esc(r.id)}</code><span class="by">${line}</span></div>`;
+  const head = (line) => `<div class="head"><span class="what">${script ? `${SCRIPT_ICON}Script` : `${BASH_ICON}Command`}</span><code class="id" title="Request id">${esc(r.id)}</code><span class="by">${line}</span></div>`;
   if (r.status !== 'pending') {
     const spin = r.status === 'running' ? '<i class="spin"></i>' : '';
     const {
       text, rest = '', bad, hint,
     } = bashState(r);
-    const more = earlier ? `<button type="button" class="more" data-bash="earlier" aria-expanded="${all}" title="${all ? 'Show only the latest request that ended' : 'Show the requests that ended before this one, within the hour'}">${all ? 'Hide earlier' : `${earlier} earlier`}</button>` : '';
+    const more = earlier ? `<button type="button" class="more" data-bash="earlier" aria-expanded="${all}" title="${all ? 'Show only the latest' : 'Show earlier requests from the last hour'}">${all ? 'Hide earlier' : `${earlier} earlier`}</button>` : '';
     return `<div class="br ${esc(r.status)}" data-id="${esc(r.id)}">${head(`${spin}<span class="st${bad ? ' bad' : ''}" title="${esc(hint)}">${esc(text)}</span>${esc(rest)}`)}<pre class="cmd"><code>${esc(r.command)}</code></pre>${more}</div>`;
   }
   // To be read before it is run: highlighted as the shell command or the script it is, once
@@ -6804,16 +6803,16 @@ function bashCard(r, {
   const lit = highlightCode(r.command, script ? 'javascript' : 'bash');
   const command = `<pre class="cmd${lit ? ' hl' : ''}"><code>${lit ?? esc(r.command)}</code></pre>${script ? scriptTools(r) : ''}`;
   // In the bar, asked in a sidebar conversation that does not show: a link that opens it.
-  const where = run ? ` <button type="button" class="toside" data-side-toggle="${esc(run)}" title="Show the sidebar conversation the agent asked this in">in the sidebar</button>` : '';
-  const asked = `the agent asks${where} · ${ago(r.created_at)} · <span title="Until ${esc(new Date(r.deadline).toLocaleString())}: after that, nobody can run it">open for ${timeLeft(r.deadline)}</span>`;
+  const where = run ? ` <button type="button" class="toside" data-side-toggle="${esc(run)}" title="Show in the sidebar">in the sidebar</button>` : '';
+  const asked = `the agent asks${where}, ${ago(r.created_at)}, <span title="Expires ${esc(new Date(r.deadline).toLocaleString())}">open for ${timeLeft(r.deadline)}</span>`;
   const reason = `<p class="why">${esc(r.reason)}</p>`;
   // `why` you may not run it, when it is not that you view as someone else: under the command.
   const whyNot = why ? `<div class="foot"><span class="note">${esc(why)}</span></div>` : '';
   if (!decide) return `<div class="br pending" data-id="${esc(r.id)}">${head(asked)}${reason}${command}${whyNot}</div>`;
   const off = busy ? ' disabled' : '';
   if (script) {
-    const note = `Runs in the agent's code mode as you, for up to ${r.timeout} s. The agent gets what it outputs.`;
-    const hint = 'Each of those tools reads the inbox as you do: other channels, teams and customers too, what you may see. Nothing else of yours reaches the agent. Read the script before you run it: what it outputs is what the agent reads.';
+    const note = `Runs as you, for up to ${r.timeout} s. The agent gets the output.`;
+    const hint = 'The script reads the inbox with your access. Read it before you run it.';
     const spin = busy ? '<i class="spin"></i>' : '';
     return `<form class="br pending" data-id="${esc(r.id)}" autocomplete="off">${head(asked)}${reason}${command}
       <div class="foot"><span class="note" title="${esc(hint)}">${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>${spin}Run as me</button></span></div></form>`;
@@ -6824,11 +6823,11 @@ function bashCard(r, {
     return `<label class="var"><span class="nm"><code>$${esc(v.name)}</code>${has ? '<span class="kept">remembered</span>' : ''}${forget}</span>${v.description ? `<span class="ds">${esc(v.description)}</span>` : ''}
       <input type="password" name="${esc(v.name)}" required autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true"${off}></label>`;
   });
-  const remember = vars.length ? `<label class="keep" title="Encrypted in this browser's storage, with a key that cannot be taken out of it. Filled in the next time a command asks for a variable of the same name."><input type="checkbox" name="remember"${off}>Remember on this device, encrypted</label>` : '';
-  const note = `Runs on the agent's computer, for up to ${r.timeout} s. ${vars.length ? 'The agent gets what it prints, never what you fill in.' : 'The agent gets what it prints.'}`;
-  const hint = vars.length ? 'What you fill in goes to this one run and is kept nowhere. Where the output has a value of 8 characters or more, the agent reads the variable\'s name instead. The command itself can still store a value or send it somewhere: read it before you run it.' : 'The agent is told what the command printed, or that it failed or timed out.';
+  const remember = vars.length ? `<label class="keep" title="Stored encrypted in this browser and filled in next time"><input type="checkbox" name="remember"${off}>Remember on this device, encrypted</label>` : '';
+  const note = `Runs on the agent's computer, for up to ${r.timeout} s. ${vars.length ? 'The agent gets the output, never the values you enter.' : 'The agent gets the output.'}`;
+  const hint = vars.length ? 'Values are used for this run only. The command can still store or send them: read it before you run it.' : '';
   return `<form class="br pending" data-id="${esc(r.id)}" autocomplete="off">${head(asked)}${reason}${command}${vars.length ? `<div class="vars">${vars.join('')}${remember}</div>` : ''}
-      <div class="foot"><span class="note" title="${esc(hint)}">${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>Run</button></span></div></form>`;
+      <div class="foot"><span class="note"${hint ? ` title="${esc(hint)}"` : ''}>${note}</span><span class="acts"><button type="button" class="deny" data-bash="deny"${off}>Deny</button><button type="submit" class="run" data-bash="run"${off}>Run</button></span></div></form>`;
 }
 
 /** What bashCard is told about the viewer of thread `key`, for each request. */
@@ -7132,7 +7131,7 @@ async function runBash(key, id, form) {
   // No answer, or the Worker failed: that does not say the command did not start.
   if (!res || res.status >= 500) {
     renderAsks(key);
-    toast(`The inbox did not answer, so the ${what} may be running all the same. The card says how it stands.`);
+    toast(`No answer from the inbox. The ${what} may still be running.`);
     reloadSoon(key);
     return;
   }
@@ -7216,20 +7215,20 @@ const sendDecides = (p, now) => Boolean(p.asked) || now - Date.parse(p.at) >= SE
  */
 function sendState(p, now = Date.now()) {
   // Restored after the page was left: its files stayed with that page, so it cannot go again.
-  const gone = p.filesLost ? '. Its files stayed with the page you left: copy the text and send it again with them' : '';
+  const gone = p.filesLost ? '. The attachments were lost: copy the text and attach them again' : '';
   if (p.status === 'unknown') {
     const decide = sendDecides(p, now);
     return `<div class="unsent" role="alert"><span class="why">${decide ? 'May have been sent' : 'Not sure it was sent'}: ${esc(p.error)}${gone}</span>
-      ${gone ? '' : `<button data-retry="${esc(p.id)}"${decide ? ' title="It may go out twice: check the thread on the platform first"' : ''}>${decide ? 'Send again' : 'Retry'}</button>`}<button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+      ${gone ? '' : `<button data-retry="${esc(p.id)}"${decide ? ' title="It may go out twice: check the thread on the platform first"' : ''}>${decide ? 'Send again' : 'Retry'}</button>`}<button data-unsend="${esc(p.id)}">Discard</button></div>`;
   }
   if (p.status === 'failed') {
     return `<div class="unsent" role="alert"><span class="why">Not sent: ${esc(p.error)}${gone}</span>
-      ${gone ? '' : `<button data-retry="${esc(p.id)}">Retry</button>`}<button data-unsend="${esc(p.id)}" title="Throw the reply away">Discard</button></div>`;
+      ${gone ? '' : `<button data-retry="${esc(p.id)}">Retry</button>`}<button data-unsend="${esc(p.id)}">Discard</button></div>`;
   }
   if (p.postedId && sendLate(p, now)) {
     // The platform took it and named it: it is there, only not back in the inbox yet.
-    return `<div class="unsent late" role="status"><span class="why">Sent, not back from ${esc(PLATFORM[p.source] || 'the platform')} yet: it shows here once it is</span>
-      <button data-unsend="${esc(p.id)}" title="Stop showing this: the message shows once it arrives">Hide</button></div>`;
+    return `<div class="unsent late" role="status"><span class="why">Sent. Waiting for ${esc(PLATFORM[p.source] || 'the platform')}</span>
+      <button data-unsend="${esc(p.id)}">Hide</button></div>`;
   }
   if (p.status !== 'sending' && p.status !== 'sent') return '';
   return `<div class="sendbar" data-send="${esc(p.id)}" role="progressbar" aria-label="Sending" aria-valuemin="0" aria-valuemax="100"><i></i></div>`;
@@ -7461,7 +7460,7 @@ function discardSend(id) {
   if (!late && state.sending[i].status !== 'failed' && state.sending[i].status !== 'unknown') return;
   const [p] = state.sending.splice(i, 1);
   showSending(p.thread);
-  toast(late ? 'Hidden: the reply was sent, and shows once it arrives.' : 'Reply discarded.', { label: 'Undo', run: () => { state.sending.push(p); showSending(p.thread); } });
+  toast(late ? 'Hidden. The reply was sent.' : 'Reply discarded.', { label: 'Undo', run: () => { state.sending.push(p); showSending(p.thread); } });
 }
 
 // ---------------------------------------------------------------- replies kept until they arrive
@@ -7716,13 +7715,13 @@ function channelOptions(channels, inView, q) {
 
 const channelIcon = (c) => favImg(PLATFORM_SITE[PLATFORM[c.source]], { alt: PLATFORM[c.source], title: PLATFORM[c.source] });
 /** Where a channel is, after its name: the customer, and on Teams the team it is in. */
-const channelWhere = (c) => [c.orgName, c.group].filter(Boolean).map(esc).join(' · ');
+const channelWhere = (c) => [c.orgName, c.group].filter(Boolean).map(esc).join(', ');
 
 function composeHead({ channel }) {
   const close = `<button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>`;
-  const shut = '<button class="linkish cancel" data-close title="Close (Esc); what you wrote stays until you post it">Cancel</button>';
+  const shut = '<button class="linkish cancel" data-close title="Close (Esc). Your text is kept.">Cancel</button>';
   const where = channel
-    ? `<div class="sub">${channelIcon(channel)}<b id="chan-name">${esc(channel.name)}</b>${channelWhere(channel) ? ` · <span>${channelWhere(channel)}</span>` : ''} · <button class="linkish" data-rechannel>Change</button></div>`
+    ? `<div class="sub">${channelIcon(channel)}<b id="chan-name">${esc(channel.name)}</b>${channelWhere(channel) ? `, <span>${channelWhere(channel)}</span>` : ''} <button class="linkish" data-rechannel>Change</button></div>`
     : '<div class="chanpick"><label class="fld" for="chan-q"><span>Channel</span></label><input id="chan-q" type="search" role="combobox" aria-describedby="chan-hint" aria-autocomplete="list" aria-controls="chan-list" aria-expanded="false" autocomplete="off" spellcheck="false"><span class="hint" id="chan-hint">Search by its name or its customer.</span><ul class="chans s2-float" id="chan-list" role="listbox" aria-label="Channels" hidden></ul></div>';
   return `<div class="ph newthread">${close}<h2>New thread ${shut}</h2>${where}</div>`;
 }
@@ -7734,7 +7733,7 @@ function composeFeed({ channel, error, unsure, lost }) {
 
 function composeBox({ channel, posting, unsure }) {
   if (channel && channel.source === 'portal' && !state.me.connected?.portal) {
-    return '<div class="composer"><span class="connect">The customer portal is not connected to this inbox: nothing can be posted there.</span></div>';
+    return '<div class="composer"><span class="connect">The customer portal is not connected.</span></div>';
   }
   if (channel && !state.me.connected?.[channel.source]) {
     return `<div class="composer"><span class="connect">To post as yourself, <a href="/api/auth/${channel.source}/start">connect your ${accountOf(channel.source)} account</a>.</span></div>`;
@@ -7919,9 +7918,9 @@ function renderStarted() {
   const feed = `<div class="scroller"><div class="feed">${items.join('')}${note}</div></div>`;
   // Slack names the files of a post, not its message: replies wait for the thread in the inbox.
   const can = s.root !== null;
-  const reply = `<div class="composer"><ul class="mentions s2-float s2-up" id="mention-list" role="listbox" hidden></ul><button class="attach" type="button" aria-disabled="true" title="Files can be added once the thread is in the inbox">${PAPERCLIP}</button>
+  const reply = `<div class="composer"><ul class="mentions s2-float s2-up" id="mention-list" role="listbox" hidden></ul><button class="attach" type="button" aria-disabled="true" title="Attach files once the thread is posted">${PAPERCLIP}</button>
     <textarea id="reply" rows="1" role="combobox" aria-autocomplete="list" aria-label="Reply in thread" aria-controls="mention-list" aria-expanded="false"></textarea>
-    <span class="sendwrap"><button class="send" id="send"${can ? '' : ' disabled title="Send once the thread is in the inbox: what you write waits here"'}>Send</button></span></div>`;
+    <span class="sendwrap"><button class="send" id="send"${can ? '' : ' disabled title="Available once the thread is posted"'}>Send</button></span></div>`;
   const scroller = pane.querySelector('.scroller');
   const top = scroller && pane.__started === s ? scroller.scrollTop : null;
   pane.innerHTML = `${head}${feed}${reply}`;
@@ -8011,7 +8010,7 @@ function awaitStarted(key, { now = false, wait = ARRIVAL_FIRST_MS } = {}) {
       if (Date.now() - s.since < ARRIVAL_WAIT_MS) {
         awaitStarted(key, { wait: Math.min(ARRIVAL_MAX_MS, wait + 1000) });
       } else {
-        s.note = 'Posted. It shows in the inbox as soon as it arrives.';
+        s.note = 'Posted.';
         renderStarted();
       }
       return;
@@ -8122,7 +8121,7 @@ async function postNew() {
   const said = [`Posted in ${channel.name}.`, invited, remind].filter(Boolean).join(' ');
   const acts = remind ? remindActions(res.data, key, channel.ref.split(':')[0]) : null;
   // Slack names the files of a post, not the message: it shows in the inbox when it arrives.
-  if (!key) s.note = 'Posted. It shows in the inbox as soon as it arrives.';
+  if (!key) s.note = 'Posted.';
   // Somewhere else by now: that stays on screen.
   const stay = { stay: missedMention(res.data) };
   if (state.compose !== c) { toast(said, acts, stay); return; }
@@ -8171,7 +8170,7 @@ async function saveEdit() {
   const m = ed && messageOf(ed.key, ed.id);
   if (!ed) return;
   const body = ed.text.trim();
-  if (!body) { toast('Write something, or press Esc to keep the message as it is.'); return; }
+  if (!body) { toast('The message is empty. Press Esc to cancel.'); return; }
   closeMentions();
   if (!m || body === ownText(m.body)) { cancelEdit(); return; }
   const at = ed.id.indexOf('|');
@@ -8249,7 +8248,7 @@ function attachProblem(rule, files) {
     if (f.size > rule.file) return `${f.name} is ${fileSize(f.size)}: files here take up to ${fileSize(rule.file)}.`;
     total += f.size;
   }
-  return total > rule.total ? `The files are ${fileSize(total)} together: up to ${fileSize(rule.total)} per message.` : null;
+  return total > rule.total ? `The files are ${fileSize(total)}. The limit is ${fileSize(rule.total)} per message.` : null;
 }
 /** What the 📎 button says it takes. */
 function attachHint(rule) {
@@ -8328,7 +8327,7 @@ function removeFile(key, id) {
   renderTray(key);
 }
 
-const fileChip = (a) => `<div class="chip ${a.url ? 'img' : 'file'}" data-id="${a.id}" title="${esc(`${a.file.name} · ${fileSize(a.file.size)}`)}">
+const fileChip = (a) => `<div class="chip ${a.url ? 'img' : 'file'}" data-id="${a.id}" title="${esc(`${a.file.name}, ${fileSize(a.file.size)}`)}">
     ${a.url ? `<img src="${esc(a.url)}" alt="">` : `<span class="ico" aria-hidden="true">${esc((a.file.name.split('.').pop() || 'file').slice(0, 4).toUpperCase())}</span><span class="nm">${esc(a.file.name)}</span><span class="sz">${fileSize(a.file.size)}</span>`}
     <button type="button" class="x" data-rm="${a.id}" aria-label="Remove ${esc(a.file.name)}" title="Remove">×</button></div>`;
 
@@ -8476,7 +8475,7 @@ function wireDrop() {
       pane.append(zone);
     }
     zone.classList.toggle('refused', !rule.count);
-    zone.innerHTML = `<div>${PAPERCLIP}<b>${rule.count ? `Drop to attach ${rule.other ? 'files' : 'images'}` : 'Cannot attach files here'}</b><span>${esc(rule.count ? `Up to ${rule.count}, ${fileSize(rule.total)} in all; they go with your ${state.compose ? 'message' : 'reply'}.` : `${rule.why[0].toUpperCase()}${rule.why.slice(1)}.`)}</span></div>`;
+    zone.innerHTML = `<div>${PAPERCLIP}<b>${rule.count ? `Drop to attach ${rule.other ? 'files' : 'images'}` : 'Cannot attach files here'}</b><span>${esc(rule.count ? `Up to ${rule.count} files, ${fileSize(rule.total)} in total.` : `${rule.why[0].toUpperCase()}${rule.why.slice(1)}.`)}</span></div>`;
     pane.classList.add('dropping');
   };
   pane.addEventListener('dragenter', (e) => {
@@ -8740,7 +8739,7 @@ function renderMentions(key) {
   if (!mention.list.length) { closeMentions(); return; }
   ul.setAttribute('aria-label', mention.kind === 'emoji' ? 'Emoji' : 'People to mention');
   ul.innerHTML = mention.list.map((p, i) => `<li role="option" id="mention-${i}" class="${i === mention.i ? 'on' : ''}" aria-selected="${i === mention.i}" data-i="${i}">
-    ${p.emoji ? emojiOption(p) : `${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.member ? '<span class="hint">in channel</span>' : p.outside ? '<span class="hint" title="Not a member of this Teams team: the mention will not reach them until someone adds them">not in team</span>' : p.expert ? '<span class="hint" title="Has written about what this thread is about">Adobe · related</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}`}</li>`).join('');
+    ${p.emoji ? emojiOption(p) : `${avatar(p.name, p.avatar)}<span>${esc(p.name)}</span>${p.kind === 'bot' ? '<span class="hint">bot</span>' : p.here ? '<span class="hint">in thread</span>' : p.member ? '<span class="hint">in channel</span>' : p.outside ? '<span class="hint" title="Not a member of this Teams team: the mention will not reach them until someone adds them">not in team</span>' : p.expert ? '<span class="hint" title="Has written about this topic">Adobe, related</span>' : p.staff ? '<span class="hint">Adobe</span>' : ''}`}</li>`).join('');
   ul.hidden = false;
   box.setAttribute('aria-expanded', 'true');
   box.setAttribute('aria-activedescendant', `mention-${mention.i}`);
@@ -8749,7 +8748,7 @@ function renderMentions(key) {
 }
 
 /** An emoji suggestion: the emoji, its name, and whether Clef suggested it. */
-const emojiOption = (p) => `<span class="glyph" aria-hidden="true">${emojiChip(p.emoji)}</span><span>:${esc(p.emoji)}:</span>${p.clef ? '<span class="hint" title="Suggested by Clef">Clef</span>' : ''}`;
+const emojiOption = (p) => `<span class="glyph" aria-hidden="true">${emojiChip(p.emoji)}</span><span>:${esc(p.emoji)}:</span>${p.clef ? '<span class="hint">suggested</span>' : ''}`;
 
 function closeMentions() {
   mention.list = [];
@@ -8845,10 +8844,10 @@ function invitedSaying(data) {
     return NOT_ADDED[w](names(list), list.length > 1 ? 'are' : 'is');
   });
   return [
-    data?.joinedWorkspace ? 'You were not in this Slack channel: the bot added you to its workspace and the channel, and sent it.' : '',
-    data?.joined && !data.joinedWorkspace ? 'You were not in this Slack channel: the bot added you, and sent it.' : '',
+    data?.joinedWorkspace ? 'The bot added you to the Slack workspace and channel, and sent your message.' : '',
+    data?.joined && !data.joinedWorkspace ? 'The bot added you to the Slack channel and sent your message.' : '',
     added.length ? `Added ${names(added)} to the channel, so they see the mention.` : '',
-    joined.length ? `Added ${names(joined)} to the Slack workspace and the channel, so they see the mention.` : '',
+    joined.length ? `Added ${names(joined)} to the Slack workspace and channel.` : '',
     ...refused,
     outsideSaying(data?.outside),
   ].filter(Boolean).join(' ');
@@ -9143,7 +9142,7 @@ async function copyAction(i) {
     await navigator.clipboard.writeText(a.url);
   } catch {
     closeMessageMenu({ focus: true });
-    toast('Could not copy the link: the browser did not let the page write to the clipboard.');
+    toast('Could not copy the link to the clipboard.');
     return;
   }
   item.textContent = 'Copied ✓';
@@ -9916,13 +9915,13 @@ function renderTraces() {
   $('tracesHere').hidden = !t?.channel_id;
   if (t?.channel_id) {
     const own = state.settings.channelTraces?.[t.channel_id];
-    $('tracesChannelLabel').textContent = `In ${channelLabel(t)}, the open thread's channel`;
-    $('tracesChannel').options[0].textContent = `As everywhere (${all ? 'shown' : 'hidden'})`;
+    $('tracesChannelLabel').textContent = `In ${channelLabel(t)}`;
+    $('tracesChannel').options[0].textContent = `Default (${all ? 'shown' : 'hidden'})`;
     $('tracesChannel').value = typeof own === 'boolean' ? (own ? 'on' : 'off') : '';
   }
   const set = Object.keys(state.settings.channelTraces || {}).length;
-  $('tracesHint').textContent = `What it is doing while it works, and its note once done; only for you.${set
-    ? ` Set in ${set} channel${set === 1 ? '' : 's'} on ${set === 1 ? 'its' : 'their'} own, which win${set === 1 ? 's' : ''}: the team's thread agents list them.` : ''}`;
+  $('tracesHint').textContent = `Only affects your inbox.${set
+    ? ` ${set} channel${set === 1 ? ' overrides' : 's override'} this.` : ''}`;
 }
 
 /** The open thread's agent, after the settings changed from `before`: shown (asked again) or gone. */
@@ -9969,8 +9968,8 @@ function offerPosting(key, offer) {
   if (state.as || state.settings?.postingDeclined?.includes(offer.channel)) return;
   const t = threadRow(key);
   const where = t?.channel_id === offer.channel ? channelLabel(t) : 'this channel';
-  toast(`You have sent ${offer.sent} of the agent's drafts in ${where}. Let it post its replies there itself, as the bot?`, {
-    label: 'Let it post', run: () => allowPosting(key, offer, where),
+  toast(`You sent ${offer.sent} agent drafts in ${where}. Let the agent post replies there as the bot?`, {
+    label: 'Allow posting', run: () => allowPosting(key, offer, where),
   }, { stay: true, dismiss: { label: 'Keep drafts', run: () => saveSettings({ postingDeclined: [offer.channel] }) } });
 }
 
@@ -9979,7 +9978,7 @@ async function allowPosting(key, offer, where) {
     .catch((e) => ({ ok: false, data: { error: e.message } }));
   if (!res.ok) { toast(`Could not let the agent post: ${res.data.error || res.status}`); return; }
   const href = agentHref(key);
-  toast(`The agent posts its replies in ${where} itself, from its next turn.`, href ? { label: 'Agent settings', href } : null);
+  toast(`The agent now posts replies in ${where}.`, href ? { label: 'Agent settings', href } : null);
   if (state.open === key) openThread(key, { live: true });
 }
 
@@ -10005,7 +10004,7 @@ async function toggleBell() {
     if (await saveSettings({ bells: bells.filter((b) => bellKey(b) !== bellKey(bell)) })) toast(`No more notifications for ${bellLabel(bell)}.`);
     return;
   }
-  if (bells.length >= 20) { toast('That is 20 views with notifications already: turn one off in the menu first.'); return; }
+  if (bells.length >= 20) { toast('You can notify for up to 20 views. Turn one off in the menu first.'); return; }
   const unasked = canNotify() && Notification.permission === 'default';
   const ok = await askToNotify({ welcome: false });
   if (await saveSettings({ bells: [...bells, bell] })) {
@@ -10028,11 +10027,11 @@ function renderNotify() {
   const wanted = s.mentions || s.threads || s.bells?.length;
   $('notifyHint').textContent = {
     unsupported: 'This browser does not show notifications.',
-    denied: 'Blocked for this site in this browser: allow notifications in its site settings.',
-    default: wanted ? 'This browser has not been allowed to show them yet.' : '',
+    denied: 'Blocked. Allow notifications in this site\'s settings.',
+    default: wanted ? 'Not allowed in this browser yet.' : '',
     granted: '',
   }[perm] || '';
-  if (perm === 'granted') $('notifyHint').textContent = s.bells?.length ? 'While the inbox is open, in a tab or as the app.' : 'While the inbox is open. The bell above the list adds the view on screen.';
+  if (perm === 'granted') $('notifyHint').textContent = 'While the inbox is open.';
   $('notifyAllow').hidden = perm !== 'default';
   // The troubleshooter: a test once they are allowed, how to allow them while they are not.
   $('notifyTest').hidden = perm !== 'granted';
@@ -10145,7 +10144,7 @@ function wireTour() {
   if (TOUR_ASKED) { showAround(); return; }
   // A toast already on screen (an account just connected) goes first: the tour asks next time.
   if (!tourDue() || document.querySelector('.toast:not(.leaving), dialog[open]')) return;
-  toast('New here? A minute\'s tour shows you around the inbox.', { label: 'Show me around', run: showAround }, {
+  toast('New here? Take a quick tour of the inbox.', { label: 'Show me around', run: showAround }, {
     stay: true, dismiss: { label: 'No thanks', run: () => saveSettings({ toured: true }) },
   });
 }
@@ -10392,7 +10391,7 @@ async function welcomeNote(justAllowed = false) {
     return false;
   }
   playChime();
-  toast('Notifications are on: the inbox just sent you one. Didn\'t see it pop up?', { label: 'Fix it', run: () => openNotifyHelp('hidden') }, { stay: true });
+  toast('Notifications are on. Didn\'t see the test notification?', { label: 'Fix it', run: () => openNotifyHelp('hidden') }, { stay: true });
   return true;
 }
 /**
@@ -10496,7 +10495,7 @@ function noteText({
   author, org, text, thread,
 }) {
   return {
-    title: [author || 'Someone', org].filter(Boolean).join(' · '),
+    title: [author || 'Someone', org].filter(Boolean).join(', '),
     body: [text ? clipNote(text, 140) : 'New message', `↳ ${clipNote(thread || '(no text)', 70)}`].join('\n'),
   };
 }
@@ -11258,7 +11257,7 @@ const SHORTCUTS = [
     ['Mark every thread in the list read', '⇧Esc'],
   ]],
   ['The open thread', [
-    ['Resolve it, or take your ✅ off again', 'e'],
+    ['Resolve, or undo', 'e'],
     ['Ask the Thread Agent, in the sidebar', 'a'],
     ['Show or hide the sidebar', '⌘.'],
     ['React to the last message, or the one in focus', '⌘⇧\\'],
@@ -11266,9 +11265,9 @@ const SHORTCUTS = [
   ]],
   ['A message (↑ from an empty reply box, or F6)', [
     ['Previous / next message', '↑ ↓'],
-    ['Edit it (one of yours)', 'e'],
-    ['React to it', 'r'],
-    ['Its menu: copy its link', 'm'],
+    ['Edit (your own)', 'e'],
+    ['React', 'r'],
+    ['Message menu', 'm'],
     ['Back to the reply box', 'Esc'],
   ]],
   ['Writing', [
@@ -11490,7 +11489,7 @@ function editLast(key, { focus = false } = {}) {
   if (going) {
     // As the bot, it takes longer to come back (SEND_APP_ARRIVE_MS).
     state.editArriving = { key, id: going.id, until: Date.now() + (going.app ? SEND_APP_ARRIVE_MS : SEND_ARRIVE_MS) };
-    toast('Your reply is on its way: it opens to edit once it is back.');
+    toast('Your reply is being sent. Edit it once it arrives.');
     return true;
   }
   const unsent = !focus && state.sending.filter((p) => newer(p)
@@ -12749,7 +12748,7 @@ function wireFiles() {
     const fileEl = m.closest('.file');
     const sub = fileEl?.querySelector('.file-sub');
     fileEl?.classList.add('play-failed');
-    if (sub) sub.textContent = `Cannot play it here${fileEl.dataset.home ? `: open it in ${fileEl.dataset.home}` : ''}`;
+    if (sub) sub.textContent = `Cannot play here${fileEl.dataset.home ? `: open in ${fileEl.dataset.home}` : ''}`;
   }, true);
   document.addEventListener('click', (e) => {
     const btn = e.target.closest?.('.file [data-preview]');

@@ -181,9 +181,9 @@ globalThis.Table = (() => {
       if (!shown.length) tbody.append(el('tr', {}, el('td', { class: 'fv-none', colspan: String(head.length + 1) }, query ? `No ${noun} has that.` : `No ${noun}s.`)));
       const shape = of.summary || plural(head.length, 'column');
       count.textContent = query
-        ? `${plural(order.length, noun)} of ${fmt(body.length)} · ${shape}`
-        : `${plural(body.length, noun)} · ${shape}`;
-      more.textContent = order.length > shown.length ? `The first ${fmt(shown.length)} of ${plural(order.length, noun)}${size === 'inline' ? ': ⤢ shows more' : ''}; the filter and the sort take them all.` : '';
+        ? `${plural(order.length, noun)} of ${fmt(body.length)}, ${shape}`
+        : `${plural(body.length, noun)}, ${shape}`;
+      more.textContent = order.length > shown.length ? `Showing ${fmt(shown.length)} of ${plural(order.length, noun)}. Filter and sort apply to all.` : '';
       more.hidden = !more.textContent;
       for (const th of headRow.querySelectorAll('th[data-c]')) {
         const on = Number(th.dataset.c) === sort.c && sort.dir;
@@ -245,9 +245,9 @@ globalThis.Table = (() => {
     const lines = (shown.match(/\n/g) || []).length + 1;
     const cut = shown.length > MAX_TEXT[size];
     box.append(...[
-      el('div', { class: 'fv-bar' }, el('span', { class: 'fv-count', text: `${plural(lines, 'line')} · ${fmtSize(text.length)}` }), expand),
+      el('div', { class: 'fv-bar' }, el('span', { class: 'fv-count', text: `${plural(lines, 'line')}, ${fmtSize(text.length)}` }), expand),
       el('pre', { class: 'fv-text', tabindex: '0' }, cut ? `${shown.slice(0, MAX_TEXT[size])}\n…` : shown),
-      cut ? el('div', { class: 'fv-more', text: `The first ${fmtSize(MAX_TEXT[size])}${size === 'inline' ? ': ⤢ shows more' : ''}; open the file for all of it.` }) : null,
+      cut ? el('div', { class: 'fv-more', text: `Showing the first ${fmtSize(MAX_TEXT[size])}. Open the file to see everything.` }) : null,
     ].filter(Boolean));
     return { focus: () => {} };
   }
@@ -314,7 +314,7 @@ globalThis.Table = (() => {
         head: ['Start (s)', 'Status', 'Method', 'Time (ms)', 'Size (KB)', 'Type', 'URL'],
         rows,
         entries,
-        summary: `${fmt(bad)} failed · slowest ${(slowest / 1000).toFixed(1)} s`,
+        summary: `${fmt(bad)} failed, slowest ${(slowest / 1000).toFixed(1)} s`,
       };
     }
     lastHar = { text, har: parsed };
@@ -364,7 +364,7 @@ globalThis.Table = (() => {
   /** A body, behind a button: tokens travel in them, and a HAR has many. */
   function bodySection(title, part) {
     if (!part?.text) return null;
-    const section = el('section', {}, el('h4', { text: `${title} · ${part.mimeType || 'no type'} · ${fmtSize(part.text.length)}` }));
+    const section = el('section', {}, el('h4', { text: `${title}, ${part.mimeType || 'no type'}, ${fmtSize(part.text.length)}` }));
     const text = bodyText(part);
     section.append(text === null
       ? el('p', { text: 'Not text.' })
@@ -394,10 +394,10 @@ globalThis.Table = (() => {
         `${e.request?.method || ''} ${maskUrl(e.request?.url)}`,
       ),
       el('p', {
-        text: [e.startedDateTime, e.response?.status ? `${e.response.status} ${e.response.statusText || ''}`.trim() : '', e.serverIPAddress].filter(Boolean).join(' · '),
+        text: [e.startedDateTime, e.response?.status ? `${e.response.status} ${e.response.statusText || ''}`.trim() : '', e.serverIPAddress].filter(Boolean).join(', '),
       }),
       reason ? el('p', { class: 'fv-why', text: reason }) : null,
-      stages.length ? el('p', { text: stages.join(' · ') }) : null,
+      stages.length ? el('p', { text: stages.join(', ') }) : null,
       pairs('Query', e.request?.queryString),
       pairs('Request headers', e.request?.headers),
       bodySection('Request body', e.request?.postData),

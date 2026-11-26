@@ -203,7 +203,7 @@ function fileCard(f) {
   if (kind === 'video' && /^video\//.test(f.type)) player = `<video class="player" controls playsinline preload="none" src="${esc(f.url)}" aria-label="Play ${esc(f.name)}"></video>`;
   else if (kind === 'audio' && /^audio\//.test(f.type)) player = `<audio class="player" controls preload="none" src="${esc(f.url)}" aria-label="Play ${esc(f.name)}"></audio>`;
   return `<div class="file">${player}<span class="file-ico" aria-hidden="true">${esc((ext || 'file').slice(0, 4).toUpperCase())}</span>
-    <span class="file-nm"><a class="file-name" href="${esc(f.url)}" download="${esc(f.name)}" title="Download ${esc(f.name)}">${esc(f.name)}</a><span class="sub">${esc(label)} · ${esc(bytes(f.size))}</span></span></div>`;
+    <span class="file-nm"><a class="file-name" href="${esc(f.url)}" download="${esc(f.name)}" title="Download ${esc(f.name)}">${esc(f.name)}</a><span class="sub">${esc(label)}, ${esc(bytes(f.size))}</span></span></div>`;
 }
 
 function filesHtml(files) {
@@ -280,7 +280,7 @@ $('menu').addEventListener('toggle', (e) => $('user').setAttribute('aria-expande
 // ---- the lobby ---------------------------------------------------------------------------------
 
 const STATUS_NOTE = {
-  requested: ['notice', 'We have your request. Somebody at Adobe will open your channel; you find it here then. You can still change what you told us, and invite colleagues.'],
+  requested: ['notice', 'We have your request. Your channel shows up here once Adobe opens it. Until then, you can edit your request and invite colleagues.'],
   declined: ['negative', 'We could not open a channel for you.'],
 };
 
@@ -319,7 +319,7 @@ function lobbyForm(root, { dialog = false } = {}) {
   const first = me.name.split(' ')[0];
   root.innerHTML = `
     ${dialog ? '' : `<h2 class="hello">Welcome, ${esc(first)}</h2>
-      <p class="lead">Tell us what you use of Adobe's, and we open a channel for ${esc(lobby.company)}, with the people at Adobe who know it. Your colleagues join you there.</p>`}
+      <p class="lead">Tell us which Adobe products you use, and we open a channel for ${esc(lobby.company)} with the right people at Adobe.</p>`}
     ${note && !dialog ? `<div class="banner ${note[0]}" role="status">${esc(note[1])}${lobby.reason ? ` <span class="reason">${esc(lobby.reason)}</span>` : ''}</div>` : ''}
     <section class="card"><h3>Your company</h3>
       <div class="pair top">${pictureField('logo', {
@@ -331,7 +331,7 @@ function lobbyForm(root, { dialog = false } = {}) {
     src: me.avatar, text: initials(me.name), hueOf: hue(me.id), has: Boolean(me.picture),
   })}
       <label class="fld grow"><span>Your name</span><input id="lbName" maxlength="120" value="${esc(me.name)}" autocomplete="name"></label></div>
-      <p class="hint">Your picture and name are what Adobe and your colleagues see beside what you write. Without a picture of your own, the one Gravatar has for your address shows.</p></section>
+      <p class="hint">Shown next to your messages. Without a picture, your Gravatar is used.</p></section>
     <section class="card"><h3>What you use</h3>
       <div class="tech">${techGroups(tech).map(([product, list]) => `<fieldset><legend>${esc(product)}</legend>${list.map((t) => `<label class="pick"><input type="checkbox" value="${esc(t.tech)}"${picked.has(t.tech) ? ' checked' : ''}><span>${esc(t.name)}</span></label>`).join('')}</fieldset>`).join('')}</div></section>
     <section class="card"><h3>What you need</h3>
@@ -341,7 +341,7 @@ function lobbyForm(root, { dialog = false } = {}) {
         ${m.joined ? '' : `<span class="tag">invited</span><button type="button" class="link" data-uninvite="${esc(m.id)}">Take back</button>`}</li>`).join('')}</ul>
       <form class="pair" id="lbInvite"><label class="fld grow"><span>Work email of a colleague (@${esc(domain)})</span><input id="lbEmail" type="email" required autocomplete="off"></label>
         <button>Invite</button></form>
-      <p class="hint">We send no mail. Tell the colleagues you invite to sign in at <a href="${esc(location.origin)}">${esc(location.host)}</a> with their work address, or <a id="lbMail" href="mailto:">write to them</a>.</p></section>
+      <p class="hint">We don't send invitations. Ask colleagues to sign in at <a href="${esc(location.origin)}">${esc(location.host)}</a> with their work email, or <a id="lbMail" href="mailto:">email them</a>.</p></section>
     <div class="status" id="lbStatus" role="status"></div>
     ${dialog || lobby.status === 'requested' ? '' : `<div class="actions"><button class="primary" id="lbAsk">${lobby.status === 'declined' ? 'Ask again' : 'Request a channel'}</button></div>`}`;
   const status = (text, err = false) => {
@@ -477,10 +477,10 @@ function confirmFirst(text, action) {
 
 function threadRow(t) {
   const who = t.author.kind === 'customer' ? t.author.name : `${t.author.name} (Adobe)`;
-  const replies = t.replies ? ` · ${t.replies} ${t.replies === 1 ? 'reply' : 'replies'}` : '';
+  const replies = t.replies ? `, ${t.replies} ${t.replies === 1 ? 'reply' : 'replies'}` : '';
   return `<button type="button" class="row${state.sel === t.id ? ' on' : ''}${t.unread ? ' unread' : ''}" data-thread="${esc(t.id)}">
     <span class="top"><span class="name">${esc(emojify(t.title))}</span>${t.mentioned ? '<span class="tag you" title="Someone mentioned you here">@ you</span>' : ''}${t.resolved ? '<span class="tag resolved" title="Adobe marked this resolved">resolved</span>' : ''}${t.unread ? `<span class="dot" title="${t.unread} new"></span>` : ''}</span>
-    <span class="sub">${esc(who)}${replies} · ${esc(ago(t.latest))}</span></button>`;
+    <span class="sub">${esc(who)}${replies}, ${esc(ago(t.latest))}</span></button>`;
 }
 
 function renderThreads() {
@@ -576,7 +576,7 @@ function composer(key, label, action) {
         <button class="send" id="send" title="${esc(action)}${ENTER_SENDS ? ' (Enter)' : ''}" aria-label="${esc(action)}">${SEND}</button></div>
     </div>
     <input type="file" id="files" multiple hidden>
-    <div class="foot"><span class="status err" id="sendStatus" role="alert"></span>${ENTER_SENDS ? '<span class="sub hint">Enter sends, Shift+Enter starts a new line</span>' : ''}</div></form>`;
+    <div class="foot"><span class="status err" id="sendStatus" role="alert"></span></div></form>`;
 }
 
 /** The composer's box with what was being written at its key, as it was left. */
@@ -822,7 +822,7 @@ function renderMessages({ toEnd = false } = {}) {
   const atEnd = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
   const at = scroll.scrollTop;
   closePicker();
-  $('paneTitle').innerHTML = `<h2>${esc(emojify(t.title))}</h2>${t.resolved ? '<span class="tag resolved" title="Adobe marked this resolved. Write again if it is not.">resolved</span>' : ''}`;
+  $('paneTitle').innerHTML = `<h2>${esc(emojify(t.title))}</h2>${t.resolved ? '<span class="tag resolved" title="Resolved by Adobe. Reply to reopen.">resolved</span>' : ''}`;
   scroll.innerHTML = `<ol class="messages">${t.messages.map(messageHtml).join('')}</ol><p class="activity" id="activity" role="status" hidden></p>`;
   // The message being changed, in its box as it reads.
   const editing = scroll.querySelector('form.edit .rich');
@@ -861,7 +861,7 @@ function renderStatus() {
     else if (e && e.asked && !state.thread?.resolved && waited <= Math.max(2 * e.minutes, 30)) parts.push(`Usually answered in ${about(e.minutes)}`);
     else if (e && !e.asked) parts.push(`A reply now is usually answered in ${about(e.minutes)}`);
     line.hidden = !parts.length;
-    line.innerHTML = parts.join('<span class="sep" aria-hidden="true">·</span>');
+    line.innerHTML = parts.join('. ');
   }
   const now = $('activity');
   if (!now) return;
@@ -906,7 +906,7 @@ function renderPane() {
   state.status = null;
   if (state.sel === 'new') {
     pane.innerHTML = `<div class="title">${back}<span class="fill"><h2>New thread in ${esc(state.channel.name)}</h2></span></div>
-      <div class="scroll">${composer('new', 'What is it about? The first line is the thread\'s title.', 'Start thread')}</div>`;
+      <div class="scroll">${composer('new', 'What do you need help with? The first line becomes the title.', 'Start thread')}</div>`;
     fillComposer();
     renderTray('new');
     $('text').focus();

@@ -61,9 +61,9 @@ describe('the sidebar of Teams, Customers and Topics', () => {
   it('draws every row on one line: a visual, the name, one number', () => {
     const { SideNav } = load();
     const html = SideNav.row({
-      sel: 'acme', on: true, lead: SideNav.tile('acme <b>'), label: 'ACME <Corp>', title: 'ACME · 3 channels', count: 12,
+      sel: 'acme', on: true, lead: SideNav.tile('acme <b>'), label: 'ACME <Corp>', title: 'ACME, 3 channels', count: 12,
     });
-    assert.match(html, /^<button type="button" class="navrow on" data-sel="acme" aria-current="page" title="ACME · 3 channels">/);
+    assert.match(html, /^<button type="button" class="navrow on" data-sel="acme" aria-current="page" title="ACME, 3 channels">/);
     assert.match(html, /<span class="navtile" aria-hidden="true">A<\/span><span class="nm">ACME &lt;Corp&gt;<\/span><span class="n">12<\/span><\/button>$/);
     assert.doesNotMatch(html, /class="sub"/);
     // No number, no column for it.

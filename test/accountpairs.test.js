@@ -163,12 +163,12 @@ describe('a customer\'s two accounts that may be one person', () => {
     assert.equal(kai.title, 'Kai Moreau: one person?');
     const { body } = await quiet(() => call(e, ADA, 'GET', `/api/thread?thread=${encodeURIComponent(key)}`));
     assert.match(body.messages[0].body, /Both posted for ACME Corp\./);
-    assert.match(body.messages[0].body, /\*\*Lu Wen\*\* · Slack · `lu\.wen@agency\.example`\n {2}2 messages, for ACME Corp \(2\), the latest /);
-    assert.match(body.messages[0].body, /· 2 accounts\n/);
+    assert.match(body.messages[0].body, /\*\*Lu Wen\*\*, Slack, `lu\.wen@agency\.example`\n {2}2 messages, for ACME Corp \(2\), the latest /);
+    assert.match(body.messages[0].body, /, 2 accounts\n/);
     assert.deepEqual(body.request.actions.map((a) => [a.id, a.pressed]), [['same', false], ['apart', false]]);
     const kaiThread = await quiet(() => call(e, ADA, 'GET', `/api/thread?thread=${encodeURIComponent(`request:person:${KAI}`)}`));
     assert.match(kaiThread.body.messages[0].body, /They posted for different customers\./);
-    assert.match(kaiThread.body.messages[0].body, /· Teams ·/);
+    assert.match(kaiThread.body.messages[0].body, /, Teams,/);
 
     const said = await quiet(() => call(e, ADA, 'POST', '/api/requests/resolve', { key, action: 'same' }));
     assert.equal(said.status, 200);
@@ -203,7 +203,7 @@ describe('a customer\'s two accounts that may be one person', () => {
       [KAI, false, 'ada@staff.example'],
     ]);
     const { body } = await quiet(() => call(e, ADA, 'GET', `/api/thread?thread=${encodeURIComponent(`request:person:${KAI}`)}`));
-    assert.match(body.messages[0].body, /^Two accounts outside Adobe are named \*\*Kai Moreau\*\*, .*\n- \*\*Kai M\*\* · Slack/s);
+    assert.match(body.messages[0].body, /^Two accounts outside Adobe are named \*\*Kai Moreau\*\*, .*\n- \*\*Kai M\*\*, Slack/s);
     // Said of a pair that is not asked about: one of them never posted.
     await call(e, ADA, 'PUT', '/api/admin/account-pairs', { a: 'slack:T:R1', b: 'slack:T:R2', same: true });
     const rae = pairId('slack:T:R1', 'slack:T:R2');
@@ -211,7 +211,7 @@ describe('a customer\'s two accounts that may be one person', () => {
       [LU, null], [KAI, false], [rae, true],
     ]);
     const shown = await quiet(() => call(e, ADA, 'GET', `/api/thread?thread=${encodeURIComponent(`request:person:${rae}`)}`));
-    assert.match(shown.body.messages[0].body, /\*\*Rae Stone\*\* · Slack · no mail address\n {2}No messages/);
+    assert.match(shown.body.messages[0].body, /\*\*Rae Stone\*\*, Slack, no mail address\n {2}No messages/);
     assert.equal(shown.body.request.status, 'one person');
     // An account that is somebody's in the inbox since is not asked about.
     e.DB.sqlite.exec("UPDATE identities SET person = 2 WHERE user_id = 'K1'");

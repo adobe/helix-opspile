@@ -38,8 +38,8 @@ globalThis.FollowSuggest = (() => {
     const out = [];
     if (x.mine) out.push(`${threads(x.mine)} in your channels`);
     if (kind !== 'org' && x.recent) out.push(`${threads(x.recent)} in ${days} days${rising(x) ? ', rising' : ''}`);
-    if (x.teams?.length) out.push(`${and(x.teams)} ${x.teams.length === 1 ? 'follows' : 'follow'} it`);
-    return out.join(' · ');
+    if (x.teams?.length) out.push(`followed by ${and(x.teams)}`);
+    return out.join(', ');
   }
 
   // Muting is the customer's page's and its column's: here one picks what to follow.

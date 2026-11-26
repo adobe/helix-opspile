@@ -125,7 +125,7 @@ globalThis.TopicView = (() => {
     const canvas = v.renderer.domElement;
     canvas.className = 'space';
     canvas.setAttribute('role', 'img');
-    canvas.setAttribute('aria-label', 'Topics in their areas, people in their teams and customers, and products, in a space where the topics are by what their threads are about');
+    canvas.setAttribute('aria-label', 'Map of topics, people and products');
     host.prepend(canvas);
     for (const type of TYPES) {
       const probe = document.createElement('span');

@@ -190,7 +190,7 @@ describe('inbox page', () => {
       await askClosest();
       assert.deepEqual(asked, ['/api/emoji/custom', '/api/emoji/closest?names=completed']);
       const near = emojiHtml('completed');
-      assert.match(near, /^<span class="emoji-near" title=":completed: has no image here/);
+      assert.match(near, /^<span class="emoji-near" title=":completed: \(closest match\)"/);
       assert.match(near, />✅<\/span>$/);
     });
 
@@ -660,7 +660,7 @@ describe('inbox page', () => {
         assert.equal(p.editLast('t'), true);
         assert.deepEqual(p.did.edited, [], `${status}: not the message before it`);
         assert.equal(p.state.editArriving.id, 'pending-1');
-        assert.match(p.did.toasts[0], /on its way/);
+        assert.match(p.did.toasts[0], /being sent/);
         p.editArrived('t', mine('2', '2026-10-21T10:05:01Z'));
         p.settle();
         assert.deepEqual(p.did.edited, ['t|2'], status);
@@ -1360,7 +1360,7 @@ describe('inbox page', () => {
         const line = shut.sideGroup('t', run, { last: true, trailing: true });
         assert.match(line, /data-side-toggle="sb1" aria-expanded="false" aria-controls="side">/);
         assert.match(line, /Lena Berg had a sidebar conversation with <b>Thread Agent<\/b>/);
-        assert.match(line, /2 messages · 10:00 AM · not posted/);
+        assert.match(line, /2 messages, 10:00 AM, not posted/);
         assert.doesNotMatch(line, /sc-body|Seen before\?| open | live /);
         // In it: the same line, marked as shown beside the thread; never unfolded there too.
         const { sideGroup, sideInline, sidePaneled } = sidebar({ wide: true, key: 't' }, { may });
@@ -1389,7 +1389,7 @@ describe('inbox page', () => {
       assert.deepEqual(items.map((h) => (/^<div class="sp-when" data-run="(\w+)">/.exec(h) || [])[1] || h), [
         'sb1', '<p>Seen before?</p>', '<p>Twice.</p>', 'sb2', '<p>And now?</p>',
       ]);
-      assert.match(items[0], /Today · 10:00 AM/);
+      assert.match(items[0], /Today, 10:00 AM/);
       assert.match(sidePanelItems('t', [])[0].html, /class="sc-wait blank".*It is never posted\./);
       // It says who sees it, and where nothing goes, as the box in the thread does.
       assert.match(sidePanelHead('t', { source: 'slack' }), /Sidebar with Thread Agent<\/b><small>Only your team sees this\. Nothing goes to Slack\.<\/small>/);
@@ -1403,7 +1403,7 @@ describe('inbox page', () => {
       // Someone who may not talk to the agent reads there, and is told why, where the box was.
       const off = sidebar({ wide: true, key: 't' }, { may: false }).sidePanelBox('t');
       assert.doesNotMatch(off, /side-reply|side-send/);
-      assert.match(off, /<div class="composer sidebar off" role="note"><p class="side-off">Thread Agent is off in this channel now, so it cannot be asked here\.<\/p><\/div>/);
+      assert.match(off, /<div class="composer sidebar off" role="note"><p class="side-off">Thread Agent is off in this channel\.<\/p><\/div>/);
     });
 
     it('tells who only sees the thread that its team sees the sidebar too, and why a folded one stops', () => {
@@ -1412,12 +1412,12 @@ describe('inbox page', () => {
       const seen = sidebar({ wide: true, key: 't' }, { work: false });
       assert.match(seen.sidePanelHead('t', { source: 'slack' }), /<small>Only the thread's team and you see this\. Nothing goes to Slack\.<\/small>/);
       assert.match(seen.sidePanelBox('t'), /id="side-reply"/);
-      assert.match(seen.onlyTeam('grant it'), /^Only the thread's team can grant it: it is filed under a team you are not on\.$/);
+      assert.match(seen.onlyTeam('grant it'), /^Only the thread's team can grant it\.$/);
       // Folded under the thread, where it cannot go on: why, instead of Continue.
       const shut = sidebar({ wide: false, key: null, open: new Set(['sb1']) }, { may: false });
       const line = shut.sideGroup('t', run, { last: true, trailing: false });
       assert.doesNotMatch(line, /sc-continue/);
-      assert.match(line, /<div class="sc-foot"><span class="sc-wait">Thread Agent is off in this channel now, so it cannot be asked here\.<\/span><\/div>/);
+      assert.match(line, /<div class="sc-foot"><span class="sc-wait">Thread Agent is off in this channel\.<\/span><\/div>/);
       const open = sidebar({ wide: false, key: null, open: new Set(['sb1']) });
       assert.match(open.sideGroup('t', run, { last: true, trailing: false }), /data-side-enter>Continue in the sidebar/);
     });
@@ -1763,7 +1763,7 @@ describe('inbox page', () => {
     });
     assert.equal(channelOf('Acme-Ops'), channelOf('C0AAAAAAAA1'));
     assert.deepEqual(channelOf('beta'), {
-      name: 'beta', href: 'https://slack.com/archives/C0BBBBBBBB2', title: '#beta is not in your inbox: open it in Slack',
+      name: 'beta', href: 'https://slack.com/archives/C0BBBBBBBB2', title: 'Open #beta in Slack',
     });
     assert.equal(channelOf('unknown'), undefined);
     assert.equal(channelNames('New channel: #C0AAAAAAAA1, #C0ZZZZZZZZ9.'), 'New channel: #acme-ops, #C0ZZZZZZZZ9.');

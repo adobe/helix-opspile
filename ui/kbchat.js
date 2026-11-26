@@ -50,7 +50,7 @@ globalThis.KbChat = (() => {
   // (px/ms): as the inbox's sidebar's tab.
   const PULL_SLOP = 4;
   const PULL_FLICK = 0.4;
-  const OPEN_HINT = `Talk to the ${NAME}: only you see it, nothing is posted`;
+  const OPEN_HINT = `Ask the ${NAME}`;
   const CLOSE_HINT = `Close the ${NAME} (Esc)`;
   const CHAT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
   const EXAMPLES = {
@@ -75,7 +75,7 @@ globalThis.KbChat = (() => {
     org: [
       'What do we know about this customer\'s sites and setup?',
       'Who is who on this customer\'s side?',
-      'Which of its open questions came up in its recent threads?',
+      'Which of this customer\'s open questions came up recently?',
     ],
   };
 
@@ -272,23 +272,23 @@ globalThis.KbChat = (() => {
   function message(m) {
     if (m.role === 'agent') {
       return `<div class="kbc-m agent${m.state === 'failed' ? ' failed' : ''}"><img class="kbc-av" src="${ICON}" alt="">
-        <div class="col"><div class="who"><b>${NAME}</b> · ${esc(when(m.at))}</div><div class="bubble">${md(m.body)}</div></div></div>`;
+        <div class="col"><div class="who"><b>${NAME}</b> ${esc(when(m.at))}</div><div class="bubble">${md(m.body)}</div></div></div>`;
     }
     return `<div class="kbc-m you${m.pending ? ' pending' : ''}">
-      <div class="col"><div class="who">${m.pending ? 'Sending…' : `You · ${esc(when(m.at))}`}</div><div class="bubble">${md(m.body)}</div></div></div>`;
+      <div class="col"><div class="who">${m.pending ? 'Sending…' : `You ${esc(when(m.at))}`}</div><div class="bubble">${md(m.body)}</div></div></div>`;
   }
 
   // A command the agent asked you to run (request_bash): what, why, the values it needs, and
   // Run and Deny while it waits; how it ended after.
   const STATUS = {
-    pending: 'Waiting for you', running: 'Running…', done: 'Ran', timeout: 'Stopped at its timeout', failed: 'Failed', denied: 'Denied', expired: 'Expired',
+    pending: 'Waiting for you', running: 'Running…', done: 'Ran', timeout: 'Timed out', failed: 'Failed', denied: 'Denied', expired: 'Expired',
   };
   function command(r) {
     const asks = r.status === 'pending' && state.write;
     const busy = state.deciding.has(r.id);
     const fields = asks ? r.env.map((v) => `<label class="kbc-var"><span><code>$${esc(v.name)}</code>${v.description ? ` ${esc(v.description)}` : ''}</span>
       <input type="password" autocomplete="off" data-var="${esc(r.id)}" data-name="${esc(v.name)}" value="${esc(state.values.get(`${r.id}|${v.name}`) || '')}"></label>`).join('') : '';
-    const ended = r.status === 'done' ? ` · exit code ${esc(r.exit_code)}` : '';
+    const ended = r.status === 'done' ? `, exit code ${esc(r.exit_code)}` : '';
     const who = r.by && r.by.name && !asks ? ` by ${esc(r.by.name)}` : '';
     return `<div class="kbc-cmd ${esc(r.status)}"><div class="kbc-cmd-head"><b>The agent asks you to run a command</b><span class="kbc-st">${esc(STATUS[r.status] || r.status)}${who}${ended}</span></div>
       <div class="kbc-why">${esc(r.reason)}</div><pre><code>${esc(r.command)}</code></pre>${fields}
@@ -300,11 +300,10 @@ globalThis.KbChat = (() => {
     // What it is asked about on the page (a product on the Topics page), with its own examples.
     const own = b.examples && (state.write ? b.examples.write : b.examples.read);
     const ex = own || (state.write ? EXAMPLES : QUESTIONS)[b.kind] || (state.write ? EXAMPLES : QUESTIONS).team;
-    const writes = state.write ? 'and writes only this knowledge base, with the threads it learned from as sources'
-      : `and answers you, but changes this knowledge base only for the people of ${b.kind === 'team' ? esc(b.name || b.repo) : 'its ops teams'}`;
+    const owners = b.kind === 'team' ? `${esc(b.name || b.repo)}'s members` : 'the customer\'s ops teams';
     return `<div class="kbc-blank"><img class="kbc-av big" src="${ICON}" alt="">
       <p><b>${b.about ? `Ask ${esc(b.name || b.repo)}'s knowledge base about ${esc(b.about)}` : `Ask about ${esc(b.name || b.repo)}'s knowledge base`}${state.write ? ', or tell the agent what to change' : ''}.</b></p>
-      <p class="sub">It reads every knowledge base and every thread of the inbox, ${writes}. Only you see this conversation.</p>
+      <p class="sub">Only you see this conversation.${state.write ? '' : ` Only ${owners} can change this knowledge base.`}</p>
       <div class="kbc-ex">${ex.map((t) => `<button type="button" class="kbc-try" data-try="${esc(t)}">${esc(t)}</button>`).join('')}</div></div>`;
   }
 
@@ -313,7 +312,7 @@ globalThis.KbChat = (() => {
     if (!list.length) return '';
     return `<label class="kbc-earlier"><span>Earlier</span><select id="kbcEarlier" aria-label="Earlier conversations">
       <option value="">${state.chat && !state.fresh ? 'This conversation' : 'New conversation'}</option>
-      ${list.map((c) => `<option value="${esc(c.chat)}">${esc(when(c.at))} · ${esc(c.first.slice(0, 60) || 'Conversation')}</option>`).join('')}
+      ${list.map((c) => `<option value="${esc(c.chat)}">${esc(c.first.slice(0, 60) || 'Conversation')} (${esc(when(c.at))})</option>`).join('')}
     </select></label>`;
   }
 
@@ -342,13 +341,13 @@ globalThis.KbChat = (() => {
     const scroller = panel.querySelector('.kbc-scroll');
     const atEnd = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
     panel.innerHTML = `<div class="kbc-head"><img class="kbc-av" src="${ICON}" alt="">
-        <div class="kbc-what"><b>${NAME}</b><small>${esc(b.name || b.repo)} · only you see this${state.write ? '' : ' · read only'}</small></div>
+        <div class="kbc-what"><b>${NAME}</b><small>${esc(b.name || b.repo)}${state.write ? '' : ', read only'}</small></div>
         <button type="button" class="kbc-new" id="kbcNew" title="Start a new conversation"${!state.messages.length ? ' disabled' : ''}>New</button>
         <button type="button" class="kbc-close" id="kbcClose" title="Close (Esc)" aria-label="Close the agent"><span class="s2-cross" aria-hidden="true"></span></button></div>
       ${chatsPick()}
       <div class="kbc-scroll"><div class="kbc-body" aria-live="polite">${body()}</div></div>
       <form class="kbc-box" id="kbcForm"><textarea id="kbcText" rows="3" maxlength="${MAX}" aria-label="Ask the ${NAME}"></textarea>
-        <div class="kbc-foot"><span class="sub">${touch() ? '' : 'Enter asks, Shift+Enter is a new line'}</span><button type="submit" class="kbc-ask" id="kbcAsk">Ask</button></div></form>`;
+        <div class="kbc-foot"><span class="sub"></span><button type="submit" class="kbc-ask" id="kbcAsk">Ask</button></div></form>`;
     const box = panel.querySelector('#kbcText');
     box.dataset.repo = b.repo;
     box.value = state.draft.get(b.repo) || '';
@@ -410,7 +409,7 @@ globalThis.KbChat = (() => {
     }
     state.deciding.delete(id);
     if (state.base !== b) return;
-    if (!res.ok) state.error = res.body.error || 'It did not go through. Try again.';
+    if (!res.ok) state.error = res.body.error || 'Could not send. Try again.';
     else for (const v of r.env) state.values.delete(`${id}|${v.name}`);
     state.since = Date.now();
     load({ chat: state.chat, quiet: true });
@@ -483,7 +482,7 @@ globalThis.KbChat = (() => {
     const text = box ? box.value.trim() : '';
     if (!b || !text || state.sending) return;
     if (waiting()) {
-      state.error = 'The agent is still answering: ask once it has.';
+      state.error = 'Wait for the agent to finish answering.';
       render();
       return;
     }
@@ -515,7 +514,7 @@ globalThis.KbChat = (() => {
     if (state.base !== b) return;
     state.messages = state.messages.filter((m) => m !== pending);
     if (!res.ok) {
-      state.error = res.body.error || 'The agent did not take it. Try again.';
+      state.error = res.body.error || 'Could not send. Try again.';
       // Back into the box, unless something was typed meanwhile.
       const now = panel.querySelector('#kbcText');
       if (now && !now.value) now.value = text;

@@ -180,27 +180,27 @@ describe('a vendor\'s overview, drawn', () => {
   it('counts its cases and how soon it answers, the other way round', () => {
     const html = CustomerView.html(vendor, vctx);
     assert.match(html, /<b>2<\/b><span>open cases<\/span><small>1 waiting on them, 1 on Adobe<\/small>/);
-    assert.match(html, /title="How long its first answer took in the threads Adobe started[^"]*"><b>1\.5 h<\/b><span>first answer<\/span><small>typically; 2 of the 3 cases Adobe opened<\/small>/);
+    assert.match(html, /title="Median time to the vendor&#39;s first answer[^"]*"><b>1\.5 h<\/b><span>first answer<\/span><small>typically; 2 of the 3 cases Adobe opened<\/small>/);
     assert.match(html, /<h2 id="tvAreas">What the cases are about<\/h2>/);
   });
 
   it('lists its open cases, status posts and the customers on its products, titles escaped', () => {
     const html = CustomerView.html(vendor, vctx);
     const cases = html.slice(html.indexOf('id="cvCases"'), html.indexOf('id="cvStatus"'));
-    assert.match(cases, /<a href="\/inbox\?team=edge&amp;t=t%3A1" title="Open it in the inbox">Purge &lt;leaves&gt; stale objects<\/a><span class="sub">#cdnco-support · high urgency · incident · [^<]+<\/span><\/span><span class="tag tv-them"[^>]*>Waiting on them<\/span>/);
+    assert.match(cases, /<a href="\/inbox\?team=edge&amp;t=t%3A1" title="Open in the inbox">Purge &lt;leaves&gt; stale objects<\/a><span class="sub">#cdnco-support, high urgency, incident, [^<]+<\/span><\/span><span class="tag tv-them"[^>]*>Waiting on them<\/span>/);
     assert.match(cases, /<span class="tag tv-us"[^>]*>Waiting on Adobe<\/span>/);
     assert.match(cases, /And 1 more thread in channels of teams you are not on\./);
     assert.match(html, /Maintenance in FRA/);
     assert.match(html, /<a href="\/org\/acme">ACME<\/a>/);
     assert.match(html, /<span class="tag tv-them"[^>]*>1 waits on a third party<\/span>/);
     const third = html.slice(html.indexOf('id="cvThird"'));
-    assert.match(third, /<span class="sub">ACME · #cdnco-support/);
+    assert.match(third, /<span class="sub">ACME, #cdnco-support/);
     assert.match(third, /<span class="tag tv-them"[^>]*>Waiting on a third party<\/span>/);
   });
 
   it('is a customer\'s for a customer', () => {
     const html = CustomerView.html(profile, ctx);
     assert.ok(!html.includes('id="cvCases"'));
-    assert.match(html, /How long Adobe&#39;s first post took/);
+    assert.match(html, /Median time to Adobe&#39;s first answer/);
   });
 });

@@ -58,7 +58,7 @@ describe('the tour', () => {
     assert.match(text(simple, 'filters'), /Pick a customer/);
     assert.match(text(simple, 'threads'), /the latest first/);
     const team = Tour.steps({ teams: 1, pages: ['inbox', 'agents', 'teams', 'orgs', 'stats'] });
-    assert.match(text(team, 'views'), /each of your teams has its inbox/);
+    assert.match(text(team, 'views'), /each of your teams has an inbox/);
     assert.match(text(team, 'filters'), /<b>Waiting on<\/b>/);
     // The pages a person has, beyond the inbox; the admin team's own are not explained.
     assert.equal((text(team, 'pages').match(/<li>/g) || []).length, 3);

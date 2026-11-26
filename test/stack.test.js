@@ -304,8 +304,8 @@ describe('ui/stack.js', () => {
       detected: [{ tech: 'akamai', name: 'Akamai', p: 0.9 }, { tech: 'da', name: 'Document <i>Authoring</i>', p: 0.8 }],
     });
     assert.doesNotMatch(html, /<b>CDN|<img|<i>/);
-    assert.match(html, /<div class="stk-part stk-seen" tabindex="0" data-part="0" title="A &lt;b&gt;CDN&lt;\/b&gt;\nAkamai: 90% sure from their threads"><b>A &lt;b&gt;CDN&lt;\/b&gt;<\/b>/);
-    assert.match(html, /<div class="stk-more"><span class="stk-mh">Also in their threads<\/span><span class="stk-chip" title="80% sure from their threads">Document &lt;i&gt;Authoring&lt;\/i&gt;<\/span><\/div>/);
+    assert.match(html, /<div class="stk-part stk-seen" tabindex="0" data-part="0" title="A &lt;b&gt;CDN&lt;\/b&gt;\nAkamai: 90% confidence"><b>A &lt;b&gt;CDN&lt;\/b&gt;<\/b>/);
+    assert.match(html, /<div class="stk-more"><span class="stk-mh">Also in their threads<\/span><span class="stk-chip" title="80% confidence">Document &lt;i&gt;Authoring&lt;\/i&gt;<\/span><\/div>/);
   });
 });
 

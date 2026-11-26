@@ -264,11 +264,11 @@ describe('the simple personal view', () => {
       const t = drafted(false);
       let r = page.row(t);
       assert.deepEqual(chips(r), [
-        'k s-team: Question · Team on it',
+        'k s-team: Question: Team on it',
         'draft: Draft by you, 1h: Try the purge',
         'ok: Resolved',
       ]);
-      assert.match(r, /<span class="mk" role="img" aria-label="Question · Team on it · Draft · Resolved">/);
+      assert.match(r, /<span class="mk" role="img" aria-label="Question: Team on it, Draft, Resolved">/);
       assert.doesNotMatch(r, /class="drafted"|✎ Draft|<svg/);
       // Without the draft, only resolved is behind the kind.
       delete t.draft;
@@ -280,11 +280,11 @@ describe('the simple personal view', () => {
       state.settings.expert = true;
       const t = drafted(true);
       let r = page.row(t);
-      assert.match(chips(r)[0], /^k s-team ring: Question, unread · /);
+      assert.match(chips(r)[0], /^k s-team ring: Question, unread: /);
       assert.match(r, /<span class="wf wf-help ringed" aria-hidden="true">/);
       read('a3');
       r = page.row(t);
-      assert.match(chips(r)[0], /^k s-team: Question · /);
+      assert.match(chips(r)[0], /^k s-team: Question: /);
       assert.doesNotMatch(r, /ringed/);
     });
 

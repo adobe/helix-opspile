@@ -300,7 +300,7 @@ function draftsCard(d) {
   const r = d.drafts;
   if (!r) return '';
   if (!d.since?.drafts) {
-    return '<div class="card drafts"><h2>The agents\' drafts</h2><p class="hint">None recorded yet: drafts are counted from when they are saved, sent or discarded.</p></div>';
+    return '<div class="card drafts"><h2>The agents\' drafts</h2><p class="hint">None recorded yet.</p></div>';
   }
   const t = d.totals;
   const e = r.estimate;
@@ -329,7 +329,7 @@ function detailText(d, detail) {
   if (!tags.length) return detail || '';
   const names = tags.map(([, x, a]) => d.experiments?.find((e) => e.id === x)?.arms
     .find((arm) => arm.id === a)?.label || `${x} ${a}`);
-  return [String(detail).replace(/#[a-z0-9_-]+=[a-z0-9_-]+/g, ''), ...names].join(' · ');
+  return [String(detail).replace(/#[a-z0-9_-]+=[a-z0-9_-]+/g, ''), ...names].join(', ');
 }
 
 /** A change against the default arm: "+12%", "−8%". */
@@ -371,7 +371,7 @@ function experimentsCard(d) {
       <div class="scroll"><table>
         <thead><tr><th>Arm</th><th class="n" title="What the model read: input, cache reads and cache writes. The cache policy does not change it">Prompt</th><th class="n" title="The share of the prompt read from the cache">From cache</th><th class="n" title="Prompt tokens written to the cache, and what that cost">Cache writes</th><th class="n">Output</th><th class="n" title="What the agents' model cost in this arm, in what is selected">Bedrock</th><th class="n" title="What the prompt cost per million prompt tokens: input, cache reads and writes">Per M prompt</th><th class="n" title="Per M prompt against the baseline">Change</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
-      <p class="hint">Each thread is in one arm for the whole window, by a hash of its key. The prompt is the same whatever the cache keeps, so the cost per million prompt tokens compares the arms even where the threads fell unevenly; output is shown to see that the work was alike.</p></div>`;
+</div>`;
   }).join('');
 }
 
@@ -399,7 +399,7 @@ function draftArms(x, vs) {
   return `<div class="scroll"><table>
     <thead><tr><th>Arm</th><th class="n" title="Drafts the agents of the arm's threads started">Drafts</th><th class="n" title="Of those, the drafts a person sent, as they were or edited, whenever they did">Accepted</th><th class="n" title="Drafts a person discarded, and drafts the agent withdrew itself">Discarded</th><th class="n" title="Accepted of the drafts decided: sent, discarded or withdrawn">Acceptance</th><th class="n" title="Replies the agents posted themselves">Agent posts</th><th class="n" title="What the agents' model cost in this arm, in what is selected">Bedrock</th><th class="n" title="Bedrock per accepted draft, and the 95% interval of so few accepted drafts">Per accepted draft</th><th class="n" title="Per accepted draft against the baseline">Change</th></tr></thead>
     <tbody>${rows}</tbody></table></div>
-    <p class="hint">Only threads whose agent first started in the window take part, half in each arm by a hash of their key, and each keeps its model for good, after the window too; a draft counts for the arm whose model wrote it, whenever it was sent. The model's cost is all of the arm's, drafts or not, so a model that drafts less, or worse, pays for it here. With few accepted drafts the cost per draft moves a lot by chance: a change inside the intervals is no difference.</p>`;
+    <p class="hint">Differences inside the intervals are not significant.</p>`;
 }
 
 /** The top of a chart's scale: 1, 2, 2.5 or 5 times a power of ten, at or above `v`. */
@@ -675,7 +675,7 @@ function treemap(d, width) {
   const label = (t, name, v) => {
     if (t.w < 44 || t.h < 20) return '';
     const head = fit(name, t.w);
-    const sub = t.h >= 36 ? fit(`${usd(v)} · ${share(v)}`, t.w) : '';
+    const sub = t.h >= 36 ? fit(`${usd(v)}, ${share(v)}`, t.w) : '';
     const cls = 'tl';
     return `<text class="${cls}" x="${t.x + 6}" y="${t.y + 15}">${esc(head)}</text>${sub ? `<text class="${cls} v" x="${t.x + 6}" y="${t.y + 30}">${esc(sub)}</text>` : ''}`;
   };
@@ -919,7 +919,7 @@ function whoTable(kind, list) {
     const picked = state.q[key].includes(g[key] || (key === 'org' ? SHARED_ORG : NO_TEAM));
     const type = kind === 'orgs' && g.type && !['customer', 'shared'].includes(g.type) ? ` <span class="tag">${esc(g.type)}</span>` : '';
     const shared = g.shared > 0 ? `<div class="sub">${usd(g.shared)} shared out</div>` : '';
-    return `<tr class="pick${picked ? ' on' : ''}" data-pick="${key}" data-value="${esc(g[key])}" title="${picked ? 'Picked: click to drop' : 'Only this one'}">
+    return `<tr class="pick${picked ? ' on' : ''}" data-pick="${key}" data-value="${esc(g[key])}" title="${picked ? 'Click to show all' : 'Click to isolate'}">
       <td><div class="name"><span>${esc(g.name)}</span>${type}</div><div class="bar-in" style="width:${top ? Math.max(1, (g.flow / top) * 100) : 0}%"></div></td>
       <td class="n">${num(g.messages)}</td><td class="n">${num(g.threads)}</td>
       <td class="n">${usd(g.flow)}${shared}</td><td class="n">${usd(g.perMessage)}</td><td class="n">${usd(g.perThread)}</td><td class="n">${num(g.accepted || 0)}</td><td class="n">${usd(g.perAcceptedDraft)}</td><td class="n">${usd(g.stock)}</td></tr>`;
@@ -944,18 +944,17 @@ function prices(d) {
       }
       return `<tr><td>${esc(m.label)}${m.stock ? ' <span class="sub">a month</span>' : ''}</td><td>${what}</td><td class="m">${esc(m.included || '')}</td></tr>`;
     }).join('');
-    return `<tr><td colspan="3"><span class="name"><span class="dot" data-series="${esc(s.id)}" style="background:${color(s.id)}"></span><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a>${s.about ? ` <span class="sub">${esc(s.about)}</span>` : ''}${s.included ? ` <span class="sub">· included: ${esc(s.included)}</span>` : ''}</span></td></tr>${metrics}`;
+    return `<tr><td colspan="3"><span class="name"><span class="dot" data-series="${esc(s.id)}" style="background:${color(s.id)}"></span><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a>${s.about ? ` <span class="sub">${esc(s.about)}</span>` : ''}${s.included ? ` <span class="sub">(included: ${esc(s.included)})</span>` : ''}</span></td></tr>${metrics}`;
   }).join('');
   return `<details class="card prices"><summary>List prices, as of ${esc(p.asOf)}</summary>
-    <p class="hint">Costs are list prices at the margin: what a plan includes is listed, not taken off, so a customer's cost does not depend on who came first in the month.</p>
+    <p class="hint">List prices. Plan allowances are not deducted.</p>
     <div class="scroll"><table><thead><tr><th>Metric</th><th>Price</th><th>Included in the plan</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
 }
 
 function notes(d) {
   const since = Object.entries(d.since || {}).map(([src, at]) => `${{ meter: 'the Worker\'s own counts', account: 'Cloudflare\'s analytics', d1: 'messages and storage', drafts: 'the agents\' drafts' }[src] || src} since ${at}`);
   const parts = [
-    'Flow is counted where the work happens and in Cloudflare\'s analytics, and rolled up every 20 minutes; storage once a day.',
-    d.allocate === 'messages' ? 'Common costs (work for no customer in particular) are shared out by each customer\'s messages.' : 'Common costs are shown as Shared.',
+    d.allocate === 'messages' ? 'Shared costs are split by message count.' : 'Shared costs are shown as Shared.',
     since.length ? `Data: ${since.join(', ')}.` : 'No data rolled up yet.',
   ];
   const unpriced = d.unpriced?.length ? `<p class="hint">Counted, but without a price here: ${d.unpriced.map(esc).join(', ')}.</p>` : '';
@@ -1000,7 +999,7 @@ function tmTooltip(e, g) {
   const t = items[Number(g.dataset.tm)];
   const k = g.dataset.kid !== undefined ? [...t.children].sort((a, b) => b.value - a.value)[Number(g.dataset.kid)] : null;
   const pct = (v) => `${((v / total) * 100).toFixed(1)}%`;
-  tip.innerHTML = `<div class="t">${esc(t.name)} · ${usd(t.value)} · ${pct(t.value)}</div>${k ? `<div class="row"><span class="dot" style="background:${t.color}"></span><span>${esc(k.name)}</span><span>${usd(k.value)}</span></div>` : ''}<div class="sub">${t.picked ? 'Picked: click to drop' : 'Click: only this one'}</div>`;
+  tip.innerHTML = `<div class="t">${esc(t.name)}: ${usd(t.value)}, ${pct(t.value)}</div>${k ? `<div class="row"><span class="dot" style="background:${t.color}"></span><span>${esc(k.name)}</span><span>${usd(k.value)}</span></div>` : ''}<div class="sub">${t.picked ? 'Click to show all' : 'Click to isolate'}</div>`;
   tip.hidden = false;
   const box = $('treemap').getBoundingClientRect();
   const left = Math.min(e.clientX - box.left + 12, box.width - tip.offsetWidth - 4);
@@ -1020,7 +1019,7 @@ function tooltip(e) {
   const values = of(x);
   const items = list.filter((s) => values[s.id] > 0).sort((a, b) => values[b.id] - values[a.id]);
   const total = items.reduce((n, s) => n + values[s.id], 0);
-  tip.innerHTML = `<div class="t">${esc(when(unit, x))} · ${usd(total)}</div>${items.map((s) => `<div class="row"><span class="dot" data-series="${esc(s.series)}" style="background:${s.color}"></span><span>${esc(s.name)}</span><span>${usd(values[s.id])}</span></div>`).join('') || '<div class="sub">Nothing counted</div>'}`;
+  tip.innerHTML = `<div class="t">${esc(when(unit, x))}: ${usd(total)}</div>${items.map((s) => `<div class="row"><span class="dot" data-series="${esc(s.series)}" style="background:${s.color}"></span><span>${esc(s.name)}</span><span>${usd(values[s.id])}</span></div>`).join('') || '<div class="sub">Nothing counted</div>'}`;
   tip.hidden = false;
   const box = $('chart').getBoundingClientRect();
   const left = Math.min(e.clientX - box.left + 12, box.width - tip.offsetWidth - 4);

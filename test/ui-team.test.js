@@ -72,7 +72,7 @@ describe('a team\'s overview, drawn', () => {
   it('links a person\'s areas, products and name to the Topics page, and ends their card with their customers', () => {
     const html = TeamView.html(profile, ctx);
     const card = html.slice(html.indexOf('<article'), html.indexOf('</article>'));
-    assert.match(card, /<a href="\/inbox\/topics\?sel=tag%3Acdn" class="ps-chip" title="Caching: 2 threads of theirs\. Open it on the Topics page">Caching<\/a>/);
+    assert.match(card, /<a href="\/inbox\/topics\?sel=tag%3Acdn" class="ps-chip" title="Caching: 2 threads">Caching<\/a>/);
     assert.match(card, /<a href="\/inbox\/topics\?sel=product%3Atech%3Afastly%2Fcdn" class="ps-chip tech"/);
     assert.match(card, /<b><a href="\/inbox\/topics\?sel=person%3A7"[^>]*>Ada &lt;Ops&gt;<\/a><\/b>/);
     // Expertise and products, then the key customers at the foot.
@@ -117,7 +117,7 @@ describe('a team\'s overview, drawn', () => {
 
   it('leaves a tag unlinked where there is nowhere to go', () => {
     const html = TeamView.html(profile, { ...ctx, topicHref: () => null });
-    assert.match(html, /<span class="ps-chip" title="Caching: 2 threads of theirs">Caching<\/span>/);
+    assert.match(html, /<span class="ps-chip" title="Caching: 2 threads">Caching<\/span>/);
   });
 
   it('draws a person\'s line in the color of their initials, a customer\'s gray until its icon is read', () => {
@@ -167,7 +167,7 @@ describe('a team\'s vendors, drawn', () => {
 
   it('lists its vendors, their cases and answers, and a Follow where its channels are not in the inbox', () => {
     const html = TeamView.vendors(p, ctx);
-    assert.match(html, /<a href="\/org\/cdnco">CDN &lt;Co&gt;<\/a><span class="sub">1 channel filed here · the team posted 4 messages there · in 2 customer threads/);
+    assert.match(html, /<a href="\/org\/cdnco">CDN &lt;Co&gt;<\/a><span class="sub">1 channel filed here, the team posted 4 messages there, in 2 customer threads/);
     assert.match(html, /<span class="tag tv-them"[^>]*>1 waits on them<\/span><span class="tag tv-us"[^>]*>1 waits on Adobe<\/span>/);
     assert.match(html, /<b>1 h<\/b><span class="sub">first answer<\/span>/);
     assert.match(html, /<span class="fo"><span class="fo-follow"><button type="button" class="fo-b" aria-pressed="false" data-follow="xlate"/);
@@ -180,7 +180,7 @@ describe('a team\'s vendors, drawn', () => {
   it('lists what waits on a vendor, a customer\'s thread as waiting on a third party', () => {
     const html = TeamView.vendors(p, ctx);
     const waiting = html.slice(html.indexOf('id="tvWaiting"'), html.indexOf('id="tvOurs"'));
-    assert.match(waiting, /<a href="\/inbox\?team=edge&amp;t=t%3Ac" title="Open it in the inbox">Stale &lt;pages&gt;<\/a><span class="sub">acme · #aem-acme · normal urgency · incident · /);
+    assert.match(waiting, /<a href="\/inbox\?team=edge&amp;t=t%3Ac" title="Open in the inbox">Stale &lt;pages&gt;<\/a><span class="sub">acme, #aem-acme, normal urgency, incident, /);
     assert.match(waiting, />Waiting on a third party<\/span>/);
     assert.match(waiting, /And 1 more thread in channels of teams you are not on\./);
     assert.match(html, /No vendor waits on Adobe\./);

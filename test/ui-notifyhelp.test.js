@@ -342,7 +342,7 @@ describe('the welcome notification', () => {
     assert.equal(note.tag, 'opspile:welcome');
     assert.deepEqual(note.data, { url: '/inbox?notify=seen' });
     const [t] = p.world.toasts;
-    assert.match(t.text, /Didn't see it pop up\?/);
+    assert.match(t.text, /Didn't see the test notification\?/);
     assert.equal(t.action.label, 'Fix it');
     assert.equal(t.stay, true);
     t.action.run();
