@@ -361,7 +361,10 @@ notes. Anyone else reads the evidence as counts only (each signal's kind, how ma
 people), the orgs without their mail domains, and the requests without their notes but their own
 (Clef's say what it found in the signals' words, an agent's what a thread said) or Clef's
 fingerprints: no mail domain, site owner, knowledge-base path or message text. The list of every
-pair (no `pair`) stays the admin team's. The admin team decides there directly too: Not partners
+pair (no `pair`) stays the admin team's. The page reads its pair alone (`onePair`), never a whole
+sync: its signals and span from the evidence the isolate keeps, the verdict kept; Clef is asked
+only of a candidate nobody decided that has no verdict yet, that pair alone, and no request is
+filed or withdrawn, for the admin team either (the cron and the list load do that). The admin team decides there directly too: Not partners
 (`/dismiss`), and Undo of its last decision (an end with `/end` `undo`, which makes it a partner of
 now again; a confirmation with `/confirm` `undo`, which takes its dates with it; a dismissal with
 `/dismiss` `undo`), so a confirmation made by mistake needs no request. Not partners closes the

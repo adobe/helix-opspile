@@ -1071,6 +1071,99 @@ const shownOrg = (o, ctx) => {
 const likely = (x) => Boolean(x.confirmed) || (!x.dismissed && x.p !== null && x.p >= LIKELY);
 
 /**
+ * One pair, for its page (`orgPartners` with `pair`), read and nothing more: no `sync`, which
+ * works out every pair, asks Clef about many and files and withdraws Clef's requests (the cron's
+ * and the admin team's list load do). The pair's signals and span are worked out from the
+ * evidence the isolate keeps (`evidence`, as the list's: an owner's or a place's spread is every
+ * org's), its verdict is the one kept. Clef is asked only of a candidate nobody decided that has
+ * no verdict yet, this pair alone, and its row written with the verdict, as `sync` would; a stale
+ * verdict is shown as stale, for the next sync to ask again. Without the partner domains it is
+ * the row as kept (`skipped`). `{ pairs: [pair], orgs, ctx, unchecked, skipped }`, or null where
+ * either org is unknown or merged. `wait` as `sync`'s.
+ */
+async function onePair(env, customer, partner, { fresh = false, wait = ASK_TIMEOUT_MS } = {}) {
+  if (!SLUG.test(String(customer)) || !SLUG.test(String(partner)) || customer === partner) {
+    return null;
+  }
+  const [f, ev, kept, merges] = await Promise.all([
+    orgFacts(env, { fresh }),
+    evidence(env, { fresh }),
+    rows(env, 'SELECT * FROM org_partners WHERE customer = ?', customer),
+    rows(env, 'SELECT slug FROM org_merges'),
+  ]);
+  const merged = new Set(merges.map((r) => r.slug));
+  const orgs = new Map([...f.orgs].filter(([slug]) => !merged.has(slug)));
+  const c = orgs.get(customer);
+  const p = orgs.get(partner);
+  if (!c || !p) {
+    return null;
+  }
+  const row = kept.find((r) => r.partner === partner) || null;
+  const mail = await partnerMailDomains(env, orgs);
+  const ctx = contextOf(orgs, ev, mail.domains);
+  if (!mail.found) {
+    const x = row ? { ...pairOf(row), candidate: !decided(row) } : {
+      ...pairOf(null, {
+        customer, partner, signals: [], score: 0,
+      }),
+      candidate: false,
+    };
+    return {
+      pairs: [x], orgs, ctx, unchecked: 0, skipped: true,
+    };
+  }
+  const signals = partnerSignals(c, p, ev, ctx);
+  const score = scoreOf(signals);
+  const candidate = enough(signals);
+  const span = spanOf(c, p, ev, ctx);
+  const x = {
+    ...pairOf(row, {
+      customer, partner, signals, score,
+    }),
+    candidate,
+    first: span.first,
+    last: span.last,
+  };
+  if (candidate && !decided(row)) {
+    const others = (confirmedPartners(kept, orgs).get(customer) || [])
+      .filter((o) => o.slug !== partner);
+    const state = pairState(c, p, signals, ctx, others);
+    const fingerprint = await fingerprintOf(state);
+    x.stale = Boolean(row && row.p !== null && row.fingerprint !== fingerprint);
+    const verdict = x.p === null && env.AI ? await askPair(env, state, wait) : null;
+    if (verdict !== null) {
+      const now = new Date().toISOString();
+      await env.DB.prepare(`INSERT INTO org_partners (customer, partner, score, signals, signals_at,
+          first_at, last_at, p, fingerprint, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (customer, partner) DO UPDATE SET score = excluded.score,
+          signals = excluded.signals, signals_at = excluded.signals_at,
+          first_at = excluded.first_at, last_at = excluded.last_at, p = excluded.p,
+          fingerprint = excluded.fingerprint, checked_at = excluded.checked_at
+        WHERE org_partners.p IS NULL`)
+        .bind(
+          customer,
+          partner,
+          score,
+          JSON.stringify(signals),
+          now,
+          span.first,
+          span.last,
+          verdict,
+          fingerprint,
+          now,
+        )
+        .run();
+      Object.assign(x, { p: verdict, checked: now, stale: false });
+    }
+  }
+  const waits = x.candidate && !x.confirmed && !x.dismissed && (x.p === null || x.stale);
+  const unchecked = waits ? 1 : 0;
+  return {
+    pairs: [x], orgs, ctx, unchecked, skipped: false,
+  };
+}
+
+/**
  * A signal as anyone on an ops team reads it on a pair's page: its kind and counts, without its
  * text (which names mail domains, site owners, knowledge-base entries and channels).
  */
@@ -1089,9 +1182,11 @@ const countsOf = (g) => ({
  * `pairRequests`). `skipped`: the partner domains could not be read, so these are the pairs as
  * they were kept (`sync`).
  *
- * The list is the admin team's; one pair's page (`pair`) anyone's on an ops team too (STAFF_ROUTES
- * in src/admin.js), who read the evidence as counts only (`countsOf`), the orgs without their mail
- * domains, and the requests as `requestFor` gives them (no fingerprint, no note but their own).
+ * The list is the admin team's, a `sync` (which files Clef's requests); one pair's page (`pair`,
+ * `onePair`: read, Clef asked of that pair at most, no request filed or withdrawn) anyone's on an
+ * ops team too (STAFF_ROUTES in src/admin.js), who read the evidence as counts only (`countsOf`),
+ * the orgs without their mail domains, and the requests as `requestFor` gives them (no
+ * fingerprint, no note but their own).
  * Only the admin team decides (`decidePartner`, `endPartner`).
  */
 export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
@@ -1099,28 +1194,17 @@ export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
   if (!admin && !(pair && me && (me.teams || []).length)) {
     return json({ error: pair ? 'for the people on an ops team' : 'for the admin team: open one pair with ?pair=' }, 403);
   }
-  const s = await sync(env, { fresh: admin && fresh });
-  let list = s.pairs;
+  let s;
   if (pair) {
     const [customer, partner] = String(pair).split(':');
-    const c = s.orgs.get(customer);
-    const p = s.orgs.get(partner);
-    if (!c || !p || customer === partner) {
+    s = await onePair(env, customer, partner, { fresh: admin && fresh });
+    if (!s) {
       return json({ error: 'no such pair of orgs (one may be merged)' }, 404);
     }
-    const one = list.find((x) => x.customer === customer && x.partner === partner);
-    if (one) {
-      list = [one];
-    } else {
-      const signals = partnerSignals(c, p, s.ev, s.ctx);
-      const row = await env.DB.prepare('SELECT * FROM org_partners WHERE customer = ? AND partner = ?')
-        .bind(customer, partner).first();
-      const found = {
-        customer, partner, signals, score: scoreOf(signals),
-      };
-      list = [{ ...pairOf(row, found), candidate: false }];
-    }
+  } else {
+    s = await sync(env, { fresh });
   }
+  let list = s.pairs;
   const rank = (x) => {
     if (x.confirmed || x.dismissed) {
       return 2;

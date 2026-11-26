@@ -430,14 +430,14 @@ globalThis.CustomerView = (() => {
    * The words of `signals`, on a partner's page (`partner`) or a customer's; `posters` not where
    * the row's meter already counts its threads of these weeks with the partner's people.
    */
-  /** The words of `signals` (`{ <kind>: n }`) of a pair, `P` and `C` the possessives to say. */
-  const signalWords = (signals, P, C) => Object.entries(signals || {}).filter(([k]) => SIGNAL[k])
-    .map(([k, n]) => SIGNAL[k](n, P, C));
   const linkWords = (signals, { partner = false, counted = false, name = 'its' } = {}) => {
     const [P, C] = partner ? [poss(name), 'their'] : ['their', poss(name)];
     return Object.entries(signals || {}).filter(([k]) => SIGNAL[k] && !(counted && k === 'posters'))
       .map(([k, n]) => SIGNAL[k](n, P, C));
   };
+  /** The words of `signals` (`{ <kind>: n }`) of a pair, `P` and `C` the possessives to say. */
+  const signalWords = (signals, P, C) => Object.entries(signals || {}).filter(([k]) => SIGNAL[k])
+    .map(([k, n]) => SIGNAL[k](n, P, C));
 
   /** Whether the two work together: confirmed, likely as Clef says, a former partner, or neither yet. */
   function linkTag(x) {

@@ -233,7 +233,8 @@ row, which then stands alone.
 neither; and gone (`org_partners`, migration 0110, src/orgpartners.js). A candidate's row is written
 by a list load or a cron run (`sync`) with its signals and score; Clef's verdict is kept with the
 `fingerprint` of what it was shown, and asked again once that changes, `ASK_PER_LIST` a load or a
-run; one Clef did not give leaves `p` null, for the next. Confirmed (`confirmed_at`) and dismissed
+run; one Clef did not give leaves `p` null, for the next. A pair's page (`?pair=`, `onePair`) writes
+only a candidate's first verdict, of that pair, where it has none, and files no request. Confirmed (`confirmed_at`) and dismissed
 (`dismissed_at`) exclude each other: one replaces the other, and `undo` clears only its own (a
 confirmation's takes its dates with it: `since`, and an end). Clef's word on a pair nobody decided
 is one of three bands: sure (`p` above `UNSURE_HIGH`, 0.65), unsure (`UNSURE_LOW`, 0.35, to

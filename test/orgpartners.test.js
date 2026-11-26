@@ -434,6 +434,47 @@ describe('admin: partners', () => {
     assert.equal(mine.body.requests[0].note, 'Bill said');
   });
 
+  it('reads one pair for its page, asking Clef of that pair at most, and files nothing', async () => {
+    const e = env();
+    // A second candidate, the studio's: a sync would ask Clef about it too.
+    e.DB.sqlite.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('studio', 'Studio', 'partner', '${AT}');
+      INSERT INTO identities (source, tenant, user_id, kind, email, fetched_at)
+        VALUES ('slack', 'E1', 'U5', 'person', 'sue@studio.example', '${AT}');
+      INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, author_key) VALUES
+        ('slack', 'E1', 'C1', 's2', 'slack:E1:C1:1.1', '${AT}', 0, 1, 'slack:E1:U5'),
+        ('slack', 'E1', 'C1', 's3', 'slack:E1:C1:1.2', '${AT}', 0, 1, 'slack:E1:U5');
+      INSERT INTO channel_members (source, tenant, channel_id, user_id, email)
+        VALUES ('slack', 'E1', 'C1', 'U5', 'sue@studio.example')`);
+    // Clef is unsure of every pair: a sync would file a request for each.
+    const asked = [];
+    e.AI = {
+      async run(model, input) {
+        asked.push(input.state);
+        return { answers: { works: { type: 'noul', noul: 0.6 } } };
+      },
+    };
+    const requests = () => e.DB.rows('SELECT customer, partner FROM org_partner_requests');
+    const page = await quiet(() => call(e, BO, 'GET', '/api/admin/org-partners?pair=globex:agency'));
+    assert.equal(page.status, 200);
+    assert.equal(asked.length, 1);
+    assert.ok(/C: slug globex,/.test(asked[0]) && /P: slug agency,/.test(asked[0]));
+    const [pair] = page.body.pairs;
+    assert.deepEqual([pair.p, pair.standing.status, pair.candidate, page.body.unchecked], [0.6, 'likely', true, 0]);
+    assert.deepEqual(e.DB.rows('SELECT customer, partner, p FROM org_partners'), [{ customer: 'globex', partner: 'agency', p: 0.6 }]);
+    assert.deepEqual(requests(), []);
+    // Its verdict is kept: read again, Clef is not asked; nor of a pair that is no candidate.
+    await quiet(() => call(e, BO, 'GET', '/api/admin/org-partners?pair=globex:agency'));
+    await quiet(() => call(e, BO, 'GET', '/api/admin/org-partners?pair=initech:agency'));
+    assert.equal(asked.length, 1);
+    assert.equal(e.DB.rows('SELECT * FROM org_partners').length, 1);
+    // The admin team's read of a pair files nothing either; its list load does.
+    await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners?pair=globex:agency'));
+    assert.deepEqual(requests(), []);
+    await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners'));
+    assert.equal(asked.length, 2);
+    assert.deepEqual(requests().map((r) => r.partner).sort(), ['agency', 'studio']);
+  });
+
   it('lets the admin team dismiss a pair and undo its last decision, directly', async () => {
     const e = env();
     const post = (what, body) => quiet(() => call(e, ADA, 'POST', `/api/admin/org-partners/${what}`, { customer: 'globex', partner: 'agency', ...body }));
