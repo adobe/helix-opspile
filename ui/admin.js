@@ -1946,9 +1946,45 @@ function prefixOf(pattern) {
   const m = /^\^((?:\\.|[^\\.*+?()[\]{}|$^])*)$/.exec(pattern || '');
   return m ? m[1].replace(/\\(.)/g, '$1') : null;
 }
+/** A zero-width space: where a regular expression may break across lines. */
+const ZWSP = '\u200b';
+/**
+ * `pattern` with a zero-width space after each `|` of an alternation and before each group
+ * (not one that starts it or another group), never inside an escape (`\|`, `\(`): a long expression breaks between its alternatives instead
+ * of widening its table. Copying it takes them out again (`unbroken`), so what you copy is the
+ * expression as the rule has it.
+ */
+function breakable(pattern) {
+  let out = '';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const c = pattern[i];
+    if (c === '\\') {
+      out += pattern.slice(i, i + 2);
+      i += 1;
+    } else if (c === '|') {
+      out += `|${ZWSP}`;
+    } else if (c === '(' && !/^\^?$|[(\u200b]$/.test(out)) {
+      out += `${ZWSP}(`;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+const unbroken = (text) => text.replaceAll(ZWSP, '');
 function describe(r) {
   const prefix = prefixOf(r.pattern);
-  return prefix !== null ? `starts with <code>${esc(prefix)}</code>` : `matches <code>${esc(r.pattern)}</code>`;
+  return prefix !== null ? `starts with <code>${esc(prefix)}</code>`
+    : `matches <code class="pattern" role="button" tabindex="0" title="Copy the expression">${esc(breakable(r.pattern))}</code>`;
+}
+/** Puts a rule's expression on the clipboard, as the rule has it: without its break points. */
+async function copyPattern(code) {
+  try {
+    await navigator.clipboard.writeText(unbroken(code.textContent));
+    status('ok', 'Copied the expression.');
+  } catch {
+    status('err', 'The browser did not let the page write to the clipboard.');
+  }
 }
 
 function ruleRow(r) {
@@ -3939,7 +3975,13 @@ function wireOrgMerge(slug) {
     clearTimeout(redraw);
     redraw = setTimeout(() => { if (state.tab === 'orgs') renderList(); }, 300);
   }, true);
+  // A rule's expression copies itself, on a click (not one that ends a selection in it) or a key.
   $('detail').addEventListener('click', (e) => {
+    const code = e.target.closest('code.pattern');
+    if (code && getSelection().isCollapsed) {
+      copyPattern(code);
+      return;
+    }
     if (e.target.closest('[data-back]')) {
       Agent.leave().then((left) => { if (left) unselect(); });
       return;
@@ -3950,6 +3992,19 @@ function wireOrgMerge(slug) {
       e.preventDefault();
       openUrl(a.getAttribute('href'));
     }
+  });
+  $('detail').addEventListener('keydown', (e) => {
+    const code = e.target.closest?.('code.pattern');
+    if (!code || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    copyPattern(code);
+  });
+  // Copying a selection of one takes its break points out too.
+  document.addEventListener('copy', (e) => {
+    const text = getSelection().toString();
+    if (!text.includes(ZWSP)) return;
+    e.clipboardData.setData('text/plain', unbroken(text));
+    e.preventDefault();
   });
   // Back or Forward that the browser has already animated (the iPhone's edge swipe) does not slide again.
   window.addEventListener('popstate', (e) => openUrl(location.href, { push: false, instant: Boolean(e.hasUAVisualTransition) }));
