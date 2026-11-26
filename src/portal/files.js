@@ -182,13 +182,18 @@ export async function pruneFiles(env, now = Date.now()) {
 
 /**
  * File `id` of lobby `domain` (and of `channel`, when given), or null: one a message carries
- * that is not deleted, or one still waiting for its message.
+ * that is not deleted, or one still waiting for its message. For `viewer` (a customer's account
+ * id), a file of an individual channel only when it is of a thread they are in, or their upload.
  */
-export async function fileRow(env, domain, id, channel = null) {
+export async function fileRow(env, domain, id, channel = null, viewer = null) {
   return env.DB.prepare(`SELECT * FROM files f WHERE f.id = ?1 AND f.lobby = ?2
     AND (?3 IS NULL OR f.channel = ?3) AND NOT EXISTS (SELECT 1 FROM messages m
-      WHERE m.id = f.message AND m.deleted_at IS NOT NULL)`)
-    .bind(String(id || ''), String(domain || ''), channel ? String(channel) : null).first();
+      WHERE m.id = f.message AND m.deleted_at IS NOT NULL)
+    AND (?4 IS NULL OR f.uploaded_by = ?4 OR NOT EXISTS (SELECT 1 FROM channel_audiences a
+        WHERE a.channel = f.channel AND a.audience = 'individual')
+      OR EXISTS (SELECT 1 FROM messages m JOIN thread_members t ON t.root = m.root
+        WHERE m.id = f.message AND t.user = ?4))`)
+    .bind(String(id || ''), String(domain || ''), channel ? String(channel) : null, viewer).first();
 }
 
 /** The part of an object a `Range` header asks for, as R2 takes it, or undefined. */

@@ -123,6 +123,10 @@ export function world() {
     declineAccess: (a) => platform.declineRequest(portal, a),
     accessChannels: (a) => platform.accessChannels(portal, a, time.now),
     setAutoApprove: (a) => platform.autoApprove(portal, a, time.now),
+    setAudience: (a) => platform.setChannelAudience(portal, a, time.now),
+    addToThread: (a) => platform.addThreadMember(portal, a, time.now),
+    post: (a) => platform.post(portal, a, time.now),
+    typing: (a) => platform.typing(portal, a, time.now),
   };
   for (const id of ['panel', 'desk']) {
     db.sqlite.prepare(`INSERT INTO integration_hosts (id, service_id, issuer, jwks, scopes, identity,

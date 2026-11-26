@@ -419,7 +419,7 @@ const integrationKind = {
     const into = m && m.enabled;
     const caught = m && m.via ? ` (it lists ${m.via.startsWith('domain:') ? 'their mail domain' : 'their organization ID'} ${code(m.via.slice(m.via.indexOf(':') + 1))})` : '';
     const where = m
-      ? `#${md(m.name)} ${code(m.channel)}${m.route && (m.route.team || m.route.org) ? `, filed under **${md(n.team(m.route.team))}**, customer **${md(n.org(m.route.org))}**` : ''}${m.enabled ? '' : ' (not enabled)'}${caught}`
+      ? `#${md(m.name)} ${code(m.channel)}${m.route && (m.route.team || m.route.org) ? `, filed under **${md(n.team(m.route.team))}**, customer **${md(n.org(m.route.org))}**` : ''}${m.enabled ? '' : ' (not enabled)'}${caught}${m.audience === 'individual' ? ', **individual**: they see only their own threads' : ''}`
       : '';
     const facts = [
       `- Host ${code(r.host)}${r.product ? `, product ${code(r.product)}` : ''}`,
@@ -444,6 +444,10 @@ const integrationKind = {
     const autoField = m && m.autoApprove ? [] : [{
       name: 'auto', label: 'Auto-approve future members of this organization', type: 'check', value: false,
     }];
+    // Who sees a new channel's threads: decided before its first message (portal migration 0008).
+    const audienceField = {
+      name: 'individual', label: 'Individual customers: each person sees only their own threads', type: 'check', value: false,
+    };
     const fields = into ? [personField, ...autoField] : [
       {
         name: 'name', label: 'Channel name', type: 'text', max: 80, required: true, value: m ? m.name : r.suggest.name,
@@ -460,6 +464,7 @@ const integrationKind = {
       },
       personField,
       ...autoField,
+      audienceField,
     ];
     const actions = open ? [
       {
@@ -468,7 +473,7 @@ const integrationKind = {
         tone: 'accent',
         off,
         hint: into
-          ? `Enrolls ${md(person)} in the channel ${md(org)} has on ${md(r.host)}: they see its threads and write there. Recorded as approved by you.`
+          ? `Enrolls ${md(person)} in the channel ${md(org)} has on ${md(r.host)}: ${m.audience === 'individual' ? 'they see the threads they start or are added to, never another member\'s,' : 'they see its threads'} and write there. Recorded as approved by you.`
           : 'Makes the organization\'s channel in the portal, files it under the team and the customer by hand (a channel-id rule with priority 10 each), then enrolls the person and enables the channel, in that order. Recorded as approved by you.',
         fields,
         run: (v) => ({
@@ -478,7 +483,9 @@ const integrationKind = {
             id: r.id,
             person: v.person,
             auto: Boolean(v.auto),
-            ...(into ? {} : { name: v.name, org: v.org, team: v.team }),
+            ...(into ? {} : {
+              name: v.name, org: v.org, team: v.team, ...(v.individual ? { audience: 'individual' } : {}),
+            }),
           },
         }),
         done: (a) => `${md(person)} is enrolled in #${md(a.channel?.name || '')}${a.channel && !a.channel.existing ? `, filed under ${md(n.team(a.channel.team))}` : ''}${a.channel?.autoApprove ? '; its organization\'s next members are auto-approved' : ''}${a.autoError ? `; auto-approval was not turned on (${md(a.autoError)})` : ''}.`,
@@ -534,6 +541,9 @@ const embedKind = {
       `- ${c.enabled ? 'Enabled' : '**Not enabled**: nobody is admitted or auto-approved'}${c.approvedBy ? `, approved by ${md(c.approvedBy)}` : ', set up by hand'}`,
       `- ${plural(c.members, 'member')}, ${c.autoMembers} of them auto-approved (${c.autoLastHour} in the last hour, of at most ${c.autoHourly})`,
       `- Auto-approval ${auto}`,
+      c.audience === 'individual'
+        ? `- **Individual customers**: each member sees only the threads they started, wrote in or were added to${c.audienceBy ? `, set by ${md(c.audienceBy)}${c.audienceAt ? ` ${md(c.audienceAt.slice(0, 10))}` : ''}` : ''}; the team sees them all`
+        : '- Shared: every member sees every thread of the channel',
       `- Also catches organization IDs ${list(c.tenants)}; mail domains ${list(c.domains)}`,
     ].join('\n');
     const events = (c.autoApproved || []).filter((x) => x.at).map((x, i) => ({
@@ -582,6 +592,20 @@ const embedKind = {
           const x = a.channel || c;
           return `Auto-approval of #${md(x.name)} is ${x.autoApprove ? 'on' : 'off'}; it also catches ${list(x.tenants || [])} and ${list(x.domains || [])}.`;
         },
+      }, {
+        id: 'audience',
+        label: 'Set audience',
+        off: bound ? null : 'The customer portal is not connected to this inbox yet (PORTAL_WORKER).',
+        hint: 'Individual: each member sees only the threads they started, wrote in or were added to, and hears of no other member\'s (not their titles, counts or changes). Shared: every member sees every thread. Switching moves no thread, and the team sees them all either way.',
+        fields: [{
+          name: 'individual', label: 'Individual customers: each person sees only their own threads', type: 'check', value: c.audience === 'individual',
+        }],
+        run: (v) => ({
+          method: 'PUT',
+          path: 'portal/integration/audience',
+          body: { channel: c.channel, audience: v.individual ? 'individual' : 'shared' },
+        }),
+        done: (a) => `#${md((a.channel && a.channel.name) || c.name)} is ${a.audience === 'individual' ? 'individual: each member sees only their own threads' : 'shared: every member sees every thread'}.`,
       }],
     };
   },

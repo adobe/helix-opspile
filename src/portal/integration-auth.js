@@ -114,7 +114,9 @@ export async function authorize(request, env, scope, options = {}) {
   // channel when its tenant is the channel's or one it lists, or, for a member a caught domain
   // placed, with its verified address (checked below). An assertion's subject is the tenant's.
   const find = () => env.DB.prepare(`SELECT c.channel, c.name AS channelName,
-      m.actor, m.cursor_key, a.verified_email, u.name FROM integration_customers c
+      m.actor, m.cursor_key, a.verified_email, u.name, COALESCE((SELECT audience
+        FROM channel_audiences WHERE channel = c.channel), 'shared') AS audience
+    FROM integration_customers c
     JOIN integration_members m ON m.channel = c.channel
     JOIN integration_actors a ON a.channel = m.channel AND a.actor = m.actor
     JOIN users u ON u.id = m.actor
@@ -174,7 +176,8 @@ export async function authorize(request, env, scope, options = {}) {
     }
     fail(429, 'rate_limited');
   }
-  return { ...member, topics: JSON.parse(host.topics) };
+  // Who the member is, as the reads of an individual channel take it: the accounts that are them.
+  return { ...member, people: [member.actor], topics: JSON.parse(host.topics) };
 }
 
 /** Opaque, authenticated continuation of one collection for one enrolled viewer. */

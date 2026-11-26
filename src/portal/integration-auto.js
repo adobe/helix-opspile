@@ -137,6 +137,10 @@ function shapeChannel(c, catches, members) {
     enabledAt: iso(c.enabled_at),
     approvedBy: c.approved_by || null,
     approvedAt: iso(c.approved_at),
+    // Who sees its threads: every member (`shared`), or each their own (`individual`).
+    audience: c.audience || 'shared',
+    audienceBy: c.audience_by || null,
+    audienceAt: iso(c.audience_at),
     autoApprove: Boolean(c.auto_approve),
     autoBy: c.auto_by || null,
     autoAt: iso(c.auto_at),
@@ -162,12 +166,14 @@ export async function listChannels(env, args = {}, now = Date.now()) {
   const one = clean(args.channel, 20) || null;
   const sec = Math.floor(now / 1000);
   const [channels, catches, members] = await Promise.all([
-    db.prepare(`SELECT c.*, h.product,
+    db.prepare(`SELECT c.*, h.product, COALESCE(ca.audience, 'shared') AS audience,
+        ca.set_by AS audience_by, ca.set_at AS audience_at,
         (SELECT COUNT(*) FROM integration_members m WHERE m.channel = c.channel AND m.active = 1) AS members,
         (SELECT COUNT(*) FROM integration_members m WHERE m.channel = c.channel AND m.auto = 1) AS auto_members,
         (SELECT COUNT(*) FROM integration_members m WHERE m.channel = c.channel AND m.auto = 1
           AND m.approved_at > ?2 - 3600) AS auto_hour
       FROM integration_customers c JOIN integration_hosts h ON h.id = c.host
+      LEFT JOIN channel_audiences ca ON ca.channel = c.channel
       WHERE h.identity IS NOT NULL AND (?1 IS NULL OR c.channel = ?1) ORDER BY c.host, c.name LIMIT 500`)
       .bind(one, sec).all(),
     db.prepare(`SELECT * FROM integration_catches WHERE ?1 IS NULL OR channel = ?1

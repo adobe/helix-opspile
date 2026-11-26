@@ -101,7 +101,8 @@ channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md
 ```
 
 Every channel belongs to one **org** (a customer, a partner or a vendor) and one **team** (the
-ops team that owns it). The mapping is a small rules engine over rows in D1: each rule matches the
+ops team that owns it). A customer portal channel may be **individual** (see "Individual
+channels" under "Customer portal"): each of its customers is their own, under the one org. The mapping is a small rules engine over rows in D1: each rule matches the
 channel id, the channel name, the Teams team name or a Slack Connect team id with a regular
 expression, and sets the team, the org or the kind (`channel`, `alert`, `ignore`); the lowest
 priority wins. Naming conventions (`aem-<customer>` exists on both platforms) are rules, and
@@ -4209,6 +4210,23 @@ edited and deleted. Reactions are emoji; Adobe's ✅ on a thread's first message
 the channel's threads every 15 seconds while it is on screen, and for the open thread's
 status every four (see [Listening and the next answer](#listening-and-the-next-answer)),
 which says when the thread changed: only then is it loaded again.
+
+**Individual channels.** A channel's customers see each other's threads: a company's people work
+together. Where each end user is their own customer (a product's users, of one organization or of
+none, who ask each for themselves), the admin team makes the channel **individual** (portal
+migration 0008, `channel_audiences`; [Individual channels](PORTAL-INTEGRATION.md#individual-channels)):
+each customer sees only the threads they are in (`thread_members`: they started it, wrote in it, or
+Adobe added them), and hears nothing of another's, neither its title nor that it is there. Every
+customer read of the portal asks it (`theirs` in `src/portal/store.js`): a channel's list, a thread,
+its status and who writes in it, its files, reactions and replies, whom one can mention, and the
+integration's list, thread, badge, unread counts and feed with its watermark
+(`src/portal/integration-read.js`). It is the channel's, not its org's: who sees what is the
+portal's to enforce, which never reads the inbox's orgs, and a channel filed under Adobe's own,
+internal org may be individual without that org becoming anything else (see "Partners" and
+"Vendors" for what an org's type is). One org holds the whole channel, as any: nobody is an org of
+their own. Adobe's side is as in any channel: its teams see, label, search and work every thread
+in their inbox. The events of an individual channel say so (`channel.audience`), and setting it
+sends a `channel` event.
 
 **Writing** there is **rich text** (`ui/richtext.js`): what is bold is bold in the box, a list
 is a list, and nobody types markdown's marks, though a line that starts with `- `, `1. `, `> `

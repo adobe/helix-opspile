@@ -152,6 +152,8 @@ function shape(r) {
       enabled: r.m_enabled, enabled_at: r.m_enabled_at, approved_by: r.m_approved_by,
     }),
     autoApprove: Boolean(r.m_auto),
+    // Who sees its threads: every member, or each their own (portal migration 0008).
+    audience: r.m_audience || 'shared',
     // How the request lands in it: its tenant (null), an extra org ID, or a caught domain.
     via: r.m_via || null,
   } : null;
@@ -182,6 +184,8 @@ function shape(r) {
 const SELECT = `SELECT r.*, h.product, c.channel AS m_channel, c.name AS m_name,
     c.customer AS m_customer, c.tenant AS m_tenant, c.enabled AS m_enabled,
     c.enabled_at AS m_enabled_at, c.approved_by AS m_approved_by, c.auto_approve AS m_auto,
+    COALESCE((SELECT a.audience FROM channel_audiences a WHERE a.channel = c.channel), 'shared')
+      AS m_audience,
     CASE WHEN c.tenant = r.tenant THEN NULL WHEN r.caught_org IS NOT NULL THEN 'org:' || r.tenant
       WHEN c.channel IS NOT NULL THEN 'domain:' || r.domain END AS m_via
   FROM (SELECT q.*, substr(q.email, instr(q.email, '@') + 1) AS domain,
@@ -243,12 +247,24 @@ async function pendingRow(db, id) {
   return { request: r };
 }
 
+const sec0 = (now) => Math.floor(now / 1000);
+
+/** The statement that makes the mapping of request `r`'s tenant individual (migration 0008). */
+const audienceOf = (db, r, by, sec) => db.prepare(`INSERT INTO channel_audiences (channel, audience,
+    set_by, set_at) SELECT channel, 'individual', ?3, ?4 FROM integration_customers
+    WHERE host = ?1 AND tenant = ?2 AND enabled = 0
+  ON CONFLICT (channel) DO UPDATE SET audience = excluded.audience, set_by = excluded.set_by,
+    set_at = excluded.set_at`).bind(r.host, r.tenant, by.email, sec);
+
 /**
- * `{ id, customer, name, by }`: reserves the channel of a pending request's tenant, which has no
- * mapping on its host yet (`integration_customers`, disabled, with who approved it), so the inbox
- * files it before anyone can post. A mapping this flow reserved and never enabled is answered
- * as it is (approving again finishes it); an enabled one too (`existing`), for `enrollAccess`.
- * `{ ok, channel: { id, name }, reserved, existing }`.
+ * `{ id, customer, name, by, audience? }`: reserves the channel of a pending request's tenant,
+ * which has no mapping on its host yet (`integration_customers`, disabled, with who approved it),
+ * so the inbox files it before anyone can post. A mapping this flow reserved and never enabled is
+ * answered as it is (approving again finishes it); an enabled one too (`existing`), for
+ * `enrollAccess`.
+ * With `audience: 'individual'` a new mapping (or one never enabled) is an individual channel
+ * (portal migration 0008): each member sees only their own threads. An enabled one keeps its own.
+ * `{ ok, channel: { id, name, audience? }, reserved, existing }`.
  */
 export async function reserveAccess(env, args = {}, now = Date.now()) {
   const db = env.DB;
@@ -264,7 +280,12 @@ export async function reserveAccess(env, args = {}, now = Date.now()) {
   if (!m && !r.tenant) {
     return fail('this person signed in without an organization: list their mail domain on a channel first', 409);
   }
+  const individual = args.audience === 'individual';
   if (m) {
+    if (!m.enabled && m.resumable && individual) {
+      // Approving again what was reserved and never enabled: as the admin says now.
+      await audienceOf(db, r, by, sec0(now)).run();
+    }
     if (m.enabled || m.resumable) {
       return {
         ok: true, channel: { id: m.channel, name: m.name }, reserved: false, existing: m.enabled,
@@ -281,14 +302,22 @@ export async function reserveAccess(env, args = {}, now = Date.now()) {
   for (let i = 0; i < 3; i += 1) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      const row = await db.prepare(`INSERT INTO integration_customers(host, tenant, customer, name,
+      const [made] = await db.batch([
+        db.prepare(`INSERT INTO integration_customers(host, tenant, customer, name,
           approved_by, approved_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING channel`)
-        .bind(r.host, r.tenant, customer, name, by.email, sec).first();
+          .bind(r.host, r.tenant, customer, name, by.email, sec),
+        // With the mapping, before it is enabled: its first thread is already its author's alone.
+        ...(individual ? [audienceOf(db, r, by, sec)] : []),
+      ]);
+      const row = made.results[0];
       // eslint-disable-next-line no-await-in-loop
       await db.prepare(`UPDATE integration_requests SET channel = ? WHERE id = ?
         AND status = 'pending'`).bind(row.channel, r.id).run();
       return {
-        ok: true, channel: { id: row.channel, name }, reserved: true, existing: false,
+        ok: true,
+        channel: { id: row.channel, name, audience: individual ? 'individual' : 'shared' },
+        reserved: true,
+        existing: false,
       };
     } catch (e) {
       const msg = String(e.message || e);

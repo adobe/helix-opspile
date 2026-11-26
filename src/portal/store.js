@@ -385,19 +385,59 @@ export async function uninvite(env, domain, body, now = Date.now()) {
   return { ok: true, members: await membersOf(env, domain) };
 }
 
+/**
+ * Who sees a channel's threads (portal migration 0008): `shared`, every customer of it, as every
+ * channel was; or `individual`, each customer only the threads they are in (`thread_members`:
+ * they started it, wrote in it, or Adobe added them). Adobe's people see every thread either way.
+ */
+export const AUDIENCES = ['shared', 'individual'];
+
+/** A channel's audience, as the database has it (`shared` without a row). */
+const AUDIENCE = "COALESCE((SELECT audience FROM channel_audiences WHERE channel = c.id), 'shared')";
+
+/** Whether `channel` (a row of `channelOf`, or with its `audience`) is an individual one. */
+export const isIndividual = (channel) => Boolean(channel) && channel.audience === 'individual';
+
+/**
+ * The SQL that says thread `root` (an expression) is one of the people of parameter `?n`: a JSON
+ * array of the account ids that are one person, or NULL for anyone (a shared channel).
+ */
+export const theirs = (root, n) => `(?${n} IS NULL OR EXISTS (SELECT 1 FROM thread_members tm
+  WHERE tm.root = ${root} AND tm.user IN (SELECT value FROM json_each(?${n}))))`;
+
+/**
+ * What a query of `channel` binds for `theirs`: the people `ids` are, as JSON, in an individual
+ * channel, and null (anyone) in a shared one.
+ */
+export const scopeOf = (channel, ids) => (isIndividual(channel) ? JSON.stringify(ids) : null);
+
+/**
+ * `channel` with its `audience`: as it is when it has one (a row of `channelOf`), else read. A
+ * channel some caller made up without one is never taken for shared.
+ */
+export async function withAudience(env, channel) {
+  if (!channel || AUDIENCES.includes(channel.audience)) {
+    return channel;
+  }
+  const row = await env.DB.prepare('SELECT audience FROM channel_audiences WHERE channel = ?')
+    .bind(String(channel.id || '')).first();
+  return { ...channel, audience: (row && row.audience) || 'shared' };
+}
+
 /** A lobby's channels, oldest first. */
 export async function channelsOf(env, domain) {
-  const { results } = await env.DB.prepare(`SELECT id, name, topic, created_at FROM channels
-    WHERE lobby = ? ORDER BY created_at, id`).bind(domain).all();
+  const { results } = await env.DB.prepare(`SELECT c.id, c.name, c.topic, c.created_at,
+      ${AUDIENCE} AS audience FROM channels c
+    WHERE c.lobby = ? ORDER BY c.created_at, c.id`).bind(domain).all();
   return (results || []).map((c) => ({
-    id: c.id, name: c.name, topic: c.topic || null, createdAt: c.created_at,
+    id: c.id, name: c.name, topic: c.topic || null, createdAt: c.created_at, audience: c.audience,
   }));
 }
 
-/** A channel of lobby `domain`, or null: nobody reads another lobby's. */
+/** A channel of lobby `domain`, with its `audience`, or null: nobody reads another lobby's. */
 export async function channelOf(env, domain, id) {
-  return env.DB.prepare('SELECT * FROM channels WHERE id = ? AND lobby = ?')
-    .bind(String(id || ''), domain).first();
+  return env.DB.prepare(`SELECT c.*, ${AUDIENCE} AS audience FROM channels c
+    WHERE c.id = ? AND c.lobby = ?`).bind(String(id || ''), domain).first();
 }
 
 /** The first line of a message, as a thread's title. */
@@ -410,9 +450,10 @@ export function titleOf(body) {
 /**
  * A channel's threads for `user`, latest activity first: each with its title, who started
  * it, its replies, how many messages of others the user has not read, and whether Adobe
- * marked it resolved.
+ * marked it resolved. In an individual channel, only the threads they are in.
  */
 export async function threadsOf(env, channel, user) {
+  const scope = scopeOf(await withAudience(env, channel), [user.id]);
   const { results } = await env.DB.prepare(`SELECT r.id, r.body, r.at, r.deleted_at,
       u.id AS author_id, u.name AS author_name, u.kind AS author_kind,
       EXISTS (SELECT 1 FROM messages m, json_each(m.mentions) j WHERE m.channel = r.channel
@@ -430,9 +471,9 @@ export async function threadsOf(env, channel, user) {
       EXISTS (SELECT 1 FROM reactions x JOIN users s ON s.id = x.user WHERE x.message = r.id
         AND s.kind = 'staff' AND x.emoji IN (SELECT value FROM json_each(?3))) AS resolved
     FROM messages r JOIN users u ON u.id = r.author
-    WHERE r.channel = ?1 AND r.root = r.id
+    WHERE r.channel = ?1 AND r.root = r.id AND ${theirs('r.id', 5)}
     ORDER BY COALESCE(latest, r.at) DESC LIMIT ?4`)
-    .bind(channel.id, user.id, JSON.stringify(RESOLVED), THREADS).all();
+    .bind(channel.id, user.id, JSON.stringify(RESOLVED), THREADS, scope).all();
   return (results || [])
     // A thread whose every message is gone is gone.
     .filter((r) => !r.deleted_at || r.replies > 0)
@@ -454,18 +495,33 @@ export async function threadsOf(env, channel, user) {
  * Who can be mentioned in `channel`, and whose `@Name` in a message is a mention: the people
  * of its lobby who signed in, and the Adobe people who wrote in it. Account rows, customers
  * first.
+ *
+ * In an individual channel nobody hears of a colleague: the customers are those of thread `root`
+ * (none for a new thread), and `viewer` (an account id) asks for themselves, with the Adobe people
+ * who wrote in their own threads only.
  */
-export async function channelPeople(env, channel) {
+export async function channelPeople(env, channel, { root = null, viewer = null } = {}) {
+  const ch = await withAudience(env, channel);
+  if (isIndividual(ch)) {
+    const { results } = await env.DB.prepare(`SELECT u.* FROM users u WHERE u.kind != 'bot'
+        AND (u.id = ?3
+          OR (u.kind = 'customer' AND u.id IN (SELECT user FROM thread_members WHERE root = ?2))
+          OR (u.kind != 'customer' AND u.id IN (SELECT DISTINCT author FROM messages
+            WHERE channel = ?1 AND (?3 IS NULL OR root IN (SELECT root FROM thread_members
+              WHERE user = ?3)))))
+      ORDER BY u.kind != 'customer', u.name, u.id`).bind(ch.id, root, viewer).all();
+    return results || [];
+  }
   const { results } = await env.DB.prepare(`SELECT u.* FROM users u WHERE u.kind != 'bot'
       AND (u.id IN (SELECT user FROM members WHERE lobby = ?1 AND joined_at IS NOT NULL)
         OR u.id IN (SELECT DISTINCT author FROM messages WHERE channel = ?2))
-    ORDER BY u.kind != 'customer', u.name, u.id`).bind(channel.lobby, channel.id).all();
+    ORDER BY u.kind != 'customer', u.name, u.id`).bind(ch.lobby, ch.id).all();
   return results || [];
 }
 
-/** GET /api/people: `channelPeople`, as the page's suggestions take them. */
-export async function peopleOf(env, channel) {
-  return (await channelPeople(env, channel)).map((u) => ({
+/** GET /api/people: `channelPeople`, as the page's suggestions take them, for `viewer`. */
+export async function peopleOf(env, channel, viewer = null) {
+  return (await channelPeople(env, channel, { viewer: viewer && viewer.id })).map((u) => ({
     id: u.id, name: u.name, kind: u.kind, avatar: avatarUrl(u),
   }));
 }
@@ -495,15 +551,17 @@ const parseIds = (s) => {
 
 /**
  * One thread for `user`: its messages, oldest first, each with its author and reactions (who
- * reacted, by name), or null when the channel has no such thread. Reading it marks it read.
+ * reacted, by name), or null when the channel has no such thread (or, in an individual channel,
+ * none of theirs). Reading it marks it read.
  */
 export async function threadOf(env, channel, root, user, now = Date.now()) {
+  const scope = scopeOf(await withAudience(env, channel), [user.id]);
   const { results } = await env.DB.prepare(`SELECT m.id, m.body, m.at, m.edited_at, m.deleted_at,
       m.mentions, u.id AS author_id, u.name AS author_name, u.kind AS author_kind,
       u.avatar AS author_avatar, u.avatar_key AS author_avatar_key, u.email AS author_email
     FROM messages m JOIN users u ON u.id = m.author
-    WHERE m.channel = ? AND m.root = ? ORDER BY m.at, m.rowid LIMIT ?`)
-    .bind(channel.id, String(root || ''), MESSAGES).all();
+    WHERE m.channel = ?1 AND m.root = ?2 AND ${theirs('?2', 4)} ORDER BY m.at, m.rowid LIMIT ?3`)
+    .bind(channel.id, String(root || ''), MESSAGES, scope).all();
   const rows = results || [];
   if (!rows.length) {
     return null;
@@ -563,11 +621,16 @@ export async function threadOf(env, channel, root, user, now = Date.now()) {
   };
 }
 
+/**
+ * A channel as an event names it. `audience` only for an individual channel: an event without it
+ * is of a shared one, as every event before individual channels was.
+ */
 const channelInfo = async (env, channel) => ({
   id: channel.id,
   name: channel.name,
   topic: channel.topic || null,
   company: channel.company || (await lobbyOf(env, channel.lobby) || {}).company || null,
+  ...(isIndividual(await withAudience(env, channel)) ? { audience: 'individual' } : {}),
 });
 
 /**
@@ -631,10 +694,15 @@ async function messageEvent(env, channel, author, m, files = null) {
  * without one the first message of a new thread. A reply to a reply goes to its thread.
  * `files`: the ids of the files uploaded for it (src/portal/files.js); with files, it needs no
  * text. `{ ok, id, root }`, or `{ error, status }`.
+ *
+ * In an individual channel a customer replies only in a thread they are in: `people`, the
+ * account ids that are the author (themselves, by default), is who that may be.
  */
 export async function writeMessage(env, channel, author, {
-  root, text, files, beforeWrite,
+  root, text, files, beforeWrite, people,
 }, now = Date.now()) {
+  // eslint-disable-next-line no-param-reassign
+  channel = await withAudience(env, channel);
   const body = String(text ?? '').replace(/\r\n?/g, '\n').trim();
   const taken = await takeFiles(env, channel, author, files);
   if (taken.error) {
@@ -645,15 +713,17 @@ export async function writeMessage(env, channel, author, {
   }
   let thread = null;
   if (root) {
-    const parent = await env.DB.prepare(`SELECT root, deleted_at FROM messages
-      WHERE id = ? AND channel = ?`).bind(String(root), channel.id).first();
+    const scope = author.kind === 'customer' ? scopeOf(channel, people || [author.id]) : null;
+    const parent = await env.DB.prepare(`SELECT p.root, p.deleted_at FROM messages p
+      WHERE p.id = ?1 AND p.channel = ?2 AND ${theirs('p.root', 3)}`)
+      .bind(String(root), channel.id, scope).first();
     if (!parent) {
       return { error: 'no such thread in this channel', status: 404 };
     }
     thread = parent.root;
   }
   const id = messageId(now);
-  const mentions = mentionsIn(body, await channelPeople(env, channel))
+  const mentions = mentionsIn(body, await channelPeople(env, channel, { root: thread }))
     .filter((u) => u !== author.id);
   const m = {
     id, root: thread || id, body, at: iso(now), mentions: JSON.stringify(mentions),
@@ -677,6 +747,21 @@ export async function writeMessage(env, channel, author, {
   return { ok: true, id: m.id, root: m.root };
 }
 
+/**
+ * Whether account `user` reads thread `root` of `channel`: Adobe's people and the app every
+ * thread, a customer every thread of a shared channel, and of an individual one theirs (`people`:
+ * the account ids that are them).
+ */
+export async function mayRead(env, channel, root, user, people = null) {
+  const ch = await withAudience(env, channel);
+  if (!isIndividual(ch) || (user && user.kind !== 'customer')) {
+    return true;
+  }
+  return Boolean(await env.DB.prepare(`SELECT 1 FROM thread_members WHERE root = ?
+    AND user IN (SELECT value FROM json_each(?))`)
+    .bind(String(root || ''), JSON.stringify(people || [user.id])).first());
+}
+
 /** A message of `channel` with its author's account, or null. */
 async function messageOf(env, channel, id) {
   const m = await env.DB.prepare('SELECT * FROM messages WHERE id = ? AND channel = ?')
@@ -698,7 +783,8 @@ export async function editMessage(env, channel, user, { id, text }, now = Date.n
   if (found.m.author !== user.id) {
     return { error: 'only its author changes a message', status: 403 };
   }
-  const mentions = mentionsIn(body, await channelPeople(env, channel)).filter((u) => u !== user.id);
+  const mentions = mentionsIn(body, await channelPeople(env, channel, { root: found.m.root }))
+    .filter((u) => u !== user.id);
   const m = {
     ...found.m,
     body,
@@ -764,13 +850,16 @@ export async function setTyping(env, channel, user, root, now = Date.now()) {
  * What `user` polls of a thread while it is on screen: who else is writing in it now (`typing`:
  * names), and a `stamp` that changes with anything a reader would see anew (a message, an
  * edit, a deletion, a reaction), so the page loads the thread again only then. Null for a
- * thread `channel` does not have: a thread's id says nothing to who is not in its channel.
+ * thread `channel` does not have (or, in an individual channel, one that is not theirs): a
+ * thread's id says nothing to who is not in it.
  */
 export async function threadPulse(env, channel, root, user, now = Date.now()) {
   const id = String(root || '');
+  const scope = scopeOf(await withAudience(env, channel), [user.id]);
   const [thread, writing, stamp] = await env.DB.batch([
-    env.DB.prepare('SELECT 1 AS there FROM messages WHERE id = ?1 AND root = ?1 AND channel = ?2')
-      .bind(id, channel.id),
+    // In an individual channel, a thread of theirs only: nobody hears who writes in another's.
+    env.DB.prepare(`SELECT 1 AS there FROM messages WHERE id = ?1 AND root = ?1 AND channel = ?2
+      AND ${theirs('?1', 3)}`).bind(id, channel.id, scope),
     // Of this channel's thread only, whatever the first query said.
     env.DB.prepare(`SELECT u.name FROM typing t JOIN users u ON u.id = t.user
       WHERE t.root = ?1 AND t.user != ?2 AND t.at > ?3
@@ -808,7 +897,7 @@ export async function reactTo(env, channel, user, { id, emoji, removed }, now = 
     return { error: 'not a reaction', status: 400 };
   }
   const found = await messageOf(env, channel, id);
-  if (!found || found.m.deleted_at) {
+  if (!found || found.m.deleted_at || !await mayRead(env, channel, found.m.root, user)) {
     return { error: 'no such message', status: 404 };
   }
   const at = iso(now);
@@ -832,6 +921,88 @@ export async function reactTo(env, channel, user, { id, emoji, removed }, now = 
   return {
     ok: true, id: found.m.id, root: found.m.root, emoji: e, changed: Boolean(meta.changes),
   };
+}
+
+/**
+ * Tells the inbox how `channel` (a row of `channelOf`) is now: its name and, when it is one, that
+ * it is individual. A snapshot, as a lobby's.
+ */
+export async function tellChannel(env, channel, now = Date.now()) {
+  await emit(env, {
+    type: 'channel', domain: channel.lobby, channel: await channelInfo(env, channel),
+  }, new Date(now));
+}
+
+/**
+ * Sets who sees the threads of channel `id` (a lobby's, or an integration mapping's reserved one,
+ * before its first message too): `shared` or `individual`, as `by` (the inbox's `{ email }`)
+ * says. Switching changes no thread: each customer's threads stay theirs, and those they wrote in.
+ * `{ ok, channel: { id, audience, by, at } }`.
+ */
+export async function setAudience(env, { channel: id, audience, by }, now = Date.now()) {
+  const email = mailOf(by && by.email);
+  if (!email) {
+    return { error: 'say who changes it: by { email, name }', status: 400 };
+  }
+  if (!AUDIENCES.includes(audience)) {
+    return { error: `an audience is ${AUDIENCES.join(' or ')}`, status: 400 };
+  }
+  const key = String(id || '');
+  const [row, mapping] = await Promise.all([
+    env.DB.prepare('SELECT * FROM channels WHERE id = ?').bind(key).first(),
+    env.DB.prepare('SELECT channel FROM integration_customers WHERE channel = ?').bind(key).first(),
+  ]);
+  if (!row && !mapping) {
+    return { error: 'no such channel', status: 404 };
+  }
+  const sec = Math.floor(now / 1000);
+  await env.DB.prepare(`INSERT INTO channel_audiences (channel, audience, set_by, set_at)
+      VALUES (?, ?, ?, ?) ON CONFLICT (channel) DO UPDATE SET audience = excluded.audience,
+        set_by = excluded.set_by, set_at = excluded.set_at`)
+    .bind(key, audience, email, sec).run();
+  if (row) {
+    await tellChannel(env, { ...row, audience }, now);
+  }
+  console.log(JSON.stringify({ route: 'portal', audience }));
+  return {
+    ok: true,
+    channel: {
+      id: key, audience, by: email, at: new Date(sec * 1000).toISOString(),
+    },
+  };
+}
+
+/**
+ * Adobe adds `account`, a customer of `channel` (a joined member of its lobby, or an active
+ * member of its integration mapping), to thread `root`: in an individual channel they see it from
+ * then on, and their host's feed says so (`added`, theirs only). Nobody else is told. `{ ok,
+ * added }`.
+ */
+export async function addToThread(env, channel, { root, account, by }, now = Date.now()) {
+  const email = mailOf(by && by.email);
+  if (!email) {
+    return { error: 'say who adds them: by { email, name }', status: 400 };
+  }
+  const thread = await env.DB.prepare(`SELECT id FROM messages WHERE id = ?1 AND root = ?1
+    AND channel = ?2`).bind(String(root || ''), channel.id).first();
+  if (!thread) {
+    return { error: 'no such thread in this channel', status: 404 };
+  }
+  const user = await env.DB.prepare(`SELECT u.id FROM users u WHERE u.id = ?1 AND u.kind = 'customer'
+      AND (EXISTS (SELECT 1 FROM members WHERE lobby = ?2 AND user = u.id AND joined_at IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM integration_members WHERE channel = ?3 AND actor = u.id
+          AND active = 1))`).bind(String(account || ''), channel.lobby, channel.id).first();
+  if (!user) {
+    return { error: 'they are no customer of this channel', status: 404 };
+  }
+  const { meta } = await env.DB.prepare(`INSERT OR IGNORE INTO thread_members (root, user,
+    added_by, at) VALUES (?, ?, ?, ?)`).bind(thread.id, user.id, email, iso(now)).run();
+  if (meta.changes) {
+    await env.DB.prepare(`INSERT INTO integration_changes (channel, root, reason, viewer)
+      SELECT ?1, ?2, 'added', ?3 WHERE EXISTS (SELECT 1 FROM integration_customers
+        WHERE channel = ?1)`).bind(channel.id, thread.id, user.id).run();
+  }
+  return { ok: true, added: Boolean(meta.changes) };
 }
 
 /**

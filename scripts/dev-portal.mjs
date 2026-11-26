@@ -20,6 +20,7 @@
  *   node scripts/dev-portal.mjs --declined   # one that was declined
  *   node scripts/dev-portal.mjs --outsider   # someone of the domain nobody invited
  *   node scripts/dev-portal.mjs --closed     # someone of a domain the portal is not open to
+ *   node scripts/dev-portal.mjs --individual # an individual channel: Dana sees only her threads
  *
  * What runs is the portal itself: its page as src/portal/worker.js puts it together (read
  * from disk on every request, so saving a file under ui/ shows on reload), its API
@@ -270,6 +271,10 @@ async function seed() {
   }, ago(1.5));
 
   await says(dana, 'Can we get a second site for the Benelux market?', 0.2);
+  if (has('individual')) {
+    // Each person sees only their threads: Lee's question about the PDFs is not Dana's.
+    await platform.setChannelAudience(env, { channel: channel.id, audience: 'individual', by: STAFF[0] });
+  }
 }
 
 await seed();

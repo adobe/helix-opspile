@@ -28,7 +28,10 @@ import { listTech, refreshTech, techStale } from './tech.js';
  * The portal's API, for its page (ui/portal.js), behind Cloudflare Access: whoever calls is
  * signed in with their work mail address (`email`, verified by the Worker), and that address
  * decides everything. Their mail domain is their lobby; they read and write its channels
- * once they are in it (its founder, or invited by a member), and nothing of any other.
+ * once they are in it (its founder, or invited by a member), and nothing of any other. In an
+ * individual channel (`audience`, portal migration 0008) they read and write only the threads
+ * they are in, and hear of no colleague's: its list, a thread, its status and who writes there,
+ * its files, reactions, replies and whom one can mention (src/portal/store.js).
  *
  * | Route | |
  * | --- | --- |
@@ -268,7 +271,7 @@ export async function api(request, env, url, { email, waitUntil = () => {} } = {
   // A file of the lobby's channels: the part of it the browser asks for.
   const wanted = /^GET file\/(f[0-9a-z]{16})\/[^/]+$/.exec(route);
   if (wanted) {
-    const file = await fileRow(env, domain, wanted[1]);
+    const file = await fileRow(env, domain, wanted[1], null, user.id);
     return file ? fileResponse(env, file, request.headers.get('range'))
       : json({ error: 'not found' }, 404);
   }
@@ -287,7 +290,7 @@ export async function api(request, env, url, { email, waitUntil = () => {} } = {
       const thread = await threadOf(env, channel, url.searchParams.get('thread'), user);
       return thread ? json({ thread }) : json({ error: 'no such thread' }, 404);
     }
-    case 'GET people': return json({ people: await peopleOf(env, channel) });
+    case 'GET people': return json({ people: await peopleOf(env, channel, user) });
     case 'GET status': {
       // Adobe's side from the inbox, and from here who is writing and whether anything is new.
       // The thread is the channel's before anything is said of it, here or by the inbox.
