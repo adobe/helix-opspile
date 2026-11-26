@@ -38,7 +38,9 @@ import {
  * from its parent's domain), or, for any but a partner's first domain, the domain most of a
  * customer's people write from. A partner's first domain may be
  * that of a customer whose channels only its people post in, which is how partners work. A domain
- * two partners have is the one's with more of its people there. Each is named by its org's
+ * two partners have is the one's with more of its people there, and one that names one other
+ * partner org (of no posts, too) and not the partner whose people write from it is the one's it
+ * names: a bought agency's people write from its new parent's domain. Each is named by its org's
  * display name.
  *
  * They are found from every message there is (a few hundred thousand rows), so an isolate keeps
@@ -99,11 +101,14 @@ export function iconDomain(env, icon) {
 /**
  * The partner domains the threads show, from `rows` (`[{ org, type, name, domain, people,
  * threads }]`, a row per org and mail domain of its people outside Adobe, and `icons`, `[{ slug,
- * icon }]` of the customers): `{ found: [{ domain,
+ * icon }]` of the customers, and `partners`, `[{ slug, name }]` of every partner org, those of no
+ * posts too): `{ found: [{ domain,
  * org, name, people, threads }], left: [{ domain, org, name, people, threads, customer }] }`,
- * `left` those a partner's people write from that are a customer's own (`customer` is which).
+ * `left` those a partner's people write from that are a customer's own (`customer` is which). A
+ * domain that names one other partner and not the one whose people write from it is the one's it
+ * names: an agency's people still write from the parent's domain after it was bought.
  */
-export function derive(env, rows, icons = []) {
+export function derive(env, rows, icons = [], partners = []) {
   const by = new Map();
   for (const r of rows || []) {
     const domain = String(r.domain || '').toLowerCase();
@@ -140,6 +145,22 @@ export function derive(env, rows, icons = []) {
   }
   const found = new Map();
   const left = new Map();
+  // Every partner org, those whose people posted nothing too (their channels hide the members'
+  // mail, or they were only just made one).
+  const known = new Map((partners || []).map((p) => [p.slug, p]));
+  for (const o of orgs.filter((x) => x.type === 'partner')) {
+    if (!known.has(o.slug)) {
+      known.set(o.slug, o);
+    }
+  }
+  // The one other partner a domain names, when it does not name `o`.
+  const namedOther = (domain, o) => {
+    if (namesOrg(domain, o)) {
+      return null;
+    }
+    const others = [...known.values()].filter((p) => p.slug !== o.slug && namesOrg(domain, p));
+    return others.length === 1 ? others[0] : null;
+  };
   for (const o of orgs.filter((x) => x.type === 'partner')) {
     const most = Math.max(...o.domains.map((d) => d.people));
     const named = (d) => Number(namesOrg(d.domain, o));
@@ -152,10 +173,11 @@ export function derive(env, rows, icons = []) {
         const own = (postsIn.get(d.domain) || []).find((c) => namesOrg(d.domain, c))
           || pictured.get(registrable(d.domain))
           || (!same && (tops.get(d.domain) || [])[0]);
+        const other = !own && namedOther(d.domain, o);
         const entry = {
           domain: d.domain,
-          org: o.slug,
-          name: o.name || o.slug,
+          org: other ? other.slug : o.slug,
+          name: (other || o).name || (other || o).slug,
           people: d.people,
           threads: d.threads,
         };
@@ -200,6 +222,13 @@ async function loadIcons(env) {
   return results || [];
 }
 
+/** Every partner org, not merged, as `derive` reads them: those of no posts too. */
+async function loadPartners(env) {
+  const { results } = await env.DB.prepare(`SELECT slug, name FROM orgs WHERE type = 'partner'
+      AND slug NOT IN (SELECT slug FROM org_merges)`).all();
+  return results || [];
+}
+
 const NONE = Object.freeze({ found: [], left: [], at: null });
 /** How long a request waits for a look; one that takes longer is looked for anew by the next. */
 const LOOK_MS = 20 * 1000;
@@ -234,8 +263,9 @@ export async function derivedDomains(env, { fresh = false } = {}) {
   }
   if (fresh || !k.look || Date.now() - k.look.started >= LOOK_MS) {
     const next = { started: Date.now() };
-    next.value = Promise.all([loadRows(env), loadIcons(env)]).then(([rows, icons]) => {
-      const done = { ...derive(env, rows, icons), at: new Date().toISOString() };
+    next.value = Promise.all([loadRows(env), loadIcons(env), loadPartners(env)]).then(([rows,
+      icons, partners]) => {
+      const done = { ...derive(env, rows, icons, partners), at: new Date().toISOString() };
       k.done = done;
       k.at = Date.now();
       k.retry = 0;

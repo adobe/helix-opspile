@@ -122,6 +122,25 @@ describe('derive', () => {
     assert.deepEqual(found.map((f) => [f.domain, f.org]), [['agency.example', 'agency'], ['bigco.example', 'bigco']]);
   });
 
+  it('gives a domain that names another partner, and not its people\'s, to the one it names', () => {
+    const rows = [
+      // A bought agency's people write from the parent's domain; the parent's people post nothing.
+      row('studio', 'partner', 'holdcoagency.example', 2, 4),
+      row('studio', 'partner', 'studio.example', 1),
+    ];
+    const { found } = derive(ENV, rows, [], [{ slug: 'holdco', name: 'HoldCo' }, { slug: 'studio', name: null }]);
+    assert.deepEqual(found.map((f) => [f.domain, f.org, f.name]), [
+      ['holdcoagency.example', 'holdco', 'HoldCo'], ['studio.example', 'studio', 'studio'],
+    ]);
+    // Without the other partner, its people's domain is the studio's.
+    assert.deepEqual(derive(ENV, rows).found.map((f) => f.org), ['studio', 'studio']);
+    // One that names both partners, or two others, stays the one's whose people write from it.
+    const both = derive(ENV, [row('studio', 'partner', 'studioholdco.example', 2)], [], [{ slug: 'holdco' }]);
+    assert.deepEqual(both.found.map((f) => f.org), ['studio']);
+    const two = derive(ENV, rows, [], [{ slug: 'holdco' }, { slug: 'holdcoag' }]);
+    assert.equal(two.found.find((f) => f.domain === 'holdcoagency.example').org, 'studio');
+  });
+
   it('tells which names a domain has', () => {
     assert.ok(namesOrg('mail.acme.co.uk', { slug: 'acme' }));
     assert.ok(namesOrg('acmeus.example', { slug: 'acme' }));
@@ -204,6 +223,21 @@ describe('partnerDomains', () => {
     assert.equal(cards['slack:E1:U1'].relation, 'partner');
     assert.equal(cards['slack:E1:U1'].partner, 'The Agency');
     assert.equal(cards['slack:E1:U3'].relation, 'customer');
+  });
+
+  it('gives a domain to the partner it names, one of no posts, and not to one merged', async () => {
+    const e = world();
+    // The agency was bought by a holding whose people post nowhere the inbox sees.
+    e.DB.sqlite.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES
+      ('agencyholding', 'Agency Holding', 'partner', '2026-10-01')`);
+    e.DB.sqlite.exec(`UPDATE orgs SET slug = 'studio', name = 'Studio' WHERE slug = 'agency';
+      UPDATE threads SET org = 'studio' WHERE org = 'agency'`);
+    assert.deepEqual([...await partnerDomains(e)], [['agency.example', { name: 'Agency Holding', org: 'agencyholding' }]]);
+    // Merged into another, it is no partner of its own.
+    e.DB.sqlite.exec(`INSERT INTO org_merges (slug, into_slug, merged_by, merged_at)
+      VALUES ('agencyholding', 'other', 'ada', '2026-10-21')`);
+    forgetPartnerDomains();
+    assert.deepEqual([...await partnerDomains(e)], [['agency.example', { name: 'Studio', org: 'studio' }]]);
   });
 
   it('keeps what it found for the isolate, until it is forgotten', async () => {

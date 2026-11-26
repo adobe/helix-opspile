@@ -3878,8 +3878,12 @@ post in the threads of each org of type `partner` (`derive`):
   of its URL, `iconDomain`), since a subsidiary's people may write from its parent's domain; and,
   for any but a partner's first domain, one most of a customer's people write from. A partner's first domain may well be the domain most people in a customer's channel write
   from, where only the partner's people post: that is how partners work, so it stays;
-- a domain two partners have is the one's with more of its people there, and each is named by its
-  org's display name.
+- a domain two partners have is the one's with more of its people there;
+- a domain that names one other partner org and not the partner whose people write from it is the
+  one's it names, though that one's people post nowhere the inbox reads their mail (Slack Connect
+  hides it): an agency that was bought still has its own org, its channels and its people, who
+  write from the parent's domain, and the parent's customers are not the agency's;
+- each is named by its org's display name.
 
 Guessing from "not staff and not the customer's domain" would call a customer's second domain a
 partner; this starts from the orgs said to be partners instead, and leaves out what names a
