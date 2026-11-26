@@ -271,9 +271,10 @@ still reads (every member's key).
 **Thread link.** candidate → asked (`p`) → shown or not; dismissed ⇄ shown (`thread_links`,
 migration 0111). A pair of entries (`a` < `b`), written by the link job of either: a candidate's row
 with its `score` (the highest seen), Clef asked once (`checked_at`) for at most `RELATED_ASK` new
-ones a job, a failed ask leaving `p` null for the next. A row is never deleted: one no longer found
-(older than `RELATED_DAYS`, its vector changed) keeps its verdict. Shown is not dismissed and `p`
-at least `RELATED_P`, or `p` null and `score` at least `RELATED_SURE`. A link that becomes shown
+ones a job, a failed ask leaving `p` null for the next; `owner` set once both threads' facts name
+the same rare owner, and kept. A row is never deleted: one no longer found (older than
+`RELATED_DAYS`, its vector changed) keeps its verdict. Shown is not dismissed and `owner`, or `p` at
+least `RELATED_P`, or `p` null and `score` at least `RELATED_SURE`. A link that becomes shown
 tells the agents of both threads once (`relatedUpdate`); a dismissed one is not asked about again
 and tells nobody.
 

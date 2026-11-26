@@ -1981,7 +1981,7 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
     },
   ];
   const threadLinks = [{
-    a: agencyMove, b: preview503, score: 0.87, p: 0.81,
+    a: agencyMove, b: preview503, score: 0.87, p: 0.81, via: ['owner', 'clef'],
   }];
 
   return {

@@ -3942,7 +3942,8 @@ function linkedMenu(data, key) {
   };
   const relRow = (r) => {
     const where = [r.org_name || r.org, r.channel_name ? `#${r.channel_name}` : platform(r)].filter(Boolean).join(' · ');
-    const sure = r.p != null ? `Clef ${pct(r.p)}` : `${pct(r.score)} alike`;
+    const sure = [(r.via || []).includes('owner') && 'same repository owner',
+      r.p != null ? `Clef ${pct(r.p)}` : `${pct(r.score)} alike`].filter(Boolean).join(', ');
     const when = r.last_at ? ago(r.last_at) : '';
     const meta = `<small>${esc([where, when, sure].filter(Boolean).join(' · '))}</small>`;
     const no = 'Not the same issue';

@@ -917,6 +917,7 @@ function relatedOf(keys) {
         thread: r.thread,
         score: l.score,
         p: l.p,
+        via: l.via || [],
         org: r.org,
         org_name: ORG_NAMES[r.org] || null,
         org_icon: { agency: 'agency.example', acme: 'acme.example' }[r.org] || null,

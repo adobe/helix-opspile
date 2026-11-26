@@ -50,7 +50,7 @@ const keysOf = (t) => (t.threads && t.threads.length ? t.threads : [t.key]).filt
 /** A linked thread the agent may read, in a line. */
 function line(r) {
   const where = `${r.org_name || r.org}'s ${platformName(r.source)} channel #${r.channel_name || 'unknown'}`;
-  const sure = r.p != null ? `, Clef ${pct(r.p)}` : '';
+  const sure = `${(r.via || []).includes('owner') ? ', both name the same repository owner' : ''}${r.p != null ? `, Clef ${pct(r.p)}` : ''}`;
   return `- ${r.thread} | ${one(r.title) || '(untitled)'} | ${where} | last ${r.last_at || 'unknown'}`
     + ` | similarity ${r.score}${sure}${r.permalink ? ` | ${r.permalink}` : ''}`;
 }

@@ -372,7 +372,9 @@ two. A minute after each labelling of a thread (the normalizer queues `{ link: t
   the channel is a partner's; its answer stands for the text's (it reads the text), and the facts
   and the channel's name stand beside it: `p` = 1 − Π(1 − pᵢ) (`aboutOf`). A customer of `p` 0.5
   or more (`ABOUT_MIN`) is kept, with `p` and `via` (what said so: `facts`, `channel`, `text`,
-  `clef`);
+  `clef`). Where Clef is all that says so, its answer must also beat its answer for every other
+  customer by 0.25 (`CLEF_MARGIN`): a thread about several customers, or none, gets close answers
+  for each;
 - **the partners in a customer's thread** (role `partner`, `p` 1, `via` `posters`): the partner
   orgs whose people posted in it, by their mail domain (`partnerDomains`, "Partner domains");
 - **possibly the same issue** (`thread_links`): the threads of the linked orgs' channels active
@@ -380,12 +382,17 @@ two. A minute after each labelling of a thread (the normalizer queues `{ link: t
   are at least 0.75 alike (`RELATED_MIN`, cosine), by inbox entry. The linked orgs are, for a
   partner's thread, the customers it is about, else every customer the partner works for; for a
   customer's, its partners and those whose people post in it. A customer's thread leaves out a
-  partner's thread about another customer. Clef is asked about three new candidates a job
-  (`RELATED_ASK`), shown both threads (their channels, titles, facts, first and latest
-  messages): "are A and B possibly about the same issue … seen from the partner's side and the
-  customer's?"; a link is shown where it said 0.5 or more (`RELATED_P`), or, without Clef, where
-  the vectors are 0.86 alike (`RELATED_SURE`). A link is kept once found, with its score, and not
-  asked about again.
+  partner's thread about another customer. The query asks for all the metadata: an indexed string
+  comes back cut to 64 bytes, and a Teams thread's key is longer. The scores are Vectorize's
+  approximate ones, as the search's. Clef is asked about three new candidates a job
+  (`RELATED_ASK`), one question a call, shown both threads (their channels, titles, facts, and the
+  first and three latest messages people wrote, of 20 letters or more beside links): "would
+  someone working thread A want to know about thread B, because both deal with the same problem
+  or the same change?" A link is shown where both threads' facts name the same GitHub or aem.live
+  owner that the threads of at most two orgs that are not partners name (`owner`: the customer's
+  own repositories, a repository move), where Clef said 0.5 or more (`RELATED_P`), or, without
+  Clef, where the vectors are 0.86 alike (`RELATED_SURE`); `via` says which. A link is kept once
+  found, with its score, and not asked about again.
 
 The inbox shows them: a row's tag, "About ACME" on a partner's thread, "With Agency Co" on a
 customer's (`linked` on `GET /api/inbox`'s entries), and in the open thread a dropdown of its

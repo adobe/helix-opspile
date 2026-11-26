@@ -206,6 +206,16 @@ describe('which customer a partner\'s thread is about', () => {
     assert.ok(out[0].p > 0.9 && out[0].p < 1);
     assert.ok(out.every((a) => a.p >= ABOUT_MIN));
   });
+
+  it('takes Clef alone only where it says much more of one customer than of the others', () => {
+    const none = { facts: 0, channel: 0, text: 0 };
+    const scores = new Map([['globex', none], ['initech', none], ['hooli', none]]);
+    assert.deepEqual(aboutOf(scores, new Map([['globex', 0.52], ['initech', 0.45], ['hooli', 0.37]])), []);
+    assert.deepEqual(aboutOf(scores, new Map([['globex', 0.6], ['initech', 0.3]])).map((a) => a.org), ['globex']);
+    // A fact beside it needs no margin.
+    const facts = new Map([['globex', { ...none, facts: 0.75 }], ['initech', none]]);
+    assert.deepEqual(aboutOf(facts, new Map([['globex', 0.5], ['initech', 0.45]])).map((a) => a.org), ['globex']);
+  });
 });
 
 describe('the link job', () => {
@@ -248,6 +258,22 @@ describe('the link job', () => {
       .map((x) => ({ ...x })), [{
       org: 'agency', role: 'partner', p: 1, via: 'posters',
     }]);
+  });
+
+  it('shows a link whose threads name the same owner few customers have, whatever Clef says', () => {
+    assert.equal(shownLink({ score: 0.8, p: 0.1, owner: 1 }), true);
+    assert.equal(shownLink({ score: 0.8, p: 0.1, owner: 0 }), false);
+    assert.equal(shownLink({
+      score: 0.8, p: 0.1, owner: 1, dismissed_at: AT,
+    }), false);
+  });
+
+  it('marks a link whose two threads name the customer\'s own site owner', async () => {
+    const e = env({ ai: false });
+    await linkThread(e, P1);
+    const [link] = e.DB.sqlite.prepare('SELECT owner FROM thread_links').all();
+    assert.equal(link.owner, 1);
+    assert.ok((await entryLinks(e, [P1], async () => true)).related[0].via.includes('owner'));
   });
 
   it('keeps a link without Clef only where the vectors are alike enough', async () => {

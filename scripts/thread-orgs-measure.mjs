@@ -103,6 +103,10 @@ const cfJson = async (args) => JSON.parse((await run('cf', [...profile, ...args]
   encoding: 'utf8', maxBuffer: 1024 * 1024 * 64,
 })).stdout);
 const CHANNELS = {
+  // src/filecache.js keeps a snapshot of a large folder: refused here, nothing is written.
+  async put() {
+    return null;
+  },
   async list({ prefix, cursor }) {
     const objects = await cfJson(['r2', 'objects', 'list', '--bucket-name', bucket, '--prefix', prefix,
       ...(cursor ? ['--cursor', cursor] : [])]);

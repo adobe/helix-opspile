@@ -23,13 +23,16 @@ CREATE INDEX thread_orgs_org ON thread_orgs(org, role);
 
 -- "Possibly the same issue": two inbox entries in the channels of linked orgs (a partner and a
 -- customer it works for), `a` < `b`, whose thread vectors are alike (`score`, cosine), with
--- Clef's probability that they are about the same issue (`p`, null where it was not asked).
+-- Clef's probability that they are about the same issue (`p`, null where it was not asked), and
+-- whether the facts of both name the same GitHub or aem.live owner, one only a few orgs' threads
+-- name (`owner`, 1).
 -- Kept once found; dismissed by a person, never shown again until it is undone.
 CREATE TABLE thread_links (
   a TEXT NOT NULL,
   b TEXT NOT NULL,
   score REAL NOT NULL,
   p REAL,
+  owner INTEGER NOT NULL DEFAULT 0,
   found_at TEXT NOT NULL,
   checked_at TEXT,
   dismissed_by TEXT,

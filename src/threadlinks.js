@@ -58,6 +58,11 @@ export const FACT_HOST_NAMED = 0.7;
 export const CHANNEL_NAMED = 0.8;
 export const TITLE_NAMED = 0.7;
 export const TEXT_NAMED = 0.6;
+/**
+ * How much more Clef must say of a customer than of any other, where nothing else says the
+ * thread is about it (measured on production: the one wrong answer of twenty had 0.07).
+ */
+export const CLEF_MARGIN = 0.25;
 /** The customers Clef is asked about, at most, for one thread. */
 export const ASK_CUSTOMERS = 12;
 /** The days a related thread was active in. */
@@ -74,7 +79,10 @@ const RELATED_K = 50;
 const ASK_TIMEOUT_MS = 10000;
 const MAX_LINKED = 100;
 const SHOWN_FACTS = 8;
-const EXCERPT = 700;
+const EXCERPT = 600;
+/** Of each thread Clef is shown its first and latest messages, this many, of this many letters. */
+const SHOWN_MESSAGES = 4;
+const MIN_SAID = 20;
 const OWNERS_MS = 10 * 60 * 1000;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const URL_FIELDS = new Set(['url', 'affected_url']);
@@ -225,6 +233,8 @@ export function aboutScores({
  * (`clef`: `Map<slug, p>`, for those it was asked about): `[{ org, p, via }]`, the likeliest first,
  * those of ABOUT_MIN or more. Clef reads the text, so where it answered its word stands for the
  * text's; the facts and the channel's name stand beside it. `p` is 1 − Π(1 − pᵢ) of those.
+ * Where Clef is all that says so, its answer must beat its answer for every other customer by
+ * CLEF_MARGIN: a thread about several of them, or none, gets close answers for each.
  */
 export function aboutOf(scores, clef = new Map()) {
   const out = [];
@@ -235,7 +245,10 @@ export function aboutOf(scores, clef = new Map()) {
       ['facts', s.facts], ['channel', s.channel], [asked ? 'clef' : 'text', said],
     ].filter(([, p]) => p > 0);
     const p = 1 - parts.reduce((q, [, x]) => q * (1 - x), 1);
-    if (p >= ABOUT_MIN) {
+    const others = [...clef].filter(([k]) => k !== org).map(([, x]) => x);
+    const alone = asked && !s.facts && !s.channel;
+    const clear = !alone || said - Math.max(0, ...others) >= CLEF_MARGIN;
+    if (p >= ABOUT_MIN && clear) {
       // What said so: Clef only where it said yes.
       const via = parts.filter(([k, x]) => k !== 'clef' || x >= ABOUT_MIN).map(([k]) => k);
       out.push({ org, p: Math.round(p * 1000) / 1000, via: via.join(',') || 'clef' });
@@ -437,8 +450,10 @@ export async function similarIn(env, vector, orgs, {
   const filters = inParts(orgs, (part) => ({
     type: 'thread', org: part.length === 1 ? part[0] : { $in: part },
   }));
+  // All the metadata: an indexed string comes back cut to its first 64 bytes, and a Teams
+  // thread's key is longer. The scores are Vectorize's approximate ones, as the search's.
   const found = await Promise.all(filters.map((filter) => env.CONTENT.query(vector, {
-    topK: RELATED_K, filter, returnMetadata: 'indexed',
+    topK: RELATED_K, filter, returnMetadata: 'all',
   })));
   const matches = found.flatMap((f) => (f && f.matches) || [])
     .filter((m) => m.metadata && m.metadata.thread && m.score >= min);
@@ -495,35 +510,63 @@ async function describeEntry(env, letter, key) {
     return null;
   }
   const [facts, messages] = await Promise.all([
-    rows(env, `SELECT field, value FROM facts WHERE thread = ? AND field != 'problem'
-      ORDER BY field LIMIT ?`, key, SHOWN_FACTS),
+    rows(env, `SELECT field, value FROM facts WHERE thread = ? AND field IN ('site', 'repo', 'url',
+      'affected_url', 'error', 'http_status', 'admin_api', 'ticket') ORDER BY field LIMIT ?`, key, SHOWN_FACTS),
     threadMessages(env, t),
   ]);
-  const live = messages.filter((m) => !m.deletedAt && m.author && m.author.kind !== 'system');
-  const first = live[0] ? String(live[0].body || '').slice(0, EXCERPT) : '';
-  const last = live.length > 1 ? String(live[live.length - 1].body || '').slice(0, EXCERPT) : '';
+  // What people wrote: not the bots' and the platform's notices, nor a bare link or an image.
+  const said = messages.filter((m) => !m.deletedAt && m.author && m.author.kind === 'person'
+    && String(m.body || '').replace(/!?\[[^\]]*\]\([^)]*\)|https?:\S+/g, '').trim().length >= MIN_SAID);
+  const shown = said.length > SHOWN_MESSAGES
+    ? [said[0], ...said.slice(-(SHOWN_MESSAGES - 1))] : said;
   const who = t.org_type === 'partner' ? 'a partner' : 'a customer';
   return [
     `Thread ${letter}, in a channel of ${t.org_name || t.org} (${who}) on ${platformName(t.source)},`
       + ` #${t.channel_name || t.channel_id}: ${t.shown_title || '(no title)'}`,
     facts.length ? `Facts: ${facts.map((f) => `${f.field} ${f.value}`).join('; ')}` : null,
-    first ? `First message: ${first}` : null,
-    last ? `Latest message: ${last}` : null,
+    ...shown.map((m, i) => `${i ? 'Later' : 'First'} message: ${String(m.body || '').slice(0, EXCERPT)}`),
   ].filter(Boolean).join('\n');
 }
 
-export const SAME_QUESTION = 'Are threads A and B possibly about the same issue, request or piece of'
-  + ' work (the same site, repository, migration, error or change), seen from the partner\'s side'
-  + ' and the customer\'s?';
+/**
+ * Whether the facts of entries `a` and `b` (their keys) name the same GitHub or aem.live owner
+ * that the threads of at most OWNER_SPREAD orgs that are not partners name: their site, their
+ * repository. Adobe's own and demo owners are in many, and say nothing.
+ */
+async function sharedOwner(env, a, b) {
+  const [fa, fb, owners] = await Promise.all([
+    rows(env, 'SELECT field, value FROM facts WHERE thread IN (SELECT value FROM json_each(?))', JSON.stringify(a)),
+    rows(env, 'SELECT field, value FROM facts WHERE thread IN (SELECT value FROM json_each(?))', JSON.stringify(b)),
+    ownerIndex(env),
+  ]);
+  const of = (facts) => new Set(facts.map((f) => ownerOf(f.field, f.value)).filter(Boolean));
+  const ob = of(fb);
+  return [...of(fa)].some((o) => ob.has(o) && owners.has(o) && owners.get(o).size <= OWNER_SPREAD);
+}
 
-/** Clef's probability that entries `a` and `b` are about the same issue, or null. */
-async function askSame(env, a, b) {
+/**
+ * Asked alone (Clef's answers move with the other questions of a call). Of the wordings tried on
+ * production pairs judged by hand, this one parted the same issue from the merely alike best.
+ */
+export const SAME_QUESTION = 'Would someone working thread A want to know about thread B, because'
+  + ' both deal with the same problem or the same change?';
+
+/** What Clef is shown of entries `a` and `b` (their keys), or null where one is gone. */
+export async function sameState(env, a, b) {
   const [da, db] = await Promise.all([describeEntry(env, 'A', a), describeEntry(env, 'B', b)]);
   if (!da || !db) {
     return null;
   }
-  const state = 'Two threads of an ops inbox at Adobe, in the channels of two organizations that work'
+  return 'Two threads of an ops inbox at Adobe, in the channels of two organizations that work'
     + ` together: a customer and a partner (an agency or system integrator) that works for it.\n\n${da}\n\n${db}`;
+}
+
+/** Clef's probability that entries `a` and `b` are about the same issue, or null. */
+async function askSame(env, a, b) {
+  const state = await sameState(env, a, b);
+  if (!state) {
+    return null;
+  }
   const res = await timed('same', () => env.AI.run(CLEF, {
     model: 'clef', state, questions: { same: { type: 'noul', instructions: SAME_QUESTION } },
   }));
@@ -532,8 +575,16 @@ async function askSame(env, a, b) {
 }
 
 /** Whether a link is shown: Clef said so, or it was not asked and the vectors are that alike. */
-export const shownLink = (l) => !l.dismissed_at
-  && (l.p == null ? l.score >= RELATED_SURE : l.p >= RELATED_P);
+/**
+ * Whether a link is shown: both name the same owner (a site, a repository few customers have)
+ * and the vectors are alike, Clef said so, or it was not asked and the vectors are that alike.
+ */
+export const shownLink = (l) => !l.dismissed_at && (Boolean(l.owner)
+  || (l.p == null ? l.score >= RELATED_SURE : l.p >= RELATED_P));
+
+/** What says a link is shown, for the inbox: `owner`, `clef`, `vector`. */
+export const linkVia = (l) => [l.owner && 'owner', l.p != null && l.p >= RELATED_P && 'clef',
+  l.p == null && l.score >= RELATED_SURE && 'vector'].filter(Boolean);
 
 /**
  * The entry's related threads, found and kept (see `similarIn`): the candidates, each kept with
@@ -571,19 +622,22 @@ async function relate(env, {
       p = await askSame(env, entry.key, f.key);
       checked = p == null ? checked : at;
     }
+    // eslint-disable-next-line no-await-in-loop
+    const owner = was && was.owner ? 1 : Number(await sharedOwner(env, entry.keys, [f.key]));
     const link = {
       a,
       b,
       score: Math.max(f.score, was ? was.score : 0),
       p,
+      owner,
       dismissed_at: was ? was.dismissed_at : null,
     };
-    if (!was || was.score !== link.score || was.p !== p) {
+    if (!was || was.score !== link.score || was.p !== p || Number(was.owner) !== owner) {
       // eslint-disable-next-line no-await-in-loop
-      await env.DB.prepare(`INSERT INTO thread_links (a, b, score, p, found_at, checked_at)
-        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (a, b) DO UPDATE SET score = excluded.score,
-          p = excluded.p, checked_at = excluded.checked_at`)
-        .bind(a, b, link.score, p, at, checked).run();
+      await env.DB.prepare(`INSERT INTO thread_links (a, b, score, p, owner, found_at, checked_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (a, b) DO UPDATE SET score = excluded.score,
+          p = excluded.p, owner = excluded.owner, checked_at = excluded.checked_at`)
+        .bind(a, b, link.score, p, owner, at, checked).run();
     }
     if (shownLink(link) && !(was && shownLink(was))) {
       fresh.push(link);
@@ -714,7 +768,7 @@ export async function entryLinks(env, keys, canSee) {
     linkedOrgsOf(env, keys),
     rows(env, `SELECT * FROM thread_links WHERE dismissed_at IS NULL
       AND (a IN (SELECT value FROM json_each(?1)) OR b IN (SELECT value FROM json_each(?1)))
-      ORDER BY COALESCE(p, score) DESC`, JSON.stringify(keys)),
+      ORDER BY owner DESC, COALESCE(p, score) DESC`, JSON.stringify(keys)),
   ]);
   const mine = new Set(keys);
   const about = [];
@@ -747,6 +801,7 @@ export async function entryLinks(env, keys, canSee) {
         thread: r.thread,
         score: l.score,
         p: l.p,
+        via: linkVia(l),
         org: r.org,
         org_name: r.org_name || null,
         org_icon: r.org_icon || null,
