@@ -94,6 +94,8 @@ main > .page { min-width: 0; min-height: 0; display: flex; flex-direction: colum
 .panel .pickr { display: grid; grid-template-columns: auto minmax(0, 1fr) calc(var(--spectrum-spacing-100) * 8) auto; align-items: center; width: 100%; text-align: left; }
 .panel .pickr .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel .pickr .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* An area's name wraps, rather than push its table past the panel's edge. */
+.panel table.areas .pickr-a { white-space: normal; }
 .meter { display: block; overflow: hidden; }
 .meter .fill { display: block; height: 100%; }
 .meter .w1 { width: 10%; } .meter .w2 { width: 20%; } .meter .w3 { width: 30%; } .meter .w4 { width: 40%; }
