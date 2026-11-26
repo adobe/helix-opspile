@@ -7324,6 +7324,10 @@ function postPending(p) {
   return run;
 }
 
+/**
+ * Posts reply `p`, as you (POST /api/post), or as the bot (`app`, POST /api/post/app: one a page
+ * left behind, retried here), under its key. Resolves to whether it went.
+ */
 async function deliver(p) {
   Object.assign(p, {
     status: 'sending', startedAt: Date.now(), doneAt: null, error: null,
@@ -7336,7 +7340,7 @@ async function deliver(p) {
     // With files, as multipart (src/attach.js).
     // A reply in a thread started here before the inbox had it goes to the platform's thread.
     const where = p.root ? { channel: p.channel, root: p.root } : { thread: p.thread };
-    res = await postWith('/api/post', { ...where, text: p.body, mentions: p.mentions, key: p.key, ...(p.base ? { draft: p.base } : {}) }, p.uploads || []);
+    res = await postWith(p.app ? '/api/post/app' : '/api/post', { ...where, text: p.body, mentions: p.mentions, key: p.key, ...(p.base ? { draft: p.base } : {}) }, p.uploads || []);
     data = res.data || {};
   } catch { /* offline, or the connection dropped */ }
   if (!res?.ok) {
@@ -7366,7 +7370,7 @@ async function deliver(p) {
   });
   saveSending();
   // Not back by then: its bubble says so (or goes, if the platform did not name it).
-  setTimeout(() => showSending(p.thread), SEND_ARRIVE_MS + 500);
+  setTimeout(() => showSending(p.thread), (p.app ? SEND_APP_ARRIVE_MS : SEND_ARRIVE_MS) + 500);
   if (p.base && state.cache.get(p.thread)?.data?.draft?.updated_at === p.base) setCachedDraft(p.thread, null);
   const invited = invitedSaying(data);
   const remind = remindSaying(data);
@@ -7465,11 +7469,11 @@ function discardSend(id) {
 // from the platform, they are discarded, or they expire, so that leaving the page (a reload,
 // closing the tab, a crash) does not lose one: the next page shows it again. One that was on its
 // way then says nobody knows whether it went out, with Retry under the same key (the Worker's
-// `post_keys` answers a retry of a post that went out, src/postkeys.js); one the platform took
-// waits for its message, as here. Files cannot be kept: a reply that had some and did not go out
-// cannot be sent again, and says so. New threads (`started`, the composer) are not kept. Other
-// tabs hear of changes (the `storage` event): what is gone there goes here, and a reply's new
-// state is taken over.
+// `post_keys` answers a retry of a post that went out, src/postkeys.js), as the bot again if it
+// was sent as the bot; one the platform took waits for its message, as here. Files cannot be
+// kept: a reply that had some and did not go out cannot be sent again, and says so. New threads
+// (`started`, the composer) are not kept. Other tabs hear of changes (the `storage` event): what
+// is gone there goes here, and a reply's new state is taken over.
 const SENDING_STORE = 'opspile.sending';
 const SENDING_FIELDS = ['thread', 'body', 'mentions', 'kinds', 'base', 'at', 'id', 'key', 'source', 'status', 'postedId', 'sentAt', 'error', 'asked', 'app', 'author', 'avatar', 'authorKey', 'unnamed', 'filesLost'];
 // The longest a reply that did not go out is kept: after that, nobody is going to send it.
@@ -7483,7 +7487,8 @@ const sendingKept = (p) => !p.started && p.thread !== STARTED && p.thread !== NE
 /** Reply `p` as it is kept: what it shows and how it went, without its files' bytes. */
 function keptReply(p) {
   const o = Object.fromEntries(SENDING_FIELDS.filter((k) => p[k] !== undefined && p[k] !== null).map((k) => [k, p[k]]));
-  o.files = (p.files || []).map((f) => ({ name: f.name, type: f.type }));
+  // A reply as the bot shows none of its files while it goes (sendAsApp), but has them.
+  o.files = (p.files?.length ? p.files : p.uploads || []).map((f) => ({ name: f.name, type: f.type }));
   return o;
 }
 
@@ -7594,7 +7599,9 @@ const appKeys = new Map();
  * the app post; `base` is the version of the shared draft it sends, which it uses up. Its
  * `@Name`s of the people picked in the reply box (or `mentions`: a draft's) are real
  * mentions, as when you send it. `again` sends it under a new key, knowing it may go out twice.
- * It shows at once, as a reply you send does; if it did not go out, its bubble goes again.
+ * It shows at once, as a reply you send does; if it did not go out, its bubble goes again. It is
+ * kept with its key (`saveSending`): restored after the page was left, its Retry goes as the bot
+ * (`deliver`), under that key unless the person decides to send it again.
  * Resolves to `{ invited, missed }` (what `invitedSaying` says, or '', and `missedMention`), or
  * to `{ error, unsure }`;
  * `unsure` when nobody knows whether it went out.
@@ -7608,8 +7615,9 @@ async function sendAsApp(key, text, base, { mentions = mentionsIn(key, text), fi
   sendSeq += 1;
   const kinds = Object.fromEntries(mentions.map((m) => [m.name, mentionKindOf(m.name)]).filter(([, k]) => k));
   // `base`: the draft it sends, whose line is not offered again while it goes (renderDraftBar).
+  // Its key and files (`uploads`) go with it, for a page that restores it (`restoredReply`).
   const p = {
-    thread: key, body: text.trim(), mentions, kinds, base, files: [], at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, source: state.cache.get(key)?.data?.thread?.source || String(key).split(':')[0], status: 'sending', startedAt: Date.now(), doneAt: null, app: true, ...appLook(key),
+    thread: key, body: text.trim(), mentions, kinds, base, files: [], uploads: files, at: new Date().toISOString(), id: `pending-${Date.now()}-${sendSeq}`, key: appKeys.get(once), source: state.cache.get(key)?.data?.thread?.source || String(key).split(':')[0], status: 'sending', startedAt: Date.now(), doneAt: null, app: true, ...appLook(key),
   };
   state.sending.push(p);
   showSending(key);
