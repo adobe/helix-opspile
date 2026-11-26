@@ -298,7 +298,9 @@ added to: the notes, and the decisions taken from the thread of a kind without a
 a kind with a row shows the row's decision, so one taken elsewhere (a manager withdraws it, an
 assignment answers it) shows too. A decision is taken by the request's admin route, as the person,
 only when the request still offers it (the action is looked up in what it offers now), so a request
-decided meanwhile refuses it as the route does (`WHERE status = 'open'`).
+decided meanwhile refuses it as the route does (`WHERE status = 'open'`). Whoever decides has the
+thread read up to the decision (their watermark, written before the room is told), as a note of
+theirs is: it does not come back unread for them.
 
 **Question.** open → answered, passed or unknown; open → expired (`questions.status`, migration
 0104, `src/questions.js`, `src/agent/question.js`). The agent asks (`ask_teammate`), and only the

@@ -1521,6 +1521,29 @@ async function logEntry(env, me, key, type, body) {
   return at;
 }
 
+/**
+ * Request `key`'s thread as it is now that `me` decided it, read by them up to its end: what they
+ * decided is the thread's latest message, and theirs, so it is not unread for them once the room
+ * says it changed (as a note of theirs is not).
+ */
+async function decidedThread(env, me, key) {
+  const thread = await requestThread(env, me, key);
+  const at = thread && thread.thread.last_at;
+  if (!at || !me.id || me.readonly) {
+    return thread;
+  }
+  await advanceWatermark(env.DB, me.id, key, at, 'post');
+  const others = thread.watermarks.filter((w) => w.person !== me.id);
+  const mine = thread.watermarks.find((w) => w.person === me.id);
+  const readAt = mine && mine.read_at > at ? mine.read_at : at;
+  return {
+    ...thread,
+    watermarks: [...others, {
+      ...mine, person: me.id, read_at: readAt, thread: key,
+    }],
+  };
+}
+
 const announce = (env, key, x = null) => {
   const parsed = parseRequestKey(key);
   const teams = x && x.d && x.d.team ? [x.d.team] : [];
@@ -1582,17 +1605,18 @@ export async function resolveRequest(env, me, body) {
       return json({ error: 'read-only while viewing as someone else' }, 403);
     }
     const done = await action.act(env, me, values);
-    await announce(env, key, x);
     if (done.error) {
+      await announce(env, key, x);
       const thread = await requestThread(env, me, key);
       return json({ error: done.error, thread }, done.status || 409);
     }
+    // Read up to the decision before the room says the thread changed.
+    const thread = await decidedThread(env, me, key);
+    await announce(env, key, x);
     console.log(JSON.stringify({
       route: 'requests', resolved: x.kind, action: action.id, by: me.id,
     }));
-    return json({
-      ok: true, done: action.done(done, values), thread: await requestThread(env, me, key),
-    });
+    return json({ ok: true, done: action.done(done, values), thread });
   }
   const call = action.run(values, dryRun || undefined);
   const url = new URL(`https://opspile.internal/api/admin/${call.path}`);
@@ -1619,8 +1643,10 @@ export async function resolveRequest(env, me, body) {
   console.log(JSON.stringify({
     route: 'requests', resolved: x.kind, action: action.id.split(':')[0], by: me.id,
   }));
+  // Read up to the decision before the room says the thread changed.
+  const thread = await decidedThread(env, me, key);
   await announce(env, key);
-  return json({ ok: true, done, thread: await requestThread(env, me, key) });
+  return json({ ok: true, done, thread });
 }
 
 /** Whether `me` may see the requests' threads and decide them: the admin team. */
