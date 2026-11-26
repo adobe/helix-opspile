@@ -66,16 +66,22 @@ const profile = {
     channels: [],
   },
   threadCount: 2,
-  answers: { asked: 2, answered: 2, median: 75 },
+  answers: {
+    asked: 2, answered: 2, median: 75, waits: [30, 120],
+  },
   people: [person(), person({
     id: null, name: 'Pat', partner: 'Agency Co', profile: { path: 'contacts/pat.md', description: null }, areas: [], tech: [],
   })],
   peopleCount: 2,
   partnerCount: 1,
-  staff: [],
-  staffCount: 0,
-  teams: [],
-  teamCount: 0,
+  staff: [{
+    id: 7, name: 'Ada Ops', avatar: null, teams: [{ slug: 'forms', name: 'Forms ops' }, { slug: 'edge', name: 'Edge ops' }], messages: 5,
+  }, {
+    id: null, name: 'Bo', avatar: null, teams: [], messages: 1,
+  }],
+  staffCount: 3,
+  teams: [{ slug: 'edge', name: 'Edge ops', messages: 5 }, { slug: 'forms', name: 'Forms ops', messages: 1 }],
+  teamCount: 2,
   areas: [],
   channels: [],
   channelCount: 0,
@@ -136,6 +142,45 @@ describe('a customer\'s overview, drawn', () => {
   });
 });
 
+describe('a customer\'s numbers, drawn', () => {
+  const html = CustomerView.html(profile, ctx);
+  const tiles = html.slice(html.indexOf('<div class="tv-stats">'), html.indexOf('<div class="cv-activity">'));
+
+  it('shows its people\'s faces, a partner\'s ringed and named', () => {
+    assert.match(tiles, /<div class="tv-k"><b>2<\/b> people posted<\/div><span class="tv-pile"><span class="av ps-av" [^>]*title="Sam &lt;Reyes&gt;">S&lt;<\/span><span class="av ps-av partner" [^>]*title="Pat, of Agency Co">P<\/span><\/span><small><span class="tv-partner-k">1 from Agency Co<\/span><\/small>/);
+  });
+
+  it('weighs who carries the conversation, its weeks as cells and its answers as dots', () => {
+    assert.match(tiles, /<div class="tv-bal" role="img" aria-label="Who wrote them: ACME 43%, Adobe 57%">/);
+    assert.match(tiles, /<span class="them" data-f="0\.4286"><\/span><span class="us" data-f="0\.5714"><\/span>/);
+    assert.deepEqual([...tiles.matchAll(/<rect class="(l\d)"/g)].map((m) => m[1]), ['l2', 'l4']);
+    assert.match(tiles, /<small>2 active in a week, from 1 to 2<\/small>/);
+    // A dot a wait, the median a line between them; the marks under them.
+    assert.equal([...tiles.matchAll(/<circle /g)].length, 2);
+    assert.match(tiles, /<line class="mid"/);
+    assert.match(tiles, /aria-label="Adobe&#39;s first answers: half within 1\.3 h, 50% within an hour, 100% within a day"/);
+    assert.match(tiles, /<span data-at="0\.444">1 h<\/span>/);
+    assert.match(tiles, /<small>typically, in the 2 threads they started<\/small>/);
+  });
+
+  it('puts Adobe\'s people in the team of theirs that works it most, those on none last', () => {
+    assert.match(tiles, /<div class="tv-k"><b>3<\/b> from Adobe, on 2 teams<\/div><ul class="tv-crews"><li data-hue="\d"><span class="tv-pile"><span [^>]*title="Ada Ops">AO<\/span><\/span><a href="\/team\/edge"[^>]*>Edge ops<\/a><\/li><li><span class="tv-pile"><span [^>]*title="Bo">B<\/span><\/span><span class="sub">on no team<\/span><\/li><\/ul><small>and 1 more person who posted less<\/small>/);
+  });
+
+  it('says what it cannot draw', () => {
+    const quiet = CustomerView.html({
+      ...profile,
+      answers: {
+        asked: 0, answered: 0, median: null, waits: [],
+      },
+      staff: [],
+      staffCount: 0,
+    }, ctx);
+    assert.match(quiet, /<div class="tv-k">No first answer to time<\/div><small>no thread they started in these weeks<\/small>/);
+    assert.match(quiet, /<div class="tv-k">Nobody from Adobe posted<\/div>/);
+  });
+});
+
 describe('a vendor\'s overview, drawn', () => {
   const thread = (over) => ({
     thread: 't:1', org: 'cdnco', title: 'Purge <leaves> stale objects', channel: 'cdnco-support', urgency: 'high', kind: 'incident', waiting: 'vendor', third: false, last: '2026-11-24T00:00:00Z', team: 'edge', shared: [], inbox: '/inbox?team=edge&t=t%3A1', ...over,
@@ -179,8 +224,17 @@ describe('a vendor\'s overview, drawn', () => {
 
   it('counts its cases and how soon it answers, the other way round', () => {
     const html = CustomerView.html(vendor, vctx);
-    assert.match(html, /<b>2<\/b><span>open cases<\/span><small>1 waiting on them, 1 on Adobe<\/small>/);
-    assert.match(html, /title="Median time to the vendor&#39;s first answer[^"]*"><b>1\.5 h<\/b><span>first answer<\/span><small>typically; 2 of the 3 cases Adobe opened<\/small>/);
+    // Its open cases as tags, each in the color of who has the next move, and a link to it.
+    assert.match(html, /<div class="tv-k"><b>2<\/b> open cases<\/div><span class="tv-chips"><a href="\/inbox\?team=edge&amp;t=t%3A1" class="tag tv-them" title="Waiting on them: Purge &lt;leaves&gt; stale objects">Purge &lt;leaves&gt; stale objects<\/a><a [^>]*class="tag tv-us"[^>]*>Send logs<\/a><\/span><small>1 waiting on them, 1 on Adobe, 1 in channels of teams you are not on<\/small>/);
+    // Its answers a dot each, in its color, and the one not answered said.
+    assert.match(html, /title="Median time to the vendor&#39;s first answer[^"]*"><div class="tv-k"><b>1\.5 h<\/b> to CDN Co's first answer<\/div><div class="tv-waits them">/);
+    assert.match(html, /<small>typically, in the 3 cases Adobe opened; 1 not answered yet<\/small>/);
+    // Its status page's weeks, the one with a post marked, and its latest post.
+    assert.match(html, /<rect class="off"[^>]*><title>Week of Nov 16: no status post<\/title><\/rect><rect class="on"[^>]*><title>Week of Nov 23: 1 status post<\/title>/);
+    assert.match(html, /<small>the latest [^:]+: Maintenance in FRA<\/small>/);
+    // Its products, then the customers on them.
+    assert.match(html, /<span class="tv-flow"><a href="\/inbox\/topics\?sel=product%3Atech%3Acdnco%2Fcdn" class="ps-chip tech"[^>]*>CDN Co CDN<\/a><span class="tv-to" aria-hidden="true">→<\/span><a href="\/org\/acme" class="tv-icon" title="ACME">/);
+    assert.match(html, /<small>in 4 threads, 1 waiting on a third party<\/small>/);
     assert.match(html, /<h2 id="tvAreas">What the cases are about<\/h2>/);
   });
 

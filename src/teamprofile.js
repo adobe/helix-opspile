@@ -186,7 +186,7 @@ export async function teamNumbers(env, slug, { now = new Date() } = {}) {
     return null;
   }
   const [members, posts, tags, threadWeeks, threadTech, staffWeeks, follows, catalog,
-    concepts, base] = await Promise.all([
+    concepts, base, threadDays] = await Promise.all([
     db.prepare(`SELECT p.id, ${NAME('p.id')} AS name, m.role, ${AVATAR('p.id')} AS avatar,
         ${TITLE('p.id')} AS title
       FROM team_members m JOIN people p ON p.id = m.person WHERE m.team = ?`).bind(slug).all()
@@ -235,6 +235,10 @@ export async function teamNumbers(env, slug, { now = new Date() } = {}) {
       .bind(`kb-team-${slug}`).all().then((r) => r.results || []),
     db.prepare('SELECT repo, entries FROM knowledge_bases WHERE kind = \'team\' AND slug = ?')
       .bind(slug).first(),
+    // How many of the team's threads were active each day (UTC): the overview's days.
+    q(`WITH ${SCOPE} SELECT date(g.at) AS day, COUNT(DISTINCT g.thread) AS n
+      FROM scope JOIN messages g ON g.thread = scope.thread AND g.at >= ?2
+      WHERE g.deleted = 0 AND g.counted = 1 GROUP BY 1`),
   ]);
   const at = new Map(weeks.map((w, i) => [w, i]));
 
@@ -429,10 +433,21 @@ export async function teamNumbers(env, slug, { now = new Date() } = {}) {
       }]);
     }
   }
-  // Everything said in the team's threads, week by week: by Adobe's people, and in how many.
+  // Everything said in the team's threads, week by week: by Adobe's people, and in how many;
+  // and how many were active each day, from the first week's Monday on.
   const activity = {
-    messages: zeros(weeks.length), staff: zeros(weeks.length), threads: zeros(weeks.length),
+    messages: zeros(weeks.length),
+    staff: zeros(weeks.length),
+    threads: zeros(weeks.length),
+    days: zeros(7 * weeks.length),
   };
+  const first = Date.parse(`${weeks[0]}T00:00:00Z`);
+  for (const r of threadDays) {
+    const i = Math.round((Date.parse(`${r.day}T00:00:00Z`) - first) / 86400000);
+    if (i >= 0 && i < activity.days.length) {
+      activity.days[i] = r.n;
+    }
+  }
   for (const r of threadWeeks) {
     const i = at.get(r.week);
     if (i !== undefined) {

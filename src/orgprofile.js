@@ -629,6 +629,8 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
       asked: asked.length,
       answered: waits.length,
       median: median(waits),
+      // Every wait, in whole minutes, shortest first: the overview draws each one (ui/customer.js).
+      waits: waits.map((m) => Math.max(0, Math.round(m))).sort((a, b) => a - b),
     },
     // A vendor's cases, status posts and the customers' threads of its products (src/vendors.js).
     ...(vendor ? { vendor: await vendorNumbers(env, slug, weeks) } : {}),

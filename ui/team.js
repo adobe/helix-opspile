@@ -16,6 +16,9 @@
  * team's last half year, for everyone at Adobe, drawn with ui/overview.js (`Overview`), as a
  * customer's is (ui/customer.js).
  *
+ * - Its numbers, each over a drawing of its own: its people as faces as big as what each said,
+ *   its customers' shares of what was said, who carries the conversation (the customers against
+ *   Adobe), its threads day by day (a contribution graph) and its collaborators by team.
  * - The team's threads, week by week: a chart of what Adobe's people and the customers said, and
  *   how much there is of each part below.
  * - Its people: a card each, with their picture, title and role, how often they post (a line of
@@ -44,18 +47,82 @@ globalThis.TeamView = (() => {
 
   // ---- the parts ----------------------------------------------------------------------------
 
-  function stats(p) {
-    const total = p.activity.messages.reduce((s, v) => s + v, 0);
-    const staff = p.activity.staff.reduce((s, v) => s + v, 0);
-    const threads = p.activity.threads.reduce((s, v) => s + v, 0);
-    const active = p.members.filter((m) => m.messages).length;
+  const { num } = Overview;
+  const sum = (list) => list.reduce((s, v) => s + v, 0);
+  const firstName = (name) => String(name || 'Someone').split(/\s+/)[0];
+  const WEEKDAYS = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'];
+
+  /**
+   * Collaborators by a team of theirs (the first; those on none last), as `Overview.crews` has
+   * them.
+   */
+  function crewsOf(list, ctx) {
+    const groups = new Map();
+    for (const c of list) {
+      const t = c.teams[0] || null;
+      const key = t ? t.slug : '';
+      if (!groups.has(key)) {
+        groups.set(key, {
+          name: t ? t.name : null, href: t ? ctx.teamHref(t.slug) : null, people: [], n: 0,
+        });
+      }
+      const g = groups.get(key);
+      g.people.push({ name: c.name, avatar: c.avatar });
+      g.n += c.messages;
+    }
+    return [...groups.values()].sort((a, b) => Boolean(b.name) - Boolean(a.name) || b.n - a.n);
+  }
+
+  function stats(p, ctx) {
+    const total = sum(p.activity.messages);
+    const staff = sum(p.activity.staff);
+    const posted = p.members.filter((m) => m.messages);
+    const said = sum(p.members.map((m) => m.messages));
+    const top = posted[0];
+    const t = p.activity.threads;
+    // The weekday most threads are active on: the team's busy days.
+    const byDay = [0, 1, 2, 3, 4, 5, 6].map((d) => sum((p.activity.days || []).filter((v, i) => i % 7 === d)));
+    const busiest = byDay.indexOf(Math.max(...byDay));
+    let who = '';
+    if (!p.members.length) who = 'nobody on it yet';
+    else if (posted.length === p.members.length) who = p.members.length === 1 ? 'posted' : 'all posted';
+    else who = `${posted.length} posted`;
+    const shares = p.customers.slice(0, 5).map((c, i) => ({
+      name: ctx.orgName(c.slug, c.name), n: c.messages, href: ctx.orgHref(c.slug), series: `s${i}`,
+    }));
+    const others = sum(p.customers.slice(5).map((c) => c.messages));
+    if (others) shares.push({ name: 'Others', n: others, series: 'other' });
+    const morePeople = p.collaboratorCount - p.collaborators.length;
     return Overview.stats([
-      [p.members.length, p.members.length === 1 ? 'person' : 'people', `${active} posted in the last ${p.weeks.length} weeks`],
-      [p.customerCount, p.customerCount === 1 ? 'customer' : 'customers', ''],
-      [total, total === 1 ? 'message' : 'messages', total ? `${Math.round((100 * staff) / total)}% by Adobe` : ''],
-      [p.threadCount, p.threadCount === 1 ? 'thread' : 'threads', `${Math.round(threads / p.weeks.length)} active in a week`],
-      [p.collaboratorCount, p.collaboratorCount === 1 ? 'collaborator' : 'collaborators', 'from Adobe, not on the team'],
-    ]);
+      {
+        label: `${num(p.members.length)} ${p.members.length === 1 ? 'person' : 'people'}, ${esc(who)}`,
+        pic: p.members.length ? Overview.bubbles(p.members.map((m) => ({
+          name: m.name, avatar: m.avatar, n: m.messages, href: ctx.topicHref(`person:${m.id}`),
+        }))) : '',
+        note: top && posted.length > 1 ? esc(`${firstName(top.name)} posts the most: ${Math.round((100 * top.messages) / Math.max(1, said))}%`) : '',
+      },
+      {
+        label: `${num(p.customerCount)} ${p.customerCount === 1 ? 'customer' : 'customers'}`,
+        pic: shares.length ? Overview.partsBar(shares) : '',
+        note: shares.length ? 'by what was said in the team\'s threads' : 'none in these weeks',
+      },
+      {
+        label: `${num(total)} ${total === 1 ? 'message' : 'messages'}`,
+        pic: total ? Overview.balance(['Customers', total - staff], ['Adobe', staff]) : '',
+        note: total ? '' : 'none in these weeks',
+      },
+      {
+        cls: 'wide',
+        label: `${num(p.threadCount)} ${p.threadCount === 1 ? 'thread' : 'threads'}`,
+        pic: p.activity.days ? Overview.days(p.activity.days, p.weeks) : Overview.strip(t, p.weeks),
+        note: esc(`${Math.round(sum(t) / t.length)} active in a week${byDay[busiest] ? `, the most on ${WEEKDAYS[busiest]}` : ''}`),
+      },
+      {
+        label: `${num(p.collaboratorCount)} ${p.collaboratorCount === 1 ? 'collaborator' : 'collaborators'}`,
+        pic: p.collaborators.length ? Overview.crews(crewsOf(p.collaborators, ctx), { most: 3 }) : '',
+        note: esc(`from Adobe, not on the team${morePeople > 0 ? `; ${morePeople} more posted less` : ''}`),
+      },
+    ], { cls: 'tv-team' });
   }
 
   function person(m, p, ctx) {
@@ -163,7 +230,7 @@ globalThis.TeamView = (() => {
    */
   function html(p, ctx) {
     return `<div class="tv">
-      <section class="tv-sec tv-hero" aria-label="Activity">${stats(p)}${Overview.chart(p, { label: `Messages in ${p.team.name}'s threads` })}</section>
+      <section class="tv-sec tv-hero" aria-label="Activity">${stats(p, ctx)}${Overview.chart(p, { label: `Messages in ${p.team.name}'s threads` })}</section>
       ${people(p, ctx)}
       <div class="tv-two">${customers(p, ctx)}${collaborators(p, ctx)}</div>
       ${tech(p, ctx, 'all')}
@@ -215,10 +282,10 @@ globalThis.TeamView = (() => {
     const open = p.vendors.reduce((s, v) => s + v.cases.open, 0);
     const them = p.vendors.reduce((s, v) => s + v.cases.them, 0);
     const numbers = Overview.stats([
-      [p.vendors.length, p.vendors.length === 1 ? 'vendor' : 'vendors', `${inInbox} in the inbox`],
-      [open, open === 1 ? 'open case' : 'open cases', `${them} waiting on the vendor`],
-      [p.waitingCount, 'waiting on a vendor', ''],
-      [p.oursCount, 'waiting on Adobe', ''],
+      { label: `${num(p.vendors.length)} ${p.vendors.length === 1 ? 'vendor' : 'vendors'}`, note: esc(`${inInbox} in the inbox`) },
+      { label: `${num(open)} open ${open === 1 ? 'case' : 'cases'}`, note: esc(`${them} waiting on the vendor`) },
+      { label: `${num(p.waitingCount)} waiting on a vendor` },
+      { label: `${num(p.oursCount)} waiting on Adobe` },
     ]);
     const list = p.vendors.length ? `<ol class="tv-vendors">${p.vendors.map((v) => vendorRow(v, p, ctx)).join('')}</ol>`
       : '<div class="empty">No vendors yet.</div>';

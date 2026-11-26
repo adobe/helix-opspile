@@ -3796,7 +3796,11 @@ the admin team; its agent's sections follow. The overview is the team's last 26 
 
 - the **team's threads**, its inbox's conversations (filed under it, in the channels shared with
   it, and those that show a technology it follows) with a message in the window, week by week:
-  what Adobe's people said in them and what the customers and partners said, as a chart;
+  what Adobe's people said in them and what the customers and partners said, as a chart; and
+  over it its numbers, each with a drawing of its own (`Overview.stats`, ui/overview.js): its
+  people as faces as big as what each said, its customers' shares, the customers' part against
+  Adobe's, its threads day by day (how many were active each day, `activity.days`, as a
+  contribution graph) and its collaborators by team;
 - its **people**, a card each: their picture and title (their accounts'), role, how often they
   post (anywhere in the inbox, a line of their weeks), and what sets them apart: Clef's areas and
   technologies of their threads, ranked by how much more of a member's messages are in the
@@ -3834,10 +3838,12 @@ channel threads filed under it, from D1:
   down by the focus picked above it: who said it (its people, the partners', Adobe's), which of
   its people, the team a thread is filed under, its likeliest area (Clef's surest), technology,
   or its channel (`breakdowns`; a thread is in one part of each, the biggest seven parts shown and
-  the rest as one); beside it its numbers, and how soon Adobe **answers** a thread its people
+  the rest as one); over it its numbers, and how soon Adobe **answers** a thread its people
   start: the
   median wait from their first message to Adobe's first post, over the threads started in the
-  window (with how many of those have an answer);
+  window (with how many of those have an answer, and every wait: its numbers draw each a dot);
+  its numbers, over the chart, each have a drawing of their own (its people's faces, the part of
+  each side, its weeks as cells, Adobe's people by team), as a team's do;
 - its **people**, a card each: their picture and title, a partner's marked (its mail domain a
   partner's, src/partners.js `partnerDomains`, as the profile cards have it), how often they post (in its threads, a line of their
   weeks), what they ask about (Clef's areas and technologies of their threads, ranked by their
