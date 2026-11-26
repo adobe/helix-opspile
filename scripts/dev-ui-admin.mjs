@@ -58,6 +58,64 @@ import { fakeMcpServers } from '../test/mcp-server.js';
 
 const PREVIEW_TOKEN = 'preview-token';
 
+/** Clef on a customer and a partner, made up: Pied Piper works for ACME (src/orgpartners.js). */
+const DEV_PARTNER_CLEF = {
+  run: async (model, { state }) => ({
+    answers: { works: { type: 'noul', noul: /C: slug acme,/.test(state) ? 0.92 : 0.34 } },
+  }),
+};
+
+/**
+ * Two partners' customers (src/orgpartners.js): Pied Piper's people post in ACME's threads, in one of
+ * Hooli's and are in Wonka's channel, and its threads and ACME's name the site owner `acme-web`;
+ * Raviga was confirmed for Soylent by hand.
+ */
+function seedPartnerPairs(DB) {
+  const db = DB.sqlite;
+  const at = (days) => new Date(Date.now() - days * 86400000).toISOString();
+  db.exec(`INSERT INTO orgs (slug, name, type, icon, updated_at) VALUES
+    ('piedpiper', 'Pied Piper Digital', 'partner', NULL, '2026-10-20T09:00:00Z'),
+    ('raviga', 'Raviga Partners', 'partner', NULL, '2026-10-20T09:00:00Z')`);
+  db.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
+    VALUES ('slack', 'T-FAKE', 'C0PIEDPIPER', 'aem-piedpiper', ?)`).run(at(1));
+  const own = ['Preview of the new header', 'Cutover checklist'].map((title, i) => {
+    const thread = `slack:T-FAKE:C0PIEDPIPER:pp-${i}`;
+    db.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+        channel_name, title, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES (?, 'slack', 'T-FAKE', 'C0PIEDPIPER', ?, 'piedpiper', 'admin', 'channel', 'aem-piedpiper',
+        ?, ?, ?, ?, ?, 1, ?)`)
+      .run(thread, `pp-${i}`, title, `channels/piedpiper/admin/slack-C0PIEDPIPER/pp-${i}/`, at(i + 2), at(i + 1), at(i + 1), at(i + 1));
+    return {
+      thread, source: 'slack', tenant: 'T-FAKE', channel_id: 'C0PIEDPIPER',
+    };
+  });
+  const of = (org, n) => db.prepare('SELECT thread, source, tenant, channel_id FROM threads WHERE org = ? ORDER BY thread LIMIT ?').all(org, n);
+  const people = [['U-PP1', 'Erlich B.', 'erlich@piedpiper.example'], ['U-PP2', 'Dinesh C.', 'dinesh@piedpiper.example'],
+    ['U-PP3', 'Monica H.', 'monica@piedpiper.example']];
+  let n = 0;
+  const post = (t, user) => {
+    n += 1;
+    db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email, fetched_at)
+      VALUES (?, ?, ?, 'person', ?, ?, ?)`).run(t.source, t.tenant, user[0], user[1], user[2], at(1));
+    db.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, deleted, author_key)
+      VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0, ?)`).run(t.source, t.tenant, t.channel_id, `pp-${n}`, t.thread, at(1), `${t.source}:${t.tenant}:${user[0]}`);
+  };
+  own.forEach((t) => people.forEach((u) => post(t, u)));
+  of('acme', 4).forEach((t, i) => post(t, people[i % 2]));
+  of('hooli', 1).forEach((t) => post(t, people[2]));
+  const wonka = of('wonka', 1)[0];
+  if (wonka) {
+    db.prepare(`INSERT OR IGNORE INTO channel_members (source, tenant, channel_id, user_id, email, name)
+      VALUES (?, ?, ?, 'U-PP3', 'monica@piedpiper.example', 'Monica H.')`).run(wonka.source, wonka.tenant, wonka.channel_id);
+  }
+  const acme = of('acme', 1)[0];
+  for (const t of [own[0], acme].filter(Boolean)) {
+    db.prepare('INSERT OR IGNORE INTO facts (thread, source, field, value) VALUES (?, \'rule\', \'site\', \'acme-web/www\')').run(t.thread);
+  }
+  db.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at)
+    VALUES ('soylent', 'raviga', 'priya@example.com', ?)`).run(at(3));
+}
+
 /** Clef on two orgs, made up: one when their names are (src/orgmerge.js). */
 const DEV_CLEF = {
   run: async (model, { state }) => ({
@@ -946,6 +1004,7 @@ export function createAdmin(store, {
     ('opspile', 'opspile', 'internal', NULL, '2026-10-20T09:00:00Z'),
     ('acme-co', 'ACME Corporation', 'customer', 'acme.example', '2026-10-20T09:00:00Z'),
     ('wonkaindustries', 'Wonka Industries Ltd', 'customer', NULL, '2026-10-20T09:00:00Z')`);
+  seedPartnerPairs(DB);
   // Channels Lena (a member of Edge ops) asked the admin team for: one the admin team holds
   // (confirming moves it), one Platform ops holds (confirming shares it), and one declined; and
   // one her thread's agent asked to move for her.
@@ -1447,7 +1506,11 @@ export function createAdmin(store, {
       return Response.json({ icons: devIcons(url.searchParams.get('slug')) });
     }
     // Clef, made up, for the duplicate customers (src/orgmerge.js): two orgs of one name are one.
-    const asked = url.pathname === '/api/admin/org-duplicates' ? { ...env, AI: DEV_CLEF } : env;
+    let asked = url.pathname === '/api/admin/org-duplicates' ? { ...env, AI: DEV_CLEF } : env;
+    // And for the partners (src/orgpartners.js): Pied Piper works for ACME.
+    if (url.pathname === '/api/admin/org-partners') {
+      asked = { ...env, AI: DEV_PARTNER_CLEF };
+    }
     await followed;
     const res = await admin(toRequest(req, url, body), asked, url, me);
     // Re-filing runs right away here.

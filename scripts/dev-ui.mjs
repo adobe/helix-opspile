@@ -112,6 +112,7 @@ import { techInfo } from '../src/techinfo.js';
 import { teamDirectory, teamProfile } from '../src/teamprofile.js';
 import { teamVendors } from '../src/vendors.js';
 import { orgDirectory, orgProfile } from '../src/orgprofile.js';
+import { orgPartnerLinks } from '../src/orgpartners.js';
 import { personCard } from '../src/person.js';
 import { weeksTo } from '../src/trends.js';
 import { latestTopicMap } from '../src/topicmap.js';
@@ -1948,6 +1949,11 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/customers/profile') {
     const { status, ...r } = await orgProfile(adminApi.env, topicsViewer(), url.searchParams.get('org'));
+    return json(res, r, r.error ? status || 400 : 200);
+  }
+  // Its partners, or the customers it works for (src/orgpartners.js).
+  if (url.pathname === '/api/customers/partners') {
+    const { status, ...r } = await orgPartnerLinks(adminApi.env, url.searchParams.get('org'));
     return json(res, r, r.error ? status || 400 : 200);
   }
   // What the Topics page's panel says of a product (src/techinfo.js), over the admin pages' D1:

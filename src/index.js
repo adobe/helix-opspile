@@ -54,6 +54,7 @@ import { syncFollowRules } from './followrules.js';
 import { ensureSubscription } from './subscription.js';
 import { moved } from './moved.js';
 import { classifyChannels } from './suggest.js';
+import { refreshPartners } from './orgpartners.js';
 import { teamsNotify } from './teams.js';
 import { teamsBot } from './teamsbot.js';
 import { sweepVectors } from './vectors.js';
@@ -336,6 +337,10 @@ const handlers = {
     ctx.waitUntil(classifyChannels(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', suggest: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', suggest: 'error', error: e.message }))));
+    // Which customers each partner works for: candidates, Clef on a few (src/orgpartners.js).
+    ctx.waitUntil(refreshPartners(env)
+      .then((r) => console.log(JSON.stringify({ route: 'cron', partners: r })))
+      .catch((e) => console.error(JSON.stringify({ route: 'cron', partners: 'error', error: e.message }))));
     ctx.waitUntil(pruneOauth(env)
       .then((r) => console.log(JSON.stringify({ route: 'cron', oauth: r })))
       .catch((e) => console.error(JSON.stringify({ route: 'cron', oauth: 'error', error: e.message }))));

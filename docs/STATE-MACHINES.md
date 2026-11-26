@@ -226,6 +226,19 @@ so an override shows at once everywhere; deleting one (`DELETE /api/admin/partne
 way back to found, an `excluded` row the way to say no. A domain that stops being found keeps its
 row, which then stands alone.
 
+**Partner pair.** candidate → Clef's verdict → stale → asked again; confirmed or dismissed ⇄
+neither; and gone (`org_partners`, migration 0109, src/orgpartners.js). A candidate's row is written
+by a list load or a cron run (`sync`) with its signals and score; Clef's verdict is kept with the
+`fingerprint` of what it was shown, and asked again once that changes, `ASK_PER_LIST` a load or a
+run; one Clef did not give leaves `p` null, for the next. Confirmed (`confirmed_at`) and dismissed
+(`dismissed_at`) exclude each other: one replaces the other, and `undo` clears only its own. A
+decided pair is not asked about and stays whatever its signals; one nobody decided is deleted by the
+first `sync` that does not find it a candidate (its signals fell under `CANDIDATE`, an org was
+retyped or merged). Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
+dismissed with `p` at least `LIKELY`. A merge copies the merged org's decided rows to the org kept
+(`merged_from`), not over a decision of its own; undoing it deletes the rows of that `merged_from`,
+and the merged org's own rows, kept all along, count again.
+
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status
 = 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.
