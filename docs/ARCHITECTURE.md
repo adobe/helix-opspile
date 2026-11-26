@@ -1697,6 +1697,20 @@ brand or a system of theirs, and a count of the names of one thread; adding one 
 topics with the share of their threads Clef tagged at all, the fewest first on a click: the
 topics Clef rarely tags are what its topic questions miss.
 
+A **product or technology** picked says what the rest of the inbox knows of it, beside its threads
+(`GET /api/topics/tech`, `src/techinfo.js`, read as the viewer may): its catalog entry (what Clef
+is asked, the names it also goes by, its layer, and each team's file of it, a link into that
+knowledge base's editor), or a product's file and whose catalogs its features are in; the
+knowledge bases' entries about it, as the inbox's search finds them (by its name's words and by
+meaning), each a link into its editor; the extraction rules that detect it, each a link to its
+team's rules; the teams that follow it; and the customers whose stack drawing names it. A name no
+catalog has says so. Each picks out the agent to ask about it (`ui/kbchat.js`, as on Teams' and
+Customers' pages, but offered only: its tab, and **Ask the agent** in the panel): the knowledge
+base of a team whose catalog has it, yours first, then those that follow it, then the admin
+team's. Where it lacks a rule or an entry, or the catalog lacks it, a link opens the agent with
+that question in its box. A team, a customer and an area picked have their own knowledge base's
+agent; a topic or a person keeps the one before.
+
 ### Trends
 
 The Topics page also shows how much the channels talk about each part of the map week by week, as

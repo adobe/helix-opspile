@@ -28,7 +28,12 @@
  * A click picks a bubble, and the panel beside the map says what it is: a topic's theme, a
  * group's children, the people, customers, areas and products of its threads, its threads (each
  * a link into the inbox), and how many of them Clef gave a tag at all, which is where Clef's
- * areas miss what the threads are about. Holding a group pops it into its children; holding its
+ * areas miss what the threads are about. A product or technology says what else the inbox knows of
+ * it (GET /api/topics/tech, src/techinfo.js): its catalog entry, the knowledge bases' entries about
+ * it, the extraction rules that detect it, who follows it and the customers whose stack has it,
+ * each a link to where it is changed. What is picked offers its knowledge base's agent beside the
+ * page (ui/kbchat.js, as on Teams' and Customers' pages): a product's is a team's whose catalog has
+ * it. Holding a group pops it into its children; holding its
  * shell or a child folds it back. A double-click shows only a bubble's threads (`only`), and on
  * nothing all of them again. Without a pick the panel has the products missing from the tech
  * stack and the areas. The
@@ -106,6 +111,12 @@ const state = {
   more: false,
   // The node a link picked, whose line is added to the chart once the trends are here (`linked`).
   link: '',
+  // What GET /api/topics/tech says of a product picked (src/techinfo.js), by its query: `{ data }`,
+  // `{ error }`, or `{ loading: true }` while it is asked.
+  tech: new Map(),
+  // The knowledge bases you read (GET /api/kb), for the agent of a team, a customer or an area
+  // picked: asked the first time one is.
+  bases: null,
 };
 
 // ---- the address ------------------------------------------------------------------------
@@ -610,6 +621,249 @@ function areasSection() {
     ${may && !state.editArea ? '<button id="newArea">New area</button>' : ''}`;
 }
 
+// ---- a product: its catalog, knowledge, extraction rules and agent (src/techinfo.js) -----
+
+/** The technologies of product node `n` (its own, or its features'), and its name: the query. */
+function techQuery(n) {
+  if (n.type !== 'product') return null;
+  const own = (x) => (x.key.startsWith('tech:') ? [x.key.slice(5)] : []);
+  const kids = (n.children || []).map((id) => state.graph.all.get(id)).filter(Boolean);
+  const tech = [...new Set([...own(n), ...kids.flatMap(own)])].sort();
+  const q = new URLSearchParams();
+  for (const id of tech) q.append('tech', id);
+  q.set('name', n.label);
+  return { tech, key: q.toString() };
+}
+
+/** What the panel has of product node `n`: asked once (and again after the agent answers). */
+function techOf(n) {
+  const query = techQuery(n);
+  if (!query) return null;
+  const had = state.tech.get(query.key);
+  if (had) return had;
+  const entry = { loading: true };
+  state.tech.set(query.key, entry);
+  fetch(`/api/topics/tech?${query.key}`, { credentials: 'same-origin', redirect: 'manual' })
+    .then(async (res) => {
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `failed (${res.status})`);
+      return body;
+    })
+    .then((data) => Object.assign(entry, { loading: false, data }))
+    .catch((e) => Object.assign(entry, { loading: false, error: e.message }))
+    .then(() => {
+      if (state.tech.get(query.key) !== entry) return;
+      const sel = state.q.sel && state.graph?.all.get(state.q.sel);
+      if (sel && techQuery(sel)?.key === query.key) renderPanel();
+    });
+  return entry;
+}
+
+/** A page of Teams or Customers (ui/admin.js): an overview, or a section of it. */
+function adminHref(kind, slug, extra = {}) {
+  const org = kind === 'org';
+  return `/inbox/admin?${new URLSearchParams({ tab: org ? 'orgs' : 'teams', [org ? 'org' : 'team']: slug, ...extra })}`;
+}
+/** A file of a knowledge base, in its editor. */
+const kbHref = (kind, slug, path) => adminHref(kind, slug, { view: 'kb', path });
+const linkTo = (href, text, title = '') => (href
+  ? `<a href="${esc(href)}"${title ? ` title="${esc(title)}"` : ''}>${esc(text)}</a>` : esc(text));
+
+/** What the agent is asked from the panel: questions about product `name`, and its asks. */
+function productAsks(n, info) {
+  const name = n.label;
+  const ids = (info?.tech || []).map((t) => t.tech);
+  return {
+    examples: {
+      write: [
+        `What does the knowledge base say about ${name}, and what is missing?`,
+        `Read the recent threads about ${name} and add what the knowledge base does not have yet.`,
+        `Which known issues of ${name} come up again and again, and are they written down?`,
+      ],
+      read: [
+        `What does the knowledge base say about ${name}?`,
+        `Which customers use ${name}, and what do they ask about it?`,
+        `What are the most common problems with ${name}, and their fixes?`,
+      ],
+    },
+    rule: `Suggest an extraction rule that detects ${name}${ids.length ? ` (${ids.join(', ')})` : ''} in messages: a link, a hostname, a header or an error that only it has. Try it on its recent threads before you add it.`,
+    entry: `Read the recent threads about ${name} and write what the knowledge base is missing about it: its known issues, how customers set it up, and who knows it.`,
+    catalog: `${name} comes up in threads but no catalog entry names it. Find the threads that name it, and add it to the catalog (products/) as what it is, or its name to the aliases of the entry that covers it.`,
+  };
+}
+
+/** The knowledge base whose agent the panel offers for node `n`, with what it is about. */
+function agentOf(n) {
+  if (!n) return null;
+  if (n.type === 'product') {
+    const t = techOf(n);
+    const a = t?.data?.agents?.[0];
+    return a ? { ...a, about: n.label, examples: productAsks(n, t.data).examples } : null;
+  }
+  if (!state.bases) {
+    loadBases();
+    return null;
+  }
+  const find = (kind, slug) => state.bases.find((b) => b.kind === kind && b.slug === slug);
+  // A team's and a customer's own, by the name the map has.
+  if (['team', 'org'].includes(n.type)) {
+    const b = find(n.type, n.key);
+    return b ? { ...b, name: n.label } : null;
+  }
+  if (n.type === 'tag') {
+    // An area is in the knowledge base of the teams that have its file: yours first.
+    const teams = areaList().find((a) => a.id === n.key)?.teams || [];
+    const mine = new Set((state.me.teams || []).map((t) => t.slug));
+    const slug = [...teams].sort((a, b) => Number(mine.has(b)) - Number(mine.has(a)))
+      .find((t) => find('team', t));
+    const b = slug && find('team', slug);
+    return b ? { ...b, about: `the area ${n.label}` } : null;
+  }
+  return null;
+}
+
+/** The knowledge bases you read (GET /api/kb), once. */
+let basesAsked = false;
+function loadBases() {
+  if (basesAsked) return;
+  basesAsked = true;
+  fetch('/api/kb', { credentials: 'same-origin', redirect: 'manual' })
+    .then((res) => (res.ok ? res.json() : { bases: [] }))
+    .catch(() => ({ bases: [] }))
+    .then((body) => {
+      state.bases = (body.bases || []).map((b) => ({
+        repo: b.repo, kind: b.kind, slug: b.slug, name: b.name, write: Boolean(b.write ?? b.may),
+      }));
+      renderPanel();
+    });
+}
+
+/**
+ * The agent's sidebar (ui/kbchat.js), as the pick has one: the knowledge base of what is picked;
+ * a pick without one (a topic, a person) keeps the one before, and its conversation.
+ */
+function syncAgent(n) {
+  const a = agentOf(n);
+  if (a) KbChat.show(a);
+}
+
+/** Its Ask: the agent's sidebar opened, about it. */
+function askButton(n) {
+  const a = agentOf(n);
+  if (!a) return '';
+  const title = `Talk to ${a.name}'s knowledge-base agent${a.about ? ` about ${a.about}` : ''}: only you see it`;
+  return `<button class="ask" id="askAgent" title="${esc(title)}">
+    <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>Ask the agent</button>`;
+}
+/** A button that opens the agent with `text` in its box. */
+const askFor = (n, text, label) => (agentOf(n)
+  ? `<button class="link askfor" data-ask="${esc(text)}">${esc(label)}</button>` : '');
+
+/** Whose catalog has it: each team (its overview), and its file there (in its editor). */
+function teamsLine(teams, file) {
+  const one = (t) => `${linkTo(adminHref('team', t.team), t.name, `${t.name}'s overview`)}${t.path ? `: ${file(t, t.path, t.path)}` : ''}${t.enabled ? '' : ' (off there)'}`;
+  return `In the catalog of ${teams.map(one).join('; ')}`;
+}
+
+/** What the catalog says of it: what Clef is asked, its names, and the teams' files of it. */
+function catalogSection(n, info) {
+  const leaf = info.tech.length === 1 && !n.children?.length ? info.tech[0] : null;
+  const file = (team, path, text) => {
+    const href = team.readable && path ? kbHref('team', team.team, path) : null;
+    return linkTo(href, text, href ? `Open ${path} in ${team.name}'s knowledge base` : '');
+  };
+  if (leaf) {
+    const names = leaf.aliases.filter((a) => a.toLowerCase() !== leaf.name.toLowerCase());
+    const facts = [
+      leaf.kind && leaf.kind.toLowerCase(),
+      leaf.vendor && leaf.vendor !== leaf.name && `by ${leaf.vendor}`,
+      leaf.product && leaf.product !== leaf.name && `in ${leaf.product}`,
+      leaf.layer && `${leaf.layer} layer`,
+    ].filter(Boolean);
+    return `<section class="tk-cat"><h3>In the catalog</h3>
+      ${leaf.description ? `<p class="theme">Clef is asked whether a thread shows ${esc(leaf.description)}.</p>` : ''}
+      ${names.length ? `<p class="chips facts"><span class="sub">Also called</span>${names.map((a) => `<span class="ps-chip tech">${esc(a)}</span>`).join('')}</p>` : ''}
+      <p class="sub facts">${esc(facts.join(' · '))}</p>
+      <p class="sub facts">${teamsLine(leaf.teams, file)}</p></section>`;
+  }
+  if (!info.tech.length) return '';
+  // A product of features: its file, and whose catalogs its features are in.
+  const teams = new Map();
+  for (const t of info.tech) {
+    for (const x of t.teams) {
+      const had = teams.get(x.team) || { ...x, n: 0 };
+      had.n += 1;
+      teams.set(x.team, had);
+    }
+  }
+  const p = info.product;
+  const pTeam = p && { team: p.team, name: p.teamName, readable: p.readable };
+  return `<section class="tk-cat"><h3>In the catalog <span class="sub">${plural(info.tech.length, 'technology', 'technologies')}</span></h3>
+    ${p?.description && p.description !== p.title ? `<p class="theme">${esc(p.description)}</p>` : ''}
+    ${p ? `<p class="sub facts">${teamsLine([{ ...pTeam, path: p.path, enabled: true }], file)}</p>` : ''}
+    <p class="sub facts">Its features are in the catalog of ${[...teams.values()].sort((a, b) => b.n - a.n)
+    .map((t) => `${linkTo(adminHref('team', t.team), t.name)} <span class="n">${t.n}</span>`).join(', ')}</p></section>`;
+}
+
+/** The knowledge bases' entries about it, as the search finds them. */
+function knowledgeSection(n, info, asks) {
+  const rows = info.knowledge;
+  const head = `<h3>Knowledge base <span class="sub">${rows.length}</span></h3>`;
+  if (!rows.length) {
+    return `<section class="tk-kb">${head}<p class="hint">No entry of the knowledge bases you read is about it yet.
+      ${askFor(n, asks.entry, 'Ask the agent to write what is missing')}</p></section>`;
+  }
+  return `<section class="tk-kb">${head}<ul class="kbhits">${rows.map((k) => `<li>
+      ${linkTo(kbHref(k.kind, k.slug, k.path), k.title || k.path, k.path)}
+      <div class="sub">${esc([k.type, k.kind === 'org' ? `${k.name}, a customer` : k.name].filter(Boolean).join(' · '))}</div>
+      ${k.description ? `<div class="sub desc">${esc(k.description)}</div>` : ''}</li>`).join('')}</ul>
+    <p class="hint">The entries of the knowledge bases you read that are about it, by its name and by what they say, the closest first.</p></section>`;
+}
+
+/** The extraction rules that detect it, each a link to its team's rules. */
+function rulesSection(n, info, asks) {
+  const { rules } = info;
+  const hidden = info.hiddenRules ? `<div class="sub more">and ${plural(info.hiddenRules, 'rule')} of teams whose knowledge base you do not read</div>` : '';
+  const head = `<h3>Extraction rules <span class="sub">${rules.length}</span></h3>`;
+  if (!rules.length) {
+    return `<section class="tk-rules">${head}<p class="hint">No rule detects it in a message: only Clef says which threads are about it.
+      ${info.tech.length ? askFor(n, asks.rule, 'Ask the agent for one') : ''}</p>${hidden}</section>`;
+  }
+  return `<section class="tk-rules">${head}<ul class="rules">${rules.map((r) => `<li${r.enabled ? '' : ' class="off"'}>
+      ${linkTo(adminHref('team', r.team, { view: 'extraction' }), r.name, `${r.teamName}'s extraction rules`)}
+      <span class="sub">${esc(r.teamName)}${r.enabled ? '' : ' · off'}</span>
+      ${r.pattern === null ? '<div class="sub">a script</div>' : `<code title="${esc(`/${r.pattern}/${r.flags}`)}">/${esc(r.pattern)}/${esc(r.flags)}</code>`}</li>`).join('')}</ul>${hidden}
+    <p class="hint">A rule finds it in what was said and tells Clef, from the next labeling of a thread.</p></section>`;
+}
+
+/** Who follows it, and the customers whose stack drawing has it. */
+function whoSection(info) {
+  const { follows, stacks } = info;
+  const teams = follows.teams.map((t) => `<a class="ps-chip" href="${esc(adminHref('team', t.team))}">${esc(t.name)}</a>`);
+  const followed = teams.length || follows.people ? `<section class="tk-who"><h3>Followed by</h3>
+    <p class="chips">${teams.join('')}${follows.people ? `<span class="sub">${teams.length ? 'and ' : ''}${plural(follows.people, 'person', 'people')}</span>` : ''}</p></section>` : '';
+  const drawn = stacks.length ? `<section class="tk-stacks"><h3>In customers' stacks <span class="sub">${stacks.length + info.moreStacks}</span></h3>
+    <p class="chips">${stacks.map((s) => `<a class="ps-chip" href="${esc(adminHref('org', s.org))}" title="${esc(`On ${s.name}'s stack drawing: ${s.parts.map((x) => x.name).join(', ')}`)}">${esc(s.name)}</a>`).join('')}
+      ${info.moreStacks ? `<span class="sub">and ${info.moreStacks} more</span>` : ''}</p>
+    <p class="hint">The customers whose stack drawing names it, whatever their threads are about.</p></section>` : '';
+  return followed + drawn;
+}
+
+/** A product's sections: the catalog, the knowledge bases, the rules, who follows and uses it. */
+function productSections(n) {
+  const t = techOf(n);
+  if (!t) return '';
+  if (t.loading) return '<p class="sub tk-wait">Reading the catalog and the knowledge bases…</p>';
+  if (t.error) return `<p class="hint err">The catalog and the knowledge bases: ${esc(t.error)}</p>`;
+  const info = t.data;
+  const asks = productAsks(n, info);
+  const gap = !info.tech.length ? `<p class="hint gap">No catalog entry names it, so Clef is not asked about it.
+    ${askFor(n, asks.catalog, 'Ask the agent to add it')}</p>` : '';
+  // A rule detects a technology of the catalog: none without one.
+  const rules = info.tech.length || info.rules.length ? rulesSection(n, info, asks) : '';
+  return `${gap}${catalogSection(n, info)}${knowledgeSection(n, info, asks)}${rules}${whoSection(info)}`;
+}
+
 function details(n) {
   const m = map();
   const topic = n.type === 'topic' ? m.topics[Number(n.key)] : null;
@@ -632,7 +886,7 @@ function details(n) {
     ? `<p class="sub facts"><a href="/inbox/admin?${new URLSearchParams({ tab: 'teams', team: teamSlug })}">${esc(n.type === 'team' ? 'The team\'s overview in Teams' : `${teamLabel(teamSlug)}'s overview in Teams`)}</a></p>` : '';
   return `<div class="head"><span class="dot" data-type="${dotType(n)}"></span><div><div class="sub">${esc(n.one)}${parent ? ` in ${esc(parent.label)}` : ''}</div>
       <h2>${esc(n.label)}</h2></div><button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
-    ${followButton(followOf(n), n.label) || foldButton(n) || team ? `<div class="acts">${followButton(followOf(n), n.label)}${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}</div>` : ''}
+    ${followButton(followOf(n), n.label) || foldButton(n) || team || askButton(n) ? `<div class="acts">${followButton(followOf(n), n.label)}${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}${askButton(n)}</div>` : ''}
     ${area && state.editArea && !state.editArea.new && state.editArea.id === area.id ? areaForm() : ''}
     ${area?.what ? `<p class="theme">Clef is asked: is this thread about ${esc(area.what)}?</p>` : ''}
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
@@ -641,7 +895,8 @@ function details(n) {
     ${TrendView.summary(TrendView.moving(trendCtx())?.items.get(n.id))}
 
     ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">Clef gave none of these threads a tag: a topic its questions miss.</p>' : ''}
-    ${childList(n)}
+    ${n.type === 'product' ? '' : childList(n)}
+    ${n.type === 'product' ? `${productSections(n)}${childList(n)}` : ''}
     ${others.map((t) => relatedList(n, t)).join('')}
     ${threadList(n.threads)}`;
 }
@@ -666,6 +921,7 @@ function renderPanel() {
   }
   renderNav();
   panel.innerHTML = n ? details(n) : overview();
+  syncAgent(n);
   // The meters' fill, as wide as its share: a class per tenth (ui/spectrum-topics.css).
   for (const f of panel.querySelectorAll('.fill[data-w]')) f.classList.add(`w${Math.max(1, Math.round(Number(f.dataset.w) / 10))}`);
   panel.scrollTop = same ? top : 0;
@@ -814,6 +1070,15 @@ function render({ refit = false } = {}) {
       <aside class="card panel" id="panel"></aside></div>
       ${state.error ? `<div class="hint err">${esc(state.error)}</div>` : ''}`;
     TrendView.wire(trendCtx);
+    // The chart is as wide as the map: drawn again as that changes, the agent's sidebar opening
+    // or closing beside the page too (not only the window).
+    let sizing = 0;
+    new ResizeObserver(() => {
+      cancelAnimationFrame(sizing);
+      sizing = requestAnimationFrame(() => {
+        if (map()) TrendView.drawChart(trendCtx());
+      });
+    }).observe($('graph'));
   }
   drawGraph({ refit });
   if (state.q.sel && !state.graph.all.has(state.q.sel)) state.q.sel = '';
@@ -957,6 +1222,10 @@ function wire() {
     const target = ev.target.closest('[data-sel]');
     if (target && !target.closest('svg')) pick(target.dataset.sel);
     if (ev.target.closest('#unpick')) pick('');
+    // The agent's sidebar, about what is picked: opened, or with a question in its box.
+    if (ev.target.closest('#askAgent')) KbChat.open();
+    const asking = ev.target.closest('button[data-ask]');
+    if (asking) KbChat.ask(asking.dataset.ask);
     if (ev.target.closest('#unweek')) {
       state.week = null;
       renderPanel();
@@ -1044,6 +1313,15 @@ function wire() {
     return;
   }
   TrendView.setEsc(esc);
+  // The agent of what is picked (ui/kbchat.js): offered, never shown by itself here. What it
+  // answered may have changed what the panel says of a product: asked again.
+  KbChat.init({
+    auto: false,
+    onAnswer: () => {
+      state.tech.clear();
+      renderPanel();
+    },
+  });
   fromUrl();
   toUrl({ push: false });
   wire();

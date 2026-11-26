@@ -62,8 +62,24 @@ main > .page { min-width: 0; min-height: 0; display: flex; flex-direction: colum
 .tip { position: absolute; z-index: 5; pointer-events: none; display: flex; flex-direction: column; }
 .tip[hidden], .graph > .empty[hidden] { display: none; }
 .panel { min-height: 0; overflow: auto; }
+/* The agent of what is picked (ui/kbchat.js, ui/spectrum-kbchat.css): a third column where it
+   fits, as on Teams' and Customers' pages, the sidebar and the page in their own cells; over the
+   page where it does not, its tab on the window's right edge. */
+@media (min-width: 1000px) {
+  main > .sidenav { grid-area: 1 / 1; }
+  main > .page { grid-area: 1 / 2; }
+}
+@media (max-width: 999px) {
+  main > #kbchatTab { position: fixed; top: 50%; right: 0px; transform: translateY(-50%); }
+}
 
 .panel .head { display: flex; align-items: flex-start; }
+/* A product's catalog entry, knowledge, rules and who has it (productSections in ui/topics.js). */
+.panel button.ask { display: inline-flex; align-items: center; }
+.panel button.ask svg { flex: none; }
+.panel .chips { display: flex; flex-wrap: wrap; align-items: center; }
+.panel ul.kbhits, .panel ul.rules { list-style: none; margin: 0; padding: 0; }
+.panel ul.rules code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel .head > div { flex: 1; min-width: 0; }
 .panel .head .dot { flex: none; }
 .panel > .acts { display: flex; flex-wrap: wrap; }
@@ -253,6 +269,25 @@ p.trend { display: flex; align-items: center; }
 .spectrum .panel .areaform .only { display: flex; align-items: center; gap: var(--spectrum-spacing-100); }
 .spectrum .panel .hint.err { color: var(--spectrum-negative-content-color-default); }
 .spectrum .panel #newArea { margin-top: var(--spectrum-spacing-100); }
+/* A product's: an ActionButton with its icon that opens the agent, the names it goes by and who
+   follows or runs it as tags, the knowledge bases' entries as Links over where each is from, the
+   rules a Link over their pattern in the code font, an off one subdued. */
+.spectrum .panel button.ask { gap: var(--spectrum-text-to-visual-100); }
+.spectrum .panel button.ask svg { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+.spectrum .panel .chips { gap: var(--spectrum-spacing-75); margin: var(--spectrum-spacing-100) 0 0; }
+.spectrum .panel .chips .sub { margin-right: var(--spectrum-spacing-50); }
+.spectrum .panel section > .hint:last-child { margin: var(--spectrum-spacing-100) 0 0; }
+.spectrum .panel .hint .askfor { margin-left: var(--spectrum-spacing-50); font-size: inherit; }
+.spectrum .panel :is(ul.kbhits, ul.rules) li { padding: var(--spectrum-spacing-100) 0; border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .panel :is(ul.kbhits, ul.rules) li:last-child { border-bottom: 0; }
+.spectrum .panel :is(ul.kbhits, ul.rules, .tk-cat) a { color: var(--spectrum-accent-content-color-default); text-decoration: none; }
+.spectrum .panel :is(ul.kbhits, ul.rules, .tk-cat) a:hover { text-decoration: underline; }
+.spectrum .panel ul.kbhits .sub { margin-top: var(--spectrum-spacing-50); }
+.spectrum .panel ul.kbhits .desc { color: var(--spectrum-neutral-content-color-default); }
+.spectrum .panel ul.rules code { margin-top: var(--spectrum-spacing-50); font-family: var(--s2-code); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .panel ul.rules li.off a { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .panel .tk-cat .n { color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .panel .tk-wait { margin: var(--spectrum-spacing-300) 0 0; }
 /* What it is joined to: ListView rows, quiet, each with a Meter of its share. */
 .spectrum .panel .pickr {
   gap: var(--spectrum-spacing-100);

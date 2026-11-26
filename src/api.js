@@ -87,6 +87,7 @@ import { customerStanding, setMark } from './standing.js';
 import {
   changeArea, rebuildTopics, topicsPage, trendsApi,
 } from './topicsapi.js';
+import { techInfo } from './techinfo.js';
 import { teamDirectory, teamProfile } from './teamprofile.js';
 import { teamVendors } from './vendors.js';
 import { orgDirectory, orgProfile } from './orgprofile.js';
@@ -1270,6 +1271,19 @@ async function route(request, env, url, {
       return json({ error: 'trends are for Adobe\'s people' }, 403);
     }
     return trendsApi(env, me, request, url);
+  }
+  // What the Topics page's panel says of a technology or a product (src/techinfo.js): its
+  // catalog entries, knowledge, extraction rules, followers and customers, read as the viewer may.
+  if (url.pathname === '/api/topics/tech') {
+    if (!internal(env, me)) {
+      return json({ error: 'the topic map is for Adobe\'s people' }, 403);
+    }
+    if (request.method !== 'GET') {
+      return json({ error: 'GET' }, 405);
+    }
+    return json(await techInfo(env, me, {
+      tech: url.searchParams.getAll('tech'), name: url.searchParams.get('name'),
+    }));
   }
   // The Topics page, for every internal user (src/topicsapi.js).
   if (url.pathname === '/api/topics') {

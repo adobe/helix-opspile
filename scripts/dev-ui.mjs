@@ -108,6 +108,7 @@ import { createKnowledgeBases } from './dev-ui-kb.mjs';
 import { compileCatalog, inCatalog, storeCatalog } from '../src/catalog.js';
 import { areaFile, compileAreas, isArea } from '../src/areas.js';
 import { topicsPage } from '../src/topicsapi.js';
+import { techInfo } from '../src/techinfo.js';
 import { teamDirectory, teamProfile } from '../src/teamprofile.js';
 import { teamVendors } from '../src/vendors.js';
 import { orgDirectory, orgProfile } from '../src/orgprofile.js';
@@ -1946,6 +1947,13 @@ async function api(req, res, url) {
   if (url.pathname === '/api/customers/profile') {
     const { status, ...r } = await orgProfile(adminApi.env, topicsViewer(), url.searchParams.get('org'));
     return json(res, r, r.error ? status || 400 : 200);
+  }
+  // What the Topics page's panel says of a product (src/techinfo.js), over the admin pages' D1:
+  // the fake knowledge bases' catalogs and entries, rules, follows and customers' stacks.
+  if (url.pathname === '/api/topics/tech') {
+    return json(res, await techInfo(adminApi.env, topicsViewer(), {
+      tech: url.searchParams.getAll('tech'), name: url.searchParams.get('name'),
+    }));
   }
   // The Topics page (src/topicsapi.js), over the admin pages' D1: its map, the areas the fake
   // knowledge bases have, and Dana's follows; areas are written to the fake knowledge bases.
