@@ -328,8 +328,24 @@ describe('the knowledge base\'s sidebar', () => {
     assert.equal((await call(e, CY, 'POST', '/api/kb/chat/bash', {
       repo: 'kb-org-acme', chat: theirs.chat || chatId(), id: 'r1', run: true,
     })).status, 403);
-    // Someone on no team sees neither.
+    // Adobe's people on no team the same, a customer's and a team's: they see their pages.
+    const DEE = {
+      id: 4, email: 'dee@staff.example', name: 'Dee', staff: true, teams: [],
+    };
+    for (const repo of ['kb-org-acme', REPO]) {
+      // eslint-disable-next-line no-await-in-loop
+      const view = await (await call(e, DEE, 'GET', `/api/kb/chat?repo=${repo}`)).json();
+      assert.deepEqual([view.may, view.write], [true, false], repo);
+    }
+    e.DB.sqlite.exec("INSERT OR IGNORE INTO people (id, email, name, staff) VALUES (4, 'dee@staff.example', 'Dee', 1)");
+    assert.equal((await call(e, DEE, 'POST', '/api/kb/chat', { repo: 'kb-org-acme', text: 'Who is who?' })).status, 202);
+    assert.deepEqual([calls.at(-1)[1].by, calls.at(-1)[1].write], ['Dee', false]);
+    assert.equal((await call(e, DEE, 'POST', '/api/kb/chat/bash', {
+      repo: 'kb-org-acme', chat: chatId(), id: 'r1', run: true,
+    })).status, 403);
+    // Someone signed in from SIGNIN_DOMAINS who is not Adobe's sees neither.
     assert.equal((await call(e, { ...CY, teams: [] }, 'GET', '/api/kb/chat?repo=kb-org-acme')).status, 404);
+    assert.equal((await call(e, { ...CY, teams: [] }, 'POST', '/api/kb/chat', { repo: REPO, text: 'x' })).status, 404);
     calls.length = 0;
     names.length = 0;
     assert.equal((await call(e, ADA, 'GET', '/api/kb/chat?repo=kb-team-nope')).status, 404);

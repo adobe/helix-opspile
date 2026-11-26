@@ -795,7 +795,9 @@ const DEV_AGENTS = {
   get: () => ({ __unsafe_ensureInitialized: async () => {}, answered: async () => ({ ok: true }) }),
 };
 
-export function createAdmin(store, { manager = false, member = false, bases = [] } = {}) {
+export function createAdmin(store, {
+  manager = false, member = false, noTeam = false, bases = [],
+} = {}) {
   const teamRows = store.teams.some((t) => t.slug === 'admin')
     ? store.teams.map(({ slug, name }) => ({ slug, name }))
     : [{ slug: 'admin', name: 'Admin' }, ...store.teams.map(({ slug, name }) => ({ slug, name }))];
@@ -1208,6 +1210,12 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       admin: false,
       teams: store.me.teams.map((t) => ({ ...t, role: manager && t.slug === 'edge' ? 'manager' : 'member' })),
       manages: manager ? ['edge'] : [],
+    };
+  }
+  if (noTeam) {
+    // Adobe's, on no team (`--no-team`): reads every knowledge base, and changes none.
+    me = {
+      ...store.me, admin: false, staff: true, teams: [], manages: [],
     };
   }
 

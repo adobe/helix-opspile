@@ -109,6 +109,25 @@ describe('knowledge-base editor API', { skip: !hasGit() && 'git is not installed
       assert.deepEqual(bases.bases.map((b) => [b.repo, b.may, b.write]), [
         ['kb-team-edge', false, false], ['kb-team-helix', false, true], ['kb-org-acme', false, false],
       ]);
+      // Adobe's people on no team read them all too, and write none; someone signed in who is not
+      // Adobe's sees none.
+      const nobody = {
+        ...MEMBER, id: 3, staff: true, teams: [],
+      };
+      const theirs = await (await call(env, nobody, 'GET', '/api/kb')).json();
+      assert.deepEqual(theirs.bases.map((b) => [b.repo, b.may, b.write]), [
+        ['kb-team-edge', false, false], ['kb-team-helix', false, false], ['kb-org-acme', false, false],
+      ]);
+      assert.equal((await call(env, nobody, 'GET', '/api/kb/files?repo=kb-org-acme')).status, 200);
+      assert.equal((await call(env, nobody, 'PUT', '/api/kb/file', { repo: 'kb-org-acme', path: 'a.md', content: 'x' })).status, 403);
+      const outsider = {
+        ...MEMBER, id: 4, email: 'x@partner.example', teams: [],
+      };
+      assert.deepEqual((await (await call(env, outsider, 'GET', '/api/kb')).json()).bases, []);
+      assert.equal((await call(env, outsider, 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
+      // The editor draws their `.dot` files the same way (503: no renderer here, the page draws).
+      assert.equal((await call(env, nobody, 'POST', '/api/diagram', { dot: 'digraph { a }' })).status, 503);
+      assert.equal((await call(env, outsider, 'POST', '/api/diagram', { dot: 'digraph { a }' })).status, 403);
       assert.equal((await call(env, MEMBER, 'GET', '/api/kb/files?repo=kb-team-helix')).status, 200);
       assert.equal((await call(env, MEMBER, 'GET', '/api/kb/files?repo=kb-team-edge')).status, 200);
       assert.equal((await call(env, MEMBER, 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);

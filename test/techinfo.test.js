@@ -116,18 +116,25 @@ describe('a technology on the Topics page', () => {
 
   it('is read as the viewer may', async () => {
     const env = { DB: db() };
-    // On no team: the catalog's names, but no knowledge base, rule or agent.
+    // Adobe's, on no team: every knowledge base, as on a team, and the agent to talk to, which
+    // changes nothing for them.
     const r = await techInfo(env, as(NOBODY), { tech: ['sketchy/sketchy'], name: 'Sketchy' });
     assert.equal(r.tech[0].name, 'Sketchy');
-    assert.equal(r.tech[0].teams[0].readable, false);
-    assert.equal(r.tech[0].teams[0].entry, null);
-    assert.deepEqual(r.knowledge, []);
-    assert.deepEqual(r.rules, []);
-    assert.equal(r.hiddenRules, 1);
-    assert.deepEqual(r.agents, []);
-    // Nor a customer's stack drawing: that is its knowledge base's.
-    assert.deepEqual(r.stacks, []);
-    assert.equal(r.moreStacks, 0);
+    assert.equal(r.tech[0].teams[0].readable, true);
+    assert.equal(r.tech[0].teams[0].entry.title, 'Sketchy');
+    assert.equal(r.knowledge.length, 2);
+    assert.equal(r.rules.length, 1);
+    assert.equal(r.hiddenRules, 0);
+    assert.deepEqual(r.agents.map((a) => [a.slug, a.write]), [['design', false]]);
+    // And a customer's stack drawing, its knowledge base's.
+    assert.deepEqual(r.stacks.map((x) => x.org), ['acme']);
+    // Someone signed in from SIGNIN_DOMAINS who is not Adobe's: none of it.
+    const out = await techInfo(env, { ...NOBODY, staff: 0, email: 'x@partner.example' }, { tech: ['sketchy/sketchy'], name: 'Sketchy' });
+    assert.deepEqual(
+      [out.tech[0].teams[0].readable, out.knowledge, out.rules, out.agents, out.stacks],
+      [false, [], [], [], []],
+    );
+    assert.equal(out.hiddenRules, 1);
     // On a team: every team's knowledge base, and the customers'; the agent of the team whose
     // catalog has it, read only.
     const mo = await techInfo(env, as(EDGE), { tech: ['sketchy/sketchy'], name: 'Sketchy' });
