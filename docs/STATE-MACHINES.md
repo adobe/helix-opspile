@@ -1071,6 +1071,15 @@ initial, an empty slot, nothing), and every favicon of its address is drawn as t
 `FAV_RETRY_MS`: a failure may pass (the Worker answers a Google that failed with a 502 for a minute,
 src/favicons.js), so it is not final, and the next drawing after that asks again.
 
+**Open thread's fetch.** shown → asked again → shown, or failed (`openThread`, `refetchLater`,
+`refetchDone` in `ui/inbox.js`). Opening a thread shows the copy it was fetched ahead into, and
+fetches it again behind it; so do its live updates. A fetch that fails in a way asking again may
+mend (`transient`: D1 busy, the Worker's 5xx, the network) leaves what the pane shows of that thread
+as it is, and asks again after 1, 2, 4… s (30 s at most, plus up to a second at random), for as
+long as it stays open; with nothing of it on screen yet the pane says the inbox is busy meanwhile.
+A fetch that succeeds ends the retries; another thread opened lets them lapse. A 4xx (gone, not
+allowed) still replaces the pane, and a sign-in that expired keeps it under the banner.
+
 **Search.** idle → loading → results or error (`state.search`). `seq` drops the answer to anything but
 the latest question.
 
