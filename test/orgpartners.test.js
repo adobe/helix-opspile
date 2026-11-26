@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { api } from '../src/api.js';
 import { forgetFacts } from '../src/orgmerge.js';
+import { forgetPartnerDomains } from '../src/partners.js';
 import {
   contextOf, customersOf, forgetEvidence, ownerOf, partnerCandidates, partnersOf, partnerSignals,
   refreshPartners,
@@ -114,6 +115,7 @@ async function call(e, me, method, path, body) {
 beforeEach(() => {
   forgetFacts();
   forgetEvidence();
+  forgetPartnerDomains();
 });
 
 describe('partner owners', () => {
@@ -256,7 +258,7 @@ describe('partner signals', () => {
     });
     // The threads show none of the partner's own (it posts nowhere itself); its domains are given.
     assert.deepEqual(partnerSignals(c, p, ev, contextOf(orgs, ev)), []);
-    const ctx = contextOf(orgs, ev, new Map([['agency', ['agency.example', 'agency-group.example']]]));
+    const ctx = contextOf(orgs, ev, new Map([['agency.example', 'agency'], ['agency-group.example', 'agency']]));
     assert.deepEqual(partnerSignals(c, p, ev, ctx).map((s) => [s.kind, s.n, s.people ?? null]), [
       ['posters', 6, 3], ['members', 3, null],
     ]);
@@ -343,6 +345,29 @@ describe('admin: partners', () => {
       { customer: 'globex', confirmed_by: 'ada@staff.example' },
     ]);
     assert.equal((await call(e, BO, 'GET', '/api/customers/partners?org=globex')).body.partners[0].confirmed, true);
+  });
+
+  it('takes a partner\'s mail domains from the partner domains, the admin team\'s rows over them', async () => {
+    const e = env();
+    const kinds = async () => {
+      forgetPartnerDomains();
+      await refreshPartners(e);
+      return e.DB.rows('SELECT customer, signals FROM org_partners').map((r) => [r.customer,
+        JSON.parse(r.signals).map((x) => `${x.kind}:${x.n}`)]);
+    };
+    assert.deepEqual(await kinds(), [['globex', ['posters:3', 'owners:1']]]);
+    // Said not to be a partner's, its people are nobody's: only the shared owner is left. (Globex's
+    // usual domain is the agency's, most of the people in its threads being the agency's: their
+    // posts in the agency's own threads are no guests' while the domain is the agency's.)
+    const row = e.DB.sqlite.prepare(`INSERT OR REPLACE INTO partner_domains (domain, name, org, excluded,
+      updated_by, updated_at) VALUES (?, NULL, ?, ?, 'ada@staff.example', '${AT}')`);
+    row.run('agency.example', null, 1);
+    assert.deepEqual(await kinds(), [['globex', ['guests:1', 'owners:1']]]);
+    // Initech's domain given to the agency by hand: Initech's own people count as the agency's.
+    row.run('agency.example', 'agency', 0);
+    row.run('initech.example', 'agency', 0);
+    const [initech] = (await kinds()).filter(([c]) => c === 'initech');
+    assert.deepEqual(initech, ['initech', ['posters:1', 'members:2']]);
   });
 
   it('stores no verdict when Clef times out, and asks again the next time', async (t) => {

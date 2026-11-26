@@ -282,9 +282,10 @@ a candidate when its signals add up (`CANDIDATE`, 2) and are more than a `kb` or
 alone (Clef found most such pairs unlikely):
 
 - `posters`: people from the partner's mail domains posted in the customer's threads (1 to 3, by
-  threads and people). The domains come from one place, `partnerMailDomains`: for now the
-  partner's usual mail domain (the one most of the people outside Adobe in its threads write from),
-  later src/partners.js `partnerDomains`, with the admin team's overrides and exclusions;
+  threads and people). The domains come from one place, `partnerMailDomains`: src/partners.js
+  `partnerDomains` ("Partner domains"), by the partner org each is of, so the admin team's
+  overrides and exclusions change the pairs too; a subdomain counts as its parent, unless it is
+  listed itself (an excluded one is nobody's);
 - `guests`: people from the customer's usual mail domain posted in the partner's threads (1 or 2);
 - `members`: people from the partner's mail domains are in the customer's channels
   (`channel_members`, 1 to 2);

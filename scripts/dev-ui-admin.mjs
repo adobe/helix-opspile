@@ -66,9 +66,9 @@ const DEV_PARTNER_CLEF = {
 };
 
 /**
- * Two partners' customers (src/orgpartners.js): Pied Piper's people post in ACME's threads, in one of
- * Hooli's and are in Wonka's channel, and its threads and ACME's name the site owner `acme-web`;
- * Raviga was confirmed for Soylent by hand.
+ * Two partners' customers (src/orgpartners.js): Pied Piper's people post in ACME's threads, in
+ * one of Hooli's and are in Wonka's channel, and its threads and ACME's name the site owner
+ * `acme-web`; Raviga was confirmed for Soylent by hand. A's partners are `seedPartners`.
  */
 function seedPartnerPairs(DB) {
   const db = DB.sqlite;

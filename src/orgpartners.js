@@ -15,6 +15,7 @@ import { orgDomain } from './favicons.js';
 import { json } from './http.js';
 import { CLEF } from './label.js';
 import { facts as orgFacts } from './orgmerge.js';
+import { partnerDomains } from './partners.js';
 import { platformName } from './platforms.js';
 import { isAdmin } from './roles.js';
 import { UNASSIGNED } from './rules.js';
@@ -249,31 +250,57 @@ function usualDomains(ev) {
   return usual;
 }
 
-/** Each partner's mail domains as the threads show them: its usual one (`partnerMailDomains`). */
+/** Each partner's usual mail domain as its partner's (`partnerMailDomains`'s shape), for tests. */
 function postedDomains(orgs, ev) {
   const usual = usualDomains(ev);
   return new Map([...orgs.values()].filter((o) => o.type === 'partner' && usual.has(o.slug))
-    .map((o) => [o.slug, [usual.get(o.slug)]]));
+    .map((o) => [usual.get(o.slug), o.slug]));
 }
 
 /**
- * The mail domains of each partner's people, `Map<partner, [domain]>`: the one place the
- * `posters`, `guests` and `members` signals get them. For now each partner's usual domain
- * (`postedDomains`); once src/partners.js `partnerDomains` is on main, its domains by org, so that
- * the admin team's overrides and exclusions change the pairs too.
+ * Whose people write from each partner domain, `Map<domain, partner | null>`: the one place the
+ * `posters`, `guests` and `members` signals get them. From src/partners.js `partnerDomains`, the
+ * domains found and the admin team's rows over them, by the partner org each is of (`orgs`, not
+ * merged); `null` is a domain that is no partner's (excluded), or of no partner org here, which
+ * keeps its subdomains from counting as their parent's (`domainPartner`).
  */
-export async function partnerMailDomains(env, orgs, ev) {
-  return postedDomains(orgs, ev);
+export async function partnerMailDomains(env, orgs) {
+  const all = await partnerDomains(env);
+  const out = new Map();
+  for (const [domain, d] of all) {
+    const org = d && d.org && orgs.get(d.org);
+    out.set(domain, org && org.type === 'partner' ? org.slug : null);
+  }
+  return out;
+}
+
+/** The partner whose people write from `domain` or a parent of it, or null (as `partnerOf`). */
+export function domainPartner(domains, domain) {
+  const labels = String(domain || '').toLowerCase().split('.');
+  for (let i = 0; i < labels.length - 1; i += 1) {
+    const d = labels.slice(i).join('.');
+    if (domains.has(d)) {
+      return domains.get(d);
+    }
+  }
+  return null;
 }
 
 /**
- * What every pair is compared with, worked out once per list: each org's usual mail domain, each
- * partner's mail domains (`partnerMailDomains`, else those its threads show), how many orgs'
+ * What every pair is compared with, worked out once per list: each org's usual mail domain, whose
+ * each partner domain is (`partnerMailDomains`, else each partner's usual one), how many orgs'
  * threads name each owner, and how many orgs have a channel in each place.
  */
 export function contextOf(orgs, ev, domains = null) {
   const usual = usualDomains(ev);
-  const partnerDomains = domains || postedDomains(orgs, ev);
+  const partnerOf = domains || postedDomains(orgs, ev);
+  // Each partner's own domains (not their subdomains), as Clef and the admin team are told.
+  const partnerMail = new Map();
+  for (const [d, slug] of partnerOf) {
+    if (slug) {
+      partnerMail.set(slug, [...(partnerMail.get(slug) || []), d].sort());
+    }
+  }
   // Partners name their customers' owners: the owners of Adobe and of demos are in the
   // threads of many customers, or of Adobe's own orgs.
   const ownerSpread = new Map();
@@ -291,7 +318,7 @@ export function contextOf(orgs, ev, domains = null) {
     }
   }
   return {
-    usual, partnerDomains, ownerSpread, places,
+    usual, partnerOf, partnerMail, ownerSpread, places,
   };
 }
 
@@ -331,11 +358,11 @@ function membersWeight(n) {
  */
 export function partnerSignals(c, p, ev, ctx) {
   const out = [];
-  const domains = ctx.partnerDomains.get(p.slug) || [];
-  const named = `${listed(domains)}, the partner's mail ${domains.length === 1 ? 'domain' : 'domains'}`;
+  const its = (d) => domainPartner(ctx.partnerOf, d) === p.slug;
+  const named = (list) => `${listed(list)}, the partner's mail ${list.length === 1 ? 'domain' : 'domains'}`;
   // The partner's people, from its mail domains, post in the customer's threads: people of each
   // domain are others, a thread may have several (the most of one is a floor).
-  const posted = (ev.posters.get(c.slug) || []).filter((r) => domains.includes(r.domain));
+  const posted = (ev.posters.get(c.slug) || []).filter((r) => its(r.domain));
   if (posted.length) {
     const threads = Math.max(...posted.map((r) => r.threads));
     const people = posted.reduce((n, r) => n + r.people, 0);
@@ -344,12 +371,12 @@ export function partnerSignals(c, p, ev, ctx) {
       weight: postersWeight(threads, people),
       n: threads,
       people,
-      text: `${plural(people, 'person', 'people')} from ${named}, posted in ${plural(threads, 'thread')} of the customer's`,
+      text: `${plural(people, 'person', 'people')} from ${named(posted.map((r) => r.domain))}, posted in ${plural(threads, 'thread')} of the customer's`,
     });
   }
   // The customer's people, from its usual mail domain, post in the partner's threads.
   const home = ctx.usual.get(c.slug);
-  const guest = home && !domains.includes(home)
+  const guest = home && !its(home)
     && (ev.posters.get(p.slug) || []).find((r) => r.domain === home);
   if (guest) {
     const { threads, people } = guest;
@@ -362,14 +389,14 @@ export function partnerSignals(c, p, ev, ctx) {
     });
   }
   // The partner's people are in the customer's channels.
-  const inChannels = ev.members.get(c.slug) || new Map();
-  const members = domains.reduce((n, d) => n + (inChannels.get(d) || 0), 0);
+  const inChannels = [...(ev.members.get(c.slug) || new Map())].filter(([d]) => its(d));
+  const members = inChannels.reduce((n, [, k]) => n + k, 0);
   if (members) {
     out.push({
       kind: 'members',
       weight: membersWeight(members),
       n: members,
-      text: `${plural(members, 'person', 'people')} from ${listed(domains.filter((d) => inChannels.has(d)))} ${members === 1 ? 'is' : 'are'} in the customer's channels`,
+      text: `${plural(members, 'person', 'people')} from ${listed(inChannels.map(([d]) => d))} ${members === 1 ? 'is' : 'are'} in the customer's channels`,
     });
   }
   // The same GitHub or aem.live owner in the facts of both, one only a few customers have.
@@ -530,7 +557,7 @@ function describeOrg(letter, o, domain) {
 /** What Clef is shown of a pair. */
 export function pairState(c, p, signals, ctx) {
   const shared = signals.length ? `\nFound: ${signals.map(said).join('; ')}.` : '';
-  const mail = (ctx.partnerDomains.get(p.slug) || []).join(', ') || ctx.usual.get(p.slug);
+  const mail = (ctx.partnerMail.get(p.slug) || []).join(', ') || ctx.usual.get(p.slug);
   return `${INTRO}\n${describeOrg('C', c, ctx.usual.get(c.slug))}\n${describeOrg('P', p, mail)}${shared}`;
 }
 
@@ -616,7 +643,7 @@ async function sync(env, { fresh = false, ask = ASK_PER_LIST } = {}) {
   // The facts may be from before a merge another isolate made.
   const merged = new Set(merges.map((r) => r.slug));
   const orgs = new Map([...f.orgs].filter(([slug]) => !merged.has(slug)));
-  const ctx = contextOf(orgs, ev, await partnerMailDomains(env, orgs, ev));
+  const ctx = contextOf(orgs, ev, await partnerMailDomains(env, orgs));
   const found = partnerCandidates({ ...f, orgs }, ev, ctx);
   const keptBy = new Map(kept.map((r) => [keyOf(r.customer, r.partner), r]));
   const writes = [];
@@ -696,7 +723,8 @@ const shownOrg = (o, ctx) => ({
   type: o.type,
   icon: o.icon || null,
   domain: ctx.usual.get(o.slug) || (o.domains || [])[0] || null,
-  domains: [...new Set([ctx.usual.get(o.slug), ...(o.domains || [])].filter(Boolean))],
+  domains: [...new Set([...(ctx.partnerMail.get(o.slug) || []), ctx.usual.get(o.slug),
+    ...(o.domains || [])].filter(Boolean))],
   channels: o.channels.length,
   threads: o.threads,
   latest: o.latest,
