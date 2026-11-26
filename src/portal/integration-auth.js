@@ -96,14 +96,16 @@ async function userToken(identity, host, jwt, scope, options, invalid) {
  */
 async function samePerson(db, m, c, sec) {
   const email = verifiedEmail(c);
-  if (email && (email !== m.seen_email || !(sec - m.seen_at < DAY))) {
+  const write = Boolean(email) && (email !== m.seen_email || !(sec - m.seen_at < DAY));
+  if (write) {
     await db.prepare(`UPDATE users SET verified_email = ?, verified_at = ? WHERE id = ?
       AND kind = 'customer' AND email IS NULL`).bind(email, sec, m.actor).run();
   }
   const recent = sec - MERGE_DAYS * DAY;
   const verified = email || m.seen_email || null;
-  // When it was last verified, which the inbox applies the same window by (src/individual.js).
-  const verifiedAt = email ? sec : m.seen_at || null;
+  // When it was last verified, as stored (which the inbox applies the same window by,
+  // src/individual.js): the same on every message of a day, so the inbox's lookup stays cached.
+  const verifiedAt = write ? sec : m.seen_at || null;
   // One person only while both still verify it: the caller now or lately, the others lately.
   const mine = email || (m.seen_at > recent ? m.seen_email : null);
   if (m.audience !== 'individual' || !mine) {

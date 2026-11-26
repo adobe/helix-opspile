@@ -23,7 +23,7 @@ import { deliver } from '../src/portal/events.js';
 import { MERGE_DAYS } from '../src/portal/integration-auth.js';
 import { quiet } from './fakes.js';
 import {
-  ADA, BO, ORG, setup, world,
+  ADA, BO, now, ORG, setup, world,
 } from './integration-world.js';
 
 setup();
@@ -118,6 +118,18 @@ describe('one person with several profiles', () => {
     // Verifying it again joins them again.
     await w.list(adaToo);
     assert.ok((await w.list(ada)).body.items.some((i) => i.id === home));
+  });
+
+  it('says the same verifiedAt on every message of a day, for the inbox\'s lookup cache', async () => {
+    const { w, ada } = await twoProfiles({ audience: 'shared' });
+    const first = (await create(w, ada, 'One')).body.threadId;
+    // A minute later: the same day, so nothing new to say.
+    await w.call('POST', `/threads/${first}/replies`, { ...ada, body: { body: 'Two' }, clock: now + 60000 });
+    const said = w.db.rows('SELECT body FROM events ORDER BY seq').map((r) => JSON.parse(r.body))
+      .filter((e) => e.type === 'message').map((e) => e.author.verifiedAt);
+    assert.equal(said.length, 2);
+    assert.ok(said[0]);
+    assert.equal(said[1], said[0]);
   });
 
   it('keeps an unverified address from making two profiles one', async () => {
