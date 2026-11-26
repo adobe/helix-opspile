@@ -158,7 +158,8 @@ const ARRIVE_MS = Number(process.argv.find((a) => a.startsWith('--arrive='))?.sl
 // Pages of the inbox, as the Worker serves them (`before` cursor, `page.next`).
 const INBOX_PAGE = Number((process.argv.find((a) => a.startsWith('--page=')) || '').slice(7)) || 100;
 // What the admin team would say about the fake orgs (src/api.js: customer unless set).
-const ORG_TYPES = { initech: 'vendor', opspile: 'internal' };
+const ORG_TYPES = { initech: 'vendor', opspile: 'internal', agency: 'partner' };
+const ORG_NAMES = { acme: 'ACME', agency: 'Agency Co' };
 const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
@@ -890,6 +891,48 @@ function standing() {
   return standingOf([...posted.values()], named);
 }
 
+/**
+ * As src/threadlinks.js: the orgs the fixtures link threads `keys` with (`linkedOrgsOf`), and the
+ * threads possibly about the same issue (`entryLinks`), those the viewer may not see unnamed.
+ */
+function linkedOf(keys) {
+  const rows = store.threadOrgs.filter((r) => keys.includes(r.thread) && !r.dismissed);
+  const shape = (r) => ({
+    slug: r.org, name: r.name, icon: r.icon, p: r.p, via: r.via,
+  });
+  const about = rows.filter((r) => r.role === 'about').map(shape);
+  const withs = rows.filter((r) => r.role === 'partner').map(shape);
+  return about.length || withs.length ? { about, with: withs } : null;
+}
+function relatedOf(keys) {
+  return store.threadLinks.filter((l) => !l.dismissed && (keys.includes(l.a) || keys.includes(l.b)))
+    .map((l) => {
+      const other = store.threads.get(keys.includes(l.a) ? l.b : l.a);
+      if (!other) {
+        return null;
+      }
+      const r = other.row;
+      const seen = maySee(other);
+      return {
+        thread: r.thread,
+        score: l.score,
+        p: l.p,
+        org: r.org,
+        org_name: ORG_NAMES[r.org] || null,
+        org_icon: { agency: 'agency.example', acme: 'acme.example' }[r.org] || null,
+        org_type: ORG_TYPES[r.org] || 'customer',
+        team: r.team,
+        source: r.source,
+        channel_name: r.channel_name,
+        last_at: r.last_at,
+        can_see: Boolean(seen),
+        ...(seen ? {
+          title: store.labels.get(r.thread)?.title || r.title, permalink: r.permalink,
+        } : {}),
+      };
+    }).filter(Boolean);
+}
+
 /** A team's inbox, or with `personal` (no team) the personal view, as src/api.js's `inbox`. */
 function inbox(team, before = null, personal = false, only = null, limit = null) {
   // `limit`, as the Worker takes it: 1 to 300, the page size without one.
@@ -969,7 +1012,12 @@ function inbox(team, before = null, personal = false, only = null, limit = null)
     // src/api.js's `resolution` is made from these; here `resolutionOf` did it already.
     .map(({ resolutionFacts: _, ...t }) => ({
       ...t, waiting_on: waitingOn(t), title: nameIds(t.title), last_text: nameIds(t.last_text),
-    }));
+    }))
+    // As src/api.js: what a thread is linked with across a partner and its customers.
+    .map((t) => {
+      const linked = linkedOf([t.thread, ...(t.members || []).map((m) => m.thread)]);
+      return linked ? { ...t, linked } : t;
+    });
   return {
     team: personal ? null : team,
     personal,
@@ -1345,6 +1393,8 @@ function thread(asked) {
     channels: channelRefs(entry.row.source, [...messages.map((m) => m.body), entry.row.title]),
     channel_links: channelLinksFor(messages.filter((m) => !m.deletedAt).map((m) => m.body)),
     links,
+    linked: linkedOf(group.map(({ row: m }) => m.thread)) || { about: [], with: [] },
+    related: relatedOf(group.map(({ row: m }) => m.thread)),
     watermarks,
     label: store.labels.get(key) || null,
     model: store.labels.get(key) || null,
@@ -2703,6 +2753,26 @@ async function api(req, res, url) {
     console.log(`react ${remove ? '-' : '+'}${native}`);
     broadcast(entry.row.team, { type: 'thread', thread: key });
     return json(res, { ok: true, emoji: native });
+  }
+  // As src/threadlinks.js `dismissAbout` and `dismissLink`: a link of the fixtures said wrong.
+  const unlink = /^\/api\/thread\/(about|related)\/dismiss$/.exec(url.pathname);
+  if (unlink && req.method === 'POST') {
+    const body = await readJson(req);
+    const entry = store.threads.get(body.thread);
+    if (!entry || !inTeam(entry.row.team)) {
+      return json(res, { error: 'not found' }, 404);
+    }
+    const found = unlink[1] === 'about'
+      ? store.threadOrgs.find((r) => r.thread === body.thread && r.org === body.org
+        && r.role === (body.role === 'partner' ? 'partner' : 'about'))
+      : store.threadLinks.find((l) => [l.a, l.b].includes(body.thread)
+        && [l.a, l.b].includes(body.other));
+    if (!found) {
+      return json(res, { error: 'not linked' }, 404);
+    }
+    found.dismissed = !body.undo;
+    broadcast(entry.row.team, { type: 'thread', thread: body.thread });
+    return json(res, { ok: true, thread: body.thread, dismissed: !body.undo });
   }
   if (url.pathname === '/api/resolve' && req.method === 'POST') {
     const { thread: key, undo } = await readJson(req);

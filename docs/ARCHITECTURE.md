@@ -355,6 +355,61 @@ making their row where `org_partners` has none. The overviews are kept five minu
 (`forgetOrgProfiles`, src/orgprofile.js), and the other isolates show it within those five minutes,
 as they do any change of a kept overview.
 
+**Thread links.** A partner's people report in the partner's own channel what the customer's
+channels are working on too (a repository moved, a site serving stale code), and nothing tied the
+two. A minute after each labelling of a thread (the normalizer queues `{ link: thread }` for a
+`labeled` result, not for an imported thread, once its vector is written too), the link job
+(`linkThread`, `src/threadlinks.js`) works out, for the thread's inbox entry:
+
+- **which customer a partner's thread is about** (`thread_orgs`, migration 0111, role `about`):
+  among the customers the partner works for (`customersOf`, above), what each part of the thread
+  says (`aboutScores`): its facts (a `site`, `repo` or `url` whose GitHub or aem.live owner only
+  that customer's threads name, 0.9, or it and one other org's, 0.75; a URL on the customer's own
+  domain, that of its icon, 0.85, or on one named for it, 0.7), its channel's name (0.8) and its
+  title (0.7) or messages (0.6) naming the customer (its display name, or its slug of more than one
+  word). Clef is asked about up to twelve of them at once, a `noul` each ("is this thread about
+  the customer C, in work that P does for it?"), shown the thread as labelling shows it and told
+  the channel is a partner's; its answer stands for the text's (it reads the text), and the facts
+  and the channel's name stand beside it: `p` = 1 − Π(1 − pᵢ) (`aboutOf`). A customer of `p` 0.5
+  or more (`ABOUT_MIN`) is kept, with `p` and `via` (what said so: `facts`, `channel`, `text`,
+  `clef`);
+- **the partners in a customer's thread** (role `partner`, `p` 1, `via` `posters`): the partner
+  orgs whose people posted in it, by their mail domain (`partnerDomains`, "Partner domains");
+- **possibly the same issue** (`thread_links`): the threads of the linked orgs' channels active
+  in the last 14 days (`RELATED_DAYS`) whose thread vectors (`CONTENT`, `type: thread`, by `org`)
+  are at least 0.75 alike (`RELATED_MIN`, cosine), by inbox entry. The linked orgs are, for a
+  partner's thread, the customers it is about, else every customer the partner works for; for a
+  customer's, its partners and those whose people post in it. A customer's thread leaves out a
+  partner's thread about another customer. Clef is asked about three new candidates a job
+  (`RELATED_ASK`), shown both threads (their channels, titles, facts, first and latest
+  messages): "are A and B possibly about the same issue … seen from the partner's side and the
+  customer's?"; a link is shown where it said 0.5 or more (`RELATED_P`), or, without Clef, where
+  the vectors are 0.86 alike (`RELATED_SURE`). A link is kept once found, with its score, and not
+  asked about again.
+
+The inbox shows them: a row's tag, "About ACME" on a partner's thread, "With Agency Co" on a
+customer's (`linked` on `GET /api/inbox`'s entries), and in the open thread a dropdown of its
+header with both and the threads possibly about the same issue (`linked` and `related` on `GET
+/api/thread`), each with how sure the inbox is. A related thread the viewer may not see (`canSee`:
+not their teams', nor their personal view's) is named by its customer, team and channel only,
+never its title or link. Whoever may work the thread says a link is wrong there (`POST
+/api/thread/about/dismiss`, `/related/dismiss`, with `undo`): a dismissed row stays, and the job
+leaves it so. The MCP server's `get_thread` has them (`about_customers`, `with_partners`,
+`possibly_same_issue`, a title only where the person may see that thread), and its
+`search_threads`, `/api/search` (`org=`) and a knowledge-base chat's `search_threads` take a
+customer filter that includes its partners' threads about it (`aboutThreads`).
+
+A thread agent is told of them in its first input (after the messages), and in an input of its
+own when its thread gets a customer it is about or a link (`relatedUpdate`, `src/agent/related.js`,
+for the agents of both threads); `related_threads` (always on) finds the linked orgs' threads like
+its own, or like a `query`, of the last `days`. A linked thread is named, with its title and key,
+only where the agent may read it with its tools (`readable`, as for a watched thread: its channel,
+`org_threads` within its own org, `any_thread`); of the others it is told how many there are. The
+prompt keeps what a linked org's thread says out of its channel unless someone asks in the sidebar.
+
+`npm run partners:threads` (README, "Measure the thread links") counts on production, read-only,
+how many partner threads get a customer and how surely.
+
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
 (an agent that provisions access, say) would show on the customer's side of a thread. Every bot
 opspile knows that posted, or that somebody said whose it is (`identities` of kind `bot`: written
@@ -2776,6 +2831,7 @@ written by people outside its control.
 | `read_thread` | the whole entry, flagged messages withheld; with `thread` (a key, or a link to one of its messages as people paste them), another conversation of the same channel, its first and latest 100 messages |
 | `read_file` | a file attached to a message of the entry (`src/agent/files.js`), named by its link as the message shows it or by a Slack file id, never any other: fetched with the app's credentials (the Slack bot's `files.info` and token, the Discord bot's refreshed links, the copies of Teams files in pile 1), up to 10 MB. Images (PNG, JPEG, GIF, WebP up to 3.75 MB and 8000 pixels a side, read from their headers) go to the model as images, larger ones through the Markdown conversion; an image the model would refuse never reaches it (`src/agent/images.js`), since the API refuses the whole request and the image would stay in the history: the provider also leaves such images out of every request (over 2000 pixels a side when it has more than 20 images); plain text as it is; PDF, Word, Excel, OpenDocument, Numbers, HTML, XML and CSV through Workers AI's Markdown conversion (`AI.toMarkdown`). Text comes in parts of 30,000 characters (`offset`), and every part goes through Clef's injection check first, as a message would; a flagged file is withheld. Teams files are read from their copies in pile 1 (one without a copy cannot be read). Files of withheld messages cannot be read. |
 | `raw_message` | a message of the entry, or with `thread` of another conversation of its channel, as its platform sent it: the newest version in pile 1 (`src/agent/rawmessage.js`), only what the message says (the Teams body as HTML, its attachments and `eventDetail`; Slack's text, blocks, attachments and files, the edited message for an edit; Discord's content, embeds, attachments, components and poll), not the envelope, in parts of 30,000 characters (`offset`). It is not checked for prompt injection again: the agent is told it is data, not instructions. A withheld message stays withheld. A message whose markdown dropped something (`dropped`, see "Pile 2") says so where the agent reads it, naming the tool; under `read_any_thread`, which it cannot read, not |
+| `related_threads` | the threads of the orgs the agent's thread is linked with (a partner and the customers it works for; "Thread links") like its own, by meaning, or like `query`, active in the last `days` (14, up to 90), with those the inbox kept as possibly the same issue first; each named with its key, title, org, channel, similarity and link only where the agent may read it (`readable`), the others counted (`src/agent/related.js`) |
 | `list_channel_threads` | the other conversations of the agent's channel, latest activity first (a re-threaded group as one, no join messages), paged by `before`; with `query`, those whose title has it, then those whose root is similar to it (Vectorize, the roots' embeddings from re-threading). Only its own channel: an agent reads another channel's threads only with `read_any_thread` (its customer's, or any) |
 | `read_any_thread` | with `org_threads` (on by default) a thread of the customer's other channels, with `any_thread` (see "Agent tools") any thread of the inbox: by its key or a link to one of its messages, its first and latest 99 messages, flagged messages withheld; in the conversations of a knowledge base's sidebar, any thread of the inbox |
 | `search_threads` | a knowledge-base agent's, in the conversations of its knowledge base's sidebar only (see "The knowledge base's sidebar"): every thread of the inbox about a query, best first, as the inbox's search finds them, each with its key, title, channel, customer, team, link, why it matched and the message that matched best; `customer` keeps one customer's. There, `read_file`, `list_topics` and `list_experts` take a thread of the inbox instead of the agent's own |
@@ -3025,7 +3081,8 @@ is not Adobe's has no page and no conversation (`isInternal`, src/kbaccess.js).
 a dream's, and are not in their prompt):
 - every thread of the inbox (`kbChatExtension` in src/agent/tools.js): `search_threads` searches
   every team's threads as the inbox's search does (src/search.js `find`: meaning, full text,
-  titles, channels, customers and facts), with `customer` for one customer's; `read_any_thread`,
+  titles, channels, customers and facts), with `customer` for one customer's and its partners'
+  threads about it ("Thread links"); `read_any_thread`,
   `find_channels` and `list_any_channel_threads` as a thread's agent has them where `any_thread`
   is on; `read_file`, a file of a message of any thread (`thread` and `file`);
 - who knows what: `list_topics` (with `topic`, the colleagues who worked its threads lately,

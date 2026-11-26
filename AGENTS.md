@@ -192,6 +192,12 @@ code and docs, is the decision model that labels threads and channels.
   caller (src/orgprofile.js): src/orgpartners.js reaches src/partners.js through src/orgmerge.js,
   so src/partners.js imports neither, nor src/profiles.js (`partnerOf` is src/partners.js's).
 
+- **Threads are linked across a partner and its customers** (src/threadlinks.js, the `{ link }` job
+  after each label; docs/ARCHITECTURE.md, "Thread links"): the customer a partner's thread is about,
+  the partners in a customer's (`thread_orgs`), and the threads possibly about the same issue
+  (`thread_links`). A linked thread's title and link go only to who may see it (`canSee` in the
+  inbox, `readable` for an agent, src/agent/related.js); the others are counted, never quoted.
+
 - **Most lifecycles here are implicit:** a nullable timestamp, a watermark, whether a row exists.
   [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md) lists them, with the rules they follow. Read the
   entry before changing one, and add one for anything new with a lifecycle.

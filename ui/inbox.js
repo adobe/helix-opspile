@@ -2083,6 +2083,36 @@ const rowOpen = (t, hit, cls) => `<div class="t ${t.unread ? 'unread' : ''} ${st
 /** One customer picked in the filters: every row is theirs, so the rows leave it out. */
 const oneCustomer = () => state.sel.customer?.size === 1;
 
+/**
+ * What a thread is linked with across a partner and its customers (src/threadlinks.js): on a
+ * partner's thread the customers it is about, on a customer's the partners whose people post in
+ * it, as `{ label, title }` for its row and its header; null where it has neither.
+ */
+function linkedLabel(linked) {
+  const about = linked?.about || [];
+  const withs = linked?.with || [];
+  const name = (o) => o.name || o.slug;
+  const more = (list) => (list.length > 1 ? ` +${list.length - 1}` : '');
+  if (about.length) {
+    return {
+      label: `About ${name(about[0])}${more(about)}`,
+      title: `A partner's thread about ${about.map(name).join(', ')}`,
+    };
+  }
+  if (withs.length) {
+    return {
+      label: `With ${name(withs[0])}${more(withs)}`,
+      title: `People of the partner ${withs.map(name).join(', ')} post in this thread`,
+    };
+  }
+  return null;
+}
+/** A row's tag of what its thread is linked with: "About Acme", "With Agency". */
+const linkedTag = (t) => {
+  const l = linkedLabel(t.linked);
+  return l ? `<span class="lkd" title="${esc(l.title)}">${esc(l.label)}</span>` : '';
+};
+
 /** A row's customer, which shows its card (by keyboard too); a click opens the thread. */
 const custChip = (t, inner) => (cardOrg(t.org)
   ? `<span class="cust" data-org="${esc(t.org)}" role="button" tabindex="0" aria-label="${esc(orgName(t))}">${inner}</span>`
@@ -2118,7 +2148,7 @@ function row(t, hit = null) {
     <div class="l1">${statusMark(t, status)}
       <span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}
+    <div class="l2">${cust}${linkedTag(t)}
       <span class="faces">${faces}</span>
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
       <span class="tags">${sideBadge(sideCount(t), t)}${moods(t)}</span>
@@ -2145,7 +2175,7 @@ function simpleRow(t, hit = null) {
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}${said}${sideBadge(sideCount(t), t)}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
+    <div class="l2">${cust}${linkedTag(t)}${said}${sideBadge(sideCount(t), t)}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
 }
 /**
  * The list by customer (`shown` in the view's order, latest activity first): each customer
@@ -3889,6 +3919,92 @@ function linksMenu(facts, names) {
   });
 }
 
+const VIA_LABEL = {
+  facts: 'its sites or links', channel: 'its channel\'s name', text: 'its text', clef: 'Clef', posters: 'who posted',
+};
+/**
+ * The header's dropdown of the thread's links (src/threadlinks.js): the customers a partner's
+ * thread is about, the partners in a customer's, and the threads possibly about the same issue in
+ * their channels, each with how sure the inbox is and a button that says it is wrong. A thread the
+ * viewer may not see is named by its customer, team and channel only.
+ */
+function linkedMenu(data, key) {
+  const linked = data.linked || {};
+  const related = data.related || [];
+  const tag = linkedLabel(linked);
+  if (!tag && !related.length) return '';
+  const orgRow = (o, role) => {
+    const via = (o.via || []).map((v) => VIA_LABEL[v] || v).join(', ');
+    const how = [via, role === 'about' && o.p != null ? pct(o.p) : ''].filter(Boolean).join(', ');
+    const no = role === 'about' ? `Not about ${o.name || o.slug}` : `Not ${o.name || o.slug}'s`;
+    return `<div class="hmi lkorg">${favImg(o.icon, { cls: 'fav', fallback: '<span class="fav"></span>' })}<span>${esc(o.name || o.slug)}</span>${how ? `<small>${esc(how)}</small>` : ''}`
+      + `<button type="button" class="lkx" data-unlink="${role}" data-org="${esc(o.slug)}" data-key="${esc(key)}" title="${esc(no)}" aria-label="${esc(no)}"><span class="s2-cross" aria-hidden="true"></span></button></div>`;
+  };
+  const relRow = (r) => {
+    const where = [r.org_name || r.org, r.channel_name ? `#${r.channel_name}` : platform(r)].filter(Boolean).join(' · ');
+    const sure = r.p != null ? `Clef ${pct(r.p)}` : `${pct(r.score)} alike`;
+    const when = r.last_at ? ago(r.last_at) : '';
+    const meta = `<small>${esc([where, when, sure].filter(Boolean).join(' · '))}</small>`;
+    const no = 'Not the same issue';
+    const x = `<button type="button" class="lkx" data-unlink="related" data-other="${esc(r.thread)}" data-key="${esc(key)}" title="${no}" aria-label="${no}"><span class="s2-cross" aria-hidden="true"></span></button>`;
+    const body = r.can_see
+      ? `<a class="lkt" href="?thread=${encodeURIComponent(r.thread)}" data-thread="${esc(r.thread)}"><span>${emojify(channelNames(r.title) || '(no text)')}</span>${meta}</a>`
+      : `<span class="lkt"><span>A thread in ${esc(r.team)}'s inbox</span>${meta}</span>`;
+    return `<div class="hmi lkrel">${favImg(r.org_icon, { cls: 'fav', fallback: '<span class="fav"></span>' })}${body}${x}</div>`;
+  };
+  const list = hmSection('About', (linked.about || []).map((o) => orgRow(o, 'about')))
+    + hmSection('With', (linked.with || []).map((o) => orgRow(o, 'partner')))
+    + hmSection('Possibly the same issue', related.map(relRow));
+  const n = tag && related.length ? `<span class="n">· ${related.length} related</span>` : '';
+  const label = tag ? tag.label : `${related.length} possibly related`;
+  return headMenu('linked', {
+    button: `<span class="wf wf-community" aria-hidden="true"></span><span class="lb">${esc(label)}</span>${n}`,
+    label: tag ? `${tag.title}${related.length ? `, and ${related.length} possibly about the same issue` : ''}` : `${related.length} possibly about the same issue`,
+    list,
+  });
+}
+
+/**
+ * Says a link of the open thread is wrong (POST /api/thread/about/dismiss, /related/dismiss), or
+ * with `undo` that it is not: the header leaves it out at once, a toast undoes it.
+ */
+async function unlink(el, undo = false) {
+  const key = el.dataset.key;
+  const kind = el.dataset.unlink;
+  const body = kind === 'related'
+    ? { thread: key, other: el.dataset.other, ...(undo ? { undo: true } : {}) }
+    : { thread: key, org: el.dataset.org, role: kind, ...(undo ? { undo: true } : {}) };
+  const res = await request('POST', `/api/thread/${kind === 'related' ? 'related' : 'about'}/dismiss`, body)
+    .catch((e) => ({ ok: false, data: { error: e.message } }));
+  if (!res.ok) {
+    toast(`Could not change it: ${res.data?.error || res.status}`);
+    return;
+  }
+  const hit = state.cache.get(key);
+  const data = hit?.data || hit;
+  if (!undo && data) {
+    if (kind === 'related') data.related = (data.related || []).filter((r) => r.thread !== el.dataset.other);
+    else if (data.linked) {
+      const list = kind === 'about' ? 'about' : 'with';
+      data.linked[list] = (data.linked[list] || []).filter((o) => o.slug !== el.dataset.org);
+    }
+  }
+  const entry = (state.data?.threads || []).find((t) => t.thread === key);
+  if (!undo && entry?.linked && kind !== 'related') {
+    const list = kind === 'about' ? 'about' : 'with';
+    entry.linked[list] = entry.linked[list].filter((o) => o.slug !== el.dataset.org);
+  }
+  if (undo) openThread(key, { live: true });
+  else {
+    closeHeadMenus();
+    repaint(key);
+    render();
+    const what = kind === 'related' ? 'Not the same issue.' : 'Taken off this thread.';
+    const again = { dataset: { ...el.dataset } };
+    toast(what, { label: 'Undo', run: () => unlink(again, true) });
+  }
+}
+
 /**
  * Line 1's icon: the customer's (else their initials), the platform's on it. It opens the
  * thread on the platform; a group of folded posts lists them instead, each to open.
@@ -3938,9 +4054,16 @@ function syncHeadMenus() {
     el.classList.toggle('open', on);
     if (on && pop.hidden && shown === shownHeadMenu) stayShown(pop);
     else pop.hidden = !on;
+    if (on) placeHeadMenu(pop);
     el.querySelector('[data-hm-toggle]')?.setAttribute('aria-expanded', String(on));
   }
   shownHeadMenu = shown;
+}
+/** A dropdown that would leave the pane at its right opens leftward, from its button's end. */
+function placeHeadMenu(pop) {
+  pop.classList.remove('end');
+  const pane = pop.closest('#pane');
+  if (pane && pop.getBoundingClientRect().right > pane.getBoundingClientRect().right) pop.classList.add('end');
 }
 function closeHeadMenus(focus = false) {
   const name = state.headOpen?.name;
@@ -5334,7 +5457,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     ? Follow.button({ kind: 'thread', id: key, name: thread.title || 'this thread' }) : '';
   const head = `<div class="ph"><button class="close" data-close title="Back to the threads" aria-label="Back to the threads">${BACK}</button>
       <div class="l1">${lead}${follow ? `<span class="ph-follow">${follow}</span>` : ''}</div>
-      <div class="l2">${techMenu(data)}${stackButton(data)}${linksMenu(facts, data.vocab?.facts)}${expertsHtml(key)}</div></div>`;
+      <div class="l2">${techMenu(data)}${stackButton(data)}${linksMenu(facts, data.vocab?.facts)}${linkedMenu(data, key)}${expertsHtml(key)}</div></div>`;
   const reply = sideInline(key) ? sideComposer(key, thread)
     : composer(thread, resolveButton(thread, resolution), key);
   // Drawn meanwhile by another call (a page opened at a thread draws it twice at once, as it
@@ -11749,6 +11872,8 @@ async function start() {
     }
     const hm = e.target.closest('[data-hm-toggle]');
     if (hm) { toggleHeadMenu(hm.dataset.hmToggle); return; }
+    const un = e.target.closest('.ph [data-unlink]');
+    if (un) { unlink(un); return; }
     // A link picked from a dropdown opens in a new tab; the dropdown closes.
     if (e.target.closest('.ph .hmpop a')) closeHeadMenus();
     if (followLink(e)) return;
