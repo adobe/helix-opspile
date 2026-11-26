@@ -1703,7 +1703,8 @@ is asked, the names it also goes by, its layer, and each team's file of it, a li
 knowledge base's editor), or a product's file and whose catalogs its features are in; the
 knowledge bases' entries about it, as the inbox's search finds them (by its name's words and by
 meaning), each a link into its editor; the extraction rules that detect it, each a link to its
-team's rules; the teams that follow it; and the customers whose stack drawing names it. A name no
+team's rules; the teams that follow it; and the customers whose stack drawing names it, of
+those whose knowledge base you read (a drawing is its knowledge base's, as on a customer's overview). A name no
 catalog has says so. Each picks out the agent to ask about it (`ui/kbchat.js`, as on Teams' and
 Customers' pages, but offered only: its tab, and **Ask the agent** in the panel): the knowledge
 base of a team whose catalog has it, yours first, then those that follow it, then the admin

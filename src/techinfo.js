@@ -23,7 +23,8 @@
  * - `rules`: the extraction rules that detect it (`target` tech, src/extract.js), of the teams
  *   whose knowledge base the viewer reads; `hiddenRules` counts the others.
  * - `follows`: the teams that follow it, and how many people do (src/following.js).
- * - `stacks`: the customers whose stack drawing names it (`org_stacks`, src/orgstacks.js).
+ * - `stacks`: the customers whose stack drawing names it (`org_stacks`, src/orgstacks.js), of those
+ *   whose knowledge base the viewer reads.
  * - `agents`: the knowledge bases whose agent to talk to about it (ui/kbchat.js): the teams' whose
  *   catalog has it, the viewer's first, then those that follow it, then the admin team's; for a
  *   name no catalog has, the viewer's own teams', else the admin team's.
@@ -203,8 +204,10 @@ export async function techInfo(env, me, { tech = [], name = '' } = {}) {
     had.tech.push(f.tech);
     teamsFollowing.set(f.team, had);
   }
+  // A customer's stack drawing is its knowledge base's: only of the customers the viewer reads
+  // (as src/orgprofile.js shows it), the others not even counted.
   const byOrg = new Map();
-  for (const s of stacks.results || []) {
+  for (const s of (stacks.results || []).filter((r) => may.read({ kind: 'org', slug: r.org }))) {
     const had = byOrg.get(s.org) || { org: s.org, name: s.name, parts: [] };
     had.parts.push({ name: s.part, tech: s.tech });
     byOrg.set(s.org, had);
