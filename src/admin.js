@@ -2145,12 +2145,13 @@ async function addMemberSettling(env, me, body) {
 
 /**
  * The routes of `/api/admin/*` for every member of an ops team, not only the admin team and
- * team managers: the duplicate customers they see, asking for a merge (src/orgmerge.js), asking the
- * admin team to decide a partner of a customer (src/partnerrequests.js), and the customers' pages
- * (whose channels, and who follows them).
+ * team managers: the duplicate customers they see, asking for a merge (src/orgmerge.js), a pair of
+ * a customer and a partner's page (`?pair=`, its evidence as counts: src/orgpartners.js checks)
+ * and asking the admin team to decide it (src/partnerrequests.js), and the customers' pages
+ * (whose channels, and who follows them). Deciding a pair stays the admin team's.
  */
 export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests',
-  'POST org-partner-requests', 'DELETE org-partner-requests', 'GET orgs', 'GET org'];
+  'GET org-partners', 'POST org-partner-requests', 'DELETE org-partner-requests', 'GET orgs', 'GET org'];
 
 async function adminRoute(request, env, url, me) {
   const p = url.pathname;

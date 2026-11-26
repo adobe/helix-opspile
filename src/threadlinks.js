@@ -16,7 +16,7 @@ import { entryRows, vectorOf } from './expertise.js';
 import { registrable } from './favicons.js';
 import { CLEF, stateOf, threadMessages } from './label.js';
 import {
-  customersOf, OWNER_SPREAD, ownerOf, partnersOf,
+  customersOf, OWNER_SPREAD, ownerOf, partnersOf, standingOf,
 } from './orgpartners.js';
 import {
   customerDomains, customerOf, iconDomain, partnerDomains,
@@ -405,11 +405,21 @@ async function writeOrgs(env, key, role, found, now) {
 
 /**
  * The `about`, `partner` and `customer` rows of entry keys `keys` that are shown: not dismissed,
- * likely.
+ * likely. An `about` row and a customer's thread's `partner` row name a pair of a customer and a
+ * partner, the row's org and its thread's (`pairable`), with how it stands (`org_partners`,
+ * `pair_*`); a public thread's rows name none: a public org is nobody's customer or partner.
  */
 async function shownOrgs(env, keys) {
-  return rows(env, `SELECT x.thread, x.org, x.role, x.p, x.via, o.name, o.icon
+  return rows(env, `SELECT x.thread, x.org, x.role, x.p, x.via, o.name, o.icon,
+      (x.role = 'about' OR (x.role = 'partner' AND COALESCE(ot.type, 'customer') = 'customer'))
+        AS pairable,
+      op.customer AS pair_customer, op.confirmed_at AS pair_confirmed,
+      op.dismissed_at AS pair_dismissed, op.until AS pair_until, op.p AS pair_p
     FROM thread_orgs x LEFT JOIN orgs o ON o.slug = x.org
+    LEFT JOIN threads t ON t.thread = x.thread LEFT JOIN orgs ot ON ot.slug = t.org
+    LEFT JOIN org_partners op
+      ON op.customer = CASE WHEN x.role = 'about' THEN x.org ELSE t.org END
+      AND op.partner = CASE WHEN x.role = 'about' THEN t.org ELSE x.org END
     WHERE x.thread IN (SELECT value FROM json_each(?1)) AND x.dismissed_at IS NULL AND x.p >= ?2
       AND x.org NOT IN (SELECT slug FROM org_merges)
       AND (x.role != 'customer' OR ${PUBLIC_NOW('x')})
@@ -787,13 +797,22 @@ const orgEntry = (r) => ({
   role: r.role,
   p: r.p,
   via: String(r.via || '').split(',').filter(Boolean),
+  // How the pair of the thread's org and this one stands (src/orgpartners.js `standingOf`); none
+  // in a public thread, whose org is nobody's customer or partner (`shownOrgs`).
+  ...(r.pairable ? {
+    pair: standingOf(r.pair_customer ? {
+      confirmed: r.pair_confirmed, dismissed: r.pair_dismissed, until: r.pair_until, p: r.pair_p,
+    } : null),
+  } : {}),
 });
 
 /**
  * The linked orgs of inbox entries, for the list: `Map<key, { about, with }>`, `about` the
  * customers a partner's thread is about, `with` the partners in a customer's thread, and the
  * partners and customers in a public one (`role` says which), each `{ slug, name, icon, role, p,
- * via }`. `keys` are the threads the list has (members too).
+ * via, pair? }`, `pair` how the org and the thread's stand as partners (src/orgpartners.js
+ * `standingOf`: confirmed, former, dismissed, or Clef's word), not in a public thread. `keys` are
+ * the threads the list has (members too).
  */
 export async function linkedOrgsOf(env, keys) {
   const out = new Map();

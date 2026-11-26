@@ -430,6 +430,9 @@ globalThis.CustomerView = (() => {
    * The words of `signals`, on a partner's page (`partner`) or a customer's; `posters` not where
    * the row's meter already counts its threads of these weeks with the partner's people.
    */
+  /** The words of `signals` (`{ <kind>: n }`) of a pair, `P` and `C` the possessives to say. */
+  const signalWords = (signals, P, C) => Object.entries(signals || {}).filter(([k]) => SIGNAL[k])
+    .map(([k, n]) => SIGNAL[k](n, P, C));
   const linkWords = (signals, { partner = false, counted = false, name = 'its' } = {}) => {
     const [P, C] = partner ? [poss(name), 'their'] : ['their', poss(name)];
     return Object.entries(signals || {}).filter(([k]) => SIGNAL[k] && !(counted && k === 'posters'))
@@ -445,12 +448,16 @@ globalThis.CustomerView = (() => {
   }
 
   /**
-   * For the admin team, a pair nothing links yet: its page in Likely partners (`ctx.review`), which
-   * shows the evidence of any two orgs and asks the admin team to decide them, in its inbox.
+   * For the people on an ops team, the pair's page in Customers (`ctx.review`), which shows the
+   * evidence of any two orgs, how they stand, and asks the admin team to decide them, in its
+   * inbox: Review for a pair nothing links yet, Evidence for one linked.
    */
   function review(x, customer, partner, ctx) {
-    if (x.linked || !ctx.review) return '';
-    return `<a class="tv-review" href="${esc(ctx.review(customer, partner))}" title="Open the pair in Likely partners: the evidence, and a request to decide it">Review</a>`;
+    if (!ctx.review) return '';
+    const [label, title] = x.linked
+      ? ['Evidence', 'Open the pair: what links them, and a request to change it']
+      : ['Review', 'Open the pair in Likely partners: the evidence, and a request to decide it'];
+    return `<a class="tv-review" href="${esc(ctx.review(customer, partner))}" title="${esc(title)}">${label}</a>`;
   }
 
   /** Since when the two work together, or until when they did, in words. */
@@ -648,8 +655,8 @@ globalThis.CustomerView = (() => {
    * what is elsewhere: `teamHref(slug)`, `teamName(slug)`, `kbHref(path)`, null where the
    * viewer may not open the knowledge base, `topicHref(id)`, a node of the Topics page, and for a
    * vendor's, a partner's and a customer's partners `orgHref(slug)` and `orgIcon(slug, icon)`
-   * (HTML), another org's page and icon; for the admin team `review(customer, partner)`, the
-   * address of a pair nothing links yet in Likely partners.
+   * (HTML), another org's page and icon; for the people on an ops team `review(customer,
+   * partner)`, the address of a pair's page in Customers.
    */
   function html(p, ctx) {
     const shown = {
@@ -690,5 +697,5 @@ globalThis.CustomerView = (() => {
     for (const b of el.querySelectorAll('[data-focus]')) b.onclick = () => pick(b);
   }
 
-  return { html, wire };
+  return { html, wire, signalWords };
 })();

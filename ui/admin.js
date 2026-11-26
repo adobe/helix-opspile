@@ -2981,9 +2981,9 @@ async function showOrgOverview(slug) {
       const o = state.orgs.find((x) => x.slug === org);
       return ico(icon || o?.icon || null, o?.domain || null);
     },
-    // The admin team's: a pair nothing links yet, its page in Likely partners (see "partners"),
-    // whether or not org_partners has a row of the two.
-    review: state.me.admin ? (customer, partner) => address({ tab: 'orgs', sel: linkSel(customer, partner) }) : null,
+    // The ops teams': a pair's page (see "partners"), whether or not org_partners has a row of the
+    // two: its evidence, and a request to decide it; the admin team decides there too.
+    review: onATeam() ? (customer, partner) => address({ tab: 'orgs', sel: linkSel(customer, partner) }) : null,
   };
   const name = p.org.name || p.org.slug;
   const inbox = orgInbox(slug, p.teams);
@@ -3460,11 +3460,10 @@ function dupQueue() {
 }
 
 /**
- * Whether Clef is sure of a pair nobody decided (above the probabilities it is unsure in): it
- * counts as a partner, and waits for nobody.
+ * Whether Clef is sure of a pair nobody decided (its standing, src/orgpartners.js `standingOf`:
+ * above the band it is unsure in, `links.unsure`): it counts as a partner, and waits for nobody.
  */
-const sureLink = (x) => !x.confirmed && !x.dismissed && !reviewLink(x)
-  && (x.standing?.status === 'sure' || (x.p !== null && x.p > (state.links?.unsure?.[1] ?? 0.65)));
+const sureLink = (x) => !x.confirmed && !x.dismissed && !reviewLink(x) && x.standing?.status === 'sure';
 
 function linkTable(list) {
   const { orgs } = state.links;
@@ -4181,16 +4180,23 @@ function wireOrgMerge(slug) {
 // customer's threads and channels, the sites both name, the partner's knowledge base, a Slack
 // Connect or Teams team they share and a channel named for both, each with Clef's verdict
 // (src/orgpartners.js), and when the partner's people posted there. The admin team decides a pair
-// in its inbox, where each request to is a thread (src/partnerrequests.js): Clef's, an agent's, and
-// those asked for on a pair's page here; everyone at Adobe reads the confirmed and likely ones, the
-// former partners apart (GET /api/customers/partners).
+// in its inbox, where each request to is a thread (src/partnerrequests.js): Clef's (where it is
+// unsure), an agent's, and those asked for on a pair's page here, which anyone on an ops team opens
+// (its evidence as counts) and where the admin team dismisses a pair or undoes its last decision
+// too; everyone at Adobe reads the confirmed and likely ones, the former partners apart (GET
+// /api/customers/partners).
 
 const LINK = 'partner:';
 const linkSel = (customer, partner) => `${LINK}${customer}:${partner}`;
 const isLink = (sel) => String(sel ?? '').startsWith(LINK);
 const linkName = (slug, orgs = state.links?.orgs) => (orgs && orgs[slug] && orgs[slug].name) || orgLabel(slug);
-/** Whether a pair waits for the admin team: nobody decided it, and Clef says it is likely. */
-const reviewLink = (x) => !x.confirmed && !x.dismissed && x.p !== null && x.p >= (state.links?.likely ?? 0.5);
+/**
+ * Whether a pair waits for the admin team: nobody decided it, and Clef is unsure of it (its
+ * standing `unsure` or `likely`: in the band `links.unsure`, where Clef asks the admin team), or
+ * someone asked; one Clef is sure of counts as a partner (`sureLink`).
+ */
+const reviewLink = (x) => !x.confirmed && !x.dismissed
+  && (['unsure', 'likely'].includes(x.standing?.status) || (x.open || []).length > 0);
 
 /** The pairs, from the Worker; while Clef has not answered for all, asked again as it gets further. */
 async function loadLinks({ fresh = false, round = 0 } = {}) {
@@ -4250,6 +4256,28 @@ async function showLink(customer, partner) {
   drawLink(state.view);
 }
 
+/** The pair as it is now, read again, in its page (after a decision there). */
+async function refreshLink(v) {
+  const r = await call(`/api/admin/org-partners?pair=${encodeURIComponent(v.value)}`);
+  if (v !== state.view) return;
+  if (!r.ok) { failed('Load', r); return; }
+  Object.assign(v, { pair: r.body.pairs[0], orgs: r.body.orgs, requests: r.body.requests || [] });
+  updateLink(v.pair, v.orgs);
+  renderList();
+  drawLink(v);
+}
+
+/**
+ * The admin team's last decision on a pair, as its Undo takes it back (the routes' `undo`): an
+ * end (then it is a partner of now again), a confirmation, a dismissal; null for none.
+ */
+function lastDecision(pair) {
+  if (pair.until) return { path: 'end', label: 'Undo the end', title: `A partner of now again, as it was until ${pair.until}`, done: 'Undone: a partner of now again.' };
+  if (pair.confirmed) return { path: 'confirm', label: 'Undo the confirmation', title: 'Not confirmed: what Clef says of the pair counts again', done: 'Undone: what Clef says of the pair counts again.' };
+  if (pair.dismissed) return { path: 'dismiss', label: 'Undo Not partners', title: 'Not dismissed: what Clef says of the pair counts again', done: 'Undone: what Clef says of the pair counts again.' };
+  return null;
+}
+
 /** A day of an ISO time, or a date as given. */
 const dayOf = (at) => String(at || '').slice(0, 10);
 /** A name's possessive: "Acme's", "Raviga Partners'". */
@@ -4261,7 +4289,9 @@ function linkState(pair, p, c) {
   if (pair.until) now = `A former partner: ${esc(p)} worked for ${esc(c)} until ${esc(pair.until)}${pair.ended ? `, as ${who({ email: pair.ended.by })} said ${esc(ago(pair.ended.at))}` : ''}.`;
   else if (pair.confirmed) now = `A partner of ${esc(c)}${pair.since ? ` since ${esc(pair.since)}` : ''}: confirmed by ${who({ email: pair.confirmed.by })} ${esc(ago(pair.confirmed.at))}.`;
   else if (pair.dismissed) now = `Not partners: dismissed by ${who({ email: pair.dismissed.by })} ${esc(ago(pair.dismissed.at))}, whatever Clef says.`;
-  else if (pair.p !== null && pair.p >= (state.links?.likely ?? 0.5)) now = `Likely, says Clef: everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)} until the admin team decides.`;
+  else if (pair.standing?.status === 'sure') now = `Clef is sure: everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}, and nobody needs to decide it.`;
+  else if (pair.p !== null && pair.p >= (state.links?.likely ?? 0.5)) now = `Likely, though Clef is unsure: everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}, and Clef asks the admin team to decide it.`;
+  else if (pair.standing?.status === 'unsure') now = `Clef is unsure, so nobody at Adobe sees ${esc(p)} as a partner of ${esc(c)}: it asks the admin team to decide it.`;
   const seen = pair.first
     ? `<p class="sub">${esc(possOf(p))} people posted in ${esc(possOf(c))} threads from ${esc(dayOf(pair.first))} to ${esc(dayOf(pair.last))}, as far back as the inbox reads.</p>`
     : `<p class="sub">None of ${esc(possOf(p))} people posted in ${esc(possOf(c))} threads that the inbox reads.</p>`;
@@ -4278,26 +4308,36 @@ function linkRequest(q, p, c) {
 function drawLink(v) {
   const { pair, orgs } = v;
   const [p, c] = [linkName(pair.partner, orgs), linkName(pair.customer, orgs)];
+  const sure = { sure: ': sure', likely: ': likely, though unsure', unsure: ': unsure', unlikely: ': unlikely' }[pair.standing?.status] || '';
   const clef = pair.p === null ? 'Clef has not been asked yet; it is, the next time the list loads.'
-    : `Clef says ${pct(pair.p)} that ${esc(p)} works for ${esc(c)}${pair.stale ? ' (from before what they share changed: it is asked again)' : ''}${pair.checked ? `, asked ${esc(ago(pair.checked))}` : ''}.`;
+    : `Clef says ${pct(pair.p)} that ${esc(p)} works for ${esc(c)}${esc(sure)}${pair.stale ? ' (from before what they share changed: it is asked again)' : ''}${pair.checked ? `, asked ${esc(ago(pair.checked))}` : ''}.`;
+  // The admin team reads what each signal names; anyone else its counts, in words.
+  const said = (x) => (x.text ? x.text : CustomerView.signalWords({ [x.kind]: x.n }, possOf(p), possOf(c))[0]) || x.kind;
   const evidence = pair.signals.length
-    ? `<ul>${pair.signals.map((x) => `<li>${esc(x.text[0].toUpperCase() + x.text.slice(1))}.</li>`).join('')}</ul>`
+    ? `<ul>${pair.signals.map((x) => { const t = said(x); return `<li>${esc(t[0].toUpperCase() + t.slice(1))}.</li>`; }).join('')}</ul>`
     : '<p class="sub">Nothing they share says so now.</p>';
   const requests = v.requests || [];
   const open = requests.filter((q) => q.status === 'open');
-  // What is asked by default: an end of a partner of now, else that it is one.
+  // What is asked by default: an end of a partner of now, else that it is one; of a partner of
+  // now no link (it is one), of a former one no end (it is one).
   const current = pair.confirmed && !pair.until;
-  const action = v.action || (current ? 'end' : 'link');
+  const actions = ['link', 'end'].filter((a) => !(a === 'link' && current) && !(a === 'end' && pair.until));
+  const action = actions.includes(v.action) ? v.action : (current ? 'end' : 'link');
   const asked = open.find((q) => q.action === action);
   const mine = open.find((q) => q.requestedBy.email === String(state.me.email || '').toLowerCase());
   const key = `link:${v.value}`;
   const listed = requests.length ? `<ul class="asks">${requests.map((q) => linkRequest(q, p, c)).join('')}</ul>` : '';
+  // The admin team's, directly: Not partners, and Undo of the last decision (`lastDecision`).
+  const last = lastDecision(pair);
+  const decide = state.me.admin && (last || !pair.dismissed) ? `<div class="form">
+      ${pair.dismissed ? '' : `<button id="lDismiss"${off(key)} title="${esc(`${p} does not work for ${c}, whatever Clef says`)}">Not partners</button>`}
+      ${last ? `<button id="lUndo"${off(key)} title="${esc(last.title)}">${esc(last.label)}</button>` : ''}</div>` : '';
   const ask = asked
     ? `<p class="hint">Asked already: the admin team decides it in <a href="${esc(requestThread('partner', asked.id))}">its inbox</a>.</p>`
     : `<form id="lAskForm" class="form">
         <label class="fld"><span>Ask the admin team</span><select id="lAction">
-          <option value="link"${action === 'link' ? ' selected' : ''}>${esc(`${p} works for ${c}`)}</option>
-          <option value="end"${action === 'end' ? ' selected' : ''}>${esc(`${p} no longer works for ${c}`)}</option></select></label>
+          ${actions.includes('link') ? `<option value="link"${action === 'link' ? ' selected' : ''}>${esc(`${p} works for ${c}`)}</option>` : ''}
+          ${actions.includes('end') ? `<option value="end"${action === 'end' ? ' selected' : ''}>${esc(`${p} no longer works for ${c}`)}</option>` : ''}</select></label>
         <label class="fld"><span id="lDateLabel">${action === 'end' ? 'Until' : 'Since (optional)'}</span><input id="lDate" type="date"${action === 'end' ? ' required' : ''}></label>
         <label class="fld grow"><span>Why (optional)</span><input id="lNote" type="text" maxlength="1000" autocomplete="off"></label>
         <button class="primary" id="lAsk"${off(key)}>Ask</button></form>`;
@@ -4305,9 +4345,11 @@ function drawLink(v) {
     <div class="status" id="status"></div>
     <div class="card"><div class="pair">${pairSide(orgs[pair.partner], false)}${pairSide(orgs[pair.customer], false)}</div></div>
     <div class="card"><h2>Why ${esc(p)} may work for ${esc(c)}</h2><p>${clef}</p>${evidence}</div>
-    <div class="card"><h2>Partner of the customer</h2>${linkState(pair, p, c)}${listed}${ask}
+    <div class="card"><h2>Partner of the customer</h2>${linkState(pair, p, c)}${decide}${listed}${ask}
       ${mine ? `<div class="form"><button id="lWithdraw"${off(key)}>Take my request back</button></div>` : ''}
-      <p class="hint">The admin team decides in its inbox: confirmed, everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}; ended, as a former one; not partners, as none, whatever Clef says. A partner confirmed by mistake is undone there too: ask that it no longer works for them, and decide Not partners.</p></div>`;
+      <p class="hint">${state.me.admin
+    ? `The admin team decides here or in its inbox: confirmed, everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}; ended, as a former one; not partners, as none, whatever Clef says. Not partners closes the pair's requests that wait. Undo takes the last decision back: an end, and it is a partner of now again; a confirmation or Not partners, and Clef's word counts again.`
+    : `The admin team decides in its inbox: confirmed, everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}; ended, as a former one; not partners, as none, whatever Clef says.`}</p></div>`;
   showStatus();
   if ($('lAction')) {
     $('lAction').onchange = () => {
@@ -4339,6 +4381,18 @@ function drawLink(v) {
       });
     };
   }
+  // A decision of the admin team's, then the pair as it is now (its requests closed with it).
+  const decideBy = (b, path, body, done) => hold(b, key, async () => {
+    const res = await call(`/api/admin/org-partners/${path}`, 'POST', { customer: pair.customer, partner: pair.partner, ...body });
+    if (!res.ok) { failed(b.textContent.trim(), res); return false; }
+    return true;
+  }).then(async (ok) => {
+    if (!ok || v !== state.view) return;
+    await refreshLink(v);
+    if (v === state.view) status('ok', done);
+  });
+  if ($('lDismiss')) $('lDismiss').onclick = () => decideBy($('lDismiss'), 'dismiss', {}, `Not partners: nobody at Adobe sees ${p} as a partner of ${c}.`);
+  if ($('lUndo')) $('lUndo').onclick = () => decideBy($('lUndo'), last.path, { undo: true }, last.done);
   if ($('lWithdraw')) {
     $('lWithdraw').onclick = () => hold($('lWithdraw'), key, async () => {
       const res = await call('/api/admin/org-partner-requests', 'DELETE', { id: mine.id });

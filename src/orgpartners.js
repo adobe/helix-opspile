@@ -17,7 +17,7 @@ import { CLEF } from './label.js';
 import { facts as orgFacts } from './orgmerge.js';
 import { partnerDomainLookup } from './partners.js';
 import {
-  clefRequests, dateOf, openRequestsByPair, pairRequests, settleRequests,
+  clefRequests, dateOf, openRequestsByPair, pairRequests, requestFor, settleRequests,
 } from './partnerrequests.js';
 import { platformName } from './platforms.js';
 import { isAdmin } from './roles.js';
@@ -42,16 +42,25 @@ import { UNASSIGNED } from './rules.js';
  *   what it would be shown changed, a few per list load and per cron run.
  *
  * The admin team decides a pair in its inbox, where each request to is a thread
- * (src/partnerrequests.js): a person's, an agent's, or Clef's, which every sync files
- * (`partnerWants`); a pair confirmed may end (`endPartner`: a former partner, until then), and
- * every pair has the span of its partner's posts in the customer's threads (`spanOf`). A
- * candidate nobody decided that stops being one goes. Everyone at Adobe reads an org's confirmed
+ * (src/partnerrequests.js): a person's, an agent's, or Clef's, which every sync files where Clef
+ * is unsure (`partnerWants`: a pair it is sure of counts as linked without one); or directly on
+ * the pair's page, which anyone on an ops team reads (`orgPartners`); a pair confirmed may end
+ * (`endPartner`: a former partner, until then), and every pair has the span of its partner's
+ * posts in the customer's threads (`spanOf`). A candidate nobody decided that stops being one
+ * goes. Everyone at Adobe reads an org's confirmed
  * and likely pairs (`partnersOf`, `customersOf`), with how many of each signal and no message
  * text. A merged org's decisions follow the merge (src/orgmerge.js `mergeOrgs`, `unmergeOrg`).
  */
 
 /** From this probability on, Clef says the partner works for the customer: "likely". */
 export const LIKELY = 0.5;
+/**
+ * Clef is unsure of a pair whose probability is in this band (inclusive): it asks the admin team
+ * to decide one nobody decided (`partnerWants`). Above it, Clef is sure: the pair counts as
+ * linked without anybody deciding it, as a likely one does. Below it, the pair is not linked.
+ */
+export const UNSURE_LOW = 0.35;
+export const UNSURE_HIGH = 0.65;
 /** What a pair's signals add up to before Clef is asked about it. */
 export const CANDIDATE = 2;
 /** Clef questions per list load and per cron run: the rest are asked the next time. */
@@ -78,6 +87,7 @@ const clean = (v, n = 200) => String(v ?? '').trim().slice(0, n);
 const bad = (error) => json({ error }, 400);
 const keyOf = (customer, partner) => `${customer}\n${partner}`;
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const pctOf = (p) => `${Math.round(p * 100)}%`;
 
 async function rows(env, sql, ...args) {
   const { results } = await env.DB.prepare(sql).bind(...args).all();
@@ -694,6 +704,92 @@ function pairOf(r, c = null) {
 
 const decided = (r) => Boolean(r && (r.confirmed_at || r.dismissed_at));
 
+/**
+ * How a pair stands, as the thread agents, the MCP server and the pages are told it: `{ status,
+ * p, until }`. `status` is the admin team's word, `confirmed` (a partner of now), `former`
+ * (confirmed and ended, until `until`) or `dismissed` (not partners); else Clef's on a pair
+ * nobody decided: `sure` (`p` above `UNSURE_HIGH`), `likely` (from `LIKELY`, linked), `unsure` (in
+ * the band below `LIKELY`, not linked), `unlikely`, or `unknown` (Clef has not said); `none`
+ * where the inbox has no such pair. `x` has the pair's `confirmed`, `dismissed` (truthy for a
+ * decision), `until` and `p`, or is null.
+ */
+export function standingOf(x) {
+  if (!x) {
+    return { status: 'none', p: null, until: null };
+  }
+  const p = x.p ?? null;
+  let status = 'unlikely';
+  if (x.dismissed) {
+    status = 'dismissed';
+  } else if (x.confirmed) {
+    status = x.until ? 'former' : 'confirmed';
+  } else if (p === null) {
+    status = 'unknown';
+  } else if (p > UNSURE_HIGH) {
+    status = 'sure';
+  } else if (p >= LIKELY) {
+    status = 'likely';
+  } else if (p >= UNSURE_LOW) {
+    status = 'unsure';
+  }
+  return { status, p, until: (status === 'former' && x.until) || null };
+}
+
+/** A pair's standing (`standingOf`) in words, as a thread agent is told it. */
+export function standingWords(s) {
+  const pc = s.p === null || s.p === undefined ? '' : ` (${pctOf(s.p)})`;
+  switch (s.status) {
+    case 'confirmed': return 'confirmed by the admin team';
+    case 'former': return `a former partner, until ${s.until}, as the admin team said`;
+    case 'dismissed': return 'not partners, as the admin team said';
+    case 'sure': return `not decided; Clef is sure${pc}, so it counts as a partner`;
+    case 'likely': return `not decided; likely, says Clef${pc}, though it is unsure`;
+    case 'unsure': return `not decided and not linked; Clef is unsure${pc}`;
+    case 'unlikely': return `not linked; unlikely, says Clef${pc}`;
+    case 'unknown': return 'not decided, and Clef has not said yet';
+    default: return 'not linked: the inbox found nothing else that pairs them';
+  }
+}
+
+/**
+ * How each of `pairs` (`[{ customer, partner }]`) stands (`standingOf`), from `org_partners`:
+ * `Map<customer\npartner, standing>`.
+ */
+export async function pairStandings(env, pairs) {
+  const list = pairs.filter((x) => x && x.customer && x.partner);
+  if (!list.length) {
+    return new Map();
+  }
+  const found = await rows(env, `SELECT x.customer, x.partner, x.confirmed_at, x.dismissed_at, x.until, x.p
+    FROM org_partners x JOIN (SELECT json_extract(value, '$[0]') AS c, json_extract(value, '$[1]') AS p
+      FROM json_each(?1)) j ON x.customer = j.c AND x.partner = j.p`, JSON.stringify(list.map((x) => [x.customer, x.partner])));
+  const by = new Map(found.map((r) => [keyOf(r.customer, r.partner), r]));
+  return new Map(list.map((x) => {
+    const r = by.get(keyOf(x.customer, x.partner));
+    return [keyOf(x.customer, x.partner), standingOf(r ? {
+      confirmed: r.confirmed_at, dismissed: r.dismissed_at, until: r.until, p: r.p,
+    } : null)];
+  }));
+}
+
+/**
+ * Why Clef takes back its open `link` request of each pair nobody decided that it no longer asks
+ * about (src/partnerrequests.js `clefRequests`): sure now, or finding it unlikely.
+ */
+function takenBack(pairs) {
+  const why = new Map();
+  for (const x of pairs) {
+    if (!x.confirmed && !x.dismissed && x.p !== null && x.p !== undefined) {
+      if (x.p > UNSURE_HIGH) {
+        why.set(keyOf(x.customer, x.partner), `Clef is sure of it, ${pctOf(x.p)}: it counts as a partner without a decision`);
+      } else if (x.p < UNSURE_LOW) {
+        why.set(keyOf(x.customer, x.partner), `Clef finds it unlikely now, ${pctOf(x.p)}`);
+      }
+    }
+  }
+  return why;
+}
+
 /** A confirmed pair whose people posted nothing in the customer's threads for this long ended… */
 export const LAPSED_DAYS = 90;
 /** …while the customer's threads went on for at least this long after their last post. */
@@ -704,14 +800,52 @@ const DAY = 24 * 3600 * 1000;
 const dayOf = (iso) => String(iso || '').slice(0, 10);
 /** An `until` (a day or a month) as the last moment it covers. */
 const endOf = (until) => Date.parse(until.length === 7 ? `${until}-28T23:59:59Z` : `${until}T23:59:59Z`);
+/**
+ * Whether the partner's people stopped posting in the customer's threads (`x.last`, the pair's
+ * span) for `LAPSED_DAYS` while the customer's went on for `GOING_ON_DAYS` after, at `now` (ms).
+ */
+function lapsed(x, orgs, now) {
+  const latest = Date.parse((orgs.get(x.customer) || {}).latest || '') || 0;
+  const last = Date.parse(x.last || '') || 0;
+  return Boolean(last) && now - last > LAPSED_DAYS * DAY && latest - last > GOING_ON_DAYS * DAY;
+}
+
+/** Kinds of signal that say the two work together, not only that they share something. */
+const DIRECT = new Set(['posters', 'channel']);
+
+/**
+ * Why Clef's sureness of a pair is in doubt (`x.p` above `UNSURE_HIGH`), or null. Narrowly, two
+ * things only:
+ *
+ * - `alone`: everything found is of one kind, and not one that says they work together (the
+ *   partner's people posting in the customer's threads, a channel named for both): a site owner
+ *   both name, the partner's people among the channel's members, the customer's in the partner's
+ *   threads. One coincidence may make Clef sure;
+ * - `quiet`: the partner's people posted in the customer's threads, and none did for
+ *   `LAPSED_DAYS` while the customer's threads went on for `GOING_ON_DAYS` after (`lapsed`, as a
+ *   confirmed pair's end): the posting that made Clef sure stopped, and Clef's word stays.
+ */
+export function conflictOf(x, orgs, now) {
+  const kinds = new Set((x.signals || []).map((g) => g.kind));
+  if (kinds.size === 1 && !DIRECT.has([...kinds][0])) {
+    return { kind: 'alone' };
+  }
+  return lapsed(x, orgs, now) ? { kind: 'quiet' } : null;
+}
 
 /**
  * What Clef asks the admin team to decide (src/partnerrequests.js `clefRequests`), from the
  * pairs as `sync` has them, `orgs` the facts' and `fingerprints` what Clef was shown of each
- * candidate, at `now` (ms): a likely pair nobody decided is a partner (`link`, on what Clef was
- * shown); a confirmed one whose people posted nothing in the customer's threads for `LAPSED_DAYS`,
- * while the customer's went on, is one no more (`end`, until their last post); an ended one whose
- * people post again is one again (`link`).
+ * candidate, at `now` (ms). Clef asks only where it is unsure, or its sureness is in doubt; the
+ * pairs it is sure of count as linked without a decision, as the likely ones always did:
+ *
+ * - a pair nobody decided whose `p` is in the unsure band (`UNSURE_LOW` to `UNSURE_HIGH`): a
+ *   partner? (`link`, on what Clef was shown);
+ * - one nobody decided that Clef is sure of while its signals conflict (`conflictOf`): a partner
+ *   still? (`link`; `alone` on what Clef was shown, `quiet` on the partner's last post);
+ * - a confirmed one whose people posted nothing in the customer's threads for `LAPSED_DAYS`, while
+ *   the customer's went on: one no more? (`end`, until their last post);
+ * - an ended one whose people post again: one again? (`link`).
  */
 export function partnerWants(pairs, orgs, fingerprints, now) {
   const wants = [];
@@ -721,18 +855,32 @@ export function partnerWants(pairs, orgs, fingerprints, now) {
     const key = keyOf(x.customer, x.partner);
     const latest = Date.parse((orgs.get(x.customer) || {}).latest || '') || 0;
     const last = Date.parse(x.last || '') || 0;
-    if (!x.confirmed && !x.dismissed && x.candidate && x.p !== null && x.p >= LIKELY
-      && fingerprints.has(key)) {
+    const open = !x.confirmed && !x.dismissed && x.candidate && x.p !== null
+      && fingerprints.has(key);
+    const found = (x.signals || []).map((g) => g.text).join('; ');
+    const doubt = open && x.p > UNSURE_HIGH ? conflictOf(x, orgs, now) : null;
+    if (open && x.p >= UNSURE_LOW && x.p <= UNSURE_HIGH) {
       wants.push({
         customer: x.customer,
         partner: x.partner,
         action: 'link',
         since: x.first ? dayOf(x.first) : null,
-        note: `Clef says ${Math.round(x.p * 100)}% that ${name(x.partner)} works for ${name(x.customer)}: ${x.signals.map((g) => g.text).join('; ')}.`,
+        note: `Clef is unsure, ${pctOf(x.p)}, that ${name(x.partner)} works for ${name(x.customer)}: ${found}.`,
         fingerprint: fingerprints.get(key),
       });
-    } else if (x.confirmed && !x.until && last && now - last > LAPSED_DAYS * DAY
-      && latest - last > GOING_ON_DAYS * DAY) {
+    } else if (doubt) {
+      const why = doubt.kind === 'quiet'
+        ? `but nobody of ${name(x.partner)} posted in ${poss(x.customer)} threads since ${dayOf(x.last)}, and its threads went on until ${dayOf(new Date(latest).toISOString())}`
+        : 'from one kind of evidence alone';
+      wants.push({
+        customer: x.customer,
+        partner: x.partner,
+        action: 'link',
+        since: x.first ? dayOf(x.first) : null,
+        note: `Clef is sure, ${pctOf(x.p)}, that ${name(x.partner)} works for ${name(x.customer)}, ${why}: ${found}.`,
+        fingerprint: doubt.kind === 'quiet' ? `quiet:${dayOf(x.last)}` : fingerprints.get(key),
+      });
+    } else if (x.confirmed && !x.until && lapsed(x, orgs, now)) {
       wants.push({
         customer: x.customer,
         partner: x.partner,
@@ -867,7 +1015,8 @@ async function sync(env, {
     && (x.p === null || x.stale)).length;
   // What Clef asks the admin team to decide now, in its inbox; best effort, as the list is.
   if (requests) {
-    await clefRequests(env, partnerWants(pairs, orgs, fingerprints, Date.now())).catch((e) => {
+    const wants = partnerWants(pairs, orgs, fingerprints, Date.now());
+    await clefRequests(env, wants, { why: takenBack(pairs) }).catch((e) => {
       console.error(JSON.stringify({ route: 'orgpartners', requests: 'failed', error: e.message }));
     });
   }
@@ -922,21 +1071,35 @@ const shownOrg = (o, ctx) => {
 const likely = (x) => Boolean(x.confirmed) || (!x.dismissed && x.p !== null && x.p >= LIKELY);
 
 /**
- * GET /api/admin/org-partners[?pair=<customer>:<partner>][&fresh=1], for the admin team: the
- * pairs of a customer and a partner that may work together, each `{ customer, partner, signals,
- * score, p, checked, stale, candidate, confirmed, dismissed, since, until, ended, first, last,
- * open }` (`open`: its requests that wait, `[{ id, action }]`), with the orgs in `orgs`; the
- * undecided likely ones first, then the rest by Clef's probability and the signals, the decided
- * last. `unchecked` counts the pairs Clef was not asked about yet. `pair` answers that one pair,
- * whatever its signals, and its requests (`requests`, src/partnerrequests.js `pairRequests`).
- * `skipped`: the partner domains could not be read, so these are the pairs as they were kept
- * (`sync`).
+ * A signal as anyone on an ops team reads it on a pair's page: its kind and counts, without its
+ * text (which names mail domains, site owners, knowledge-base entries and channels).
+ */
+const countsOf = (g) => ({
+  kind: g.kind, n: g.n, ...(g.people !== undefined ? { people: g.people } : {}),
+});
+
+/**
+ * GET /api/admin/org-partners[?pair=<customer>:<partner>][&fresh=1]: the pairs of a customer and
+ * a partner that may work together, each `{ customer, partner, signals, score, p, standing,
+ * checked, stale, candidate, confirmed, dismissed, since, until, ended, first, last, open }`
+ * (`standing`: `standingOf`'s; `open`: its requests that wait, `[{ id, action }]`), with the orgs
+ * in `orgs`; the undecided likely ones first, then the rest by Clef's probability and the signals,
+ * the decided last. `unchecked` counts the pairs Clef was not asked about yet. `pair` answers that
+ * one pair, whatever its signals, and its requests (`requests`, src/partnerrequests.js
+ * `pairRequests`). `skipped`: the partner domains could not be read, so these are the pairs as
+ * they were kept (`sync`).
+ *
+ * The list is the admin team's; one pair's page (`pair`) anyone's on an ops team too (STAFF_ROUTES
+ * in src/admin.js), who read the evidence as counts only (`countsOf`), the orgs without their mail
+ * domains, and the requests as `requestFor` gives them (no fingerprint, no note but their own).
+ * Only the admin team decides (`decidePartner`, `endPartner`).
  */
 export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
-  if (!isAdmin(me)) {
-    return json({ error: 'for the admin team' }, 403);
+  const admin = isAdmin(me);
+  if (!admin && !(pair && me && (me.teams || []).length)) {
+    return json({ error: pair ? 'for the people on an ops team' : 'for the admin team: open one pair with ?pair=' }, 403);
   }
-  const s = await sync(env, { fresh });
+  const s = await sync(env, { fresh: admin && fresh });
   let list = s.pairs;
   if (pair) {
     const [customer, partner] = String(pair).split(':');
@@ -968,14 +1131,21 @@ export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
     || x.customer.localeCompare(y.customer));
   // What waits for the admin team of each pair, in its inbox; of one pair, every request.
   const open = await openRequestsByPair(env);
-  list = list.map((x) => ({ ...x, open: open.get(keyOf(x.customer, x.partner)) || [] }));
+  list = list.map((x) => ({
+    ...x,
+    ...(admin ? {} : { signals: x.signals.map(countsOf) }),
+    standing: standingOf(x),
+    open: open.get(keyOf(x.customer, x.partner)) || [],
+  }));
   const requests = pair && list.length
-    ? await pairRequests(env, list[0].customer, list[0].partner) : null;
+    ? (await pairRequests(env, list[0].customer, list[0].partner)).map((r) => requestFor(me, r))
+    : null;
   const orgs = {};
   for (const x of list) {
     for (const slug of [x.customer, x.partner]) {
       const o = s.orgs.get(slug);
-      orgs[slug] = o ? shownOrg(o, s.ctx) : {
+      const shown = o && shownOrg(o, s.ctx);
+      orgs[slug] = shown ? { ...shown, ...(admin ? {} : { domain: null, domains: [] }) } : {
         slug,
         name: null,
         type: null,
@@ -994,6 +1164,7 @@ export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
     orgs,
     unchecked: s.unchecked,
     likely: LIKELY,
+    unsure: [UNSURE_LOW, UNSURE_HIGH],
     skipped: Boolean(s.skipped),
     ...(requests ? { requests } : {}),
   });
@@ -1004,9 +1175,10 @@ export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
  * the admin team: the partner works for the customer (from `since`, a day or a month, kept as it
  * was without one), or does not. Either replaces the other; confirming a former partner makes it a
  * partner again (its `until` cleared), and dismissing a pair clears its dates. `undo` takes it
- * back, and Clef's verdict is what is said of the pair again. The pair's open requests it settles
- * are closed with it (src/partnerrequests.js `settleRequests`): a confirmation the `link` ones, a
- * dismissal all.
+ * back, and Clef's verdict is what is said of the pair again; a confirmation undone clears its
+ * dates too (`since`, and an end: an ended pair undoes its end first, `endPartner`). The pair's
+ * open requests it settles are closed with it (src/partnerrequests.js `settleRequests`): a
+ * confirmation the `link` ones, a dismissal all; an undo opens none again.
  */
 export async function decidePartner(env, me, body, what) {
   const customer = clean(body.customer);
@@ -1032,6 +1204,10 @@ export async function decidePartner(env, me, body, what) {
   // An undo clears only its own; a decision replaces the other. Confirmed, a former partner is
   // one again; dismissed, the pair never was, and has no dates.
   let clear = body.undo ? '' : `, ${other}_by = NULL, ${other}_at = NULL`;
+  if (body.undo && what === 'confirm') {
+    // A confirmation undone takes its dates with it: an end is of a confirmed pair.
+    clear = ', since = NULL, until = NULL, ended_by = NULL, ended_at = NULL';
+  }
   if (!body.undo) {
     clear += what === 'confirm'
       ? ', since = COALESCE(excluded.since, org_partners.since), until = NULL, ended_by = NULL, ended_at = NULL'
