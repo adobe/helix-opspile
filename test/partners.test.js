@@ -266,6 +266,23 @@ describe('partnerDomains', () => {
     assert.equal(looks, 1);
   });
 
+  it('awaits no other request\'s look: requests together each look the first time', async () => {
+    const e = world();
+    let looks = 0;
+    const prepare = e.DB.prepare.bind(e.DB);
+    e.DB.prepare = (sql) => {
+      looks += /COUNT\(DISTINCT m\.thread\)/.test(sql) ? 1 : 0;
+      return prepare(sql);
+    };
+    const request = () => new Meter({ ...e, USAGE: { writeDataPoint() {} } }).env({});
+    const one = request();
+    const found = await Promise.all([
+      partnerDomains(one), partnerDomains(one), partnerDomains(request()),
+    ]);
+    assert.deepEqual(found.map((m) => m.size), [1, 1, 1]);
+    assert.equal(looks, 2, 'one for each request, shared within it');
+  });
+
   it('gives a domain to the partner it names, one of no posts, and not to one merged', async () => {
     const e = world();
     // The agency was bought by a holding whose people post nowhere the inbox sees.

@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 
-import { underlying } from './d1batch.js';
+import { isolateCache } from './isolatecache.js';
 import { orgDomain } from './favicons.js';
 import { json } from './http.js';
 import { CLEF } from './label.js';
@@ -206,28 +206,16 @@ async function loadEvidence(env) {
   };
 }
 
-let cachedEvidence = null;
+const evidenceKept = isolateCache(EVIDENCE_MS);
 
 /** The evidence (`loadEvidence`), kept as src/orgmerge.js keeps its facts. */
 async function evidence(env, { fresh = false } = {}) {
-  const db = underlying(env.DB);
-  const c = cachedEvidence;
-  if (!fresh && c && c.db === db && Date.now() - c.at < EVIDENCE_MS) {
-    return c.evidence;
-  }
-  const kept = { db, at: Date.now(), evidence: loadEvidence(env) };
-  cachedEvidence = kept;
-  kept.evidence.catch(() => {
-    if (cachedEvidence === kept) {
-      cachedEvidence = null;
-    }
-  });
-  return kept.evidence;
+  return evidenceKept.get(env, loadEvidence, { fresh });
 }
 
 /** Forgets the evidence kept (for tests). */
 export function forgetEvidence() {
-  cachedEvidence = null;
+  evidenceKept.forget();
 }
 
 // ---- signals ---------------------------------------------------------------------------------

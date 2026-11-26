@@ -280,11 +280,13 @@ let kept = null;
  * The domains found (`derive`), as this isolate found them in the last hour (`DERIVED_MS`). After
  * the hour, the request that asks looks again and waits for it (a fraction of a second, once an
  * hour): a look nobody awaits could be cancelled with the response, and the old domains would be
- * trusted for another hour. Requests that come together share a look. Kept by the D1 binding under
- * the request's wrappers (`underlying`). `at` moves only when a look succeeds: one that fails or
- * takes longer than `LOOK_MS` answers what was found before (none, the first time). After a
- * failure, so do the requests of the next minute (`RETRY_MS`), so that an overloaded D1 is not
- * asked for every message again by each of them; the first after it looks again.
+ * trusted for another hour. A request shares only its own look: another's (src/isolatecache.js
+ * says why) is not awaited, and what was found before is answered meanwhile. Kept by the D1
+ * binding under the request's wrappers (`underlying`). `at` moves only when a look succeeds:
+ * one that fails or takes longer than `LOOK_MS` answers what was found before (none, the first
+ * time). After a failure, so do the requests of the next minute (`RETRY_MS`), so that an
+ * overloaded D1 is not asked for every message again by each of them; the first after it looks
+ * again.
  */
 export async function derivedDomains(env, { fresh = false } = {}) {
   const db = underlying(env.DB);
@@ -300,8 +302,15 @@ export async function derivedDomains(env, { fresh = false } = {}) {
   if (!fresh && !k.look && Date.now() < k.retry) {
     return k.done || NONE;
   }
-  if (fresh || !k.look || Date.now() - k.look.started >= LOOK_MS) {
-    const next = { started: Date.now() };
+  // A look is shared only within the request that started it (`env.DB`): in Workers, another
+  // request's could end with it, and its awaiting requests wait forever. Meanwhile the others
+  // answer what was found before, or look themselves the first time.
+  const shared = Boolean(k.look) && k.look.owner === env.DB;
+  if (!fresh && k.look && !shared && k.done) {
+    return k.done;
+  }
+  if (fresh || !shared || Date.now() - k.look.started >= LOOK_MS) {
+    const next = { started: Date.now(), owner: env.DB };
     next.value = Promise.all([loadRows(env), loadIcons(env), loadPartners(env)]).then(([rows,
       icons, partners]) => {
       const done = { ...derive(env, rows, icons, partners), at: new Date().toISOString() };

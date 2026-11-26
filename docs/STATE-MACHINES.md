@@ -213,7 +213,9 @@ merge.
 src/partners.js). Found is no row: an isolate derives the domains from every message and keeps
 them an hour (`DERIVED_MS`); the first request after the hour derives them again and waits for it
 (a refresh nobody awaits could be cancelled with the response, and the old domains trusted for
-another hour). Requests that come together share one derivation. Whatever changes what they are
+another hour). A request shares only its own derivation (src/isolatecache.js: in Workers, one
+request may not await another's I/O); while another's is on its way, it answers what was found
+before, and the first time derives them itself. Whatever changes what they are
 derived from in this Worker forgets them in its isolate (`forgetPartnerDomains`, as `forgetFacts`
 for the duplicate search): an org's name, type or icon saved or reset, a portal customer's org
 made, a merge or its undoing, and every edit of `partner_domains`; its next request derives them

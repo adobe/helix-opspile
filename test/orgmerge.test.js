@@ -188,7 +188,7 @@ describe('duplicate candidates', () => {
 });
 
 describe('admin: duplicate customers', () => {
-  it('keeps the facts across requests, and loads them once for requests that come together', async () => {
+  it('keeps the facts across requests, and shares no load still on its way with another', async () => {
     const e = env();
     let loads = 0;
     const prepare = e.DB.prepare.bind(e.DB);
@@ -199,17 +199,19 @@ describe('admin: duplicate customers', () => {
       }
       return prepare(sql);
     };
-    // Each request wraps the binding anew (src/api.js): the facts are kept by the binding.
+    // Each request wraps the binding anew (src/api.js): the facts are kept by the binding. Two
+    // at once each load them (a Worker's request may not await another's, src/isolatecache.js).
     const [a, b] = await Promise.all([
       call(e, ADA, 'GET', '/api/admin/org-duplicates'),
       call(e, ADA, 'GET', '/api/admin/org-duplicates'),
     ]);
+    assert.equal(loads, 2);
     const c = await call(e, ADA, 'GET', '/api/admin/org-duplicates');
     assert.deepEqual([a.status, b.status, c.status], [200, 200, 200]);
     assert.deepEqual(c.body.pairs.map((p) => [p.a, p.b]), a.body.pairs.map((p) => [p.a, p.b]));
-    assert.equal(loads, 1);
+    assert.equal(loads, 2, 'kept');
     await call(e, ADA, 'GET', '/api/admin/org-duplicates?fresh=1');
-    assert.equal(loads, 2);
+    assert.equal(loads, 3);
   });
 
   it('lists likely duplicates with Clef, and keeps what it said', async () => {
