@@ -699,7 +699,8 @@ async function messageEvent(env, channel, author, m, files = null) {
  * text. `{ ok, id, root }`, or `{ error, status }`.
  *
  * In an individual channel a customer replies only in a thread they are in: `people`, the
- * account ids that are the author (themselves, by default), is who that may be.
+ * account ids that are the author (themselves, by default), is who that may be; and only a
+ * customer starts a thread there (409 for Adobe's people and the app, whose thread nobody saw).
  */
 export async function writeMessage(env, channel, author, {
   root, text, files, beforeWrite, people,
@@ -713,6 +714,14 @@ export async function writeMessage(env, channel, author, {
   }
   if ((!body && !taken.files.length) || body.length > MAX_TEXT) {
     return { error: `write something (up to ${MAX_TEXT} characters)`, status: 400 };
+  }
+  // In an individual channel a thread is its customers': one Adobe started would be nobody's,
+  // and no customer would see it. Adobe answers in theirs, or adds them to one (`addToThread`).
+  if (!root && author.kind !== 'customer' && isIndividual(channel)) {
+    return {
+      error: 'in an individual channel each thread is a customer\'s: answer in one of theirs',
+      status: 409,
+    };
   }
   let thread = null;
   if (root) {
