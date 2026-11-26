@@ -550,7 +550,8 @@ for the team, or for one channel (**Per channel**; a channel's switch wins over 
   reads on its computer (`playwright-cli` in an image with the browser, or curl). On for every team (migration 0077) and
   every new one. Each query leaves Adobe for the search provider (`WEB_SEARCH_PROVIDER`), so the
   prompt has the agent write general queries, never the customer's name, people, hosts or the
-  thread's words; the Worker logs that a search ran, never its query. Two services can answer:
+  thread's words, but for a company someone at Adobe asks it to find out about, which it searches
+  by its public name only; the Worker logs that a search ran, never its query. Two services can answer:
   - [Microsoft Web IQ](https://learn.microsoft.com/web-iq/) (`webiq`): create a Web IQ resource
     in an Azure subscription, an API key of its profile in the Web IQ portal, and set it as the
     repository secret `WEBIQ_API_KEY` (`gh secret set WEBIQ_API_KEY`): the deploy uploads it

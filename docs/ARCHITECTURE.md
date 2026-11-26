@@ -3477,7 +3477,11 @@ characters; Web IQ's passages, which answer the query, to 1,500) are the Agents 
 (`createWebIQSearch`) answers in the SDK's shape, so both read the same to the agent. It answers with up to 10 results, not pages: the prompt
 has the agent read a page (playwright-cli or curl on its computer) before relying on it, and give `update_draft` only
 pages it read as sources. A query leaves Adobe, so the prompt has it write general queries in the
-product's words, never the customer's name, people, hosts, ids or the thread's words, and the
+product's words, never the customer's name, people, hosts, ids or the thread's words. The one
+exception is a company someone at Adobe asks about (in the sidebar, or the person a knowledge
+base's agent talks to): what it does, who owns it, how it relates to another. The agent searches
+its public name, alone or with general words, never with what the threads say of it, its ids,
+hosts or people. The
 Worker logs a search's team, provider, result count or error, never its query. A failed search
 (nothing to pay with, a rejected key, a timeout) tells the agent to fix the query, retry once,
 or go on without searching. Each search that answered is counted for COGS as the thread's
