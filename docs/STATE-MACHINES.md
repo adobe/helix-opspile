@@ -226,6 +226,36 @@ so an override shows at once everywhere; deleting one (`DELETE /api/admin/partne
 way back to found, an `excluded` row the way to say no. A domain that stops being found keeps its
 row, which then stands alone.
 
+**Partner pair.** candidate → Clef's verdict → stale → asked again; confirmed or dismissed ⇄
+neither; and gone (`org_partners`, migration 0110, src/orgpartners.js). A candidate's row is written
+by a list load or a cron run (`sync`) with its signals and score; Clef's verdict is kept with the
+`fingerprint` of what it was shown, and asked again once that changes, `ASK_PER_LIST` a load or a
+run; one Clef did not give leaves `p` null, for the next. Confirmed (`confirmed_at`) and dismissed
+(`dismissed_at`) exclude each other: one replaces the other, and `undo` clears only its own. A
+decided pair is not asked about and stays whatever its signals; one nobody decided is deleted by the
+first `sync` that does not find it a candidate (its signals fell under `CANDIDATE` or to one
+`kb` or `place` signal alone, a partner's mail domains changed, an org was retyped or merged). Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
+dismissed with `p` at least `LIKELY`. A merge copies the merged org's decided rows to the org kept
+(`merged_from`), not over a decision of its own: a row it adds is `merged_new`, and on a candidate
+the kept org had only the decision is written. Undoing it deletes the rows it added, clears the
+decision it wrote on the others (their signals, Clef's verdict and fingerprint stay), and the merged
+org's own rows, kept all along, count again. A decision by hand since makes the row the kept org's.
+A verdict Clef did not give (a timeout, an error, no number) is not written: `p` and the
+`fingerprint` stay as they were, and the next load or run asks again. Without the partner domains
+(src/partners.js `partnerDomainLookup` not `found`: no look succeeded in the isolate yet, D1 failed
+or was slow) a `sync` writes, deletes and asks nothing and answers the rows as they are
+(`skipped`): the partners' people would be nobody's, and every pair would drop and lose its
+verdict. What a look found before counts as found while the next one fails.
+
+**Org overview kept.** not kept → kept → stale or forgotten (`cache`, `forgotten` in
+src/orgprofile.js). A customer's, vendor's or partner's overview (`orgNumbers`) is kept per isolate
+by the D1 binding for `CACHE_MS` (five minutes). A decision on a pair of a customer and a partner
+(`POST /api/admin/org-partners/confirm`, `/dismiss`, with `undo` too) forgets both orgs' once it is
+written (`forgetOrgProfiles`): each counts its forgets, and numbers read before the last forget of
+their org are not used, so one read while the decision was written is not kept as fresh. The other
+isolates keep theirs up to `CACHE_MS` (five minutes), as they do for a new thread, and show the
+decision after that; nothing else forgets them.
+
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status
 = 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.
@@ -1071,13 +1101,22 @@ initial, an empty slot, nothing), and every favicon of its address is drawn as t
 `FAV_RETRY_MS`: a failure may pass (the Worker answers a Google that failed with a 502 for a minute,
 src/favicons.js), so it is not final, and the next drawing after that asks again.
 
+**Open thread's fetch.** shown → asked again → shown, or failed (`openThread`, `refetchLater`,
+`refetchDone` in `ui/inbox.js`). Opening a thread shows the copy it was fetched ahead into, and
+fetches it again behind it; so do its live updates. A fetch that fails in a way asking again may
+mend (`transient`: D1 busy, the Worker's 5xx, the network) leaves what the pane shows of that thread
+as it is, and asks again after 1, 2, 4… s (30 s at most, plus up to a second at random), for as
+long as it stays open; with nothing of it on screen yet the pane says the inbox is busy meanwhile.
+A fetch that succeeds ends the retries; another thread opened lets them lapse. A 4xx (gone, not
+allowed) still replaces the pane, and a sign-in that expired keeps it under the banner.
+
 **D1 session.** anywhere → at least as new as a bookmark (src/d1session.js, `D1Bookmark` in
 `ui/app.js`). With D1's read replication on, each `/api/*` request is one session: a read
 (`GET`, `HEAD`) starts from the bookmark the page sent (`x-d1-bookmark`), else at any copy of the
 database (`first-unconstrained`); anything else starts at the primary (`first-primary`), so what
 it reads before it writes is the latest. Every answer says the session's bookmark, and every room
-event carries the primary's at the time it was sent (`notifyRoom`, one `SELECT 1` there), so the
-reads an event sets off see what it is about. The browser keeps the newest bookmark it has seen,
+event carries the primary's at the time it was sent (`notifyRoom`, one `SELECT 1` there, only
+with `D1_READ_REPLICAS` set), so the reads an event sets off see what it is about. The browser keeps the newest bookmark it has seen,
 in `localStorage`, for every tab: bookmarks are hex fields of fixed width, and of two as long the
 greater is the newer, so an older one never replaces it. Anything that is not a bookmark is not
 passed to D1. The queue, the crons and the Durable Objects read and write at the primary, as

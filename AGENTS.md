@@ -186,6 +186,15 @@ code and docs, is the decision model that labels threads and channels.
   vendor's page and a team's Vendors section, whose thread titles go only to those who work the
   thread (`visible`). docs/ARCHITECTURE.md, "Vendors".
 
+- **Which customers a partner works for is `org_partners`** (src/orgpartners.js, docs/ARCHITECTURE.md,
+  "Partners"): candidates from signals, Clef's verdict, the admin team's confirm or dismiss. Read
+  it through `partnersOf` and `customersOf` (confirmed and likely, merged orgs left out), never
+  `SELECT * FROM org_partners`; its `signals` hold domains, owners and entry paths, for the admin
+  team only.
+  A partner's page is `partnerNumbers` (src/partners.js), which is handed `customersOf` by its
+  caller (src/orgprofile.js): src/orgpartners.js reaches src/partners.js through src/orgmerge.js,
+  so src/partners.js imports neither, nor src/profiles.js (`partnerOf` is src/partners.js's).
+
 - **Most lifecycles here are implicit:** a nullable timestamp, a watermark, whether a row exists.
   [docs/STATE-MACHINES.md](docs/STATE-MACHINES.md) lists them, with the rules they follow. Read the
   entry before changing one, and add one for anything new with a lifecycle.

@@ -96,6 +96,7 @@ import { techInfo } from './techinfo.js';
 import { teamDirectory, teamProfile } from './teamprofile.js';
 import { teamVendors } from './vendors.js';
 import { orgDirectory, orgProfile } from './orgprofile.js';
+import { orgPartnerLinks } from './orgpartners.js';
 import { drawDiagram } from './diagrams.js';
 import { isRequestKey } from './requestkeys.js';
 import { openQuestions } from './questions.js';
@@ -1327,7 +1328,8 @@ async function route(request, env, url, {
   }
   // Every customer's overview, its first section in Customers (src/orgprofile.js): for every
   // internal user, as a team's; what changes a customer stays the ops teams' and the admin team's.
-  if (url.pathname === '/api/customers' || url.pathname === '/api/customers/profile') {
+  if (url.pathname === '/api/customers' || url.pathname === '/api/customers/profile'
+    || url.pathname === '/api/customers/partners') {
     if (!internal(env, me)) {
       return json({ error: 'the customers are for Adobe\'s people' }, 403);
     }
@@ -1337,7 +1339,10 @@ async function route(request, env, url, {
     if (url.pathname === '/api/customers') {
       return json({ orgs: await orgDirectory(env) });
     }
-    const profile = await orgProfile(env, me, url.searchParams.get('org'));
+    // Its partners, or the customers it works for (src/orgpartners.js).
+    const profile = url.pathname === '/api/customers/partners'
+      ? await orgPartnerLinks(env, url.searchParams.get('org'))
+      : await orgProfile(env, me, url.searchParams.get('org'));
     if (profile.error) {
       const { status, ...rest } = profile;
       return json(rest, status || 400);

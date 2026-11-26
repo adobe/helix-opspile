@@ -274,6 +274,87 @@ the two (the customers its teams own) sees the pair too and asks the admin team 
 threads"), until the admin team merges or declines it; the admin team can also say two orgs are not the same, which takes the pair off everyone else's
 list until somebody asks for its merge.
 
+**Partners.** An org of type `partner` is an agency or system integrator that builds, runs or
+supports the sites and projects of several customers, in its own channels and in theirs. Which
+customers each works for is a table, `org_partners` (migration 0110, `src/orgpartners.js`), found as
+duplicate customers are: candidates from signals, then Clef. A pair of a customer and a partner is
+a candidate when its signals add up (`CANDIDATE`, 2) and are more than a `kb` or a `place` signal
+alone (Clef found most such pairs unlikely):
+
+- `posters`: people from the partner's mail domains posted in the customer's threads (1 to 3, by
+  threads and people). The domains come from one place, `partnerMailDomains`: src/partners.js
+  `partnerDomains` ("Partner domains"), by the partner org each is of, so the admin team's
+  overrides and exclusions change the pairs too; a subdomain counts as its parent, unless it is
+  listed itself (an excluded one is nobody's). Without them (no look for them succeeded yet in the
+  isolate), a load or cron run changes nothing in `org_partners` and the list says so (`skipped`);
+- `guests`: people from the customer's usual mail domain posted in the partner's threads (1 or 2);
+- `members`: people from the partner's mail domains are in the customer's channels
+  (`channel_members`, 1 to 2);
+- `owners`: the facts of both name the same GitHub or aem.live owner (`site`, `repo`, and a `url`
+  `<branch>--<repo>--<owner>.aem.live`, `github.com/<owner>`, the admin API's), one the threads of
+  at most two orgs that are not partners name: Adobe's own and demo owners are in many (1.5, 2.5
+  for an owner only this customer has);
+- `kb`: entries of the partner's knowledge base (`kb_concepts`) name the customer (its display
+  name, or its slug of more than one word, in an entry's path, title or aliases), one of its owners
+  (there, or as an owner in the text), or are about it (`sites/<slug>-….md`; 2, 3 for an entry
+  about it);
+- `place`: channels of both with the same Slack Connect or Teams team, one at most six orgs have
+  (1 or 2);
+- `channel`: a channel named for both, `<partner>-<customer>` (3).
+
+Clef is asked about each candidate nobody decided, shown both orgs (names, type, channels, usual
+mail domains) and the signals with their counts as one, a few or many, so a new thread does not
+make it ask again: "does partner P work for customer C?" Its answer is kept with a fingerprint of
+what it was shown and asked again once that changes, two dozen per load of the admin team's list and
+per cron run, so the table fills in without anybody looking. Every load and run writes the
+candidates' signals where they changed, and deletes the rows of pairs that are no candidate any
+more and that nobody decided. The admin team reviews them in Customers ("Likely partners", `GET
+/api/admin/org-partners`): each pair's page shows both orgs, the evidence (the signals, with domains,
+owners and entry paths) and Clef's verdict, and confirms or dismisses it (`POST
+/api/admin/org-partners/confirm`, `/dismiss`, either with `undo`). A confirmed pair stays whatever
+the signals say later; a dismissed one is never shown as partners. A merge copies the merged org's
+decisions to the org kept, where it has none of its own (`merged_from`), and undoing it takes the
+copies back: the rows it added go, a row the kept org had keeps its signals and Clef's verdict.
+
+Everyone at Adobe reads an org's confirmed and likely pairs (Clef's probability at least `LIKELY`,
+0.5, not dismissed): `partnersOf(env, customer)` and `customersOf(env, partner)` in
+src/orgpartners.js, and `GET /api/customers/partners?org=` with both, `{ org, partners, customers }`.
+Each is `{ slug, name, type, icon, confirmed, p, score, signals }`, `signals` the count of each kind
+(`{ posters: 12, owners: 1 }`): names and numbers, no message text, domain or owner. Merged orgs are
+left out. Who is a partner's person is apart from this: their mail domain is one of `partnerDomains`
+(src/partners.js, "Partner domains" under "People").
+
+A partner's **page** in Customers is its customer overview with its own numbers first
+(`partnerNumbers`, src/partners.js, in its `partner`; ui/customer.js), everyone's at Adobe:
+
+- its **customers**: those it works for, confirmed and likely (`customersOf`, with what links
+  them), then those whose threads of the window its people posted in, nothing linking them yet
+  (from two threads with its people or two of its people, `UNLINKED_MIN`: one stray post lists
+  nobody);
+  each with how many of the customer's threads its people are in, how many of its own threads the
+  customer's people are in (the people outside Adobe of its threads who post in the customer's
+  too), and how many of those wait on Adobe;
+- its **people**: the accounts of its mail domains (`partnerDomains`; a person's accounts, and
+  those of one mail address, as one), wherever they posted in the window: in its own channels and
+  in customers', how much, and for whom;
+- what **waits on Adobe** in its channels and in the customers' threads its people are in (who a
+  thread waits on as the inbox says it, `waitingOn`; a resolved one does not), and how soon Adobe
+  **answers**: the median wait for Adobe's first post, in its threads started outside Adobe, and
+  in customers' threads its people started.
+
+Counts are everyone's; a thread's title and link only for whoever works it (`forViewer`, as a
+vendor's, "Vendors"). In its overview its own people are "their people", not a partner's. A
+customer's page lists its **partners** (`partners`): those that work for it (`partnersOf`) and
+those whose people posted in its threads of the window (as many, `UNLINKED_MIN`), each a link to
+the partner's page, with what links them (the signals' counts, in words), how many of its threads
+their people are in and whether it is confirmed or likely. Those nothing links yet come last: they
+are the evidence the review works from, and for the admin team each links to its pair's page in
+Likely partners, which shows the evidence of any two orgs (`?pair=`) and confirms or dismisses them,
+making their row where `org_partners` has none. The overviews are kept five minutes per isolate; a decision on a pair
+(`POST /api/admin/org-partners/confirm`, `/dismiss`) forgets both orgs' in the isolate that made it
+(`forgetOrgProfiles`, src/orgprofile.js), and the other isolates show it within those five minutes,
+as they do any change of a kept overview.
+
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
 (an agent that provisions access, say) would show on the customer's side of a thread. Every bot
 opspile knows that posted, or that somebody said whose it is (`identities` of kind `bot`: written
@@ -3838,8 +3919,9 @@ channel threads filed under it, from D1:
   start: the
   median wait from their first message to Adobe's first post, over the threads started in the
   window (with how many of those have an answer);
-- its **people**, a card each: their picture and title, a partner's marked (its mail domain a
-  partner's, src/partners.js `partnerDomains`, as the profile cards have it), how often they post (in its threads, a line of their
+- its **people**, a card each: their picture and title, a partner's marked (its mail domain
+  another partner's than its own, src/partners.js `partnerDomains`, as the profile cards have it),
+  how often they post (in its threads, a line of their
   weeks), what they ask about (Clef's areas and technologies of their threads, ranked by their
   lift over the rest of its people, as a team's members are), and their profile there: their
   Contact in its knowledge base (`contacts/`, found by their name as src/kbpeople.js finds one),
@@ -3855,7 +3937,13 @@ channel threads filed under it, from D1:
   parts of its stack drawing (`org_stacks`) for whoever may read its knowledge base;
 - its **knowledge base**, its entries by type (`kb_concepts`, the catalog left out), listed for
   whoever may read it (src/kbaccess.js) and counted for everyone else, and its stack drawing
-  (`GET /api/kb/stack?org=`).
+  (`GET /api/kb/stack?org=`);
+- its **partners**, the agencies and system integrators that work for it (confirmed and likely,
+  src/orgpartners.js `partnersOf`) or whose people posted in its threads, each a link to its page
+  with what links them ("Partners").
+
+A vendor's page is the other way round ("Vendors"), and a partner's has its customers, its people
+wherever they post and what waits on Adobe first ("Partners").
 
 Names, numbers, pictures and titles only: no message text and no mail address. The biggest
 customer's numbers cost under a tenth of a second of D1, and are kept five minutes per isolate.
@@ -3905,7 +3993,9 @@ everyone's at Adobe; a thread's title and its link only for whoever works it, on
 filed under or one it is shared with (`visible`, src/vendors.js), so the lists say how many more
 there are. Every conversation of the window that may wait on someone is read for the cases, however
 many newer ones are resolved. A team's vendors are kept five minutes per isolate, as its overview,
-and forgotten when a team starts or stops following one.
+and forgotten when a team starts or stops following one. A partner's page ("Partners") lists what
+waits on Adobe the same way (`entriesOf`, `listRow` and `forViewer` of src/vendors.js), in its
+channels and in the customers' threads its people are in.
 
 ## Customer portal
 

@@ -164,7 +164,7 @@ if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').m
     }
     if (res.type !== 'opaqueredirect') return res;
     signedOut();
-    throw new Error('Signed out: sign in again');
+    throw Object.assign(new Error('Signed out: sign in again'), { signedOut: true });
   };
 })();
 

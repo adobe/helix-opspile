@@ -48,9 +48,18 @@ try { localStorage.removeItem('opspile.design'); } catch { /* storage is off */ 
 // ---------------------------------------------------------------- helpers
 async function get(path) {
   const res = await fetch(path, { credentials: 'same-origin', headers: state.as ? { 'x-opspile-as': String(state.as) } : {} });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw Object.assign(new Error(body.error || res.status), { status: res.status, busy: Boolean(body.busy) });
+  }
   return res.json();
 }
+/**
+ * A failed read that asking again may mend: D1 busy (503, after ui/app.js asked once more), the
+ * Worker failing (5xx, 429), or the network (fetch's TypeError). Not a 4xx (gone, not allowed),
+ * a sign-in that expired, or an answer that was no JSON.
+ */
+const transient = (e) => !e.signedOut && (e.status ? e.status === 429 || e.status >= 500 : e instanceof TypeError);
 // Dates and times: one formatter each, made once (toLocale*String builds one per call, and a
 // long thread asks for hundreds), and each day's label once.
 const formatter = (opts) => {
@@ -5097,6 +5106,40 @@ function renderPane(pane, key, {
   }
 }
 
+/**
+ * The open thread, when fetching it failed in a way asking again may mend (`transient`): asked
+ * again after 1, 2, 4… s (30 s at most, and up to a second at random, so the tabs D1 turned away
+ * together do not come back together), for as long as it stays open. What it showed stays.
+ */
+const refetch = { key: null, n: 0, timer: 0 };
+function refetchLater(key) {
+  if (refetch.key !== key) Object.assign(refetch, { key, n: 0 });
+  clearTimeout(refetch.timer);
+  const wait = Math.min(30000, 1000 * 2 ** refetch.n) + Math.random() * 1000;
+  refetch.n += 1;
+  refetch.timer = setTimeout(() => { if (state.open === key) openThread(key, { live: true }); }, wait);
+}
+/** Fetched, or another thread opened: the thread's retries are over. */
+function refetchDone(key) {
+  if (refetch.key !== key) return;
+  clearTimeout(refetch.timer);
+  Object.assign(refetch, { key: null, n: 0, timer: 0 });
+}
+/**
+ * Fetching the open thread `key` into `pane` failed with `e`. What the pane shows of that thread
+ * (the preload's copy, the last fetch) stays while it is asked again (`transient`), or until
+ * signing in again: a failed refresh does not clear what was read. Anything else, or with
+ * nothing of it on screen, the pane says what failed. Returns `kept` or `shown`.
+ */
+function fetchFailed(pane, key, e) {
+  const again = transient(e);
+  if (again) refetchLater(key);
+  if (pane.__key === key && (again || e.signedOut)) return 'kept';
+  pane.innerHTML = `<div class="empty">${esc(e.busy ? 'The inbox is busy: trying again in a moment…' : e.message)}</div>`;
+  pane.__key = null;
+  return 'shown';
+}
+
 async function openThread(key, { live = false, cached = false } = {}) {
   const switching = state.open !== key;
   // Opened from the list, not from another thread: the entry before this one shows the list.
@@ -5106,7 +5149,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // The sidebar is the thread's you entered it in: another one opens to reply in.
   if (switching && side.key !== key) side.key = null;
   syncReading();
-  if (switching) { prefetchAround(key); closeMessageMenu(); }
+  if (switching) { prefetchAround(key); closeMessageMenu(); refetchDone(refetch.key); }
   // Another thread than a search's or a link's: not at its message later.
   if (switching && state.jump && state.jump.key !== key) state.jump = null;
   if (switching) toUrl(true, fromList ? { list: true } : null);
@@ -5122,7 +5165,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   const typed = $('reply')?.value;
   const focused = document.activeElement === $('reply');
   const caret = focused ? [$('reply').selectionStart, $('reply').selectionEnd] : null;
-  if (!live && !state.cache.get(key)) pane.innerHTML = '<div class="empty">Loading…</div>';
+  if (!live && !state.cache.get(key)) { pane.innerHTML = '<div class="empty">Loading…</div>'; pane.__key = null; }
   let data;
   const hit = (!live || cached) && state.cache.get(key);
   try {
@@ -5130,9 +5173,11 @@ async function openThread(key, { live = false, cached = false } = {}) {
     const ahead = !hit && !live && inflight.get(key);
     data = hit ? hit.data : ((ahead && await ahead) || await get(threadUrl(key)));
   } catch (e) {
-    pane.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    // Another thread is open by now: this one's failure is not shown over it.
+    if (state.open === key) fetchFailed(pane, key, e);
     return;
   }
+  if (!hit) refetchDone(key);
   // Opened from the cache: let the selected row paint first, then render the thread (the
   // click or key press is answered in one frame, not after the whole thread is built).
   if (hit && switching) {
