@@ -302,7 +302,11 @@ person"). Its messages in D1 follow at once (`relabelAccount`: `messages.person`
 `author`, and the threads' `last_staff` and `last_author`), and so do the ones written before in
 the thread view (`accountAuthor`). Only an account that is staff by itself and that no mail
 address links is linked, and only to a staff person, so no customer's account becomes Adobe's.
-Looking the account up again keeps the link; giving no address takes it back.
+Looking the account up again keeps the link; giving no address takes it back. The thread view
+names every account that is staff by itself (these, and a Discord account with a staff role) as
+`toAuthor` does now, whatever its frontmatter says: its person's name while it has one (linked
+here, or connected by them on Discord), else its own, so what it wrote while linked goes by the
+account's name again once the link is taken back.
 
 **A customer's people with two accounts.** The customers' people are no person of D1, so the
 customers' overviews and the topic map count them by account. The accounts of one mail address

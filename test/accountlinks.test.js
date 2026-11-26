@@ -38,6 +38,30 @@ const OWNER = 'teams:T:u-owner';
 const CY = 'teams:T:u-cy';
 const ENV = { STAFF_DOMAINS: 'staff.example' };
 
+/** Thread `key` of the helix team, its messages in pile 2 at `path`. */
+const thread = (DB, key, path) => {
+  const [source, tenant, ...rest] = key.split(':');
+  DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
+      channel_name, path, root_at, last_at, any_at, messages, updated_at, last_author, last_staff)
+    VALUES (?, ?, ?, ?, ?, 'acme', 'helix', 'Main', ?, ?, ?, ?, 2, ?, 'BO', 1)`)
+    .run(key, source, tenant, rest.slice(0, -1).join(':'), rest.at(-1), path, AT, AT, AT, AT);
+};
+/** Message `id` of thread `key` (`THREAD` unless said) by account `authorKey`, in D1. */
+const message = (DB, id, at, authorKey, name, staff, { key = THREAD, person = null } = {}) => {
+  const [source, tenant, ...rest] = key.split(':');
+  DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author,
+      staff, counted, author_key, author_kind, person)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'person', ?)`)
+    .run(source, tenant, rest.slice(0, -1).join(':'), id, key, at, name, staff, authorKey, person);
+};
+/** Its file in pile 2, with the frontmatter `author` it was written with. */
+const file = (CHANNELS, id, at, author, { key = THREAD, path = 'q/5/' } = {}) => CHANNELS.put(
+  `${path}${id}.md`,
+  render({
+    source: key.split(':')[0], thread: key, id, at, author,
+  }, `message ${id}`),
+);
+
 function env() {
   const DB = d1({
     teams: [{ slug: 'admin', name: 'Admin' }, { slug: 'helix', name: 'Helix' }],
@@ -52,10 +76,7 @@ function env() {
       { id: 3, email: 'cy@customer.example', name: 'Cy' },
     ],
   });
-  DB.sqlite.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team,
-      channel_name, path, root_at, last_at, any_at, messages, updated_at, last_author, last_staff)
-    VALUES (?, 'teams', 'T', '19:c', '5', 'acme', 'helix', 'Main', 'q/5/', ?, ?, ?, 2, ?, 'BO', 1)`)
-    .run(THREAD, AT, AT, AT, AT);
+  thread(DB, THREAD, 'q/5/');
   const account = (id, name, email, { staff = null, guest = 1 } = {}) => DB.sqlite.prepare(`INSERT
       INTO identities (source, tenant, user_id, kind, name, email, fetched_at, avatar, staff, guest)
     VALUES ('teams', 'T', ?, 'person', ?, ?, ?, '', ?, ?)`)
@@ -63,21 +84,14 @@ function env() {
   // The host tenant's admin account, already seen as staff (the lookup, or migration 0097).
   account('u-owner', 'BO', `owner_bo@${HOST}`, { staff: 1, guest: 0 });
   account('u-cy', 'Cy', 'cy@customer.example');
-  const message = (id, at, key, name, staff) => DB.sqlite.prepare(`INSERT INTO messages (source,
-      tenant, channel_id, id, thread, at, author, staff, counted, author_key, author_kind)
-    VALUES ('teams', 'T', '19:c', ?, ?, ?, ?, ?, 1, ?, 'person')`)
-    .run(id, THREAD, at, name, staff, key);
-  message('5', '2026-10-21T10:00:00Z', CY, 'Cy', 0);
-  message('6', '2026-10-21T10:01:00Z', OWNER, 'BO', 1);
+  message(DB, '5', '2026-10-21T10:00:00Z', CY, 'Cy', 0);
+  message(DB, '6', '2026-10-21T10:01:00Z', OWNER, 'BO', 1);
   const CHANNELS = fakeBucket();
-  const file = (id, at, author) => CHANNELS.put(`q/5/${id}.md`, render({
-    source: 'teams', thread: THREAD, id, at, author,
-  }, `message ${id}`));
-  file('5', '2026-10-21T10:00:00Z', {
+  file(CHANNELS, '5', '2026-10-21T10:00:00Z', {
     kind: 'person', name: 'Cy', org: 'customer.example', staff: false,
   });
   // Written before the account was known to be Adobe's.
-  file('6', '2026-10-21T10:01:00Z', {
+  file(CHANNELS, '6', '2026-10-21T10:01:00Z', {
     kind: 'person', name: 'BO', org: HOST, staff: false,
   });
   return {
@@ -94,7 +108,7 @@ const call = async (e, who, method, path, body) => {
   );
   return { status: res.status, body: await res.json() };
 };
-const authors = async (e) => Object.fromEntries((await call(e, ADA, 'GET', `/api/thread?thread=${THREAD}`))
+const authors = async (e, key = THREAD) => Object.fromEntries((await call(e, ADA, 'GET', `/api/thread?thread=${key}`))
   .body.messages.map((m) => [m.id, [m.author.name, m.author.staff]]));
 
 describe('the host tenant\'s admin accounts', () => {
@@ -261,6 +275,53 @@ describe('the host tenant\'s admin accounts', () => {
     assert.deepEqual(await authors(e), { 5: ['Cy', false], 6: ['BO', true] });
   });
 
+  it('go by their own name again once the link is taken back, what they wrote while linked too', async () => {
+    const e = env();
+    const put = (email) => quiet(() => call(e, ADA, 'PUT', '/api/admin/accounts', { key: OWNER, email }));
+    assert.equal((await put('bo@staff.example')).status, 200);
+    // Written while linked: its frontmatter has the person's name, as the normalizer writes it.
+    const author = toAuthor(e, await getIdentity(e, { source: 'teams', tenant: 'T', userId: 'u-owner' }, Date.parse(AT)));
+    assert.deepEqual(author, {
+      kind: 'person', name: 'Bo Ops', org: HOST, staff: true,
+    });
+    message(e.DB, '7', '2026-10-21T10:02:00Z', OWNER, author.name, 1, { person: 2 });
+    file(e.CHANNELS, '7', '2026-10-21T10:02:00Z', author);
+    assert.deepEqual(await authors(e), { 5: ['Cy', false], 6: ['Bo Ops', true], 7: ['Bo Ops', true] });
+    assert.equal((await put(null)).status, 200);
+    assert.deepEqual(e.DB.rows('SELECT id, person, author FROM messages WHERE author_key = ? ORDER BY id', OWNER), [
+      { id: '6', person: null, author: 'BO' }, { id: '7', person: null, author: 'BO' },
+    ]);
+    assert.deepEqual(await authors(e), { 5: ['Cy', false], 6: ['BO', true], 7: ['BO', true] });
+  });
+
+  it('leave a Discord account with a staff role its person\'s name while they have it connected', async () => {
+    const e = env();
+    const DISCORD = 'discord:G:c1:8';
+    const BOD = 'discord:G:u-bo';
+    thread(e.DB, DISCORD, 'd/8/');
+    // Staff by its role, and Bo's since Bo connected it: no admin linked it (`linked_at` NULL).
+    e.DB.sqlite.prepare(`INSERT INTO identities (source, tenant, user_id, kind, name, fetched_at,
+        avatar, staff, person) VALUES ('discord', 'G', 'u-bo', 'person', 'bo_plays', ?, '', 1, 2)`).run(AT);
+    e.DB.sqlite.prepare(`INSERT INTO user_tokens (person, platform, user_id, access_token, updated_at)
+      VALUES (2, 'discord', 'u-bo', 'x', ?)`).run(AT);
+    const ref = { source: 'discord', tenant: 'G', userId: 'u-bo' };
+    const author = toAuthor(e, await getIdentity(e, ref, Date.parse(AT)));
+    assert.deepEqual(author, {
+      kind: 'person', name: 'Bo Ops', org: null, staff: true,
+    });
+    const where = { key: DISCORD, path: 'd/8/' };
+    // Written before Bo connected it, and since.
+    message(e.DB, '8', '2026-10-21T10:00:00Z', BOD, 'bo_plays', 1, where);
+    file(e.CHANNELS, '8', '2026-10-21T10:00:00Z', { ...author, name: 'bo_plays' }, where);
+    message(e.DB, '9', '2026-10-21T10:01:00Z', BOD, author.name, 1, { ...where, person: 2 });
+    file(e.CHANNELS, '9', '2026-10-21T10:01:00Z', author, where);
+    assert.deepEqual(await authors(e, DISCORD), { 8: ['Bo Ops', true], 9: ['Bo Ops', true] });
+    // Bo disconnects it: the account's own name, still Adobe's by its role.
+    assert.equal((await call(e, BO, 'DELETE', '/api/auth/discord')).status, 200);
+    assert.deepEqual(e.DB.rows("SELECT person FROM identities WHERE user_id = 'u-bo'"), [{ person: null }]);
+    assert.deepEqual(await authors(e, DISCORD), { 8: ['bo_plays', true], 9: ['bo_plays', true] });
+  });
+
   it('link to a colleague of a staff domain not seen yet', async () => {
     const e = env();
     const r = await quiet(() => call(e, ADA, 'PUT', '/api/admin/accounts', { key: OWNER, email: 'dee@staff.example' }));
@@ -290,8 +351,17 @@ describe('the host tenant\'s admin accounts', () => {
     assert.deepEqual(accountAuthor(ENV, author, {
       account_kind: 'person', account_staff: 1, linked_at: AT, account_person_name: 'Bo Ops', account_person_staff: 1,
     }), { ...author, staff: true, name: 'Bo Ops' });
+    // Its own name, now that it is nobody's (a link taken back), over its person's then.
+    assert.deepEqual(accountAuthor(ENV, { ...author, name: 'Bo Ops', staff: true }, {
+      account_kind: 'person', account_staff: 1, account_name: 'BO',
+    }), { ...author, staff: true });
+    // A Discord account with a staff role that its person connected: theirs, no admin linked it.
+    assert.deepEqual(accountAuthor(ENV, { ...author, name: 'bo_plays', staff: true }, {
+      account_kind: 'person', account_staff: 1, account_name: 'bo_plays', account_person_name: 'Bo Ops', account_person_staff: 1,
+    }), { ...author, staff: true, name: 'Bo Ops' });
     // A person's own name, by their mail address, is what the frontmatter says already.
     assert.equal(accountAuthor(ENV, author, { account_kind: 'person', account_person_name: 'Other' }), author);
+    assert.equal(accountAuthor(ENV, author, { account_kind: 'person', account_name: 'Other' }), author);
     assert.equal(accountAuthor(ENV, author, { account_kind: 'person' }), author);
   });
 
