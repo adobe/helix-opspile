@@ -224,28 +224,44 @@ describe('a customer\'s partners', () => {
     assert.deepEqual(p.partners.map((x) => [x.slug, x.linked, x.threads, x.signals]), [['agency', false, 2, {}]]);
   });
 
-  it('lists none from one stray post, and tells the admin team which have a pair to review', async () => {
+  it('lists none from one stray post', async () => {
     const env = seed();
-    const admin = as({ ...ADA, teams: ['admin', 'edge'] });
     // Hooli: only Pat's one post in h1, nothing linking them.
     env.DB.sqlite.exec('DELETE FROM org_partners WHERE customer = \'hooli\'');
-    assert.deepEqual((await orgProfile(env, admin, 'hooli', { now: NOW })).partners, []);
-    // ACME: Clef's verdict under LIKELY, so not linked, but a row to review.
-    env.DB.sqlite.exec('UPDATE org_partners SET p = 0.2 WHERE customer = \'acme\'');
-    resetOrgProfiles();
-    const mine = await orgProfile(env, admin, 'acme', { now: NOW });
-    assert.deepEqual(mine.partners.map((x) => [x.slug, x.linked, x.pair]), [['agency', false, true]]);
-    const theirs = await orgProfile(env, admin, 'agency', { now: NOW });
-    assert.deepEqual(theirs.partner.customers.list.map((c) => [c.slug, c.linked, c.pair]), [['acme', false, true]]);
-    // Without a row, a pair to find in the list; and for anyone else, not said.
+    assert.deepEqual((await orgProfile(env, as(ADA), 'hooli', { now: NOW })).partners, []);
+  });
+
+  it('has a pair nothing links reviewed on its page, and Confirm and Dismiss make its row', async () => {
+    const env = seed();
+    const admin = as({ ...ADA, teams: ['admin', 'edge'] });
     env.DB.sqlite.exec('DELETE FROM org_partners');
-    resetOrgProfiles();
-    const none = await orgProfile(env, admin, 'acme', { now: NOW });
-    assert.deepEqual(none.partners.map((x) => [x.slug, x.pair]), [['agency', false]]);
-    const ada = await orgProfile(env, as(ADA), 'acme', { now: NOW });
-    assert.equal('pair' in ada.partners[0], false);
-    const page = await orgProfile(env, as(ADA), 'agency', { now: NOW });
-    assert.equal('pair' in page.partner.customers.list[0], false);
+    const post = (what, body) => call(env, admin, `/api/admin/org-partners/${what}`, {
+      method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
+    });
+    // Its page: the evidence of the two, though org_partners has no row and they are no candidate.
+    const page = await call(env, admin, '/api/admin/org-partners?pair=acme:agency');
+    assert.equal(page.status, 200);
+    const [pair] = page.body.pairs;
+    assert.deepEqual([pair.customer, pair.partner, pair.confirmed, pair.dismissed], ['acme', 'agency', null, null]);
+    assert.ok(pair.signals.some((x) => x.kind === 'posters'));
+    assert.equal(env.DB.sqlite.prepare('SELECT COUNT(*) AS n FROM org_partners').get().n, 0);
+    // Confirm makes the row; both pages say so.
+    assert.equal((await post('confirm', { customer: 'acme', partner: 'agency' })).status, 200);
+    const row = env.DB.sqlite.prepare('SELECT confirmed_at, dismissed_at FROM org_partners WHERE customer = \'acme\'').get();
+    assert.ok(row.confirmed_at && !row.dismissed_at);
+    const acme = await call(env, admin, '/api/customers/profile?org=acme');
+    assert.deepEqual(acme.body.partners.map((x) => [x.slug, x.linked, x.confirmed]), [['agency', true, true]]);
+    const agency = await call(env, admin, '/api/customers/profile?org=agency');
+    assert.deepEqual(agency.body.partner.customers.list.map((c) => [c.slug, c.confirmed]), [['acme', true]]);
+    // The pair page again, and the admin list, have it confirmed.
+    const again = await call(env, admin, '/api/admin/org-partners?pair=acme:agency');
+    assert.ok(again.body.pairs[0].confirmed);
+    const list = await call(env, admin, '/api/admin/org-partners');
+    assert.ok(list.body.pairs.some((x) => x.customer === 'acme' && x.partner === 'agency' && x.confirmed));
+    // Dismiss, on a pair with no row, makes one too.
+    assert.equal((await post('dismiss', { customer: 'hooli', partner: 'agency' })).status, 200);
+    const hooli = env.DB.sqlite.prepare('SELECT dismissed_at FROM org_partners WHERE customer = \'hooli\'').get();
+    assert.ok(hooli.dismissed_at);
   });
 
   it('says at once that the admin team dismissed one, on both pages, though they are kept', async () => {

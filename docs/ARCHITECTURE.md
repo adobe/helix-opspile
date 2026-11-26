@@ -348,9 +348,9 @@ customer's page lists its **partners** (`partners`): those that work for it (`pa
 those whose people posted in its threads of the window (as many, `UNLINKED_MIN`), each a link to
 the partner's page, with what links them (the signals' counts, in words), how many of its threads
 their people are in and whether it is confirmed or likely. Those nothing links yet come last: they
-are the evidence the review works from, and for the admin team each links to its pair in Likely
-partners where `org_partners` has a row of the two (`keptPairs`; only the admin team is told,
-`pair`), else to that list. The overviews are kept five minutes per isolate; a decision on a pair
+are the evidence the review works from, and for the admin team each links to its pair's page in
+Likely partners, which shows the evidence of any two orgs (`?pair=`) and confirms or dismisses them,
+making their row where `org_partners` has none. The overviews are kept five minutes per isolate; a decision on a pair
 (`POST /api/admin/org-partners/confirm`, `/dismiss`) forgets both orgs' in the isolate that made it
 (`forgetOrgProfiles`, src/orgprofile.js), and the other isolates show it within those five minutes,
 as they do any change of a kept overview.

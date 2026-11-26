@@ -49,7 +49,7 @@
  * customer's numbers are kept CACHE_MS per isolate.
  */
 
-import { ADMIN_TEAM, isAdmin } from './roles.js';
+import { ADMIN_TEAM } from './roles.js';
 import { underlying } from './d1batch.js';
 import { mayRead } from './kbaccess.js';
 import { weeksTo } from './trends.js';
@@ -58,7 +58,7 @@ import { partnerOf } from './profiles.js';
 import {
   partnerDomains, partnerForViewer, partnerNumbers, UNLINKED_MIN,
 } from './partners.js';
-import { customersOf, keptPairs, partnersOf } from './orgpartners.js';
+import { customersOf, partnersOf } from './orgpartners.js';
 import { personSlug } from './agent/okf.js';
 import { mailDomains } from './orgmerge.js';
 import { activeSince } from './listactivity.js';
@@ -104,9 +104,8 @@ const AUTHORS = `a AS (SELECT g.author_key AS key, g.staff, ${WEEK('g.at')} AS w
  * The partners of customer `slug`, for its page: those that work for it, confirmed or likely
  * (src/orgpartners.js `partnersOf`, with what links them), and those whose people posted in its
  * threads of the weeks (from `UNLINKED_MIN` threads or people on), each with how many of its
- * threads (`threads`) and how many of its people (`people`) that is, and for one nothing links
- * whether `org_partners` has a row of the two (`pair`, the admin team's). `authors` and `threadsBy`
- * are `orgNumbers`' rows of who posted, `partnerFor` the partner of a mail domain.
+ * threads (`threads`) and how many of its people (`people`) that is. `authors` and `threadsBy` are
+ * `orgNumbers`' rows of who posted, `partnerFor` the partner of a mail domain.
  */
 async function partnersHere(env, slug, authors, threadsBy, partnerFor) {
   const linked = await partnersOf(env, slug);
@@ -129,7 +128,6 @@ async function partnersHere(env, slug, authors, threadsBy, partnerFor) {
   const linkOf = new Map(linked.map((x) => [x.slug, x]));
   const others = [...people.keys()].filter((o) => !linkOf.has(o)
     && ((threads.get(o) || new Set()).size >= UNLINKED_MIN || people.get(o).size >= UNLINKED_MIN));
-  const kept = await keptPairs(env, others.map((o) => [slug, o]));
   const { results: rows } = others.length ? await env.DB.prepare(`SELECT slug, name, type, icon
     FROM orgs WHERE slug IN (SELECT value FROM json_each(?)) AND slug NOT IN (SELECT slug FROM org_merges)`)
     .bind(JSON.stringify(others)).all() : { results: [] };
@@ -154,33 +152,14 @@ async function partnersHere(env, slug, authors, threadsBy, partnerFor) {
     signals: x.signals,
     threads: (threads.get(x.slug) || new Set()).size,
     people: (people.get(x.slug) || new Set()).size,
-    pair: linkOf.has(x.slug) || kept.has(`${slug}\n${x.slug}`),
   })).sort((a, b) => Number(b.confirmed) - Number(a.confirmed)
     || Number(b.linked) - Number(a.linked) || b.threads - a.threads || (b.p ?? 0) - (a.p ?? 0)
     || a.slug.localeCompare(b.slug));
 }
 
-/**
- * A partner's numbers for its page (src/partners.js `partnerNumbers`, handed the customers it works
- * for), each customer with whether `org_partners` has a row of the two (`pair`, the admin team's).
- */
+/** A partner's numbers for its page (src/partners.js), handed the customers it works for. */
 async function partnerHere(env, slug, weeks) {
-  const v = await partnerNumbers(env, slug, weeks, { customers: await customersOf(env, slug) });
-  const loose = v.customers.list.filter((c) => !c.linked);
-  const kept = await keptPairs(env, loose.map((c) => [c.slug, slug]));
-  const list = v.customers.list.map((c) => ({ ...c, pair: c.linked || kept.has(`${c.slug}\n${slug}`) }));
-  return { ...v, customers: { ...v.customers, list } };
-}
-
-/** Whether a pair is reviewed (`pair`) is the admin team's: the others get the rest. */
-// eslint-disable-next-line no-unused-vars
-const withoutPair = ({ pair, ...rest }) => rest;
-
-/** A partner's numbers as `me` sees them: the lists' titles where they work them, `pair` theirs. */
-function partnerAsSeen(me, v) {
-  const out = partnerForViewer(me, v);
-  return isAdmin(me) ? out
-    : { ...out, customers: { ...out.customers, list: out.customers.list.map(withoutPair) } };
+  return partnerNumbers(env, slug, weeks, { customers: await customersOf(env, slug) });
 }
 
 /** The middle of `values` (a sorted copy), or null for none. */
@@ -815,10 +794,7 @@ export async function orgProfile(env, me, slug, { now = new Date() } = {}) {
       drawing: readable && numbers.kb.drawing,
     },
     ...(numbers.vendor ? { vendor: vendorForViewer(me, numbers.vendor) } : {}),
-    ...(numbers.partner ? { partner: partnerAsSeen(me, numbers.partner) } : {}),
-    ...(numbers.partners ? {
-      partners: isAdmin(me) ? numbers.partners : numbers.partners.map(withoutPair),
-    } : {}),
+    ...(numbers.partner ? { partner: partnerForViewer(me, numbers.partner) } : {}),
     may: { read: readable },
   };
 }

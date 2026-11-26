@@ -307,32 +307,22 @@ describe('a partner\'s overview, and a customer\'s partners, drawn', () => {
     assert.ok(!html.includes('id="cvCustomers"'));
   });
 
-  it('links the admin team to a pair nothing links yet, or to the review list', () => {
-    const review = (c, pt, pair) => (pair ? { href: `/pair/${c}:${pt}`, list: false } : { href: '/here', list: true });
+  it('links the admin team to the page of each pair nothing links yet', () => {
+    const review = (c, pt) => `/pair/${c}:${pt}`;
     const row = (over) => ({
       slug: 'agency', name: 'Agency', type: 'partner', icon: null, linked: false, confirmed: false, p: null, signals: {}, threads: 2, people: 1, ...over,
     });
     const html = CustomerView.html({
-      ...profile, partners: [row({ pair: true }), row({ slug: 'other', pair: false }), row({ slug: 'mine', linked: true, pair: true })],
+      ...profile, partners: [row(), row({ slug: 'other' }), row({ slug: 'mine', linked: true })],
     }, { ...pctx, review });
-    assert.match(html, /<a class="tv-review" href="\/pair\/acme:agency" title="Open the pair in Likely partners">Review<\/a>/);
-    assert.match(html, /<a class="tv-review" href="\/here" data-review-list[^>]*>Review list<\/a>/);
-    assert.equal([...html.matchAll(/class="tv-review"/g)].length, 2);
+    assert.match(html, /<a class="tv-review" href="\/pair\/acme:agency" title="Open the pair in Likely partners[^"]*">Review<\/a>/);
+    assert.match(html, /href="\/pair\/acme:other"/);
+    assert.ok(!html.includes('/pair/acme:mine'));
     // A partner's page: the pair is its customer's and its own.
-    const page = CustomerView.html(partner, { ...pctx, review });
-    assert.ok(!page.includes('tv-review'));
-    const loose = {
-      ...partner,
-      partner: {
-        ...partner.partner,
-        customers: {
-          ...partner.partner.customers, list: [customer({ linked: false, pair: true })],
-        },
-      },
-    };
-    assert.match(CustomerView.html(loose, { ...pctx, review }), /href="\/pair\/acme:agency"/);
-    // Nobody else gets `pair`, so no link.
-    assert.ok(!CustomerView.html({ ...profile, partners: [row()] }, { ...pctx, review }).includes('tv-review'));
+    assert.ok(!CustomerView.html(partner, { ...pctx, review }).includes('/pair/acme:agency'));
+    assert.match(CustomerView.html(partner, { ...pctx, review }), /href="\/pair\/wonka:agency"/);
+    // Nobody but the admin team gets `review`.
+    assert.ok(!CustomerView.html({ ...profile, partners: [row()] }, pctx).includes('tv-review'));
   });
 
   it('says so when no partner is known to work for a customer', () => {

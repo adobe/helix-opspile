@@ -251,16 +251,12 @@ globalThis.CustomerView = (() => {
   }
 
   /**
-   * For the admin team, where a pair nothing links yet is reviewed (`x.pair`, which only they get):
-   * its page in Likely partners where `org_partners` has a row of the two, else that list.
+   * For the admin team, a pair nothing links yet: its page in Likely partners (`ctx.review`), which
+   * shows the evidence of any two orgs and confirms or dismisses them.
    */
   function review(x, customer, partner, ctx) {
-    if (x.linked || x.pair === undefined || !ctx.review) return '';
-    const r = ctx.review(customer, partner, x.pair);
-    if (!r) return '';
-    return r.list
-      ? `<a class="tv-review" href="${esc(r.href)}" data-review-list title="Open Likely partners, the admin team's review list">Review list</a>`
-      : `<a class="tv-review" href="${esc(r.href)}" title="Open the pair in Likely partners">Review</a>`;
+    if (x.linked || !ctx.review) return '';
+    return `<a class="tv-review" href="${esc(ctx.review(customer, partner))}" title="Open the pair in Likely partners: the evidence, Confirm and Dismiss">Review</a>`;
   }
 
   /** A partner's customers: those it works for, then those whose threads its people are in. */
@@ -438,8 +434,8 @@ globalThis.CustomerView = (() => {
    * what is elsewhere: `teamHref(slug)`, `teamName(slug)`, `kbHref(path)`, null where the
    * viewer may not open the knowledge base, `topicHref(id)`, a node of the Topics page, and for a
    * vendor's, a partner's and a customer's partners `orgHref(slug)` and `orgIcon(slug, icon)`
-   * (HTML), another org's page and icon; for the admin team `review(customer, partner, pair)`,
-   * `{ href, list }`: where a pair nothing links yet is reviewed (`list` for Likely partners).
+   * (HTML), another org's page and icon; for the admin team `review(customer, partner)`, the
+   * address of a pair nothing links yet in Likely partners.
    */
   function html(p, ctx) {
     const shown = {

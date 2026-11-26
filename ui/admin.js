@@ -2988,10 +2988,9 @@ async function showOrgOverview(slug) {
       const o = state.orgs.find((x) => x.slug === org);
       return ico(icon || o?.icon || null, o?.domain || null);
     },
-    // The admin team's: a pair nothing links yet, in Likely partners (see "partners").
-    review: state.me.admin ? (customer, partner, pair) => (pair
-      ? { href: address({ tab: 'orgs', sel: linkSel(customer, partner) }), list: false }
-      : (state.links?.pairs?.length && { href: address({ tab: 'orgs', sel: slug, section: 'overview' }), list: true })) : null,
+    // The admin team's: a pair nothing links yet, its page in Likely partners (see "partners"),
+    // whether or not org_partners has a row of the two.
+    review: state.me.admin ? (customer, partner) => address({ tab: 'orgs', sel: linkSel(customer, partner) }) : null,
   };
   const name = p.org.name || p.org.slug;
   const inbox = orgInbox(slug, p.teams);
@@ -3009,7 +3008,6 @@ async function showOrgOverview(slug) {
   showStatus();
   tabInView();
   CustomerView.wire($('overview'), p, ctx);
-  for (const a of $('overview').querySelectorAll('[data-review-list]')) a.onclick = (e) => { e.preventDefault(); openLinks(); };
   if (p.kb?.drawing) drawOrgStack(slug, current);
 }
 
@@ -4012,7 +4010,6 @@ function wireOrgMerge(slug) {
 // the confirmed and likely ones (GET /api/customers/partners).
 
 const LINK = 'partner:';
-const LINKS_GROUP = 'orgs:partners';
 const linkSel = (customer, partner) => `${LINK}${customer}:${partner}`;
 const isLink = (sel) => String(sel ?? '').startsWith(LINK);
 const linkName = (slug, orgs = state.links?.orgs) => (orgs && orgs[slug] && orgs[slug].name) || orgLabel(slug);
@@ -4060,17 +4057,6 @@ function linkRow(x) {
   });
 }
 
-/** Likely partners opened in the list, and shown: a customer's or partner's page links it. */
-function openLinks() {
-  SideNav.setOpen(LINKS_GROUP, true);
-  renderList();
-  const b = document.querySelector(`[data-nav-group="${LINKS_GROUP}"]`);
-  if (b) {
-    b.scrollIntoView({ block: 'nearest' });
-    b.focus();
-  }
-}
-
 /** The admin team's: the pairs to review at the top of the list, the rest folded. */
 function linkSection(f) {
   const d = state.links;
@@ -4088,7 +4074,7 @@ function linkSection(f) {
     key, label, body: list.map(linkRow).join(''), holds: holds(list),
   }) : '');
   return SideNav.group({
-    key: LINKS_GROUP,
+    key: 'orgs:partners',
     label: 'Likely partners',
     count: top.length,
     title: 'A partner that may work for a customer, as Clef sees it: confirm it, or dismiss it',
