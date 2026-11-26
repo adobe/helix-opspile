@@ -2928,6 +2928,13 @@ own, and Adobe's people on no team), the agent answers but refuses to: each mess
 the session as of the latest message, `chat-of:<session>`), and `kb_write`, `draw_stack`, `bash`,
 `request_bash` and the extraction rules' and tech stack's saves and deletes check it at every call.
 
+**Who reads through it.** What the agent reads there (below: every thread of the inbox, every
+knowledge base) it reads for whoever talks to it, whatever they see in the inbox themselves:
+another team's members, and Adobe's people on no team, whose inbox is their personal view. That is
+on purpose: whoever sees a team's or a customer's page may ask its agent what the inbox knows, and
+only the agent's changes depend on who asks (`write`). Someone signed in from `SIGNIN_DOMAINS` who
+is not Adobe's has no page and no conversation (`isInternal`, src/kbaccess.js).
+
 **What it has there**, and only there (the tools refuse in the agent's other sessions, a seed's or
 a dream's, and are not in their prompt):
 - every thread of the inbox (`kbChatExtension` in src/agent/tools.js): `search_threads` searches

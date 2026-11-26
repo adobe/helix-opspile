@@ -25,7 +25,10 @@
  * Its files, but `systemprompt.md` (the agents' instructions, `mayEdit`'s), are written by more
  * (`mayWrite`): everyone on the team, a team's for its own, the owning teams' for a customer's,
  * in the editor and through its agent's sidebar (src/kbchat.js), where whoever looks may talk;
- * for anyone else who looks, the agent there answers but changes nothing.
+ * for anyone else who looks, the agent there answers but changes nothing. What that agent reads
+ * (every thread of the inbox, src/agent/tools.js `kbChatExtension`) it reads for whoever looks, on
+ * purpose, also for Adobe's people on no team, whose own inbox is their personal view
+ * (docs/ARCHITECTURE.md, "Who reads through it").
  */
 
 import { isStaffDomain } from './lookup.js';
