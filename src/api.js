@@ -59,6 +59,7 @@ import {
 } from './fileview.js';
 import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
 import { mentionedPeople, profiles, relationOf } from './profiles.js';
+import { partnerDomains } from './partners.js';
 import { channelLinks, channelRefs, nameChannelIds } from './channelrefs.js';
 import { slackMessageLinks } from './slacklinks.js';
 import { json, text } from './http.js';
@@ -578,7 +579,7 @@ export async function inbox(env, me, team, {
   const [
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, { results: names },
-    drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
+    drafts, { results: teamRows }, teamMembers, orgs, partners,
     { results: techRows }, stacks, techVocab, elsewhere, yours, unseen, agentLabels, standing,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
@@ -628,7 +629,7 @@ export async function inbox(env, me, team, {
     teamRowsP,
     membersP,
     orgsOf(env, threads.map((t) => t.org)),
-    env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
+    partnerDomains(env),
     // What each thread shows (thread_tech, its own label), for the tech facet.
     env.DB.prepare(`SELECT thread, tech, p FROM thread_tech
       WHERE thread IN (SELECT value FROM json_each(?)) AND p >= ? ORDER BY p DESC`)
@@ -672,8 +673,6 @@ export async function inbox(env, me, team, {
   ]));
   // The viewer's teams.
   // Adobe, partner or customer (the UI tells vendors by their org); emails stay here.
-  const partners = new Map((partnerRows || [])
-    .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const myTeams = {};
   for (const r of teamRows || []) {
     myTeams[r.team] = myTeams[r.team] || { name: r.name, members: [] };

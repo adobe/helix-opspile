@@ -74,6 +74,9 @@ import {
   reopenDeclined,
 } from './portalrequests.js';
 import { resetTeamVendors } from './vendors.js';
+import {
+  deletePartnerDomain, forgetPartnerDomains, listPartnerDomains, savePartnerDomain,
+} from './partners.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -86,6 +89,8 @@ import { resetTeamVendors } from './vendors.js';
  *   channels they match with a team (src/followrules.js); and the conflicts between team
  *   rules, which the admin team settles in its inbox (src/ruleconflicts.js, src/requestthreads.js);
  * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments;
+ * - partner domains: the mail domains found to be partners' (src/partners.js), and the admin
+ *   team's own over them: one added, renamed, given to another partner, or said not to be one;
  * - bots: which of the bots the inbox knows are Adobe's, and so count as staff, and which only
  *   post alerts, each with its latest messages (src/ourbots.js); a bot nobody said either of is
  *   a request, a thread of the admin team's inbox;
@@ -1037,6 +1042,8 @@ async function openPortal(env, me, body) {
   await env.DB.prepare(`INSERT INTO orgs (slug, name, type, icon, updated_at)
     VALUES (?, ?, 'customer', ?, ?) ON CONFLICT (slug) DO NOTHING`)
     .bind(customer, r.company || null, icon, now).run();
+  // A new customer, and its icon: neither is a partner's domain (src/partners.js).
+  forgetPartnerDomains();
   await ensureKnowledgeBase(env, 'org', customer).catch(() => null);
   for (const [target, value] of [['team', slug], ['org', customer]]) {
     // eslint-disable-next-line no-await-in-loop
@@ -1758,14 +1765,17 @@ async function saveOrg(env, body, create) {
       ON CONFLICT (slug) DO UPDATE SET name = excluded.name, type = excluded.type,
         icon = excluded.icon, updated_at = excluded.updated_at`).bind(slug, f.name, f.type, f.icon, now).run();
   }
-  // Its name, type and icon are what the duplicate search compares.
+  // Its name, type and icon are what the duplicate search compares, and what tells a partner's
+  // domains (src/partners.js).
   forgetFacts();
+  forgetPartnerDomains();
   return json({ ok: true, org: { slug, ...f, updated_at: now } });
 }
 
 async function deleteOrg(env, body) {
   const { meta } = await env.DB.prepare('DELETE FROM orgs WHERE slug = ?').bind(clean(body.slug)).run();
   forgetFacts();
+  forgetPartnerDomains();
   return meta.changes ? json({ ok: true }) : json({ error: 'this org has no name, icon or type to delete' }, 404);
 }
 
@@ -2009,6 +2019,9 @@ async function adminRoute(request, env, url, me) {
     case 'POST org-merge-requests': return requestMerge(env, me, body);
     case 'DELETE org-merge-requests': return closeMergeRequest(env, me, body, 'withdrawn');
     case 'POST org-merge-requests/decline': return closeMergeRequest(env, me, body, 'declined');
+    case 'GET partner-domains': return listPartnerDomains(env, { fresh: Boolean(q('fresh')) });
+    case 'PUT partner-domains': return savePartnerDomain(env, me, body);
+    case 'DELETE partner-domains': return deletePartnerDomain(env, body);
     case 'GET org-icons': return orgIcons(env, q('slug'), Boolean(q('fresh')));
     case 'GET favicon': return faviconProxy(q('domain'), { request });
     case 'GET bots': return listBots(env);

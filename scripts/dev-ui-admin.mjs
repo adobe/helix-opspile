@@ -752,6 +752,41 @@ function seedBots(DB, store) {
  * two that nobody said whose they are yet, one with messages in a Teams thread, and one an admin
  * linked to a colleague. Made up, as their tenant's domain.
  */
+/**
+ * Partners: Agency Co, a partner org whose threads Ravi and a colleague post in, so the inbox
+ * finds agency.example to be its domain (src/partners.js), and one of ACME's people in one of
+ * them, whose domain is left out as ACME's own; and the admin team's rows over what is found:
+ * agency.co.uk added by hand, and a freelancer's domain said not to be a partner's.
+ */
+function seedPartners(DB) {
+  const db = DB.sqlite;
+  const at = new Date(Date.now() - 3 * 86400000).toISOString();
+  db.exec(`INSERT OR IGNORE INTO orgs (slug, name, type, icon, updated_at) VALUES
+    ('agency', 'Agency Co', 'partner', NULL, '2026-10-20T09:00:00Z');
+    INSERT OR IGNORE INTO people (id, email, name, staff) VALUES (61, 'lee@agency.example', 'Lee Ward', 0);
+    INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email, person, fetched_at) VALUES
+      ('slack', 'T-FAKE', 'TP-61', 'person', 'Lee Ward', 'lee@agency.example', 61, '${at}'),
+      ('slack', 'T-FAKE', 'TP-AG-8', 'person', 'Ravi Kumar', 'ravi@agency.example', 8, '${at}'),
+      ('slack', 'T-FAKE', 'TP-AG-52', 'person', 'Elena Marsh', 'elena@acme.example', 52, '${at}');
+    INSERT INTO partner_domains (domain, name, org, excluded, updated_by, updated_at) VALUES
+      ('agency.co.uk', NULL, 'agency', 0, 'priya@example.com', '${at}'),
+      ('freelance.example', NULL, NULL, 1, 'priya@example.com', '${at}')`);
+  const thread = db.prepare(`INSERT OR IGNORE INTO threads (thread, source, tenant, channel_id, root_id,
+      org, team, kind, channel_name, path, root_at, last_at, any_at, messages, updated_at)
+    VALUES (?, 'slack', 'T-FAKE', 'C0AGENCY1', ?, 'agency', 'platform', 'channel', 'ext-agency', 'p/',
+      ?, ?, ?, 2, ?)`);
+  const message = db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at,
+      person, staff, counted, deleted, author_key) VALUES ('slack', 'T-FAKE', 'C0AGENCY1', ?, ?, ?, ?, 0, 1, 0, ?)`);
+  const posts = [['1', [8, 61]], ['2', [61, 8]], ['3', [8, 52]]];
+  for (const [root, who] of posts) {
+    const key = `slack:T-FAKE:C0AGENCY1:ag-${root}`;
+    thread.run(key, `ag-${root}`, at, at, at, at);
+    for (const id of who) {
+      message.run(`ag-${root}-${id}`, key, at, id, `slack:T-FAKE:${id === 61 ? 'TP-61' : `TP-AG-${id}`}`);
+    }
+  }
+}
+
 function seedAccounts(DB, store) {
   const db = DB.sqlite;
   const staff = [...store.people.values()].filter((p) => p.staff);
@@ -887,6 +922,7 @@ export function createAdmin(store, {
   // And Initech's, a vendor's: its cases, status posts and the customers on its products
   // (dev-ui-vendor.mjs).
   seedVendorProfile(DB);
+  seedPartners(DB);
   // The people outside Adobe post in their org's threads, so each org has a usual mail
   // domain: the org list shows its favicon when the org has no icon (src/admin.js).
   for (const p of store.people.values()) {
