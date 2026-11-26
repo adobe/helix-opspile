@@ -417,9 +417,12 @@ body main.instant :is(#list, #detail) { transition: none; }
     padding-inline-end: var(--spectrum-component-edge-to-text-75);
   }
 }
-/* A rule's pattern breaks anywhere rather than widen its table past its card: a regular
-   expression has no spaces to break at. */
+/* A rule's pattern breaks between its alternatives (`breakable` in ui/admin.js), and anywhere
+   where one is still too long, rather than widen its table past its card. A click copies it. */
 .spectrum td code { overflow-wrap: anywhere; }
+.spectrum code.pattern { cursor: copy; border-radius: var(--spectrum-corner-radius-75); transition: background var(--s2-ease); }
+.spectrum code.pattern:hover { background: var(--spectrum-gray-200); }
+.spectrum code.pattern:focus-visible { outline: var(--s2-focus); outline-offset: var(--spectrum-focus-indicator-gap); }
 .spectrum td div.sub { display: block; margin-top: var(--spectrum-spacing-50); }
 .spectrum .person .sub { margin: 0; }
 .spectrum tr:last-child td { border-bottom: 0; }
