@@ -328,7 +328,9 @@ A partner's **page** in Customers is its customer overview with its own numbers 
 (`partnerNumbers`, src/partners.js, in its `partner`; ui/customer.js), everyone's at Adobe:
 
 - its **customers**: those it works for, confirmed and likely (`customersOf`, with what links
-  them), then those whose threads of the window its people posted in, nothing linking them yet;
+  them), then those whose threads of the window its people posted in, nothing linking them yet
+  (from two threads with its people or two of its people, `UNLINKED_MIN`: one stray post lists
+  nobody);
   each with how many of the customer's threads its people are in, how many of its own threads the
   customer's people are in (the people outside Adobe of its threads who post in the customer's
   too), and how many of those wait on Adobe;
@@ -343,11 +345,15 @@ A partner's **page** in Customers is its customer overview with its own numbers 
 Counts are everyone's; a thread's title and link only for whoever works it (`forViewer`, as a
 vendor's, "Vendors"). In its overview its own people are "their people", not a partner's. A
 customer's page lists its **partners** (`partners`): those that work for it (`partnersOf`) and
-those whose people posted in its threads of the window, each a link to the partner's page, with
-what links them (the signals' counts, in words), how many of its threads their people are in and
-whether it is confirmed or likely. The overviews are kept five minutes per isolate, and a decision
-on a pair (`POST /api/admin/org-partners/confirm`, `/dismiss`) forgets both orgs' in its isolate
-(`forgetOrgProfiles`, src/orgprofile.js).
+those whose people posted in its threads of the window (as many, `UNLINKED_MIN`), each a link to
+the partner's page, with what links them (the signals' counts, in words), how many of its threads
+their people are in and whether it is confirmed or likely. Those nothing links yet come last: they
+are the evidence the review works from, and for the admin team each links to its pair in Likely
+partners where `org_partners` has a row of the two (`keptPairs`; only the admin team is told,
+`pair`), else to that list. The overviews are kept five minutes per isolate; a decision on a pair
+(`POST /api/admin/org-partners/confirm`, `/dismiss`) forgets both orgs' in the isolate that made it
+(`forgetOrgProfiles`, src/orgprofile.js), and the other isolates show it within those five minutes,
+as they do any change of a kept overview.
 
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
 (an agent that provisions access, say) would show on the customer's side of a thread. Every bot

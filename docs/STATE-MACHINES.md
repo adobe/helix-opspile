@@ -253,7 +253,8 @@ by the D1 binding for `CACHE_MS` (five minutes). A decision on a pair of a custo
 (`POST /api/admin/org-partners/confirm`, `/dismiss`, with `undo` too) forgets both orgs' once it is
 written (`forgetOrgProfiles`): each counts its forgets, and numbers read before the last forget of
 their org are not used, so one read while the decision was written is not kept as fresh. The other
-isolates keep theirs up to `CACHE_MS`, as they do for a new thread; nothing else forgets them.
+isolates keep theirs up to `CACHE_MS` (five minutes), as they do for a new thread, and show the
+decision after that; nothing else forgets them.
 
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status

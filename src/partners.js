@@ -345,6 +345,11 @@ export function partnerOf(domain, partners) {
 export const MAX_PARTNER_PEOPLE = 12;
 export const MAX_PARTNER_CUSTOMERS = 20;
 export const MAX_PARTNER_WAITING = 25;
+/**
+ * A customer nothing links to the partner yet is listed from this many threads with its people,
+ * or this many of its people, in the weeks: one stray post lists nobody.
+ */
+export const UNLINKED_MIN = 2;
 /** Of a person, the customers whose threads they post in that their card names. */
 const MAX_PERSON_ORGS = 4;
 
@@ -368,7 +373,7 @@ const isCustomer = (o) => (o ? (o.type || 'customer') === 'customer' : true);
  *   `customersOf`, with what links them), and those whose threads its people posted in, each with
  *   how many of the customer's threads its people are in (`theirs`) and how many of its own the
  *   customer's people are in (`ours`: the people outside Adobe of its threads who post in the
- *   customer's too);
+ *   customer's too); one nothing links yet from `UNLINKED_MIN` threads or people on;
  * - `people`: its people (their mail domain its, `partnerDomains`), wherever they posted: in its
  *   own channels and in customers', how much, and in whose;
  * - `posts`: what its people said in its channels and in customers', week by week;
@@ -559,7 +564,9 @@ export async function partnerNumbers(env, slug, weeks, { customers: linked = [] 
   const custFirsts = firsts.filter((f) => f.org !== slug && keyOf.has(f.key));
 
   const linkOf = new Map(linked.filter((c) => !merged.has(c.slug)).map((c) => [c.slug, c]));
-  const customers = [...new Set([...linkOf.keys(), ...byCustomer.keys()])].map((o) => {
+  const unlinked = [...byCustomer].filter(([o, c]) => !linkOf.has(o)
+    && (c.threads.size >= UNLINKED_MIN || c.people.size >= UNLINKED_MIN)).map(([o]) => o);
+  const customers = [...linkOf.keys(), ...unlinked].map((o) => {
     const l = linkOf.get(o);
     const c = byCustomer.get(o);
     const row = orgOf.get(o);

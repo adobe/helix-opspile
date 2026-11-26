@@ -250,6 +250,19 @@ globalThis.CustomerView = (() => {
     return '';
   }
 
+  /**
+   * For the admin team, where a pair nothing links yet is reviewed (`x.pair`, which only they get):
+   * its page in Likely partners where `org_partners` has a row of the two, else that list.
+   */
+  function review(x, customer, partner, ctx) {
+    if (x.linked || x.pair === undefined || !ctx.review) return '';
+    const r = ctx.review(customer, partner, x.pair);
+    if (!r) return '';
+    return r.list
+      ? `<a class="tv-review" href="${esc(r.href)}" data-review-list title="Open Likely partners, the admin team's review list">Review list</a>`
+      : `<a class="tv-review" href="${esc(r.href)}" title="Open the pair in Likely partners">Review</a>`;
+  }
+
   /** A partner's customers: those it works for, then those whose threads its people are in. */
   function partnerCustomers(p, ctx) {
     const c = p.partner.customers;
@@ -264,7 +277,7 @@ globalThis.CustomerView = (() => {
         !x.linked ? 'its people post there; not linked yet' : '',
         x.last ? ago(x.last) : '',
       ].filter(Boolean).join(', ')),
-      tail: `${linkTag(x)}${x.waiting ? `<span class="tag tv-us">${esc(`${x.waiting} waiting on Adobe`)}</span>` : ''}`,
+      tail: `${linkTag(x)}${x.waiting ? `<span class="tag tv-us">${esc(`${x.waiting} waiting on Adobe`)}</span>` : ''}${review(x, x.slug, p.org.slug, ctx)}`,
     }));
     const shown = c.list.length < c.count ? `${c.list.length} of ${c.count}` : plural(c.count, 'customer');
     return `<section class="tv-sec" aria-labelledby="cvCustomers"><h2 id="cvCustomers">Customers <span class="sub">${esc(shown)}</span></h2>
@@ -315,7 +328,7 @@ globalThis.CustomerView = (() => {
         x.people ? `${plural(x.people, 'person', 'people')} of theirs posted in these weeks` : '',
         !x.linked ? 'not linked yet' : '',
       ].filter(Boolean).join(', ')),
-      tail: linkTag(x),
+      tail: `${linkTag(x)}${review(x, p.org.slug, x.slug, ctx)}`,
     }));
     return `<section class="tv-sec" aria-labelledby="cvPartners"><h2 id="cvPartners">Partners <span class="sub">${esc(plural(list.length, 'partner'))}</span></h2>
       ${rows.length ? ranked(rows, p.weeks.length) : `<div class="empty">No agency or system integrator is known to work for ${esc(nameOf(p))}.</div>`}</section>`;
@@ -425,7 +438,8 @@ globalThis.CustomerView = (() => {
    * what is elsewhere: `teamHref(slug)`, `teamName(slug)`, `kbHref(path)`, null where the
    * viewer may not open the knowledge base, `topicHref(id)`, a node of the Topics page, and for a
    * vendor's, a partner's and a customer's partners `orgHref(slug)` and `orgIcon(slug, icon)`
-   * (HTML), another org's page and icon.
+   * (HTML), another org's page and icon; for the admin team `review(customer, partner, pair)`,
+   * `{ href, list }`: where a pair nothing links yet is reviewed (`list` for Likely partners).
    */
   function html(p, ctx) {
     const shown = {

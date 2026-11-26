@@ -895,6 +895,21 @@ async function linked(env, slug, side) {
   });
 }
 
+/**
+ * Of `pairs` (`[[customer, partner]]`), those `org_partners` has a row of, whatever its verdict or
+ * decision: `Set<"customer\npartner">`. Only that a row is there, nothing of what it holds: the
+ * pages link the admin team to a pair's review where there is one.
+ */
+export async function keptPairs(env, pairs) {
+  if (!pairs.length) {
+    return new Set();
+  }
+  const list = await rows(env, `SELECT x.customer, x.partner FROM org_partners x
+    JOIN json_each(?1) j ON x.customer = json_extract(j.value, '$[0]')
+      AND x.partner = json_extract(j.value, '$[1]')`, JSON.stringify(pairs));
+  return new Set(list.map((r) => keyOf(r.customer, r.partner)));
+}
+
 /** The partners that work for `customer`, confirmed or likely (see `linked`). */
 export async function partnersOf(env, customer) {
   return linked(env, customer, 'customer');

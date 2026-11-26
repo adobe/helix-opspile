@@ -153,8 +153,10 @@ describe('a partner\'s page', () => {
       [posts.own, posts.customers, posts.ownThreads, posts.customerThreads],
       [2, 3, 2, 3],
     );
-    // Without customersOf, the customers its people post for, none linked.
-    assert.deepEqual(v.customers.list.map((c) => [c.slug, c.linked]), [['acme', false], ['hooli', false]]);
+    // Without customersOf, the customers its people post for, none linked: ACME, two threads
+    // with Pia; not Hooli, Pat's one post in one thread.
+    assert.deepEqual(v.customers.list.map((c) => [c.slug, c.linked]), [['acme', false]]);
+    assert.equal(v.customers.count, 1);
   });
 
   it('has what waits on Adobe, and how soon Adobe answers, in its channels and customers\'', async () => {
@@ -220,6 +222,30 @@ describe('a customer\'s partners', () => {
     env.DB.sqlite.exec('DELETE FROM org_partners');
     const p = await orgProfile(env, as(ADA), 'acme', { now: NOW });
     assert.deepEqual(p.partners.map((x) => [x.slug, x.linked, x.threads, x.signals]), [['agency', false, 2, {}]]);
+  });
+
+  it('lists none from one stray post, and tells the admin team which have a pair to review', async () => {
+    const env = seed();
+    const admin = as({ ...ADA, teams: ['admin', 'edge'] });
+    // Hooli: only Pat's one post in h1, nothing linking them.
+    env.DB.sqlite.exec('DELETE FROM org_partners WHERE customer = \'hooli\'');
+    assert.deepEqual((await orgProfile(env, admin, 'hooli', { now: NOW })).partners, []);
+    // ACME: Clef's verdict under LIKELY, so not linked, but a row to review.
+    env.DB.sqlite.exec('UPDATE org_partners SET p = 0.2 WHERE customer = \'acme\'');
+    resetOrgProfiles();
+    const mine = await orgProfile(env, admin, 'acme', { now: NOW });
+    assert.deepEqual(mine.partners.map((x) => [x.slug, x.linked, x.pair]), [['agency', false, true]]);
+    const theirs = await orgProfile(env, admin, 'agency', { now: NOW });
+    assert.deepEqual(theirs.partner.customers.list.map((c) => [c.slug, c.linked, c.pair]), [['acme', false, true]]);
+    // Without a row, a pair to find in the list; and for anyone else, not said.
+    env.DB.sqlite.exec('DELETE FROM org_partners');
+    resetOrgProfiles();
+    const none = await orgProfile(env, admin, 'acme', { now: NOW });
+    assert.deepEqual(none.partners.map((x) => [x.slug, x.pair]), [['agency', false]]);
+    const ada = await orgProfile(env, as(ADA), 'acme', { now: NOW });
+    assert.equal('pair' in ada.partners[0], false);
+    const page = await orgProfile(env, as(ADA), 'agency', { now: NOW });
+    assert.equal('pair' in page.partner.customers.list[0], false);
   });
 
   it('says at once that the admin team dismissed one, on both pages, though they are kept', async () => {
