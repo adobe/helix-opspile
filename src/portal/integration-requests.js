@@ -288,8 +288,14 @@ export async function reserveAccess(env, args = {}, now = Date.now()) {
       await audienceOf(db, r, by, sec0(now), args.audience).run();
     }
     if (m.enabled || m.resumable) {
+      // Its audience as it is now, so the inbox records it either way (src/admin.js).
+      const row = await db.prepare('SELECT audience FROM channel_audiences WHERE channel = ?')
+        .bind(m.channel).first();
       return {
-        ok: true, channel: { id: m.channel, name: m.name }, reserved: false, existing: m.enabled,
+        ok: true,
+        channel: { id: m.channel, name: m.name, audience: (row && row.audience) || 'shared' },
+        reserved: false,
+        existing: m.enabled,
       };
     }
     return fail('this organization\'s channel on the host is suspended, or set up by hand: an operator enables it first', 409);

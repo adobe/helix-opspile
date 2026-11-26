@@ -207,6 +207,11 @@ describe('individual integration channels', () => {
     });
     const audience = () => w.db.rows('SELECT audience FROM channel_audiences WHERE channel = ?', reserved.channel.id)[0].audience;
     assert.equal(audience(), 'individual');
+    // Resumed without saying, it keeps its own, and says which, for the inbox to record.
+    const resumed = await platform.reserve(w.portal, {
+      id: 1, customer: 'agents-mill', name: 'agents-mill', by: { email: w.admin.email },
+    });
+    assert.deepEqual([resumed.reserved, resumed.channel.audience], [false, 'individual']);
     const key = 'request:integration:1';
     const thread = (await w.staff(w.admin, 'GET', `/api/thread?thread=${encodeURIComponent(key)}`)).body;
     const field = thread.request.actions.find((x) => x.id === 'approve').fields.find((f) => f.name === 'individual');
