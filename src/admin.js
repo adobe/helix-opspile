@@ -36,8 +36,8 @@ import {
 import { syncAccessQuietly } from './accesssync.js';
 import { faviconProxy, findIcons } from './favicons.js';
 import {
-  closeMergeRequest, dismissPair, forgetFacts, listMergeRequests, mailDomains, mergeOrgs,
-  openMergeCount, orgDuplicates, requestMerge, unmergeOrg,
+  closeMergeRequest, dismissPair, forgetFacts, likelyPairCount, listMergeRequests, mailDomains,
+  mergeOrgs, openMergeCount, orgDuplicates, requestMerge, unmergeOrg,
 } from './orgmerge.js';
 import { decidePartner, endPartner, orgPartners } from './orgpartners.js';
 import { closePartnerRequest, openPartnerCount, requestPartner } from './partnerrequests.js';
@@ -1812,9 +1812,11 @@ async function dismissSuggestedMember(env, me, body, dismiss) {
 
 /**
  * Every org: the ones with a row, and every slug the rules filed threads or a base under.
- * `domain` is its usual mail domain, whose favicon it is shown with when it has no icon.
+ * `domain` is its usual mail domain, whose favicon it is shown with when it has no icon. `review`
+ * is what waits for `me` in the sidebar's Review entry, as far as it is known without asking Clef
+ * (`duplicates`, `likelyPairCount`): whether there is one from the first paint (ui/review.js).
  */
-async function listOrgs(env) {
+async function listOrgs(env, me) {
   const list = await rows(env, `SELECT s.slug, o.name, COALESCE(o.type, 'customer') AS type, o.icon,
       (SELECT COUNT(DISTINCT channel_id) FROM threads t WHERE t.org = s.slug AND ${LIVE('t')})
         AS channels,
@@ -1831,10 +1833,14 @@ async function listOrgs(env) {
     o.domain = (domains.get(o.slug) || [])[0] || null;
   }
   // The channels no rule files under an org, which Unassigned lists to be given one.
-  const unassigned = await env.DB.prepare(`SELECT
+  const [unassigned, duplicates] = await Promise.all([env.DB.prepare(`SELECT
       COUNT(DISTINCT CASE WHEN ${LIVE('t')} THEN t.channel_id END) AS channels,
-      COUNT(*) AS threads FROM threads t WHERE t.org = ? AND t.kind != 'ignore'`).bind(UNASSIGNED).first();
-  return json({ orgs: list, types: TYPES, unassigned });
+      COUNT(*) AS threads FROM threads t WHERE t.org = ? AND t.kind != 'ignore'`).bind(UNASSIGNED).first(),
+  likelyPairCount(env, me)]);
+  const review = { duplicates };
+  return json({
+    orgs: list, types: TYPES, unassigned, review,
+  });
 }
 
 /**
@@ -2230,7 +2236,7 @@ async function adminRoute(request, env, url, me) {
     case 'POST classify': return json(await classifyChannels(env, {
       limit: Math.min(Math.max(Number(body.limit) || 10, 1), 25),
     }));
-    case 'GET orgs': return listOrgs(env);
+    case 'GET orgs': return listOrgs(env, me);
     case 'POST orgs': return saveOrg(env, body, true);
     case 'PUT orgs': return saveOrg(env, body, false);
     case 'DELETE orgs': return deleteOrg(env, body);

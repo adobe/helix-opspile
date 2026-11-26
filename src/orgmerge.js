@@ -762,6 +762,30 @@ export async function orgDuplicates(env, me, { pair = '', fresh = false } = {}) 
 }
 
 /**
+ * How many pairs of orgs wait for `me`, from what is kept only (no candidates found, no Clef
+ * asked): those Clef found likely that nobody dismissed, and those asked to be merged, of the
+ * customers `me` sees (every org, for the admin team). The Customers sidebar has its Review entry
+ * from its first paint by it (`review` of GET /api/admin/orgs, ui/review.js): an estimate, as the
+ * kept verdicts may be of pairs that are no candidates any more; the list itself is
+ * `orgDuplicates`.
+ */
+export async function likelyPairCount(env, me) {
+  const admin = isAdmin(me);
+  const [likely, asked, merges, owned] = await Promise.all([
+    rows(env, 'SELECT a, b FROM org_pairs WHERE p >= ?1 AND dismissed_at IS NULL', LIKELY),
+    rows(env, 'SELECT slug AS a, into_slug AS b FROM org_merge_requests WHERE status = \'open\''),
+    rows(env, 'SELECT slug FROM org_merges'),
+    admin ? null : ownedCustomers(env, (me.teams || []).map((t) => t.slug)),
+  ]);
+  const merged = new Set(merges.map((m) => m.slug));
+  const sees = (slug) => admin || owned.has(slug);
+  const pairs = new Set([...likely, ...asked]
+    .filter((x) => x.a !== x.b && !merged.has(x.a) && !merged.has(x.b) && (sees(x.a) || sees(x.b)))
+    .map((x) => pairKey(x.a, x.b)));
+  return pairs.size;
+}
+
+/**
  * POST /api/admin/org-duplicates/dismiss `{ a, b, undo? }`: the admin team says two orgs are not
  * one; they leave the list (the admin team's shows them last), until somebody asks to merge them.
  */

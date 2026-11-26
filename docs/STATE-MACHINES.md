@@ -1188,6 +1188,16 @@ says which hash a path has, and is the watermark: a save relists (unless another
 it was read), and so does showing the tab again after `RELIST_MS`. A failed batch leaves its hashes
 not here, and opening one reads it by its path.
 
+**Review row.** absent, or there → counted (`state.reviewHas`, `reviewCounts` in `ui/admin.js`,
+`ui/review.js`). Whether a list of Teams or Customers has its Review row is decided once, at its
+first paint, and holds until the page loads again: the admin team's always, an ops team member's in
+Customers when `review.duplicates` of `GET /api/admin/orgs` (what `org_pairs` and
+`org_merge_requests` keep) is above 0, nobody else's. Its count is the sum of its queues', shown
+once none of them is still unread (`total` null until then): the unassigned channels are read with
+the list, the duplicates, the partners and the suggested teams after it. A queue that fails to load
+counts 0. A later round of Clef's (`loadDups`, `loadLinks`) changes the count, and the open queue's
+note offers to show what it said; its rows stay where they are until then.
+
 **Teams and Customers read ahead.** not read → in flight → kept → forgotten (`ahead`, `cached`,
 `forget` in `ui/admin.js`). What a team's or a customer's overview and Manage section read (their
 profile, `/api/admin/team` or `/org`, the member suggestions, the stack drawing) is asked for once
