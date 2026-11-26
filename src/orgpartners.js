@@ -20,7 +20,7 @@ import { isAdmin } from './roles.js';
 import { UNASSIGNED } from './rules.js';
 
 /**
- * Which customers each partner works for (migration 0109). A partner (an org of type
+ * Which customers each partner works for (migration 0110). A partner (an org of type
  * `partner`: an agency, a system integrator) works on the sites and projects of several
  * customers, in its own channels and in theirs, and nothing in the inbox said whose. The pairs
  * of a customer and a partner that may work together are found as duplicate customers are
@@ -238,17 +238,42 @@ const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** Whether `text` has `word` as a word of its own (not part of a longer one). */
 const hasWord = (text, word) => new RegExp(`(^|[^a-z0-9])${escape(word)}($|[^a-z0-9])`).test(text);
 
-/**
- * What every pair is compared with, worked out once per list: the partners' usual mail domains,
- * how many customers' threads name each owner, and how many orgs have a channel in each place.
- */
-export function contextOf(orgs, ev) {
+/** Each org's usual mail domain: the one most of its people outside Adobe post from. */
+function usualDomains(ev) {
   const usual = new Map();
   for (const [slug, list] of ev.posters) {
     if (list.length) {
       usual.set(slug, list[0].domain);
     }
   }
+  return usual;
+}
+
+/** Each partner's mail domains as the threads show them: its usual one (`partnerMailDomains`). */
+function postedDomains(orgs, ev) {
+  const usual = usualDomains(ev);
+  return new Map([...orgs.values()].filter((o) => o.type === 'partner' && usual.has(o.slug))
+    .map((o) => [o.slug, [usual.get(o.slug)]]));
+}
+
+/**
+ * The mail domains of each partner's people, `Map<partner, [domain]>`: the one place the
+ * `posters`, `guests` and `members` signals get them. For now each partner's usual domain
+ * (`postedDomains`); once src/partners.js `partnerDomains` is on main, its domains by org, so that
+ * the admin team's overrides and exclusions change the pairs too.
+ */
+export async function partnerMailDomains(env, orgs, ev) {
+  return postedDomains(orgs, ev);
+}
+
+/**
+ * What every pair is compared with, worked out once per list: each org's usual mail domain, each
+ * partner's mail domains (`partnerMailDomains`, else those its threads show), how many orgs'
+ * threads name each owner, and how many orgs have a channel in each place.
+ */
+export function contextOf(orgs, ev, domains = null) {
+  const usual = usualDomains(ev);
+  const partnerDomains = domains || postedDomains(orgs, ev);
   // Partners name their customers' owners: the owners of Adobe and of demos are in the
   // threads of many customers, or of Adobe's own orgs.
   const ownerSpread = new Map();
@@ -265,7 +290,9 @@ export function contextOf(orgs, ev) {
       places.set(p, (places.get(p) || 0) + 1);
     }
   }
-  return { usual, ownerSpread, places };
+  return {
+    usual, partnerDomains, ownerSpread, places,
+  };
 }
 
 /** Of a list of names, the first few and how many more, as a signal says them. */
@@ -304,23 +331,25 @@ function membersWeight(n) {
  */
 export function partnerSignals(c, p, ev, ctx) {
   const out = [];
-  const domain = ctx.usual.get(p.slug);
-  const theirs = ev.posters.get(c.slug) || [];
-  // The partner's people, from its usual mail domain, post in the customer's threads.
-  const posted = domain && theirs.find((r) => r.domain === domain);
-  if (posted) {
-    const { threads, people } = posted;
+  const domains = ctx.partnerDomains.get(p.slug) || [];
+  const named = `${listed(domains)}, the partner's mail ${domains.length === 1 ? 'domain' : 'domains'}`;
+  // The partner's people, from its mail domains, post in the customer's threads: people of each
+  // domain are others, a thread may have several (the most of one is a floor).
+  const posted = (ev.posters.get(c.slug) || []).filter((r) => domains.includes(r.domain));
+  if (posted.length) {
+    const threads = Math.max(...posted.map((r) => r.threads));
+    const people = posted.reduce((n, r) => n + r.people, 0);
     out.push({
       kind: 'posters',
       weight: postersWeight(threads, people),
       n: threads,
       people,
-      text: `${plural(people, 'person', 'people')} from ${domain}, the partner's usual mail domain, posted in ${plural(threads, 'thread')} of the customer's`,
+      text: `${plural(people, 'person', 'people')} from ${named}, posted in ${plural(threads, 'thread')} of the customer's`,
     });
   }
   // The customer's people, from its usual mail domain, post in the partner's threads.
   const home = ctx.usual.get(c.slug);
-  const guest = home && home !== domain
+  const guest = home && !domains.includes(home)
     && (ev.posters.get(p.slug) || []).find((r) => r.domain === home);
   if (guest) {
     const { threads, people } = guest;
@@ -333,13 +362,14 @@ export function partnerSignals(c, p, ev, ctx) {
     });
   }
   // The partner's people are in the customer's channels.
-  const members = domain && (ev.members.get(c.slug) || new Map()).get(domain);
+  const inChannels = ev.members.get(c.slug) || new Map();
+  const members = domains.reduce((n, d) => n + (inChannels.get(d) || 0), 0);
   if (members) {
     out.push({
       kind: 'members',
       weight: membersWeight(members),
       n: members,
-      text: `${plural(members, 'person', 'people')} from ${domain} ${members === 1 ? 'is' : 'are'} in the customer's channels`,
+      text: `${plural(members, 'person', 'people')} from ${listed(domains.filter((d) => inChannels.has(d)))} ${members === 1 ? 'is' : 'are'} in the customer's channels`,
     });
   }
   // The same GitHub or aem.live owner in the facts of both, one only a few customers have.
@@ -422,11 +452,19 @@ export function partnerSignals(c, p, ev, ctx) {
 const scoreOf = (signals) => signals.reduce((n, s) => n + s.weight, 0);
 
 /**
- * The pairs of a customer and a partner whose signals add up to `CANDIDATE`, strongest first:
- * `[{ customer, partner, signals, score }]`. `f` is the duplicates' facts, `ev` the evidence.
+ * Signals that make no candidate alone, however much they weigh: a knowledge-base entry that
+ * names a customer, a Slack Connect or Teams team both have. Clef found most such pairs unlikely.
  */
-export function partnerCandidates(f, ev) {
-  const ctx = contextOf(f.orgs, ev);
+const NOT_ALONE = new Set(['kb', 'place']);
+const enough = (signals) => scoreOf(signals) >= CANDIDATE
+  && !(signals.length === 1 && NOT_ALONE.has(signals[0].kind));
+
+/**
+ * The pairs of a customer and a partner whose signals add up to `CANDIDATE`, and are more than a
+ * `NOT_ALONE` signal, strongest first: `[{ customer, partner, signals, score }]`. `f` is the
+ * duplicates' facts, `ev` the evidence, `ctx` `contextOf`'s (of `f.orgs` and `ev` when none).
+ */
+export function partnerCandidates(f, ev, ctx = contextOf(f.orgs, ev)) {
   const all = [...f.orgs.values()];
   const partners = all.filter((o) => o.type === 'partner');
   const customers = all.filter((o) => o.type === 'customer');
@@ -434,10 +472,9 @@ export function partnerCandidates(f, ev) {
   for (const p of partners) {
     for (const c of customers) {
       const signals = partnerSignals(c, p, ev, ctx);
-      const score = scoreOf(signals);
-      if (score >= CANDIDATE) {
+      if (enough(signals)) {
         out.push({
-          customer: c.slug, partner: p.slug, signals, score,
+          customer: c.slug, partner: p.slug, signals, score: scoreOf(signals),
         });
       }
     }
@@ -493,7 +530,8 @@ function describeOrg(letter, o, domain) {
 /** What Clef is shown of a pair. */
 export function pairState(c, p, signals, ctx) {
   const shared = signals.length ? `\nFound: ${signals.map(said).join('; ')}.` : '';
-  return `${INTRO}\n${describeOrg('C', c, ctx.usual.get(c.slug))}\n${describeOrg('P', p, ctx.usual.get(p.slug))}${shared}`;
+  const mail = (ctx.partnerDomains.get(p.slug) || []).join(', ') || ctx.usual.get(p.slug);
+  return `${INTRO}\n${describeOrg('C', c, ctx.usual.get(c.slug))}\n${describeOrg('P', p, mail)}${shared}`;
 }
 
 async function fingerprintOf(text) {
@@ -577,8 +615,8 @@ async function sync(env, { fresh = false, ask = ASK_PER_LIST } = {}) {
   // The facts may be from before a merge another isolate made.
   const merged = new Set(merges.map((r) => r.slug));
   const orgs = new Map([...f.orgs].filter(([slug]) => !merged.has(slug)));
-  const ctx = contextOf(orgs, ev);
-  const found = partnerCandidates({ ...f, orgs }, ev);
+  const ctx = contextOf(orgs, ev, await partnerMailDomains(env, orgs, ev));
+  const found = partnerCandidates({ ...f, orgs }, ev, ctx);
   const keptBy = new Map(kept.map((r) => [keyOf(r.customer, r.partner), r]));
   const writes = [];
   const now = new Date().toISOString();

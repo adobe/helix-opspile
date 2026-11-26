@@ -227,14 +227,14 @@ way back to found, an `excluded` row the way to say no. A domain that stops bein
 row, which then stands alone.
 
 **Partner pair.** candidate → Clef's verdict → stale → asked again; confirmed or dismissed ⇄
-neither; and gone (`org_partners`, migration 0109, src/orgpartners.js). A candidate's row is written
+neither; and gone (`org_partners`, migration 0110, src/orgpartners.js). A candidate's row is written
 by a list load or a cron run (`sync`) with its signals and score; Clef's verdict is kept with the
 `fingerprint` of what it was shown, and asked again once that changes, `ASK_PER_LIST` a load or a
 run; one Clef did not give leaves `p` null, for the next. Confirmed (`confirmed_at`) and dismissed
 (`dismissed_at`) exclude each other: one replaces the other, and `undo` clears only its own. A
 decided pair is not asked about and stays whatever its signals; one nobody decided is deleted by the
-first `sync` that does not find it a candidate (its signals fell under `CANDIDATE`, an org was
-retyped or merged). Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
+first `sync` that does not find it a candidate (its signals fell under `CANDIDATE` or to one
+`kb` or `place` signal alone, a partner's mail domains changed, an org was retyped or merged). Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
 dismissed with `p` at least `LIKELY`. A merge copies the merged org's decided rows to the org kept
 (`merged_from`), not over a decision of its own; undoing it deletes the rows of that `merged_from`,
 and the merged org's own rows, kept all along, count again.

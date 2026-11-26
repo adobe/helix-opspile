@@ -226,6 +226,41 @@ describe('partner signals', () => {
       ['globex', 'agency', 2],
     ]);
   });
+
+  it('takes a knowledge-base entry or a shared team alone for no candidate', () => {
+    const c = org('globex', 'customer', { channels: [{ label: '#aem-globex', places: ['connect:T1'] }] });
+    const p = org('agency', 'partner', { channels: [{ label: '#aem-agency', places: ['connect:T1'] }] });
+    const orgs = new Map([['globex', c], ['agency', p]]);
+    const pairs = (ev) => partnerCandidates({ orgs }, ev).map((x) => x.signals.map((s) => s.kind));
+    const entry = { path: 'sites/globex-www.md', head: 'sites/globex-www.md', body: '' };
+    // A shared team (2) and an entry about it (3) weigh enough, but say nothing alone.
+    assert.deepEqual(pairs(evidence()), []);
+    c.channels = [{ label: '#aem-globex', places: [] }];
+    assert.deepEqual(pairs(evidence({ kb: new Map([['agency', [entry]]]) })), []);
+    // With a second signal, they do.
+    assert.deepEqual(pairs(evidence({
+      kb: new Map([['agency', [entry]]]),
+      posters: new Map([['agency', [{ domain: 'agency.example', threads: 5, people: 2 }]],
+        ['globex', [{ domain: 'agency.example', threads: 1, people: 1 }]]]),
+    })), [['posters', 'kb']]);
+  });
+
+  it('counts the people of every mail domain of the partner', () => {
+    const c = org('globex', 'customer');
+    const p = org('agency', 'partner');
+    const orgs = new Map([['globex', c], ['agency', p]]);
+    const ev = evidence({
+      posters: new Map([['globex', [{ domain: 'agency.example', threads: 4, people: 1 },
+        { domain: 'agency-group.example', threads: 6, people: 2 }]]]),
+      members: new Map([['globex', new Map([['agency.example', 1], ['agency-group.example', 2]])]]),
+    });
+    // The threads show none of the partner's own (it posts nowhere itself); its domains are given.
+    assert.deepEqual(partnerSignals(c, p, ev, contextOf(orgs, ev)), []);
+    const ctx = contextOf(orgs, ev, new Map([['agency', ['agency.example', 'agency-group.example']]]));
+    assert.deepEqual(partnerSignals(c, p, ev, ctx).map((s) => [s.kind, s.n, s.people ?? null]), [
+      ['posters', 6, 3], ['members', 3, null],
+    ]);
+  });
 });
 
 describe('admin: partners', () => {

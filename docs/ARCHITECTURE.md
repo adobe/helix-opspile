@@ -276,14 +276,17 @@ list until somebody asks for its merge.
 
 **Partners.** An org of type `partner` is an agency or system integrator that builds, runs or
 supports the sites and projects of several customers, in its own channels and in theirs. Which
-customers each works for is a table, `org_partners` (migration 0109, `src/orgpartners.js`), found as
+customers each works for is a table, `org_partners` (migration 0110, `src/orgpartners.js`), found as
 duplicate customers are: candidates from signals, then Clef. A pair of a customer and a partner is
-a candidate when its signals add up (`CANDIDATE`, 2):
+a candidate when its signals add up (`CANDIDATE`, 2) and are more than a `kb` or a `place` signal
+alone (Clef found most such pairs unlikely):
 
-- `posters`: people from the partner's usual mail domain (the one most of the people outside Adobe
-  in its threads write from) posted in the customer's threads (1 to 3, by threads and people);
+- `posters`: people from the partner's mail domains posted in the customer's threads (1 to 3, by
+  threads and people). The domains come from one place, `partnerMailDomains`: for now the
+  partner's usual mail domain (the one most of the people outside Adobe in its threads write from),
+  later src/partners.js `partnerDomains`, with the admin team's overrides and exclusions;
 - `guests`: people from the customer's usual mail domain posted in the partner's threads (1 or 2);
-- `members`: people from the partner's usual mail domain are in the customer's channels
+- `members`: people from the partner's mail domains are in the customer's channels
   (`channel_members`, 1 to 2);
 - `owners`: the facts of both name the same GitHub or aem.live owner (`site`, `repo`, and a `url`
   `<branch>--<repo>--<owner>.aem.live`, `github.com/<owner>`, the admin API's), one the threads of
