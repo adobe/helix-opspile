@@ -112,6 +112,10 @@ function d1(db, scope) {
       if (prop === 'prepare') {
         return (...args) => statement(v.apply(target, args));
       }
+      // A session (src/d1session.js) is counted as the database is.
+      if (prop === 'withSession') {
+        return (...args) => d1(v.apply(target, args), scope);
+      }
       if (prop === 'batch') {
         // D1 wants its own statements back.
         return (stmts, ...rest) => counted(target, v, (results) => {

@@ -92,6 +92,8 @@ jobs:
       # The header's Stats link to klickhaus (optional; off while either is empty; src/klickhaus.js).
       KLICKHAUS_URL: ${{ secrets.KLICKHAUS_URL }}
       KLICKHAUS_TEAMS: ${{ secrets.KLICKHAUS_TEAMS }}
+      # 1 once the database's read replication is on (optional; src/d1session.js).
+      D1_READ_REPLICAS: ${{ secrets.D1_READ_REPLICAS }}
       # The global fluffyjaws MCP server (optional; off while FLUFFYJAWS_ISSUER is empty;
       # src/agent/fluffyjaws.js): its Okta, opspile's client there, or a service app, whose
       # secret FLUFFYJAWS_SERVICE_SECRET is a Worker secret.

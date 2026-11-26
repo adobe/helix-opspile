@@ -47,6 +47,7 @@ on:
       - 'src/cogs/meter.js'
       - 'src/cogs/prices.js'
       - 'src/d1batch.js'
+      - 'src/d1session.js'
       - 'src/deadjobs.js'
       - 'src/diagrams.js'
       - 'src/discord.js'

@@ -81,6 +81,9 @@ import {
 } from './search.js';
 import { findKnowledge } from './kbsearch.js';
 import { Timing, withTiming } from './timing.js';
+import {
+  bookmarkOf, constraintFor, sessionDatabase, withBookmark,
+} from './d1session.js';
 import { batchedDatabase, overloaded } from './d1batch.js';
 import { statsFor } from './klickhaus.js';
 import { TECH_MIN, topicList, vocab } from './label.js';
@@ -1875,7 +1878,10 @@ export async function api(request, env, url, options = {}) {
     return null;
   }
   const timing = new Timing();
-  const timed = timing.wrap(env);
+  // One D1 session for the request: a read runs at the nearest copy of the database, as new as
+  // the bookmark the page sent; what writes starts at the primary (src/d1session.js).
+  const session = env && sessionDatabase(env.DB, constraintFor(request));
+  const timed = timing.wrap(session ? { ...env, DB: session } : env);
   const batched = timed && timed.DB ? { ...timed, DB: batchedDatabase(timed.DB) } : timed;
   let response;
   try {
@@ -1890,5 +1896,5 @@ export async function api(request, env, url, options = {}) {
     response = json({ error: 'The inbox is busy: try again in a moment.', busy: true }, 503);
     response.headers.set('retry-after', String(BUSY_RETRY_AFTER));
   }
-  return withTiming(response, timing);
+  return withTiming(withBookmark(response, bookmarkOf(session)), timing);
 }
