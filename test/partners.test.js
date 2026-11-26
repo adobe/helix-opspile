@@ -141,6 +141,29 @@ describe('derive', () => {
     assert.equal(two.found.find((f) => f.domain === 'holdcoagency.example').org, 'studio');
   });
 
+  it('gives a domain of a partner\'s very name to it, though its people post only for others', () => {
+    const rows = [
+      // The integrator's own channel has no posts with mail; its people post for a customer and
+      // in a studio's channel, outnumbering the customer's own and fewer than the studio's.
+      row('globex', 'customer', 'integrator.example', 5, 34),
+      row('globex', 'customer', 'globex.example', 2, 6),
+      row('studio', 'partner', 'studio.example', 8, 226),
+      row('studio', 'partner', 'integrator.example', 3, 71),
+      // A customer's own domain of the same name stays the customer's.
+      row('initech', 'customer', 'initech.example', 4),
+    ];
+    const partners = [{ slug: 'integrator', name: 'Integrator' }, { slug: 'initech', name: null }];
+    const { found } = derive(ENV, rows, [], partners);
+    assert.deepEqual(found.map((f) => [f.domain, f.org, f.people, f.threads]), [
+      ['integrator.example', 'integrator', 5, 105], ['studio.example', 'studio', 8, 226],
+    ]);
+    // Without the integrator, nobody's.
+    assert.deepEqual(derive(ENV, rows).found.map((f) => f.domain), ['studio.example']);
+    // Of two partners of the very name, neither's.
+    const two = derive(ENV, rows, [], [{ slug: 'integrator' }, { slug: 'int', name: 'Integrator' }]);
+    assert.deepEqual(two.found.map((f) => f.domain), ['studio.example']);
+  });
+
   it('tells which names a domain has', () => {
     assert.ok(namesOrg('mail.acme.co.uk', { slug: 'acme' }));
     assert.ok(namesOrg('acmeus.example', { slug: 'acme' }));

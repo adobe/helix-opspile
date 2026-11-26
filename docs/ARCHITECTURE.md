@@ -287,7 +287,9 @@ alone (Clef found most such pairs unlikely):
   overrides and exclusions change the pairs too; a subdomain counts as its parent, unless it is
   listed itself (an excluded one is nobody's). Without them (no look for them succeeded yet in the
   isolate), a load or cron run changes nothing in `org_partners` and the list says so (`skipped`);
-- `guests`: people from the customer's usual mail domain posted in the partner's threads (1 or 2);
+- `guests`: people from the customer's usual mail domain (the most common of its posters' that is no
+  other org's partner domain: an integrator's people may outnumber the customer's in its channel)
+  posted in the partner's threads (1 or 2);
 - `members`: people from the partner's mail domains are in the customer's channels
   (`channel_members`, 1 to 2);
 - `owners`: the facts of both name the same GitHub or aem.live owner (`site`, `repo`, and a `url`
@@ -3879,6 +3881,10 @@ post in the threads of each org of type `partner` (`derive`):
   for any but a partner's first domain, one most of a customer's people write from. A partner's first domain may well be the domain most people in a customer's channel write
   from, where only the partner's people post: that is how partners work, so it stays;
 - a domain two partners have is the one's with more of its people there;
+- a domain of a partner's very name (its name part is the slug's or the display name's, `acme.com`
+  of `acme`) is that partner's wherever its people post, though none of them posted in the
+  partner's own threads, unless it names a customer they post for or is a customer's icon's: in a
+  customer's channel they would else be the customer's people;
 - a domain that names one other partner org and not the partner whose people write from it is the
   one's it names, though that one's people post nowhere the inbox reads their mail (Slack Connect
   hides it): an agency that was bought still has its own org, its channels and its people, who

@@ -239,6 +239,8 @@ describe('a customer\'s partners', () => {
     const env = seed();
     const admin = as({ ...ADA, teams: ['admin', 'edge'] });
     env.DB.sqlite.exec('DELETE FROM org_partners');
+    // Sam of ACME's post in the agency's thread would make them candidates (`guests`).
+    env.DB.sqlite.exec('DELETE FROM messages WHERE thread = \'t:a2\' AND author_key = \'slack:T:U6\'');
     const post = (what, body) => call(env, admin, `/api/admin/org-partners/${what}`, {
       method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
     });

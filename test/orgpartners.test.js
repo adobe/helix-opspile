@@ -264,6 +264,30 @@ describe('partner signals', () => {
       ['posters', 6, 3], ['members', 3, null],
     ]);
   });
+  it('takes no partner\'s domain for the customer\'s usual one', () => {
+    // An integrator's people outnumber the customer's in its channel, and post in a studio's too.
+    const c = org('globex', 'customer');
+    const si = org('integrator', 'partner');
+    const studio = org('studio', 'partner');
+    const orgs = new Map([['globex', c], ['integrator', si], ['studio', studio]]);
+    const ev = evidence({
+      posters: new Map([
+        ['globex', [{ domain: 'integrator.example', threads: 30, people: 5 },
+          { domain: 'globex.example', threads: 6, people: 2 }]],
+        ['studio', [{ domain: 'studio.example', threads: 200, people: 8 },
+          { domain: 'integrator.example', threads: 70, people: 3 }]],
+      ]),
+    });
+    const domains = new Map([['integrator.example', 'integrator'], ['studio.example', 'studio']]);
+    const ctx = contextOf(orgs, ev, domains);
+    assert.equal(ctx.usual.get('globex'), 'globex.example');
+    // The integrator's people are no guests of the studio's from the customer.
+    assert.deepEqual(partnerSignals(c, studio, ev, ctx), []);
+    assert.deepEqual(partnerSignals(c, si, ev, ctx).map((s) => [s.kind, s.n]), [['posters', 30]]);
+    // A domain that is no partner's (excluded) may be its usual one.
+    const excluded = contextOf(orgs, ev, new Map([['integrator.example', null]]));
+    assert.equal(excluded.usual.get('globex'), 'integrator.example');
+  });
 });
 
 describe('admin: partners', () => {
