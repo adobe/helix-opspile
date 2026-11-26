@@ -439,6 +439,11 @@ describe('following technologies', () => {
     assert.deepEqual(await followingTeams(e, key('C4', '6.1')), ['ew']);
     assert.deepEqual(await entryFollows(e, key('C4', '6.1')), [{ team: 'ew', org: 'globex' }]);
     assert.ok(entries(await inbox(e, ew, 'ew')).includes(key('C4', '6.1')));
+    // Not while its org is no longer public (retyped, its link job yet to run).
+    e.DB.sqlite.exec("UPDATE orgs SET type = 'customer' WHERE slug = 'community'");
+    assert.deepEqual(await followingTeams(e, key('C4', '6.1')), []);
+    assert.equal(entries(await inbox(e, ew, 'ew')).includes(key('C4', '6.1')), false);
+    e.DB.sqlite.exec("UPDATE orgs SET type = 'public' WHERE slug = 'community'");
     // Not once the customer is dismissed from it.
     e.DB.sqlite.exec(`UPDATE thread_orgs SET dismissed_at = '${AT}', dismissed_by = 'ada'`);
     assert.deepEqual(await followingTeams(e, key('C4', '6.1')), []);

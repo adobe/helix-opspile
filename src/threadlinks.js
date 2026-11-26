@@ -21,6 +21,7 @@ import {
 import {
   customerDomains, customerOf, iconDomain, partnerDomains,
 } from './partners.js';
+import { PUBLIC_NOW } from './follows.js';
 import { platformName } from './platforms.js';
 import { partnerOf } from './profiles.js';
 import { inParts } from './search.js';
@@ -411,6 +412,7 @@ async function shownOrgs(env, keys) {
     FROM thread_orgs x LEFT JOIN orgs o ON o.slug = x.org
     WHERE x.thread IN (SELECT value FROM json_each(?1)) AND x.dismissed_at IS NULL AND x.p >= ?2
       AND x.org NOT IN (SELECT slug FROM org_merges)
+      AND (x.role != 'customer' OR ${PUBLIC_NOW('x')})
     ORDER BY x.p DESC, x.org`, JSON.stringify(keys), ABOUT_MIN);
 }
 
@@ -691,6 +693,9 @@ async function tellAgents(env, links) {
   return told;
 }
 
+/** The roles of `thread_orgs` the threads of each org type have. */
+const ROLES = { partner: ['about'], customer: ['partner'], public: ['partner', 'customer'] };
+
 /**
  * Queue job `{ link: thread }`, a minute after the thread was labelled: its entry's linked orgs
  * (`thread_orgs`) and related threads (`thread_links`), as above; the agent hears of a new
@@ -708,10 +713,15 @@ export async function linkThread(env, key, now = new Date()) {
     return { result: 'skip', reason: anchor ? anchor.kind : 'no thread' };
   }
   const type = anchor.org_type;
-  if (type !== 'partner' && type !== 'customer' && type !== 'public') {
+  const at = now.toISOString();
+  // The roles its type has; those of another (its org was retyped, or its channel filed under
+  // another org) go, as the rows of its own role it no longer finds do.
+  const own = ROLES[type] || [];
+  await env.DB.prepare(`DELETE FROM thread_orgs WHERE thread = ? AND dismissed_at IS NULL
+    AND role NOT IN (SELECT value FROM json_each(?))`).bind(entry.key, JSON.stringify(own)).run();
+  if (!own.length) {
     return { result: 'skip', reason: type };
   }
-  const at = now.toISOString();
   const before = await shownOrgs(env, entry.keys);
   let orgs = [];
   if (type === 'partner') {
@@ -872,8 +882,9 @@ export async function aboutThreads(env, org, keys) {
     env,
     `SELECT thread FROM threads WHERE org = ?1
       AND thread IN (SELECT value FROM json_each(?2))
-    UNION SELECT thread FROM thread_orgs WHERE org = ?1 AND role IN ('about', 'customer')
-      AND dismissed_at IS NULL AND p >= ?3 AND thread IN (SELECT value FROM json_each(?2))`,
+    UNION SELECT x.thread FROM thread_orgs x WHERE x.org = ?1 AND x.dismissed_at IS NULL
+      AND x.p >= ?3 AND x.thread IN (SELECT value FROM json_each(?2))
+      AND (x.role = 'about' OR (x.role = 'customer' AND ${PUBLIC_NOW('x')}))`,
     String(org),
     JSON.stringify(keys),
     ABOUT_MIN,

@@ -88,13 +88,22 @@ const inFollowed = (alias, techs) => `(${alias}.thread IN (${followedEntries(tec
     OR ${alias}.logical_thread IN (${followedEntries(techs)}))`;
 
 /**
+ * SQL: the entry of `thread_orgs` row `alias` (its `thread`) is a public org's now. A row of role
+ * `customer` counts only then: the link job writes them for public threads, and an org retyped
+ * since, or a channel filed under another org, keeps them until the thread is linked again.
+ * By the threads' key and the orgs' slug.
+ */
+export const PUBLIC_NOW = (alias) => `EXISTS (SELECT 1 FROM threads pt JOIN orgs po ON po.slug = pt.org
+    WHERE pt.thread = ${alias}.thread AND po.type = 'public')`;
+
+/**
  * SQL: thread row `alias` is in a public thread (an org of type `public`) whose people include a
  * customer's of those `orgs` selects: `thread_orgs` of role `customer` (src/threadlinks.js), by
- * entry key, not dismissed. By index (`thread_orgs_org`).
+ * entry key, not dismissed, of a thread public now (`PUBLIC_NOW`). By index (`thread_orgs_org`).
  */
 const inPublic = (alias, orgs) => {
   const entries = `SELECT x.thread FROM thread_orgs x WHERE x.role = 'customer'
-      AND x.dismissed_at IS NULL AND x.org IN (${orgs})`;
+      AND x.dismissed_at IS NULL AND x.org IN (${orgs}) AND ${PUBLIC_NOW('x')}`;
   return `(${alias}.thread IN (${entries}) OR ${alias}.logical_thread IN (${entries}))`;
 };
 
@@ -179,7 +188,7 @@ const ENTRY_TEAM_FOLLOWS = `WITH k AS (SELECT COALESCE(logical_thread, thread) A
   UNION SELECT f.team, NULL, f.target, NULL FROM x JOIN thread_areas a ON a.thread = x.thread
     JOIN team_follows_by f ON f.kind = 'area' AND f.target = a.area
   UNION SELECT r.value, NULL, NULL, o.org FROM x JOIN thread_orgs o ON o.thread = x.thread
-      AND o.role = 'customer' AND o.dismissed_at IS NULL
+      AND o.role = 'customer' AND o.dismissed_at IS NULL AND ${PUBLIC_NOW('o')}
     JOIN rules r ON r.target = 'follow' AND r.field = 'org'
       AND r.pattern = '^' || o.org || '$'`;
 
@@ -255,7 +264,7 @@ export async function followersOf(env, people, thread) {
         (f.kind = 'org' AND f.target IN (SELECT org FROM x))
         OR (f.kind = 'org' AND f.target IN (SELECT o.org FROM thread_orgs o
           WHERE o.thread IN (SELECT thread FROM x) AND o.role = 'customer'
-            AND o.dismissed_at IS NULL))
+            AND o.dismissed_at IS NULL AND ${PUBLIC_NOW('o')}))
         OR (f.kind = 'area' AND f.target IN (SELECT a.area FROM thread_areas a WHERE a.thread IN (SELECT thread FROM x)))
         OR (f.kind = 'person' AND CAST(f.target AS INTEGER) IN (SELECT m.person FROM messages m
           WHERE m.thread IN (SELECT thread FROM x) AND m.deleted = 0))

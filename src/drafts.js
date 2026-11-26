@@ -15,6 +15,7 @@ import { linkedMessage, messageRef } from './messagelinks.js';
 import { notifyRoom } from './notify.js';
 import { cleanSources, lookAt, sourcesOf } from './sources.js';
 import { draftFileResponse, filesOf, savedFiles } from './draftfiles.js';
+import { PUBLIC_NOW } from './follows.js';
 import {
   AGENT_EMAIL, changeOf, keepForUndo, recordDraftEvent, textHash, undoneDiscard,
 } from './draftevents.js';
@@ -59,6 +60,7 @@ export const ENTRY_ROW = `WITH t AS (SELECT thread, org, team, logical_thread, s
       WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel'
       UNION SELECT r.value FROM threads x
       JOIN thread_orgs o ON o.thread = x.thread AND o.role = 'customer' AND o.dismissed_at IS NULL
+        AND ${PUBLIC_NOW('o')}
       JOIN rules r ON r.target = 'follow' AND r.field = 'org' AND r.pattern = '^' || o.org || '$'
       WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel' ORDER BY 1))
       AS follows`;
