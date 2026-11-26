@@ -189,6 +189,7 @@ Nothing below is committed; set it on the Worker.
 | `CLICKHOUSE_PASSWORD` | secret | That user's password, sent in `X-ClickHouse-Key`. Required when `CLICKHOUSE_URL` is set |
 | `MCP_ORIGINS` | var | Optional, comma-separated: browser origins besides `PUBLIC_ORIGIN` that may call `/mcp` (requests with any other `Origin` get 403) |
 | `KLICKHAUS_URL` | var | Optional: klickhaus' origin (or a path under it). With `KLICKHAUS_TEAMS`, the header has **Stats**, its `opspile.html` (the statistics of all threads) in a new tab, on the customer and team on screen |
+| `D1_READ_REPLICAS` | var | Optional: `1` once the database's read replication is on ("Develop and deploy"). Room events made outside an `/api` request then ask the primary for its bookmark (one `SELECT 1`), so the reloads they set off see what changed; without it they carry none |
 | `KLICKHAUS_TEAMS` | var | Optional, comma-separated ops team slugs whose members have klickhaus users: only they see Stats (admins too only as members of one), and `/api/me` gives them `stats: { url }` |
 | `LOADER` | Worker Loader | Dynamic Workers: the processes of the agents' computers (the `computer` tool, on the SLICC kernel), and extraction rules that are scripts (without network access; without `LOADER` they do not run) |
 | `GRAPHVIZ` | Service binding | The renderer Worker (`helix-opspile-graphviz`, its `Graphviz` entrypoint; [graphviz/cloudflare.config.ts](graphviz/cloudflare.config.ts)): Graphviz on the server, which lays out every write of a diagram (`.dot`) to a knowledge base and draws them for the editor (`POST /api/diagram`). Bound where the Worker is deployed (`--mode prod`, `--mode stage`), after the renderer: `npm run deploy:graphviz:prod` first. Without it, diagrams are checked by src/dot.js alone and drawn in the page |
@@ -1211,7 +1212,9 @@ id> --read-replication-mode auto` (or the dashboard's D1 settings) turns it on, 
 The inbox's reads (`GET /api/*`) then run at the nearest copy of the database, in a D1 session
 that starts from the bookmark the page sends (`x-d1-bookmark`, src/d1session.js); everything
 else (writes, the queue, the crons, the Durable Objects) still goes to the primary. With it off,
-the sessions are the primary's and nothing changes, so the code may deploy before it is on.
+the sessions are the primary's and nothing changes, so the code may deploy before it is on. Once
+it is on, set `D1_READ_REPLICAS=1` (a repository secret, for CI's deploy), so the rooms' events
+carry the bookmark that keeps the reloads they set off up to date.
 
 **Pull requests merge through a merge queue** (a ruleset on `main`): `gh pr merge --auto`
 puts one in line, and it merges once CI's `test` and the AI review's `ai-review / review` have

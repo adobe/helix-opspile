@@ -72,6 +72,10 @@ const SLACK_VARS = ['SLACK_JOIN_TEAMS'] as const;
 // header's Stats entry shows only with both, and only to members of those teams.
 const STATS_VARS = ['KLICKHAUS_URL', 'KLICKHAUS_TEAMS'] as const;
 
+// D1_READ_REPLICAS, optional: set (to 1) once the database's read replication is on; the rooms'
+// events then carry the primary's bookmark (src/d1session.js).
+const D1_VARS = ['D1_READ_REPLICAS'] as const;
+
 // Discord, optional: DISCORD_GUILDS (comma-separated server ids) turns the poller on, with the
 // secret DISCORD_BOT_TOKEN. DISCORD_STAFF_ROLES: role ids whose members count as staff;
 // DISCORD_HISTORY_DAYS: how far back the first poll reads (default 30); DISCORD_POLL_SECONDS:
@@ -258,7 +262,8 @@ function vars(deployed: boolean) {
   };
   return Object.fromEntries(
     [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...SIGNIN_VARS, ...MOVE_VARS, ...SLACK_VARS,
-      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS, ...FLUFFYJAWS_VARS]
+      ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS, ...FLUFFYJAWS_VARS,
+      ...D1_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );

@@ -98,13 +98,23 @@ export function withBookmark(response, bookmark) {
 }
 
 /**
- * The primary's bookmark now, for a room event (src/notify.js): at least as new as every write
- * made before it, so the page's next read sees what the event is about. One query of nothing at
- * the primary; null without sessions, or when it fails (the event goes without).
+ * The bookmark for a room event (src/notify.js): at least as new as every write made before it,
+ * so the page's next read sees what the event is about. In an /api request, its session's;
+ * elsewhere, with `D1_READ_REPLICAS` set, the primary's (one query of nothing there); else, or
+ * when that fails, null (the event goes without).
  */
 export async function primaryBookmark(env) {
   const db = env && env.DB;
   if (!db || typeof db.withSession !== 'function') {
+    return null;
+  }
+  // Within an /api request: the request's own session, which made the change.
+  const own = bookmarkOf(db);
+  if (own) {
+    return own;
+  }
+  // Elsewhere only once read replication is on: else the query would buy nothing.
+  if (!env.D1_READ_REPLICAS) {
     return null;
   }
   try {

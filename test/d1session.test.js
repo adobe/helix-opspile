@@ -137,10 +137,19 @@ describe('D1 sessions', () => {
 
   it('give a room event the primary\'s bookmark, so the reads it sets off see what changed', async () => {
     const { db, sessions } = replicated(d1());
-    assert.equal(await primaryBookmark({ DB: db }), NEW);
+    // Not asked while read replication is not said to be on: it would buy nothing.
+    assert.equal(await primaryBookmark({ DB: db }), null);
+    assert.equal(sessions.length, 0);
+    assert.equal(await primaryBookmark({ DB: db, D1_READ_REPLICAS: '1' }), NEW);
     assert.equal(sessions.at(-1).constraint, 'first-primary');
-    assert.equal(await primaryBookmark({ DB: d1() }), null);
+    assert.equal(await primaryBookmark({ DB: d1(), D1_READ_REPLICAS: '1' }), null);
     assert.equal(await primaryBookmark({}), null);
+    // In an /api request, the request's own session says it, without asking.
+    const own = sessionDatabase(db, 'first-primary');
+    await own.prepare('SELECT 1').first();
+    const asked = sessions.length;
+    assert.equal(await primaryBookmark({ DB: own }), NEW);
+    assert.equal(sessions.length, asked);
 
     const told = [];
     const ROOMS = {
@@ -149,12 +158,13 @@ describe('D1 sessions', () => {
         fetch: async (u, init) => told.push([team, JSON.parse(init.body)]),
       }),
     };
-    await notifyRoom({ DB: db, ROOMS }, ['a', 'b', 'a'], { type: 'thread', thread: 't' });
+    const before = sessions.length;
+    await notifyRoom({ DB: db, ROOMS, D1_READ_REPLICAS: '1' }, ['a', 'b', 'a'], { type: 'thread', thread: 't' });
     assert.deepEqual(told, [
       ['a', { type: 'thread', thread: 't', bookmark: NEW }],
       ['b', { type: 'thread', thread: 't', bookmark: NEW }],
     ]);
-    assert.equal(sessions.filter((s) => s.constraint === 'first-primary').length, 2, 'asked once per event');
+    assert.equal(sessions.length - before, 1, 'asked once per event');
     // Without sessions, the event goes as it was.
     told.length = 0;
     await notifyRoom({ DB: d1(), ROOMS }, 'a', { type: 'draft', thread: 't' });
