@@ -52,7 +52,7 @@ import {
 import {
   CURL_HOME, CURLRC, gatewayFetch, imageFor, imageSpec, KERNEL_ENV,
 } from './kernel.js';
-import { browserConfigured, browserHost, hasBrowser } from './browser.js';
+import { computerBrowser } from './browser.js';
 import { AgentMcp, codemodeExtension, mcpExtension } from './mcp.js';
 import { agentProvider, modelProblem, modelRef } from './model.js';
 import { forward } from './secrets.js';
@@ -432,9 +432,9 @@ export class ThreadAgent extends Agent {
    * The browser of the computer (src/agent/browser.js): Browser Run, with its session's id in
    * this object's storage, so that a computer evicted meanwhile finds its tabs again.
    */
-  browserHost() {
+  computerCdp() {
     const { storage } = this.ctx;
-    return browserHost(this.env, {
+    this.cdp ??= computerBrowser(this.env, {
       // Browser Run's time, for COGS (src/cogs/meter.js).
       used: (ms) => this.env.meter?.add('browser_run', 'browser_ms', '', ms),
       store: {
@@ -443,6 +443,7 @@ export class ThreadAgent extends Agent {
         delete: () => storage.delete('browser-session'),
       },
     });
+    return this.cdp;
   }
 
   /**
@@ -452,21 +453,15 @@ export class ThreadAgent extends Agent {
    * the programs are told no browser is attached (503). A host that fails answers them 502.
    */
   browserFor(image) {
-    if (!browserConfigured(this.env) || !hasBrowser(image)) {
-      return {};
-    }
-    const host = this.browserHost();
-    this.cdp = { host };
-    return { cdp: (request) => host.hook(request) };
+    return this.computerCdp().attach(image);
   }
 
-  /** Ends the computer's browser, with its kernel: its Chromium session. */
+  /**
+   * Ends the computer's browser, with its kernel: its Chromium session, also the one an evicted
+   * object left in storage, before this object attached a host.
+   */
   async endBrowser() {
-    const { cdp } = this;
-    this.cdp = null;
-    if (cdp) {
-      await cdp.host.close().catch(() => {});
-    }
+    await this.computerCdp().end();
   }
 
   /** The answer to a request of the kernel's programs: the gateway's (src/agent/secrets.js). */
@@ -549,7 +544,7 @@ export class ThreadAgent extends Agent {
         kernel: 'booted',
         image: image.name,
         layers: image.layers.length,
-        browser: Boolean(this.cdp),
+        browser: this.computerCdp().attached,
         ms: Date.now() - started,
       }));
       return kernel;

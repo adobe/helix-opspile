@@ -13,7 +13,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  browserAccount, browserConfigured, browserHost, cdpConnection, hasBrowser, KEEP_ALIVE_MS,
+  browserAccount, browserConfigured, browserHost, cdpConnection, computerBrowser, hasBrowser,
+  KEEP_ALIVE_MS,
 } from '../src/agent/browser.js';
 import { quiet } from './fakes.js';
 
@@ -36,6 +37,21 @@ function fakeSocket() {
     emit(type, event) { (listeners[type] || []).forEach((fn) => fn(event)); },
   };
 }
+
+/** The agent's storage of the session's id, faked: `kept` has it. */
+function fakeStore() {
+  const kept = new Map();
+  return {
+    kept,
+    get: async () => kept.get('id') || null,
+    put: async (id) => kept.set('id', id),
+    delete: async () => kept.delete('id'),
+  };
+}
+
+// Images, as src/agent/image.js's manifests: one with the browser's programs, one without.
+const BROWSER_IMAGE = { name: 'browser', commands: ['bash', 'playwright-cli'] };
+const BASE_IMAGE = { name: 'base', commands: ['bash'] };
 
 /** Browser Run, faked: sessions it made, the ones that ended, and every request. */
 function fakeBrowserRun() {
@@ -122,6 +138,62 @@ describe('the computer\'s browser (Browser Run over CDP)', () => {
     assert.equal(run.calls.at(-1).method, 'DELETE');
     assert.equal(run.calls.at(-1).url, `${ROOT}/s2`);
     assert.equal(kept.has('id'), false);
+  });
+
+  it('ends the session an evicted object left when the image changes', async () => {
+    const run = fakeBrowserRun();
+    const store = fakeStore();
+    const first = computerBrowser(ENV, { fetch: run.fetch, store });
+    const { cdp } = first.attach(BROWSER_IMAGE);
+    assert.equal(first.attached, true);
+    await quiet(() => cdp({}));
+    assert.equal(store.kept.get('id'), 's1');
+
+    // The object was evicted: its host is gone, the session's id is not. Its team changes the
+    // image before the next kernel boots.
+    const evicted = computerBrowser(ENV, { fetch: run.fetch, store });
+    assert.equal(evicted.attached, false);
+    await evicted.end();
+    assert.deepEqual(run.calls.at(-1), {
+      method: 'DELETE', url: `${ROOT}/s1`, auth: 'Bearer made-up-token', upgrade: undefined,
+    });
+    assert.equal(store.kept.has('id'), false);
+
+    // Back to the browser image: a new session, not the tabs of the one before.
+    const back = computerBrowser(ENV, { fetch: run.fetch, store });
+    await quiet(() => back.attach(BROWSER_IMAGE).cdp({}));
+    assert.equal(run.sessions, 2);
+    assert.equal(run.calls.at(-1).url, `${ROOT}/s2`);
+  });
+
+  it('ends the stored session through a host that never connected', async () => {
+    const run = fakeBrowserRun();
+    const store = fakeStore();
+    await store.put('s7');
+    // An evicted object's kernel boots the browser image again and is ended before a program
+    // connects: its host has no session in memory, the store has one.
+    const browser = computerBrowser(ENV, { fetch: run.fetch, store });
+    browser.attach(BROWSER_IMAGE);
+    await browser.end();
+    assert.equal(browser.attached, false);
+    assert.deepEqual(run.calls.map((c) => `${c.method} ${c.url}`), [`DELETE ${ROOT}/s7`]);
+    assert.equal(store.kept.has('id'), false);
+  });
+
+  it('attaches no host for an image without the programs, or without Browser Run', async () => {
+    const run = fakeBrowserRun();
+    const store = fakeStore();
+    const browser = computerBrowser(ENV, { fetch: run.fetch, store });
+    assert.deepEqual(browser.attach(BASE_IMAGE), {});
+    assert.equal(browser.attached, false);
+
+    // A deployment whose token went: the stored id goes, and nothing is sent without it.
+    await store.put('s3');
+    const without = computerBrowser({}, { fetch: run.fetch, store });
+    assert.deepEqual(without.attach(BROWSER_IMAGE), {});
+    await without.end();
+    assert.equal(store.kept.has('id'), false);
+    assert.deepEqual(run.calls, []);
   });
 
   it('gives Kitesurf a browser of its own, and refuses another runtime', async () => {

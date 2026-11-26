@@ -123,7 +123,8 @@ export function cdpConnection(ws, { ended: done = () => {} } = {}) {
  * `fetch` is the Worker's (a test's fake); `used(ms)` is told how long each connection held the
  * browser. `store` (`get`, `put`, `delete`: the agent's
  * storage) keeps the session's id, so that the computer finds its tabs again after its object
- * was evicted, while the session lives.
+ * was evicted, while the session lives. So `close` ends the one in the store when this host has
+ * none in memory: the session an evicted object left, which no program connected to since.
  */
 export function browserHost(env, {
   fetch = globalThis.fetch, keepAlive = KEEP_ALIVE_MS, store = null, used = () => {},
@@ -226,12 +227,47 @@ export function browserHost(env, {
       return session ? session.id.catch(() => null) : null;
     },
     async close() {
-      const id = session && await session.id.catch(() => null);
+      const current = session;
       session = null;
+      const id = (current && await current.id.catch(() => null))
+        || (store && await store.get());
       await store?.delete();
-      if (id) {
+      // Without Browser Run (its token gone since), the id goes and the session runs out.
+      if (id && browserConfigured(env)) {
         await fetch(`${root}/${id}`, { method: 'DELETE', headers: auth }).catch(() => {});
       }
+    },
+  };
+}
+
+/**
+ * The browser of a computer across its kernels, as the agent's object keeps it (`browserFor`,
+ * `endBrowser` in src/agent/agent.js); `options` are `browserHost`'s. `attach(image)` is the
+ * `cdp` option of the kernel about to boot `image`: a host for an image with the browser's
+ * programs (`hasBrowser`) where the deployment has Browser Run (`browserConfigured`), else none
+ * (`{}`), and `attached` says whether there is one. `end()` ends the computer's Chromium
+ * session, with its kernel or its image: the attached host's, or else the one in the store. An
+ * object evicted since has no host, but the session lives on, and a kernel back on the browser
+ * image within its keep-alive would find its tabs.
+ */
+export function computerBrowser(env, options = {}) {
+  let host = null;
+  return {
+    get attached() {
+      return Boolean(host);
+    },
+    attach(image) {
+      if (!browserConfigured(env) || !hasBrowser(image)) {
+        return {};
+      }
+      const made = browserHost(env, options);
+      host = made;
+      return { cdp: (request) => made.hook(request) };
+    },
+    async end() {
+      const ending = host || browserHost(env, options);
+      host = null;
+      await ending.close().catch(() => {});
     },
   };
 }
