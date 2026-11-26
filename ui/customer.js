@@ -49,7 +49,8 @@
  * where its people post) with what links them and what waits on Adobe. Its people's cards end
  * with the customers they post for, as a team member's; those who post only in customers'
  * channels follow them. The page says its name where it would say "its" ("Valtech's channels").
- * A customer's lists its partners (`p.partners`), each a link to its page, with what links them.
+ * A customer's lists its partners (`p.partners`), each a link to its page, with what links them,
+ * since when, and its former partners last (`until`, tagged Former).
  *
  * Everything in it is a name, a number or a picture, written escaped.
  */
@@ -434,8 +435,9 @@ globalThis.CustomerView = (() => {
       .map(([k, n]) => SIGNAL[k](n, P, C));
   };
 
-  /** Whether the two work together: confirmed, likely as Clef says, or neither yet. */
+  /** Whether the two work together: confirmed, likely as Clef says, a former partner, or neither yet. */
   function linkTag(x) {
+    if (x.until) return `<span class="tag tv-former" title="${esc(`A partner until ${x.until}, as the admin team said`)}">Former</span>`;
     if (x.confirmed) return '<span class="tag tv-confirmed" title="The admin team confirmed it">Confirmed</span>';
     if (x.linked) return `<span class="tag tv-likely" title="${esc(x.p === null ? 'Likely, from what links them' : `${Math.round(x.p * 100)}% likely, says Clef`)}">Likely</span>`;
     return '';
@@ -443,12 +445,18 @@ globalThis.CustomerView = (() => {
 
   /**
    * For the admin team, a pair nothing links yet: its page in Likely partners (`ctx.review`), which
-   * shows the evidence of any two orgs and confirms or dismisses them.
+   * shows the evidence of any two orgs and asks the admin team to decide them, in its inbox.
    */
   function review(x, customer, partner, ctx) {
     if (x.linked || !ctx.review) return '';
-    return `<a class="tv-review" href="${esc(ctx.review(customer, partner))}" title="Open the pair in Likely partners: the evidence, Confirm and Dismiss">Review</a>`;
+    return `<a class="tv-review" href="${esc(ctx.review(customer, partner))}" title="Open the pair in Likely partners: the evidence, and a request to decide it">Review</a>`;
   }
+
+  /** Since when the two work together, or until when they did, in words. */
+  const span = (x) => {
+    if (x.until) return `until ${x.until}`;
+    return x.confirmed && x.since ? `since ${x.since}` : '';
+  };
 
   /** A partner's customers: those it works for, then those whose threads its people are in. */
   function partnerCustomers(p, ctx) {
@@ -462,6 +470,7 @@ globalThis.CustomerView = (() => {
       sub: esc([
         ...linkWords(x.signals, { partner: true, counted: x.theirs > 0, name: nameOf(p) }),
         x.ours ? `their people in ${x.ours} of ${its} threads` : '',
+        span(x),
         !x.linked ? `${its} people post there; not linked yet` : '',
         x.last ? ago(x.last) : '',
       ].filter(Boolean).join(', ')),
@@ -494,6 +503,7 @@ globalThis.CustomerView = (() => {
       sub: esc([
         ...linkWords(x.signals, { counted: x.threads > 0, name: nameOf(p) }),
         x.people ? `${plural(x.people, 'person', 'people')} of theirs posted in these weeks` : '',
+        span(x),
         !x.linked ? 'not linked yet' : '',
       ].filter(Boolean).join(', ')),
       tail: `${linkTag(x)}${review(x, p.org.slug, x.slug, ctx)}`,

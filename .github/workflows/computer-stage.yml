@@ -94,6 +94,7 @@ on:
       - 'src/orgmerge.js'
       - 'src/orgpartners.js'
       - 'src/orgstacks.js'
+      - 'src/partnerrequests.js'
       - 'src/partners.js'
       - 'src/personsql.js'
       - 'src/platforms.js'

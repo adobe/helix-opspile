@@ -1386,7 +1386,7 @@ describe('the earlier conversations of the channel', () => {
         )),
         chatOf: async (session) => (session === 'chat-1' ? CHAT : null),
       });
-      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads', 'search_threads', 'read_file', 'list_topics', 'list_experts']);
+      assert.deepEqual(ext.tools.map((t) => t.name), ['read_any_thread', 'find_channels', 'list_any_channel_threads', 'search_threads', 'read_file', 'list_topics', 'list_experts', 'request_partner_link']);
       const call = async (name, args, conversationId) => {
         const res = await ext.tools.find((t) => t.name === name).execute(args, { conversationId });
         return { text: res.output.map((o) => o.text).join(''), error: Boolean(res.isError) };
@@ -1394,7 +1394,8 @@ describe('the earlier conversations of the channel', () => {
       // A seed's or a dream's session reads no thread.
       for (const [name, args] of [['read_any_thread', { thread: THREAD }], ['search_threads', { query: 'acme' }],
         ['find_channels', { query: 'acme' }], ['list_any_channel_threads', { channel: 'slack:E1:C1' }],
-        ['read_file', { thread: THREAD, file: 'F1' }], ['list_topics', {}], ['list_experts', { thread: THREAD }]]) {
+        ['read_file', { thread: THREAD, file: 'F1' }], ['list_topics', {}], ['list_experts', { thread: THREAD }],
+        ['request_partner_link', { action: 'link', partner: 'agency', note: 'x' }]]) {
         // eslint-disable-next-line no-await-in-loop
         const refused = await call(name, args, 'seed-1');
         assert.equal(refused.error, true, name);

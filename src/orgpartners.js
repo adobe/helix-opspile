@@ -16,6 +16,9 @@ import { json } from './http.js';
 import { CLEF } from './label.js';
 import { facts as orgFacts } from './orgmerge.js';
 import { partnerDomainLookup } from './partners.js';
+import {
+  clefRequests, dateOf, openRequestsByPair, pairRequests, settleRequests,
+} from './partnerrequests.js';
 import { platformName } from './platforms.js';
 import { isAdmin } from './roles.js';
 import { UNASSIGNED } from './rules.js';
@@ -38,10 +41,13 @@ import { UNASSIGNED } from './rules.js';
  *   for the customer (`askPair`). Its answers are kept (`org_partners`), and asked again once
  *   what it would be shown changed, a few per list load and per cron run.
  *
- * The admin team confirms a pair or dismisses it in Customers; a candidate nobody decided that
- * stops being one goes. Everyone at Adobe reads an org's confirmed and likely pairs
- * (`partnersOf`, `customersOf`), with how many of each signal and no message text. A merged org's
- * decisions follow the merge (src/orgmerge.js `mergeOrgs`, `unmergeOrg`).
+ * The admin team decides a pair in its inbox, where each request to is a thread
+ * (src/partnerrequests.js): a person's, an agent's, or Clef's, which every sync files
+ * (`partnerWants`); a pair confirmed may end (`endPartner`: a former partner, until then), and
+ * every pair has the span of its partner's posts in the customer's threads (`spanOf`). A
+ * candidate nobody decided that stops being one goes. Everyone at Adobe reads an org's confirmed
+ * and likely pairs (`partnersOf`, `customersOf`), with how many of each signal and no message
+ * text. A merged org's decisions follow the merge (src/orgmerge.js `mergeOrgs`, `unmergeOrg`).
  */
 
 /** From this probability on, Clef says the partner works for the customer: "likely". */
@@ -128,15 +134,17 @@ export function ownerOf(field, value) {
 /**
  * What the signals compare, beyond the duplicates' facts (`orgFacts`: every org, its channels and
  * their places): who posts in each org's threads, by mail domain (`posters`: `Map<org,
- * [{ domain, threads, people }]>`, most people first), who is in each org's channels
- * (`members`: `Map<org, Map<domain, people>>`), the owners each org's facts name (`owners`:
- * `Map<org, Map<owner, threads>>`), and the partners' knowledge-base entries (`kb`: `Map<partner,
- * [{ path, head, body }]>`: the path, title and aliases, and the text, lowercase).
+ * [{ domain, threads, people, first, last }]>`, most people first, with their first and last
+ * post), who is in each org's channels (`members`: `Map<org, Map<domain, people>>`), the owners
+ * each org's facts name (`owners`: `Map<org, Map<owner, threads>>`), and the partners'
+ * knowledge-base entries (`kb`: `Map<partner, [{ path, head, body }]>`: the path, title and
+ * aliases, and the text, lowercase).
  */
 async function loadEvidence(env) {
   const [posters, members, owned, kb] = await Promise.all([
     rows(env, `SELECT t.org, LOWER(SUBSTR(i.email, INSTR(i.email, '@') + 1)) AS domain,
-        COUNT(DISTINCT m.thread) AS threads, COUNT(DISTINCT m.author_key) AS people
+        COUNT(DISTINCT m.thread) AS threads, COUNT(DISTINCT m.author_key) AS people,
+        MIN(m.at) AS first, MAX(m.at) AS last
       FROM messages m JOIN threads t ON t.thread = m.thread
       JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
       WHERE m.staff = 0 AND m.deleted = 0 AND m.counted = 1 AND i.email LIKE '%_@_%' AND t.org != ?1
@@ -163,7 +171,9 @@ async function loadEvidence(env) {
       if (!by.has(r.org)) {
         by.set(r.org, []);
       }
-      by.get(r.org).push({ domain: r.domain, threads: r.threads, people: r.people });
+      by.get(r.org).push({
+        domain: r.domain, threads: r.threads, people: r.people, first: r.first, last: r.last,
+      });
     }
   }
   for (const list of by.values()) {
@@ -342,6 +352,18 @@ function membersWeight(n) {
     return 2;
   }
   return n >= 2 ? 1.5 : 1;
+}
+
+/**
+ * When the partner's people posted in the customer's threads, as the inbox has them (its history
+ * is a floor): `{ first, last }`, ISO times, or nulls when they never did.
+ */
+export function spanOf(c, p, ev, ctx) {
+  const its = (ev.posters.get(c.slug) || [])
+    .filter((r) => domainPartner(ctx.partnerOf, r.domain) === p.slug);
+  const firsts = its.map((r) => r.first).filter(Boolean).sort();
+  const lasts = its.map((r) => r.last).filter(Boolean).sort();
+  return { first: firsts[0] || null, last: lasts[lasts.length - 1] || null };
 }
 
 /**
@@ -549,10 +571,10 @@ function describeOrg(letter, o, domain) {
 }
 
 /**
- * C's other partners as Clef is told them: `others`, `[{ slug, name, signals }]`, those the admin
- * team confirmed (not Clef's likely ones, whose verdicts would move each other's), each with how
- * many of its people post in C's threads. One of a few posts beside a partner of many does other
- * work, or none, rather than build the site.
+ * C's other partners as Clef is told them: `others`, `[{ slug, name, signals, until }]`, those
+ * the admin team confirmed (not Clef's likely ones, whose verdicts would move each other's), each
+ * with how many of its people post in C's threads, and a former one until when. One of a few
+ * posts beside a partner of many does other work, or none, rather than build the site.
  */
 function othersOf(others) {
   if (!others.length) {
@@ -563,7 +585,9 @@ function othersOf(others) {
     const what = posted
       ? `${about(posted.people)} of its people posted in ${about(posted.n)} of C's threads`
       : 'none of its people posted in C\'s threads';
-    return `${o.name ? `"${o.name}"` : o.slug} (${what})`;
+    // A former partner, by the month it ended: a day more is no news.
+    const until = o.until ? `, until ${o.until.slice(0, 7)}` : '';
+    return `${o.name ? `"${o.name}"` : o.slug} (${what}${until})`;
   };
   return `\nC's partners the admin team confirmed: ${others.map(one).join('; ')}.`;
 }
@@ -588,7 +612,9 @@ function confirmedPartners(kept, orgs) {
       }
       const o = orgs.get(r.partner);
       const list = by.get(r.customer) || [];
-      by.set(r.customer, [...list, { slug: r.partner, name: o.name || null, signals }]);
+      by.set(r.customer, [...list, {
+        slug: r.partner, name: o.name || null, signals, until: r.until || null,
+      }]);
     }
   }
   for (const list of by.values()) {
@@ -657,10 +683,77 @@ function pairOf(r, c = null) {
     candidate: Boolean(c),
     confirmed: r && r.confirmed_at ? { by: r.confirmed_by, at: r.confirmed_at } : null,
     dismissed: r && r.dismissed_at ? { by: r.dismissed_by, at: r.dismissed_at } : null,
+    // The admin team's dates, and when its people posted in the customer's threads.
+    since: (r && r.since) || null,
+    until: (r && r.until) || null,
+    ended: r && r.ended_at ? { by: r.ended_by, at: r.ended_at } : null,
+    first: (r && r.first_at) || null,
+    last: (r && r.last_at) || null,
   };
 }
 
 const decided = (r) => Boolean(r && (r.confirmed_at || r.dismissed_at));
+
+/** A confirmed pair whose people posted nothing in the customer's threads for this long ended… */
+export const LAPSED_DAYS = 90;
+/** …while the customer's threads went on for at least this long after their last post. */
+export const GOING_ON_DAYS = 30;
+/** An ended pair whose people post this long after its end works for the customer again. */
+export const AGAIN_DAYS = 14;
+const DAY = 24 * 3600 * 1000;
+const dayOf = (iso) => String(iso || '').slice(0, 10);
+/** An `until` (a day or a month) as the last moment it covers. */
+const endOf = (until) => Date.parse(until.length === 7 ? `${until}-28T23:59:59Z` : `${until}T23:59:59Z`);
+
+/**
+ * What Clef asks the admin team to decide (src/partnerrequests.js `clefRequests`), from the
+ * pairs as `sync` has them, `orgs` the facts' and `fingerprints` what Clef was shown of each
+ * candidate, at `now` (ms): a likely pair nobody decided is a partner (`link`, on what Clef was
+ * shown); a confirmed one whose people posted nothing in the customer's threads for `LAPSED_DAYS`,
+ * while the customer's went on, is one no more (`end`, until their last post); an ended one whose
+ * people post again is one again (`link`).
+ */
+export function partnerWants(pairs, orgs, fingerprints, now) {
+  const wants = [];
+  const name = (slug) => (orgs.get(slug) && orgs.get(slug).name) || slug;
+  const poss = (slug) => (/s$/i.test(name(slug)) ? `${name(slug)}'` : `${name(slug)}'s`);
+  for (const x of pairs) {
+    const key = keyOf(x.customer, x.partner);
+    const latest = Date.parse((orgs.get(x.customer) || {}).latest || '') || 0;
+    const last = Date.parse(x.last || '') || 0;
+    if (!x.confirmed && !x.dismissed && x.candidate && x.p !== null && x.p >= LIKELY
+      && fingerprints.has(key)) {
+      wants.push({
+        customer: x.customer,
+        partner: x.partner,
+        action: 'link',
+        since: x.first ? dayOf(x.first) : null,
+        note: `Clef says ${Math.round(x.p * 100)}% that ${name(x.partner)} works for ${name(x.customer)}: ${x.signals.map((g) => g.text).join('; ')}.`,
+        fingerprint: fingerprints.get(key),
+      });
+    } else if (x.confirmed && !x.until && last && now - last > LAPSED_DAYS * DAY
+      && latest - last > GOING_ON_DAYS * DAY) {
+      wants.push({
+        customer: x.customer,
+        partner: x.partner,
+        action: 'end',
+        until: dayOf(x.last),
+        note: `Nobody of ${name(x.partner)} posted in ${poss(x.customer)} threads since ${dayOf(x.last)}, and its threads went on until ${dayOf(new Date(latest).toISOString())}.`,
+        fingerprint: `end:${dayOf(x.last)}`,
+      });
+    } else if (x.confirmed && x.until && last && last - endOf(x.until) > AGAIN_DAYS * DAY) {
+      wants.push({
+        customer: x.customer,
+        partner: x.partner,
+        action: 'link',
+        since: null,
+        note: `People of ${name(x.partner)} posted in ${poss(x.customer)} threads again, last on ${dayOf(x.last)}, after it was a partner until ${x.until}.`,
+        fingerprint: `again:${x.until}`,
+      });
+    }
+  }
+  return wants;
+}
 
 /**
  * Brings `org_partners` up to the candidates of now: a candidate's signals and score are
@@ -674,8 +767,15 @@ const decided = (r) => Boolean(r && (r.confirmed_at || r.dismissed_at));
  * candidates, their rows pruned and their fingerprints changed, every verdict lost for a slow
  * minute. So it writes, deletes and asks nothing then, and answers the rows as they are
  * (`skipped`). `wait` is how long Clef is waited for (tests wait less).
+ *
+ * Every pair's span (`spanOf`: the first and last post of the partner's people in the customer's
+ * threads) is written where it changed, the decided pairs' too; and then Clef files what it asks
+ * the admin team to decide (`partnerWants`, src/partnerrequests.js `clefRequests`), unless
+ * `requests` is false.
  */
-async function sync(env, { fresh = false, ask = ASK_PER_LIST, wait = ASK_TIMEOUT_MS } = {}) {
+async function sync(env, {
+  fresh = false, ask = ASK_PER_LIST, wait = ASK_TIMEOUT_MS, requests = true,
+} = {}) {
   const [f, ev, kept, merges] = await Promise.all([
     orgFacts(env, { fresh }),
     evidence(env, { fresh }),
@@ -698,6 +798,8 @@ async function sync(env, { fresh = false, ask = ASK_PER_LIST, wait = ASK_TIMEOUT
   const found = partnerCandidates({ ...f, orgs }, ev, ctx);
   const keptBy = new Map(kept.map((r) => [keyOf(r.customer, r.partner), r]));
   const confirmed = confirmedPartners(kept, orgs);
+  // What Clef was shown of each candidate, for the requests it files (`partnerWants`).
+  const fingerprints = new Map();
   const writes = [];
   const now = new Date().toISOString();
   const pairs = [];
@@ -709,13 +811,18 @@ async function sync(env, { fresh = false, ask = ASK_PER_LIST, wait = ASK_TIMEOUT
     // eslint-disable-next-line no-await-in-loop
     const fingerprint = await fingerprintOf(state);
     const signals = JSON.stringify(c.signals);
-    if (!row || row.signals !== signals || row.score !== c.score) {
-      writes.push(env.DB.prepare(`INSERT INTO org_partners (customer, partner, score, signals, signals_at)
-        VALUES (?, ?, ?, ?, ?) ON CONFLICT (customer, partner) DO UPDATE SET score = excluded.score,
-          signals = excluded.signals, signals_at = excluded.signals_at`)
-        .bind(c.customer, c.partner, c.score, signals, now));
+    const span = spanOf(orgs.get(c.customer), orgs.get(c.partner), ev, ctx);
+    const moved = !row || row.first_at !== span.first || row.last_at !== span.last;
+    if (!row || row.signals !== signals || row.score !== c.score || moved) {
+      writes.push(env.DB.prepare(`INSERT INTO org_partners (customer, partner, score, signals, signals_at,
+          first_at, last_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (customer, partner) DO UPDATE SET score = excluded.score,
+          signals = excluded.signals, signals_at = excluded.signals_at, first_at = excluded.first_at,
+          last_at = excluded.last_at`)
+        .bind(c.customer, c.partner, c.score, signals, now, span.first, span.last));
     }
-    const pair = pairOf(row, c);
+    fingerprints.set(keyOf(c.customer, c.partner), fingerprint);
+    const pair = { ...pairOf(row, c), first: span.first, last: span.last };
     pair.stale = Boolean(row && row.p !== null && row.fingerprint !== fingerprint);
     if (!decided(row) && (pair.p === null || pair.stale) && env.AI && asking.length < ask) {
       asking.push({
@@ -730,14 +837,20 @@ async function sync(env, { fresh = false, ask = ASK_PER_LIST, wait = ASK_TIMEOUT
     writes.push(env.DB.prepare('DELETE FROM org_partners WHERE customer = ? AND partner = ? AND confirmed_at IS NULL AND dismissed_at IS NULL')
       .bind(r.customer, r.partner));
   }
+  // The decided pairs that are no candidate now, with the signals they had, and when the
+  // partner's people posted in the customer's threads now (a former partner's stop).
+  for (const r of kept.filter((x) => decided(x) && !live.has(keyOf(x.customer, x.partner)))) {
+    if (orgs.has(r.customer) && orgs.has(r.partner)) {
+      const span = spanOf(orgs.get(r.customer), orgs.get(r.partner), ev, ctx);
+      if (r.first_at !== span.first || r.last_at !== span.last) {
+        writes.push(env.DB.prepare(`UPDATE org_partners SET first_at = ?, last_at = ?
+          WHERE customer = ? AND partner = ?`).bind(span.first, span.last, r.customer, r.partner));
+      }
+      pairs.push({ ...pairOf(r), first: span.first, last: span.last });
+    }
+  }
   if (writes.length) {
     await env.DB.batch(writes);
-  }
-  // The decided pairs that are no candidate now, with the signals they had.
-  for (const r of kept.filter((x) => decided(x) && !live.has(keyOf(x.customer, x.partner)))) {
-    if (!merged.has(r.customer) && !merged.has(r.partner)) {
-      pairs.push(pairOf(r));
-    }
   }
   await pool(asking, ASK_PARALLEL, async ({
     pair, state, fingerprint, c,
@@ -752,6 +865,12 @@ async function sync(env, { fresh = false, ask = ASK_PER_LIST, wait = ASK_TIMEOUT
   });
   const unchecked = pairs.filter((x) => x.candidate && !x.confirmed && !x.dismissed
     && (x.p === null || x.stale)).length;
+  // What Clef asks the admin team to decide now, in its inbox; best effort, as the list is.
+  if (requests) {
+    await clefRequests(env, partnerWants(pairs, orgs, fingerprints, Date.now())).catch((e) => {
+      console.error(JSON.stringify({ route: 'orgpartners', requests: 'failed', error: e.message }));
+    });
+  }
   return {
     pairs, unchecked, orgs, ctx, ev,
   };
@@ -805,11 +924,13 @@ const likely = (x) => Boolean(x.confirmed) || (!x.dismissed && x.p !== null && x
 /**
  * GET /api/admin/org-partners[?pair=<customer>:<partner>][&fresh=1], for the admin team: the
  * pairs of a customer and a partner that may work together, each `{ customer, partner, signals,
- * score, p, checked, stale, candidate, confirmed, dismissed }`, with the orgs in `orgs`; the
+ * score, p, checked, stale, candidate, confirmed, dismissed, since, until, ended, first, last,
+ * open }` (`open`: its requests that wait, `[{ id, action }]`), with the orgs in `orgs`; the
  * undecided likely ones first, then the rest by Clef's probability and the signals, the decided
  * last. `unchecked` counts the pairs Clef was not asked about yet. `pair` answers that one pair,
- * whatever its signals. `skipped`: the partner domains could not be read, so these are the pairs
- * as they were kept (`sync`).
+ * whatever its signals, and its requests (`requests`, src/partnerrequests.js `pairRequests`).
+ * `skipped`: the partner domains could not be read, so these are the pairs as they were kept
+ * (`sync`).
  */
 export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
   if (!isAdmin(me)) {
@@ -845,6 +966,11 @@ export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
   };
   list.sort((x, y) => rank(x) - rank(y) || ((y.p ?? -1) - (x.p ?? -1)) || y.score - x.score
     || x.customer.localeCompare(y.customer));
+  // What waits for the admin team of each pair, in its inbox; of one pair, every request.
+  const open = await openRequestsByPair(env);
+  list = list.map((x) => ({ ...x, open: open.get(keyOf(x.customer, x.partner)) || [] }));
+  const requests = pair && list.length
+    ? await pairRequests(env, list[0].customer, list[0].partner) : null;
   const orgs = {};
   for (const x of list) {
     for (const slug of [x.customer, x.partner]) {
@@ -864,14 +990,23 @@ export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
     }
   }
   return json({
-    pairs: list, orgs, unchecked: s.unchecked, likely: LIKELY, skipped: Boolean(s.skipped),
+    pairs: list,
+    orgs,
+    unchecked: s.unchecked,
+    likely: LIKELY,
+    skipped: Boolean(s.skipped),
+    ...(requests ? { requests } : {}),
   });
 }
 
 /**
- * POST /api/admin/org-partners/confirm and /dismiss `{ customer, partner, undo? }`, for the
- * admin team: the partner works for the customer, or does not. Either replaces the other;
- * `undo` takes it back, and Clef's verdict is what is said of the pair again.
+ * POST /api/admin/org-partners/confirm and /dismiss `{ customer, partner, since?, undo? }`, for
+ * the admin team: the partner works for the customer (from `since`, a day or a month, kept as it
+ * was without one), or does not. Either replaces the other; confirming a former partner makes it a
+ * partner again (its `until` cleared), and dismissing a pair clears its dates. `undo` takes it
+ * back, and Clef's verdict is what is said of the pair again. The pair's open requests it settles
+ * are closed with it (src/partnerrequests.js `settleRequests`): a confirmation the `link` ones, a
+ * dismissal all.
  */
 export async function decidePartner(env, me, body, what) {
   const customer = clean(body.customer);
@@ -887,14 +1022,28 @@ export async function decidePartner(env, me, body, what) {
   if (!known || known.merged || !(known.c || known.ct) || !(known.p || known.pt)) {
     return json({ error: 'no such org, or it was merged' }, 404);
   }
+  const since = what === 'confirm' && !body.undo ? dateOf(body.since) : null;
+  if (since === undefined) {
+    return bad('give since as 2026-10 or 2026-10-24');
+  }
   const at = body.undo ? null : new Date().toISOString();
   const by = body.undo ? null : String(me.email || me.id);
   const [set, other] = what === 'confirm' ? ['confirmed', 'dismissed'] : ['dismissed', 'confirmed'];
-  // An undo clears only its own; a decision replaces the other.
-  const clear = body.undo ? '' : `, ${other}_by = NULL, ${other}_at = NULL`;
-  await env.DB.prepare(`INSERT INTO org_partners (customer, partner, ${set}_by, ${set}_at)
-    VALUES (?, ?, ?, ?) ON CONFLICT (customer, partner) DO UPDATE SET ${set}_by = excluded.${set}_by,
-      ${set}_at = excluded.${set}_at${clear}, merged_from = NULL, merged_new = NULL`).bind(customer, partner, by, at).run();
+  // An undo clears only its own; a decision replaces the other. Confirmed, a former partner is
+  // one again; dismissed, the pair never was, and has no dates.
+  let clear = body.undo ? '' : `, ${other}_by = NULL, ${other}_at = NULL`;
+  if (!body.undo) {
+    clear += what === 'confirm'
+      ? ', since = COALESCE(excluded.since, org_partners.since), until = NULL, ended_by = NULL, ended_at = NULL'
+      : ', since = NULL, until = NULL, ended_by = NULL, ended_at = NULL';
+  }
+  await env.DB.prepare(`INSERT INTO org_partners (customer, partner, ${set}_by, ${set}_at, since)
+    VALUES (?, ?, ?, ?, ?) ON CONFLICT (customer, partner) DO UPDATE SET ${set}_by = excluded.${set}_by,
+      ${set}_at = excluded.${set}_at${clear}, merged_from = NULL, merged_new = NULL`)
+    .bind(customer, partner, by, at, since).run();
+  if (!body.undo) {
+    await settleRequests(env, by, customer, partner, what === 'confirm' ? ['link'] : ['link', 'end'], what === 'confirm' ? 'confirmed' : 'dismissed');
+  }
   const row = await env.DB.prepare('SELECT * FROM org_partners WHERE customer = ? AND partner = ?')
     .bind(customer, partner).first();
   console.log(JSON.stringify({
@@ -903,22 +1052,73 @@ export async function decidePartner(env, me, body, what) {
   return json({ ok: true, pair: pairOf(row) });
 }
 
+/**
+ * POST /api/admin/org-partners/end `{ customer, partner, until, undo? }`, for the admin team: the
+ * partner worked for the customer until `until` (a day or a month), a former partner: confirmed,
+ * by whoever ends it when nobody confirmed it before, and not dismissed. The pair's open `end`
+ * requests are closed with it. `undo` makes it a partner again, as it was confirmed.
+ */
+export async function endPartner(env, me, body) {
+  const customer = clean(body.customer);
+  const partner = clean(body.partner);
+  if (!SLUG.test(customer) || !SLUG.test(partner) || customer === partner) {
+    return bad('give two orgs, customer and partner');
+  }
+  const until = body.undo ? null : dateOf(body.until);
+  if (!body.undo && !until) {
+    return bad('give until, as 2026-10 or 2026-10-24');
+  }
+  const known = await env.DB.prepare(`SELECT
+      (SELECT COUNT(*) FROM org_merges WHERE slug IN (?1, ?2)) AS merged,
+      (SELECT 1 FROM orgs WHERE slug = ?1) AS c, (SELECT 1 FROM threads WHERE org = ?1 LIMIT 1) AS ct,
+      (SELECT 1 FROM orgs WHERE slug = ?2) AS p`).bind(customer, partner).first();
+  if (!known || known.merged || !(known.c || known.ct) || !known.p) {
+    return json({ error: 'no such org, or it was merged' }, 404);
+  }
+  const by = String(me.email || me.id);
+  const at = new Date().toISOString();
+  if (body.undo) {
+    await env.DB.prepare(`UPDATE org_partners SET until = NULL, ended_by = NULL, ended_at = NULL
+      WHERE customer = ? AND partner = ?`).bind(customer, partner).run();
+  } else {
+    await env.DB.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at,
+        until, ended_by, ended_at) VALUES (?1, ?2, ?3, ?4, ?5, ?3, ?4)
+      ON CONFLICT (customer, partner) DO UPDATE SET
+        confirmed_by = COALESCE(org_partners.confirmed_by, excluded.confirmed_by),
+        confirmed_at = COALESCE(org_partners.confirmed_at, excluded.confirmed_at),
+        dismissed_by = NULL, dismissed_at = NULL, until = excluded.until,
+        ended_by = excluded.ended_by, ended_at = excluded.ended_at, merged_from = NULL, merged_new = NULL`)
+      .bind(customer, partner, by, at, until).run();
+    await settleRequests(env, by, customer, partner, ['end'], 'ended');
+  }
+  const row = await env.DB.prepare('SELECT * FROM org_partners WHERE customer = ? AND partner = ?')
+    .bind(customer, partner).first();
+  console.log(JSON.stringify({
+    route: 'orgpartners', ended: !body.undo, by: me.id,
+  }));
+  return json({ ok: true, pair: row ? pairOf(row) : null });
+}
+
 // ---- what everyone reads ---------------------------------------------------------------------
 
 /**
  * The confirmed and likely pairs of an org, as everyone at Adobe reads them: `[{ slug, name,
- * type, icon, confirmed, p, score, signals: { <kind>: n } }]`, the confirmed first, then by
- * Clef's probability. No message text and no names beyond the orgs'. `side` is the column the
- * org is in (`customer`), the other is listed.
+ * type, icon, confirmed, current, since, until, last, p, score, signals: { <kind>: n } }]`, the
+ * confirmed partners of now first, then the likely ones by Clef's probability, then the former
+ * ones (`until`, the latest ended first). `since` is the admin team's, else the day the partner's
+ * people first posted in the customer's threads as the inbox has them; `last` their last post. No
+ * message text and no names beyond the orgs'. `side` is the column the org is in (`customer`),
+ * the other is listed.
  */
 async function linked(env, slug, side) {
   const other = side === 'customer' ? 'partner' : 'customer';
   const list = await rows(env, `SELECT x.${other} AS slug, o.name, o.type, o.icon, x.p, x.score,
-      x.signals, x.confirmed_at
+      x.signals, x.confirmed_at, x.since, x.until, x.first_at, x.last_at
     FROM org_partners x LEFT JOIN orgs o ON o.slug = x.${other}
     WHERE x.${side} = ?1 AND x.dismissed_at IS NULL AND (x.confirmed_at IS NOT NULL OR x.p >= ?2)
       AND x.${other} NOT IN (SELECT slug FROM org_merges)
-    ORDER BY x.confirmed_at IS NULL, x.p DESC, x.score DESC, x.${other}`, clean(slug), LIKELY);
+    ORDER BY CASE WHEN x.until IS NOT NULL THEN 2 WHEN x.confirmed_at IS NOT NULL THEN 0 ELSE 1 END,
+      x.until DESC, x.p DESC, x.score DESC, x.${other}`, clean(slug), LIKELY);
   return list.map((r) => {
     let signals = [];
     try {
@@ -932,6 +1132,10 @@ async function linked(env, slug, side) {
       type: r.type || 'customer',
       icon: r.icon || null,
       confirmed: Boolean(r.confirmed_at),
+      current: !r.until,
+      since: r.since || (r.first_at ? String(r.first_at).slice(0, 10) : null),
+      until: r.until || null,
+      last: r.last_at || null,
       p: r.p ?? null,
       score: r.score || 0,
       signals: Object.fromEntries(signals.map((s) => [s.kind, s.n])),
