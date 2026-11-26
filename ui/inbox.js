@@ -5660,7 +5660,7 @@ const rq = {
 };
 const RQ_LABEL = {
   asked: 'Waiting for your answer', answered: 'Answered', passed: 'Passed on', unknown: 'Did not know', expired: 'Expired',
-  waiting: 'Waiting for the admin team', confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged', adobe: 'Adobe\'s', external: 'External', linked: 'Linked', kept: 'Kept as it is', gone: 'Settled', mentioned: 'Mentioned only',
+  waiting: 'Waiting for the admin team', confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged', ended: 'Ended', dismissed: 'Not partners', adobe: 'Adobe\'s', external: 'External', linked: 'Linked', kept: 'Kept as it is', gone: 'Settled', mentioned: 'Mentioned only',
 };
 
 /** One field of an action's form. */
@@ -5674,6 +5674,8 @@ function rqField(a, f) {
   const input = {
     select: () => `<select id="${id}" ${name}>${(f.options || []).map((o) => `<option value="${esc(o.value)}"${o.value === f.value ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`,
     textarea: () => `<textarea id="${id}" ${name} rows="${Number(f.rows) || 4}"${f.max ? ` maxlength="${f.max}"` : ''}>${esc(f.value || '')}</textarea>`,
+    // A day, as a partner request's since and until take it.
+    date: () => `<input id="${id}" ${name} type="date" value="${esc(f.value || '')}"${f.required ? ' required' : ''}>`,
   }[f.type];
   const control = input ? input() : `<input id="${id}" ${name} type="${f.type === 'email' ? 'email' : 'text'}" value="${esc(f.value || '')}"${f.max ? ` maxlength="${f.max}"` : ''}${f.required ? ' required' : ''} autocomplete="off">`;
   return `<label class="fld" for="${id}"><span>${esc(f.label)}</span>${control}</label>`;

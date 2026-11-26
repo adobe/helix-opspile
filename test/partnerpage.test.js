@@ -212,6 +212,8 @@ describe('a customer\'s partners', () => {
       icon: null,
       linked: true,
       confirmed: false,
+      since: null,
+      until: null,
       p: 0.9,
       signals: { posters: 2, owners: 1 },
       threads: 2,

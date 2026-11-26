@@ -312,20 +312,50 @@ that builds the site does other work, or none; Clef's likely ones are left out, 
 would move each other's): "does partner P work for customer C?" Its answer is kept with a fingerprint of
 what it was shown and asked again once that changes, two dozen per load of the admin team's list and
 per cron run, so the table fills in without anybody looking. Every load and run writes the
-candidates' signals where they changed, and deletes the rows of pairs that are no candidate any
-more and that nobody decided. The admin team reviews them in Customers ("Likely partners", `GET
-/api/admin/org-partners`): each pair's page shows both orgs (a customer's mail domains its own,
-none of a partner's), the evidence (the signals, with domains,
-owners and entry paths) and Clef's verdict, and confirms or dismisses it (`POST
-/api/admin/org-partners/confirm`, `/dismiss`, either with `undo`). A confirmed pair stays whatever
-the signals say later; a dismissed one is never shown as partners. A merge copies the merged org's
+candidates' signals where they changed, every pair's span (`first_at`, `last_at`, migration 0112:
+the first and last post of the partner's people in the customer's threads, as far back as the
+inbox reads), and deletes the rows of pairs that are no candidate any more and that nobody decided.
+
+A partner works for a customer for a while: a pair has the admin team's dates too, `since` (given
+on confirming; else the first post is shown) and `until`, which makes it a former partner,
+confirmed and ended (`ended_by`, `ended_at`). Confirming a former partner makes it one again;
+dismissing a pair clears its dates, as it never was one.
+
+The admin team decides the pairs in its inbox, where each request to is a thread
+(`request:partner:<id>`, `org_partner_requests`, src/partnerrequests.js): that a partner works for a
+customer (`link`, since when), or no longer does (`end`, until when). Its actions are Confirm (with
+since), Not partners (dismiss) and Decline for a `link`; End (with until) and Still a partner
+(decline) for an `end`; each runs the route the pair's page had (`POST
+/api/admin/org-partners/confirm`, `/dismiss`, `/end`, each with `undo`), which closes the pair's
+open requests it settles: a confirmation the `link` ones, an end the `end` ones, a dismissal all.
+The thread shows the pair as it is now, its span, and the customer's other partners. Three ask:
+
+- anyone on an ops team, on a pair's page in Customers ("Likely partners", `GET
+  /api/admin/org-partners`, which shows both orgs, a customer's mail domains its own and none of a
+  partner's, the evidence, Clef's verdict, the pair's dates and requests), `POST
+  /api/admin/org-partner-requests`;
+- an agent (`request_partner_link`): a thread's, on its own when the thread says a partner started
+  or stopped working for the customer, or for the person in its sidebar who tells it; a
+  knowledge base's, for the person in its conversation. The request names the thread. Unlike a
+  channel's move or a team's member, it needs no person to ask: nothing changes until the admin
+  team decides;
+- Clef, from every load and cron run (`partnerWants`): a likely pair nobody decided (`link`); a
+  confirmed one whose people posted nothing in the customer's threads for `LAPSED_DAYS` (90), while
+  the customer's threads went on for `GOING_ON_DAYS` (30) after their last post (`end`, until it);
+  and an ended one whose people post `AGAIN_DAYS` (14) after its end (`link` again). Each carries
+  the fingerprint of what it was found on: declined, it is not asked again until that changes, and
+  Clef takes back its own that wait once the pair is no longer what it asked about.
+
+A confirmed pair stays whatever the signals say later; a dismissed one is never shown as partners. A merge copies the merged org's
 decisions to the org kept, where it has none of its own (`merged_from`), and undoing it takes the
 copies back: the rows it added go, a row the kept org had keeps its signals and Clef's verdict.
 
 Everyone at Adobe reads an org's confirmed and likely pairs (Clef's probability at least `LIKELY`,
 0.5, not dismissed): `partnersOf(env, customer)` and `customersOf(env, partner)` in
 src/orgpartners.js, and `GET /api/customers/partners?org=` with both, `{ org, partners, customers }`.
-Each is `{ slug, name, type, icon, confirmed, p, score, signals }`, `signals` the count of each kind
+Each is `{ slug, name, type, icon, confirmed, current, since, until, last, p, score, signals }`, the
+partners of now first, then the likely ones, then the former ones (`until`; a customer's page and a
+partner's tag them Former and list them last), `signals` the count of each kind
 (`{ posters: 12, owners: 1 }`): names and numbers, no message text, domain or owner. Merged orgs are
 left out. Who is a partner's person is apart from this: their mail domain is one of `partnerDomains`
 (src/partners.js, "Partner domains" under "People").
@@ -361,7 +391,7 @@ their people are in and whether it is confirmed or likely. Those nothing links y
 are the evidence the review works from, and for the admin team each links to its pair's page in
 Likely partners, which shows the evidence of any two orgs (`?pair=`) and confirms or dismisses them,
 making their row where `org_partners` has none. The overviews are kept five minutes per isolate; a decision on a pair
-(`POST /api/admin/org-partners/confirm`, `/dismiss`) forgets both orgs' in the isolate that made it
+(`POST /api/admin/org-partners/confirm`, `/dismiss`, `/end`) forgets both orgs' in the isolate that made it
 (`forgetOrgProfiles`, src/orgprofile.js), and the other isolates show it within those five minutes,
 as they do any change of a kept overview.
 
@@ -2856,6 +2886,7 @@ written by people outside its control.
 | `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for another channel (with `org_threads` the customer's, and of it the customer's threads only), by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `channel_assignment`, `list_teams`, `request_channel_reassignment`, `request_team_membership` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"), which the admin team decides; or a membership request: add its author, or someone they name, to an ops team (see "Membership requests"), which an admin or that team's managers decide |
+| `request_partner_link` | asks the admin team to decide that a partner works for a customer (`link`, since when) or no longer does (`end`, until when), from what its thread says or the person in its sidebar tells it, on its own or for them; the customer and the partner default to the thread's org, by its type (see "Partners"). The knowledge base's agent has it too, for the person in its conversation |
 | `ask_teammate` | a question to one colleague on the thread's teams, with its best guess at each of up to three questions, for a runbook, a reply or a fact; they answer it in their inbox, and the agent is told in an input of its own (see "Questions") |
 | `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
 | `sidebar_followup` | tells the person who asked something in the sidebar (`message`, its `sb_…` id) what has happened since, from a later turn on the thread's messages (`addSidebarFollowup` in `src/sidebar.js`): a new answer of the agent's to them, under their question; refused while it answers a sidebar message, for a message it did not answer yet, over a week old, or followed up three times |

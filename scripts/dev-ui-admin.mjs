@@ -113,8 +113,29 @@ function seedPartnerPairs(DB) {
   for (const t of [own[0], acme].filter(Boolean)) {
     db.prepare('INSERT OR IGNORE INTO facts (thread, source, field, value) VALUES (?, \'rule\', \'site\', \'acme-web/www\')').run(t.thread);
   }
-  db.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at)
-    VALUES ('soylent', 'raviga', 'priya@example.com', ?)`).run(at(3));
+  db.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at, since, first_at,
+      last_at) VALUES ('soylent', 'raviga', 'priya@example.com', ?, '2025-02', ?, ?)`).run(at(3), at(240), at(110));
+  // Raviga worked for Hooli until the summer: a former partner, on both pages.
+  db.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at, since, until,
+      ended_by, ended_at, first_at, last_at)
+    VALUES ('hooli', 'raviga', 'priya@example.com', ?, '2025-06', '2026-08', 'priya@example.com', ?, ?, ?)`)
+    .run(at(60), at(20), at(300), at(95));
+  // What waits for the admin team of the partners, in its inbox (src/partnerrequests.js): Clef
+  // finds Raviga's people gone from Soylent's threads; Lena asks for Pied Piper at ACME; and the
+  // agent of an ACME thread read that Agency Co takes over its site.
+  const day = (d) => at(d).slice(0, 10);
+  db.prepare(`INSERT INTO org_partner_requests (customer, partner, action, until, note, fingerprint,
+      requested_by, requested_at) VALUES ('soylent', 'raviga', 'end', ?, ?, ?, 'clef', ?)`)
+    .run(day(110), `Nobody of Raviga Partners posted in Soylent's threads since ${day(110)}, and its threads went on until ${day(1)}.`, `end:${day(110)}`, at(0.4));
+  db.prepare(`INSERT INTO org_partner_requests (customer, partner, action, since, note, requested_by,
+      requested_name, requested_at) VALUES ('acme', 'piedpiper', 'link', '2026-09', ?, 'lena@example.com', 'Lena Berg', ?)`)
+    .run('They run the cutover with ACME; their people are in every launch thread.', at(0.2));
+  const acmeThread = of('acme', 1)[0];
+  if (acmeThread) {
+    db.prepare(`INSERT INTO org_partner_requests (customer, partner, action, since, note, thread,
+        requested_by, requested_name, requested_at) VALUES ('acme', 'agency', 'link', ?, ?, ?, 'agent', ?, ?)`)
+      .run(day(5), 'Elena (ACME) wrote that Agency Co takes over the site\'s day-to-day support this month.', acmeThread.thread, 'The agent of a thread in #aem-acme', at(0.1));
+  }
 }
 
 /** Clef on two orgs, made up: one when their names are (src/orgmerge.js). */

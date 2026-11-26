@@ -247,10 +247,32 @@ or was slow) a `sync` writes, deletes and asks nothing and answers the rows as t
 (`skipped`): the partners' people would be nobody's, and every pair would drop and lose its
 verdict. What a look found before counts as found while the next one fails.
 
+A pair's span (`first_at`, `last_at`, migration 0112) is what the threads show: every `sync` writes
+it where it changed, a decided pair's too. Over the decision: confirmed → ended (`until`, with
+`ended_by` and `ended_at`: a former partner; `POST /api/admin/org-partners/end`, which confirms
+one nobody had) → confirmed again (a confirmation clears `until`; `/end` with `undo` too). A
+confirmation keeps `since` unless it gives one; a dismissal clears `since` and `until`.
+
+**Partner request.** open → confirmed, ended or dismissed (the pair decided), declined (the pair
+left as it is) or withdrawn (`org_partner_requests`, migration 0112, src/partnerrequests.js), a
+thread of the admin team's inbox (`request:partner:<id>`) in either. One waits per pair and action
+(`link`, `end`: a partial unique index): asking again answers 409 with the one that waits. A
+decision on the pair, from the thread or the pair's page, closes the requests it settles
+(`settleRequests`): a confirmation the `link` ones (`confirmed`), an end the `end` ones (`ended`), a
+dismissal both (`dismissed`); an `end` that waits stays open over a confirmation, and a `link` over
+an end. Whoever asked takes theirs back, the admin team any; a merge withdraws the merged org's
+that wait, saying into which org (an undo does not bring them back). Clef's (`requested_by` `clef`, filed by
+each `sync` from `partnerWants`) carry the `fingerprint` of what they were found on: one waits per
+pair and action as any; one declined or withdrawn is not filed again on the same fingerprint; and
+Clef withdraws its own that wait once the sync does not want them (a pair no longer likely or a
+candidate, a lapsed partner posting again), with why in `reason`. Without the partner domains, a
+`sync` files and withdraws nothing. Filing one announces it to the admin team's room (Clef's, once
+a sync).
+
 **Org overview kept.** not kept → kept → stale or forgotten (`cache`, `forgotten` in
 src/orgprofile.js). A customer's, vendor's or partner's overview (`orgNumbers`) is kept per isolate
 by the D1 binding for `CACHE_MS` (five minutes). A decision on a pair of a customer and a partner
-(`POST /api/admin/org-partners/confirm`, `/dismiss`, with `undo` too) forgets both orgs' once it is
+(`POST /api/admin/org-partners/confirm`, `/dismiss`, `/end`, with `undo` too) forgets both orgs' once it is
 written (`forgetOrgProfiles`): each counts its forgets, and numbers read before the last forget of
 their org are not used, so one read while the decision was written is not kept as fresh. The other
 isolates keep theirs up to `CACHE_MS` (five minutes), as they do for a new thread, and show the

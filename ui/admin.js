@@ -4006,8 +4006,10 @@ function wireOrgMerge(slug) {
 // pairs of a customer and a partner that may work together, from the partner's people in the
 // customer's threads and channels, the sites both name, the partner's knowledge base, a Slack
 // Connect or Teams team they share and a channel named for both, each with Clef's verdict
-// (src/orgpartners.js). The admin team confirms a pair or dismisses it; everyone at Adobe reads
-// the confirmed and likely ones (GET /api/customers/partners).
+// (src/orgpartners.js), and when the partner's people posted there. The admin team decides a pair
+// in its inbox, where each request to is a thread (src/partnerrequests.js): Clef's, an agent's, and
+// those asked for on a pair's page here; everyone at Adobe reads the confirmed and likely ones, the
+// former partners apart (GET /api/customers/partners).
 
 const LINK = 'partner:';
 const linkSel = (customer, partner) => `${LINK}${customer}:${partner}`;
@@ -4033,17 +4035,20 @@ async function loadLinks({ fresh = false, round = 0 } = {}) {
   }
 }
 
-/** What is said of a pair, in a few words. */
+/** What is said of a pair, in a few words, and whether the admin team is asked to decide it. */
 function linkSaid(x) {
-  if (x.confirmed) return 'confirmed';
-  if (x.dismissed) return 'dismissed';
-  return x.p === null ? 'Clef has not said yet' : `${pct(x.p)} likely, says Clef`;
+  const asked = (x.open || []).length ? ', asked in the admin inbox' : '';
+  if (x.until) return `a former partner, until ${x.until}${asked}`;
+  if (x.confirmed) return `confirmed${asked}`;
+  if (x.dismissed) return `dismissed${asked}`;
+  return `${x.p === null ? 'Clef has not said yet' : `${pct(x.p)} likely, says Clef`}${asked}`;
 }
 
 function linkRow(x) {
   const { orgs } = state.links;
   let shown = x.p === null ? '' : pct(x.p);
-  if (x.confirmed) shown = '✓';
+  if (x.until) shown = 'past';
+  else if (x.confirmed) shown = '✓';
   else if (x.dismissed) shown = '–';
   return SideNav.row({
     sel: linkSel(x.customer, x.partner),
@@ -4077,7 +4082,7 @@ function linkSection(f) {
     key: 'orgs:partners',
     label: 'Likely partners',
     count: top.length,
-    title: 'A partner that may work for a customer, as Clef sees it: confirm it, or dismiss it',
+    title: 'A partner that may work for a customer, as Clef sees it: the admin team decides each in its inbox',
     body: `${top.map(linkRow).join('') || `<div class="navempty">${f ? 'Nothing matches.' : 'None to review.'}</div>`}${checking}
       ${fold('orgs:partners:less', `${open.length} less likely`, open)}${fold('orgs:partners:done', `${done.length} decided`, done)}`,
     holds: (Boolean(f) && (top.length + open.length + done.length) > 0) || holds(top) || holds(open) || holds(done),
@@ -4107,9 +4112,34 @@ async function showLink(customer, partner) {
   updateLink(pair, orgs);
   renderList();
   state.view = {
-    target: 'link', value: `${customer}:${partner}`, pair, orgs,
+    target: 'link', value: `${customer}:${partner}`, pair, orgs, requests: r.body.requests || [],
   };
   drawLink(state.view);
+}
+
+/** A day of an ISO time, or a date as given. */
+const dayOf = (at) => String(at || '').slice(0, 10);
+/** A name's possessive: "Acme's", "Raviga Partners'". */
+const possOf = (name) => (/s$/i.test(name) ? `${name}'` : `${name}'s`);
+
+/** Where a pair stands now, in a sentence, and when its partner's people posted. */
+function linkState(pair, p, c) {
+  let now = `Not decided: nobody at Adobe sees ${esc(p)} as a partner of ${esc(c)} until Clef finds it likely, or the admin team confirms it.`;
+  if (pair.until) now = `A former partner: ${esc(p)} worked for ${esc(c)} until ${esc(pair.until)}${pair.ended ? `, as ${who({ email: pair.ended.by })} said ${esc(ago(pair.ended.at))}` : ''}.`;
+  else if (pair.confirmed) now = `A partner of ${esc(c)}${pair.since ? ` since ${esc(pair.since)}` : ''}: confirmed by ${who({ email: pair.confirmed.by })} ${esc(ago(pair.confirmed.at))}.`;
+  else if (pair.dismissed) now = `Not partners: dismissed by ${who({ email: pair.dismissed.by })} ${esc(ago(pair.dismissed.at))}, whatever Clef says.`;
+  else if (pair.p !== null && pair.p >= (state.links?.likely ?? 0.5)) now = `Likely, says Clef: everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)} until the admin team decides.`;
+  const seen = pair.first
+    ? `<p class="sub">${esc(possOf(p))} people posted in ${esc(possOf(c))} threads from ${esc(dayOf(pair.first))} to ${esc(dayOf(pair.last))}, as far back as the inbox reads.</p>`
+    : `<p class="sub">None of ${esc(possOf(p))} people posted in ${esc(possOf(c))} threads that the inbox reads.</p>`;
+  return `<p>${now}</p>${seen}`;
+}
+
+/** A request of the pair, as its page lists it: what it asks, who asked, where it stands. */
+function linkRequest(q, p, c) {
+  const asks = q.action === 'end' ? `${p} no longer works for ${c}${q.until ? `, until ${q.until}` : ''}` : `${p} works for ${c}${q.since ? `, since ${q.since}` : ''}`;
+  const stand = q.status === 'open' ? 'waiting for the admin team' : `${q.status}${q.decidedAt ? ` ${ago(q.decidedAt)}` : ''}`;
+  return `<li><a href="${esc(requestThread('partner', q.id))}">${esc(asks)}</a> <span class="sub">${esc(`asked by ${q.requestedBy.name || q.requestedBy.email || 'someone'} ${ago(q.requestedAt)}, ${stand}`)}</span></li>`;
 }
 
 function drawLink(v) {
@@ -4120,36 +4150,77 @@ function drawLink(v) {
   const evidence = pair.signals.length
     ? `<ul>${pair.signals.map((x) => `<li>${esc(x.text[0].toUpperCase() + x.text.slice(1))}.</li>`).join('')}</ul>`
     : '<p class="sub">Nothing they share says so now.</p>';
-  let said = `Confirmed, everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}; dismissed, nobody does, whatever Clef says.`;
-  if (pair.confirmed) said = `Confirmed by ${who({ email: pair.confirmed.by })} ${esc(ago(pair.confirmed.at))}.`;
-  else if (pair.dismissed) said = `Dismissed by ${who({ email: pair.dismissed.by })} ${esc(ago(pair.dismissed.at))}: not shown as partners, whatever Clef says.`;
+  const requests = v.requests || [];
+  const open = requests.filter((q) => q.status === 'open');
+  // What is asked by default: an end of a partner of now, else that it is one.
+  const current = pair.confirmed && !pair.until;
+  const action = v.action || (current ? 'end' : 'link');
+  const asked = open.find((q) => q.action === action);
+  const mine = open.find((q) => q.requestedBy.email === String(state.me.email || '').toLowerCase());
   const key = `link:${v.value}`;
+  const listed = requests.length ? `<ul class="asks">${requests.map((q) => linkRequest(q, p, c)).join('')}</ul>` : '';
+  const ask = asked
+    ? `<p class="hint">Asked already: the admin team decides it in <a href="${esc(requestThread('partner', asked.id))}">its inbox</a>.</p>`
+    : `<form id="lAskForm" class="form">
+        <label class="fld"><span>Ask the admin team</span><select id="lAction">
+          <option value="link"${action === 'link' ? ' selected' : ''}>${esc(`${p} works for ${c}`)}</option>
+          <option value="end"${action === 'end' ? ' selected' : ''}>${esc(`${p} no longer works for ${c}`)}</option></select></label>
+        <label class="fld"><span id="lDateLabel">${action === 'end' ? 'Until' : 'Since (optional)'}</span><input id="lDate" type="date"${action === 'end' ? ' required' : ''}></label>
+        <label class="fld grow"><span>Why (optional)</span><input id="lNote" type="text" maxlength="1000" autocomplete="off"></label>
+        <button class="primary" id="lAsk"${off(key)}>Ask</button></form>`;
   $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(p)} <span class="sub">for</span> ${esc(c)}</h1></div>
     <div class="status" id="status"></div>
     <div class="card"><div class="pair">${pairSide(orgs[pair.partner], false)}${pairSide(orgs[pair.customer], false)}</div></div>
     <div class="card"><h2>Why ${esc(p)} may work for ${esc(c)}</h2><p>${clef}</p>${evidence}</div>
-    <div class="card"><h2>Partner of the customer</h2><div class="form">
-      ${pair.confirmed ? `<button id="lUndo" data-what="confirm"${off(key)}>Not confirmed after all</button>` : `<button class="primary" id="lConfirm"${off(key)}>Confirm</button>`}
-      ${pair.dismissed ? `<button id="lUndo" data-what="dismiss"${off(key)}>Not dismissed after all</button>` : `<button id="lDismiss"${off(key)}>Dismiss</button>`}</div>
-      <p class="hint">${said}</p></div>`;
+    <div class="card"><h2>Partner of the customer</h2>${linkState(pair, p, c)}${listed}${ask}
+      ${mine ? `<div class="form"><button id="lWithdraw"${off(key)}>Take my request back</button></div>` : ''}
+      <p class="hint">The admin team decides in its inbox: confirmed, everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}; ended, as a former one; dismissed, as none, whatever Clef says.</p></div>`;
   showStatus();
-  // Drawn again once it is done: drawn meanwhile, its buttons would stay disabled (`off`).
-  const decide = (b, what, undo) => hold(b, key, async () => {
-    const res = await call(`/api/admin/org-partners/${what}`, 'POST', { customer: pair.customer, partner: pair.partner, undo });
-    if (!res.ok) { failed(what === 'confirm' ? 'Confirm' : 'Dismiss', res); return false; }
-    Object.assign(pair, { confirmed: res.body.pair.confirmed, dismissed: res.body.pair.dismissed });
-    updateLink(pair, orgs);
-    renderList();
-    return true;
-  }).then((done) => {
-    if (!done || v !== state.view) return;
-    drawLink(v);
-    if (undo) status('ok', 'Taken back.');
-    else status('ok', what === 'confirm' ? 'Confirmed.' : 'Dismissed.');
-  });
-  if ($('lConfirm')) $('lConfirm').onclick = () => decide($('lConfirm'), 'confirm', false);
-  if ($('lDismiss')) $('lDismiss').onclick = () => decide($('lDismiss'), 'dismiss', false);
-  if ($('lUndo')) $('lUndo').onclick = () => decide($('lUndo'), $('lUndo').dataset.what, true);
+  if ($('lAction')) {
+    $('lAction').onchange = () => {
+      v.action = $('lAction').value;
+      const end = v.action === 'end';
+      $('lDateLabel').textContent = end ? 'Until' : 'Since (optional)';
+      $('lDate').required = end;
+    };
+  }
+  if ($('lAskForm')) {
+    $('lAskForm').onsubmit = (e) => {
+      e.preventDefault();
+      const what = $('lAction').value;
+      const date = $('lDate').value || undefined;
+      hold($('lAsk'), key, async () => {
+        const res = await call('/api/admin/org-partner-requests', 'POST', {
+          customer: pair.customer, partner: pair.partner, action: what, ...(what === 'end' ? { until: date } : { since: date }), note: $('lNote').value.trim() || undefined,
+        });
+        if (!res.ok) { failed('Ask', res); if (res.body.request) v.requests = [res.body.request, ...requests]; return false; }
+        v.requests = [res.body.request, ...requests];
+        pair.open = [...(pair.open || []), { id: res.body.request.id, action: what }];
+        updateLink(pair, orgs);
+        renderList();
+        return true;
+      }).then((done) => {
+        if (v !== state.view) return;
+        drawLink(v);
+        if (done) status('ok', 'Asked: the admin team decides it in its inbox.');
+      });
+    };
+  }
+  if ($('lWithdraw')) {
+    $('lWithdraw').onclick = () => hold($('lWithdraw'), key, async () => {
+      const res = await call('/api/admin/org-partner-requests', 'DELETE', { id: mine.id });
+      if (!res.ok) { failed('Take back', res); return false; }
+      Object.assign(mine, res.body.request);
+      pair.open = (pair.open || []).filter((x) => x.id !== mine.id);
+      updateLink(pair, orgs);
+      renderList();
+      return true;
+    }).then((done) => {
+      if (v !== state.view) return;
+      drawLink(v);
+      if (done) status('ok', 'Request withdrawn.');
+    });
+  }
 }
 
 // ---- start ------------------------------------------------------------------------------

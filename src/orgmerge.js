@@ -953,22 +953,31 @@ export async function mergeOrgs(env, me, body, { applyRules }) {
         // `merged_new`; on a row the kept org had (a candidate nobody decided), only the decision
         // is written, so an undo clears it and leaves the row, Clef's verdict and all.
         env.DB.prepare(`INSERT INTO org_partners (customer, partner, score, signals, signals_at,
-            confirmed_by, confirmed_at, dismissed_by, dismissed_at, merged_from, merged_new)
+            confirmed_by, confirmed_at, dismissed_by, dismissed_at, since, until, ended_by, ended_at,
+            merged_from, merged_new)
           SELECT CASE WHEN customer = ?1 THEN ?2 ELSE customer END,
             CASE WHEN partner = ?1 THEN ?2 ELSE partner END, score, signals, signals_at,
-            confirmed_by, confirmed_at, dismissed_by, dismissed_at, ?1, 1
+            confirmed_by, confirmed_at, dismissed_by, dismissed_at, since, until, ended_by, ended_at,
+            ?1, 1
           FROM org_partners WHERE (customer = ?1 OR partner = ?1)
             AND (confirmed_at IS NOT NULL OR dismissed_at IS NOT NULL)
             AND (CASE WHEN customer = ?1 THEN ?2 ELSE customer END)
               != (CASE WHEN partner = ?1 THEN ?2 ELSE partner END)
           ON CONFLICT (customer, partner) DO UPDATE SET confirmed_by = excluded.confirmed_by,
             confirmed_at = excluded.confirmed_at, dismissed_by = excluded.dismissed_by,
-            dismissed_at = excluded.dismissed_at, merged_from = excluded.merged_from, merged_new = 0
+            dismissed_at = excluded.dismissed_at, since = excluded.since, until = excluded.until,
+            ended_by = excluded.ended_by, ended_at = excluded.ended_at,
+            merged_from = excluded.merged_from, merged_new = 0
           WHERE org_partners.confirmed_at IS NULL AND org_partners.dismissed_at IS NULL`)
           .bind(from, into),
         env.DB.prepare(`UPDATE org_merge_requests SET status = 'merged', decided_by = ?, decided_at = ?
           WHERE status = 'open' AND ((slug = ?3 AND into_slug = ?4) OR (slug = ?4 AND into_slug = ?3))`)
           .bind(by, at, from, into),
+        // Its partner requests that wait name an org that is gone: taken back, saying where.
+        env.DB.prepare(`UPDATE org_partner_requests SET status = 'withdrawn', decided_by = ?1,
+            decided_at = ?2, reason = ?4
+          WHERE status = 'open' AND (customer = ?3 OR partner = ?3)`)
+          .bind(by, at, from, `${from} was merged into ${into}: ask again of ${into}`),
       ];
       await env.DB.batch(statements);
       forgetFacts();
@@ -1014,7 +1023,8 @@ export async function unmergeOrg(env, me, body, { applyRules }) {
         // rows it added, and the decision it wrote on a row the other org had (which stays).
         env.DB.prepare('DELETE FROM org_partners WHERE merged_from = ? AND merged_new = 1').bind(slug),
         env.DB.prepare(`UPDATE org_partners SET confirmed_by = NULL, confirmed_at = NULL,
-            dismissed_by = NULL, dismissed_at = NULL, merged_from = NULL, merged_new = NULL
+            dismissed_by = NULL, dismissed_at = NULL, since = NULL, until = NULL, ended_by = NULL,
+            ended_at = NULL, merged_from = NULL, merged_new = NULL
           WHERE merged_from = ?`).bind(slug),
         ...(m.name || m.icon || m.type ? [env.DB.prepare(`INSERT INTO orgs (slug, name, type, icon, updated_at)
           VALUES (?, ?, ?, ?, ?) ON CONFLICT (slug) DO NOTHING`)

@@ -39,7 +39,8 @@ import {
   closeMergeRequest, dismissPair, forgetFacts, listMergeRequests, mailDomains, mergeOrgs,
   openMergeCount, orgDuplicates, requestMerge, unmergeOrg,
 } from './orgmerge.js';
-import { decidePartner, orgPartners } from './orgpartners.js';
+import { decidePartner, endPartner, orgPartners } from './orgpartners.js';
+import { closePartnerRequest, openPartnerCount, requestPartner } from './partnerrequests.js';
 import { forgetOrgProfiles } from './orgprofile.js';
 import {
   claimRequest, closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf,
@@ -770,8 +771,9 @@ async function requestList(env, me, { status, count }) {
   const conflicts = isAdmin(me) ? await techConflicts(env) : [];
   // And the conflicts between team rules (src/ruleconflicts.js), the admin team's too.
   const rules = isAdmin(me) ? await ruleConflicts(env) : [];
-  // And the merges of customers asked for (src/orgmerge.js), the admin team's too.
-  const merges = isAdmin(me) ? await openMergeCount(env) : 0;
+  // And the merges of customers asked for (src/orgmerge.js), the admin team's too, and the pairs
+  // of a customer and a partner to decide (src/partnerrequests.js).
+  const merges = isAdmin(me) ? await openMergeCount(env) + await openPartnerCount(env) : 0;
   // And the bots nobody said whose they are (src/ourbots.js), the admin team's too.
   const bots = isAdmin(me) ? await unreviewedCount(env) : 0;
   // And the admin accounts nobody said whose they are (src/accountlinks.js), the admin team's too.
@@ -1381,7 +1383,7 @@ async function listTeams(env, me) {
     + await memberOpenCount(env, scope)
     + (everything ? await openConflictCount(env)
       + (await ruleConflicts(env, { kept: false })).length + await openMergeCount(env)
-      + await unreviewedCount(env) + await unlinkedCount(env) : 0);
+      + await openPartnerCount(env) + await unreviewedCount(env) + await unlinkedCount(env) : 0);
   // Every team's name, for a manager's page to say where a channel is now.
   const names = Object.fromEntries(all.map((t) => [t.slug, t.name]));
   return json({
@@ -2137,11 +2139,12 @@ async function addMemberSettling(env, me, body) {
 
 /**
  * The routes of `/api/admin/*` for every member of an ops team, not only the admin team and
- * team managers: the duplicate customers they see, asking for a merge (src/orgmerge.js), and the
- * customers' pages (whose channels, and who follows them).
+ * team managers: the duplicate customers they see, asking for a merge (src/orgmerge.js), asking the
+ * admin team to decide a partner of a customer (src/partnerrequests.js), and the customers' pages
+ * (whose channels, and who follows them).
  */
 export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests',
-  'GET orgs', 'GET org'];
+  'POST org-partner-requests', 'DELETE org-partner-requests', 'GET orgs', 'GET org'];
 
 async function adminRoute(request, env, url, me) {
   const p = url.pathname;
@@ -2245,6 +2248,15 @@ async function adminRoute(request, env, url, me) {
       forgetOrgProfiles(String(body.customer || ''), String(body.partner || ''));
       return res;
     }
+    case 'POST org-partners/end': {
+      const res = await endPartner(env, me, body);
+      forgetOrgProfiles(String(body.customer || ''), String(body.partner || ''));
+      return res;
+    }
+    // Asking the admin team to decide a pair, in its inbox (src/partnerrequests.js).
+    case 'POST org-partner-requests': return requestPartner(env, me, body);
+    case 'DELETE org-partner-requests': return closePartnerRequest(env, me, body, 'withdrawn');
+    case 'POST org-partner-requests/decline': return closePartnerRequest(env, me, body, 'declined');
     case 'POST org-merge': return mergeOrgs(env, me, body, { applyRules });
     case 'DELETE org-merge': return unmergeOrg(env, me, body, { applyRules });
     case 'POST org-merge-requests': return requestMerge(env, me, body);
