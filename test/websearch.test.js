@@ -215,6 +215,12 @@ describe('web search', () => {
     const guide = await ext.sections.find((s) => s.key === 'web-search').render({});
     assert.match(guide, /Every query leaves Adobe/);
     assert.match(guide, /never with the customer's name/);
+    // A company someone at Adobe asks about is looked up by its name, only its name.
+    assert.match(guide, /never with the customer's name, .* The one exception is a company itself .* when someone at Adobe, in the sidebar, asks you to find out about it: .* search for its public name, .* Only its name: never in a query with what the threads say of it .* never a person's name\. .* do not refuse or ask the team first\./);
+    assert.match(ext.tools[0].description, /but for a company someone at Adobe asked you to look up, by its name only/);
+    // A knowledge-base agent looks one up for the person it talks to.
+    const kbExt = agentToolsExtension({ env: { AI }, hasThread: false, chatOf: async () => ({ chat: 'c' }) }, ['web_search']);
+    assert.match(await kbExt.sections.find((s) => s.key === 'web-search').render({ conversationId: 's' }), /never with a customer's name, .* The one exception is a company itself .* when the person you talk to asks you to find out about it: .* Only its name/);
     assert.match(guide, /give update_draft only pages you read as sources/);
 
     const logs = [];
