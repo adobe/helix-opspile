@@ -2447,8 +2447,9 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .bubble .file-view.failed, .spectrum .file-view .fv-wait { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum :is(.file-view, .file-dialog) .fv-bar { gap: var(--spectrum-spacing-100); background: var(--spectrum-background-layer-1-color); border-bottom-color: var(--spectrum-gray-200); }
 .spectrum :is(.file-view, .file-dialog) .fv-count { color: var(--spectrum-neutral-subdued-content-color-default); }
-/* The preview's filter: a SearchField, size S (ui/spectrum.css draws its magnifier). */
-.spectrum :is(.file-view, .file-dialog) .fv-find {
+/* The preview's filter: a SearchField, size S (ui/spectrum.css draws its magnifier; `input`
+   outranks its size M there). */
+.spectrum :is(.file-view, .file-dialog) input.fv-find {
   min-height: var(--spectrum-component-height-75);
   padding-inline: calc(var(--spectrum-component-edge-to-visual-100) + var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-75)) var(--spectrum-component-edge-to-text-75);
   background: var(--spectrum-gray-25);
