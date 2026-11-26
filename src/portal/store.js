@@ -645,7 +645,12 @@ const authorInfo = (u) => ({
   kind: u.kind,
   // An embedded account's provider-verified address (portal migration 0009): a merge key for
   // the inbox, never a mail address it signs in with or is staff by.
-  ...(!u.email && u.kind === 'customer' && u.verified_email ? { verifiedEmail: u.verified_email } : {}),
+  ...(!u.email && u.kind === 'customer' && u.verified_email ? {
+    verifiedEmail: u.verified_email,
+    // When it was last verified (Unix seconds kept), for the inbox's window.
+    ...(Number.isFinite(u.verified_at)
+      ? { verifiedAt: new Date(u.verified_at * 1000).toISOString() } : {}),
+  } : {}),
   ...(/^https:\/\//.test(u.avatar || '') ? { avatar: u.avatar } : {}),
   ...(u.avatar_key ? { picture: pictureVersion(u.avatar_key) } : {}),
 });

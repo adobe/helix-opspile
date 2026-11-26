@@ -102,10 +102,12 @@ async function samePerson(db, m, c, sec) {
   }
   const recent = sec - MERGE_DAYS * DAY;
   const verified = email || m.seen_email || null;
+  // When it was last verified, which the inbox applies the same window by (src/individual.js).
+  const verifiedAt = email ? sec : m.seen_at || null;
   // One person only while both still verify it: the caller now or lately, the others lately.
   const mine = email || (m.seen_at > recent ? m.seen_email : null);
   if (m.audience !== 'individual' || !mine) {
-    return { verified, people: [m.actor] };
+    return { verified, verifiedAt, people: [m.actor] };
   }
   const { results } = await db.prepare(`SELECT m.actor FROM integration_members m
       JOIN users u ON u.id = m.actor
@@ -113,7 +115,7 @@ async function samePerson(db, m, c, sec) {
       AND u.verified_email = ? AND u.verified_at > ? ORDER BY m.actor LIMIT 20`)
     .bind(m.channel, mine, recent).all();
   const people = [...new Set([m.actor, ...(results || []).map((r) => r.actor)])];
-  return { verified, people };
+  return { verified, verifiedAt, people };
 }
 
 /** Only Access's signed service identity selects the host and therefore how it names users. */

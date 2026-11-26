@@ -122,7 +122,11 @@ async function post(request, env, m, root, now, waitUntil) {
     const rest = body.trim() === title?.trim() ? null : body.trim();
     const content = root ? body : [title.trim(), topic, rest].filter(Boolean).join('\n\n');
     wrote = await writeMessage(env, channel, {
-      id: m.actor, kind: 'customer', name: m.name, verified_email: m.verified,
+      id: m.actor,
+      kind: 'customer',
+      name: m.name,
+      verified_email: m.verified,
+      verified_at: m.verifiedAt,
     }, {
       root,
       text: content,

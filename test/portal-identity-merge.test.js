@@ -147,6 +147,10 @@ describe('one person with several profiles', () => {
     for (const i of ids) {
       assert.deepEqual([i.email, i.merge_email, i.staff, i.person], [null, 'ada.e@staff.example', null, null]);
     }
+    // And when it was last verified, for the window an individual channel's agent applies.
+    const at = w.inbox.DB.rows(`SELECT merge_at FROM identities WHERE source = 'portal'
+      AND name = 'Ada Example'`).map((r) => Date.parse(r.merge_at));
+    assert.ok(at.every((t) => Math.abs(t - Date.now()) < 60 * 60 * 1000), JSON.stringify(at));
     assert.equal(w.inbox.DB.rows('SELECT * FROM people WHERE email = ?', 'ada.e@staff.example').length, 0);
     const posted = w.inbox.DB.rows('SELECT staff, person FROM messages WHERE source = \'portal\'');
     assert.ok(posted.length >= 2 && posted.every((m) => m.staff === 0 && m.person === null));
