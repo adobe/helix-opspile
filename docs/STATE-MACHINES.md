@@ -325,8 +325,9 @@ A reply the platform took and named (`postedId`) settles only when a message wit
 thread: after a minute (three as the bot) it says it is sent and not back yet, with Hide, and it goes
 after a day. One the platform did not name (Slack's uploads) still goes after the minute. Every
 reply in a thread the inbox has is kept in localStorage meanwhile (`opspile.sending.<person>`, by id;
-`saveSending`): the next page restores it, a reply that was sending as unknown under the same key,
-one that was sent as delivered and waiting. A reply with files keeps their names only: restored
+`saveSending`): the next page restores it, a reply that was sending as unknown under the same key
+(one as the bot keeps its key too, and its Retry goes as the bot), one that was sent as delivered and
+waiting. A reply with files keeps their names only: restored
 unsent, it cannot be retried (`filesLost`), only discarded. Not-sent replies expire after a week.
 Tabs share the store: one gone in another tab (arrived, discarded) goes, one that moved on there
 takes its state. ↑ (⌘↑) in the empty reply box while your last reply is sending or sent and not

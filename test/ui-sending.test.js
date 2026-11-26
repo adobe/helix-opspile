@@ -30,11 +30,8 @@ let listeners;
 let opened;
 let timers;
 
-/** A page: its state, the store it shares with other tabs, and the block's functions. */
-function page(state) {
-  const a = js.indexOf('// ---------------------------------------------------------------- replies kept until they arrive');
-  const b = js.indexOf('// Leaving the page (a reload', a);
-  assert.ok(a >= 0 && b > a);
+/** What a tab of `state` has of the browser: the store it shares with other tabs, and `window`. */
+function tab(state) {
   const tell = (e) => {
     for (const [l, from] of listeners) {
       if (from !== state) {
@@ -54,6 +51,15 @@ function page(state) {
     },
   };
   const window = { addEventListener: (type, l) => listeners.push([l, state]) };
+  return { localStorage, window };
+}
+
+/** A page: its state, the store it shares with other tabs, and the block's functions. */
+function page(state) {
+  const a = js.indexOf('// ---------------------------------------------------------------- replies kept until they arrive');
+  const b = js.indexOf('// Leaving the page (a reload', a);
+  assert.ok(a >= 0 && b > a);
+  const { localStorage, window } = tab(state);
   // eslint-disable-next-line no-new-func
   return new Function('state', 'localStorage', 'window', 'openThread', 'showSending', 'setTimeout', 'Date', 'STARTED', 'NEW', 'SEND_KEEP_MS', 'SEND_ARRIVE_MS', 'SEND_APP_ARRIVE_MS', `${js.slice(a, b)}
 return { keptReply, restoredReply, saveSending, restoreSending };`)(
@@ -70,6 +76,40 @@ return { keptReply, restoredReply, saveSending, restoreSending };`)(
     60 * 1000,
     3 * 60 * 1000,
   );
+}
+
+/**
+ * A page's sending, from a reply's bubble to its post ("Sending, as in iMessage" up to new
+ * threads), on the real clock: `post` answers its POSTs, which `posts` records.
+ */
+function sender(state, post, posts = []) {
+  const a = js.indexOf('// Sending, as in iMessage');
+  const b = js.indexOf('// ---------------------------------------------------------------- new threads', a);
+  assert.ok(a >= 0 && b > a);
+  const globals = {
+    state,
+    ...tab(state),
+    matchMedia: () => ({ matches: true }),
+    postWith: (path, payload, files) => {
+      posts.push({ path, payload, files });
+      return post(path, payload, files);
+    },
+    openThread: () => {},
+    setTimeout: () => {},
+    toast: () => {},
+    startedShown: () => false,
+    started: null,
+    STARTED: 'started',
+    NEW: 'new',
+    mentionKindOf: () => null,
+    invitedSaying: () => '',
+    remindSaying: () => '',
+    missedMention: () => false,
+    setCachedDraft: () => {},
+  };
+  // eslint-disable-next-line no-new-func
+  return new Function(...Object.keys(globals), `${js.slice(a, b)}
+return { sendAsApp, retrySend, restoreSending, sendQueue };`)(...Object.values(globals));
 }
 
 const reply = (more = {}) => ({
@@ -197,5 +237,86 @@ describe('replies kept until they arrive', () => {
     assert.equal(two.sending[0].status, 'delivered');
     assert.equal(two.sending[0].postedId, '1.9');
     assert.ok(opened.includes('slack:E1:C1:1.1'));
+  });
+});
+
+describe('a reply as the bot that a page left behind', () => {
+  const THREAD = 'slack:E1:C1:1.1';
+  const ok = { ok: true, status: 200, data: { ok: true, id: '1.9', text: 'On it.' } };
+
+  /** Sends "On it." as the bot and leaves the page while it goes: the post it made. */
+  function left(files = []) {
+    const posts = [];
+    sender(fresh(), () => new Promise(() => {}), posts)
+      .sendAsApp(THREAD, 'On it.', null, { mentions: [], files });
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].path, '/api/post/app');
+    assert.equal(typeof posts[0].payload.key, 'string');
+    return posts[0];
+  }
+
+  /** The next page, answering its posts with `answers` in turn: its reply restored, retried. */
+  function next(...answers) {
+    const state = fresh();
+    const posts = [];
+    const page2 = sender(state, async () => answers.shift(), posts);
+    page2.restoreSending();
+    assert.equal(state.sending.length, 1);
+    const [p] = state.sending;
+    const retry = async () => {
+      page2.retrySend(p.id);
+      await Promise.all(page2.sendQueue.values());
+    };
+    return { p, posts, retry };
+  }
+
+  it('is retried as the bot, under the key it was sent with', async () => {
+    const first = left();
+    const { p, posts, retry } = next(ok);
+    assert.equal(p.status, 'unknown');
+    assert.equal(p.app, true);
+    assert.equal(p.key, first.payload.key);
+    await retry();
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].path, '/api/post/app');
+    assert.equal(posts[0].payload.key, first.payload.key);
+    assert.equal(posts[0].payload.thread, THREAD);
+    assert.equal(posts[0].payload.text, 'On it.');
+    assert.equal(p.status, 'delivered');
+    assert.equal(p.postedId, '1.9');
+  });
+
+  it('goes under a new key, still as the bot, once only the person can decide', async () => {
+    const first = left();
+    const unfinished = {
+      ok: false, status: 409, data: { error: 'this reply may have gone out: the first try did not finish', unknown: true },
+    };
+    const { p, posts, retry } = next(unfinished, ok);
+    await retry();
+    assert.equal(p.status, 'unknown');
+    assert.equal(p.asked, true);
+    await retry();
+    assert.deepEqual(posts.map((x) => x.path), ['/api/post/app', '/api/post/app']);
+    assert.equal(posts[0].payload.key, first.payload.key);
+    assert.notEqual(posts[1].payload.key, first.payload.key);
+    assert.equal(p.status, 'delivered');
+  });
+
+  it('cannot go again with files, which stayed with the page it left', async () => {
+    const first = left([{ name: 'a.png', type: 'image/png', size: 3 }]);
+    assert.deepEqual(first.files.map((f) => f.name), ['a.png']);
+    const { p, posts, retry } = next(ok);
+    assert.equal(p.filesLost, true);
+    assert.deepEqual(p.files, [{ name: 'a.png', type: 'image/png' }]);
+    await retry();
+    assert.equal(posts.length, 0);
+  });
+
+  it('leaves a reply as you to go as you', async () => {
+    storage.set('opspile.sending.7', JSON.stringify({ 'pending-1': reply({ at: new Date().toISOString() }) }));
+    const { posts, retry } = next(ok);
+    await retry();
+    assert.equal(posts[0].path, '/api/post');
+    assert.equal(posts[0].payload.key, 'k-1');
   });
 });

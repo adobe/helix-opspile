@@ -1870,7 +1870,8 @@ minute it says "Sent, not back from Teams yet" (with Hide), and it goes once the
 the thread, or after a day. Replies being sent are kept in localStorage until then
 (`saveSending`, per person): leaving the page (a reload, closing the tab, a crash) loses none. The
 next page shows each again, one that was still on its way as "Not sure it was sent", with Retry
-under the same key, which the Worker answers without posting again if the post went out. Files are
+under the same key (as the bot, `POST /api/post/app`, if it was sent as the bot), which the Worker
+answers without posting again if the post went out. Files are
 not kept: one with files that did not go out says so and can only be discarded, and leaving the
 page while it is on its way asks first, with the browser's "Leave page?", as for a new thread.
 
