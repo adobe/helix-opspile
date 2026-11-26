@@ -210,17 +210,19 @@ merge.
 **Partner domain.** found ⇄ not found, and over either the admin team's row: set by hand
 (a name, a partner org) or excluded, ⇄ none (`partner_domains`, migrations 0013 and 0109;
 src/partners.js). Found is no row: an isolate derives the domains from every message and keeps
-them an hour (`DERIVED_MS`), then hands out what it found while it derives them again.
-Whatever changes what they are derived from in this Worker forgets them in its isolate
-(`forgetPartnerDomains`, as `forgetFacts` for the duplicate search): an org's name, type or icon
-saved or reset, a portal customer's org made, a merge or its undoing, and every edit of
-`partner_domains`; its next request derives them anew. **The other isolates lag up to an hour**,
-as they do for a change of the threads themselves. A derivation that fails is not an answer: the
-isolate keeps what it found before (none, the first time) and tries again a minute later. The
-admin team's rows are read on every request and win over what is found, so an override shows at
-once everywhere; deleting one (`DELETE /api/admin/partner-domains`) is the way back to found, an
-`excluded` row the way to say no. A domain that stops being found keeps its row, which then stands
-alone.
+them an hour (`DERIVED_MS`); the first request after the hour derives them again and waits for it
+(a refresh nobody awaits could be cancelled with the response, and the old domains trusted for
+another hour). Requests that come together share one derivation. Whatever changes what they are
+derived from in this Worker forgets them in its isolate (`forgetPartnerDomains`, as `forgetFacts`
+for the duplicate search): an org's name, type or icon saved or reset, a portal customer's org
+made, a merge or its undoing, and every edit of `partner_domains`; its next request derives them
+anew. **The other isolates lag up to an hour**, as they do for a change of the threads themselves.
+A derivation that fails, or takes longer than `LOOK_MS`, is not an answer: the request gets what
+was found before (none, the first time), the time it was found stays, and the next request
+derives them again. The admin team's rows are read on every request and win over what is found,
+so an override shows at once everywhere; deleting one (`DELETE /api/admin/partner-domains`) is the
+way back to found, an `excluded` row the way to say no. A domain that stops being found keeps its
+row, which then stands alone.
 
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status

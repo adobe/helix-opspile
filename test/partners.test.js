@@ -11,10 +11,13 @@
  */
 
 import assert from 'node:assert/strict';
-import { beforeEach, describe, it } from 'node:test';
+import {
+  beforeEach, describe, it, mock,
+} from 'node:test';
 import { api } from '../src/api.js';
 import {
-  derive, derivedDomains, domainOf, forgetPartnerDomains, iconDomain, namesOrg, partnerDomains,
+  DERIVED_MS, derive, derivedDomains, domainOf, forgetPartnerDomains, iconDomain, namesOrg,
+  partnerDomains,
 } from '../src/partners.js';
 import { profiles } from '../src/profiles.js';
 import { d1 } from './d1.js';
@@ -235,6 +238,33 @@ describe('partnerDomains', () => {
     assert.equal((await profiles(e, ['slack:E1:U1']))['slack:E1:U1'].relation, 'customer');
     await call(e, ADA, 'DELETE', '/api/admin/partner-domains', { domain: 'agency.example' });
     assert.equal((await profiles(e, ['slack:E1:U1']))['slack:E1:U1'].partner, 'The Agency');
+  });
+
+  it('waits for the look after the hour, and looks again after one that failed', async () => {
+    const e = world();
+    const quiet = console.error;
+    const errors = [];
+    console.error = (...args) => errors.push(args.join(' '));
+    const now = Date.now();
+    const clock = mock.method(Date, 'now', () => now);
+    try {
+      assert.equal((await partnerDomains(e)).get('agency.example').name, 'The Agency');
+      // The hour is up and looking fails: what was found before, and no new hour of it.
+      e.DB.sqlite.exec(`UPDATE orgs SET name = 'Agency Co' WHERE slug = 'agency';
+        ALTER TABLE org_merges RENAME TO org_merges_gone`);
+      clock.mock.mockImplementation(() => now + DERIVED_MS + 1);
+      assert.equal((await partnerDomains(e)).get('agency.example').name, 'The Agency');
+      assert.equal(errors.length, 1);
+      // The next request looks again, and waits for it.
+      e.DB.sqlite.exec('ALTER TABLE org_merges_gone RENAME TO org_merges');
+      assert.equal((await partnerDomains(e)).get('agency.example').name, 'Agency Co');
+      // Then it holds for the hour.
+      e.DB.sqlite.exec('UPDATE orgs SET name = \'Agency Inc\' WHERE slug = \'agency\'');
+      assert.equal((await partnerDomains(e)).get('agency.example').name, 'Agency Co');
+    } finally {
+      clock.mock.restore();
+      console.error = quiet;
+    }
   });
 
   it('has none found when looking fails, and the admin team\'s rows still', async () => {

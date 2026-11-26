@@ -37,7 +37,7 @@ import { UNASSIGNED } from './rules.js';
  * display name.
  *
  * They are found from every message there is (a few hundred thousand rows), so an isolate keeps
- * what it found for an hour (`DERIVED_MS`) and finds them again in the background after that.
+ * what it found for an hour (`DERIVED_MS`), and the first request after that finds them again.
  * What changes them forgets them in its isolate (`forgetPartnerDomains`: an org's name, type or
  * icon, a merge, an edit of `partner_domains`); the other isolates find them again within the hour.
  * The rows of `partner_domains` (migration 0013, `org` and `excluded` in 0109) are the admin
@@ -195,38 +195,65 @@ async function loadIcons(env) {
   return results || [];
 }
 
-let kept = null;
 const NONE = Object.freeze({ found: [], left: [], at: null });
-/** After a failed look, the next one is this much later, with what was found before kept. */
-const RETRY_MS = 60 * 1000;
+/** How long a request waits for a look; one that takes longer is looked for anew by the next. */
+const LOOK_MS = 20 * 1000;
+/** `{ db, done, at, look }`: what was found, when, and the look on its way (`started`, `value`). */
+let kept = null;
 
 /**
- * The domains found (`derive`), as this isolate found them in the last hour; after that, what it
- * found before while it looks again. Kept by the D1 binding under the request's wrappers
- * (`underlying`), and as a promise, so requests that come together look once. A failed look
- * keeps what was found before (none, the first time) and is tried again a minute later.
+ * The domains found (`derive`), as this isolate found them in the last hour (`DERIVED_MS`). After
+ * the hour, the request that asks looks again and waits for it (a fraction of a second, once an
+ * hour): a look nobody awaits could be cancelled with the response, and the old domains would be
+ * trusted for another hour. Requests that come together share a look. Kept by the D1 binding under
+ * the request's wrappers (`underlying`). `at` moves only when a look succeeds: one that fails or
+ * takes longer than `LOOK_MS` answers what was found before (none, the first time), and the next
+ * request looks again.
  */
 export async function derivedDomains(env, { fresh = false } = {}) {
   const db = underlying(env.DB);
-  const k = kept && kept.db === db ? kept : null;
-  if (k && !fresh && Date.now() - k.at < DERIVED_MS) {
-    return k.value;
+  if (!kept || kept.db !== db) {
+    kept = {
+      db, done: null, at: 0, look: null,
+    };
   }
-  const next = { db, at: Date.now(), last: k ? k.last : null };
-  next.value = Promise.all([loadRows(env), loadIcons(env)]).then(([rows, icons]) => {
-    next.last = { ...derive(env, rows, icons), at: new Date().toISOString() };
-    return next.last;
-  }, (e) => {
-    console.error('partner domains:', e && e.message);
-    if (kept === next) {
-      kept = {
-        ...next, at: Date.now() - DERIVED_MS + RETRY_MS, value: Promise.resolve(next.last || NONE),
-      };
-    }
-    return next.last || NONE;
+  const k = kept;
+  if (!fresh && k.done && Date.now() - k.at < DERIVED_MS) {
+    return k.done;
+  }
+  if (fresh || !k.look || Date.now() - k.look.started >= LOOK_MS) {
+    const next = { started: Date.now() };
+    next.value = Promise.all([loadRows(env), loadIcons(env)]).then(([rows, icons]) => {
+      const done = { ...derive(env, rows, icons), at: new Date().toISOString() };
+      k.done = done;
+      k.at = Date.now();
+      return done;
+    }).finally(() => {
+      if (k.look === next) {
+        k.look = null;
+      }
+    });
+    // Its failure is each waiting request's; once none waits, nobody's.
+    next.value.catch(() => {});
+    k.look = next;
+  }
+  const { look } = k;
+  let timer;
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), LOOK_MS);
   });
-  kept = next;
-  return !fresh && next.last ? next.last : next.value;
+  try {
+    const done = await Promise.race([look.value, late]);
+    if (done) {
+      return done;
+    }
+    console.error('partner domains: still looking after', LOOK_MS, 'ms');
+  } catch (e) {
+    console.error('partner domains:', e && e.message);
+  } finally {
+    clearTimeout(timer);
+  }
+  return k.done || NONE;
 }
 
 /**
