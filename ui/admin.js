@@ -68,6 +68,9 @@ const state = {
   // The pairs of orgs that may be one (GET /api/admin/org-duplicates), whether the list shows the
   // less likely ones too, and the merges asked for (the admin team's, threads of its inbox).
   dups: null, orgMerges: [],
+  // The pairs of a customer and a partner that may work together (GET /api/admin/org-partners),
+  // for the admin team.
+  links: null,
   // The channels no rule files under an org (GET /api/admin/orgs `unassigned`): how many.
   orgsUnassigned: null,
 };
@@ -321,7 +324,8 @@ const isGroup = (sel) => String(sel ?? '').startsWith(GROUP);
 /** Two orgs that may be one, picked in Customers (see "duplicate customers"). */
 const isPair = (sel) => String(sel ?? '').startsWith(PAIR);
 /** Whether `sel` on `tab` is a team or a customer, whose page has an agent's sections. */
-const agented = (tab, sel) => AGENTED.includes(tab) && !isGroup(sel) && !isPair(sel) && !isDomains(sel);
+const agented = (tab, sel) => AGENTED.includes(tab) && !isGroup(sel) && !isPair(sel) && !isDomains(sel)
+  && !isLink(sel);
 
 /**
  * The address of what is picked (`sel` on `tab`), at a section of its page (`view`, none for its
@@ -471,6 +475,8 @@ async function load() {
   if (state.me.admin) loadGroups();
   // The duplicate customers are for the ops teams, who ask for a merge.
   if (onTeam) loadDups();
+  // Which customers each partner works for: the admin team's review.
+  if (state.me.admin) loadLinks();
   return true;
 }
 
@@ -704,7 +710,7 @@ function drawList() {
         sel: UNASSIGNED, on: state.sel === UNASSIGNED, label: 'Unassigned channels', count: state.orgsUnassigned.channels, title: 'Channels not filed under an org',
       }) : '';
     const yours = followed.length || middle;
-    body = `${un}${domainsRow(f)}${onATeam() ? dupSection(f) : ''}
+    body = `${un}${domainsRow(f)}${onATeam() ? dupSection(f) : ''}${state.me.admin ? linkSection(f) : ''}
       ${navSection('Following', followed.map(orgRow))}${middle}
       ${navSection(yours ? 'Other customers' : 'Customers', ranked(rest, orgName).map(orgRow), { empty: f || state.orgType || state.noIcon ? 'Nothing matches.' : (yours ? '' : 'No customer yet.') })}`;
     const label = [state.orgType ? orgTypeLabel(state.orgType) : 'All types', state.noIcon && 'no icon'].filter(Boolean).join(', ');
@@ -792,6 +798,7 @@ function select(sel, {
   if (state.tab === 'teams' && isGroup(sel)) showGroup(String(sel).slice(GROUP.length));
   else if (state.tab === 'orgs' && isPair(sel)) showPair(...String(sel).slice(PAIR.length).split(':'));
   else if (state.tab === 'orgs' && isDomains(sel)) showDomains();
+  else if (state.tab === 'orgs' && isLink(sel)) showLink(...String(sel).slice(LINK.length).split(':'));
   else if (agented(state.tab, sel)) showPicked({ channel, flash, fresh: true });
 }
 
@@ -3092,8 +3099,11 @@ async function showOrg(slug) {
     v.org = res.body.org;
     status('ok', 'Saved.');
     if (v === state.view) show(res.body.org);
-    // A partner and a customer are candidates only by their names.
-    if (retyped) loadDups({ fresh: true });
+    // A partner and a customer are candidates only by their names; partners pair with customers.
+    if (retyped) {
+      loadDups({ fresh: true });
+      loadLinks({ fresh: true });
+    }
   };
   // The icon suggestions (src/favicons.js), each a button that makes it the org's icon.
   let found = [];
@@ -3985,6 +3995,158 @@ function wireOrgMerge(slug) {
     if (!o || o.slug === slug) { status('err', `No other org ${typed || 'by that name'}.`); return; }
     openUrl(address({ tab: 'orgs', sel: pairSel(slug, o.slug) }));
   };
+}
+
+// ---- partners --------------------------------------------------------------------------------
+//
+// Which customers each partner (an agency, a system integrator) works for. The Worker finds the
+// pairs of a customer and a partner that may work together, from the partner's people in the
+// customer's threads and channels, the sites both name, the partner's knowledge base, a Slack
+// Connect or Teams team they share and a channel named for both, each with Clef's verdict
+// (src/orgpartners.js). The admin team confirms a pair or dismisses it; everyone at Adobe reads
+// the confirmed and likely ones (GET /api/customers/partners).
+
+const LINK = 'partner:';
+const linkSel = (customer, partner) => `${LINK}${customer}:${partner}`;
+const isLink = (sel) => String(sel ?? '').startsWith(LINK);
+const linkName = (slug, orgs = state.links?.orgs) => (orgs && orgs[slug] && orgs[slug].name) || orgLabel(slug);
+/** Whether a pair waits for the admin team: nobody decided it, and Clef says it is likely. */
+const reviewLink = (x) => !x.confirmed && !x.dismissed && x.p !== null && x.p >= (state.links?.likely ?? 0.5);
+
+/** The pairs, from the Worker; while Clef has not answered for all, asked again as it gets further. */
+async function loadLinks({ fresh = false, round = 0 } = {}) {
+  const r = await call(`/api/admin/org-partners${fresh ? '?fresh=1' : ''}`);
+  if (!r.ok) {
+    state.links = {
+      error: r.body.error || `failed (${r.status})`, pairs: [], orgs: {}, unchecked: 0,
+    };
+    return;
+  }
+  const was = state.links && !state.links.error ? state.links.unchecked : null;
+  state.links = r.body;
+  if (state.tab === 'orgs') renderList();
+  if (r.body.unchecked && round < 10 && (was === null || round === 0 || r.body.unchecked < was)) {
+    loadLinks({ round: round + 1 });
+  }
+}
+
+/** What is said of a pair, in a few words. */
+function linkSaid(x) {
+  if (x.confirmed) return 'confirmed';
+  if (x.dismissed) return 'dismissed';
+  return x.p === null ? 'Clef has not said yet' : `${pct(x.p)} likely, says Clef`;
+}
+
+function linkRow(x) {
+  const { orgs } = state.links;
+  let shown = x.p === null ? '' : pct(x.p);
+  if (x.confirmed) shown = '✓';
+  else if (x.dismissed) shown = '–';
+  return SideNav.row({
+    sel: linkSel(x.customer, x.partner),
+    on: state.sel === linkSel(x.customer, x.partner),
+    cls: 'dup',
+    lead: `${ico(orgs[x.partner].icon, orgs[x.partner].domain)}${ico(orgs[x.customer].icon, orgs[x.customer].domain)}`,
+    labelHtml: `${esc(linkName(x.partner))} <span class="sep">for</span> ${esc(linkName(x.customer))}`,
+    title: `${linkName(x.partner)} (${x.partner}) for ${linkName(x.customer)} (${x.customer}) · ${linkSaid(x)}`,
+    count: shown,
+    countTitle: linkSaid(x),
+  });
+}
+
+/** The admin team's: the pairs to review at the top of the list, the rest folded. */
+function linkSection(f) {
+  const d = state.links;
+  if (!d || d.error) return '';
+  const match = (x) => !f || `${linkName(x.customer)} ${x.customer} ${linkName(x.partner)} ${x.partner}`.toLowerCase().includes(f);
+  const top = d.pairs.filter((x) => reviewLink(x) && match(x));
+  const open = d.pairs.filter((x) => !reviewLink(x) && !x.confirmed && !x.dismissed && match(x));
+  const done = d.pairs.filter((x) => (x.confirmed || x.dismissed) && match(x));
+  if (!top.length && !open.length && !done.length && !d.unchecked) return '';
+  let checking = d.unchecked ? `<div class="navnote">Clef is looking at ${d.unchecked} more…</div>` : '';
+  // The partner domains could not be read (src/orgpartners.js `sync`): the pairs as they were.
+  if (d.skipped) checking = '<div class="navnote">The partner domains could not be read: the pairs as they were found before.</div>';
+  const holds = (list) => list.some((x) => state.sel === linkSel(x.customer, x.partner));
+  const fold = (key, label, list) => (list.length ? SideNav.group({
+    key, label, body: list.map(linkRow).join(''), holds: holds(list),
+  }) : '');
+  return SideNav.group({
+    key: 'orgs:partners',
+    label: 'Likely partners',
+    count: top.length,
+    title: 'A partner that may work for a customer, as Clef sees it: confirm it, or dismiss it',
+    body: `${top.map(linkRow).join('') || `<div class="navempty">${f ? 'Nothing matches.' : 'None to review.'}</div>`}${checking}
+      ${fold('orgs:partners:less', `${open.length} less likely`, open)}${fold('orgs:partners:done', `${done.length} decided`, done)}`,
+    holds: (Boolean(f) && (top.length + open.length + done.length) > 0) || holds(top) || holds(open) || holds(done),
+  });
+}
+
+/** The pair as it is now, in the list on the left too. */
+function updateLink(x, orgs) {
+  if (!state.links || state.links.error) return;
+  const i = state.links.pairs.findIndex((y) => y.customer === x.customer && y.partner === x.partner);
+  if (i >= 0) state.links.pairs[i] = x;
+  else state.links.pairs.unshift(x);
+  Object.assign(state.links.orgs, orgs);
+}
+
+async function showLink(customer, partner) {
+  const current = loadingPage();
+  state.view = null;
+  const r = await call(`/api/admin/org-partners?pair=${encodeURIComponent(`${customer}:${partner}`)}`);
+  if (!current()) return;
+  if (!r.ok) {
+    $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">Partners</h1></div><div class="empty">${esc(r.body.error || `Could not load (${r.status}).`)}</div>`;
+    return;
+  }
+  const [pair] = r.body.pairs;
+  const { orgs } = r.body;
+  updateLink(pair, orgs);
+  renderList();
+  state.view = {
+    target: 'link', value: `${customer}:${partner}`, pair, orgs,
+  };
+  drawLink(state.view);
+}
+
+function drawLink(v) {
+  const { pair, orgs } = v;
+  const [p, c] = [linkName(pair.partner, orgs), linkName(pair.customer, orgs)];
+  const clef = pair.p === null ? 'Clef has not been asked yet; it is, the next time the list loads.'
+    : `Clef says ${pct(pair.p)} that ${esc(p)} works for ${esc(c)}${pair.stale ? ' (from before what they share changed: it is asked again)' : ''}${pair.checked ? `, asked ${esc(ago(pair.checked))}` : ''}.`;
+  const evidence = pair.signals.length
+    ? `<ul>${pair.signals.map((x) => `<li>${esc(x.text[0].toUpperCase() + x.text.slice(1))}.</li>`).join('')}</ul>`
+    : '<p class="sub">Nothing they share says so now.</p>';
+  let said = `Confirmed, everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}; dismissed, nobody does, whatever Clef says.`;
+  if (pair.confirmed) said = `Confirmed by ${who({ email: pair.confirmed.by })} ${esc(ago(pair.confirmed.at))}.`;
+  else if (pair.dismissed) said = `Dismissed by ${who({ email: pair.dismissed.by })} ${esc(ago(pair.dismissed.at))}: not shown as partners, whatever Clef says.`;
+  const key = `link:${v.value}`;
+  $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(p)} <span class="sub">for</span> ${esc(c)}</h1></div>
+    <div class="status" id="status"></div>
+    <div class="card"><div class="pair">${pairSide(orgs[pair.partner], false)}${pairSide(orgs[pair.customer], false)}</div></div>
+    <div class="card"><h2>Why ${esc(p)} may work for ${esc(c)}</h2><p>${clef}</p>${evidence}</div>
+    <div class="card"><h2>Partner of the customer</h2><div class="form">
+      ${pair.confirmed ? `<button id="lUndo" data-what="confirm"${off(key)}>Not confirmed after all</button>` : `<button class="primary" id="lConfirm"${off(key)}>Confirm</button>`}
+      ${pair.dismissed ? `<button id="lUndo" data-what="dismiss"${off(key)}>Not dismissed after all</button>` : `<button id="lDismiss"${off(key)}>Dismiss</button>`}</div>
+      <p class="hint">${said}</p></div>`;
+  showStatus();
+  // Drawn again once it is done: drawn meanwhile, its buttons would stay disabled (`off`).
+  const decide = (b, what, undo) => hold(b, key, async () => {
+    const res = await call(`/api/admin/org-partners/${what}`, 'POST', { customer: pair.customer, partner: pair.partner, undo });
+    if (!res.ok) { failed(what === 'confirm' ? 'Confirm' : 'Dismiss', res); return false; }
+    Object.assign(pair, { confirmed: res.body.pair.confirmed, dismissed: res.body.pair.dismissed });
+    updateLink(pair, orgs);
+    renderList();
+    return true;
+  }).then((done) => {
+    if (!done || v !== state.view) return;
+    drawLink(v);
+    if (undo) status('ok', 'Taken back.');
+    else status('ok', what === 'confirm' ? 'Confirmed.' : 'Dismissed.');
+  });
+  if ($('lConfirm')) $('lConfirm').onclick = () => decide($('lConfirm'), 'confirm', false);
+  if ($('lDismiss')) $('lDismiss').onclick = () => decide($('lDismiss'), 'dismiss', false);
+  if ($('lUndo')) $('lUndo').onclick = () => decide($('lUndo'), $('lUndo').dataset.what, true);
 }
 
 // ---- start ------------------------------------------------------------------------------

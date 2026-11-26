@@ -274,6 +274,55 @@ the two (the customers its teams own) sees the pair too and asks the admin team 
 threads"), until the admin team merges or declines it; the admin team can also say two orgs are not the same, which takes the pair off everyone else's
 list until somebody asks for its merge.
 
+**Partners.** An org of type `partner` is an agency or system integrator that builds, runs or
+supports the sites and projects of several customers, in its own channels and in theirs. Which
+customers each works for is a table, `org_partners` (migration 0110, `src/orgpartners.js`), found as
+duplicate customers are: candidates from signals, then Clef. A pair of a customer and a partner is
+a candidate when its signals add up (`CANDIDATE`, 2) and are more than a `kb` or a `place` signal
+alone (Clef found most such pairs unlikely):
+
+- `posters`: people from the partner's mail domains posted in the customer's threads (1 to 3, by
+  threads and people). The domains come from one place, `partnerMailDomains`: src/partners.js
+  `partnerDomains` ("Partner domains"), by the partner org each is of, so the admin team's
+  overrides and exclusions change the pairs too; a subdomain counts as its parent, unless it is
+  listed itself (an excluded one is nobody's). Without them (no look for them succeeded yet in the
+  isolate), a load or cron run changes nothing in `org_partners` and the list says so (`skipped`);
+- `guests`: people from the customer's usual mail domain posted in the partner's threads (1 or 2);
+- `members`: people from the partner's mail domains are in the customer's channels
+  (`channel_members`, 1 to 2);
+- `owners`: the facts of both name the same GitHub or aem.live owner (`site`, `repo`, and a `url`
+  `<branch>--<repo>--<owner>.aem.live`, `github.com/<owner>`, the admin API's), one the threads of
+  at most two orgs that are not partners name: Adobe's own and demo owners are in many (1.5, 2.5
+  for an owner only this customer has);
+- `kb`: entries of the partner's knowledge base (`kb_concepts`) name the customer (its display
+  name, or its slug of more than one word, in an entry's path, title or aliases), one of its owners
+  (there, or as an owner in the text), or are about it (`sites/<slug>-….md`; 2, 3 for an entry
+  about it);
+- `place`: channels of both with the same Slack Connect or Teams team, one at most six orgs have
+  (1 or 2);
+- `channel`: a channel named for both, `<partner>-<customer>` (3).
+
+Clef is asked about each candidate nobody decided, shown both orgs (names, type, channels, usual
+mail domains) and the signals with their counts as one, a few or many, so a new thread does not
+make it ask again: "does partner P work for customer C?" Its answer is kept with a fingerprint of
+what it was shown and asked again once that changes, two dozen per load of the admin team's list and
+per cron run, so the table fills in without anybody looking. Every load and run writes the
+candidates' signals where they changed, and deletes the rows of pairs that are no candidate any
+more and that nobody decided. The admin team reviews them in Customers ("Likely partners", `GET
+/api/admin/org-partners`): each pair's page shows both orgs, the evidence (the signals, with domains,
+owners and entry paths) and Clef's verdict, and confirms or dismisses it (`POST
+/api/admin/org-partners/confirm`, `/dismiss`, either with `undo`). A confirmed pair stays whatever
+the signals say later; a dismissed one is never shown as partners. A merge copies the merged org's
+decisions to the org kept, where it has none of its own (`merged_from`), and undoing it takes the
+copies back: the rows it added go, a row the kept org had keeps its signals and Clef's verdict.
+
+Everyone at Adobe reads an org's confirmed and likely pairs (Clef's probability at least `LIKELY`,
+0.5, not dismissed): `partnersOf(env, customer)` and `customersOf(env, partner)` in
+src/orgpartners.js, and `GET /api/customers/partners?org=` with both, `{ org, partners, customers }`.
+Each is `{ slug, name, type, icon, confirmed, p, score, signals }`, `signals` the count of each kind
+(`{ posters: 12, owners: 1 }`): names and numbers, no message text, domain or owner. Merged orgs are
+left out. `partner_domains` (src/profiles.js) is apart from this, and empty.
+
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
 (an agent that provisions access, say) would show on the customer's side of a thread. Every bot
 opspile knows that posted, or that somebody said whose it is (`identities` of kind `bot`: written
