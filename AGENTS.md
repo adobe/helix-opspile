@@ -132,7 +132,9 @@ code and docs, is the decision model that labels threads and channels.
   its own, so only it fails; `Server-Timing` counts a batch as one call. When D1 is overloaded
   ("D1 DB is overloaded", a few seconds at a time), a read is instead asked again once, in its
   batch, 0.5–1.5 s later, and `/api/*` answers what still fails with 503 and `Retry-After`,
-  which `ui/app.js` waits out once for a `GET`. Each `/api/*` request is one D1 session
+  which `ui/app.js` waits out once for a `GET`. The thread agents' D1 asks a read again once so
+  too, but batches nothing (`patientDatabase` in src/d1batch.js, `agentEnv` in
+  src/agent/agentenv.js): a query goes when it is asked. Each `/api/*` request is one D1 session
   (src/d1session.js): with read replication on, a `GET` reads at the nearest copy, as new as the
   bookmark the page sends (`x-d1-bookmark`, kept by `ui/app.js`), and room events carry the
   primary's (src/notify.js). Wrap `env.DB` only in ways that pass `withSession` on, and that

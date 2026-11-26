@@ -2582,7 +2582,10 @@ in the channels where agents are on: the admin team and team managers switch the
 on the team's or the customer's page (**Thread agents**), and their team's default and `AGENT_CHANNELS` turn on the rest. Each is a Durable Object
 (`ThreadAgent`) running [Pi](https://developers.cloudflare.com/agents/harnesses/pi/) through
 the Agents SDK's `PiHarness`: the transcript, tool calls and retries live in the object's
-SQLite, so a run survives evictions and deploys, and a model request that fails is retried.
+SQLite, so a run survives evictions and deploys, and a model request that fails is retried. So is
+a read of D1 that D1 turned away as overloaded (a few seconds at a time), once, 0.5–1.5 s later, as
+for `/api/*` and `/mcp`, so that a tool does not fail on it; a write is not asked again, and the
+agent's queries go to D1 one by one, as they are asked (src/agent/agentenv.js, src/d1batch.js).
 Prompt caching asks for the one-hour TTL (`cacheRetention: 'long'`). Turns are often minutes
 apart, past pi's five-minute default, and Bedrock bills a later hit inside the hour as a read.
 But every write costs 2× the input price for an hour against 1.25× for five minutes, so whether
