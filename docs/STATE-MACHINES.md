@@ -275,7 +275,9 @@ keeps a link (`linked_at` set: `person` is not looked up by mail address) and on
 takes it back (all three NULL). A change of side or person rewrites `messages.person`, `staff` and, from
 the admin page, `author` of its messages, and `last_staff` and `last_author` of the threads they
 are in (`relabelAccount`); their frontmatter keeps what they were written with, which
-`accountAuthor` replaces in the thread view, until a replay writes them again.
+`accountAuthor` replaces in the thread view, until a replay writes them again: there its name is
+the one `toAuthor` gives the account now (its person's while linked, its own once unlinked), the
+messages written while it was linked too.
 
 ## Drafts and replies
 
