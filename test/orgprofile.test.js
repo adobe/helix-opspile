@@ -244,7 +244,7 @@ describe('a customer\'s overview', () => {
     assert.equal(p.kb.drawing, true);
   });
 
-  it('is everyone\'s at Adobe; its knowledge base is for the teams that work it', async () => {
+  it('is everyone\'s at Adobe, its knowledge base too', async () => {
     const e = seed();
     const outsider = {
       id: 9, email: 'x@partner.example', name: 'X', teams: [],
@@ -254,16 +254,14 @@ describe('a customer\'s overview', () => {
     const staff = { ...outsider, email: 'x@staff.example' };
     let r = await call(e, staff, '/api/customers');
     assert.deepEqual(r.body.orgs.map((o) => [o.slug, o.channels]), [['acme', 2], ['globex', 1]]);
+    // Adobe's, on no team, read it all, as the ops teams do.
     r = await call(e, staff, '/api/customers/profile?org=acme');
     assert.equal(r.status, 200);
     assert.equal(r.body.people.length, 3);
-    assert.equal(r.body.people[0].profile, null);
-    assert.deepEqual(r.body.kb.types, [{ type: 'Contact', n: 2, entries: [] }, { type: 'Site', n: 1, entries: [] }]);
-    assert.equal(r.body.kb.readable, false);
-    assert.equal(r.body.kb.drawing, false);
-    // Without the drawing's parts: what Clef sees only.
-    assert.deepEqual(r.body.tech.map((t) => t.tech), ['fastly', 'forms']);
-    assert.deepEqual(r.body.may, { read: false });
+    assert.equal(r.body.people[0].profile.path, 'contacts/sam-reyes.md');
+    assert.equal(r.body.kb.readable, true);
+    assert.equal(r.body.tech.length, 4);
+    assert.deepEqual(r.body.may, { read: true });
     // A member of a team it has a channel of reads it all.
     r = await call(e, as(DEE), '/api/customers/profile?org=acme');
     assert.equal(r.body.kb.readable, true);

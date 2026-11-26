@@ -325,11 +325,13 @@ describe('admin: team managers', () => {
     assert.equal((await as(e, me, 'GET', '/api/kb/channels?repo=kb-team-edge')).status, 200);
     assert.equal((await as(e, me, 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);
     assert.equal((await as(e, asMe(ADA), 'GET', '/api/kb')).body.bases.length, 3);
-    // A member of edge reads the teams', and writes the files of edge's (not its instructions).
+    // A member of edge reads them all, customers' too, and writes the files of edge's (not its
+    // instructions), not acme's, which edge does not own.
     const cy = await as(e, asMe(CY), 'GET', '/api/kb');
-    assert.deepEqual(cy.body.bases.map((b) => [b.repo, b.may, b.write]), [['kb-team-edge', false, true], ['kb-team-helix', false, false]]);
+    assert.deepEqual(cy.body.bases.map((b) => [b.repo, b.may, b.write]), [['kb-team-edge', false, true], ['kb-team-helix', false, false], ['kb-org-acme', false, false]]);
     assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/channels?repo=kb-team-helix')).status, 200);
-    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/files?repo=kb-org-acme')).status, 404);
+    assert.equal((await as(e, asMe(CY), 'GET', '/api/kb/channels?repo=kb-org-acme')).status, 200);
+    assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-org-acme', path: 'a.md', content: 'x' })).status, 403);
     // Let through: what is left is the content (`x` is no concept), which the fake refuses.
     assert.notEqual((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'a.md', content: 'x' })).status, 403);
     assert.equal((await as(e, asMe(CY), 'PUT', '/api/kb/file', { repo: 'kb-team-edge', path: 'systemprompt.md', content: 'x' })).status, 403);

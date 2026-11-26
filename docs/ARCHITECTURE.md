@@ -857,8 +857,8 @@ the page draws, from `-Tjson0`: the layout without dot's drawing instructions, w
 does not read, a third of `-Tjson`'s size; dot's output crosses the kernel's pipe, and its size,
 not the layout, is what a large diagram's time goes to). A write is checked with `-Tplain`. It is deployed before the inbox Worker, which binds it; until its image is in
 the bucket, or when it fails, writes are checked by src/dot.js alone and the editor draws in the
-page (`/inbox/fmc.js`). The editor asks it first (`POST /api/diagram`, for the members of a
-team), so the editor needs no Graphviz of its own where it is deployed; a diagram the renderer
+page (`/inbox/fmc.js`). The editor asks it first (`POST /api/diagram`, for every internal user,
+who reads the knowledge bases), so the editor needs no Graphviz of its own where it is deployed; a diagram the renderer
 cannot lay out in its ten seconds is answered 503, and the page draws it itself. dot is in the agents'
 Base image too, for laying out a diagram in the shell before writing it.
 
@@ -936,10 +936,11 @@ at the knowledge base talks to its agent (see "The knowledge base's sidebar", un
 team managers for the knowledge bases of their teams and of the customers their teams own,
 change them there. The files of a knowledge base but `systemprompt.md` and its Clef areas (`areas/`) are everyone's on its team (`pathOwner`, src/agent/kbwrite.js, which takes a path only as it is: `./systemprompt.md` is refused)
 (`mayWrite`, `write` on each knowledge base of `GET /api/kb`): a team's members write their team's,
-and the members of the teams that own a customer the customer's. The members of every ops team see every team's agent there read-only (its
+and the members of the teams that own a customer the customer's. Every internal user (src/kbaccess.js `isInternal`: the members of every ops team, and Adobe's people on none) sees every team's agent there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
-says per knowledge base whether they may change it, `may`), as every thread agent reads them,
-and the customers' their teams own the same way. A team owns the customers with a channel filed under it or shared with it
+says per knowledge base whether they may change it, `may`, and write its files, `write`), as every thread agent reads them,
+and every customer's the same way: whoever sees a team's or a customer's page reads its knowledge base and
+talks to its agent, on a team that owns it or on none. Someone signed in from `SIGNIN_DOMAINS` who is not Adobe's sees none. A team owns the customers with a channel filed under it or shared with it
 (`threads.team`, `channel_teams`; ignored channels aside), so ownership follows the channels
 when they are re-filed or shared; src/kbaccess.js says who looks and who changes. What the
 members change is only their
@@ -2901,8 +2902,8 @@ left empty), which has no kb-org at all, and only the chosen knowledge base is c
 is missing.
 
 **The knowledge base's sidebar.** On a team's page in Teams and a customer's in Customers, whoever
-may look at its knowledge base (src/kbaccess.js `mayRead`: every ops team's members for a team's,
-the members of the teams that own the customer for a customer's, the admin team for all) talks to
+may look at its knowledge base (src/kbaccess.js `mayRead`: every internal user, on an ops team or
+not, for a team's and a customer's alike, so whoever sees the page has its panel) talks to
 its knowledge-base agent, to ask what it knows and to have it changed: a panel beside every section
 of the page (ui/kbchat.js, the global `KbChat`, in `ui/spectrum-kbchat.css`), beside the page where
 three columns fit, over it where they do not. Its tab is the inbox's sidebar's: purple, on the right
@@ -2923,9 +2924,17 @@ waits (`GET /api/kb/chat`, which also says what the agent is doing, `POST /api/k
 
 **Who changes it.** Everyone on its team (`mayWrite`: a team's members, the owning teams' members
 for a customer's, and the admin team) has the agent change the knowledge base and run commands;
-for anyone else, the agent answers but refuses to: each message tells it which (`write`, kept with
+for anyone else (another team's members, on a team's page or on a customer's their teams do not
+own, and Adobe's people on no team), the agent answers but refuses to: each message tells it which (`write`, kept with
 the session as of the latest message, `chat-of:<session>`), and `kb_write`, `draw_stack`, `bash`,
 `request_bash` and the extraction rules' and tech stack's saves and deletes check it at every call.
+
+**Who reads through it.** What the agent reads there (below: every thread of the inbox, every
+knowledge base) it reads for whoever talks to it, whatever they see in the inbox themselves:
+another team's members, and Adobe's people on no team, whose inbox is their personal view. That is
+on purpose: whoever sees a team's or a customer's page may ask its agent what the inbox knows, and
+only the agent's changes depend on who asks (`write`). Someone signed in from `SIGNIN_DOMAINS` who
+is not Adobe's has no page and no conversation (`isInternal`, src/kbaccess.js).
 
 **What it has there**, and only there (the tools refuse in the agent's other sessions, a seed's or
 a dream's, and are not in their prompt):

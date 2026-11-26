@@ -331,6 +331,14 @@ const SEED = {
   },
   'kb-org-globex': { name: 'globex', kind: 'org', files: {} },
   'kb-org-umbrella': { name: 'umbrella', kind: 'org', files: {} },
+  // Forms ops' customer alone: Dana reads it, and its agent changes nothing for her.
+  'kb-org-massive': {
+    name: 'massive',
+    kind: 'org',
+    files: {
+      'sites/surveys.md': '---\ntype: Site\ntitle: surveys\ndescription: Their survey forms, on AEM Forms.\n---\n\nUploads up to 10 MB since the limit was raised.\n',
+    },
+  },
 };
 
 export async function createKnowledgeBases() {

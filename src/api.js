@@ -13,6 +13,7 @@
 import { accessEmail } from './access.js';
 import { admin, followOrg, STAFF_ROUTES } from './admin.js';
 import { changeFollow, followState } from './following.js';
+import { isInternal } from './kbaccess.js';
 import { kbAdmin } from './kbadmin.js';
 import { personInKb } from './kbpeople.js';
 import {
@@ -300,12 +301,8 @@ export async function viewer(request, env, options) {
 /** What `me` follows and mutes, and what their teams follow (src/following.js). */
 const followsOf = (env, me) => followState(env, me);
 
-/**
- * Whether the viewer is internal: a member of an ops team, or staff signed in on none (from
- * SIGNIN_DOMAINS). Not someone signed in from a SIGNIN_DOMAINS domain that is not Adobe's.
- */
-const internal = (env, me) => (me.teams || []).length > 0
-  || Boolean(me.staff) || isStaffDomain(env, me.email);
+/** Whether the viewer is internal (src/kbaccess.js `isInternal`): who sees every page. */
+const internal = isInternal;
 
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
 const inTeam = (me, teams) => memberOf(me)(teams);
@@ -1583,10 +1580,11 @@ async function route(request, env, url, {
     }
     return res;
   }
-  // A diagram drawn on the server (src/diagrams.js), for the members of a team.
+  // A diagram drawn on the server (src/diagrams.js), for whoever reads the knowledge bases its
+  // `.dot` files are in: every internal user (src/kbaccess.js `mayRead`).
   if (url.pathname === '/api/diagram' && request.method === 'POST') {
-    if (!isAdmin(me) && !(me.teams || []).length) {
-      return json({ error: 'for the members of a team' }, 403);
+    if (!internal(env, me)) {
+      return json({ error: 'for Adobe\'s people' }, 403);
     }
     return drawDiagram(env, await request.json().catch(() => ({})));
   }

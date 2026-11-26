@@ -269,8 +269,11 @@ describe('GET /api/kb/stack', () => {
     const broken = await (await call(env, ADMIN, '/api/kb/stack?org=initech')).json();
     assert.equal(broken.drawing, null);
     assert.match(broken.error, /"## Parts" heading/);
-    // Nobody else's, and no customer without a knowledge base.
-    assert.equal((await call(env, OUTSIDER, '/api/kb/stack?org=acme')).status, 404);
+    // Everyone on a team's, which they do not change; nobody else's, and no customer without a
+    // knowledge base.
+    const theirs = await (await call(env, OUTSIDER, '/api/kb/stack?org=acme')).json();
+    assert.deepEqual([theirs.repo, theirs.may], ['kb-org-acme', false]);
+    assert.equal((await call(env, { ...OUTSIDER, teams: [] }, '/api/kb/stack?org=acme')).status, 404);
     assert.equal((await call(env, ADMIN, '/api/kb/stack?org=nope')).status, 404);
     assert.equal((await call(env, ADMIN, '/api/kb/stack?org=_unassigned')).status, 404);
   });

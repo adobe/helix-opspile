@@ -171,7 +171,9 @@ if (NO_TEAM) {
   store.me = { ...store.me, teams: [] };
 }
 const kb = await createKnowledgeBases();
-const adminApi = createAdmin(store, { manager: MANAGER, member: MEMBER, bases: kb.list() });
+const adminApi = createAdmin(store, {
+  manager: MANAGER, member: MEMBER, noTeam: NO_TEAM, bases: kb.list(),
+});
 /** Compiles a team's catalog into the admin pages' D1, as a write of it does (src/catalog.js). */
 const compileKb = async (repo) => {
   const b = kb.list().find((x) => x.repo === repo);
@@ -1625,7 +1627,7 @@ async function kbApi(req, res, url) {
     return (await list.json()).bases.find((b) => b.repo === repo);
   };
   const open = ['/api/kb/file', '/api/kb/chat', '/api/kb/chat/bash'].includes(url.pathname);
-  if (MEMBER && req.method !== 'GET' && !open) {
+  if ((MEMBER || NO_TEAM) && req.method !== 'GET' && !open) {
     return json(res, { error: 'changing the agents is for the admin team and team managers' }, 403);
   }
   const body = req.method === 'GET' ? {} : await readJson(req);

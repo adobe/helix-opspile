@@ -215,8 +215,10 @@ describe('agent tools', () => {
     // helix owns acme: its managers see acme's tools too.
     res = await call(e, manager, 'GET', '/api/kb/tools?repo=kb-org-acme');
     assert.equal(res.status, 200);
+    // And everyone on a team a customer's, as they see its page (its channels' switches stay
+    // its owners', above).
     res = await call(e, outsider, 'GET', '/api/kb/tools?repo=kb-org-acme');
-    assert.equal(res.status, 404);
+    assert.equal(res.status, 200);
 
     await call(e, manager, 'PUT', '/api/kb/tools', { tool: 'post_message', channel: 'C1', enabled: true });
     res = await call(e, manager, 'GET', '/api/kb/tools?repo=kb-team-helix');

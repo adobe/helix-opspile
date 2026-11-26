@@ -213,7 +213,7 @@ describe('a team\'s overview', () => {
     assert.equal(p.kb.stack, true);
   });
 
-  it('is everyone\'s at Adobe; the entries\' titles are for the ops teams', async () => {
+  it('is everyone\'s at Adobe, its knowledge base\'s entries too', async () => {
     const e = seed();
     const outsider = {
       id: 9, email: 'x@partner.example', name: 'X', teams: [],
@@ -226,11 +226,10 @@ describe('a team\'s overview', () => {
     r = await call(e, staff, '/api/teams/profile?team=edge');
     assert.equal(r.status, 200);
     assert.equal(r.body.members.length, 3);
-    assert.deepEqual(r.body.kb.types.map((t) => [t.type, t.n, t.entries.length]), [['Known Issue', 2, 0], ['Contact', 1, 0], ['Playbook', 1, 0]]);
-    // The members' profiles are the knowledge base's too.
-    assert.ok(r.body.members.every((m) => m.profile === null));
-    assert.equal(r.body.kb.readable, false);
-    assert.equal(r.body.kb.stack, false);
+    // Adobe's, on no team, read its entries and its members' profiles, as the ops teams do.
+    assert.deepEqual(r.body.kb.types[0].entries.map((x) => x.title), ['Purge is slow', 'Sign-in loop']);
+    assert.equal(r.body.members[0].profile.description, 'Runs the CDN setups.');
+    assert.equal(r.body.kb.readable, true);
     assert.deepEqual(r.body.may, { manage: false });
     // A member of another team reads the entries; the team's manager manages it.
     r = await call(e, as(DEE), '/api/teams/profile?team=edge');
