@@ -101,6 +101,10 @@ const FIELD_LABEL = {
 const UNASSIGNED = '_unassigned';
 /** From this probability on, Clef says an icon is the org's (src/favicons.js). */
 const FITS = 0.5;
+/** An icon suggestion as tall as one, unseen: the suggestions keep their height while they load,
+    and when there are none, so that what is under them does not move. */
+const ICON_GHOST = `<button type="button" class="iconpick ghost" tabindex="-1" aria-hidden="true" disabled>
+  <span class="ph"></span><span class="host">&nbsp;</span><span class="sub">&nbsp;</span></button>`;
 
 async function send(path, method, body) {
   const res = await fetch(path, {
@@ -3043,7 +3047,7 @@ async function showOrg(slug) {
       <label for="oName">Display name</label><span class="inline"><input id="oName" class="fill" value="${esc(org.name || '')}"></span>
       <label>Type</label><span class="seg" id="oType">${types.map((t) => `<button type="button" data-type="${t}" aria-pressed="${org.type === t}">${t}</button>`).join('')}</span>
       <label for="oIcon">Icon</label><span class="inline"><input id="oIcon" class="mono fill" value="${esc(org.icon || '')}"></span>
-      <label>Suggestions</label><div class="icons" id="oIcons"><span class="sub">Looking for icons…</span></div>
+      <label>Suggestions</label><div class="icons" id="oIcons"><span class="sub">Looking for icons…</span>${ICON_GHOST}</div>
     </div><p class="hint">Icon: a domain (uses the favicon) or an https image URL.${domain ? ` Defaults to the favicon of ${esc(domain)}.` : ''}</p></div>
     ${orgChannelsCard()}
     ${orgMergeCard(slug, merged)}
@@ -3104,7 +3108,7 @@ async function showOrg(slug) {
   };
   const drawIcons = () => {
     $('oIcons').innerHTML = `${found.map(tile).join('') || '<span class="sub">No icons found.</span>'}
-      <button type="button" class="again" id="oIconsAgain" title="Fetch the icons again">Look again</button>`;
+      <button type="button" class="again" id="oIconsAgain" title="Fetch the icons again">Look again</button>${ICON_GHOST}`;
     markIcons();
     for (const b of $('oIcons').querySelectorAll('[data-icon]')) {
       b.onclick = () => {
@@ -3119,7 +3123,7 @@ async function showOrg(slug) {
     const res = await call(`/api/admin/org-icons?slug=${encodeURIComponent(slug)}${fresh ? '&fresh=1' : ''}`);
     if (v !== state.view) return;
     if (!res.ok) {
-      $('oIcons').innerHTML = `<span class="sub">Could not look for icons: ${esc(res.body.error || res.status)}</span>`;
+      $('oIcons').innerHTML = `<span class="sub">Could not look for icons: ${esc(res.body.error || res.status)}</span>${ICON_GHOST}`;
       return;
     }
     found = res.body.icons || [];

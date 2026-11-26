@@ -533,6 +533,14 @@ function seedRuleConflicts(DB) {
     VALUES ('team', 50, NULL, 'name', '^aem-edge-', 'edge', 'Edge Delivery customers', 'priya@example.com', ?)`).run(at);
   db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
     VALUES ('team', 10, 'slack', 'channel_id', '^C0WONKAAEM$', 'edge', 'manual assignment', 'priya@example.com', ?)`).run(at);
+  // A rule naming orgs by a long alternation, as production has: a regular expression with no
+  // spaces, which has to break inside its table on a customer's Manage rather than widen it.
+  const products = ['sites', 'forms', 'assets', 'screens', 'commerce', 'headless', 'analytics', 'journeys',
+    'campaigns', 'workflows', 'dynamic\\-media', 'content\\-hub', 'edge\\-delivery', 'cloud\\-service',
+    'universal\\-editor', 'live\\-search', 'optimizer', 'genstudio', 'firefly', 'target', 'audience'];
+  db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
+    VALUES ('org', 90, NULL, 'name', ?, '$1', 'a product, then the customer', 'priya@example.com', ?)`)
+    .run(`^(?:${products.join('|')})\\-(.+?)\\-(?:alerts|support|ops)$`, at);
   const follow = db.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note, updated_by, updated_at)
     VALUES ('follow', 100, NULL, 'name', '^initech-', 'edge', 'their CDN questions', 'priya@example.com', ?)`).run(at);
   // Its shares, as src/followrules.js writes them.

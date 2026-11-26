@@ -1972,6 +1972,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
   border: 0;
   border-radius: var(--s2-pill);
 }
+/* All as tall as the agent's, which come later: the header does not grow when they do. */
+.spectrum .ph .l2 > :is(.hm, .experts) { min-height: var(--spectrum-component-height-75); }
 .spectrum :is(.experts .top, .ph .hmb, .ph .hm a.top) { border-radius: var(--s2-pill); }
 .spectrum :is(.experts, .ph .hm) .more { border-left: var(--spectrum-border-width-100) solid var(--spectrum-gray-300); border-radius: 0 var(--s2-pill) var(--s2-pill) 0; }
 .spectrum .ph .hm.split a.top { border-radius: var(--s2-pill) 0 0 var(--s2-pill); }
