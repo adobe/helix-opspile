@@ -3090,7 +3090,8 @@ where the deployment has `BROWSER_RUN_TOKEN` (*Browser Run Write*) and an accoun
   storage (`browser-session`), so the computer finds its tabs again after its object was
   evicted, while the session lives. A session that refuses a connection has ended (ten minutes
   after its last): the next one makes another, once. A new image (`changeImage`) ends it
-  (`DELETE`). What a command sets on its own CDP session (a viewport) ends with the command.
+  (`DELETE`), the one in storage too when the object was evicted since and has no host. What a
+  command sets on its own CDP session (a viewport) ends with the command.
 - **Kitesurf**, Browser Run's browser that runs on Workers without a container, is
   `playwright-cli --runtime kitesurf`: a browser for each connection, which keeps nothing.
   playwright-cli 2.1.20 refuses its pages yet ("target is on seven's origin").
