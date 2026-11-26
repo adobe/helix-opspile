@@ -13,7 +13,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { api } from '../src/api.js';
-import { batchable, batchedDatabase, overloaded } from '../src/d1batch.js';
+import {
+  batchable, batchedDatabase, overloaded, patientDatabase, underlying,
+} from '../src/d1batch.js';
+import { Meter } from '../src/cogs/meter.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
 
@@ -136,8 +139,11 @@ describe('d1 batch', () => {
 
   describe('when D1 is overloaded', () => {
     const BUSY = 'D1_ERROR: D1 DB is overloaded. Too many resources consumed within a 10 second window.';
-    /** `counting()`, whose first `n` calls (batch or one) D1 turns away as overloaded. */
-    function busy(n) {
+    /**
+     * `counting()`, whose first `n` calls (batch or one) D1 turns away as overloaded, in
+     * `wrapper` (`batchedDatabase`, `patientDatabase`).
+     */
+    function busy(n, wrapper = batchedDatabase) {
       const { DB, calls } = counting();
       let left = n;
       const turnAway = (fn) => (...a) => {
@@ -160,7 +166,7 @@ describe('d1 batch', () => {
         return wrap(prepare(sql));
       };
       const waits = [];
-      const db = batchedDatabase(DB, { pause: async (ms) => waits.push(ms) });
+      const db = wrapper(DB, { pause: async (ms) => waits.push(ms) });
       return { db, calls, waits };
     }
     const reads = (db) => Promise.allSettled([
@@ -205,6 +211,110 @@ describe('d1 batch', () => {
       await assert.rejects(write.db.prepare("UPDATE people SET name = 'X' WHERE id = 1").run(), /overloaded/);
       assert.deepEqual(write.waits, []);
       assert.deepEqual(write.calls.one, []);
+    });
+
+    describe('for the thread agents, without batches (patientDatabase)', () => {
+      const patient = (n) => busy(n, patientDatabase);
+
+      it('sends each query when it is asked, on its own, as the binding does', async () => {
+        const { db, calls } = patient(0);
+        const [name, n] = await reads(db);
+        assert.deepEqual([name.value, n.value], ['Ada', 2]);
+        assert.deepEqual(calls.batch, []);
+        assert.equal(calls.one.length, 2);
+      });
+
+      it('asks a read again once, after a moment, however it is asked', async () => {
+        for (const ask of [
+          (db) => db.prepare('SELECT name FROM people WHERE id = ?').bind(2).first('name'),
+          async (db) => (await db.prepare('SELECT name FROM people WHERE id = 2').all())
+            .results[0].name,
+          async (db) => (await db.prepare('SELECT name FROM people WHERE id = 2').run())
+            .results[0].name,
+        ]) {
+          const { db, calls, waits } = patient(1);
+          // eslint-disable-next-line no-await-in-loop
+          assert.equal(await ask(db), 'Bo');
+          assert.equal(calls.one.length, 1); // the one that ran
+          assert.equal(waits.length, 1);
+          assert.ok(waits[0] >= 500 && waits[0] <= 1500, `waited ${waits[0]} ms`);
+        }
+      });
+
+      it('fails with it when D1 is still overloaded, and at once with any other error', async () => {
+        const still = patient(2);
+        await assert.rejects(still.db.prepare('SELECT name FROM people').all(), overloaded);
+        assert.equal(still.waits.length, 1);
+        assert.deepEqual(still.calls.one, []);
+        const wrong = patient(0);
+        await assert.rejects(wrong.db.prepare('SELECT nope FROM people').all(), /nope/);
+        assert.deepEqual(wrong.waits, []);
+      });
+
+      it('never asks a write again, nor a batch with one', async () => {
+        const write = patient(1);
+        await assert.rejects(write.db.prepare("UPDATE people SET name = 'X' WHERE id = 1").run(), overloaded);
+        const both = patient(1);
+        await assert.rejects(both.db.batch([
+          both.db.prepare('SELECT name FROM people WHERE id = 1'),
+          both.db.prepare("UPDATE people SET name = 'X' WHERE id = 1"),
+        ]), overloaded);
+        for (const { waits, calls } of [write, both]) {
+          assert.deepEqual(waits, []);
+          assert.deepEqual([calls.one, calls.batch], [[], []]);
+        }
+      });
+
+      it('asks a batch of reads again once, with D1\'s own statements', async () => {
+        const { db, calls, waits } = patient(1);
+        const [a, b] = await db.batch([
+          db.prepare('SELECT name FROM people WHERE id = ?').bind(1),
+          db.prepare('SELECT COUNT(*) AS n FROM people'),
+        ]);
+        assert.deepEqual([a.results, b.results], [[{ name: 'Ada' }], [{ n: 2 }]]);
+        assert.equal(calls.batch.length, 1);
+        assert.equal(waits.length, 1);
+      });
+
+      it('asks a session\'s reads again too', async () => {
+        const { DB } = counting();
+        let turned = false;
+        const session = {
+          prepare: (sql) => {
+            const stmt = DB.prepare(sql);
+            return {
+              ...stmt,
+              first: (...c) => {
+                if (turned) {
+                  return stmt.first(...c);
+                }
+                turned = true;
+                return Promise.reject(new Error(BUSY));
+              },
+            };
+          },
+          batch: DB.batch,
+        };
+        const waits = [];
+        const db = patientDatabase({ ...DB, withSession: () => session }, {
+          pause: async (ms) => waits.push(ms),
+        });
+        const name = await db.withSession('first-primary').prepare('SELECT name FROM people WHERE id = 1').first('name');
+        assert.equal(name, 'Ada');
+        assert.equal(waits.length, 1);
+      });
+
+      it('keeps the binding under it, which what is kept by the database is keyed by', () => {
+        const { DB } = counting();
+        assert.equal(underlying(patientDatabase(DB)), DB);
+        assert.equal(underlying(patientDatabase(batchedDatabase(DB))), DB);
+        // In a Durable Object metered for COGS (src/cogs/meter.js): what the meter answers.
+        const metered = new Meter({ DB, USAGE: { writeDataPoint() {} } }).env({}).DB;
+        assert.equal(underlying(patientDatabase(metered)), underlying(metered));
+        const plain = { batch: () => null };
+        assert.equal(patientDatabase(plain), plain);
+        assert.equal(patientDatabase(undefined), undefined);
+      });
     });
 
     it('answers /api with 503 and Retry-After, not an exception', async () => {
