@@ -436,7 +436,9 @@ header .note { white-space: nowrap; }
 .spectrum .fld.grow { flex: 1; }
 .spectrum .fld > :is(input, select) { width: 100%; }
 /* SearchField: a field that filters or finds says so with the magnifier at its start, and
-   is named for assistive technology (aria-label); it has no visible label and no placeholder. */
+   is named for assistive technology (aria-label); it has no visible label and no placeholder.
+   Its input is always `type="search"`, which the rule names so that it outranks a page's
+   rule for every field (`.spectrum input:not(…)`, which sets the padding the magnifier needs). */
 .spectrum .s2-search { position: relative; display: block; min-width: 0; }
 .spectrum .s2-search::before {
   content: "";
@@ -450,7 +452,7 @@ header .note { white-space: nowrap; }
   mask: var(--s2-icon-search) center / contain no-repeat;
   pointer-events: none;
 }
-.spectrum .s2-search > input {
+.spectrum .s2-search > input[type="search"] {
   width: 100%;
   min-height: var(--s2-ctl);
   padding-inline: calc(var(--spectrum-component-edge-to-visual-100) + var(--spectrum-workflow-icon-size-75) + var(--spectrum-text-to-visual-100)) var(--spectrum-component-edge-to-text-100);

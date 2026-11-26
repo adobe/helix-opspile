@@ -166,11 +166,13 @@ dialog.ask .apply { display: flex; justify-content: flex-end; gap: var(--spectru
 
 /* The sections: the thread agents, the tools and MCP servers and the extraction rules are one
    column of the page's content area, which scrolls them; the knowledge base has its files
-   beside the editor, filling what the title and the tabs leave, each scrolling on its own. */
+   beside the editor, filling what the title and the tabs leave, each scrolling on its own; the
+   page scrolls only where that is less than a short editor (a phone on its side), not on a
+   laptop's screen. */
 :where(.agent) .note { white-space: normal; }
 :where(.agent) .fill { flex: 1; }
 .spectrum #detail:has(> .agent.kb) { display: flex; flex-direction: column; }
-.spectrum #detail > .agent.kb { flex: 1; min-height: calc(var(--spectrum-spacing-1000) * 5); max-width: none; display: grid;
+.spectrum #detail > .agent.kb { flex: 1; min-height: calc(var(--spectrum-spacing-1000) * 3); max-width: none; display: grid;
   grid-template-columns: calc(var(--spectrum-spacing-100) * 34) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 :where(.agent.kb) #files { overflow: auto; min-height: 0; }
 :where(.agent.kb) #editor { min-height: 0; }

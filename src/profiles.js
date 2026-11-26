@@ -11,6 +11,7 @@
  */
 
 import { isStaffDomain } from './lookup.js';
+import { partnerDomains } from './partners.js';
 
 /**
  * Profile cards: what the inbox knows about an author, keyed by their identity
@@ -20,7 +21,7 @@ import { isStaffDomain } from './lookup.js';
  *
  * Who someone is to us:
  * - `adobe`: staff (a person marked staff in D1, or a mail domain in STAFF_DOMAINS)
- * - `partner`: their mail domain (or a parent domain) is in `partner_domains`
+ * - `partner`: their mail domain (or a parent domain) is a partner's (src/partners.js)
  * - `customer`: any other person
  * - `bot`: a bot account
  *
@@ -29,13 +30,23 @@ import { isStaffDomain } from './lookup.js';
 
 const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
 
-/** The partner a mail domain belongs to, matching the domain or any parent domain. */
+/**
+ * The partner a mail domain belongs to, `{ domain, name, org }`, matching the domain or any
+ * parent domain: `partners` is src/partners.js `partnerDomains`, whose `null` (a domain that is
+ * not a partner's) ends the search there. A plain name instead of `{ name, org }` does too.
+ */
 export function partnerOf(domain, partners) {
   const parts = String(domain || '').toLowerCase().split('.');
   for (let i = 0; i < parts.length - 1; i += 1) {
     const d = parts.slice(i).join('.');
     if (partners.has(d)) {
-      return { domain: d, name: partners.get(d) || d };
+      const p = partners.get(d);
+      if (p === null) {
+        return null;
+      }
+      return typeof p === 'object'
+        ? { domain: d, name: p.name || d, org: p.org || null }
+        : { domain: d, name: p || d, org: null };
     }
   }
   return null;
@@ -67,7 +78,7 @@ export async function profiles(env, keys) {
     return {};
   }
   // The partner domains do not depend on who is asked about: ask D1 for both at once.
-  const [{ results: rows }, { results: partnerRows }] = await Promise.all([
+  const [{ results: rows }, partners] = await Promise.all([
     env.DB.prepare(`WITH k AS (
       SELECT json_extract(value, '$[0]') AS s, json_extract(value, '$[1]') AS t,
         json_extract(value, '$[2]') AS u FROM json_each(?))
@@ -77,7 +88,7 @@ export async function profiles(env, keys) {
       MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff
     FROM k JOIN identities i ON i.source = k.s AND i.tenant = k.t AND i.user_id = k.u
     LEFT JOIN people p ON p.id = i.person`).bind(JSON.stringify(wanted.map(splitKey))).all(),
-    env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
+    partnerDomains(env),
   ]);
   if (!rows || !rows.length) {
     return {};
@@ -87,8 +98,6 @@ export async function profiles(env, keys) {
       t.name FROM team_members m JOIN teams t ON t.slug = m.team
     WHERE m.person IN (SELECT value FROM json_each(?)) ORDER BY t.name`)
     .bind(JSON.stringify(persons)).all() : { results: [] };
-  const partners = new Map((partnerRows || [])
-    .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const teamsOf = new Map();
   for (const m of memberships || []) {
     teamsOf.set(m.person, [...(teamsOf.get(m.person) || []), m.name]);
@@ -182,7 +191,7 @@ export async function mentionedPeople(env, { source, tenant, threads }, texts) {
     return { kinds: {}, keys: {} };
   }
   const list = JSON.stringify(names);
-  const [{ results: accounts }, { results: people }, { results: partnerRows }] = await Promise.all([
+  const [{ results: accounts }, { results: people }, partners] = await Promise.all([
     env.DB.prepare(`SELECT i.kind, COALESCE(p.name, i.name) AS name, i.name AS handle,
         COALESCE(p.email, i.email) AS email,
         MAX(COALESCE(p.staff, 0), COALESCE(i.staff, 0)) AS staff,
@@ -203,10 +212,8 @@ export async function mentionedPeople(env, { source, tenant, threads }, texts) {
           ORDER BY i.user_id LIMIT 1) AS key
       FROM named`)
       .bind(list, JSON.stringify(threads || []), source, tenant).all(),
-    env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
+    partnerDomains(env),
   ]);
-  const partners = new Map((partnerRows || [])
-    .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const kinds = new Map();
   // By name: the account and the person it is of; null where the name is of more than one.
   const keys = new Map();

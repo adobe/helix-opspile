@@ -60,13 +60,13 @@ label.only { display: flex; align-items: center; }
 .iconpick .host { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .iconpick.weak { opacity: .55; }
 .iconpick[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 var(--spectrum-border-width-100) var(--accent) inset; opacity: 1; }
-.icons .again { align-self: center; }
+.icons .again, .icons > .sub { align-self: center; }
 .tag { white-space: nowrap; }
 .tag.partner { color: var(--purple); border-color: var(--purple); }
 
 
 
-.title { display: flex; align-items: center; }
+.title { display: flex; flex: none; align-items: center; }
 .title input.big { flex: 1; }
 .title input.big:hover, .title input.big:focus { border-color: var(--line); background: var(--card); }
 table { width: 100%; border-collapse: collapse; }
@@ -125,7 +125,9 @@ tr.left td { opacity: .55; }
 #requestsTable td.note { min-width: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-800)); }
 .preview { margin: 0 0 var(--spectrum-spacing-75); }
 .preview ul { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)) 0 0; }
-#membersTable, #rulesTable, #channelsTable, #requestsTable { overflow-x: auto; }
+/* Wide tables scroll sideways in their card, never the page: the box each is drawn into
+   (`…Table`, ui/admin.js). */
+.card > [id$="Table"] { overflow-x: auto; }
 
 /*
  * Narrower screens. Under 1100px the list gets narrower. Under 700px (phones, a folded iPhone
@@ -198,8 +200,9 @@ body main.instant :is(#list, #detail) { transition: none; }
    leading a card, a list's empty note, the new team's slug and a rule's priority. */
 .title h1 { margin: 0; }
 /* The sections of a team's or a customer's page (ui/admin.js, "sections"): tabs under its title,
-   in one line that scrolls sideways where it is too long. */
-.sections { display: flex; align-items: stretch; overflow-x: auto; scrollbar-width: none; }
+   in one line that scrolls sideways where it is too long. Never shorter than the tabs, where the
+   section fills the page's height (a knowledge base): it would scroll them up and down too. */
+.sections { display: flex; flex: none; align-items: stretch; overflow-x: auto; scrollbar-width: none; }
 .sections a { display: inline-flex; flex: none; align-items: center; text-decoration: none; white-space: nowrap; }
 .fill { flex: 1; }
 .inline { display: flex; gap: var(--spectrum-spacing-100); align-items: center; }
@@ -402,6 +405,21 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum #detail :is(th, td):last-child { padding-inline-end: 0; }
 .spectrum #detail td:last-child:has(> button.link) { text-align: end; white-space: nowrap; }
 .spectrum #detail td:last-child > button.link:last-child { margin-inline-end: calc(-1 * var(--spectrum-component-edge-to-text-75)); }
+/* The box a table scrolls sideways in reaches out as far as that button does, so that the button
+   alone scrolls nothing. */
+.spectrum #detail :is(.card > [id$="Table"], #suggestTable) {
+  margin-inline-end: calc(-1 * var(--spectrum-component-edge-to-text-75));
+  padding-inline-end: var(--spectrum-component-edge-to-text-75);
+}
+@media (max-width: 699px) {
+  .spectrum #detail .card > table {
+    margin-inline-end: calc(-1 * var(--spectrum-component-edge-to-text-75));
+    padding-inline-end: var(--spectrum-component-edge-to-text-75);
+  }
+}
+/* A rule's pattern breaks anywhere rather than widen its table past its card: a regular
+   expression has no spaces to break at. */
+.spectrum td code { overflow-wrap: anywhere; }
 .spectrum td div.sub { display: block; margin-top: var(--spectrum-spacing-50); }
 .spectrum .person .sub { margin: 0; }
 .spectrum tr:last-child td { border-bottom: 0; }
@@ -486,6 +504,14 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .status.warn::before { background: var(--spectrum-notice-visual-color); }
 .spectrum .status.err { color: var(--spectrum-negative-content-color-default); }
 .spectrum .status.err::before { background: var(--spectrum-negative-visual-color); }
+/* A section's status sits in the gap under its tabs: every section's content starts where the
+   others' does, whether it has a status line or not. */
+.spectrum .sections + .status {
+  align-items: center;
+  min-height: var(--spectrum-spacing-400);
+  margin: calc(-1 * var(--spectrum-spacing-400)) 0 0;
+}
+.spectrum .sections + .status::before { translate: none; }
 .spectrum .newpop .status { margin: 0 var(--spectrum-component-edge-to-text-100); }
 .spectrum .preview .status { display: inline-flex; margin: 0; }
 .spectrum .preview ul { margin-top: var(--spectrum-spacing-100); padding-left: var(--spectrum-spacing-400); }
@@ -553,7 +579,9 @@ body main.instant :is(#list, #detail) { transition: none; }
   border-radius: var(--spectrum-corner-radius-large-default);
 }
 .spectrum .iconpick:hover:not(:disabled) { color: var(--spectrum-neutral-content-color-hover); background: var(--spectrum-gray-200); }
-.spectrum .iconpick img { width: var(--spectrum-component-height-100); height: var(--spectrum-component-height-100); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .iconpick :is(img, .ph) { width: var(--spectrum-component-height-100); height: var(--spectrum-component-height-100); border-radius: var(--spectrum-corner-radius-75); }
+/* The unseen suggestion (ICON_GHOST in ui/admin.js) holds the row's height and takes no width. */
+.spectrum .iconpick.ghost { visibility: hidden; width: 0px; margin-inline-start: calc(-1 * var(--spectrum-spacing-100)); padding-inline: 0px; border-inline-width: 0px; overflow: hidden; }
 .spectrum .iconpick .host { font-size: var(--spectrum-font-size-75); }
 .spectrum .iconpick[aria-pressed="true"], .spectrum .iconpick[aria-pressed="true"]:hover:not(:disabled) {
   color: var(--spectrum-neutral-content-color-default);

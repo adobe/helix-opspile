@@ -15,7 +15,8 @@
  * of ACME, after Platform ops' (dev-ui-team.mjs). Its people (Sam, four more, and Ravi of a
  * partner) start most of them, each about their own areas and technologies, and Adobe's people
  * of three teams answer, some at once and some a day later; a few threads Adobe starts. Their
- * pictures and titles too, and the partner's domain. Made up.
+ * pictures and titles too; the partner's domain is found from its own threads (dev-ui-admin.mjs
+ * `seedPartners`). Made up.
  */
 
 const WEEKS = 26;
@@ -89,7 +90,6 @@ export function seedCustomerProfile(DB, now = Date.now()) {
   if (!channels.length) {
     return;
   }
-  db.prepare('INSERT OR IGNORE INTO partner_domains (domain, name) VALUES (\'agency.example\', \'Agency Co\')').run();
   const identity = db.prepare(`INSERT OR REPLACE INTO identities (source, tenant, user_id, kind, name,
       email, person, fetched_at, avatar, title) VALUES ('slack', 'T-FAKE', ?, 'person', ?, ?, ?, ?, ?, ?)`);
   for (const p of THEIRS) {

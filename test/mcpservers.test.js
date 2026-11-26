@@ -162,7 +162,9 @@ describe('MCP servers in the knowledge-base editor', () => {
     const made = await call(e, admin, 'POST', '/api/kb/mcp', org);
     assert.equal(made.status, 200);
     assert.equal(made.body.server.repo, 'kb-org-acme');
-    assert.equal((await call(e, manager, 'GET', '/api/kb/mcp?repo=kb-org-acme')).status, 404);
+    // Which they read, as everyone on a team does, without changing it.
+    const read = await call(e, manager, 'GET', '/api/kb/mcp?repo=kb-org-acme');
+    assert.deepEqual([read.status, read.body.may], [200, false]);
     assert.equal((await call(e, manager, 'DELETE', '/api/kb/mcp', { id: made.body.server.id })).status, 404);
     assert.equal((await call(e, admin, 'POST', '/api/kb/mcp/check', { id: made.body.server.id })).body.server.tools.length, 1);
   });

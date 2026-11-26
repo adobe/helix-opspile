@@ -13,6 +13,7 @@
 import { accessEmail } from './access.js';
 import { admin, followOrg, STAFF_ROUTES } from './admin.js';
 import { changeFollow, followState } from './following.js';
+import { isInternal } from './kbaccess.js';
 import { kbAdmin } from './kbadmin.js';
 import { personInKb } from './kbpeople.js';
 import {
@@ -58,6 +59,7 @@ import {
 } from './fileview.js';
 import { isSharePointUrl, keptTeamsFile } from './teamsfiles.js';
 import { mentionedPeople, profiles, relationOf } from './profiles.js';
+import { partnerDomains } from './partners.js';
 import { channelLinks, channelRefs, nameChannelIds } from './channelrefs.js';
 import { slackMessageLinks } from './slacklinks.js';
 import { json, text } from './http.js';
@@ -115,16 +117,20 @@ const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop
 
 /**
  * A message's author as its account says now (`account`: the message's row, with its
- * identity's `account_kind`, `ours`, `account_staff`, `account_email`, `display_name` and
- * `linked_at`, and its person's `account_person_staff` and `account_person_name`), since the
- * frontmatter says what was so when it was written:
+ * identity's `account_kind`, `ours`, `account_staff`, `account_email`, `account_name`,
+ * `display_name` and `linked_at`, and its person's `account_person_staff` and
+ * `account_person_name`), since the frontmatter says what was so when it was written:
  *
  * - a bot an admin says is Adobe's, or takes it back (in its thread of the admin team's inbox),
  *   moves to that side, and the name an admin gives it goes on its messages too. A bot nobody
  *   decided on (`ours` NULL) keeps its frontmatter's side.
  * - a person's account that is staff now and was not then (one of the host tenant's admin
- *   accounts, src/lookup.js `isHostAdmin`) is Adobe's, and one the admin team linked to the
- *   Adobe person who uses it (src/accountlinks.js) goes by that person's name.
+ *   accounts, src/lookup.js `isHostAdmin`) is Adobe's.
+ * - an account whose person no mail address says (staff by itself: a host tenant's admin account,
+ *   a Discord account with a staff role; or one the admin team linked, src/accountlinks.js) goes
+ *   by the name `toAuthor` gives it now: its person's while it has one (linked to the Adobe
+ *   person who uses it, or connected by them on Discord), else its own, so taking the link back
+ *   gives its messages their account's name again. Everyone else's name is the frontmatter's.
  */
 export function accountAuthor(env, author, account) {
   if (!author || !account) {
@@ -133,11 +139,13 @@ export function accountAuthor(env, author, account) {
   if (author.kind === 'person' && account.account_kind === 'person') {
     const now = toAuthor(env, {
       kind: 'person',
+      name: account.account_name,
       staff: account.account_staff,
       person_staff: account.account_person_staff,
+      person_name: account.account_person_name,
       email: account.account_email,
     });
-    const name = account.linked_at && account.account_person_name;
+    const name = (account.account_staff || account.linked_at) && now.name;
     if (!(now.staff && !author.staff) && !(name && name !== author.name)) {
       return author;
     }
@@ -300,12 +308,8 @@ export async function viewer(request, env, options) {
 /** What `me` follows and mutes, and what their teams follow (src/following.js). */
 const followsOf = (env, me) => followState(env, me);
 
-/**
- * Whether the viewer is internal: a member of an ops team, or staff signed in on none (from
- * SIGNIN_DOMAINS). Not someone signed in from a SIGNIN_DOMAINS domain that is not Adobe's.
- */
-const internal = (env, me) => (me.teams || []).length > 0
-  || Boolean(me.staff) || isStaffDomain(env, me.email);
+/** Whether the viewer is internal (src/kbaccess.js `isInternal`): who sees every page. */
+const internal = isInternal;
 
 /** Whether the viewer is in a team, or in one of a list of them (a shared channel's). */
 const inTeam = (me, teams) => memberOf(me)(teams);
@@ -575,7 +579,7 @@ export async function inbox(env, me, team, {
   const [
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, { results: names },
-    drafts, { results: teamRows }, teamMembers, orgs, { results: partnerRows },
+    drafts, { results: teamRows }, teamMembers, orgs, partners,
     { results: techRows }, stacks, techVocab, elsewhere, yours, unseen, agentLabels, standing,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
@@ -625,7 +629,7 @@ export async function inbox(env, me, team, {
     teamRowsP,
     membersP,
     orgsOf(env, threads.map((t) => t.org)),
-    env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
+    partnerDomains(env),
     // What each thread shows (thread_tech, its own label), for the tech facet.
     env.DB.prepare(`SELECT thread, tech, p FROM thread_tech
       WHERE thread IN (SELECT value FROM json_each(?)) AND p >= ? ORDER BY p DESC`)
@@ -669,8 +673,6 @@ export async function inbox(env, me, team, {
   ]));
   // The viewer's teams.
   // Adobe, partner or customer (the UI tells vendors by their org); emails stay here.
-  const partners = new Map((partnerRows || [])
-    .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const myTeams = {};
   for (const r of teamRows || []) {
     myTeams[r.team] = myTeams[r.team] || { name: r.name, members: [] };
@@ -909,7 +911,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     env.DB.prepare(`SELECT m.thread, m.id, m.source || ':' || m.tenant
         || ':' || m.channel_id || ':' || m.id AS mkey, COALESCE(i.display_avatar, i.avatar) AS avatar,
         m.author_key, m.person = ? AS mine, i.kind AS account_kind, i.ours, i.display_name,
-        i.staff AS account_staff, i.email AS account_email, i.linked_at,
+        i.staff AS account_staff, i.email AS account_email, i.name AS account_name, i.linked_at,
         ap.staff AS account_person_staff, ap.name AS account_person_name
       FROM messages m ${identityJoin} LEFT JOIN people ap ON ap.id = i.person
       WHERE m.thread IN (SELECT value FROM json_each(?))`)
@@ -1583,10 +1585,11 @@ async function route(request, env, url, {
     }
     return res;
   }
-  // A diagram drawn on the server (src/diagrams.js), for the members of a team.
+  // A diagram drawn on the server (src/diagrams.js), for whoever reads the knowledge bases its
+  // `.dot` files are in: every internal user (src/kbaccess.js `mayRead`).
   if (url.pathname === '/api/diagram' && request.method === 'POST') {
-    if (!isAdmin(me) && !(me.teams || []).length) {
-      return json({ error: 'for the members of a team' }, 403);
+    if (!internal(env, me)) {
+      return json({ error: 'for Adobe\'s people' }, 403);
     }
     return drawDiagram(env, await request.json().catch(() => ({})));
   }

@@ -35,10 +35,23 @@ describe('relationOf', () => {
   });
 
   it('matches partner domains and their subdomains only', () => {
-    assert.deepEqual(partnerOf('eu.agency.example', partners), { domain: 'agency.example', name: 'Agency' });
+    assert.deepEqual(partnerOf('eu.agency.example', partners), { domain: 'agency.example', name: 'Agency', org: null });
     assert.equal(partnerOf('notagency.example', partners), null);
     assert.equal(partnerOf('example', partners), null);
     assert.equal(partnerOf(null, partners), null);
+  });
+
+  it('stops at a domain that is not a partner\'s, and gives a partner org', () => {
+    const found = new Map([
+      ['agency.example', { name: 'Agency', org: 'agency' }],
+      ['eu.agency.example', null],
+      ['dev.eu.agency.example', { name: 'Agency Dev', org: null }],
+    ]);
+    assert.deepEqual(partnerOf('agency.example', found), { domain: 'agency.example', name: 'Agency', org: 'agency' });
+    assert.equal(partnerOf('eu.agency.example', found), null);
+    assert.equal(partnerOf('mail.eu.agency.example', found), null);
+    assert.deepEqual(partnerOf('dev.eu.agency.example', found), { domain: 'dev.eu.agency.example', name: 'Agency Dev', org: null });
+    assert.equal(relationOf(env, { kind: 'person', email: 'p@eu.agency.example' }, found), 'customer');
   });
 });
 

@@ -302,7 +302,11 @@ person"). Its messages in D1 follow at once (`relabelAccount`: `messages.person`
 `author`, and the threads' `last_staff` and `last_author`), and so do the ones written before in
 the thread view (`accountAuthor`). Only an account that is staff by itself and that no mail
 address links is linked, and only to a staff person, so no customer's account becomes Adobe's.
-Looking the account up again keeps the link; giving no address takes it back.
+Looking the account up again keeps the link; giving no address takes it back. The thread view
+names every account that is staff by itself (these, and a Discord account with a staff role) as
+`toAuthor` does now, whatever its frontmatter says: its person's name while it has one (linked
+here, or connected by them on Discord), else its own, so what it wrote while linked goes by the
+account's name again once the link is taken back.
 
 **A customer's people with two accounts.** The customers' people are no person of D1, so the
 customers' overviews and the topic map count them by account. The accounts of one mail address
@@ -857,8 +861,8 @@ the page draws, from `-Tjson0`: the layout without dot's drawing instructions, w
 does not read, a third of `-Tjson`'s size; dot's output crosses the kernel's pipe, and its size,
 not the layout, is what a large diagram's time goes to). A write is checked with `-Tplain`. It is deployed before the inbox Worker, which binds it; until its image is in
 the bucket, or when it fails, writes are checked by src/dot.js alone and the editor draws in the
-page (`/inbox/fmc.js`). The editor asks it first (`POST /api/diagram`, for the members of a
-team), so the editor needs no Graphviz of its own where it is deployed; a diagram the renderer
+page (`/inbox/fmc.js`). The editor asks it first (`POST /api/diagram`, for every internal user,
+who reads the knowledge bases), so the editor needs no Graphviz of its own where it is deployed; a diagram the renderer
 cannot lay out in its ten seconds is answered 503, and the page draws it itself. dot is in the agents'
 Base image too, for laying out a diagram in the shell before writing it.
 
@@ -936,10 +940,11 @@ at the knowledge base talks to its agent (see "The knowledge base's sidebar", un
 team managers for the knowledge bases of their teams and of the customers their teams own,
 change them there. The files of a knowledge base but `systemprompt.md` and its Clef areas (`areas/`) are everyone's on its team (`pathOwner`, src/agent/kbwrite.js, which takes a path only as it is: `./systemprompt.md` is refused)
 (`mayWrite`, `write` on each knowledge base of `GET /api/kb`): a team's members write their team's,
-and the members of the teams that own a customer the customer's. The members of every ops team see every team's agent there read-only (its
+and the members of the teams that own a customer the customer's. Every internal user (src/kbaccess.js `isInternal`: the members of every ops team, and Adobe's people on none) sees every team's agent there read-only (its
 files, history, thread agents, tools and MCP servers: the API answers them `GET`s only, and
-says per knowledge base whether they may change it, `may`), as every thread agent reads them,
-and the customers' their teams own the same way. A team owns the customers with a channel filed under it or shared with it
+says per knowledge base whether they may change it, `may`, and write its files, `write`), as every thread agent reads them,
+and every customer's the same way: whoever sees a team's or a customer's page reads its knowledge base and
+talks to its agent, on a team that owns it or on none. Someone signed in from `SIGNIN_DOMAINS` who is not Adobe's sees none. A team owns the customers with a channel filed under it or shared with it
 (`threads.team`, `channel_teams`; ignored channels aside), so ownership follows the channels
 when they are re-filed or shared; src/kbaccess.js says who looks and who changes. What the
 members change is only their
@@ -2901,8 +2906,8 @@ left empty), which has no kb-org at all, and only the chosen knowledge base is c
 is missing.
 
 **The knowledge base's sidebar.** On a team's page in Teams and a customer's in Customers, whoever
-may look at its knowledge base (src/kbaccess.js `mayRead`: every ops team's members for a team's,
-the members of the teams that own the customer for a customer's, the admin team for all) talks to
+may look at its knowledge base (src/kbaccess.js `mayRead`: every internal user, on an ops team or
+not, for a team's and a customer's alike, so whoever sees the page has its panel) talks to
 its knowledge-base agent, to ask what it knows and to have it changed: a panel beside every section
 of the page (ui/kbchat.js, the global `KbChat`, in `ui/spectrum-kbchat.css`), beside the page where
 three columns fit, over it where they do not. Its tab is the inbox's sidebar's: purple, on the right
@@ -2923,9 +2928,17 @@ waits (`GET /api/kb/chat`, which also says what the agent is doing, `POST /api/k
 
 **Who changes it.** Everyone on its team (`mayWrite`: a team's members, the owning teams' members
 for a customer's, and the admin team) has the agent change the knowledge base and run commands;
-for anyone else, the agent answers but refuses to: each message tells it which (`write`, kept with
+for anyone else (another team's members, on a team's page or on a customer's their teams do not
+own, and Adobe's people on no team), the agent answers but refuses to: each message tells it which (`write`, kept with
 the session as of the latest message, `chat-of:<session>`), and `kb_write`, `draw_stack`, `bash`,
 `request_bash` and the extraction rules' and tech stack's saves and deletes check it at every call.
+
+**Who reads through it.** What the agent reads there (below: every thread of the inbox, every
+knowledge base) it reads for whoever talks to it, whatever they see in the inbox themselves:
+another team's members, and Adobe's people on no team, whose inbox is their personal view. That is
+on purpose: whoever sees a team's or a customer's page may ask its agent what the inbox knows, and
+only the agent's changes depend on who asks (`write`). Someone signed in from `SIGNIN_DOMAINS` who
+is not Adobe's has no page and no conversation (`isInternal`, src/kbaccess.js).
 
 **What it has there**, and only there (the tools refuse in the agent's other sessions, a seed's or
 a dream's, and are not in their prompt):
@@ -3695,16 +3708,44 @@ domain, ops teams, the channel's org, and above all who they are to us:
 
 - **Adobe**: staff (a person marked staff, or a mail domain in `STAFF_DOMAINS`); a bot an
   admin said is Adobe's is staff too, but its card still says **Bot**;
-- **Partner**: their mail domain, or a parent domain, is in the `partner_domains` table
-  (agencies and system integrators, maintained by hand, like the rules);
+- **Partner**: their mail domain, or a parent domain, is a partner's (agencies and system
+  integrators; "Partner domains" below), and the card names the partner;
 - **Customer**: anyone else; the card notes when their domain is not the usual customer
   domain of the channel, which is how an unlisted partner shows up;
 - **Bot**.
 
-A list of partner domains is explicit and never wrong, where guessing from "not staff and not
-the customer's domain" would call a customer's second domain a partner. The cards travel with
-the inbox and thread payloads (`profiles`, keyed by `messages.author_key`), so a hover costs no
-request, and emails stay on the server.
+The cards travel with the inbox and thread payloads (`profiles`, keyed by
+`messages.author_key`), so a hover costs no request, and emails stay on the server.
+
+**Partner domains.** Which mail domains are a partner's is one list, `partnerDomains` in
+src/partners.js, that everything which tells people apart asks (the cards, mentions, a customer's
+people, its "Who" and `partnerCount`, the ClickHouse export's `relation`), never `partner_domains`
+itself. It is found, not kept by hand: the usual mail domains of the people outside Adobe who
+post in the threads of each org of type `partner` (`derive`):
+
+- a partner's first domain is the one that names it (its slug or display name, as `acme.co.uk`
+  names `acme`), else the one most of its people write from; its other domains count when nearly
+  as many of its people (half the busiest one's) write from them, or when they have the first
+  one's name (`acme.co.uk` beside `acme.com`);
+- free mail, Microsoft tenant and staff domains never count (`orgDomain`, src/favicons.js);
+- a customer's own domain is never a partner's: one that names a customer in whose threads its
+  people post; one whose org part is that of a customer's icon (`orgs.icon`, a domain or the host
+  of its URL, `iconDomain`), since a subsidiary's people may write from its parent's domain; and,
+  for any but a partner's first domain, one most of a customer's people write from. A partner's first domain may well be the domain most people in a customer's channel write
+  from, where only the partner's people post: that is how partners work, so it stays;
+- a domain two partners have is the one's with more of its people there, and each is named by its
+  org's display name.
+
+Guessing from "not staff and not the customer's domain" would call a customer's second domain a
+partner; this starts from the orgs said to be partners instead, and leaves out what names a
+customer. It reads every message, so an isolate keeps it an hour; what changes it (an org's
+name, type or icon, a merge, an edit of `partner_domains`) forgets it in its own isolate, and the
+others find it again within the hour (docs/STATE-MACHINES.md, "Partner domain"). The rows of `partner_domains` (migration 0109) are the admin team's over it,
+under **Partner domains** in Customers (`GET`, `PUT`, `DELETE /api/admin/partner-domains`): a
+domain added by hand with a partner org or a name, a found one renamed or given to another partner,
+and one that is not a partner's (`excluded`), which its subdomains are not either unless one of
+them has a row of its own. The page also lists the domains left out as a customer's, each one
+click from being the partner's.
 
 For an Adobe person, the card is also who they are on their teams, as their card on their team's
 overview has them (`person` of `GET /api/person`, src/person.js `personCard`; both cards are drawn
@@ -3797,8 +3838,8 @@ channel threads filed under it, from D1:
   start: the
   median wait from their first message to Adobe's first post, over the threads started in the
   window (with how many of those have an answer);
-- its **people**, a card each: their picture and title, a partner's marked (its mail domain in
-  `partner_domains`, src/profiles.js), how often they post (in its threads, a line of their
+- its **people**, a card each: their picture and title, a partner's marked (its mail domain a
+  partner's, src/partners.js `partnerDomains`, as the profile cards have it), how often they post (in its threads, a line of their
   weeks), what they ask about (Clef's areas and technologies of their threads, ranked by their
   lift over the rest of its people, as a team's members are), and their profile there: their
   Contact in its knowledge base (`contacts/`, found by their name as src/kbpeople.js finds one),

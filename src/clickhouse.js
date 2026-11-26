@@ -15,6 +15,7 @@ import { agentLabelsFor, applyAgentLabels } from './agentlabels.js';
 import { threadMessages } from './label.js';
 import { withoutQuotes } from './markdown.js';
 import { relationOf } from './profiles.js';
+import { partnerDomains } from './partners.js';
 import {
   isResolved, mergeFacts, resolution, resolutionFacts, signalFacts,
 } from './resolve.js';
@@ -251,7 +252,7 @@ async function rowsOf(env, emit, groups, version) {
   await fillFromPile2(env, emit, all);
   const persons = all.map((m) => m.person).filter(Boolean);
   const [{ results: rx }, { results: mentions }, { results: members }, { results: shares },
-    { results: orgs }, { results: partnerRows }, entryOf] = await Promise.all([
+    { results: orgs }, partners, entryOf] = await Promise.all([
     env.DB.prepare(`SELECT message, COUNT(*) AS n FROM reactions
       WHERE thread IN (SELECT value FROM json_each(?)) GROUP BY message`).bind(list(keys)).all(),
     env.DB.prepare(`SELECT message, COUNT(*) AS n FROM mentions
@@ -263,7 +264,7 @@ async function rowsOf(env, emit, groups, version) {
       .bind(list(emit.map((t) => t.channel_id))).all(),
     env.DB.prepare('SELECT slug, name, type FROM orgs WHERE slug IN (SELECT value FROM json_each(?))')
       .bind(list(emit.map((t) => t.org))).all(),
-    env.DB.prepare('SELECT domain, name FROM partner_domains').all(),
+    partnerDomains(env),
     entries(env, groups),
   ]);
   const count = (rows) => new Map((rows || []).map((r) => [r.message, r.n]));
@@ -272,8 +273,6 @@ async function rowsOf(env, emit, groups, version) {
   const teamsOfPerson = new Map([...by(members, 'person')].map(([p, rs]) => [p, rs.map((r) => r.team)]));
   const sharesOf = by((shares || []).map((s) => ({ ...s, k: `${s.source}:${s.channel_id}` })), 'k');
   const orgOf = new Map((orgs || []).map((o) => [o.slug, o]));
-  const partners = new Map((partnerRows || [])
-    .map((r) => [String(r.domain).toLowerCase(), r.name]));
   const threadOf = new Map(emit.map((t) => [t.thread, t]));
   const origin = String(env.PUBLIC_ORIGIN || '').replace(/\/+$/, '');
   return all.map((m) => {

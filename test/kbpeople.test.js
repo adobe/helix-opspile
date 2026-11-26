@@ -189,9 +189,12 @@ describe('GET /api/person', { skip: !hasGit() && 'git is not installed' }, () =>
       // Bots are nobody's Contact; the email stays on the server.
       assert.deepEqual((await ask({ key: 'slack:E1:B1', name: 'Sam Reyes' })).entries, []);
       assert.doesNotMatch(JSON.stringify(sam), /sam@acme/);
-      // Only the knowledge bases the viewer may read: the edge team does not own ACME.
+      // Only the knowledge bases the viewer may read: every one, for anyone on a team (the edge
+      // team does not own ACME, and reads its knowledge base), none for someone on no team.
       const edge = { email: 'x@example.com', teams: [{ slug: 'edge', role: 'member' }] };
-      assert.deepEqual((await ask({ key: 'slack:E1:U1' }, edge)).entries, []);
+      assert.deepEqual((await ask({ key: 'slack:E1:U1' }, edge)).entries.map((e) => e.repo), ['kb-org-acme']);
+      const nobody = { email: 'y@example.com', teams: [] };
+      assert.deepEqual((await ask({ key: 'slack:E1:U1' }, nobody)).entries, []);
       // Only on a thread the viewer may see.
       assert.equal((await ask({ key: 'slack:E1:U1' }, lena, async () => false)).status, 404);
       assert.equal((await personInKb(env, lena, { thread: 'nope', key: 'slack:E1:U1' }, anyone)).status, 404);

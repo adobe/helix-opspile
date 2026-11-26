@@ -149,6 +149,14 @@ describe('Spectrum 2', () => {
     assert.match(SCRIPTS['admin.js'], /<label class="fld grow"><span>Name<\/span><input id="ntName" required><\/label>/);
     assert.match(SCRIPTS['admin.js'], /<label class="s2-search"><input class="search" id="filter" type="search" aria-label="Filter teams"/);
     assert.match(SCRIPTS['spectrum.css'], /\.spectrum \.s2-search::before \{[^}]*mask: var\(--s2-icon-search\)/);
+    // The room for the magnifier is the search input's, `type="search"`: the rule outranks a
+    // page's rule for every field (`.spectrum input:not(…)`), which would put the text under it.
+    assert.match(SCRIPTS['spectrum.css'], /\.spectrum \.s2-search > input\[type="search"\] \{[^}]*padding-inline: calc\(/);
+    for (const [name, text] of written) {
+      for (const m of text.matchAll(/class="s2-search[^"]*">\s*<input[^>]*>/g)) {
+        assert.match(m[0], /type="search"/, `${name}: ${m[0]}`);
+      }
+    }
     // Deleting a team is confirmed in an alert dialog; resetting an org is not.
     assert.match(SCRIPTS['admin.js'], /\$\('tDelete'\)\.onclick = async \(\) => \(await confirmFirst\(/);
     assert.match(SCRIPTS['admin.js'], /\$\('oDelete'\)\.onclick = \(\) => hold\(/);
