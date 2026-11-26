@@ -304,9 +304,12 @@ export async function derivedDomains(env, { fresh = false } = {}) {
   }
   // A look is shared only within the request that started it (`env.DB`): in Workers, another
   // request's could end with it, and its awaiting requests wait forever. Meanwhile the others
-  // answer what was found before, or look themselves the first time.
+  // answer what was found before, or look themselves the first time. A look older than
+  // `LOOK_MS` is stuck (its request ended, and its I/O with it: it never settles), and the next
+  // request looks anew.
   const shared = Boolean(k.look) && k.look.owner === env.DB;
-  if (!fresh && k.look && !shared && k.done) {
+  const young = Boolean(k.look) && Date.now() - k.look.started < LOOK_MS;
+  if (!fresh && k.look && !shared && young && k.done) {
     return k.done;
   }
   if (fresh || !shared || Date.now() - k.look.started >= LOOK_MS) {
