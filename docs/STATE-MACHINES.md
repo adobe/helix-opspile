@@ -1060,7 +1060,9 @@ the portal, portal migration 0009; `identities.merge_email` in the inbox, migrat
 on an admitted call whose provider (or signed assertion) verified the address, when it differs
 from the one kept; a call without one keeps it, so a profile that stops saying it is not split
 off. The inbox takes it from the account's next message, and a reference that names none keeps
-the row's. It is read for "is this one person" only (an individual channel's `people`, the
+the row's. The portal keeps when it was last presented (`verified_at`, written again at most
+daily), and joins two profiles in an individual channel only while both presented it in the last
+30 days. It is read for "is this one person" only (an individual channel's `people`, the
 inbox's `sameAccounts`), never for admission, a person of D1 or staff.
 
 **Managed channel and member.** Reserved → enabled ⇄ suspended (`integration_customers`).

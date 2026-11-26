@@ -250,11 +250,11 @@ async function pendingRow(db, id) {
 const sec0 = (now) => Math.floor(now / 1000);
 
 /** The statement that makes the mapping of request `r`'s tenant individual (migration 0008). */
-const audienceOf = (db, r, by, sec) => db.prepare(`INSERT INTO channel_audiences (channel, audience,
-    set_by, set_at) SELECT channel, 'individual', ?3, ?4 FROM integration_customers
-    WHERE host = ?1 AND tenant = ?2 AND enabled = 0
+const audienceOf = (db, r, by, sec, audience = 'individual') => db.prepare(`INSERT INTO
+    channel_audiences (channel, audience, set_by, set_at) SELECT channel, ?5, ?3, ?4
+    FROM integration_customers WHERE host = ?1 AND tenant = ?2 AND enabled = 0
   ON CONFLICT (channel) DO UPDATE SET audience = excluded.audience, set_by = excluded.set_by,
-    set_at = excluded.set_at`).bind(r.host, r.tenant, by.email, sec);
+    set_at = excluded.set_at`).bind(r.host, r.tenant, by.email, sec, audience);
 
 /**
  * `{ id, customer, name, by, audience? }`: reserves the channel of a pending request's tenant,
@@ -262,8 +262,9 @@ const audienceOf = (db, r, by, sec) => db.prepare(`INSERT INTO channel_audiences
  * so the inbox files it before anyone can post. A mapping this flow reserved and never enabled is
  * answered as it is (approving again finishes it); an enabled one too (`existing`), for
  * `enrollAccess`.
- * With `audience: 'individual'` a new mapping (or one never enabled) is an individual channel
- * (portal migration 0008): each member sees only their own threads. An enabled one keeps its own.
+ * With `audience: 'individual'` a new mapping is an individual channel (portal migration 0008):
+ * each member sees only their own threads. One never enabled takes `audience` as given, `shared`
+ * too; without it, it keeps its own. An enabled one keeps its own.
  * `{ ok, channel: { id, name, audience? }, reserved, existing }`.
  */
 export async function reserveAccess(env, args = {}, now = Date.now()) {
@@ -282,9 +283,9 @@ export async function reserveAccess(env, args = {}, now = Date.now()) {
   }
   const individual = args.audience === 'individual';
   if (m) {
-    if (!m.enabled && m.resumable && individual) {
-      // Approving again what was reserved and never enabled: as the admin says now.
-      await audienceOf(db, r, by, sec0(now)).run();
+    if (!m.enabled && m.resumable && ['individual', 'shared'].includes(args.audience)) {
+      // Approving again what was reserved and never enabled: as the admin says now, either way.
+      await audienceOf(db, r, by, sec0(now), args.audience).run();
     }
     if (m.enabled || m.resumable) {
       return {

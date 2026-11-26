@@ -371,6 +371,8 @@ What it changes, for a member of an individual channel:
   watermark moves only with them: a colleague's thread changes no cursor, page or count of theirs.
 - `POST /threads` starts a thread that is theirs; nobody else of the channel sees it.
 - `GET /threads` says `audience: "individual"` (otherwise `"shared"`), for the host to show.
+- Only a member starts a thread: support answers in theirs, and a thread support would start
+  there (from the inbox, or the app) is refused with `409`, since no member would see it.
 - Support may add a member of the same channel to a thread (`addToThread` of the portal's
   platform binding); they then see it, and their feed says `added` (theirs only).
 
@@ -415,7 +417,10 @@ one person:
   admits nobody (enrollment, and the alias binding of a domain-caught member, are as before), and
   an unverified address is never kept.
 - In an individual channel, a member reads the threads of every active member of the same channel
-  with the same merge key: their threads from either profile. Never across channels or hosts.
+  with the same merge key: their threads from either profile. Never across channels or hosts, and
+  only while both profiles verified the address in the last 30 days (`users.verified_at`): an
+  address given to someone new after its owner left stops joining them to the former owner's
+  profile. Revoke a member who leaves (`integration_members.active = 0`) to end it at once.
 - The inbox hears it with each message (`author.verifiedEmail`, only for an account without a mail
   address) and keeps it apart from the account's mail address (`identities.merge_email`): the
   accounts of one address are one person in the customers' overviews and the topic map, and the

@@ -198,6 +198,51 @@ describe('individual integration channels', () => {
     assert.equal((await w.list()).body.audience, 'individual');
   });
 
+  it('finishes an individual reservation as the admin says now, shared too', async () => {
+    const w = world();
+    await w.list();
+    // A first approval reserved it individual, then failed before anyone was enrolled.
+    const reserved = await platform.reserve(w.portal, {
+      id: 1, customer: 'agents-mill', name: 'agents-mill', by: { email: w.admin.email }, audience: 'individual',
+    });
+    const audience = () => w.db.rows('SELECT audience FROM channel_audiences WHERE channel = ?', reserved.channel.id)[0].audience;
+    assert.equal(audience(), 'individual');
+    const key = 'request:integration:1';
+    const thread = (await w.staff(w.admin, 'GET', `/api/thread?thread=${encodeURIComponent(key)}`)).body;
+    const field = thread.request.actions.find((x) => x.id === 'approve').fields.find((f) => f.name === 'individual');
+    assert.equal(field.value, true);
+    // Unchecked this time: the channel is shared, as the admin now sees it.
+    const done = await quiet(() => w.staff(w.admin, 'POST', '/api/requests/resolve', {
+      key,
+      action: 'approve',
+      values: {
+        name: 'agents-mill', org: 'mill', team: 'agents', person: 'Ada', individual: false,
+      },
+    }));
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.equal(audience(), 'shared');
+    assert.equal((await w.list()).body.audience, 'shared');
+  });
+
+  it('lets no one at Adobe start a thread nobody of the channel would see', async () => {
+    const { w, channel, ada } = await individualWorld();
+    const managed = `${channel}.embed.invalid`;
+    const mine = (await create(w, ada, 'Ada asks')).body.threadId;
+    const started = await platform.post(w.portal, {
+      domain: managed, channel, author: STAFF, text: 'Hello everyone',
+    });
+    assert.equal(started.status, 409);
+    const bot = await platform.post(w.portal, {
+      domain: managed, channel, author: { bot: true, name: 'Enterprise Support' }, text: 'Hello',
+    });
+    assert.equal(bot.status, 409);
+    assert.equal(w.db.rows('SELECT * FROM messages WHERE id = root').length, 1);
+    // An answer in a customer's thread is as ever.
+    assert.equal((await platform.post(w.portal, {
+      domain: managed, channel, root: mine, author: STAFF, text: 'Looking.',
+    })).ok, true);
+  });
+
   it('keeps every channel shared that nobody set, as it was', async () => {
     const w = world();
     const channel = w.handMade('panel', ORG, 'agents-mill', ADA);

@@ -446,7 +446,8 @@ const integrationKind = {
     }];
     // Who sees a new channel's threads: decided before its first message (portal migration 0008).
     const audienceField = {
-      name: 'individual', label: 'Individual customers: each person sees only their own threads', type: 'check', value: false,
+      // As the reservation is, when approving again finishes one.
+      name: 'individual', label: 'Individual customers: each person sees only their own threads', type: 'check', value: Boolean(m && m.audience === 'individual'),
     };
     const fields = into ? [personField, ...autoField] : [
       {
@@ -484,7 +485,7 @@ const integrationKind = {
             person: v.person,
             auto: Boolean(v.auto),
             ...(into ? {} : {
-              name: v.name, org: v.org, team: v.team, ...(v.individual ? { audience: 'individual' } : {}),
+              name: v.name, org: v.org, team: v.team, audience: v.individual ? 'individual' : 'shared',
             }),
           },
         }),

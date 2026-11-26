@@ -20,6 +20,7 @@ import { listAccountPairs } from '../src/accountpairs.js';
 import { processKey } from '../src/normalizer.js';
 import { receive } from '../src/portalsource.js';
 import { deliver } from '../src/portal/events.js';
+import { MERGE_DAYS } from '../src/portal/integration-auth.js';
 import { quiet } from './fakes.js';
 import {
   ADA, BO, ORG, setup, world,
@@ -101,6 +102,22 @@ describe('one person with several profiles', () => {
       { email: null, verified_email: 'ada@mill.example' },
       { email: null, verified_email: 'ada@mill.example' },
     ]);
+  });
+
+  it('stops making them one once a profile has not verified the address for a month', async () => {
+    // As when the address went to someone new after its owner left, whose profile stays active.
+    const { w, ada, adaToo } = await twoProfiles();
+    await create(w, ada, 'From work');
+    const home = (await create(w, adaToo, 'From home')).body.threadId;
+    assert.ok((await w.list(ada)).body.items.some((i) => i.id === home));
+    const old = Math.floor(Date.now() / 1000) - (MERGE_DAYS + 1) * 24 * 60 * 60;
+    w.db.sqlite.prepare(`UPDATE users SET verified_at = ? WHERE id IN (SELECT actor
+      FROM integration_members WHERE subject = ?)`).run(old, ADA_TOO);
+    assert.ok(!(await w.list(ada)).body.items.some((i) => i.id === home));
+    assert.equal((await w.call('GET', `/threads/${home}`, ada)).status, 404);
+    // Verifying it again joins them again.
+    await w.list(adaToo);
+    assert.ok((await w.list(ada)).body.items.some((i) => i.id === home));
   });
 
   it('keeps an unverified address from making two profiles one', async () => {

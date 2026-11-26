@@ -1226,7 +1226,11 @@ async function approveIntegration(env, me, body) {
     }
     // An individual channel is one from before its first message (portal migration 0008).
     const reserved = await portalCall(env, 'reserveAccess', {
-      id: r.id, customer: name, name, by, audience: body.audience === 'individual' ? 'individual' : undefined,
+      id: r.id,
+      customer: name,
+      name,
+      by,
+      audience: ['individual', 'shared'].includes(body.audience) ? body.audience : undefined,
     });
     if (reserved.error || !reserved.channel) {
       return portalRefused(reserved);
