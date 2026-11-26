@@ -64,7 +64,8 @@ function page(answer, { opened = null, timers = null } = {}) {
 describe('signed out', () => {
   it('says so when Access redirects a fetch of /api to its sign-in page', async () => {
     const p = page(async () => ({ type: 'opaqueredirect', ok: false, status: 0 }));
-    await assert.rejects(p.fetch('/api/inbox?team=t'), /Signed out/);
+    // Marked, so the inbox keeps what it shows under the banner (ui/inbox.js, `fetchFailed`).
+    await assert.rejects(p.fetch('/api/inbox?team=t'), (e) => /Signed out/.test(e.message) && e.signedOut === true);
     assert.equal(p.calls[0].init.redirect, 'manual');
     assert.equal(p.body.length, 1);
     assert.match(p.body[0].innerHTML, /Sign in again/);

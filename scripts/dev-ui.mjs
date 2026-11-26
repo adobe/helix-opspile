@@ -31,6 +31,9 @@
  *
  * `POST /__dev/signout` ends the sign-in, as Cloudflare Access's session ends: `/api/*` then
  * redirects to a sign-in page on another origin (127.0.0.1 for localhost), which signs in again.
+ * `POST /__dev/busy?n=<count>&thread=<key>` has the next `count` (6 by default) `GET /api/thread`
+ * (of `thread` only, if given) answer as an overloaded D1 makes the Worker answer (503,
+ * `Retry-After`, src/api.js): the open thread stays on screen while the inbox asks again.
  *
  * For scripts/perf-ui.mjs, `POST /__dev/simulate?thread=<key>` posts a message into a thread
  * (a random one without `thread`) and sends the live update, as the simulation does; with
@@ -3134,6 +3137,9 @@ function rethread(key, after = RETHREAD_MS) {
 
 // Signed out (POST /__dev/signout): /api/* redirects to the sign-in page, as Access does.
 let signedOut = false;
+// Overloaded (POST /__dev/busy): the next thread reads answer 503, as src/api.js does.
+let busyReads = 0;
+let busyThread = null;
 const SIGNIN_HOST = `127.0.0.1:${PORT}`;
 const SIGNIN_PAGE = (back) => `<!doctype html><meta charset="utf-8"><title>Sign in</title>
 <body style="font:15px system-ui;display:grid;place-items:center;height:90vh">
@@ -3151,6 +3157,20 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/__dev/signout' && req.method === 'POST') {
       signedOut = true;
       res.writeHead(204).end();
+      return;
+    }
+    if (url.pathname === '/__dev/busy' && req.method === 'POST') {
+      busyReads = Number(url.searchParams.get('n')) || 6;
+      busyThread = url.searchParams.get('thread');
+      res.writeHead(204).end();
+      return;
+    }
+    if (busyReads > 0 && url.pathname === '/api/thread' && req.method === 'GET'
+      && (!busyThread || url.searchParams.get('thread') === busyThread)) {
+      busyReads -= 1;
+      console.log(`[dev] busy: /api/thread answers 503 (${busyReads} more)`);
+      res.writeHead(503, { 'content-type': 'application/json', 'retry-after': '1' })
+        .end(JSON.stringify({ error: 'The inbox is busy: try again in a moment.', busy: true }));
       return;
     }
     if (url.pathname === '/__dev/access-login') {
