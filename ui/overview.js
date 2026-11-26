@@ -276,24 +276,47 @@ globalThis.Overview = (() => {
   /**
    * Every first answer a dot (`waits`, in minutes), on a scale of a minute to a week (longer ones
    * at its end), piled where they fall; the median a line. A dot is several where there are many.
+   * `series` puts several sets of waits on one scale (`[{ name, waits, median, series }]`, each
+   * in the color of its `series`, as the stacked bars' `data-series`): their dots piled one set
+   * on the other, each set's median its own line, and a key of their names under it. `wide` is
+   * for a tile twice as wide as most.
    */
-  function waitDots(waits, median, { who = 'Adobe' } = {}) {
-    const W = 120;
+  function waitDots(waits, median, { who = 'Adobe', series = null, wide = false } = {}) {
+    const sets = series || [{
+      name: null, waits, median, series: null,
+    }];
+    // A wide tile's scale is twice as long: its dots no bigger than a narrow one's.
+    const W = wide ? 240 : 120;
     const R = 2;
     const ROWS = 6;
+    const bin = (m) => Math.min(W / (2 * R) - 1, Math.floor((along(m) * W) / (2 * R)));
     const bins = new Map();
-    for (const m of waits) {
-      const b = Math.min(W / (2 * R) - 1, Math.floor((along(m) * W) / (2 * R)));
-      bins.set(b, (bins.get(b) || 0) + 1);
+    for (const x of sets) {
+      for (const m of x.waits) bins.set(bin(m), (bins.get(bin(m)) || 0) + 1);
     }
     const per = Math.max(1, Math.ceil(Math.max(0, ...bins.values()) / ROWS));
     const H = ROWS * 2 * R;
-    const dots = [...bins].flatMap(([b, n]) => Array.from({ length: Math.ceil(n / per) }, (_, k) => `<circle cx="${b * 2 * R + R}" cy="${H - k * 2 * R - R}" r="${R * 0.8}"></circle>`)).join('');
-    const mid = median === null || median === undefined ? '' : `<line class="mid" x1="${(along(median) * W).toFixed(1)}" x2="${(along(median) * W).toFixed(1)}" y1="0" y2="${H}"></line>`;
-    const within = (min) => Math.round((100 * waits.filter((m) => m <= min).length) / Math.max(1, waits.length));
-    const label = `${who}'s first answers: half within ${wait(median)}, ${within(60)}% within an hour, ${within(1440)}% within a day`;
-    return `<div class="tv-waits${who === 'Adobe' ? '' : ' them'}"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}"><line class="axis" x1="0" x2="${W}" y1="${H}" y2="${H}"></line>${dots}${mid}</svg>
-      <div class="tv-ticks">${TICKS.map(([m, l]) => `<span data-at="${along(m).toFixed(3)}">${esc(l)}</span>`).join('')}</div>${per > 1 ? `<span class="sub">A dot is ${per} threads.</span>` : ''}</div>`;
+    const at = (x) => (x.series ? ` data-series="${esc(x.series)}"` : '');
+    // Each set's dots over the last set's, in each place.
+    const height = new Map();
+    const dots = sets.flatMap((x) => {
+      const mine = new Map();
+      for (const m of x.waits) mine.set(bin(m), (mine.get(bin(m)) || 0) + 1);
+      return [...mine].flatMap(([b, n]) => Array.from({ length: Math.ceil(n / per) }, () => {
+        const k = height.get(b) || 0;
+        height.set(b, k + 1);
+        return `<circle${at(x)} cx="${b * 2 * R + R}" cy="${H - k * 2 * R - R}" r="${R * 0.8}"></circle>`;
+      }));
+    }).join('');
+    const mids = sets.filter((x) => x.median !== null && x.median !== undefined)
+      .map((x) => `<line class="mid"${at(x)} x1="${(along(x.median) * W).toFixed(1)}" x2="${(along(x.median) * W).toFixed(1)}" y1="0" y2="${H}"></line>`).join('');
+    const all = sets.flatMap((x) => x.waits);
+    const within = (min) => Math.round((100 * all.filter((m) => m <= min).length) / Math.max(1, all.length));
+    const halves = sets.map((x) => `half within ${wait(x.median)}${x.name ? ` ${x.name}` : ''}`).join(', ');
+    const label = `${who}'s first answers: ${halves}, ${within(60)}% within an hour, ${within(1440)}% within a day`;
+    const key = series ? `<span class="tv-key">${sets.map((x) => `<span${at(x)}><span class="dot"></span>${esc(x.name)}</span>`).join('')}</span>` : '';
+    return `<div class="tv-waits${who === 'Adobe' ? '' : ' them'}"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}"><line class="axis" x1="0" x2="${W}" y1="${H}" y2="${H}"></line>${dots}${mids}</svg>
+      <div class="tv-ticks">${TICKS.map(([m, l]) => `<span data-at="${along(m).toFixed(3)}">${esc(l)}</span>`).join('')}</div>${key}${per > 1 ? `<span class="sub">A dot is ${per} threads.</span>` : ''}</div>`;
   }
 
   /** A status page's weeks: a bar each, a week with a post `on`; `values` of `weeks`. */

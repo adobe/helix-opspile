@@ -279,6 +279,8 @@ describe('a partner\'s overview, and a customer\'s partners, drawn', () => {
     org: {
       ...profile.org, slug: 'agency', name: 'Agency Co', type: 'partner',
     },
+    // Who posts in its channels: Pia, its own, and Sam.
+    people: [person({ id: 7, name: 'Pia <B>', profile: null }), profile.people[0]],
     partner: {
       domains: 1,
       customers: {
@@ -286,16 +288,18 @@ describe('a partner\'s overview, and a customer\'s partners, drawn', () => {
         linked: 2,
         confirmed: 1,
         list: [customer({
-          slug: 'hooli', name: 'Hooli', confirmed: true, p: null, signals: { members: 2 }, ours: 0, waiting: 0,
-        }), customer(), customer({
-          slug: 'wonka', name: 'Wonka', linked: false, p: null, signals: {}, theirs: 1, ours: 0, waiting: 0,
+          slug: 'hooli', name: 'Hooli', confirmed: true, p: null, signals: { members: 2 }, ours: 0, waiting: 0, messages: 4,
+        }), customer({ messages: 2 }), customer({
+          slug: 'wonka', name: 'Wonka', linked: false, p: null, signals: {}, theirs: 1, ours: 0, waiting: 0, messages: 0,
         })],
       },
       people: {
-        count: 1,
-        inCustomers: 1,
+        count: 2,
+        inCustomers: 2,
         list: [{
           id: 7, account: null, name: 'Pia <B>', avatar: null, title: 'Developer', messages: 10, own: 4, customers: 6, threads: 5, orgs: [{ slug: 'acme', name: 'ACME <Corp>', threads: 3 }], orgCount: 2, weekly: [4, 6], last: '2026-11-24T00:00:00Z',
+        }, {
+          id: 8, account: null, name: 'Lu', avatar: null, title: null, messages: 2, own: 0, customers: 2, threads: 1, orgs: [{ slug: 'hooli', name: 'Hooli', threads: 1 }], orgCount: 1, weekly: [0, 2], last: '2026-11-24T00:00:00Z',
         }],
       },
       posts: {
@@ -309,8 +313,12 @@ describe('a partner\'s overview, and a customer\'s partners, drawn', () => {
         count: 3, own: 1, customers: 2, list: [thread(), thread({ thread: 't:2', org: 'acme', title: 'Forms' })], hidden: 1,
       },
       answers: {
-        own: { asked: 2, answered: 1, median: 60 },
-        customers: { asked: 4, answered: 3, median: 120 },
+        own: {
+          asked: 2, answered: 1, median: 60, waits: [60],
+        },
+        customers: {
+          asked: 4, answered: 3, median: 120, waits: [30, 120, 900],
+        },
       },
     },
   };
@@ -319,42 +327,56 @@ describe('a partner\'s overview, and a customer\'s partners, drawn', () => {
   it('counts its customers, people, what waits on Adobe and how soon Adobe answers', () => {
     const html = CustomerView.html(partner, pctx);
     const tiles = html.slice(html.indexOf('<div class="tv-stats">'), html.indexOf('<div class="cv-activity">'));
-    // Its customers' icons, a confirmed one ringed; the one nothing links yet is in the words.
-    assert.match(tiles, /<div class="tv-k"><b>2<\/b> customers<\/div><span class="tv-flow"><a href="\/org\/hooli" class="tv-icon confirmed" title="Hooli, confirmed"><\/a><a href="\/org\/acme" class="tv-icon" title="ACME &lt;Corp&gt;, likely"><\/a><\/span><small>1 confirmed, 1 likely, its people post for 1 more<\/small>/);
-    assert.match(tiles, /<div class="tv-k"><b>1<\/b> person<\/div><span class="tv-pile"><span [^>]*title="Pia &lt;B&gt;">/);
-    // Where its people post: its channels against customers'.
-    assert.match(tiles, /<div class="tv-k"><b>10<\/b> messages by its people<\/div><div class="tv-parts-bar"><span class="tv-seg" title="Its channels: 4 messages, 40%"[^>]*><span>Its channels<\/span><\/span><span class="tv-seg" title="Customers&#39;: 6 messages, 60%"/);
+    // Its customers' icons, a confirmed one ringed; the one nothing links yet is in the words,
+    // which name it rather than say "its".
+    assert.match(tiles, /<div class="tv-k"><b>2<\/b> customers<\/div><span class="tv-flow"><a href="\/org\/hooli" class="tv-icon confirmed" title="Hooli, confirmed"><\/a><a href="\/org\/acme" class="tv-icon" title="ACME &lt;Corp&gt;, likely"><\/a><\/span><small>1 confirmed, 1 likely, Agency Co&#39;s people post for 1 more<\/small>/);
+    assert.match(tiles, /<div class="tv-k"><b>2<\/b> people<\/div><span class="tv-pile"><span [^>]*title="Pia &lt;B&gt;">/);
+    // What its people said: in its channels, by its name, then in each customer's, busiest first.
+    assert.match(tiles, /<div class="tv-k"><b>10<\/b> messages by Agency Co&#39;s people<\/div><div class="tv-parts-bar"><span class="tv-seg" title="Agency Co: 4 messages, 40%" data-series="theirs"[^>]*><span>Agency Co<\/span><\/span><a href="\/org\/hooli" class="tv-seg" title="Hooli: 4 messages, 40%" data-series="s1"[^>]*><span>Hooli<\/span><\/a><a href="\/org\/acme" class="tv-seg" title="ACME &lt;Corp&gt;: 2 messages, 20%" data-series="s2"/);
+    assert.ok(!tiles.includes('Other customers'));
     assert.match(tiles, /<small>60% in customers&#39; threads<\/small>/);
     assert.match(tiles, /<div class="tv-k"><b>3<\/b> waiting on Adobe<\/div><span class="tv-chips"><a href="\/inbox\?team=edge&amp;t=t%3A1" class="tag tv-us" title="Waiting on Adobe: Stale &lt;code&gt;">/);
-    assert.match(tiles, /<small>1 in its channels, 2 in customers&#39;, 1 in channels of teams you are not on<\/small>/);
-    assert.match(tiles, /<div class="tv-k"><b>1 h<\/b> to Adobe's first answer in its channels<\/div><div class="tv-waits">/);
-    assert.match(tiles, /<b>2 h<\/b> to Adobe's first answer for customers<\/div>[\s\S]*?<small>typically, in the 4 threads started there; 1 not answered yet<\/small>/);
+    assert.match(tiles, /<small>1 in Agency Co&#39;s channels, 2 in customers&#39;, 1 in channels of teams you are not on<\/small>/);
+    // Both first answers on one scale, each in its color with its median, and a key of them.
+    assert.match(tiles, /<div class="tv-stat w4" title="[^"]*"><div class="tv-k"><b>1 h<\/b> to Adobe's first answer in Agency Co&#39;s channels, <b>2 h<\/b> in customers&#39;<\/div>/);
+    assert.deepEqual([...tiles.matchAll(/<circle data-series="(\w+)"/g)].map((m) => m[1]), ['theirs', 's6', 's6', 's6']);
+    assert.equal([...tiles.matchAll(/<line class="mid" data-series/g)].length, 2);
+    assert.match(tiles, /<span class="tv-key"><span data-series="theirs"><span class="dot"><\/span>Agency Co&#39;s channels<\/span><span data-series="s6"><span class="dot"><\/span>Customers&#39; channels<\/span><\/span>/);
+    assert.match(tiles, /<small>typically, in the 2 threads started in Agency Co&#39;s channels and the 4 threads Agency Co&#39;s people started in customers&#39;; 2 not answered yet<\/small>/);
+    assert.ok(!/\bits\b/.test(tiles.replace(/<[^>]*>/g, '')), 'says its name, not "its"');
   });
 
   it('lists its customers, each a link, with what links them and whether it is confirmed', () => {
     const html = CustomerView.html(partner, pctx);
     const list = html.slice(html.indexOf('id="cvCustomers"'), html.indexOf('id="cvWaiting"'));
     assert.match(list, /<a href="\/org\/hooli">Hooli<\/a>/);
-    assert.match(list, /2 of its people in their channels/);
+    assert.match(list, /2 of Agency Co&#39;s people in their channels/);
     assert.match(list, /<span class="tag tv-confirmed"[^>]*>Confirmed<\/span>/);
     // ACME: likely, Clef's 90%; the threads with its people are the meter's, not the words'.
-    assert.match(list, /<a href="\/org\/acme">ACME &lt;Corp&gt;<\/a><span class="sub">a site owner in common, their people in 1 of its threads, /);
+    assert.match(list, /<a href="\/org\/acme">ACME &lt;Corp&gt;<\/a><span class="sub">a site owner in common, their people in 1 of Agency Co&#39;s threads, /);
     assert.match(list, /<span class="tag tv-likely" title="90% likely, says Clef">Likely<\/span><span class="tag tv-us">1 waiting on Adobe<\/span>/);
-    assert.match(list, /9 threads with its people/);
-    assert.match(list, /its people post there; not linked yet/);
+    assert.match(list, /9 threads with Agency Co&#39;s people/);
+    assert.match(list, /Agency Co&#39;s people post there; not linked yet/);
   });
 
-  it('lists what waits on Adobe, titles escaped, and its people with where they post', () => {
+  it('lists what waits on Adobe, titles escaped, and puts its people\'s customers on their cards', () => {
     const html = CustomerView.html(partner, pctx);
-    const waiting = html.slice(html.indexOf('id="cvWaiting"'), html.indexOf('id="cvWhere"'));
+    const waiting = html.slice(html.indexOf('id="cvWaiting"'), html.indexOf('id="tvPeople"'));
+    assert.match(waiting, /Waiting on Adobe <span class="sub">1 in Agency Co&#39;s channels, 2 in customers&#39;<\/span>/);
     assert.match(waiting, /Stale &lt;code&gt;<\/a><span class="sub">Agency Co, #agency-aem/);
     assert.match(waiting, /<span class="sub">ACME &lt;Corp&gt;, #agency-aem/);
     assert.match(waiting, /And 1 more thread in channels of teams you are not on\./);
-    const where = html.slice(html.indexOf('id="cvWhere"'), html.indexOf('id="tvPeople"'));
-    assert.match(where, /Pia &lt;B&gt;/);
-    assert.match(where, /Developer, 4 in its channels, 6 in customers&#39;/);
-    assert.match(where, /<a class="ps-chip" href="\/org\/acme"[^>]*>ACME &lt;Corp&gt;<\/a><span class="sub">and 1 more<\/span>/);
-    assert.match(html, /<h2 id="tvPeople">People in its channels/);
+    // No list of where they post: their customers are on their cards, as a team member's.
+    assert.ok(!html.includes('id="cvWhere"'));
+    assert.match(html, /<h2 id="tvPeople">People in Agency Co&#39;s channels/);
+    const pia = html.slice(html.indexOf('<article'), html.indexOf('</article>'));
+    assert.match(pia, /Pia &lt;B&gt;/);
+    assert.match(pia, /<dl class="ps-keys"><dt>Key customers<\/dt><dd><a href="\/org\/acme" class="ps-org" title="ACME &lt;Corp&gt;: 3 threads of theirs"><span>ACME &lt;Corp&gt;<\/span><\/a><span class="ps-chip ps-more">\+1<\/span><\/dd><\/dl>/);
+    // Sam is no person of its: no customers on his card.
+    const sam = html.slice(html.lastIndexOf('<article'));
+    assert.ok(!sam.slice(0, sam.indexOf('</article>')).includes('Key customers'));
+    // Lu posts in customers' channels only: after the cards, with the customers' icons.
+    assert.match(html, /<div class="tv-quiet"><span class="sub">Only in customers&#39; channels<\/span><span class="tv-q" title="Lu: 2 messages in customers&#39; threads">[^]*?<span>Lu<\/span><a href="\/org\/hooli" class="tv-icon" title="Hooli"><\/a><\/span><\/div>/);
     assert.ok(!html.includes('id="cvPartners"'));
   });
 
