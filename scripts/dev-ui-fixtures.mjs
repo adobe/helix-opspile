@@ -240,6 +240,10 @@ const CHANNELS = {
   aemUmbrella: {
     source: 'slack', channelId: 'C0UMBRELLA', name: 'aem-umbrella', org: 'umbrella', team: 'platform', tech: ['eds', 'ue', 'aemcs'],
   },
+  // A partner's own channel (an agency that works for ACME, src/threadlinks.js).
+  agencyProjects: {
+    source: 'slack', channelId: 'C0AGENCY01', name: 'agency-projects', org: 'agency', team: 'platform', tech: ['eds', 'github'],
+  },
   alerts: {
     source: 'slack',
     channelId: 'C0ALERTS01',
@@ -1953,6 +1957,33 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
     ? [...TEAMS, { slug: 'admin', name: 'Admin', members: [1] }]
     : TEAMS;
 
+  // Linked across a partner and its customers (src/threadlinks.js): the agency's own thread about
+  // ACME's preview after a repository move, possibly the 503s ACME reported in its channel, where
+  // Ravi of the agency posts too.
+  const agencyMove = seed({
+    ch: CHANNELS.agencyProjects,
+    messages: [
+      ['ravi', 95, 'After we moved the preview repository to the new GitHub org, the preview still serves the old code.'],
+      ['priya', 80, 'Which org does the code sync point at now? It may still be the old one.'],
+      ['ravi', 30, 'The new one, as far as we can tell. The 503s started after the move as well.'],
+    ],
+    label: {
+      kind: 'incident', next_actor: 'us', urgency: 1.6, resolved_p: 0.1, topics: ['publishing'], tech: { eds: 1, github: 0.9 },
+    },
+    facts: [['site', 'acme/acme-preview']],
+  });
+  const threadOrgs = [
+    {
+      thread: agencyMove, org: 'acme', name: 'ACME', icon: 'acme.example', role: 'about', p: 0.92, via: ['facts', 'clef'],
+    },
+    {
+      thread: preview503, org: 'agency', name: 'Agency Co', icon: 'agency.example', role: 'partner', p: 1, via: ['posters'],
+    },
+  ];
+  const threadLinks = [{
+    a: agencyMove, b: preview503, score: 0.87, p: 0.81, via: ['owner', 'clef'],
+  }];
+
   return {
     now,
     me: {
@@ -1963,6 +1994,8 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
     teams,
     klickhaus: KLICKHAUS,
     partners: PARTNERS,
+    threadOrgs,
+    threadLinks,
     people,
     members: MEMBERS,
     threads,

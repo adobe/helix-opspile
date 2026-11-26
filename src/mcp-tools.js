@@ -155,6 +155,13 @@ function summary(t, me) {
   if (t.permalink) {
     out.link = t.permalink;
   }
+  // A partner's thread about a customer, a customer's with a partner's people (src/threadlinks.js).
+  if (t.linked && t.linked.about.length) {
+    out.about_customers = t.linked.about.map((o) => o.slug);
+  }
+  if (t.linked && t.linked.with.length) {
+    out.with_partners = t.linked.with.map((o) => o.slug);
+  }
   return out;
 }
 
@@ -266,7 +273,7 @@ async function searchThreads(env, me, args) {
   // customer two of them own, each concept of its knowledge base once.
   const seen = new Set();
   const answers = await Promise.all(teams.map((team) => searchInbox(env, me, team, q, {
-    limit, personal: !team,
+    limit, personal: !team, org: args.customer ? String(args.customer) : null,
   })));
   const found = answers.flatMap((r) => {
     const byKey = new Map(r.threads.map((t) => [t.thread, t]));
@@ -382,6 +389,25 @@ function threadHead(key, data) {
     // The thread view's label has Clef's kind as `kind` (the inbox's has `label_kind`).
     kind: kindOf({ kind: t.kind, label: data.label && { label_kind: data.label.kind } }),
     facts: data.facts.map((x) => ({ field: x.field, value: x.value })),
+    // Linked across a partner and its customers (src/threadlinks.js): the customers a partner's
+    // thread is about, the partners in a customer's, and the threads possibly about the same
+    // issue there (a title only where the person may see that thread).
+    ...(data.linked && data.linked.about.length ? {
+      about_customers: data.linked.about.map((o) => ({ customer: o.slug, name: o.name, p: o.p })),
+    } : {}),
+    ...(data.linked && data.linked.with.length ? {
+      with_partners: data.linked.with.map((o) => ({ partner: o.slug, name: o.name })),
+    } : {}),
+    ...(data.related && data.related.length ? {
+      possibly_same_issue: data.related.map((r) => ({
+        thread: r.thread,
+        customer: r.org,
+        ...(r.can_see ? { title: clip(r.title || '(no text)', 140), link: r.permalink || null } : {}),
+        similarity: r.score,
+        ...(r.p != null ? { p: r.p } : {}),
+        last_activity: r.last_at,
+      })),
+    } : {}),
   };
 }
 
@@ -885,6 +911,7 @@ export const TOOLS = [
       properties: {
         query: { type: 'string', description: 'What to look for: a question, a topic, words, a URL or a ticket' },
         team: { type: 'string', description: 'Ops team slug from whoami; all your teams when left out' },
+        customer: { type: 'string', description: 'Only this customer\'s threads (its slug), and its partners\' threads about it' },
         limit: {
           type: 'integer', minimum: 1, maximum: MAX_LIST, description: 'How many threads (default 20)',
         },

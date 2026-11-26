@@ -479,6 +479,7 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .ph .hmpop { position: absolute; left: 0; top: calc(100% + var(--spectrum-spacing-75)); z-index: 6; width: max-content; min-width: calc(var(--spectrum-spacing-100) * 30); max-width: min(calc(var(--spectrum-spacing-100) * 56), calc(100vw - var(--spectrum-spacing-500)));
  max-height: calc(var(--spectrum-spacing-100) * 52); overflow: auto; padding: var(--spectrum-spacing-75); }
 .ph .hmpop[hidden] { display: none; }
+.ph .hmpop.end { left: auto; right: 0; }
 .ph .hms + .hms { margin-top: var(--spectrum-spacing-75); padding-top: var(--spectrum-spacing-75); }
 .ph .hmh, .ph .hmnote { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100) var(--spectrum-spacing-50); }
 .ph .hmi { display: flex; align-items: baseline; justify-content: space-between; gap: var(--spectrum-spacing-200); padding: var(--spectrum-spacing-75) var(--spectrum-spacing-100); text-decoration: none; }
@@ -501,6 +502,16 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .ph .hmi .url .path { flex: 0 1 auto; min-width: var(--spectrum-spacing-300); }
 .ph .hmi .url .page { flex: none; max-width: calc(100% - var(--spectrum-spacing-300)); }
 .ph .hm .lb { max-width: calc(var(--spectrum-spacing-100) * 44); }
+/* What the thread is linked with across a partner and its customers (ui/inbox.js `linkedMenu`): an
+   org or a thread a line, its icon first and a button at its end that says the link is wrong. */
+.ph .hmi:is(.lkorg, .lkrel) { align-items: center; justify-content: flex-start; gap: var(--spectrum-spacing-100); }
+.ph .hmi.lkorg > span:not(.fav) { flex: 1; }
+.ph .hmi .lkt { display: flex; flex-direction: column; flex: 1; min-width: 0; text-decoration: none; color: inherit; }
+.ph .hmi .lkt small { flex: none; }
+.ph .hm .hmi .lkx { flex: none; display: flex; align-items: center; justify-content: center; width: var(--s2-ctl); height: var(--s2-ctl); padding: 0; }
+.ph .hmi .lkx .s2-cross { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); }
+/* A row's tag of the same: "About Acme", "With Agency". */
+.t .lkd { flex: none; max-width: 30%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 var(--spectrum-spacing-75); }
 .experts { position: relative; display: flex; align-items: stretch; min-width: 0; max-width: 100%; }
 .experts button { font: inherit; border: 0; background: none; }
 .experts[hidden] { display: none; }
@@ -1991,6 +2002,13 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .ph a.hmi:hover, .spectrum .ph a.hmi:focus-visible { background: var(--s2-down); color: var(--spectrum-neutral-content-color-hover); outline: none; }
 .spectrum .ph a.hmi:focus-visible { outline: var(--s2-focus); outline-offset: calc(var(--spectrum-focus-indicator-thickness) * -1); }
 .spectrum .ph .hmi small { font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .hm[data-hm="linked"] .wf { width: var(--spectrum-workflow-icon-size-75); height: var(--spectrum-workflow-icon-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph a.lkt:hover > span, .spectrum .ph a.lkt:focus-visible > span { text-decoration: underline; }
+.spectrum .ph a.lkt:focus-visible { outline: var(--s2-focus); border-radius: var(--spectrum-corner-radius-75); }
+.spectrum .ph .hm .hmi .lkx { border-radius: var(--spectrum-corner-radius-100); color: var(--spectrum-neutral-subdued-content-color-default); }
+.spectrum .ph .hm .hmi .lkx:hover { background: var(--spectrum-gray-200); color: var(--spectrum-neutral-content-color-hover); }
+.spectrum .ph .hm .hmi .lkx:focus-visible { outline: var(--s2-focus); }
+.spectrum .t .lkd { border-radius: var(--spectrum-corner-radius-75); background: var(--spectrum-gray-100); font-size: var(--spectrum-font-size-75); color: var(--spectrum-neutral-subdued-content-color-default); }
 
 /* The feed's landmarks: the day as a subtle neutral Badge, dividers and events subdued. */
 .spectrum .day span {

@@ -123,9 +123,10 @@ export async function entryMessages(env, key) {
  * The input for the messages after `watermark`: the whole thread (its first message and the
  * latest ones) on first contact, the new messages after that. `verdicts` maps message ids to
  * Clef verdicts, `outside` who the messages mention that is not in the channel, if anyone
- * (src/agent/members.js).
+ * (src/agent/members.js), `related` what the thread is linked with across a partner and its
+ * customers (src/agent/related.js `relatedNote`), if anything.
  */
-export function deliveryText(entry, fresh, verdicts, { first, outside }) {
+export function deliveryText(entry, fresh, verdicts, { first, outside, related = '' }) {
   const shown = first && fresh.length > MAX_HISTORY
     ? [fresh[0], ...fresh.slice(-(MAX_HISTORY - 1))]
     : fresh;
@@ -137,5 +138,6 @@ export function deliveryText(entry, fresh, verdicts, { first, outside }) {
   const out = outside
     ? `\n\nMentioned above but not a member of this ${outside.place} (members listed ${outside.at}): ${outside.names.join(', ')}.`
     : '';
-  return `${lead}\n\n${blocks.join('\n\n')}${out}`;
+  const linked = related ? `\n\n${related}` : '';
+  return `${lead}\n\n${blocks.join('\n\n')}${out}${linked}`;
 }

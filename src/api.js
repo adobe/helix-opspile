@@ -94,6 +94,10 @@ import { teamDirectory, teamProfile } from './teamprofile.js';
 import { teamVendors } from './vendors.js';
 import { orgDirectory, orgProfile } from './orgprofile.js';
 import { orgPartnerLinks } from './orgpartners.js';
+import { notifyRoom } from './notify.js';
+import {
+  aboutThreads, dismissAbout, dismissLink, entryLinks, linkedOrgsOf,
+} from './threadlinks.js';
 import { drawDiagram } from './diagrams.js';
 import { isRequestKey } from './requestkeys.js';
 import { openQuestions } from './questions.js';
@@ -259,6 +263,23 @@ async function orgsOf(env, slugs) {
     WHERE slug IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(list)).all();
   return new Map((results || []).map((o) => [o.slug, o]));
 }
+/**
+ * An inbox entry's linked orgs (src/threadlinks.js `linkedOrgsOf`), of any of its threads `keys`:
+ * `{ about, with }`, or null where it has none.
+ */
+function linkedOf(linkedBy, keys) {
+  const about = [];
+  const withs = [];
+  for (const k of new Set(keys)) {
+    const l = linkedBy.get(k);
+    if (l) {
+      about.push(...l.about.filter((o) => !about.some((x) => x.slug === o.slug)));
+      withs.push(...l.with.filter((o) => !withs.some((x) => x.slug === o.slug)));
+    }
+  }
+  return about.length || withs.length ? { about, with: withs } : null;
+}
+
 const orgFields = (orgs, slug) => {
   const o = orgs.get(slug);
   return { org_name: (o && o.name) || null, org_icon: (o && o.icon) || null, org_type: (o && o.type) || 'customer' };
@@ -577,6 +598,9 @@ export async function inbox(env, me, team, {
   }
   const threadKeys = threads.map((t) => t.thread);
   const keys = JSON.stringify(threadKeys);
+  // The customers a partner's thread is about, the partners in a customer's (src/threadlinks.js).
+  const linkedP = linkedOrgsOf(env, [...new Set([...threadKeys,
+    ...threads.map((t) => t.logical_thread).filter(Boolean)])]);
   const [
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, { results: names },
@@ -683,6 +707,7 @@ export async function inbox(env, me, team, {
   const cards = await profiles(env, [...people.values()]
     .flatMap((t) => t.participants.map((p) => p.key)));
   const states = readState(threads, marks || [], mentions || [], me.id, yours);
+  const linkedBy = await linkedP;
   return {
     team: personal ? null : team,
     personal,
@@ -728,8 +753,13 @@ export async function inbox(env, me, team, {
       // A sidebar is kept under the entry's key when it was talked in: a member's, before a fold.
       const sideNew = [...new Set([t.thread, ...t.members.map((m) => m.thread)])]
         .flatMap((k) => unseen.get(k) || []);
+      const linked = linkedOf(linkedBy, [t.thread, ...t.members.map((m) => m.thread)]);
       return {
-        ...sized, waiting_on: waitingOn(sized), draft, ...(sideNew.length ? { sideNew } : {}),
+        ...sized,
+        waiting_on: waitingOn(sized),
+        draft,
+        ...(sideNew.length ? { sideNew } : {}),
+        ...(linked ? { linked } : {}),
       };
     })),
   };
@@ -742,8 +772,11 @@ export async function inbox(env, me, team, {
  * in the knowledge bases of the team (the personal view: of the viewer's teams) and of the
  * customers it owns, that the viewer may read (src/kbsearch.js). Nobody on a team sees none.
  */
-export async function searchInbox(env, me, team, q, { limit, personal = false } = {}) {
+export async function searchInbox(env, me, team, q, { limit, personal = false, org = null } = {}) {
   const n = Math.max(1, Math.min(MAX_RESULTS, Number(limit) || 30));
+  // One customer's (`org`): its own threads and its partners' threads about it
+  // (src/threadlinks.js `aboutThreads`); more are asked for, as the filter leaves some out.
+  const customer = org ? String(org).trim().toLowerCase() : null;
   // One vector of the query for the threads and the knowledge bases.
   const query = cleanQuery(q);
   const vector = terms(query).length ? queryVector(env, query) : Promise.resolve(null);
@@ -756,10 +789,14 @@ export async function searchInbox(env, me, team, q, { limit, personal = false } 
   });
   const teams = personal ? await roomsOf(env, me) : [team];
   const [found, kb] = await Promise.all([
-    teams.length ? find(env, teams, query, { limit: n, vector })
+    teams.length ? find(env, teams, query, { limit: customer ? MAX_RESULTS : n, vector })
       : { q: query, words: [], hits: [] },
     kbP,
   ]);
+  if (customer && found.hits.length) {
+    const theirs = await aboutThreads(env, customer, found.hits.map((h) => h.thread));
+    found.hits = found.hits.filter((h) => theirs.has(h.thread));
+  }
   if (!found.hits.length) {
     return {
       team: personal ? null : team,
@@ -1014,7 +1051,7 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
   const mentionedP = mentionedPeople(env, {
     source: row.source, tenant: row.tenant, threads: group.map((m) => m.thread),
   }, bodies);
-  const [cards, named, channels, links, channelLinked, stacks] = await Promise.all([
+  const [cards, named, channels, links, channelLinked, stacks, joined] = await Promise.all([
     Promise.all([linksP, mentionedP]).then(([linked, { keys: mentionKeys }]) => profiles(env, [
       ...messages.map((m) => m.authorKey),
       ...linked.map((l) => l.authorKey),
@@ -1030,6 +1067,9 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     // The customer's stack drawing's parts (src/orgstacks.js): the header's button to the
     // drawing shows where there is one.
     orgStacksOf(env, [row.org]),
+    // The customers it is about, the partners in it, and the threads possibly about the same
+    // issue in theirs (src/threadlinks.js): those the viewer may not see without their words.
+    entryLinks(env, [...new Set(entryKeys)], (k) => canSee(env, me, k)),
   ]);
   return {
     thread: {
@@ -1066,6 +1106,8 @@ export async function thread(env, me, asked, wanted = null, { waitUntil = null }
     channels,
     channel_links: channelLinked,
     links,
+    linked: { about: joined.about, with: joined.with },
+    related: joined.related,
     watermarks: marks || [],
     label,
     model,
@@ -1548,6 +1590,22 @@ async function route(request, env, url, {
     const body = await request.json().catch(() => ({}));
     return react(env, me, body, working);
   }
+  // Not about that customer, not that partner's; not the same issue (src/threadlinks.js).
+  const unlink = /^\/api\/thread\/(about|related)\/dismiss$/.exec(url.pathname);
+  if (unlink && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const t = body.thread && await env.DB.prepare('SELECT thread, team, source, channel_id FROM threads WHERE thread = ?')
+      .bind(String(body.thread)).first();
+    if (!t || !await working(await teamsOf(env, t), t)) {
+      return json({ error: 'not found' }, 404);
+    }
+    const res = unlink[1] === 'about' ? await dismissAbout(env, me, body) : await dismissLink(env, me, body);
+    if (res.error) {
+      return json({ error: res.error }, res.status || 400);
+    }
+    await notifyRoom(env, await teamsOf(env, t), { type: 'thread', thread: res.thread });
+    return json(res);
+  }
   if (url.pathname === '/api/resolve' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
     return resolve(env, me, body, working);
@@ -1617,7 +1675,7 @@ async function route(request, env, url, {
   }
   if (url.pathname === '/api/search' && url.searchParams.get('view') === 'personal') {
     return json(await searchInbox(env, me, null, url.searchParams.get('q'), {
-      personal: true, limit: url.searchParams.get('limit'),
+      personal: true, limit: url.searchParams.get('limit'), org: url.searchParams.get('org'),
     }));
   }
   if (url.pathname === '/api/search') {
@@ -1625,7 +1683,7 @@ async function route(request, env, url, {
       return json({ error: 'not a member of this team' }, 403);
     }
     return json(await searchInbox(env, me, team, url.searchParams.get('q'), {
-      limit: url.searchParams.get('limit'),
+      limit: url.searchParams.get('limit'), org: url.searchParams.get('org'),
     }));
   }
   // The admin team's requests, threads of its inbox (src/requestthreads.js), and the questions

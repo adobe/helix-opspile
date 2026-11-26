@@ -15,6 +15,7 @@ import {
 } from './deliver.js';
 import { mentionedOutside } from './members.js';
 import { modelProblem } from './model.js';
+import { relatedNote } from './related.js';
 import { rearmIdle } from './wakeups.js';
 
 /**
@@ -160,7 +161,12 @@ async function tell(agent, { retry }) {
     console.log(JSON.stringify({ route: 'agent', members: 'failed', error: e.message }));
     return null;
   });
-  const input = deliveryText(entry, fresh, verdicts, { first: !mark, outside });
+  // On first contact, what its thread is linked with across a partner and its customers.
+  const related = mark ? '' : await relatedNote(env, t).catch((e) => {
+    console.log(JSON.stringify({ route: 'agent', related: 'failed', error: e.message }));
+    return '';
+  });
+  const input = deliveryText(entry, fresh, verdicts, { first: !mark, outside, related });
   await agent.syncTools();
   await agent.syncMcp();
   await agent.syncUploads(entry);

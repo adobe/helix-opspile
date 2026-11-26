@@ -19,6 +19,7 @@ import { attachmentsOf, exportThreads, queueExport } from './clickhouse.js';
 import { ensureChannelKnowledgeBases } from './kb.js';
 import { LABEL_DELAY_SECONDS, labelThread } from './label.js';
 import { VECTORIZE_DELAY_SECONDS, vectorizeThread } from './vectors.js';
+import { linkThread } from './threadlinks.js';
 import { dethread, rethread, RETHREAD_DELAY_SECONDS } from './rethread.js';
 import {
   botIdentity, getChannel, getIdentity, loadRules, toAuthor, updateChannelName,
@@ -649,7 +650,7 @@ export async function processKey(env, key, cache = {}) {
 /** Whom a queue job works for: its thread, where it names one (src/cogs/meter.js). */
 export function jobSubject(body) {
   const thread = body.label || body.vectorize || body.rethread || body.agent || body.files
-    || body.watched
+    || body.watched || body.link
     || (body.backfill && body.backfill.thread)
     || (body.export && [].concat(body.export).length === 1 && [].concat(body.export)[0]);
   return typeof thread === 'string' ? { thread } : {};
@@ -663,6 +664,11 @@ const exportKey = (keys) => {
 
 /** A job's last delivery: the queue retries it five times (`maxRetries`, cloudflare.config.ts). */
 const LAST_ATTEMPT = 6;
+/**
+ * A thread's link job after its label: by then its vector is written too (both wait
+ * LABEL_DELAY_SECONDS and VECTORIZE_DELAY_SECONDS after its latest message).
+ */
+export const LINK_DELAY_SECONDS = 60;
 
 /**
  * Queue consumer for NORMALIZE. Each message is acknowledged on its own; a failure is
@@ -685,6 +691,7 @@ export async function consume(batch, baseEnv, meter = null) {
       || (body.rethread && `rethread:${body.rethread}`)
       || (body.agent && `agent:${body.agent}`)
       || (body.watched && `watched:${body.watched}`)
+      || (body.link && `link:${body.link}`)
       || (body.files && `files:${body.files}`)
       || (body.refile && `refile:${body.refile.source}:${body.refile.channelId}`)
       || (body.catchup && `catchup:${body.catchup.channelId}`)
@@ -731,6 +738,12 @@ export async function consume(batch, baseEnv, meter = null) {
           // eslint-disable-next-line no-await-in-loop
           await queueExport(env, body.label, { delaySeconds: 0 });
         }
+        // Its links to a partner's or customers' threads (src/threadlinks.js), once its vector is
+        // written too; not an imported thread's (nobody works those).
+        if (r.result === 'labeled' && !r.imported) {
+          // eslint-disable-next-line no-await-in-loop
+          await env.NORMALIZE.send({ link: body.label }, { delaySeconds: LINK_DELAY_SECONDS });
+        }
         // An imported thread's first label is no news: thousands of them, labeled when asked
         // for (scripts/replay.mjs --imported), would reload every inbox that follows what they
         // show with each.
@@ -738,6 +751,9 @@ export async function consume(batch, baseEnv, meter = null) {
           // eslint-disable-next-line no-await-in-loop
           await announceFollowed(env, body.label, r.tech, r.areas);
         }
+      } else if (body.link) {
+        // eslint-disable-next-line no-await-in-loop
+        r = { key, ...await linkThread(env, body.link) };
       } else if (body.export) {
         // eslint-disable-next-line no-await-in-loop
         r = { key, ...await exportThreads(env, body.export, { at: body.at || null }) };

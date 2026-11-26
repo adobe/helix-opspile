@@ -256,6 +256,28 @@ their org are not used, so one read while the decision was written is not kept a
 isolates keep theirs up to `CACHE_MS` (five minutes), as they do for a new thread, and show the
 decision after that; nothing else forgets them.
 
+**Thread org.** found → found again (its `p` and `via` move) or gone; dismissed ⇄ shown
+(`thread_orgs`, migration 0111, src/threadlinks.js). A row per inbox entry (its key at the time),
+org and role (`about`: the customer a partner's thread is about; `partner`: a partner whose people
+post in a customer's thread). Every link job (`{ link }`, a minute after a `labeled` result) writes
+what it finds for its role and deletes the rows of that role it no longer finds, unless dismissed;
+`found_at` moves only when `p` or `via` changed. Shown is not dismissed, `p` at least `ABOUT_MIN`,
+and an org not merged. A dismissed row (`dismissed_at`, by whoever may work the thread) is kept
+through every job, so the org stays off the thread until `undo` clears it. Nothing else writes
+them: a change of the pairs (`org_partners`) or of the partner domains shows at the thread's next
+labelling, and a thread re-threaded into another keeps its rows under its old key, which the entry
+still reads (every member's key).
+
+**Thread link.** candidate → asked (`p`) → shown or not; dismissed ⇄ shown (`thread_links`,
+migration 0111). A pair of entries (`a` < `b`), written by the link job of either: a candidate's row
+with its `score` (the highest seen), Clef asked once (`checked_at`) for at most `RELATED_ASK` new
+ones a job, a failed ask leaving `p` null for the next; `owner` set once both threads' facts name
+the same rare owner, and kept. A row is never deleted: one no longer found (older than
+`RELATED_DAYS`, its vector changed) keeps its verdict. Shown is not dismissed and `owner`, or `p` at
+least `RELATED_P`, or `p` null and `score` at least `RELATED_SURE`. A link that becomes shown
+tells the agents of both threads once (`relatedUpdate`); a dismissed one is not asked about again
+and tells nobody.
+
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status
 = 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.

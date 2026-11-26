@@ -42,6 +42,7 @@ import { answered } from './question.js';
 import { dream, dreamOf, dreamState } from './dream.js';
 import { setWakeup, wakeupDue } from './wakeups.js';
 import { removeWatch, setWatch, watchUpdate } from './watches.js';
+import { relatedUpdate } from './related.js';
 import { armCompact, compactIdle } from './idlecompact.js';
 import {
   COMPUTER_CWD, computerEnv, ensureCwd, KERNEL_OUTPUT_DIR, readComputerFile,
@@ -735,6 +736,12 @@ export class ThreadAgent extends Agent {
   async watchUpdate(update) {
     this.meterModel();
     return watchUpdate(this, update);
+  }
+
+  /** Its thread's links to a partner's or customers' threads changed (src/agent/related.js). */
+  async relatedUpdate(change) {
+    this.meterModel();
+    return relatedUpdate(this, change);
   }
 
   /** A turn ended: compact after an idle hour, in the compaction experiment (idlecompact.js). */
