@@ -413,7 +413,10 @@ one person:
   admits nobody (enrollment, and the alias binding of a domain-caught member, are as before), and
   an unverified address is never kept.
 - In an individual channel, a member reads the threads of every active member of the same channel
-  with the same merge key: their threads from either profile. Never across channels or hosts.
+  with the same merge key: their threads from either profile. Never across channels or hosts, and
+  only while both profiles verified the address in the last 30 days (`users.verified_at`): an
+  address given to someone new after its owner left stops joining them to the former owner's
+  profile. Revoke a member who leaves (`integration_members.active = 0`) to end it at once.
 - The inbox hears it with each message (`author.verifiedEmail`, only for an account without a mail
   address) and keeps it apart from the account's mail address (`identities.merge_email`): the
   accounts of one address are one person in the customers' overviews and the topic map, and the
