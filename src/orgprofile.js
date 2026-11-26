@@ -277,7 +277,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     q(`WITH ${SCOPE}, ${AUTHORS}
       SELECT a.key, a.staff, a.week, a.n, a.threads, a.last, i.person, i.kind,
         COALESCE(i.display_name, i.name) AS name,
-        LOWER(COALESCE(p.email, i.email)) AS mail,
+        LOWER(COALESCE(p.email, i.email, i.merge_email)) AS mail,
         LOWER(SUBSTR(COALESCE(p.email, i.email), INSTR(COALESCE(p.email, i.email), '@') + 1)) AS domain
       FROM a LEFT JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +a.key
         LEFT JOIN people p ON p.id = i.person`),
