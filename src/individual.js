@@ -108,11 +108,17 @@ export async function endUserOf(env, keys) {
   };
 }
 
+/** How recently an embedded account must have verified its address to be joined by it. */
+export const MERGE_DAYS = 30;
+
 /**
  * The accounts of `person` (`endUserOf`'s) in portal tenant `tenant` (its channel's lobby): theirs,
- * and those of the same address. Their threads are the ones these wrote in.
+ * and those of the same address: a standalone portal account's mail address, or an embedded
+ * account's merge key verified in the last `MERGE_DAYS` (`merge_at`), as the portal joins them
+ * (src/portal/integration-auth.js), so an address given to someone new after its owner left does
+ * not join the former owner's. Their threads are the ones these wrote in.
  */
-export async function accountsOf(env, tenant, person) {
+export async function accountsOf(env, tenant, person, now = Date.now()) {
   if (!person) {
     return [];
   }
@@ -122,7 +128,8 @@ export async function accountsOf(env, tenant, person) {
   const { results } = await env.DB.prepare(`SELECT 'portal:' || tenant || ':' || user_id AS key
     FROM identities WHERE source = 'portal' AND tenant = ?1 AND kind = 'person'
       AND person IS NULL AND COALESCE(staff, 0) = 0
-      AND (merge_email = ?2 OR LOWER(email) = ?2) LIMIT 20`).bind(tenant, person.mail).all();
+      AND (LOWER(email) = ?2 OR (merge_email = ?2 AND merge_at > ?3)) LIMIT 20`)
+    .bind(tenant, person.mail, new Date(now - MERGE_DAYS * 864e5).toISOString()).all();
   return [...new Set([person.key, ...(results || []).map((r) => r.key)])];
 }
 

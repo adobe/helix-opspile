@@ -1236,9 +1236,10 @@ async function approveIntegration(env, me, body) {
       return portalRefused(reserved);
     }
     channel = { ...reserved.channel, existing: Boolean(reserved.existing) };
-    if (reserved.channel.audience === 'individual') {
+    if (reserved.channel.audience) {
+      // Either way: a reservation resumed as shared was individual in the inbox until now.
       await recordAudience(env, {
-        tenant: `${channel.id}.embed.invalid`, channelId: channel.id, audience: 'individual',
+        tenant: `${channel.id}.embed.invalid`, channelId: channel.id, audience: reserved.channel.audience,
       });
     }
     if (!reserved.existing) {

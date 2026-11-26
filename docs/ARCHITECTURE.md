@@ -970,7 +970,8 @@ own, `kb-person-p<24 hex>` (kind `person` in `knowledge_bases`, made by the firs
 first thread, src/individual.js). Its key is a hash of who they are: the address their accounts
 are one person by (an embedded account's merge key, `identities.merge_email`, or a standalone
 portal account's mail address), so two IMS profiles of one person have one knowledge base, and
-without an address the account's identity key. The end user of a thread is its first customer
+without an address the account's identity key. An embedded account counts as theirs only while it
+verified the address in the last 30 days (`identities.merge_at`), as the portal counts it. The end user of a thread is its first customer
 author. It is laid out as a customer's (`LAYOUT`: Customer, Contact, Site, Project, …, no catalog
 type and no stack drawing), and indexed for the search under its own key (`person` in the
 concepts' vectors), which no team's or customer's search asks for. The team's knowledge base and

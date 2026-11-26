@@ -21,8 +21,9 @@ import { normalizePortal } from '../src/normalize.js';
 import { receive } from '../src/portalsource.js';
 import { deliver } from '../src/portal/events.js';
 import {
-  endUserOf, individualOf, personSlug, recordAudience,
+  endUserOf, individualOf, MERGE_DAYS, personSlug, recordAudience,
 } from '../src/individual.js';
+import * as platform from '../src/portal/platform.js';
 import { accessibleRepos } from '../src/agent/repos.js';
 import { channelThreads, resolveThread } from '../src/agent/history.js';
 import { readable } from '../src/agent/watches.js';
@@ -233,6 +234,40 @@ describe('the agents of an individual channel', () => {
     assert.match(await run('list_channel_threads', { query: 'Login' }), /Login loops/);
     assert.match(await run('read_thread', { thread: keys.bo }), /no thread of your channel/);
     assert.doesNotMatch(await run('read_thread', { thread: keys.bo }), /Billing secret/);
+  });
+
+  it('joins a profile whose address went stale no longer, as the portal does', async () => {
+    const { w, keys } = await channelWithThreads();
+    const before = await channelThreads(w.inbox, keys.ada);
+    assert.ok(before.threads.some((t) => t.thread === keys.adaToo));
+    // Her second profile last verified the address over a month ago: as if it were someone else's.
+    const [{ author_key: author }] = w.inbox.DB.rows(`SELECT author_key FROM messages
+      WHERE thread = ?`, keys.adaToo);
+    const old = new Date(Date.now() - (MERGE_DAYS + 1) * 864e5).toISOString();
+    w.inbox.DB.sqlite.prepare(`UPDATE identities SET merge_at = ? WHERE source || ':' || tenant
+      || ':' || user_id = ?`).run(old, author);
+    const listed = await channelThreads(w.inbox, keys.ada);
+    assert.deepEqual(listed.threads.map((t) => t.thread), [keys.ada2]);
+    assert.match((await resolveThread(w.inbox, keys.ada, keys.adaToo)).error, /no thread of your channel/);
+  });
+
+  it('records a resumed reservation\'s audience in the inbox either way', async () => {
+    const w = world();
+    await w.list();
+    // A first approval reserved it individual, and the inbox recorded that; then routing failed.
+    const reserved = await platform.reserve(w.portal, {
+      id: 1, customer: 'agents-mill', name: 'agents-mill', by: { email: w.admin.email }, audience: 'individual',
+    });
+    const { id } = reserved.channel;
+    await recordAudience(w.inbox, { tenant: `${id}.embed.invalid`, channelId: id, audience: 'individual' });
+    const inbox = () => w.inbox.DB.rows('SELECT audience FROM channel_audiences WHERE channel_id = ?', id)
+      .map((r) => r.audience);
+    // Approved again, unchecked: shared in the portal and in the inbox.
+    const done = await quiet(() => w.staff(w.admin, 'POST', '/api/admin/portal/integration/approve', {
+      id: 1, team: 'agents', org: 'mill', audience: 'shared',
+    }));
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.deepEqual(inbox(), ['shared']);
   });
 
   it('reads every thread of a shared channel, as before', async () => {
