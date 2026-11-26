@@ -60,6 +60,10 @@
 /* A dot per wait, on a scale from a minute to a week, its marks under it. */
 .ov .tv-waits { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); }
 .ov .tv-waits svg { display: block; width: 100%; height: auto; overflow: visible; }
+/* Several sets of waits on one scale: a key of them, each its dot, its name and its median. */
+.ov .tv-key { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-300); }
+.ov .tv-key > span { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
+.ov .tv-key .dot { flex: none; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); border-radius: 50%; }
 .ov .tv-ticks { position: relative; height: calc(var(--spectrum-font-size-75) * 1.5); }
 .ov .tv-ticks span { position: absolute; left: calc(var(--at, 0) * 100%); transform: translateX(-50%); white-space: nowrap; }
 .ov .tv-ticks span:first-child { transform: none; }
@@ -99,9 +103,11 @@
 .ov .cv-hero .tv-stats { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--spectrum-spacing-500); padding: var(--spectrum-spacing-400); }
 .ov .cv-hero .tv-stat { grid-column: span 2; }
 .ov .cv-hero .tv-stat.w3 { grid-column: span 3; }
+.ov .cv-hero .tv-stat.w4 { grid-column: span 4; }
 @container (max-width: 40em) {
   .ov .cv-hero .tv-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ov .cv-hero .tv-stat, .ov .cv-hero .tv-stat.w3 { grid-column: span 1; }
+  .ov .cv-hero .tv-stat.w4 { grid-column: span 2; }
 }
 .ov .tv-bars .tv-axis, .ov .tv-bars .tv-plot svg { height: calc(var(--spectrum-spacing-1000) * 2 + var(--spectrum-spacing-500)); }
 .ov .cv-activity { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); min-width: 0; }
@@ -266,8 +272,13 @@
 /* The waits: Adobe's answers in indigo, a vendor's in purple (as its tags); the median a line. */
 .spectrum .ov .tv-waits circle { fill: var(--spectrum-indigo-visual-color); }
 .spectrum .ov .tv-waits.them circle { fill: var(--spectrum-purple-visual-color); }
+.spectrum .ov .tv-waits circle[data-series] { fill: var(--s2-series); }
+.spectrum .ov .tv-key .dot { background: var(--s2-series); }
+.spectrum .ov .tv-key { color: var(--spectrum-neutral-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .ov .tv-key b { font-weight: var(--spectrum-bold-font-weight); font-variant-numeric: tabular-nums; }
 .spectrum .ov .tv-waits .axis { stroke: var(--spectrum-gray-300); stroke-width: var(--spectrum-border-width-100); vector-effect: non-scaling-stroke; }
 .spectrum .ov .tv-waits .mid { stroke: var(--spectrum-neutral-content-color-default); stroke-width: var(--spectrum-border-width-200); vector-effect: non-scaling-stroke; }
+.spectrum .ov .tv-waits .mid[data-series] { stroke: var(--s2-series); }
 /* A status page's weeks: quiet ones green, those with a post in the notice color. */
 .spectrum .ov .tv-uptime rect.off { fill: var(--spectrum-positive-visual-color); }
 .spectrum .ov .tv-uptime rect.on { fill: var(--spectrum-notice-visual-color); }
