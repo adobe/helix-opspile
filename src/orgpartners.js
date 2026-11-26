@@ -239,12 +239,29 @@ const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** Whether `text` has `word` as a word of its own (not part of a longer one). */
 const hasWord = (text, word) => new RegExp(`(^|[^a-z0-9])${escape(word)}($|[^a-z0-9])`).test(text);
 
-/** Each org's usual mail domain: the one most of its people outside Adobe post from. */
-function usualDomains(ev) {
+/** The partner whose people write from `domain` or a parent of it, or null (as `partnerOf`). */
+export function domainPartner(domains, domain) {
+  const labels = String(domain || '').toLowerCase().split('.');
+  for (let i = 0; i < labels.length - 1; i += 1) {
+    const d = labels.slice(i).join('.');
+    if (domains.has(d)) {
+      return domains.get(d);
+    }
+  }
+  return null;
+}
+
+/**
+ * Each org's usual mail domain: the one most of its people outside Adobe post from, of no other
+ * org's partner domains (`partnerOf`, `domainPartner`'s): a partner's people may well outnumber the
+ * customer's in its channel, and are not the customer's.
+ */
+function usualDomains(ev, partnerOf = new Map()) {
   const usual = new Map();
   for (const [slug, list] of ev.posters) {
-    if (list.length) {
-      usual.set(slug, list[0].domain);
+    const own = list.find((r) => [null, slug].includes(domainPartner(partnerOf, r.domain)));
+    if (own) {
+      usual.set(slug, own.domain);
     }
   }
   return usual;
@@ -275,26 +292,14 @@ export async function partnerMailDomains(env, orgs) {
   return { domains: out, found };
 }
 
-/** The partner whose people write from `domain` or a parent of it, or null (as `partnerOf`). */
-export function domainPartner(domains, domain) {
-  const labels = String(domain || '').toLowerCase().split('.');
-  for (let i = 0; i < labels.length - 1; i += 1) {
-    const d = labels.slice(i).join('.');
-    if (domains.has(d)) {
-      return domains.get(d);
-    }
-  }
-  return null;
-}
-
 /**
  * What every pair is compared with, worked out once per list: each org's usual mail domain, whose
  * each partner domain is (`partnerMailDomains`, else each partner's usual one), how many orgs'
  * threads name each owner, and how many orgs have a channel in each place.
  */
 export function contextOf(orgs, ev, domains = null) {
-  const usual = usualDomains(ev);
   const partnerOf = domains || postedDomains(orgs, ev);
+  const usual = usualDomains(ev, partnerOf);
   // Each partner's own domains (not their subdomains), as Clef and the admin team are told.
   const partnerMail = new Map();
   for (const [d, slug] of partnerOf) {

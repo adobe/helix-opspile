@@ -40,8 +40,9 @@ import {
  * that of a customer whose channels only its people post in, which is how partners work. A domain
  * two partners have is the one's with more of its people there, and one that names one other
  * partner org (of no posts, too) and not the partner whose people write from it is the one's it
- * names: a bought agency's people write from its new parent's domain. Each is named by its org's
- * display name.
+ * names: a bought agency's people write from its new parent's domain. A domain of a partner's
+ * very name (`acme.com` of `acme`) is that partner's wherever its people post, though they posted
+ * in none of its own threads. Each is named by its org's display name.
  *
  * They are found from every message there is (a few hundred thousand rows), so an isolate keeps
  * what it found for an hour (`DERIVED_MS`), and the first request after that finds them again.
@@ -193,6 +194,44 @@ export function derive(env, rows, icons = [], partners = []) {
   }
   for (const d of found.keys()) {
     left.delete(d);
+  }
+  // A domain whose name is a partner org's own, exactly (`acme.example` of `acme`), is that
+  // partner's wherever its people post, though none of them posted in the partner's threads (its
+  // channels may hide their mail, or have no threads): in a customer's channel, they would else be
+  // the customer's people. Not one that names a customer its people post for, or a customer's icon.
+  const byLabel = new Map();
+  for (const o of orgs) {
+    for (const d of o.domains) {
+      const l = label(d.domain);
+      if (!byLabel.has(l)) {
+        byLabel.set(l, new Map());
+      }
+      const was = byLabel.get(l).get(d.domain) || { people: 0, threads: 0 };
+      // A thread is of one org: its threads add up, its people may be the same.
+      byLabel.get(l).set(d.domain, {
+        people: Math.max(was.people, d.people), threads: was.threads + d.threads,
+      });
+    }
+  }
+  const exactly = new Map();
+  for (const p of known.values()) {
+    for (const n of new Set([compact(p.slug), compact(p.name)].filter(Boolean))) {
+      exactly.set(n, [...(exactly.get(n) || []), p]);
+    }
+  }
+  for (const [n, ps] of exactly) {
+    const p = new Set(ps.map((x) => x.slug)).size === 1 ? ps[0] : null;
+    for (const [domain, d] of (p && byLabel.get(n)) || []) {
+      const own = (postsIn.get(domain) || []).some((c) => namesOrg(domain, c))
+        || pictured.has(registrable(domain));
+      const was = found.get(domain);
+      if (!own && (!was || was.org !== p.slug)) {
+        found.set(domain, {
+          domain, org: p.slug, name: p.name || p.slug, people: d.people, threads: d.threads,
+        });
+        left.delete(domain);
+      }
+    }
   }
   const order = (a, b) => a.name.localeCompare(b.name) || a.domain.localeCompare(b.domain);
   return { found: [...found.values()].sort(order), left: [...left.values()].sort(order) };
