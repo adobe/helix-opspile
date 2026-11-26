@@ -2375,12 +2375,13 @@ function marked(text, words) {
     .map((part, i) => (i % 2 ? `<mark>${emojify(part)}</mark>` : emojify(part))).join('');
 }
 const MATCHED = { title: 'Title', place: 'Channel or customer', fact: 'Facts', text: 'Words in a message', topic: 'About this' };
-// Fact fields of the admin team's rules (migration 0043) and Clairic's; a team's own show as they are named.
+// Fact fields of the admin team's rules (migration 0043 and those added since) and Clairic's; a
+// team's own show as they are named.
 const FACT_LABEL = {
   url: 'URL', cve: 'CVE', ticket: 'Ticket', site: 'Site', repo: 'Repository', problem: 'Problem', error: 'Error', deadline: 'Deadline',
   go_live: 'Go-live', affected_url: 'Affected URL', admin_api: 'Admin API', aemcs_env: 'AEM environment', doc: 'Docs', tool: 'Tool',
   config_file: 'Config file', http_status: 'Status', header: 'Header', case: 'Support case',
-  product: 'Product',
+  product: 'Product', figma_file: 'Figma file',
 };
 /** A result's third line: the message that matched, else the fact, else why it matched. */
 function hitLine(hit) {
