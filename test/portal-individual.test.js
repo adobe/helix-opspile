@@ -314,9 +314,13 @@ describe('individual channels of the standalone portal', () => {
     await call(env, MAIL_ADA, 'POST', '/api/post', { channel, text: 'Individual' });
     await deliver(env);
     const told = got.filter((e) => e.channel && e.channel.id === channel);
-    assert.deepEqual(told.map((e) => [e.type, e.channel.audience || 'shared']).slice(-3), [
-      ['message', 'shared'], ['channel', 'individual'], ['message', 'individual'],
+    assert.deepEqual(told.map((e) => [e.type, e.channel.audience]).slice(-3), [
+      ['message', undefined], ['channel', 'individual'], ['message', 'individual'],
     ]);
+    // Shared again: its channel event says so, which no message of a shared channel does.
+    const back = await platform.setChannelAudience(env, { channel, audience: 'shared', by: STAFF });
+    await deliver(env);
+    assert.deepEqual([got.at(-1).type, got.at(-1).channel.audience, got.at(-1).seq], ['channel', 'shared', back.seq]);
     assert.equal((await platform.setChannelAudience(env, { channel, audience: 'x', by: STAFF })).status, 400);
     assert.equal((await platform.setChannelAudience(env, { channel: 'cnope', audience: 'shared', by: STAFF })).status, 404);
     assert.equal((await platform.setChannelAudience(env, { channel, audience: 'shared' })).status, 400);

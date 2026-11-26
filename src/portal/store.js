@@ -924,13 +924,18 @@ export async function reactTo(env, channel, user, { id, emoji, removed }, now = 
 }
 
 /**
- * Tells the inbox how `channel` (a row of `channelOf`) is now: its name and, when it is one, that
- * it is individual. A snapshot, as a lobby's.
+ * Tells the inbox how `channel` (a row of `channelOf`) is now: its name and who sees its threads,
+ * said either way (`audience`), so the inbox hears a channel shared again too. A snapshot, as a
+ * lobby's. The event's number in the outbox (`seq`), which the inbox orders what it heard by.
  */
 export async function tellChannel(env, channel, now = Date.now()) {
-  await emit(env, {
-    type: 'channel', domain: channel.lobby, channel: await channelInfo(env, channel),
-  }, new Date(now));
+  const ch = await withAudience(env, channel);
+  const { meta } = await eventStatement(env, {
+    type: 'channel',
+    domain: ch.lobby,
+    channel: { ...await channelInfo(env, ch), audience: isIndividual(ch) ? 'individual' : 'shared' },
+  }, new Date(now)).run();
+  return meta && meta.last_row_id;
 }
 
 /**
@@ -960,15 +965,19 @@ export async function setAudience(env, { channel: id, audience, by }, now = Date
       VALUES (?, ?, ?, ?) ON CONFLICT (channel) DO UPDATE SET audience = excluded.audience,
         set_by = excluded.set_by, set_at = excluded.set_at`)
     .bind(key, audience, email, sec).run();
-  if (row) {
-    await tellChannel(env, { ...row, audience }, now);
-  }
+  const seq = row ? await tellChannel(env, { ...row, audience }, now) : null;
   console.log(JSON.stringify({ route: 'portal', audience }));
   return {
     ok: true,
     channel: {
-      id: key, audience, by: email, at: new Date(sec * 1000).toISOString(),
+      id: key,
+      lobby: row ? row.lobby : `${key}.embed.invalid`,
+      audience,
+      by: email,
+      at: new Date(sec * 1000).toISOString(),
     },
+    // The `channel` event that tells the inbox, when the channel exists yet.
+    ...(seq ? { seq } : {}),
   };
 }
 
