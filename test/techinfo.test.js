@@ -128,16 +128,16 @@ describe('a technology on the Topics page', () => {
     // Nor a customer's stack drawing: that is its knowledge base's.
     assert.deepEqual(r.stacks, []);
     assert.equal(r.moreStacks, 0);
-    // On a team: every team's knowledge base, and its own customers'; the agent of the team whose
+    // On a team: every team's knowledge base, and the customers'; the agent of the team whose
     // catalog has it, read only.
     const mo = await techInfo(env, as(EDGE), { tech: ['sketchy/sketchy'], name: 'Sketchy' });
     assert.equal(mo.knowledge.length, 2);
     assert.deepEqual(mo.agents.map((a) => [a.slug, a.write]), [['design', false]]);
     // The stack of a customer of its own team.
     assert.deepEqual(mo.stacks.map((x) => x.org), ['acme']);
-    // A team that does not own the customer does not see its stack.
+    // And of one its team does not own, whose knowledge base it reads too.
     const other = await techInfo(env, as({ ...EDGE, teams: ['design'] }), { tech: ['sketchy/sketchy'] });
-    assert.deepEqual(other.stacks, []);
+    assert.deepEqual(other.stacks.map((x) => x.org), ['acme']);
   });
 
   it('of a name no catalog has: its knowledge, and the agents of your teams', async () => {

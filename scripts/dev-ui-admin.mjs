@@ -895,6 +895,7 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     ('hooli', 'Hooli Inc.', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('wonka', 'Wonka Industries', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('soylent', 'Soylent Corporation', 'customer', NULL, '2026-10-20T09:00:00Z'),
+    ('massive', 'Massive Dynamic', 'customer', NULL, '2026-10-20T09:00:00Z'),
     ('opspile', 'opspile', 'internal', NULL, '2026-10-20T09:00:00Z'),
     ('acme-co', 'ACME Corporation', 'customer', 'acme.example', '2026-10-20T09:00:00Z'),
     ('wonkaindustries', 'Wonka Industries Ltd', 'customer', NULL, '2026-10-20T09:00:00Z')`);

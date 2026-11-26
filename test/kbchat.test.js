@@ -318,8 +318,18 @@ describe('the knowledge base\'s sidebar', () => {
     assert.deepEqual([calls[0][1].by, calls[0][1].write, calls[0][1].person], ['Cy', false, CY.id]);
     assert.equal((await call(e, BO, 'POST', '/api/kb/chat', { repo: REPO, text: 'Hi' })).status, 202);
     assert.equal(calls[1][1].write, true);
-    // Not a customer's knowledge base their teams do not own.
-    assert.equal((await call(e, CY, 'GET', '/api/kb/chat?repo=kb-org-acme')).status, 404);
+    // A customer's knowledge base their teams do not own the same way: they see its page, so
+    // they talk to its agent, which changes nothing for them.
+    const theirs = await (await call(e, CY, 'GET', '/api/kb/chat?repo=kb-org-acme')).json();
+    assert.deepEqual([theirs.may, theirs.write], [true, false]);
+    assert.equal((await call(e, CY, 'POST', '/api/kb/chat', { repo: 'kb-org-acme', text: 'Who is who?' })).status, 202);
+    assert.deepEqual([names.at(-1), calls[2][1].kb, calls[2][1].write], ['kb::acme', 'org', false]);
+    // Nor do they run the commands its agent asks for.
+    assert.equal((await call(e, CY, 'POST', '/api/kb/chat/bash', {
+      repo: 'kb-org-acme', chat: theirs.chat || chatId(), id: 'r1', run: true,
+    })).status, 403);
+    // Someone on no team sees neither.
+    assert.equal((await call(e, { ...CY, teams: [] }, 'GET', '/api/kb/chat?repo=kb-org-acme')).status, 404);
     calls.length = 0;
     names.length = 0;
     assert.equal((await call(e, ADA, 'GET', '/api/kb/chat?repo=kb-team-nope')).status, 404);

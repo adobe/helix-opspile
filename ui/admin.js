@@ -498,7 +498,8 @@ async function pickRow(sel) {
  */
 /**
  * The knowledge base's sidebar (ui/kbchat.js): the agent of the team or the customer picked,
- * where it has a knowledge base you may change; else none.
+ * where it has a knowledge base, which everyone on a team reads (GET /api/kb); else none. It
+ * changes it only for those who may write it.
  */
 function showChat() {
   const { tab, sel } = state;
@@ -684,8 +685,9 @@ function drawList() {
     let middle = '';
     let rest = orgs.filter((o) => !followsOrg(o.slug));
     if (!state.me.admin && onATeam()) {
-      // The customers your teams own (their agents, which their managers change).
-      const ours = state.bases.filter((b) => b.kind === 'org' && !followsOrg(b.slug))
+      // The customers your teams own (their agents, which their managers change): of the
+      // customers' knowledge bases, which everyone on a team reads, those you write.
+      const ours = state.bases.filter((b) => b.kind === 'org' && b.write && !followsOrg(b.slug))
         .map((b) => ({ ...(state.orgs.find((o) => o.slug === b.slug) || { slug: b.slug, name: b.name, type: 'customer' }), base: b }))
         .filter(shown);
       const slugs = new Set(ours.map((o) => o.slug));

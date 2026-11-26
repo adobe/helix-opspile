@@ -16,14 +16,15 @@
  *
  * - a team's (`kind: 'team'`): the members of every ops team look (as every thread agent
  *   reads it, src/agent/repos.js), its managers change it;
- * - a customer's (`kind: 'org'`): the members of the teams that own the customer look (a
- *   channel of the customer's is filed under or shared with the team, src/shares.js), and the
- *   managers of those teams change it;
+ * - a customer's (`kind: 'org'`): the members of every ops team look too, as they see the
+ *   customer's page (ui/admin.js), and the managers of the teams that own the customer (a
+ *   channel of the customer's is filed under or shared with the team, src/shares.js) change it;
  * - the admin team looks at and changes all of them.
  *
  * Its files, but `systemprompt.md` (the agents' instructions, `mayEdit`'s), are written by more
  * (`mayWrite`): everyone on the team, a team's for its own, the owning teams' for a customer's,
- * in the editor and through its agent's sidebar (src/kbchat.js), where whoever looks may talk.
+ * in the editor and through its agent's sidebar (src/kbchat.js), where whoever looks may talk;
+ * for anyone else who looks, the agent there answers but changes nothing.
  */
 
 import { isAdmin, managedTeams, managesTeam } from './roles.js';
@@ -31,7 +32,7 @@ import { ownedCustomers, ownsCustomer } from './shares.js';
 
 const teamsOf = (me) => ((me && me.teams) || []).map((t) => t.slug);
 
-/** Whether `me` is in an ops team at all (or the admin team): who looks at the teams' ones. */
+/** Whether `me` is in an ops team at all (or the admin team): who looks at every one. */
 const inAnyTeam = (me) => isAdmin(me) || teamsOf(me).length > 0;
 
 /** Whether `me` may change the knowledge base (or the servers) of `kind`/`slug`. */
@@ -55,12 +56,12 @@ export async function mayWrite(env, me, { kind, slug }) {
     : ownsCustomer(env, teamsOf(me), slug);
 }
 
-/** Whether `me` may look at the knowledge base (or the servers) of `kind`/`slug`. */
-export async function mayRead(env, me, { kind, slug }) {
-  if (isAdmin(me)) {
-    return true;
-  }
-  return kind === 'team' ? inAnyTeam(me) : ownsCustomer(env, teamsOf(me), slug);
+/**
+ * Whether `me` may look at a knowledge base (or its servers), a team's or a customer's alike:
+ * every ops team's members and the admin team. It takes the base (`{ kind, slug }`) as the others.
+ */
+export async function mayRead(env, me) {
+  return inAnyTeam(me);
 }
 
 /**
@@ -76,8 +77,9 @@ export async function access(env, me) {
     ownedCustomers(env, teamsOf(me)),
     ownedCustomers(env, managed),
   ]);
+  const looks = inAnyTeam(me);
   return {
-    read: (b) => (b.kind === 'team' ? inAnyTeam(me) : owned.has(b.slug)),
+    read: () => looks,
     edit: (b) => (b.kind === 'team' ? managesTeam(me, b.slug) : ownedManaged.has(b.slug)),
     write: (b) => (b.kind === 'team' ? teamsOf(me).includes(b.slug) || managesTeam(me, b.slug)
       : owned.has(b.slug)),

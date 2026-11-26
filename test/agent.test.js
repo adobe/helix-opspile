@@ -1410,6 +1410,18 @@ describe('the earlier conversations of the channel', () => {
       }).tools;
       const wrote = await kbTools.find((t) => t.name === 'kb_write').execute({ kb: 'team', message: 'x', changes: [{ path: 'a.md', content: 'x' }] }, { conversationId: 'chat-1' });
       assert.match(wrote.output[0].text, /not on this knowledge base's team/);
+      // A customer's agent (`kb::acme`) neither, for someone of a team that does not own it.
+      const orgTools = opspileExtension({
+        env: e,
+        hasThread: false,
+        target: async () => ({ key: null, team: null, org: 'acme' }),
+        pinned: async () => 'org',
+        chatOf: async () => ({ ...CHAT, kb: 'org', repo: 'kb-org-acme' }),
+      }).tools;
+      const run = async (name, args) => (await orgTools.find((t) => t.name === name)
+        .execute(args, { conversationId: 'chat-1' })).output[0].text;
+      assert.match(await run('kb_write', { kb: 'org', message: 'x', changes: [{ path: 'a.md', content: 'x' }] }), /not on this knowledge base's team/);
+      assert.match(await run('draw_stack', { summary: 'x', parts: [{ layer: 'edge', name: 'CDN' }] }), /not on this knowledge base's team/);
     });
   });
 

@@ -320,6 +320,11 @@ const CHANNELS = {
   cyberdyne: {
     source: 'slack', channelId: 'C0CYBER001', name: 'cyberdyne-cdn', org: 'cyberdyne', team: 'edge',
   },
+  // A customer only Forms ops works, which Dana is not on: she sees its page in Customers, reads
+  // its knowledge base and talks to its agent there, which changes nothing for her.
+  massive: {
+    source: 'slack', channelId: 'C0MASSIVE1', name: 'massive-forms', org: 'massive', team: 'forms',
+  },
   // A community server: a forum where every post is a thread.
   forum: {
     source: 'discord', channelId: '1100000000000000001', name: 'community-forum', org: 'opspile', team: 'edge', appPosting: true,
@@ -1665,6 +1670,16 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
   quiet(CHANNELS.stark, 5 * DAY, 'Stark\'s sitemap lists pages that are gone.', 'It is rebuilt every night: tomorrow\'s will not have them.');
   quiet(CHANNELS.wonka, 18 * DAY, 'Wonka\'s forms post to an endpoint that answers 404.', 'Their forms service moved: the form config needs the new URL.');
   quiet(CHANNELS.tyrell, 26 * DAY, 'Tyrell wants to know when the old author host goes away.', 'At the end of the quarter; they have a reminder.');
+  seed({
+    ch: CHANNELS.massive,
+    messages: [
+      ['priya', 3 * DAY + 30, 'Massive Dynamic\'s survey form drops the file upload field on submit.'],
+      ['priya', 3 * DAY, 'The upload limit was 2 MB; raised to 10 MB, and their test submission went through.'],
+    ],
+    label: {
+      kind: 'question', next_actor: 'nobody', urgency: 0.2, resolved_p: 0.9,
+    },
+  });
   quiet(CHANNELS.cyberdyne, 40 * DAY, 'Cyberdyne sees mixed content warnings on the product pages.', 'Two images still had http URLs; fixed in the content.');
 
   seed({
