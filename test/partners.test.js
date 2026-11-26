@@ -240,7 +240,7 @@ describe('partnerDomains', () => {
     assert.equal((await profiles(e, ['slack:E1:U1']))['slack:E1:U1'].partner, 'The Agency');
   });
 
-  it('waits for the look after the hour, and looks again after one that failed', async () => {
+  it('waits for the look after the hour, and looks again a minute after one that failed', async () => {
     const e = world();
     const quiet = console.error;
     const errors = [];
@@ -255,8 +255,14 @@ describe('partnerDomains', () => {
       clock.mock.mockImplementation(() => now + DERIVED_MS + 1);
       assert.equal((await partnerDomains(e)).get('agency.example').name, 'The Agency');
       assert.equal(errors.length, 1);
-      // The next request looks again, and waits for it.
+      // For a minute, what was found before, without asking D1 again.
       e.DB.sqlite.exec('ALTER TABLE org_merges_gone RENAME TO org_merges');
+      clock.mock.mockImplementation(() => now + DERIVED_MS + 30 * 1000);
+      assert.equal((await partnerDomains(e)).get('agency.example').name, 'The Agency');
+      assert.equal((await partnerDomains(e)).get('agency.example').name, 'The Agency');
+      assert.equal(errors.length, 1);
+      // Then the next request looks again, and waits for it.
+      clock.mock.mockImplementation(() => now + DERIVED_MS + 61 * 1000);
       assert.equal((await partnerDomains(e)).get('agency.example').name, 'Agency Co');
       // Then it holds for the hour.
       e.DB.sqlite.exec('UPDATE orgs SET name = \'Agency Inc\' WHERE slug = \'agency\'');

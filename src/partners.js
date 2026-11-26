@@ -198,7 +198,9 @@ async function loadIcons(env) {
 const NONE = Object.freeze({ found: [], left: [], at: null });
 /** How long a request waits for a look; one that takes longer is looked for anew by the next. */
 const LOOK_MS = 20 * 1000;
-/** `{ db, done, at, look }`: what was found, when, and the look on its way (`started`, `value`). */
+/** After a look that failed, the next one is this much later: what was found before until then. */
+const RETRY_MS = 60 * 1000;
+/** `{ db, done, at, look, retry }`: what was found, when, the look on its way, the next try. */
 let kept = null;
 
 /**
@@ -207,19 +209,23 @@ let kept = null;
  * hour): a look nobody awaits could be cancelled with the response, and the old domains would be
  * trusted for another hour. Requests that come together share a look. Kept by the D1 binding under
  * the request's wrappers (`underlying`). `at` moves only when a look succeeds: one that fails or
- * takes longer than `LOOK_MS` answers what was found before (none, the first time), and the next
- * request looks again.
+ * takes longer than `LOOK_MS` answers what was found before (none, the first time). After a
+ * failure, so do the requests of the next minute (`RETRY_MS`), so that an overloaded D1 is not
+ * asked for every message again by each of them; the first after it looks again.
  */
 export async function derivedDomains(env, { fresh = false } = {}) {
   const db = underlying(env.DB);
   if (!kept || kept.db !== db) {
     kept = {
-      db, done: null, at: 0, look: null,
+      db, done: null, at: 0, look: null, retry: 0,
     };
   }
   const k = kept;
   if (!fresh && k.done && Date.now() - k.at < DERIVED_MS) {
     return k.done;
+  }
+  if (!fresh && !k.look && Date.now() < k.retry) {
+    return k.done || NONE;
   }
   if (fresh || !k.look || Date.now() - k.look.started >= LOOK_MS) {
     const next = { started: Date.now() };
@@ -227,7 +233,11 @@ export async function derivedDomains(env, { fresh = false } = {}) {
       const done = { ...derive(env, rows, icons), at: new Date().toISOString() };
       k.done = done;
       k.at = Date.now();
+      k.retry = 0;
       return done;
+    }, (e) => {
+      k.retry = Date.now() + RETRY_MS;
+      throw e;
     }).finally(() => {
       if (k.look === next) {
         k.look = null;

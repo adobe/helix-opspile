@@ -218,8 +218,9 @@ for the duplicate search): an org's name, type or icon saved or reset, a portal 
 made, a merge or its undoing, and every edit of `partner_domains`; its next request derives them
 anew. **The other isolates lag up to an hour**, as they do for a change of the threads themselves.
 A derivation that fails, or takes longer than `LOOK_MS`, is not an answer: the request gets what
-was found before (none, the first time), the time it was found stays, and the next request
-derives them again. The admin team's rows are read on every request and win over what is found,
+was found before (none, the first time), the time it was found stays, and after a failure the
+requests of the next minute (`RETRY_MS`) get that too, without asking D1 (an overloaded D1 is not
+asked for every message by each of them); the first request after the minute derives them again. The admin team's rows are read on every request and win over what is found,
 so an override shows at once everywhere; deleting one (`DELETE /api/admin/partner-domains`) is the
 way back to found, an `excluded` row the way to say no. A domain that stops being found keeps its
 row, which then stands alone.
