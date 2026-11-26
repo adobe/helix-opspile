@@ -56,9 +56,10 @@ async function get(path) {
 }
 /**
  * A failed read that asking again may mend: D1 busy (503, after ui/app.js asked once more), the
- * Worker or the network failing. Not a 4xx (gone, not allowed), nor a sign-in that expired.
+ * Worker failing (5xx, 429), or the network (fetch's TypeError). Not a 4xx (gone, not allowed),
+ * a sign-in that expired, or an answer that was no JSON.
  */
-const transient = (e) => !e.signedOut && (!e.status || e.status === 429 || e.status >= 500);
+const transient = (e) => !e.signedOut && (e.status ? e.status === 429 || e.status >= 500 : e instanceof TypeError);
 // Dates and times: one formatter each, made once (toLocale*String builds one per call, and a
 // long thread asks for hundreds), and each day's label once.
 const formatter = (opts) => {
@@ -5118,11 +5119,25 @@ function refetchLater(key) {
   refetch.n += 1;
   refetch.timer = setTimeout(() => { if (state.open === key) openThread(key, { live: true }); }, wait);
 }
-/** Fetched: the thread's retries are over. */
+/** Fetched, or another thread opened: the thread's retries are over. */
 function refetchDone(key) {
   if (refetch.key !== key) return;
   clearTimeout(refetch.timer);
   Object.assign(refetch, { key: null, n: 0, timer: 0 });
+}
+/**
+ * Fetching the open thread `key` into `pane` failed with `e`. What the pane shows of that thread
+ * (the preload's copy, the last fetch) stays while it is asked again (`transient`), or until
+ * signing in again: a failed refresh does not clear what was read. Anything else, or with
+ * nothing of it on screen, the pane says what failed. Returns `kept` or `shown`.
+ */
+function fetchFailed(pane, key, e) {
+  const again = transient(e);
+  if (again) refetchLater(key);
+  if (pane.__key === key && (again || e.signedOut)) return 'kept';
+  pane.innerHTML = `<div class="empty">${esc(e.busy ? 'The inbox is busy: trying again in a moment…' : e.message)}</div>`;
+  pane.__key = null;
+  return 'shown';
 }
 
 async function openThread(key, { live = false, cached = false } = {}) {
@@ -5134,7 +5149,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   // The sidebar is the thread's you entered it in: another one opens to reply in.
   if (switching && side.key !== key) side.key = null;
   syncReading();
-  if (switching) { prefetchAround(key); closeMessageMenu(); }
+  if (switching) { prefetchAround(key); closeMessageMenu(); refetchDone(refetch.key); }
   // Another thread than a search's or a link's: not at its message later.
   if (switching && state.jump && state.jump.key !== key) state.jump = null;
   if (switching) toUrl(true, fromList ? { list: true } : null);
@@ -5159,14 +5174,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
     data = hit ? hit.data : ((ahead && await ahead) || await get(threadUrl(key)));
   } catch (e) {
     // Another thread is open by now: this one's failure is not shown over it.
-    if (state.open !== key) return;
-    const again = transient(e);
-    if (again) refetchLater(key);
-    // The thread on screen (the preload's copy, the last fetch) stays while it is asked again,
-    // or until signing in again: a failed refresh does not clear what was read.
-    if (pane.__key === key && (again || e.signedOut)) return;
-    pane.innerHTML = `<div class="empty">${esc(e.busy ? 'The inbox is busy: trying again in a moment…' : e.message)}</div>`;
-    pane.__key = null;
+    if (state.open === key) fetchFailed(pane, key, e);
     return;
   }
   if (!hit) refetchDone(key);
