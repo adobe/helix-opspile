@@ -19,6 +19,7 @@ import {
   DERIVED_MS, derive, derivedDomains, domainOf, forgetPartnerDomains, iconDomain, namesOrg,
   partnerDomains,
 } from '../src/partners.js';
+import { Meter } from '../src/cogs/meter.js';
 import { profiles } from '../src/profiles.js';
 import { d1 } from './d1.js';
 
@@ -246,6 +247,23 @@ describe('partnerDomains', () => {
     assert.equal(cards['slack:E1:U1'].relation, 'partner');
     assert.equal(cards['slack:E1:U1'].partner, 'The Agency');
     assert.equal(cards['slack:E1:U3'].relation, 'customer');
+  });
+
+  it('finds them once an hour, not once a request, also in requests metered for COGS', async () => {
+    const e = world();
+    let looks = 0;
+    const prepare = e.DB.prepare.bind(e.DB);
+    e.DB.prepare = (sql) => {
+      looks += /COUNT\(DISTINCT m\.thread\)/.test(sql) ? 1 : 0;
+      return prepare(sql);
+    };
+    // Each request has a meter of its own, and its D1 wrapped anew (src/index.js).
+    const request = () => new Meter({ ...e, USAGE: { writeDataPoint() {} } }).env({});
+    for (let i = 0; i < 3; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal((await partnerDomains(request())).size, 1);
+    }
+    assert.equal(looks, 1);
   });
 
   it('gives a domain to the partner it names, one of no posts, and not to one merged', async () => {

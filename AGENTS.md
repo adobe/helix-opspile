@@ -135,7 +135,9 @@ code and docs, is the decision model that labels threads and channels.
   which `ui/app.js` waits out once for a `GET`. Each `/api/*` request is one D1 session
   (src/d1session.js): with read replication on, a `GET` reads at the nearest copy, as new as the
   bookmark the page sends (`x-d1-bookmark`, kept by `ui/app.js`), and room events carry the
-  primary's (src/notify.js). Wrap `env.DB` only in ways that pass `withSession` on.
+  primary's (src/notify.js). Wrap `env.DB` only in ways that pass `withSession` on, and that
+  answer `UNDERLYING` (src/d1batch.js) with the binding under them: every request wraps it anew
+  (COGS, timing, batching), and what an isolate keeps by the database is keyed by the binding.
 - `src/agent/stub.js` reaches the `ThreadAgent` Durable Objects without importing the Agents
   SDK, so the paths that use it stay testable in Node. Keep SDK imports out of everything but
   `src/agent/agent.js`, and `agents/websearch` (it imports no `cloudflare:workers`) out of all
