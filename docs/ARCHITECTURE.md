@@ -308,13 +308,17 @@ alone (Clef found most such pairs unlikely):
 - `channel`: a channel named for both, `<partner>-<customer>` (3).
 
 Clef is asked about each candidate nobody decided, shown both orgs (names, type, channels, usual
-mail domains) and the signals with their counts as one, a few or many, so a new thread does not
-make it ask again: "does partner P work for customer C?" Its answer is kept with a fingerprint of
+mail domains), the signals with their counts as one, a few or many, so a new thread does not
+make it ask again, and the customer's other partners the admin team confirmed, each with how many
+of its people post in the customer's threads (one person of a second agency beside the partner
+that builds the site does other work, or none; Clef's likely ones are left out, or their verdicts
+would move each other's): "does partner P work for customer C?" Its answer is kept with a fingerprint of
 what it was shown and asked again once that changes, two dozen per load of the admin team's list and
 per cron run, so the table fills in without anybody looking. Every load and run writes the
 candidates' signals where they changed, and deletes the rows of pairs that are no candidate any
 more and that nobody decided. The admin team reviews them in Customers ("Likely partners", `GET
-/api/admin/org-partners`): each pair's page shows both orgs, the evidence (the signals, with domains,
+/api/admin/org-partners`): each pair's page shows both orgs (a customer's mail domains its own,
+none of a partner's), the evidence (the signals, with domains,
 owners and entry paths) and Clef's verdict, and confirms or dismisses it (`POST
 /api/admin/org-partners/confirm`, `/dismiss`, either with `undo`). A confirmed pair stays whatever
 the signals say later; a dismissed one is never shown as partners. A merge copies the merged org's
@@ -345,7 +349,11 @@ A partner's **page** in Customers is its customer overview with its own numbers 
 - what **waits on Adobe** in its channels and in the customers' threads its people are in (who a
   thread waits on as the inbox says it, `waitingOn`; a resolved one does not), and how soon Adobe
   **answers**: the median wait for Adobe's first post, in its threads started outside Adobe, and
-  in customers' threads its people started.
+  in customers' threads its people started (and every wait: its numbers draw both on one scale).
+
+Its numbers split what its people said into its own channels and each customer's, and its people's
+cards end with the customers they post for, as a team member's do; those who post only in
+customers' channels are listed after the cards. Its page says its name where it would say "its".
 
 Counts are everyone's; a thread's title and link only for whoever works it (`forViewer`, as a
 vendor's, "Vendors"). In its overview its own people are "their people", not a partner's. A

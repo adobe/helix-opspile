@@ -43,13 +43,14 @@
  *
  * A partner's (`p.partner`, src/partners.js `partnerNumbers`), an agency's or a system
  * integrator's, works for customers: its numbers are its customers (their icons, a confirmed one
- * ringed), its people (their faces), where they post (its channels against customers'), what
- * waits on Adobe (as tags) and how soon Adobe answers (a dot each), in its channels and in the
- * customers'; under them the
- * customers it works for (confirmed, likely, or where its people post) with what links them, what
- * waits on Adobe, and its people with where they post. A customer's lists its partners
- * (`p.partners`), each a link to its page, with what links them, and the public channels its
- * people posted in (`p.public`).
+ * ringed), its people (their faces), what they said (in its channels, then in each customer's,
+ * as a team's customers), what waits on Adobe (as tags) and how soon Adobe answers, its channels'
+ * and customers' dots on one scale; under them the customers it works for (confirmed, likely, or
+ * where its people post) with what links them and what waits on Adobe. Its people's cards end
+ * with the customers they post for, as a team member's; those who post only in customers'
+ * channels follow them. The page says its name where it would say "its" ("Valtech's channels").
+ * A customer's lists its partners (`p.partners`), each a link to its page, with what links them,
+ * and the public channels its people posted in (`p.public`).
  *
  * Everything in it is a name, a number or a picture, written escaped.
  */
@@ -201,30 +202,71 @@ globalThis.CustomerView = (() => {
     ]);
   }
 
+  /** A name's possessive, as the page says it: "Valtech's", "Siemens'". */
+  const poss = (name) => (/s$/i.test(name) ? `${name}'` : `${name}'s`);
+
+  /**
+   * How soon Adobe answers what a partner's people start, in its channels and in customers', on
+   * one scale: the dots of each in a color of their own, each median its own line.
+   */
+  function partnerAnswers(p) {
+    const { own, customers } = p.partner.answers;
+    const its = poss(nameOf(p));
+    const sets = [
+      {
+        name: `${its} channels`, where: `${its} channels`, x: own, series: 'theirs',
+      },
+      {
+        name: 'Customers\' channels', where: 'customers\'', x: customers, series: 's6',
+      },
+    ].filter((s) => s.x.asked);
+    if (!sets.length) return { cls: 'w4', label: 'No first answer to time', note: esc(`no thread started in ${its} channels or by ${its} people in customers' in these weeks`) };
+    const said = sets.map((s, i) => {
+      const where = `in ${s.where}`;
+      if (!s.x.answered) return esc(`none yet ${where}`);
+      return `${num(Overview.wait(s.x.median))} ${i ? '' : 'to Adobe\'s first answer '}${esc(where)}`;
+    });
+    const answered = sets.filter((s) => s.x.answered);
+    const open = sets.reduce((n, s) => n + s.x.asked - s.x.answered, 0);
+    const started = sets.map((s) => `${plural(s.x.asked, 'thread')} ${s.series === 'theirs' ? `started in ${s.where}` : `${its} people started in customers'`}`);
+    return {
+      cls: 'w4',
+      label: answered.length ? said.join(', ') : `No first answer of Adobe's yet, ${said.join(', ')}`,
+      title: `Median time to Adobe's first answer, in threads started outside Adobe in ${its} channels, and in those ${its} people started in customers' channels`,
+      pic: answered.length ? Overview.waitDots(null, null, {
+        wide: true,
+        series: answered.map((s) => ({
+          name: s.name, waits: s.x.waits || [], median: s.x.median, series: s.series,
+        })),
+      }) : '',
+      note: esc(`typically, in the ${started.join(' and the ')}${open ? `; ${open} not answered yet` : ''}`),
+    };
+  }
+
   /** A partner's numbers: its customers and people, what waits on Adobe, how soon it answers. */
   function partnerStats(p, ctx) {
     const {
-      customers: c, people: who, posts, waiting: w, answers: a,
+      customers: c, people: who, posts, waiting: w,
     } = p.partner;
+    const name = nameOf(p);
+    const its = poss(name);
     const all = posts.own + posts.customers;
     const likely = c.linked - c.confirmed;
     const linked = c.list.filter((x) => x.linked);
     const icons = linked.slice(0, 8).map((x) => link(ctx.orgHref(x.slug), ctx.orgIcon(x.slug, x.icon), { cls: `tv-icon${x.confirmed ? ' confirmed' : ''}`, title: `${x.name || x.slug}, ${x.confirmed ? 'confirmed' : 'likely'}` })).join('');
-    const answer = (x, { where, title }) => {
-      if (!x.asked) return { label: `No first answer ${esc(where)} to time`, note: 'no thread started there in these weeks' };
-      if (!x.answered) return { label: `No first answer of Adobe's ${esc(where)} yet`, note: esc(`in the ${plural(x.asked, 'thread')} started there`) };
-      return {
-        label: `${num(Overview.wait(x.median))} to Adobe's first answer ${esc(where)}`,
-        title,
-        pic: Overview.waitDots(x.waits || [], x.median),
-        note: esc(`typically, in the ${plural(x.asked, 'thread')} started there${x.asked > x.answered ? `; ${x.asked - x.answered} not answered yet` : ''}`),
-      };
-    };
+    // What its people said: in its channels, then in each customer's, the busiest first (as a
+    // team's customers), the rest as one.
+    const busiest = c.list.filter((x) => x.messages).sort((x, y) => y.messages - x.messages).slice(0, 5);
+    const shares = [{ name, n: posts.own, series: 'theirs' }, ...busiest.map((x, i) => ({
+      name: x.name || x.slug, n: x.messages, href: ctx.orgHref(x.slug), series: `s${i + 1}`,
+    }))];
+    const rest = posts.customers - sum(busiest.map((x) => x.messages));
+    if (rest > 0) shares.push({ name: 'Other customers', n: rest, series: 'other' });
     return Overview.stats([
       {
         label: `${num(c.linked)} ${c.linked === 1 ? 'customer' : 'customers'}`,
         pic: icons ? `<span class="tv-flow">${icons}${linked.length > 8 ? `<span class="tv-pmore">+${linked.length - 8}</span>` : ''}</span>` : '',
-        note: esc([c.confirmed ? `${c.confirmed} confirmed` : '', likely ? `${likely} likely` : '', c.count > c.linked ? `its people post for ${c.count - c.linked} more` : ''].filter(Boolean).join(', ') || 'none found yet'),
+        note: esc([c.confirmed ? `${c.confirmed} confirmed` : '', likely ? `${likely} likely` : '', c.count > c.linked ? `${its} people post for ${c.count - c.linked} more` : ''].filter(Boolean).join(', ') || 'none found yet'),
       },
       {
         label: `${num(who.count)} ${who.count === 1 ? 'person' : 'people'}`,
@@ -232,20 +274,16 @@ globalThis.CustomerView = (() => {
         note: esc(who.count ? `${who.inCustomers} of them in customers' threads` : 'none known by their mail domain'),
       },
       {
-        label: `${num(all)} ${all === 1 ? 'message' : 'messages'} by its people`,
-        pic: all ? Overview.partsBar([
-          { name: 'Its channels', n: posts.own, series: 's0' },
-          { name: 'Customers\'', n: posts.customers, series: 's1' },
-        ]) : '',
+        label: `${num(all)} ${all === 1 ? 'message' : 'messages'} by ${esc(its)} people`,
+        pic: all ? Overview.partsBar(shares) : '',
         note: esc(all ? `${Math.round((100 * posts.customers) / all)}% in customers' threads` : `none in the last ${p.weeks.length} weeks`),
       },
       {
         label: `${num(w.count)} waiting on Adobe`,
         pic: w.list.length ? Overview.caseTags(w.list) : '',
-        note: esc(`${w.own} in its channels, ${w.customers} in customers'${w.hidden ? `, ${w.hidden} in channels of teams you are not on` : ''}`),
+        note: esc(`${w.own} in ${its} channels, ${w.customers} in customers'${w.hidden ? `, ${w.hidden} in channels of teams you are not on` : ''}`),
       },
-      answer(a.own, { where: 'in its channels', title: 'Median time to Adobe\'s first answer, in threads started outside Adobe in its channels' }),
-      answer(a.customers, { where: 'for customers', title: 'Median time to Adobe\'s first answer, in threads its people started in customers\' channels' }),
+      partnerAnswers(p),
     ]);
   }
 
@@ -280,6 +318,25 @@ globalThis.CustomerView = (() => {
     ]);
   }
 
+  /**
+   * On a partner's page, where a person of its posts (`p.partner.people`): the entry of `m`, by
+   * their person, else their account, else their name.
+   */
+  function whereOf(m, p) {
+    const list = p.partner?.people.list || [];
+    return list.find((e) => (m.id && e.id === m.id) || (m.account && e.account === m.account))
+      || list.find((e) => !m.id && !e.id && m.name && e.name === m.name) || null;
+  }
+
+  /** The customers a partner's person posts for, their icons and names, as a team member's key customers. */
+  function customersOf(e, ctx) {
+    if (!e || !e.orgs.length) return '';
+    const more = e.orgCount - e.orgs.length;
+    return `<dl class="ps-keys"><dt>Key customers</dt><dd>${e.orgs.map((o) => link(ctx.orgHref(o.slug), `${ctx.orgIcon(o.slug, null)}<span>${esc(o.name || o.slug)}</span>`, {
+      cls: 'ps-org', title: `${o.name || o.slug}: ${plural(o.threads, 'thread')} of theirs`,
+    })).join('')}${more > 0 ? `<span class="ps-chip ps-more">+${more}</span>` : ''}</dd></dl>`;
+  }
+
   function person(m, p, ctx) {
     const partner = m.partner ? `<span class="tag tv-partner" title="${esc(`Of ${m.partner}, a partner`)}">${esc(m.partner)}</span>` : '';
     // Drawn as a team's members are, and the inbox's profile card (ui/person.js): an area is
@@ -294,7 +351,9 @@ globalThis.CustomerView = (() => {
     let follow = null;
     if (m.id) follow = { kind: 'person', id: m.id, name: m.name };
     else if (m.account) follow = { kind: 'account', id: m.account, name: m.name || 'Someone' };
-    const foot = href && !m.profile.description ? `<dl class="ps-keys"><dt>Contact</dt><dd><a class="tv-contact" href="${esc(href)}" title="Open their contact page">In the knowledge base</a></dd></dl>` : '';
+    // A partner's person: the customers they post for at the foot, as a team member's.
+    const keys = p.partner ? customersOf(whereOf(m, p), ctx) : '';
+    const foot = keys || (href && !m.profile.description ? `<dl class="ps-keys"><dt>Contact</dt><dd><a class="tv-contact" href="${esc(href)}" title="Open their contact page">In the knowledge base</a></dd></dl>` : '');
     return Person.card(m, {
       face: face(m.name, m.avatar, 'big'),
       name: link(m.id ? ctx.topicHref(`person:${m.id}`) : null, esc(m.name || 'Someone'), { title: m.id ? 'Open on the Topics page' : '' }),
@@ -354,7 +413,8 @@ globalThis.CustomerView = (() => {
   /**
    * What links a customer and a partner, in words (src/orgpartners.js `partnerSignals`): the
    * count of each signal, as `GET /api/customers/partners` and the pages have them. `P` and `C`
-   * are the partner's and the customer's possessive as the page says them ("its", "their").
+   * are the partner's and the customer's possessive as the page says them: the page's own by its
+   * name ("Valtech's"), the other "their".
    */
   const SIGNAL = {
     posters: (n, P, C) => `${P} people in ${n} of ${C} threads`,
@@ -369,8 +429,8 @@ globalThis.CustomerView = (() => {
    * The words of `signals`, on a partner's page (`partner`) or a customer's; `posters` not where
    * the row's meter already counts its threads of these weeks with the partner's people.
    */
-  const linkWords = (signals, { partner = false, counted = false } = {}) => {
-    const [P, C] = partner ? ['its', 'their'] : ['their', 'its'];
+  const linkWords = (signals, { partner = false, counted = false, name = 'its' } = {}) => {
+    const [P, C] = partner ? [poss(name), 'their'] : ['their', poss(name)];
     return Object.entries(signals || {}).filter(([k]) => SIGNAL[k] && !(counted && k === 'posters'))
       .map(([k, n]) => SIGNAL[k](n, P, C));
   };
@@ -394,15 +454,16 @@ globalThis.CustomerView = (() => {
   /** A partner's customers: those it works for, then those whose threads its people are in. */
   function partnerCustomers(p, ctx) {
     const c = p.partner.customers;
+    const its = poss(nameOf(p));
     const rows = c.list.map((x) => ({
       n: x.theirs,
-      count: `${plural(x.theirs, 'thread')} with its people`,
+      count: `${plural(x.theirs, 'thread')} with ${its} people`,
       lead: ctx.orgIcon(x.slug, x.icon),
       name: link(ctx.orgHref(x.slug), esc(x.name || x.slug)),
       sub: esc([
-        ...linkWords(x.signals, { partner: true, counted: x.theirs > 0 }),
-        x.ours ? `their people in ${x.ours} of its threads` : '',
-        !x.linked ? 'its people post there; not linked yet' : '',
+        ...linkWords(x.signals, { partner: true, counted: x.theirs > 0, name: nameOf(p) }),
+        x.ours ? `their people in ${x.ours} of ${its} threads` : '',
+        !x.linked ? `${its} people post there; not linked yet` : '',
         x.last ? ago(x.last) : '',
       ].filter(Boolean).join(', ')),
       tail: `${linkTag(x)}${x.waiting ? `<span class="tag tv-us">${esc(`${x.waiting} waiting on Adobe`)}</span>` : ''}${review(x, x.slug, p.org.slug, ctx)}`,
@@ -417,30 +478,10 @@ globalThis.CustomerView = (() => {
     const w = p.partner.waiting;
     const names = new Map(p.partner.customers.list.map((c) => [c.slug, c.name || c.slug]));
     names.set(p.org.slug, nameOf(p));
-    return `<section class="tv-sec" aria-labelledby="cvWaiting"><h2 id="cvWaiting">Waiting on Adobe <span class="sub">${esc(`${w.own} in its channels, ${w.customers} in customers'`)}</span></h2>
+    return `<section class="tv-sec" aria-labelledby="cvWaiting"><h2 id="cvWaiting">Waiting on Adobe <span class="sub">${esc(`${w.own} in ${poss(nameOf(p))} channels, ${w.customers} in customers'`)}</span></h2>
       ${Overview.threads(w.list, {
     hidden: w.hidden, withOrg: true, orgName: (slug) => names.get(slug) || slug, empty: `Nothing of ${nameOf(p)}'s waits on Adobe.`,
   })}</section>`;
-  }
-
-  /** A partner's people, wherever they post: in its channels, and in which customers'. */
-  function partnerPeople(p, ctx) {
-    const who = p.partner.people;
-    const rows = who.list.map((m) => ({
-      n: m.messages,
-      of: m.messages ? m.customers / m.messages : null,
-      lead: face(m.name, m.avatar),
-      tint: Person.tintOf(m.name),
-      name: link(m.id ? ctx.topicHref(`person:${m.id}`) : null, esc(m.name || 'Someone'), { title: m.id ? 'Open on the Topics page' : '' }),
-      sub: esc([m.title, `${m.own} in its channels, ${m.customers} in customers'`, m.last ? `last ${ago(m.last)}` : ''].filter(Boolean).join(', ')),
-      weekly: m.weekly,
-      tail: m.orgs.map((o) => `<a class="ps-chip" href="${esc(ctx.orgHref(o.slug))}" title="${esc(plural(o.threads, 'thread'))}">${esc(o.name || o.slug)}</a>`).join('')
-        + (m.orgCount > m.orgs.length ? `<span class="sub">${esc(`and ${m.orgCount - m.orgs.length} more`)}</span>` : ''),
-    }));
-    const shown = who.list.length < who.count ? `${who.list.length} of ${who.count}` : plural(who.count, 'person', 'people');
-    return `<section class="tv-sec" aria-labelledby="cvWhere"><h2 id="cvWhere">Where its people post <span class="sub">${esc(shown)}</span></h2>
-      <p class="sub">The people of its mail domains, in its channels and in customers' (a bar's left part).</p>
-      ${rows.length ? ranked(rows, p.weeks.length) : `<div class="empty">Nobody of ${esc(nameOf(p))}'s mail domains posted in these weeks.</div>`}</section>`;
   }
 
   /** A customer's partners: those that work for it, and those whose people post in its threads. */
@@ -452,7 +493,7 @@ globalThis.CustomerView = (() => {
       lead: ctx.orgIcon(x.slug, x.icon),
       name: link(ctx.orgHref(x.slug), esc(x.name || x.slug)),
       sub: esc([
-        ...linkWords(x.signals, { counted: x.threads > 0 }),
+        ...linkWords(x.signals, { counted: x.threads > 0, name: nameOf(p) }),
         x.people ? `${plural(x.people, 'person', 'people')} of theirs posted in these weeks` : '',
         !x.linked ? 'not linked yet' : '',
       ].filter(Boolean).join(', ')),
@@ -479,11 +520,25 @@ globalThis.CustomerView = (() => {
       ${ranked(rows, p.weeks.length)}</section>`;
   }
 
+  /**
+   * A partner's people who post only in customers' channels, after the cards: a face and name
+   * each, with the icons of the customers they post for.
+   */
+  function elsewhere(p, ctx) {
+    const carded = new Set(p.people.map((m) => whereOf(m, p)).filter(Boolean));
+    const rest = (p.partner?.people.list || []).filter((e) => !carded.has(e) && !e.own && e.orgs.length);
+    if (!rest.length) return '';
+    const one = (e) => `<span class="tv-q" title="${esc(`${e.name || 'Someone'}: ${plural(e.customers, 'message')} in customers' threads`)}">${face(e.name, e.avatar)}<span>${esc(e.name || 'Someone')}</span>${e.orgs.map((o) => link(ctx.orgHref(o.slug), ctx.orgIcon(o.slug, null), { cls: 'tv-icon', title: o.name || o.slug })).join('')}</span>`;
+    return `<div class="tv-quiet"><span class="sub">Only in customers&#39; channels</span>${rest.map(one).join('')}</div>`;
+  }
+
   function people(p, ctx) {
     const more = p.peopleCount - p.people.length;
-    return `<section class="tv-sec" aria-labelledby="tvPeople"><h2 id="tvPeople">${p.partner ? 'People in its channels' : 'Their people'} <span class="sub">${esc(plural(p.peopleCount, 'person', 'people'))}</span></h2>
+    const title = p.partner ? `People in ${poss(nameOf(p))} channels` : 'Their people';
+    return `<section class="tv-sec" aria-labelledby="tvPeople"><h2 id="tvPeople">${esc(title)} <span class="sub">${esc(plural(p.peopleCount, 'person', 'people'))}</span></h2>
       ${p.people.length ? `<div class="tv-people">${p.people.map((m) => person(m, p, ctx)).join('')}</div>` : `<div class="empty">Nobody of ${esc(nameOf(p))} posted in these weeks.</div>`}
-      ${more > 0 ? `<p class="sub tv-more">And ${esc(plural(more, 'more person', 'more people'))} who posted less.</p>` : ''}</section>`;
+      ${more > 0 ? `<p class="sub tv-more">And ${esc(plural(more, 'more person', 'more people'))} who posted less.</p>` : ''}
+      ${elsewhere(p, ctx)}</section>`;
   }
 
   function staff(p, ctx) {
@@ -595,8 +650,7 @@ globalThis.CustomerView = (() => {
       <section class="tv-sec tv-hero cv-hero" aria-labelledby="cvActivity">${stats(p, ctx)}${activity(p)}</section>
       ${p.vendor ? `<div class="tv-two">${cases(p)}${statusPosts(p)}</div>
       <div class="tv-two">${dependents(p, ctx)}${thirdParty(p)}</div>` : ''}
-      ${p.partner ? `<div class="tv-two">${partnerCustomers(p, ctx)}${partnerWaiting(p)}</div>
-      ${partnerPeople(p, ctx)}` : ''}
+      ${p.partner ? `<div class="tv-two">${partnerCustomers(p, ctx)}${partnerWaiting(p)}</div>` : ''}
       ${people(p, ctx)}
       ${p.partners ? customerPartners(p, ctx) : ''}
       ${publicChannels(p)}
