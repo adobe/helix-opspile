@@ -157,7 +157,11 @@ describe('the admin team\'s requests as threads', () => {
     const decision = shown.messages.find((m) => m.author.kind === 'system');
     assert.match(decision.body, /\*\*Declined\*\* by Ada Admin: Edge ops works it/);
     const list = await quiet(() => call(e, ADA, 'GET', '/api/requests'));
-    assert.equal(list.body.threads.find((t) => t.thread === key).resolution.verdict, 'resolved');
+    const entry = list.body.threads.find((t) => t.thread === key);
+    assert.equal(entry.resolution.verdict, 'resolved');
+    // Decided by her, it is read by her up to the decision: not unread again once listed.
+    assert.equal(entry.unread, false);
+    assert.ok(shown.watermarks.some((w) => w.person === ADA.id && w.read_at >= decision.at));
   });
 
   it('keep what is decided of a bot in the log', async () => {
@@ -169,6 +173,8 @@ describe('the admin team\'s requests as threads', () => {
     const log = said.body.thread.messages.filter((m) => m.author.kind === 'system');
     assert.equal(log.length, 1);
     assert.equal(log[0].body, '**Ada Admin**: deploy-bot is Adobe\'s.');
+    const list = await quiet(() => call(e, ADA, 'GET', '/api/requests'));
+    assert.equal(list.body.threads.find((t) => t.thread === key).unread, false);
     // Still offered: it can be changed.
     assert.ok(said.body.thread.request.actions.some((a) => a.id === 'external'));
   });
