@@ -560,11 +560,53 @@ function describeOrg(letter, o, domain) {
   return `${letter}: ${bits.join(', ')}.${chans}${mail}`;
 }
 
-/** What Clef is shown of a pair. */
-export function pairState(c, p, signals, ctx) {
+/**
+ * C's other partners as Clef is told them: `others`, `[{ slug, name, signals }]`, those the admin
+ * team confirmed (not Clef's likely ones, whose verdicts would move each other's), each with how
+ * many of its people post in C's threads. One of a few posts beside a partner of many does other
+ * work, or none, rather than build the site.
+ */
+function othersOf(others) {
+  if (!others.length) {
+    return '';
+  }
+  const one = (o) => {
+    const posted = (o.signals || []).find((s) => s.kind === 'posters');
+    const what = posted
+      ? `${about(posted.people)} of its people posted in ${about(posted.n)} of C's threads`
+      : 'none of its people posted in C\'s threads';
+    return `${o.name ? `"${o.name}"` : o.slug} (${what})`;
+  };
+  return `\nC's partners the admin team confirmed: ${others.map(one).join('; ')}.`;
+}
+
+/** What Clef is shown of a pair, with C's other partners the admin team confirmed (`othersOf`). */
+export function pairState(c, p, signals, ctx, others = []) {
   const shared = signals.length ? `\nFound: ${signals.map(said).join('; ')}.` : '';
   const mail = (ctx.partnerMail.get(p.slug) || []).join(', ') || ctx.usual.get(p.slug);
-  return `${INTRO}\n${describeOrg('C', c, ctx.usual.get(c.slug))}\n${describeOrg('P', p, mail)}${shared}`;
+  return `${INTRO}\n${describeOrg('C', c, ctx.usual.get(c.slug))}\n${describeOrg('P', p, mail)}${shared}${othersOf(others)}`;
+}
+
+/** Each customer's partners the admin team confirmed, from rows of `org_partners`, by customer. */
+function confirmedPartners(kept, orgs) {
+  const by = new Map();
+  for (const r of kept) {
+    if (r.confirmed_at && !r.dismissed_at && orgs.has(r.customer) && orgs.has(r.partner)) {
+      let signals = [];
+      try {
+        signals = JSON.parse(r.signals || '[]');
+      } catch {
+        // none
+      }
+      const o = orgs.get(r.partner);
+      const list = by.get(r.customer) || [];
+      by.set(r.customer, [...list, { slug: r.partner, name: o.name || null, signals }]);
+    }
+  }
+  for (const list of by.values()) {
+    list.sort((a, b) => a.slug.localeCompare(b.slug));
+  }
+  return by;
 }
 
 async function fingerprintOf(text) {
@@ -667,13 +709,15 @@ async function sync(env, { fresh = false, ask = ASK_PER_LIST, wait = ASK_TIMEOUT
   }
   const found = partnerCandidates({ ...f, orgs }, ev, ctx);
   const keptBy = new Map(kept.map((r) => [keyOf(r.customer, r.partner), r]));
+  const confirmed = confirmedPartners(kept, orgs);
   const writes = [];
   const now = new Date().toISOString();
   const pairs = [];
   const asking = [];
   for (const c of found) {
     const row = keptBy.get(keyOf(c.customer, c.partner));
-    const state = pairState(orgs.get(c.customer), orgs.get(c.partner), c.signals, ctx);
+    const others = (confirmed.get(c.customer) || []).filter((o) => o.slug !== c.partner);
+    const state = pairState(orgs.get(c.customer), orgs.get(c.partner), c.signals, ctx, others);
     // eslint-disable-next-line no-await-in-loop
     const fingerprint = await fingerprintOf(state);
     const signals = JSON.stringify(c.signals);
@@ -743,22 +787,29 @@ export async function refreshPartners(env, { wait } = {}) {
 
 // ---- the admin team's list -------------------------------------------------------------------
 
-/** An org as the review shows it. */
-const shownOrg = (o, ctx) => ({
-  slug: o.slug,
-  name: o.name || null,
-  type: o.type,
-  icon: o.icon || null,
-  domain: ctx.usual.get(o.slug) || (o.domains || [])[0] || null,
-  domains: [...new Set([...(ctx.partnerMail.get(o.slug) || []), ctx.usual.get(o.slug),
-    ...(o.domains || [])].filter(Boolean))],
-  channels: o.channels.length,
-  threads: o.threads,
-  latest: o.latest,
-  channelNames: o.channels.slice(0, SHOWN_CHANNELS).map((c) => ({
-    label: c.label, source: c.source, threads: c.threads,
-  })),
-});
+/**
+ * An org as the review shows it: its mail domains are its own and those of no other org's
+ * partner domains (a partner's people post in a customer's channels, and are not the customer's).
+ */
+const shownOrg = (o, ctx) => {
+  const own = (d) => [null, o.slug].includes(domainPartner(ctx.partnerOf, d));
+  const domains = (o.domains || []).filter(own);
+  return {
+    slug: o.slug,
+    name: o.name || null,
+    type: o.type,
+    icon: o.icon || null,
+    domain: ctx.usual.get(o.slug) || domains[0] || null,
+    domains: [...new Set([...(ctx.partnerMail.get(o.slug) || []), ctx.usual.get(o.slug),
+      ...domains].filter(Boolean))],
+    channels: o.channels.length,
+    threads: o.threads,
+    latest: o.latest,
+    channelNames: o.channels.slice(0, SHOWN_CHANNELS).map((c) => ({
+      label: c.label, source: c.source, threads: c.threads,
+    })),
+  };
+};
 
 /** Whether a pair is a likely one: confirmed, or Clef says so and nobody dismissed it. */
 const likely = (x) => Boolean(x.confirmed) || (!x.dismissed && x.p !== null && x.p >= LIKELY);

@@ -291,6 +291,37 @@ describe('partner signals', () => {
 });
 
 describe('admin: partners', () => {
+  it('tells Clef the customer\'s confirmed partners, and shows the customer\'s own mail only', async () => {
+    const e = env();
+    const sql = e.DB.sqlite;
+    // A studio: one of its people posts in two of Globex's threads and is in its channel.
+    sql.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('studio', 'Studio', 'partner', '${AT}');
+      INSERT INTO channels (source, tenant, channel_id, name, fetched_at) VALUES ('slack', 'E1', 'C4', 'aem-studio', '${AT}');
+      INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name, path, root_at,
+        last_at, any_at, messages, updated_at) VALUES ('slack:E1:C4:4.1', 'slack', 'E1', 'C4', '4.1', 'studio', 'helix',
+        'channel', '', 'channels/studio/helix/slack-C4/4.1/', '${AT}', '${AT}', '${AT}', 1, '${AT}');
+      INSERT INTO identities (source, tenant, user_id, kind, email, fetched_at)
+        VALUES ('slack', 'E1', 'U5', 'person', 'sue@studio.example', '${AT}');
+      INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, author_key) VALUES
+        ('slack', 'E1', 'C4', 's1', 'slack:E1:C4:4.1', '${AT}', 0, 1, 'slack:E1:U5'),
+        ('slack', 'E1', 'C1', 's2', 'slack:E1:C1:1.1', '${AT}', 0, 1, 'slack:E1:U5'),
+        ('slack', 'E1', 'C1', 's3', 'slack:E1:C1:1.2', '${AT}', 0, 1, 'slack:E1:U5');
+      INSERT INTO channel_members (source, tenant, channel_id, user_id, email)
+        VALUES ('slack', 'E1', 'C1', 'U5', 'sue@studio.example')`);
+    const r = await call(e, ADA, 'GET', '/api/admin/org-partners');
+    assert.deepEqual(r.body.pairs.map((x) => x.partner).sort(), ['agency', 'studio']);
+    const told = () => e.AI.asked.filter((x) => /P: slug studio,/.test(x)).at(-1);
+    assert.ok(!/confirmed/.test(told()));
+    // Globex's mail is its own: the partners' domains are theirs.
+    assert.deepEqual(r.body.orgs.globex.domains, ['globex.example']);
+    // The agency confirmed, Clef is asked about the studio again, told of the agency.
+    await call(e, ADA, 'POST', '/api/admin/org-partners/confirm', { customer: 'globex', partner: 'agency' });
+    await call(e, ADA, 'GET', '/api/admin/org-partners?fresh=1');
+    assert.match(told(), /C's partners the admin team confirmed: "The Agency" \(a few of its people posted in a few of C's threads\)\./);
+    // Nobody is told of themselves.
+    assert.ok(!e.AI.asked.some((x) => /P: slug agency,/.test(x) && /confirmed/.test(x)));
+  });
+
   it('lists the candidates with Clef, keeps what it said, and asks again only on a change', async () => {
     const e = env();
     assert.equal((await call(e, BO, 'GET', '/api/admin/org-partners')).status, 403);
