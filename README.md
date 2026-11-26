@@ -616,9 +616,10 @@ The admin team edits teams, members, rules, manual assignments and orgs at `/inb
 which also re-files the channels a change moves. Rules changed in D1 by hand need a replay
 with `--clear`.
 
-Rows in `partner_domains` (`domain`, `name`) mark people from a partner's mail domain (or a
-subdomain of it) as partners on their profile card, instead of customers:
-`INSERT INTO partner_domains (domain, name) VALUES ('agency.example', 'Agency')`.
+People from a partner's mail domain (or a subdomain of it) are shown as the partner's, not the
+customer's: the domains are found from the threads of the orgs of type `partner`
+(src/partners.js), and the admin team adds, renames or excludes one under **Partner domains** in
+Customers (`/inbox/admin?tab=orgs&org=domains:`; rows of `partner_domains`).
 
 Pile 2 is derived, so it can always be rebuilt from pile 1:
 

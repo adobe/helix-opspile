@@ -317,7 +317,7 @@ const isGroup = (sel) => String(sel ?? '').startsWith(GROUP);
 /** Two orgs that may be one, picked in Customers (see "duplicate customers"). */
 const isPair = (sel) => String(sel ?? '').startsWith(PAIR);
 /** Whether `sel` on `tab` is a team or a customer, whose page has an agent's sections. */
-const agented = (tab, sel) => AGENTED.includes(tab) && !isGroup(sel) && !isPair(sel);
+const agented = (tab, sel) => AGENTED.includes(tab) && !isGroup(sel) && !isPair(sel) && !isDomains(sel);
 
 /**
  * The address of what is picked (`sel` on `tab`), at a section of its page (`view`, none for its
@@ -698,7 +698,7 @@ function drawList() {
         sel: UNASSIGNED, on: state.sel === UNASSIGNED, label: 'Unassigned channels', count: state.orgsUnassigned.channels, title: 'Channels not filed under an org',
       }) : '';
     const yours = followed.length || middle;
-    body = `${un}${onATeam() ? dupSection(f) : ''}
+    body = `${un}${domainsRow(f)}${onATeam() ? dupSection(f) : ''}
       ${navSection('Following', followed.map(orgRow))}${middle}
       ${navSection(yours ? 'Other customers' : 'Customers', ranked(rest, orgName).map(orgRow), { empty: f || state.orgType || state.noIcon ? 'Nothing matches.' : (yours ? '' : 'No customer yet.') })}`;
     const label = [state.orgType ? orgTypeLabel(state.orgType) : 'All types', state.noIcon && 'no icon'].filter(Boolean).join(', ');
@@ -785,6 +785,7 @@ function select(sel, {
   renderList();
   if (state.tab === 'teams' && isGroup(sel)) showGroup(String(sel).slice(GROUP.length));
   else if (state.tab === 'orgs' && isPair(sel)) showPair(...String(sel).slice(PAIR.length).split(':'));
+  else if (state.tab === 'orgs' && isDomains(sel)) showDomains();
   else if (agented(state.tab, sel)) showPicked({ channel, flash, fresh: true });
 }
 
@@ -3467,6 +3468,129 @@ function orgMenu(button, v, c) {
   render();
   placePop(el, button);
   input.focus();
+}
+
+// ---- partner domains -------------------------------------------------------------------------
+//
+// The mail domains whose people are partners' (src/partners.js), the admin team's, in Customers:
+// those found in the partners' threads, and its own over them. A domain is added by hand (with a
+// partner org, or a name), a found one given another name or partner, or said not to be a
+// partner's; removing a row of its own brings back what was found. Below, the domains a partner's
+// people write from that are left out as a customer's own, each one click from being a partner's.
+
+const DOMAINS = 'domains:';
+const isDomains = (sel) => sel === DOMAINS;
+const DOMAIN_STATE = {
+  found: ['', 'Found'], manual: ['manual', 'Set by hand'], excluded: ['declined', 'Not a partner'],
+};
+
+/** The row in Customers that opens them, the admin team's. */
+const domainsRow = (f) => (state.me.admin && (!f || 'partner domains'.includes(f))
+  ? SideNav.todo({
+    sel: DOMAINS, on: isDomains(state.sel), label: 'Partner domains', title: 'The mail domains whose people are partners\', found in the partners\' threads or set by hand',
+  }) : '');
+
+async function showDomains({ fresh = false } = {}) {
+  const current = loadingPage();
+  state.view = null;
+  const r = await call(`/api/admin/partner-domains${fresh ? '?fresh=1' : ''}`);
+  if (!current()) return;
+  if (!r.ok) {
+    $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">Partner domains</h1></div><div class="empty">${esc(r.body.error || `Could not load (${r.status}).`)}</div>`;
+    return;
+  }
+  state.view = { target: 'domains', value: DOMAINS, ...r.body };
+  drawDomains(state.view);
+}
+
+/** A partner org's name, as a link to its page. */
+const partnerLink = (slug, name) => (slug
+  ? `<a href="${esc(address({ tab: 'orgs', sel: slug, section: 'overview' }))}">${esc(name || orgLabel(slug))}</a>` : esc(name || ''));
+
+function domainForm(v, d = {}) {
+  const org = d.manual ? d.manual.org : d.org;
+  const name = d.manual ? d.manual.name : '';
+  return `<form class="form" id="pdForm">
+    <label class="fld grow"><span>Mail domain (agency.example)</span><input id="pdDomain" class="mono" value="${esc(d.domain || '')}" required></label>
+    <label class="fld"><span>Partner</span><select id="pdOrg"><option value="">None: by name</option>${v.partners.map((p) => `<option value="${esc(p.slug)}"${p.slug === org ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
+    <label class="fld grow"><span>Name (optional with a partner)</span><input id="pdName" value="${esc(name || '')}"></label>
+    <button class="primary">Save</button>
+  </form>`;
+}
+
+function drawDomains(v) {
+  const rows = v.domains.map((d) => {
+    const [cls, label] = DOMAIN_STATE[d.state];
+    const found = d.found ? `${d.found.people} ${d.found.people === 1 ? 'person' : 'people'} in ${d.found.threads} ${d.found.threads === 1 ? 'thread' : 'threads'} of ${esc(d.found.name)}` : '';
+    const by = d.manual && d.manual.by ? `${esc(d.manual.by)}${d.manual.at ? `, ${esc(ago(d.manual.at))}` : ''}` : '';
+    const key = `pd:${d.domain}`;
+    const acts = [
+      `<button class="link" data-pd-edit="${esc(d.domain)}">Change</button>`,
+      d.state === 'excluded' ? '' : `<button class="link" data-pd-exclude="${esc(d.domain)}"${off(key)}>Not a partner</button>`,
+      d.manual ? `<button class="link" data-pd-undo="${esc(d.domain)}"${off(key)}>${d.found ? 'Back to found' : 'Remove'}</button>` : '',
+    ].filter(Boolean).join(' ');
+    return `<tr><td class="mono">${esc(d.domain)}</td><td>${d.state === 'excluded' ? '<span class="sub">none</span>' : partnerLink(d.org, d.name)}</td>
+      <td><span class="tag${cls ? ` ${cls}` : ''}">${label}</span>${by ? `<div class="sub">${by}</div>` : ''}</td><td class="sub">${found}</td><td class="picks-cell">${acts}</td></tr>`;
+  }).join('');
+  const left = (v.left || []).map((d) => `<tr><td class="mono">${esc(d.domain)}</td><td>${partnerLink(d.org, d.name)}</td><td>${partnerLink(d.customer, orgLabel(d.customer))}</td>
+    <td class="sub">${d.people} ${d.people === 1 ? 'person' : 'people'}</td><td><button class="link" data-pd-take="${esc(d.domain)}" data-org="${esc(d.org)}"${off(`pd:${d.domain}`)}>The partner's</button></td></tr>`).join('');
+  $('detail').innerHTML = `<div class="title">${backButton()}<span class="ico none"></span><h1 class="fill">Partner domains</h1>
+      <button id="pdFresh" title="Look in the threads again">Find again</button></div>
+    <div class="status" id="status"></div>
+    <div class="card"><h2>Add or change one</h2><div id="pdSlot">${domainForm(v)}</div>
+      <p class="hint">People who write from one of these domains, or from a domain under one, are shown as the partner's wherever the inbox tells people apart: their profile card, a customer's people and its "Who". A partner org's domain shows its display name.</p></div>
+    <div class="card"><h2>Partners' mail domains</h2>${rows ? `<table><tr><th>Domain</th><th>Partner</th><th>From</th><th>In the threads</th><th></th></tr>${rows}</table>` : '<div class="empty">None found, none set.</div>'}
+      <p class="hint">Found: the usual mail domains of the people outside Adobe who post in each partner org's threads${v.at ? `, looked for ${esc(ago(v.at))}` : ''}. Free mail, tenant and staff domains never count, and neither does a customer's own domain. "Not a partner" leaves a domain out, and the domains under it; "Back to found" takes back what was set by hand.</p></div>
+    ${left ? `<div class="card"><h2>Left out as a customer's</h2><table><tr><th>Domain</th><th>Its people post for</th><th>The customer</th><th></th><th></th></tr>${left}</table>
+      <p class="hint">Domains a partner's people write from that name a customer, or that most of a customer's people write from: the customer's own, most likely, and not the partner's.</p></div>` : ''}`;
+  showStatus();
+  wireDomains(v);
+}
+
+/** Saves a row of the admin team's, and shows the list again as the Worker has it. */
+async function saveDomain(v, body, what) {
+  const saved = await once(`pd:${body.domain}`, async () => {
+    const res = await call('/api/admin/partner-domains', body.remove ? 'DELETE' : 'PUT', body.remove ? { domain: body.domain } : body);
+    if (!res.ok) { failed(what, res); return false; }
+    status('ok', `${what}: saved.`);
+    return true;
+  });
+  if (!saved || v !== state.view) return;
+  // Drawn once the row's buttons are not busy any more.
+  const r = await call('/api/admin/partner-domains');
+  if (r.ok && v === state.view) {
+    Object.assign(v, r.body);
+    drawDomains(v);
+  }
+}
+
+function wireDomains(v) {
+  const find = (domain) => v.domains.find((d) => d.domain === domain);
+  const wireForm = () => {
+    $('pdForm').onsubmit = (e) => {
+      e.preventDefault();
+      const domain = $('pdDomain').value.trim();
+      saveDomain(v, { domain, org: $('pdOrg').value, name: $('pdName').value }, domain);
+    };
+  };
+  wireForm();
+  $('pdFresh').onclick = () => press($('pdFresh'), () => showDomains({ fresh: true }));
+  for (const b of $('detail').querySelectorAll('[data-pd-edit]')) {
+    b.onclick = () => {
+      $('pdSlot').innerHTML = domainForm(v, find(b.dataset.pdEdit));
+      wireForm();
+      $('pdName').focus();
+    };
+  }
+  for (const b of $('detail').querySelectorAll('[data-pd-exclude]')) {
+    b.onclick = () => press(b, () => saveDomain(v, { domain: b.dataset.pdExclude, excluded: true }, `${b.dataset.pdExclude} is not a partner's`));
+  }
+  for (const b of $('detail').querySelectorAll('[data-pd-undo]')) {
+    b.onclick = () => press(b, () => saveDomain(v, { domain: b.dataset.pdUndo, remove: true }, b.dataset.pdUndo));
+  }
+  for (const b of $('detail').querySelectorAll('[data-pd-take]')) {
+    b.onclick = () => press(b, () => saveDomain(v, { domain: b.dataset.pdTake, org: b.dataset.org }, `${b.dataset.pdTake} is the partner's`));
+  }
 }
 
 // ---- duplicate customers ---------------------------------------------------------------------

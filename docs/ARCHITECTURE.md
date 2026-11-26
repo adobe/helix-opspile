@@ -3695,16 +3695,42 @@ domain, ops teams, the channel's org, and above all who they are to us:
 
 - **Adobe**: staff (a person marked staff, or a mail domain in `STAFF_DOMAINS`); a bot an
   admin said is Adobe's is staff too, but its card still says **Bot**;
-- **Partner**: their mail domain, or a parent domain, is in the `partner_domains` table
-  (agencies and system integrators, maintained by hand, like the rules);
+- **Partner**: their mail domain, or a parent domain, is a partner's (agencies and system
+  integrators; "Partner domains" below), and the card names the partner;
 - **Customer**: anyone else; the card notes when their domain is not the usual customer
   domain of the channel, which is how an unlisted partner shows up;
 - **Bot**.
 
-A list of partner domains is explicit and never wrong, where guessing from "not staff and not
-the customer's domain" would call a customer's second domain a partner. The cards travel with
-the inbox and thread payloads (`profiles`, keyed by `messages.author_key`), so a hover costs no
-request, and emails stay on the server.
+The cards travel with the inbox and thread payloads (`profiles`, keyed by
+`messages.author_key`), so a hover costs no request, and emails stay on the server.
+
+**Partner domains.** Which mail domains are a partner's is one list, `partnerDomains` in
+src/partners.js, that everything which tells people apart asks (the cards, mentions, a customer's
+people, its "Who" and `partnerCount`, the ClickHouse export's `relation`), never `partner_domains`
+itself. It is found, not kept by hand: the usual mail domains of the people outside Adobe who
+post in the threads of each org of type `partner` (`derive`):
+
+- a partner's first domain is the one that names it (its slug or display name, as `acme.co.uk`
+  names `acme`), else the one most of its people write from; its other domains count when nearly
+  as many of its people (half the busiest one's) write from them, or when they have the first
+  one's name (`acme.co.uk` beside `acme.com`);
+- free mail, Microsoft tenant and staff domains never count (`orgDomain`, src/favicons.js);
+- a customer's own domain is never a partner's: one that names a customer in whose threads its
+  people post, and, for any but a partner's first domain, one most of a customer's people write
+  from. A partner's first domain may well be the domain most people in a customer's channel write
+  from, where only the partner's people post: that is how partners work, so it stays;
+- a domain two partners have is the one's with more of its people there, and each is named by its
+  org's display name.
+
+Guessing from "not staff and not the customer's domain" would call a customer's second domain a
+partner; this starts from the orgs said to be partners instead, and leaves out what names a
+customer. It reads every message, so an isolate keeps it an hour (docs/STATE-MACHINES.md,
+"Partner domain"). The rows of `partner_domains` (migration 0109) are the admin team's over it,
+under **Partner domains** in Customers (`GET`, `PUT`, `DELETE /api/admin/partner-domains`): a
+domain added by hand with a partner org or a name, a found one renamed or given to another partner,
+and one that is not a partner's (`excluded`), which its subdomains are not either unless one of
+them has a row of its own. The page also lists the domains left out as a customer's, each one
+click from being the partner's.
 
 For an Adobe person, the card is also who they are on their teams, as their card on their team's
 overview has them (`person` of `GET /api/person`, src/person.js `personCard`; both cards are drawn
@@ -3797,8 +3823,8 @@ channel threads filed under it, from D1:
   start: the
   median wait from their first message to Adobe's first post, over the threads started in the
   window (with how many of those have an answer);
-- its **people**, a card each: their picture and title, a partner's marked (its mail domain in
-  `partner_domains`, src/profiles.js), how often they post (in its threads, a line of their
+- its **people**, a card each: their picture and title, a partner's marked (its mail domain a
+  partner's, src/partners.js `partnerDomains`, as the profile cards have it), how often they post (in its threads, a line of their
   weeks), what they ask about (Clef's areas and technologies of their threads, ranked by their
   lift over the rest of its people, as a team's members are), and their profile there: their
   Contact in its knowledge base (`contacts/`, found by their name as src/kbpeople.js finds one),

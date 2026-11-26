@@ -48,6 +48,7 @@ import { mayRead } from './kbaccess.js';
 import { weeksTo } from './trends.js';
 import { LAYERS, STACK_PATH } from './stack.js';
 import { partnerOf } from './profiles.js';
+import { partnerDomains } from './partners.js';
 import { personSlug } from './agent/okf.js';
 import { mailDomains } from './orgmerge.js';
 import { activeSince } from './listactivity.js';
@@ -175,7 +176,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     return null;
   }
   const [threadWeeks, threadTech, threadAreas, authors, tags, firsts, channelRows, shares, follows,
-    concepts, base, stackRow, partnerRows, domains, threadsBy, links] = await Promise.all([
+    concepts, base, stackRow, partners, domains, threadsBy, links] = await Promise.all([
     // Its threads, week by week: what was said in each, how much of it by Adobe; the chart, the
     // channels, the areas and the technologies are counted from these (a thread by its rowid).
     q(`WITH ${SCOPE} SELECT h.rowid AS id, h.team, h.source || ':' || h.tenant || ':' || h.channel_id AS channel,
@@ -235,7 +236,7 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     db.prepare('SELECT repo, entries FROM knowledge_bases WHERE kind = \'org\' AND slug = ?')
       .bind(slug).first(),
     db.prepare('SELECT parts FROM org_stacks WHERE org = ?').bind(slug).first(),
-    all('SELECT domain, name FROM partner_domains'),
+    partnerDomains(env),
     mailDomains(env, slug),
     // The threads each of its people's accounts posted in, to count a person's threads once.
     q(`WITH ${SCOPE} SELECT DISTINCT g.author_key AS key, g.thread
@@ -244,7 +245,6 @@ export async function orgNumbers(env, slug, { now = new Date() } = {}) {
     sameLinks(env),
   ]);
   const at = new Map(weeks.map((w, i) => [w, i]));
-  const partners = new Map(partnerRows.map((p) => [String(p.domain).toLowerCase(), p.name]));
 
   // Everything said in its threads, week by week: by Adobe's people, and in how many.
   const activity = {

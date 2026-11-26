@@ -74,6 +74,9 @@ import {
   reopenDeclined,
 } from './portalrequests.js';
 import { resetTeamVendors } from './vendors.js';
+import {
+  deletePartnerDomain, listPartnerDomains, savePartnerDomain, stalePartnerDomains,
+} from './partners.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -86,6 +89,8 @@ import { resetTeamVendors } from './vendors.js';
  *   channels they match with a team (src/followrules.js); and the conflicts between team
  *   rules, which the admin team settles in its inbox (src/ruleconflicts.js, src/requestthreads.js);
  * - orgs: display name, icon and type (customer, partner, vendor), and manual assignments;
+ * - partner domains: the mail domains found to be partners' (src/partners.js), and the admin
+ *   team's own over them: one added, renamed, given to another partner, or said not to be one;
  * - bots: which of the bots the inbox knows are Adobe's, and so count as staff, and which only
  *   post alerts, each with its latest messages (src/ourbots.js); a bot nobody said either of is
  *   a request, a thread of the admin team's inbox;
@@ -1917,6 +1922,18 @@ async function addMemberSettling(env, me, body) {
 export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests',
   'GET orgs', 'GET org'];
 
+/**
+ * What changes an org's name or type, or merges it: this isolate finds the partner domains again
+ * (src/partners.js) on the next request, the others within the hour.
+ */
+async function anew(res) {
+  try {
+    return await res;
+  } finally {
+    stalePartnerDomains();
+  }
+}
+
 async function adminRoute(request, env, url, me) {
   const p = url.pathname;
   if (!p.startsWith('/api/admin/')) {
@@ -1996,19 +2013,22 @@ async function adminRoute(request, env, url, me) {
       limit: Math.min(Math.max(Number(body.limit) || 10, 1), 25),
     }));
     case 'GET orgs': return listOrgs(env);
-    case 'POST orgs': return saveOrg(env, body, true);
-    case 'PUT orgs': return saveOrg(env, body, false);
-    case 'DELETE orgs': return deleteOrg(env, body);
+    case 'POST orgs': return anew(saveOrg(env, body, true));
+    case 'PUT orgs': return anew(saveOrg(env, body, false));
+    case 'DELETE orgs': return anew(deleteOrg(env, body));
     case 'GET org': return org(env, q('slug'), me);
     case 'PUT org-follows': return followOrg(env, me, body);
     case 'POST release': return releaseChannel(env, me, body);
     case 'GET org-duplicates': return orgDuplicates(env, me, { pair: q('pair'), fresh: Boolean(q('fresh')) });
     case 'POST org-duplicates/dismiss': return dismissPair(env, me, body);
-    case 'POST org-merge': return mergeOrgs(env, me, body, { applyRules });
-    case 'DELETE org-merge': return unmergeOrg(env, me, body, { applyRules });
+    case 'POST org-merge': return anew(mergeOrgs(env, me, body, { applyRules }));
+    case 'DELETE org-merge': return anew(unmergeOrg(env, me, body, { applyRules }));
     case 'POST org-merge-requests': return requestMerge(env, me, body);
     case 'DELETE org-merge-requests': return closeMergeRequest(env, me, body, 'withdrawn');
     case 'POST org-merge-requests/decline': return closeMergeRequest(env, me, body, 'declined');
+    case 'GET partner-domains': return listPartnerDomains(env, { fresh: Boolean(q('fresh')) });
+    case 'PUT partner-domains': return savePartnerDomain(env, me, body);
+    case 'DELETE partner-domains': return deletePartnerDomain(env, body);
     case 'GET org-icons': return orgIcons(env, q('slug'), Boolean(q('fresh')));
     case 'GET favicon': return faviconProxy(q('domain'), { request });
     case 'GET bots': return listBots(env);
