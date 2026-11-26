@@ -359,12 +359,12 @@ describe('mcp tools', () => {
     const e = env();
     const list = structured(await callTool(e, 'list_extraction_rules', { team: 'helix' }));
     assert.deepEqual(list.rules, []);
-    assert.ok(list.inherited.rules.some((r) => r.field === 'site'));
+    assert.ok(list.inherited.rules.some((r) => r.field === 'site' && r.label === 'Site'));
     const other = await callTool(e, 'list_extraction_rules', { team: 'edge' });
     assert.match(other.body.result.content[0].text, /Not one of your teams: edge/);
 
     const rule = {
-      name: 'Outage words', field: 'symptom', pattern: '\\b(down|broken)\\b', value: '$1',
+      name: 'Outage words', field: 'symptom', label: 'Symptom', pattern: '\\b(down|broken)\\b', value: '$1',
     };
     const tested = structured(await callTool(e, 'test_extraction_rule', { rule, thread: SLACK }));
     assert.deepEqual(tested.facts, [{ field: 'symptom', value: 'down' }]);
@@ -373,7 +373,7 @@ describe('mcp tools', () => {
     assert.match(refused.body.result.content[0].text, /managers of helix/);
     const boss = { ...ME, teams: [{ slug: 'helix', name: 'Helix', role: 'manager' }] };
     const saved = await send(e, req('tools/call', { name: 'save_extraction_rule', arguments: { team: 'helix', ...rule } }), boss);
-    assert.equal(saved.body.result.structuredContent.rule.team, 'helix');
+    assert.deepEqual(['team', 'label'].map((k) => saved.body.result.structuredContent.rule[k]), ['helix', 'Symptom']);
     const tech = await send(e, req('tools/call', {
       name: 'save_tech',
       arguments: {

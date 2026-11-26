@@ -1464,6 +1464,13 @@ and an unchanged thread is never labeled twice):
   edited on the team's page in Teams (**Extraction rules**), with the MCP
   server's tools (`list_extraction_rules`, `save_extraction_rule`, …), and by thread agents
   where the team turned on their `extraction_rules` tool (see "Agent tools").
+  A fact's rule also says what the inbox calls its field (`label`, migration 0108: "Site" for
+  `site`), as a technology's name is in the tech stack: the inbox shows the first label of the
+  channel team's rules of the field, else of the admin team's, else of another team's
+  (src/extract.js `factLabels`), and the field as it is where none has one. Clairic's fields
+  are named next to them (`FIELD_LABELS` in src/label.js). Both come to the pages with the
+  names of technologies and topics (`vocab.facts`), which name a search result's fact and the
+  ids in a thread's header.
 - A language model (`llama-3.3-70b-instruct`) writes a **title** of at most eight words. For an
   alert group it names the specific failure (the error or failing request), once per group.
   The title leaves out what the inbox shows next to it: the customer, the channel, the

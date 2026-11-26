@@ -1453,7 +1453,7 @@ ${UPLOADS_DIR}/ in that directory is read-only and holds the files attached to t
 const REQUEST_BASH = `request_bash asks a person on the team to run a command on your computer for you. Use it for what bash cannot do by itself: a call that needs a credential you do not have (name it in \`env\`: the person fills in its value, and the command reads it as $NAME, quoted), or a change outside your computer that a person should decide on. The team sees the command, your reason and the variables under the thread, next to the draft, and one of them runs it or denies it. It runs in the same shell and working directory as bash, with the team's secrets too. The tool answers at once, and how it ended comes later, as a message of its own: what the command printed, or that it was denied, timed out, failed, or expired with nobody deciding. So do not wait for it: finish your turn, and say in your note what you asked for and why. Write a command a person can read and check: short, one purpose, no encoding tricks, and nothing that prints or stores a value from \`env\`. You never see those values (where the output has one, it shows the variable's name), so never ask anyone for a credential in a draft or a post: ask for it there. At most ${MAX_OPEN} requests wait at a time.`;
 
 const EXTRACTION = `The team turned on extraction rules for this channel: you can read, test and change the extraction rules and the tech stack of your team (list_extraction_rules, test_extraction_rule, save_extraction_rule, delete_extraction_rule, save_tech, delete_tech). Rules are regular expressions (or scripts) that find facts in every thread of your team's channels, such as a site, a ticket or an error code, or detect a technology the customer uses; the tech stack is what Clef is asked about each thread ("Does this thread show that the customer uses <description>?"). The admin team's rules apply to every channel; you cannot change them.
-- Add a rule only for something that recurs across threads and that the existing rules (list_extraction_rules, the admin team's too) miss, and test it first (test_extraction_rule, on your thread or on text) for what it finds and what it should not find.
+- Add a rule only for something that recurs across threads and that the existing rules (list_extraction_rules, the admin team's too) miss, and test it first (test_extraction_rule, on your thread or on text) for what it finds and what it should not find. Give a fact's rule the \`label\` the inbox shows for its field, a word or two (Order id), unless a rule of that field has one.
 - Keep patterns specific: anchor them on what is distinctive (a hostname, a prefix, a keyword), avoid patterns that match almost anything, and never put a customer's name, a person or a secret into a rule; rules are shared by every customer of the team.
 - Say in your note for the team what you added or changed, and why.`;
 
@@ -1470,6 +1470,7 @@ const RULE_ARGS = {
   kind: Type.Optional(Type.Union([Type.Literal('regex'), Type.Literal('script')], { description: 'regex (the default), or script: an ES module whose default export gets the thread ({ text, messages: [{ at, author, staff, bot, text }], channel, platform, customer }) and returns [{ field, value }] and [{ tech }]; no network access' })),
   target: Type.Optional(Type.Union([Type.Literal('fact'), Type.Literal('tech')], { description: 'fact (the default): writes `field`; tech: detects the technology whose id is `field`' })),
   field: Type.Optional(Type.String({ description: 'Fact field (site, ticket, url, …) or technology id' })),
+  label: Type.Optional(Type.String({ description: 'target fact: what the inbox calls the field, a word or two (Site, Order id); left out, the field as it is' })),
   pattern: Type.Optional(Type.String({ description: 'JavaScript regular expression (always global)' })),
   flags: Type.Optional(Type.String({ description: 'Any of i, m, s, u' })),
   value: Type.Optional(Type.String({ description: 'Template: $0 the match (the default), $1… its groups' })),
@@ -1499,7 +1500,7 @@ function extractionTools(ctx, refused = async () => null) {
   return [
     defineTool({
       name: 'list_extraction_rules',
-      description: 'Your team\'s extraction rules and tech stack, and the admin team\'s, which apply to every channel: each rule\'s id, name, kind, target, field, pattern, flags, value template, transform, exclude and whether it is on.',
+      description: 'Your team\'s extraction rules and tech stack, and the admin team\'s, which apply to every channel: each rule\'s id, name, kind, target, field, the label the inbox shows for a fact\'s field, pattern, flags, value template, transform, exclude and whether it is on.',
       parameters: Type.Object({}),
       replay: 'safe',
       async execute(args, api) {

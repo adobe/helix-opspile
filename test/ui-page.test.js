@@ -1790,7 +1790,8 @@ describe('inbox page', () => {
         fact('url', 'https://www.acme.example/pricing'),
         fact('url', 'https://main--www--acme.aem.page/en/'),
         fact('affected_url', 'main--www--acme.aem.page/en'),
-      ]);
+        fact('case', 'E-000001'),
+      ], { ticket: 'Ticket', cve: 'CVE' });
       assert.deepEqual(links.map((l) => [l.group, l.text, l.note]), [
         ['mentioned', 'main--www--acme.aem.page/en', 'Affected page'],
         ['mentioned', 'www.acme.example/pricing', ''],
@@ -1799,6 +1800,8 @@ describe('inbox page', () => {
         ['reference', 'www.aem.live/docs/cdn', ''],
         ['id', 'OPS-1', 'Ticket'],
         ['id', 'CVE-2026-1234', 'CVE'],
+        // An id whose field the API names not: as the field is named.
+        ['id', 'E-000001', 'case'],
       ]);
       assert.equal(links.find((l) => l.text === 'OPS-1').href, null);
       assert.equal(links.find((l) => l.group === 'id' && l.href).href, 'https://www.cve.org/CVERecord?id=CVE-2026-1234');

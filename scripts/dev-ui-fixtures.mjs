@@ -1145,6 +1145,20 @@ export function createStore(now = Date.now(), { big = false, admin = false } = {
   });
 
   // The kinds about people and meetings, not work: a farewell and handover, a call moved.
+  // Before it, a thread with a fact of the admin team's Figma rule (scripts/dev-ui-admin.mjs),
+  // named as the rule labels it: searching for the file's key shows "Figma file" and the key.
+  seed({
+    ch: CHANNELS.aemGlobex,
+    messages: [
+      ['mei', 420, 'Our designers shared the Figma file for the new hero block. Can the block match it on mobile too?'],
+      ['priya', 400, 'I will build it from the file and send a preview link.'],
+    ],
+    reads: { dana: 'latest' },
+    label: {
+      kind: 'request', next_actor: 'us', urgency: 0.6, resolved_p: 0.2, topics: ['frontend'],
+    },
+    facts: [['figma_file', 'Hx7DemoKey2026Blocks'], ['order', 'ORD-204816']],
+  });
   seed({
     ch: CHANNELS.aemGlobex,
     messages: [

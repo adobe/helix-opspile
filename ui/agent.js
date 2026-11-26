@@ -1145,6 +1145,8 @@ function showExtraction({ nav = 'replace' } = {}) {
 
 const mayRules = () => Boolean(state.extraction?.may);
 const ruleWhat = (r) => (r.kind === 'script' ? 'script' : r.target === 'tech' ? `detects ${r.field}` : `→ ${r.field}`);
+/** What the inbox calls a fact's field, as its rule has it (`label`, src/extract.js). */
+const ruleLabel = (r) => (r.target === 'fact' && r.field && r.label ? r.label : '');
 
 function ruleRow(r, own) {
   const edit = own && mayRules();
@@ -1153,7 +1155,7 @@ function ruleRow(r, own) {
   const by = r.by ? `Changed by ${r.by}, ${ago(r.at)}` : '';
   return `<div class="ch rule${r.enabled ? '' : ' off'}">
     <div class="who">
-      <div class="nm">${esc(r.name)}<span class="src mono">${esc(ruleWhat(r))}</span></div>
+      <div class="nm">${esc(r.name)}<span class="src mono">${esc(ruleWhat(r))}</span>${ruleLabel(r) ? `<span class="src" title="What the inbox calls it">${esc(r.label)}</span>` : ''}</div>
       <div class="sub pat mono">${esc(detail)}</div>
       ${by ? `<div class="sub by">${esc(by)}</div>` : ''}
     </div>
@@ -1190,6 +1192,9 @@ function techRow(t, own) {
 function ruleForm(r = {}) {
   const kind = r.kind || 'regex';
   const hide = (k) => (kind === k ? '' : ' hidden');
+  // The label is a fact's: hidden for a rule that detects a technology.
+  const fact = kind === 'regex' && (r.target || 'fact') === 'fact';
+  const hideFact = fact ? '' : ' hidden';
   const opt = (v, cur, label) => `<option value="${v}"${v === (cur || '') ? ' selected' : ''}>${label}</option>`;
   return `<form class="mcpform" id="ruleForm" autocomplete="off">
     <h3>${r.id ? `Edit ${esc(r.name)}` : 'Add a rule'}</h3>
@@ -1199,6 +1204,8 @@ function ruleForm(r = {}) {
     <label for="rTarget" data-kind="regex"${hide('regex')}>Finds</label><select id="rTarget" data-kind="regex" class="long"${hide('regex')}>${opt('fact', r.target || 'fact', 'A fact: its field and value')}${opt('tech', r.target, 'A technology the customer uses')}</select>
     <label for="rField" data-kind="regex"${hide('regex')}>Field or tech id</label><input id="rField" data-kind="regex" class="mono short" value="${esc(r.field || '')}"${hide('regex')}>
     <span class="hint" data-kind="regex"${hide('regex')}>A fact's field, such as site or ticket, or the id of a technology, such as akamai.</span>
+    <label for="rLabel" data-kind="regex" data-target="fact"${hideFact}>Label</label><input id="rLabel" data-kind="regex" data-target="fact" class="long" maxlength="40" value="${esc(r.label || '')}"${hideFact}>
+    <span class="hint" data-kind="regex" data-target="fact"${hideFact}>What the inbox calls the fact, such as Site or Order id: in a search result, next to its value. Left empty, it shows the field as it is, or another rule's label for it.</span>
     <label for="rPattern" data-kind="regex"${hide('regex')}>Pattern</label><input id="rPattern" data-kind="regex" class="mono" value="${esc(r.pattern || '')}"${hide('regex')}>
     <span class="hint" data-kind="regex"${hide('regex')}>A regular expression, such as <span class="mono">\\bORD-(\\d{6})\\b</span>.</span>
     <label for="rFlags" data-kind="regex"${hide('regex')}>Flags</label><input id="rFlags" data-kind="regex" class="mono short" value="${esc(r.flags || '')}"${hide('regex')}>
@@ -1349,19 +1356,28 @@ function bindExtraction() {
     return kind === 'script' ? { name: $('rName').value.trim(), kind, script: $('rScript').value }
       : {
         name: $('rName').value.trim(), kind, target: $('rTarget').value, field: $('rField').value.trim(),
+        label: $('rTarget').value === 'fact' ? $('rLabel').value.trim() : '',
         pattern: $('rPattern').value, flags: $('rFlags').value.trim(), value: $('rValue').value.trim(),
         transform: $('rTransform').value, exclude: $('rExclude').value,
       };
   };
-  $('rKind').onchange = () => {
-    for (const el of form.querySelectorAll('[data-kind]')) el.hidden = el.dataset.kind !== $('rKind').value;
+  // What shows is the kind's, and of a regular expression's, the label only for a fact.
+  const shown = () => {
+    for (const el of form.querySelectorAll('[data-kind]')) {
+      el.hidden = el.dataset.kind !== $('rKind').value
+        || Boolean(el.dataset.target && el.dataset.target !== $('rTarget').value);
+    }
   };
+  $('rKind').onchange = shown;
+  $('rTarget').onchange = shown;
   $('rTest').onclick = async () => {
     state.sample = $('rSample').value;
     $('rFound').textContent = 'Testing…';
     const r = await call('/api/kb/extraction/test', { method: 'POST', body: JSON.stringify({ repo, rule: { name: 'test', ...given() }, text: state.sample }) });
     if (stale()) return;
-    const found = r.ok ? [...r.body.facts.map((f) => `${f.field}: ${f.value}`), ...r.body.tech.map((t) => `tech: ${t}`)] : null;
+    const g = given();
+    const named = (f) => (g.label && f.field === g.field ? g.label : f.field);
+    const found = r.ok ? [...r.body.facts.map((f) => `${named(f)}: ${f.value}`), ...r.body.tech.map((t) => `tech: ${t}`)] : null;
     $('rFound').innerHTML = !r.ok ? `<span class="err">${esc(r.body.error)}</span>`
       : found.length ? `<span class="tags">${found.map((f) => `<span class="src">${esc(f)}</span>`).join('')}</span>` : 'Nothing found.';
   };
