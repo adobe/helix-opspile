@@ -1071,6 +1071,18 @@ initial, an empty slot, nothing), and every favicon of its address is drawn as t
 `FAV_RETRY_MS`: a failure may pass (the Worker answers a Google that failed with a 502 for a minute,
 src/favicons.js), so it is not final, and the next drawing after that asks again.
 
+**D1 session.** anywhere → at least as new as a bookmark (src/d1session.js, `D1Bookmark` in
+`ui/app.js`). With D1's read replication on, each `/api/*` request is one session: a read
+(`GET`, `HEAD`) starts from the bookmark the page sent (`x-d1-bookmark`), else at any copy of the
+database (`first-unconstrained`); anything else starts at the primary (`first-primary`), so what
+it reads before it writes is the latest. Every answer says the session's bookmark, and every room
+event carries the primary's at the time it was sent (`notifyRoom`, one `SELECT 1` there), so the
+reads an event sets off see what it is about. The browser keeps the newest bookmark it has seen,
+in `localStorage`, for every tab: bookmarks are hex fields of fixed width, and of two as long the
+greater is the newer, so an older one never replaces it. Anything that is not a bookmark is not
+passed to D1. The queue, the crons and the Durable Objects read and write at the primary, as
+without replication; so does everything when it is off.
+
 **Search.** idle → loading → results or error (`state.search`). `seq` drops the answer to anything but
 the latest question.
 

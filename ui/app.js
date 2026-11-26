@@ -124,12 +124,43 @@ if (window.visualViewport && matchMedia('(hover: none) and (pointer: coarse)').m
     setTimeout(resolve, s * 1000 + Math.random() * 1000);
   });
 
+  // D1's bookmark (src/d1session.js): the newest state of the database this browser has seen,
+  // from /api's answers and the rooms' events (`D1Bookmark.see`), in every tab. Each fetch of
+  // /api says it, so its reads come from a copy of the database at least that new. Bookmarks
+  // are hex fields of fixed width: of two as long, the greater is the newer.
+  const MARK = 'opspile.d1bookmark';
+  const MARK_HEADER = 'x-d1-bookmark';
+  let mark = null;
+  const newer = (a, b) => typeof a === 'string' && a !== '' && (!b || a.length !== b.length || a > b);
+  const marked = () => {
+    let kept = null;
+    try { kept = localStorage.getItem(MARK); } catch { /* storage is off */ }
+    return newer(kept, mark) ? kept : mark;
+  };
+  const see = (b) => {
+    if (!newer(b, marked())) return;
+    mark = b;
+    try { localStorage.setItem(MARK, b); } catch { /* storage is off */ }
+  };
+  window.D1Bookmark = { see, get: marked };
+  const withMark = (input, init) => {
+    const b = marked();
+    if (!b) return init;
+    const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+    headers.set(MARK_HEADER, b);
+    return { ...init, headers };
+  };
+  const ask = (input, init) => native(input, { ...withMark(input, init), redirect: 'manual' }).then((res) => {
+    see(res.headers?.get?.(MARK_HEADER));
+    return res;
+  });
+
   window.fetch = async (input, init = {}) => {
     if (!api(input) || init.redirect) return native(input, init);
-    let res = await native(input, { ...init, redirect: 'manual' });
+    let res = await ask(input, init);
     if (busy(res) && reads(input, init)) {
       await later(res);
-      res = await native(input, { ...init, redirect: 'manual' });
+      res = await ask(input, init);
     }
     if (res.type !== 'opaqueredirect') return res;
     signedOut();

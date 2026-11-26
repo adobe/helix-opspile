@@ -9769,6 +9769,8 @@ function listen(team, live, { again = false } = {}) {
   ws.onmessage = (e) => {
     if (e.data === 'pong') { clearTimeout(ws.probe); ws.probe = null; return; }
     const ev = JSON.parse(e.data);
+    // As new as what changed (src/notify.js): the reads it sets off see it.
+    globalThis.D1Bookmark?.see(ev.bookmark);
     noteEvent(ev, team);
     // A message in a channel: someone may have joined it, whom its kept pools do not have.
     if (ev.type === 'thread' && ev.thread) stalePools(ev.thread);

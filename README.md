@@ -1206,6 +1206,13 @@ Observability; it expires after a year) and `CLOUDFLARE_ACCOUNT_ID`, and reads t
 secrets of the same name. Migrations must be additive, because they run before the new code
 is live.
 
+**D1 read replication** is a setting of the database, not of the deploy: `cf d1 update <database
+id> --read-replication-mode auto` (or the dashboard's D1 settings) turns it on, `disabled` off.
+The inbox's reads (`GET /api/*`) then run at the nearest copy of the database, in a D1 session
+that starts from the bookmark the page sends (`x-d1-bookmark`, src/d1session.js); everything
+else (writes, the queue, the crons, the Durable Objects) still goes to the primary. With it off,
+the sessions are the primary's and nothing changes, so the code may deploy before it is on.
+
 **Pull requests merge through a merge queue** (a ruleset on `main`): `gh pr merge --auto`
 puts one in line, and it merges once CI's `test` and the AI review's `ai-review / review` have
 passed, on the pull request and again on the queue's merge of it with `main`. Both workflows
