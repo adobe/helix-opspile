@@ -371,6 +371,8 @@ What it changes, for a member of an individual channel:
   watermark moves only with them: a colleague's thread changes no cursor, page or count of theirs.
 - `POST /threads` starts a thread that is theirs; nobody else of the channel sees it.
 - `GET /threads` says `audience: "individual"` (otherwise `"shared"`), for the host to show.
+- Only a member starts a thread: support answers in theirs, and a thread support would start
+  there (from the inbox, or the app) is refused with `409`, since no member would see it.
 - Support may add a member of the same channel to a thread (`addToThread` of the portal's
   platform binding); they then see it, and their feed says `added` (theirs only).
 
