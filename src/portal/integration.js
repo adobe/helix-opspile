@@ -116,7 +116,9 @@ async function post(request, env, m, root, now, waitUntil) {
   };
   let wrote;
   try {
-    const content = root ? body : [title.trim(), topic, body.trim()].filter(Boolean).join('\n\n');
+    // A one-line request is its title: a body that only repeats it is not said twice.
+    const rest = body.trim() === title?.trim() ? null : body.trim();
+    const content = root ? body : [title.trim(), topic, rest].filter(Boolean).join('\n\n');
     wrote = await writeMessage(env, channel, {
       id: m.actor, kind: 'customer', name: m.name,
     }, {
@@ -188,7 +190,7 @@ export async function integration(request, env, options = {}) {
   } catch (e) {
     if (e instanceof IntegrationError) {
       return respond(
-        { error: { code: e.message } },
+        { error: { code: e.message, ...e.detail } },
         e.status,
         e.status === 429 ? { 'retry-after': '60' } : {},
       );

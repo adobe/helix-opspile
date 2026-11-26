@@ -35,7 +35,8 @@ import { BASE, pruneIntegration } from './integration-auth.js';
 import { deliver, pruneEvents } from './events.js';
 import { pruneFiles } from './files.js';
 import {
-  again, avatar, decline, edit, file, logo, open, post, react, typing, upload,
+  accessChannels, accessRequests, again, autoApprove, avatar, decline, declineRequest, edit, enroll,
+  file, logo, open, post, react, reserve, typing, upload,
 } from './platform.js';
 import { refreshTech, techStale } from './tech.js';
 
@@ -173,5 +174,35 @@ export class PortalPlatform extends WorkerEntrypoint {
   /** `{ domain, channel, root? }`: a thread's messages again, as events. */
   resend(args) {
     return this.#told(again(this.env, args));
+  }
+
+  /** `{ id?, count? }`: the integration's access requests (docs/PORTAL-INTEGRATION.md). */
+  accessRequests(args) {
+    return accessRequests(this.env, args);
+  }
+
+  /** `{ id, customer, name, by }`: reserves the channel of a request's new tenant. */
+  reserveAccess(args) {
+    return reserve(this.env, args);
+  }
+
+  /** `{ id, name, by, enable? }`: enrolls a request's person, and enables what was reserved. */
+  enrollAccess(args) {
+    return enroll(this.env, args);
+  }
+
+  /** `{ id, reason?, by }`: declines an access request. */
+  declineAccess(args) {
+    return declineRequest(this.env, args);
+  }
+
+  /** `{ channel? }`: the user-token hosts' channels, with their auto-approval and members. */
+  accessChannels(args) {
+    return accessChannels(this.env, args);
+  }
+
+  /** `{ channel, on?, tenants?, domains?, by }`: a channel's auto-approval. */
+  setAutoApprove(args) {
+    return autoApprove(this.env, args);
   }
 }

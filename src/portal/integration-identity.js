@@ -36,6 +36,10 @@ const KEYS_TTL = 60 * 60 * 1000;
 const KEYS_REFETCH = 60 * 1000; // at most this often for a key it does not have yet
 const TOKEN_TTL = 5 * 60 * 1000;
 const PROFILE_TTL = 60 * 1000;
+const ORG_TTL = 24 * 60 * 60 * 1000;
+const ORG_MISS_TTL = 10 * 60 * 1000;
+const ORG_TIMEOUT = 3000;
+const ORG_BYTES = 256 * 1024;
 const MAX = 1000;
 const id = (s) => typeof s === 'string' && s.trim().length > 0 && s.length <= 256;
 
@@ -76,18 +80,20 @@ function remember(map, key, value) {
 let keySets = new Map();
 let tokens = new Map();
 let profiles = new Map();
+let orgNames = new Map();
 
 export function resetIdentityCache() {
   keySets = new Map();
   tokens = new Map();
   profiles = new Map();
+  orgNames = new Map();
 }
 
-async function upstream(fetchImpl, url, init) {
+async function upstream(fetchImpl, url, init, timeout = 5000) {
   let res;
   try {
     res = await fetchImpl(url, {
-      redirect: 'manual', signal: AbortSignal.timeout(5000), ...init,
+      redirect: 'manual', signal: AbortSignal.timeout(timeout), ...init,
     });
   } catch {
     throw new UpstreamError('unreachable');
@@ -185,12 +191,15 @@ function imsProfile(c, token, hash, fetchImpl, now) {
     if (!p || typeof p !== 'object') {
       throw new UpstreamError(`profile ${res.status}`);
     }
-    // Only what maps; the rest of the profile is never kept.
+    // Only what maps, and the name an access request shows; the rest is never kept.
+    const named = [p.displayName, p.name, [p.first_name, p.last_name].filter(Boolean).join(' ')]
+      .find((n) => typeof n === 'string' && n.trim());
     return {
       userId: p.userId,
       ownerOrg: p.ownerOrg,
       email: p.email,
       emailVerified: p.emailVerified === true || p.emailVerified === 'true',
+      name: named ? named.trim().slice(0, 120) : null,
     };
   })();
   remember(profiles, hash, { profile, until: now + PROFILE_TTL });
@@ -199,11 +208,71 @@ function imsProfile(c, token, hash, fetchImpl, now) {
   return profile;
 }
 
+/** A response's JSON, read up to `max` bytes; null when it is longer or not JSON. */
+async function boundedJson(res, max) {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    return null;
+  }
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    size += value.byteLength;
+    if (size > max) {
+      reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The provider's name of organization `tenant`, from `/ims/organizations/v6` with the user's
+ * token (it needs the `read_organizations` scope), or null: without the scope, on any failure,
+ * or when the list does not have the organization. Only the entry whose `orgRef` is `tenant`
+ * counts, so what the user is otherwise a member of never names it. Kept a day per
+ * organization (a miss ten minutes), in a bounded cache; never an error for the caller.
+ */
+async function imsOrgName(c, token, tenant, fetchImpl, now) {
+  const key = `${c.environment}:${tenant}`;
+  const hit = orgNames.get(key);
+  if (hit && hit.until > now) {
+    return hit.name;
+  }
+  let name = null;
+  try {
+    const res = await upstream(fetchImpl, `${c.issuer}/ims/organizations/v6`, {
+      headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+    }, ORG_TIMEOUT);
+    const list = res.ok ? await boundedJson(res, ORG_BYTES) : (await res.body?.cancel(), null);
+    const org = (Array.isArray(list) ? list : []).find((o) => o && o.orgRef
+      && `${o.orgRef.ident}@${o.orgRef.authSrc}` === tenant);
+    if (org && typeof org.orgName === 'string' && org.orgName.trim()) {
+      name = org.orgName.trim().slice(0, 200);
+    }
+  } catch {
+    name = null;
+  }
+  remember(orgNames, key, { name, until: now + (name ? ORG_TTL : ORG_MISS_TTL) });
+  return name;
+}
+
 /**
  * The caller of a host with a provider, from its user token alone: `{ tenant, sub, email,
- * email_verified }`, the same names as an assertion's. Null when the token is not one this host
- * takes, `{ tenant: null }` when it is but names no organization. Throws UpstreamError when the
- * provider cannot be asked.
+ * email_verified, name }` (`profile()`), the same names as an assertion's, and the provider's
+ * name of an organization (`organization()`). Null when the token is not one this host takes,
+ * `{ tenant: null }` when it is but names no organization. Throws UpstreamError when the provider
+ * cannot be asked.
  */
 export async function tokenUser(c, token, { fetchImpl = fetch, now = Date.now() } = {}) {
   if (!token || token.length > 16384) {
@@ -227,7 +296,10 @@ export async function tokenUser(c, token, { fetchImpl = fetch, now = Date.now() 
         sub: claims.userId,
         email: c.email && id(p.email) ? p.email : undefined,
         email_verified: c.email ? p.emailVerified : undefined,
+        name: p.name || null,
       };
     },
+    /** The provider's name of `tenant`, for an access request; null when it cannot say. */
+    organization: (tenant) => imsOrgName(c, token, tenant, fetchImpl, now),
   };
 }

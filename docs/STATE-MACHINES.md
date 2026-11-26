@@ -2,7 +2,8 @@
 
 opspile has seven status columns, `channel_requests.status`, `bash_requests.status`,
 `tool_requests.status`, `portal_requests.status`, `org_merge_requests.status`,
-`member_requests.status` and `questions.status` (and the customer portal, in its own database, `lobbies.status`). Everything
+`member_requests.status` and `questions.status` (and the customer portal, in its own database, `lobbies.status` and
+`integration_requests.status`). Everything
 else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
@@ -224,6 +225,36 @@ asked for every message by each of them); the first request after the minute der
 so an override shows at once everywhere; deleting one (`DELETE /api/admin/partner-domains`) is the
 way back to found, an `excluded` row the way to say no. A domain that stops being found keeps its
 row, which then stands alone.
+
+**Partner pair.** candidate → Clef's verdict → stale → asked again; confirmed or dismissed ⇄
+neither; and gone (`org_partners`, migration 0110, src/orgpartners.js). A candidate's row is written
+by a list load or a cron run (`sync`) with its signals and score; Clef's verdict is kept with the
+`fingerprint` of what it was shown, and asked again once that changes, `ASK_PER_LIST` a load or a
+run; one Clef did not give leaves `p` null, for the next. Confirmed (`confirmed_at`) and dismissed
+(`dismissed_at`) exclude each other: one replaces the other, and `undo` clears only its own. A
+decided pair is not asked about and stays whatever its signals; one nobody decided is deleted by the
+first `sync` that does not find it a candidate (its signals fell under `CANDIDATE` or to one
+`kb` or `place` signal alone, a partner's mail domains changed, an org was retyped or merged). Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
+dismissed with `p` at least `LIKELY`. A merge copies the merged org's decided rows to the org kept
+(`merged_from`), not over a decision of its own: a row it adds is `merged_new`, and on a candidate
+the kept org had only the decision is written. Undoing it deletes the rows it added, clears the
+decision it wrote on the others (their signals, Clef's verdict and fingerprint stay), and the merged
+org's own rows, kept all along, count again. A decision by hand since makes the row the kept org's.
+A verdict Clef did not give (a timeout, an error, no number) is not written: `p` and the
+`fingerprint` stay as they were, and the next load or run asks again. Without the partner domains
+(src/partners.js `partnerDomainLookup` not `found`: no look succeeded in the isolate yet, D1 failed
+or was slow) a `sync` writes, deletes and asks nothing and answers the rows as they are
+(`skipped`): the partners' people would be nobody's, and every pair would drop and lose its
+verdict. What a look found before counts as found while the next one fails.
+
+**Org overview kept.** not kept → kept → stale or forgotten (`cache`, `forgotten` in
+src/orgprofile.js). A customer's, vendor's or partner's overview (`orgNumbers`) is kept per isolate
+by the D1 binding for `CACHE_MS` (five minutes). A decision on a pair of a customer and a partner
+(`POST /api/admin/org-partners/confirm`, `/dismiss`, with `undo` too) forgets both orgs' once it is
+written (`forgetOrgProfiles`): each counts its forgets, and numbers read before the last forget of
+their org are not used, so one read while the decision was written is not kept as fresh. The other
+isolates keep theirs up to `CACHE_MS` (five minutes), as they do for a new thread, and show the
+decision after that; nothing else forgets them.
 
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status
@@ -913,6 +944,35 @@ the page does not send it again by itself. If filing the new channel fails after
 it, the answer says so and names it: it is in the inbox under the admin team (the rule of last
 resort), to be assigned on a team's page.
 
+**Integration access request.** pending → approved | declined → (30 days) pending
+(`integration_requests.status` in the portal, `src/portal/integration-requests.js`; the inbox keeps
+nothing of it, `src/integrationrequests.js`). A verified caller of a user-token host with no member
+row in its tenant's channel is recorded on a `not_enrolled` (one row per host, tenant and subject,
+`UNIQUE`), refreshed at most every 15 minutes, and only within the bounds (1,000 pending per host,
+100 per tenant, 120 new per host and hour, all in the `INSERT … WHERE NOT EXISTS` itself). A
+member row of any state, or an approved row, stops capture: those are an operator's. Approving is
+claimed by the row's status in the same batch that inserts the actor and the member and enables
+a mapping the flow reserved, each conditional on the claim, so a decision made meanwhile inserts
+nothing. A new tenant's mapping is reserved first (`integration_customers.approved_by`, disabled),
+then routed in the inbox, then enrolled and enabled (`enabled_at`, set by trigger on the first
+enable): a routing failure leaves it reserved, and approving again finishes it; a mapping enabled
+once and disabled since, or made by hand and never enabled, is never re-enabled from here. A
+decline is conditional on `pending`, and a later call after 30 days makes the row pending again,
+with the decision cleared. Decided rows and pending rows not seen for 180 days are pruned by the
+cron, a thousand at a time.
+
+**Auto-approval of an integration channel.** off ⇄ on (`integration_customers.auto_approve`,
+who and when in `auto_by`, `auto_at`; what else lands there in `integration_catches`, primary key
+`(host, kind, value)`, so an org ID or domain is one channel's per host, and triggers refuse a
+catch of a mapped tenant and a mapping of a caught one). On, a verified caller with no member row
+on the host whose tenant, extra org ID or, failing both, exact verified mail domain lands in the
+enabled channel is enrolled in one batch: the actor only if the channel is still enabled and on
+and fewer than 30 were auto-approved in the last hour, the member only if that actor exists, and
+their request approved only if that member exists. Anything that stops it (off, disabled, cap, a
+uniqueness conflict) leaves a pending request instead. Off stops new ones; members stay. A
+provider host's subject is one member per host (trigger `integration_member_host`), resolved by
+subject; a domain-caught member (`via` `domain:…`) is bound to its verified address.
+
 **Managed channel and member.** Reserved → enabled ⇄ suspended (`integration_customers`).
 Reserve the channel ID, pre-file it by that ID in the inbox, then enable the tenant. The first
 create materializes its lobby and channel with the root and its events; racing creates reuse
@@ -1040,6 +1100,15 @@ drawn again, as one that failed out of the page) gives way to the stand-in its p
 initial, an empty slot, nothing), and every favicon of its address is drawn as that stand-in for
 `FAV_RETRY_MS`: a failure may pass (the Worker answers a Google that failed with a 502 for a minute,
 src/favicons.js), so it is not final, and the next drawing after that asks again.
+
+**Open thread's fetch.** shown → asked again → shown, or failed (`openThread`, `refetchLater`,
+`refetchDone` in `ui/inbox.js`). Opening a thread shows the copy it was fetched ahead into, and
+fetches it again behind it; so do its live updates. A fetch that fails in a way asking again may
+mend (`transient`: D1 busy, the Worker's 5xx, the network) leaves what the pane shows of that thread
+as it is, and asks again after 1, 2, 4… s (30 s at most, plus up to a second at random), for as
+long as it stays open; with nothing of it on screen yet the pane says the inbox is busy meanwhile.
+A fetch that succeeds ends the retries; another thread opened lets them lapse. A 4xx (gone, not
+allowed) still replaces the pane, and a sign-in that expired keeps it under the banner.
 
 **Search.** idle → loading → results or error (`state.search`). `seq` drops the answer to anything but
 the latest question.

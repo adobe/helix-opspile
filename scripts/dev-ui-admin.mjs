@@ -25,13 +25,15 @@ import {
   addNote, requestEntries, requestThread, resolveRequest,
 } from '../src/requestthreads.js';
 import { isRequestKey } from '../src/requestkeys.js';
-import { d1 } from '../test/d1.js';
+import { d1, PORTAL as PORTAL_MIGRATIONS } from '../test/d1.js';
+import * as portalPlatform from '../src/portal/platform.js';
 import { IMAGES, layerNames } from './computer-images.mjs';
 import { seedCogs } from './dev-ui-cogs.mjs';
 import { seedTopicMap } from './dev-ui-topics.mjs';
 import { seedTeamProfile } from './dev-ui-team.mjs';
 import { seedCustomerProfile } from './dev-ui-customer.mjs';
 import { seedVendorProfile } from './dev-ui-vendor.mjs';
+import { seedPartnerProfile } from './dev-ui-partner.mjs';
 import { fakeBucket } from '../test/fakes.js';
 import { fakeMcpServers } from '../test/mcp-server.js';
 
@@ -56,6 +58,64 @@ import { fakeMcpServers } from '../test/mcp-server.js';
  */
 
 const PREVIEW_TOKEN = 'preview-token';
+
+/** Clef on a customer and a partner, made up: Pied Piper works for ACME (src/orgpartners.js). */
+const DEV_PARTNER_CLEF = {
+  run: async (model, { state }) => ({
+    answers: { works: { type: 'noul', noul: /C: slug acme,/.test(state) ? 0.92 : 0.34 } },
+  }),
+};
+
+/**
+ * Two partners' customers (src/orgpartners.js): Pied Piper's people post in ACME's threads, in
+ * one of Hooli's and are in Wonka's channel, and its threads and ACME's name the site owner
+ * `acme-web`; Raviga was confirmed for Soylent by hand. A's partners are `seedPartners`.
+ */
+function seedPartnerPairs(DB) {
+  const db = DB.sqlite;
+  const at = (days) => new Date(Date.now() - days * 86400000).toISOString();
+  db.exec(`INSERT INTO orgs (slug, name, type, icon, updated_at) VALUES
+    ('piedpiper', 'Pied Piper Digital', 'partner', NULL, '2026-10-20T09:00:00Z'),
+    ('raviga', 'Raviga Partners', 'partner', NULL, '2026-10-20T09:00:00Z')`);
+  db.prepare(`INSERT INTO channels (source, tenant, channel_id, name, fetched_at)
+    VALUES ('slack', 'T-FAKE', 'C0PIEDPIPER', 'aem-piedpiper', ?)`).run(at(1));
+  const own = ['Preview of the new header', 'Cutover checklist'].map((title, i) => {
+    const thread = `slack:T-FAKE:C0PIEDPIPER:pp-${i}`;
+    db.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+        channel_name, title, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES (?, 'slack', 'T-FAKE', 'C0PIEDPIPER', ?, 'piedpiper', 'admin', 'channel', 'aem-piedpiper',
+        ?, ?, ?, ?, ?, 1, ?)`)
+      .run(thread, `pp-${i}`, title, `channels/piedpiper/admin/slack-C0PIEDPIPER/pp-${i}/`, at(i + 2), at(i + 1), at(i + 1), at(i + 1));
+    return {
+      thread, source: 'slack', tenant: 'T-FAKE', channel_id: 'C0PIEDPIPER',
+    };
+  });
+  const of = (org, n) => db.prepare('SELECT thread, source, tenant, channel_id FROM threads WHERE org = ? ORDER BY thread LIMIT ?').all(org, n);
+  const people = [['U-PP1', 'Erlich B.', 'erlich@piedpiper.example'], ['U-PP2', 'Dinesh C.', 'dinesh@piedpiper.example'],
+    ['U-PP3', 'Monica H.', 'monica@piedpiper.example']];
+  let n = 0;
+  const post = (t, user) => {
+    n += 1;
+    db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email, fetched_at)
+      VALUES (?, ?, ?, 'person', ?, ?, ?)`).run(t.source, t.tenant, user[0], user[1], user[2], at(1));
+    db.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, deleted, author_key)
+      VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0, ?)`).run(t.source, t.tenant, t.channel_id, `pp-${n}`, t.thread, at(1), `${t.source}:${t.tenant}:${user[0]}`);
+  };
+  own.forEach((t) => people.forEach((u) => post(t, u)));
+  of('acme', 4).forEach((t, i) => post(t, people[i % 2]));
+  of('hooli', 1).forEach((t) => post(t, people[2]));
+  const wonka = of('wonka', 1)[0];
+  if (wonka) {
+    db.prepare(`INSERT OR IGNORE INTO channel_members (source, tenant, channel_id, user_id, email, name)
+      VALUES (?, ?, ?, 'U-PP3', 'monica@piedpiper.example', 'Monica H.')`).run(wonka.source, wonka.tenant, wonka.channel_id);
+  }
+  const acme = of('acme', 1)[0];
+  for (const t of [own[0], acme].filter(Boolean)) {
+    db.prepare('INSERT OR IGNORE INTO facts (thread, source, field, value) VALUES (?, \'rule\', \'site\', \'acme-web/www\')').run(t.thread);
+  }
+  db.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at)
+    VALUES ('soylent', 'raviga', 'priya@example.com', ?)`).run(at(3));
+}
 
 /** Clef on two orgs, made up: one when their names are (src/orgmerge.js). */
 const DEV_CLEF = {
@@ -945,6 +1005,9 @@ export function createAdmin(store, {
     ('opspile', 'opspile', 'internal', NULL, '2026-10-20T09:00:00Z'),
     ('acme-co', 'ACME Corporation', 'customer', 'acme.example', '2026-10-20T09:00:00Z'),
     ('wonkaindustries', 'Wonka Industries Ltd', 'customer', NULL, '2026-10-20T09:00:00Z')`);
+  seedPartnerPairs(DB);
+  // And Pied Piper's half year, a partner's page (dev-ui-partner.mjs).
+  seedPartnerProfile(DB);
   // Channels Lena (a member of Edge ops) asked the admin team for: one the admin team holds
   // (confirming moves it), one Platform ops holds (confirming shares it), and one declined; and
   // one her thread's agent asked to move for her.
@@ -1096,6 +1159,94 @@ export function createAdmin(store, {
     id: 'u5', name: 'Duffman', email: 'duffman@duff.example', joined: true,
   }], ago(9), 'declined', ['priya@example.com', 'Priya Nair', ago(8), 'You have a Slack channel with us: ask there.']);
 
+  // People a host of the portal's integration signed in with its identity provider, waiting
+  // for access (src/integrationrequests.js): one of an organization new to the host, one of an
+  // organization that has its channel there already, and one declined. The portal's own database,
+  // in memory, with its real code behind the made-up PORTAL binding below.
+  const portalDb = d1({ migrations: PORTAL_MIGRATIONS });
+  const sec = (days) => Math.floor((Date.now() - days * 86400000) / 1000);
+  portalDb.sqlite.prepare(`INSERT INTO integration_hosts (id, service_id, issuer, jwks, scopes,
+      identity, product) VALUES ('panel-prod', 'made-up.access', 'https://ims-na1.adobelogin.com',
+      '{"keys":[]}', '["threads:create","threads:read","threads:reply","changes:read"]', ?, 'agents')`)
+    .run(JSON.stringify({
+      provider: 'adobe-ims',
+      environment: 'prod',
+      issuer: 'https://ims-na1.adobelogin.com',
+      keys: 'https://ims-na1.adobelogin.com/ims/keys',
+      clientIds: ['made-up-panel'],
+      tenant: 'profile.ownerOrg',
+      subject: 'token.user_id',
+      email: 'profile.email',
+    }));
+  const { channel: wonkaChannel } = portalDb.sqlite.prepare(`INSERT INTO integration_customers
+      (host, tenant, customer, name, enabled) VALUES ('panel-prod', '0000000000000000000000B0@AdobeOrg',
+      'agents-wonka', 'agents-wonka', 1) RETURNING channel`).get();
+  // Wonka's channel auto-approves its people, and whoever has a verified wonka.example address;
+  // two were auto-approved (src/portal/integration-auto.js), one by its domain.
+  portalDb.sqlite.prepare(`UPDATE integration_customers SET auto_approve = 1, auto_by = 'priya@example.com',
+      auto_at = ? WHERE channel = ?`).run(sec(3), wonkaChannel);
+  portalDb.sqlite.prepare(`INSERT INTO integration_catches (host, channel, kind, value, added_by, added_at)
+      VALUES ('panel-prod', ?, 'domain', 'wonka.example', 'priya@example.com', ?)`).run(wonkaChannel, sec(3));
+  for (const [i, name, email, via, days] of [[1, 'Augustus Gloop', null, null, 2], [2, 'Violet Beauregarde', 'violet@wonka.example', 'domain:wonka.example', 0.1]]) {
+    const { actor } = portalDb.sqlite.prepare(`INSERT INTO integration_actors (channel, name, verified_email)
+      VALUES (?, ?, ?) RETURNING actor`).get(wonkaChannel, name, email);
+    portalDb.sqlite.prepare(`INSERT INTO integration_members (channel, subject, actor, approved_by,
+        approved_at, via, auto) VALUES (?, ?, ?, 'priya@example.com', ?, ?, 1)`)
+      .run(wonkaChannel, `00000000000000000000B00${i + 1}@AdobeID`, actor, sec(days), via);
+  }
+  for (const [target, value] of [['team', 'edge'], ['org', 'wonka']]) {
+    DB.sqlite.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note)
+      VALUES (?, 10, 'portal', 'channel_id', ?, ?, 'manual assignment')`).run(target, `^${wonkaChannel}$`, value);
+  }
+  const access = portalDb.sqlite.prepare(`INSERT INTO integration_requests (host, tenant, subject,
+      name, email, org_name, status, requested_at, seen_at, attempts, decided_at, decided_by,
+      decided_name, reason) VALUES ('panel-prod', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  access.run(
+    '0000000000000000000000A0@AdobeOrg',
+    '00000000000000000000A001@AdobeID',
+    'Lucius Fox',
+    'lucius.fox@wayne.example',
+    'Wayne Enterprises International Holdings Inc. - Applied Sciences (Prod)',
+    'pending',
+    sec(0.2),
+    sec(0.05),
+    7,
+    null,
+    null,
+    null,
+    null,
+  );
+  access.run(
+    '0000000000000000000000B0@AdobeOrg',
+    '00000000000000000000B001@AdobeID',
+    'Charlie Bucket',
+    'charlie@wonka.example',
+    'Wonka Industries',
+    'pending',
+    sec(1.2),
+    sec(1),
+    2,
+    null,
+    null,
+    null,
+    null,
+  );
+  access.run(
+    '0000000000000000000000C0@AdobeOrg',
+    '00000000000000000000C001@AdobeID',
+    'Homer Simpson',
+    null,
+    null,
+    'declined',
+    sec(12),
+    sec(12),
+    1,
+    sec(11),
+    'priya@example.com',
+    'Priya Nair',
+    'Ask your account team for a Slack channel.',
+  );
+
   // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
   // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
   for (const b of bases) {
@@ -1116,6 +1267,12 @@ export function createAdmin(store, {
       }),
       post: async () => ({ ok: true, id: `m${Date.now().toString(36).padStart(15, '0')}` }),
       decline: async () => ({ ok: true }),
+      accessRequests: (a) => portalPlatform.accessRequests({ DB: portalDb }, a),
+      reserveAccess: (a) => portalPlatform.reserve({ DB: portalDb }, a),
+      enrollAccess: (a) => portalPlatform.enroll({ DB: portalDb }, a),
+      declineAccess: (a) => portalPlatform.declineRequest({ DB: portalDb }, a),
+      accessChannels: (a) => portalPlatform.accessChannels({ DB: portalDb }, a),
+      setAutoApprove: (a) => portalPlatform.autoApprove({ DB: portalDb }, a),
     },
     AGENT_MODEL: 'dev',
     AGENT_CHANNELS: 'C0ACMEAEM',
@@ -1352,7 +1509,11 @@ export function createAdmin(store, {
       return Response.json({ icons: devIcons(url.searchParams.get('slug')) });
     }
     // Clef, made up, for the duplicate customers (src/orgmerge.js): two orgs of one name are one.
-    const asked = url.pathname === '/api/admin/org-duplicates' ? { ...env, AI: DEV_CLEF } : env;
+    let asked = url.pathname === '/api/admin/org-duplicates' ? { ...env, AI: DEV_CLEF } : env;
+    // And for the partners (src/orgpartners.js): Pied Piper works for ACME.
+    if (url.pathname === '/api/admin/org-partners') {
+      asked = { ...env, AI: DEV_PARTNER_CLEF };
+    }
     await followed;
     const res = await admin(toRequest(req, url, body), asked, url, me);
     // Re-filing runs right away here.

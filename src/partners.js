@@ -14,7 +14,12 @@ import { underlying } from './d1batch.js';
 import { DOMAIN, orgDomain, registrable } from './favicons.js';
 import { json } from './http.js';
 import { domainList } from './lookup.js';
+import { AVATAR, NAME, TITLE } from './personsql.js';
 import { UNASSIGNED } from './rules.js';
+import { WEEK, zeros } from './teamprofile.js';
+import {
+  entriesOf, forViewer, listRow, MAY_WAIT, middle, ROW, sharesOf,
+} from './vendors.js';
 
 /**
  * Partner domains: the mail domains whose people work for a partner of Adobe (an agency, a
@@ -284,10 +289,13 @@ async function overrides(env) {
 }
 
 /**
- * The partner domains: `Map<domain, { name, org } | null>`, the domains found and then the admin
- * team's rows over them; `null` is a domain that is not a partner's (src/profiles.js `partnerOf`).
+ * The partner domains and whether they were found (`{ domains, found }`): `domains` is
+ * `partnerDomains`'s, `found` false when no look ever succeeded in this isolate (the first failed
+ * or is late, `NONE`), so `domains` has the admin team's rows only. What a look found before, kept
+ * while the next one fails, is found. A caller that writes from them (src/orgpartners.js) waits
+ * for found ones; one that only shows them takes what there is.
  */
-export async function partnerDomains(env) {
+export async function partnerDomainLookup(env) {
   const [derived, rows] = await Promise.all([derivedDomains(env), overrides(env)]);
   const out = new Map(derived.found.map((d) => [d.domain, { name: d.name, org: d.org }]));
   for (const r of rows) {
@@ -298,7 +306,355 @@ export async function partnerDomains(env) {
       org: r.org || (was && was.org) || null,
     });
   }
-  return out;
+  return { domains: out, found: derived.at !== null };
+}
+
+/**
+ * The partner domains: `Map<domain, { name, org } | null>`, the domains found and then the admin
+ * team's rows over them; `null` is a domain that is not a partner's (src/profiles.js `partnerOf`).
+ */
+export async function partnerDomains(env) {
+  return (await partnerDomainLookup(env)).domains;
+}
+
+/**
+ * The partner a mail domain belongs to, `{ domain, name, org }`, matching the domain or any
+ * parent domain: `partners` is `partnerDomains`, whose `null` (a domain that is
+ * not a partner's) ends the search there. A plain name instead of `{ name, org }` does too.
+ */
+export function partnerOf(domain, partners) {
+  const parts = String(domain || '').toLowerCase().split('.');
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const d = parts.slice(i).join('.');
+    if (partners.has(d)) {
+      const p = partners.get(d);
+      if (p === null) {
+        return null;
+      }
+      return typeof p === 'object'
+        ? { domain: d, name: p.name || d, org: p.org || null }
+        : { domain: d, name: p || d, org: null };
+    }
+  }
+  return null;
+}
+
+// ---- a partner's page: its customers, its people, what waits on Adobe ----------------------
+
+/** At most this many of each list of a partner's page. */
+export const MAX_PARTNER_PEOPLE = 12;
+export const MAX_PARTNER_CUSTOMERS = 20;
+export const MAX_PARTNER_WAITING = 25;
+/**
+ * A customer nothing links to the partner yet is listed from this many threads with its people,
+ * or this many of its people, in the weeks: one stray post lists nobody.
+ */
+export const UNLINKED_MIN = 2;
+/** Of a person, the customers whose threads they post in that their card names. */
+const MAX_PERSON_ORGS = 4;
+
+/** Who an account of the partner's is: their person, else their mail address, else it. */
+const whoOf = (a) => {
+  if (a.person) {
+    return `p:${a.person}`;
+  }
+  return a.mail ? `m:${a.mail}` : `a:${a.key}`;
+};
+
+/** Whether an org (`{ type }`) is a customer, as an org of no row is. */
+const isCustomer = (o) => (o ? (o.type || 'customer') === 'customer' : true);
+
+/**
+ * What a partner's page adds to its overview (src/orgprofile.js `orgNumbers`; docs/ARCHITECTURE.md,
+ * "Partners"), for the weeks `weeks`, everyone's at Adobe but the list of threads, which
+ * `partnerForViewer` filters:
+ *
+ * - `customers`: the customers it works for, confirmed and likely (src/orgpartners.js
+ *   `customersOf`, with what links them), and those whose threads its people posted in, each with
+ *   how many of the customer's threads its people are in (`theirs`) and how many of its own the
+ *   customer's people are in (`ours`: the people outside Adobe of its threads who post in the
+ *   customer's too); one nothing links yet from `UNLINKED_MIN` threads or people on;
+ * - `people`: its people (their mail domain its, `partnerDomains`), wherever they posted: in its
+ *   own channels and in customers', how much, and in whose;
+ * - `posts`: what its people said in its channels and in customers', week by week;
+ * - `waiting`: what waits on Adobe in its channels and in the customers' threads its people are in;
+ * - `answers`: how soon Adobe answers what its people start, in its channels and in customers'
+ *   (the median, and every wait).
+ *
+ * `customers` is what src/orgpartners.js `customersOf` says of it, which the caller reads: that
+ * file reaches this one through src/orgmerge.js.
+ */
+export async function partnerNumbers(env, slug, weeks, { customers: linked = [] } = {}) {
+  const since = `${weeks[0]}T00:00:00.000Z`;
+  const at = new Map(weeks.map((w, i) => [w, i]));
+  const all = (sql, ...args) => env.DB.prepare(sql).bind(...args).all()
+    .then((r) => r.results || []);
+  const list = (values) => JSON.stringify([...values]);
+  const partners = await partnerDomains(env);
+  const domains = [...partners].filter(([, v]) => v && v.org === slug).map(([d]) => d);
+  const [accounts, ownRows, guests] = await Promise.all([
+    // The accounts of its mail domains, or under them; `partnerOf` says which are its.
+    domains.length ? all(`SELECT i.source || ':' || i.tenant || ':' || i.user_id AS key, i.person,
+        COALESCE(i.display_name, i.name) AS name, LOWER(COALESCE(p.email, i.email)) AS mail
+      FROM identities i LEFT JOIN people p ON p.id = i.person
+      WHERE COALESCE(i.kind, 'person') = 'person' AND COALESCE(i.staff, 0) = 0
+        AND EXISTS (SELECT 1 FROM json_each(?1) d
+          WHERE LOWER(COALESCE(p.email, i.email)) LIKE '%@' || d.value
+            OR LOWER(COALESCE(p.email, i.email)) LIKE '%.' || d.value)`, list(domains)) : [],
+    // Its threads of the weeks that may wait on someone.
+    all(`SELECT ${ROW} FROM threads h WHERE h.org = ?1 AND h.kind = 'channel' AND h.last_at >= ?2
+      AND ${MAY_WAIT('h')}`, slug, since),
+    // Who outside Adobe posted in its threads of the weeks.
+    all(`SELECT DISTINCT g.author_key AS key, g.thread FROM threads h
+        JOIN messages g ON g.thread = h.thread AND g.at >= ?2
+      WHERE h.org = ?1 AND h.kind = 'channel' AND h.last_at >= ?2 AND g.staff = 0 AND g.deleted = 0
+        AND g.counted = 1 AND g.author_key IS NOT NULL`, slug, since),
+  ]);
+  const mine = accounts.filter((a) => partnerOf(String(a.mail || '').split('@').pop(), partners)
+    ?.org === slug);
+  const keyOf = new Map(mine.map((a) => [a.key, a]));
+  const guestKeys = [...new Set(guests.map((g) => g.key))].filter((k) => !keyOf.has(k));
+  const [posts, guestOrgs] = await Promise.all([
+    // What its people said of the weeks, wherever: by account, thread and week.
+    keyOf.size ? all(`SELECT m.author_key AS key, h.thread, h.org, ${WEEK('m.at')} AS week,
+        COUNT(*) AS n, MAX(m.at) AS last
+      FROM messages m JOIN threads h ON h.thread = m.thread
+      WHERE m.author_key IN (SELECT value FROM json_each(?1)) AND m.at >= ?2 AND m.staff = 0
+        AND m.deleted = 0 AND m.counted = 1 AND h.kind = 'channel'
+      GROUP BY 1, 2, 4`, list(keyOf.keys()), since) : [],
+    // Where the others of its threads post: the customers whose people they are.
+    guestKeys.length ? all(
+      `SELECT DISTINCT m.author_key AS key, h.org FROM messages m
+        JOIN threads h ON h.thread = m.thread
+      WHERE m.author_key IN (SELECT value FROM json_each(?1)) AND m.at >= ?2 AND h.org != ?3
+        AND h.kind = 'channel' AND m.staff = 0 AND m.deleted = 0 AND m.counted = 1`,
+      list(guestKeys),
+      since,
+      slug,
+    ) : [],
+  ]);
+  const slugs = new Set([...posts.map((r) => r.org), ...guestOrgs.map((r) => r.org),
+    ...linked.map((c) => c.slug)].filter((o) => o && o !== slug && o !== UNASSIGNED));
+  const orgRows = slugs.size ? await all(`SELECT slug, name, COALESCE(type, 'customer') AS type,
+      icon FROM orgs WHERE slug IN (SELECT value FROM json_each(?1))`, list(slugs)) : [];
+  const orgOf = new Map(orgRows.map((o) => [o.slug, o]));
+  const merged = new Set((await all(`SELECT slug FROM org_merges
+    WHERE slug IN (SELECT value FROM json_each(?1))`, list(slugs))).map((r) => r.slug));
+  const customer = (o) => o !== slug && o !== UNASSIGNED && !merged.has(o)
+    && isCustomer(orgOf.get(o));
+
+  // Its people: an account each, a person's accounts and those of one mail address as one.
+  const people = new Map();
+  const custThreads = new Set();
+  const ownThreads = new Set();
+  const byCustomer = new Map();
+  const weekly = { own: zeros(weeks.length), customers: zeros(weeks.length) };
+  for (const r of posts) {
+    const a = keyOf.get(r.key);
+    const w = whoOf(a);
+    if (!people.has(w)) {
+      people.set(w, {
+        person: a.person ?? null,
+        account: a.person ? null : a.key,
+        name: a.name || null,
+        messages: 0,
+        own: 0,
+        customers: 0,
+        threads: new Set(),
+        orgs: new Map(),
+        weekly: zeros(weeks.length),
+        last: null,
+      });
+    }
+    const e = people.get(w);
+    const i = at.get(r.week);
+    const own = r.org === slug;
+    const theirs = customer(r.org);
+    e.messages += r.n;
+    e.threads.add(r.thread);
+    e.last = [e.last, r.last].filter(Boolean).sort().pop() || null;
+    if (i !== undefined) {
+      e.weekly[i] += r.n;
+    }
+    if (own) {
+      e.own += r.n;
+      ownThreads.add(r.thread);
+      if (i !== undefined) {
+        weekly.own[i] += r.n;
+      }
+    } else if (theirs) {
+      e.customers += r.n;
+      e.orgs.set(r.org, (e.orgs.get(r.org) || new Set()).add(r.thread));
+      custThreads.add(r.thread);
+      if (i !== undefined) {
+        weekly.customers[i] += r.n;
+      }
+      if (!byCustomer.has(r.org)) {
+        byCustomer.set(r.org, {
+          threads: new Set(), people: new Set(), messages: 0, last: null,
+        });
+      }
+      const c = byCustomer.get(r.org);
+      c.threads.add(r.thread);
+      c.people.add(w);
+      c.messages += r.n;
+      c.last = [c.last, r.last].filter(Boolean).sort().pop() || null;
+    }
+  }
+  // The customers' people in its threads: those who post in a customer's threads too.
+  const orgsOfGuest = new Map();
+  for (const g of guestOrgs.filter((x) => customer(x.org))) {
+    orgsOfGuest.set(g.key, [...(orgsOfGuest.get(g.key) || []), g.org]);
+  }
+  const ours = new Map();
+  for (const g of guests) {
+    for (const o of orgsOfGuest.get(g.key) || []) {
+      ours.set(o, (ours.get(o) || new Set()).add(g.thread));
+    }
+  }
+
+  const ids = [...new Set([...people.values()].map((e) => e.person).filter(Boolean))];
+  const [whoRows, custRows, firsts] = await Promise.all([
+    ids.length ? all(
+      `SELECT p.id, ${NAME('p.id')} AS name, ${AVATAR('p.id')} AS avatar,
+        ${TITLE('p.id')} AS title FROM people p WHERE p.id IN (SELECT value FROM json_each(?1))`,
+      list(ids),
+    ) : [],
+    // The customers' threads its people are in that may wait on someone.
+    custThreads.size ? all(`SELECT ${ROW} FROM threads h
+      WHERE h.thread IN (SELECT value FROM json_each(?1)) AND h.last_at >= ?2
+        AND ${MAY_WAIT('h')}`, list(custThreads), since) : [],
+    // The threads of the weeks it or its people are in: who posted first, and Adobe's answer.
+    all(`WITH f AS (SELECT h.thread, h.org,
+          (SELECT m.author_key FROM messages m WHERE m.thread = h.thread AND m.counted = 1
+            AND m.deleted = 0 ORDER BY m.at LIMIT 1) AS key,
+          (SELECT m.staff FROM messages m WHERE m.thread = h.thread AND m.counted = 1
+            AND m.deleted = 0 ORDER BY m.at LIMIT 1) AS staff,
+          (SELECT MIN(m.at) FROM messages m WHERE m.thread = h.thread AND m.counted = 1
+            AND m.deleted = 0) AS first
+        FROM threads h WHERE (h.org = ?1 OR h.thread IN (SELECT value FROM json_each(?3)))
+          AND h.kind = 'channel' AND h.root_at >= ?2)
+      SELECT f.org, f.key, f.staff, f.first, (SELECT MIN(m.at) FROM messages m
+          WHERE m.thread = f.thread AND m.staff = 1 AND m.counted = 1 AND m.deleted = 0
+            AND m.at > f.first) AS answered
+      FROM f WHERE f.staff = 0`, slug, since, list(custThreads)),
+  ]);
+  const who = new Map(whoRows.map((r) => [r.id, r]));
+  const typed = [
+    ...ownRows.map((r) => ({ ...r, org_type: 'partner' })),
+    ...custRows.map((r) => ({ ...r, org_type: orgOf.get(r.org)?.type || 'customer' })),
+  ];
+  const [entries, shares] = await Promise.all([entriesOf(env, typed), sharesOf(env, typed)]);
+  const waiting = typed.map((r) => ({ row: listRow(r, entries.get(r.thread), shares), r }))
+    .filter(({ row }) => row.waiting === 'us' && !entries.get(row.thread).resolved)
+    .map(({ row }) => row)
+    .sort((a, b) => String(b.last || '').localeCompare(String(a.last || '')));
+  const waitingOf = new Map();
+  for (const w of waiting.filter((x) => x.org !== slug)) {
+    waitingOf.set(w.org, (waitingOf.get(w.org) || 0) + 1);
+  }
+
+  // How soon Adobe answers what it starts: in its threads, the people's outside Adobe; in
+  // customers', its people's.
+  const answers = (rows) => {
+    const waits = rows.filter((f) => f.answered)
+      .map((f) => (Date.parse(f.answered) - Date.parse(f.first)) / 60000);
+    return {
+      asked: rows.length,
+      answered: waits.length,
+      median: middle(waits),
+      // Every wait, in whole minutes, shortest first: the page draws each one (ui/customer.js).
+      waits: waits.map((m) => Math.max(0, Math.round(m))).sort((a, b) => a - b),
+    };
+  };
+  const ownFirsts = firsts.filter((f) => f.org === slug);
+  const custFirsts = firsts.filter((f) => f.org !== slug && keyOf.has(f.key));
+
+  const linkOf = new Map(linked.filter((c) => !merged.has(c.slug)).map((c) => [c.slug, c]));
+  const unlinked = [...byCustomer].filter(([o, c]) => !linkOf.has(o)
+    && (c.threads.size >= UNLINKED_MIN || c.people.size >= UNLINKED_MIN)).map(([o]) => o);
+  const customers = [...linkOf.keys(), ...unlinked].map((o) => {
+    const l = linkOf.get(o);
+    const c = byCustomer.get(o);
+    const row = orgOf.get(o);
+    return {
+      slug: o,
+      name: (row && row.name) || (l && l.name) || null,
+      type: (row && row.type) || (l && l.type) || 'customer',
+      icon: (row && row.icon) || (l && l.icon) || null,
+      linked: Boolean(l),
+      confirmed: Boolean(l && l.confirmed),
+      p: l ? l.p : null,
+      signals: l ? l.signals : {},
+      theirs: c ? c.threads.size : 0,
+      people: c ? c.people.size : 0,
+      messages: c ? c.messages : 0,
+      ours: (ours.get(o) || new Set()).size,
+      waiting: waitingOf.get(o) || 0,
+      last: c ? c.last : null,
+    };
+  }).sort((a, b) => Number(b.confirmed) - Number(a.confirmed) || Number(b.linked) - Number(a.linked)
+    || b.theirs - a.theirs || (b.p ?? 0) - (a.p ?? 0) || a.slug.localeCompare(b.slug));
+
+  const ranked = [...people.values()].sort((a, b) => b.messages - a.messages
+    || String(a.name || '').localeCompare(String(b.name || '')));
+  const nameOf = (o) => orgOf.get(o)?.name || linkOf.get(o)?.name || o;
+  return {
+    domains: domains.length,
+    customers: {
+      count: customers.length,
+      linked: customers.filter((c) => c.linked).length,
+      confirmed: customers.filter((c) => c.confirmed).length,
+      list: customers.slice(0, MAX_PARTNER_CUSTOMERS),
+    },
+    people: {
+      count: people.size,
+      inCustomers: ranked.filter((e) => e.customers).length,
+      list: ranked.slice(0, MAX_PARTNER_PEOPLE).map((e) => {
+        const p = e.person ? who.get(e.person) : null;
+        return {
+          id: e.person,
+          account: e.account,
+          name: (p && p.name) || e.name || null,
+          avatar: (p && p.avatar) || null,
+          title: (p && p.title) || null,
+          messages: e.messages,
+          own: e.own,
+          customers: e.customers,
+          threads: e.threads.size,
+          orgs: [...e.orgs].sort((x, y) => y[1].size - x[1].size || x[0].localeCompare(y[0]))
+            .slice(0, MAX_PERSON_ORGS)
+            .map(([o, t]) => ({ slug: o, name: nameOf(o), threads: t.size })),
+          orgCount: e.orgs.size,
+          weekly: e.weekly,
+          last: e.last,
+        };
+      }),
+    },
+    posts: {
+      own: weekly.own.reduce((n, v) => n + v, 0),
+      customers: weekly.customers.reduce((n, v) => n + v, 0),
+      ownThreads: ownThreads.size,
+      customerThreads: custThreads.size,
+      weekly,
+    },
+    waiting: {
+      count: waiting.length,
+      own: waiting.filter((w) => w.org === slug).length,
+      customers: waiting.filter((w) => w.org !== slug).length,
+      list: waiting,
+    },
+    answers: { own: answers(ownFirsts), customers: answers(custFirsts) },
+  };
+}
+
+/** `partnerNumbers` as `me` sees it: the titles and links of the threads they work only. */
+export function partnerForViewer(me, v) {
+  if (!v) {
+    return null;
+  }
+  const waiting = forViewer(me, v.waiting.list, MAX_PARTNER_WAITING);
+  return { ...v, waiting: { ...v.waiting, list: waiting.list, hidden: waiting.hidden } };
 }
 
 // ---- partner domains: the admin team's editor ------------------------------------------------

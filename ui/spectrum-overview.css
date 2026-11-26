@@ -293,6 +293,8 @@
 .spectrum .ov .tv-chips a.tag { color: var(--spectrum-neutral-content-color-default); text-decoration: none; }
 .spectrum .ov .tv-chips a.tag:hover { text-decoration: underline; }
 .spectrum .ov .tv-to { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* A partner's customers: a confirmed one's icon ringed in the positive color. */
+.spectrum .ov .tv-icon.confirmed > * { border-radius: var(--spectrum-corner-radius-small-size-medium); box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--spectrum-positive-visual-color); }
 
 /* The chart: Adobe's in indigo, under the customers' in seafoam; a quiet grid. */
 .spectrum .ov .tv-axis, .spectrum .ov .tv-months, .spectrum .ov .tv-legend { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); font-variant-numeric: tabular-nums; }
@@ -350,9 +352,12 @@
 .spectrum .ov .tag.tv-manager { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-indigo-subtle-background-color-default); border-color: transparent; }
 .spectrum .ov .tag.tv-partner { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-seafoam-subtle-background-color-default); border-color: transparent; }
 .spectrum .ov .tv-more { margin: var(--spectrum-spacing-300) 0 0; }
-.spectrum .ov a.tv-contact { color: var(--link); font-size: var(--spectrum-font-size-75); text-decoration: none; }
-.spectrum .ov a.tv-contact:hover { text-decoration: underline; }
+.spectrum .ov a:is(.tv-contact, .tv-review) { color: var(--link); font-size: var(--spectrum-font-size-75); text-decoration: none; }
+.spectrum .ov a:is(.tv-contact, .tv-review):hover { text-decoration: underline; }
 .spectrum .ov .tag.tv-follow { color: var(--spectrum-white); background: var(--spectrum-accent-background-color-default); border-color: transparent; }
+/* A customer and a partner: confirmed by the admin team in green, likely (Clef's) in yellow. */
+.spectrum .ov .tag.tv-confirmed { flex: none; color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-positive-subtle-background-color-default); border-color: transparent; }
+.spectrum .ov .tag.tv-likely { flex: none; color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-notice-subtle-background-color-default); border-color: transparent; }
 
 /* Avatars: the initials in white on the hue (ui/spectrum.css), small and bold. */
 
