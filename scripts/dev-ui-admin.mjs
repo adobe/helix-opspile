@@ -25,7 +25,8 @@ import {
   addNote, requestEntries, requestThread, resolveRequest,
 } from '../src/requestthreads.js';
 import { isRequestKey } from '../src/requestkeys.js';
-import { d1 } from '../test/d1.js';
+import { d1, PORTAL as PORTAL_MIGRATIONS } from '../test/d1.js';
+import * as portalPlatform from '../src/portal/platform.js';
 import { IMAGES, layerNames } from './computer-images.mjs';
 import { seedCogs } from './dev-ui-cogs.mjs';
 import { seedTopicMap } from './dev-ui-topics.mjs';
@@ -1049,6 +1050,71 @@ export function createAdmin(store, { manager = false, member = false, bases = []
     id: 'u5', name: 'Duffman', email: 'duffman@duff.example', joined: true,
   }], ago(9), 'declined', ['priya@example.com', 'Priya Nair', ago(8), 'You have a Slack channel with us: ask there.']);
 
+  // People a host of the portal's integration signed in with its identity provider, waiting
+  // for access (src/integrationrequests.js): one of an organization new to the host, one of an
+  // organization that has its channel there already, and one declined. The portal's own database,
+  // in memory, with its real code behind the made-up PORTAL binding below.
+  const portalDb = d1({ migrations: PORTAL_MIGRATIONS });
+  const sec = (days) => Math.floor((Date.now() - days * 86400000) / 1000);
+  portalDb.sqlite.prepare(`INSERT INTO integration_hosts (id, service_id, issuer, jwks, scopes,
+      identity, product) VALUES ('panel-prod', 'made-up.access', 'https://ims-na1.adobelogin.com',
+      '{"keys":[]}', '["threads:create","threads:read","threads:reply","changes:read"]', NULL, 'agents')`).run();
+  const { channel: wonkaChannel } = portalDb.sqlite.prepare(`INSERT INTO integration_customers
+      (host, tenant, customer, name, enabled) VALUES ('panel-prod', '0000000000000000000000B0@AdobeOrg',
+      'agents-wonka', 'agents-wonka', 1) RETURNING channel`).get();
+  for (const [target, value] of [['team', 'edge'], ['org', 'wonka']]) {
+    DB.sqlite.prepare(`INSERT INTO rules (target, priority, source, field, pattern, value, note)
+      VALUES (?, 10, 'portal', 'channel_id', ?, ?, 'manual assignment')`).run(target, `^${wonkaChannel}$`, value);
+  }
+  const access = portalDb.sqlite.prepare(`INSERT INTO integration_requests (host, tenant, subject,
+      name, email, org_name, status, requested_at, seen_at, attempts, decided_at, decided_by,
+      decided_name, reason) VALUES ('panel-prod', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  access.run(
+    '0000000000000000000000A0@AdobeOrg',
+    '00000000000000000000A001@AdobeID',
+    'Lucius Fox',
+    'lucius.fox@wayne.example',
+    'Wayne Enterprises International Holdings Inc. - Applied Sciences (Prod)',
+    'pending',
+    sec(0.2),
+    sec(0.05),
+    7,
+    null,
+    null,
+    null,
+    null,
+  );
+  access.run(
+    '0000000000000000000000B0@AdobeOrg',
+    '00000000000000000000B001@AdobeID',
+    'Charlie Bucket',
+    'charlie@wonka.example',
+    'Wonka Industries',
+    'pending',
+    sec(1.2),
+    sec(1),
+    2,
+    null,
+    null,
+    null,
+    null,
+  );
+  access.run(
+    '0000000000000000000000C0@AdobeOrg',
+    '00000000000000000000C001@AdobeID',
+    'Homer Simpson',
+    null,
+    null,
+    'declined',
+    sec(12),
+    sec(12),
+    1,
+    sec(11),
+    'priya@example.com',
+    'Priya Nair',
+    'Ask your account team for a Slack channel.',
+  );
+
   // The knowledge bases of the fake editor (dev-ui-kb.mjs), so its channel and agent routes
   // (src/kbadmin.js) find them; agents are "configured", and on in one channel by default.
   for (const b of bases) {
@@ -1069,6 +1135,10 @@ export function createAdmin(store, { manager = false, member = false, bases = []
       }),
       post: async () => ({ ok: true, id: `m${Date.now().toString(36).padStart(15, '0')}` }),
       decline: async () => ({ ok: true }),
+      accessRequests: (a) => portalPlatform.accessRequests({ DB: portalDb }, a),
+      reserveAccess: (a) => portalPlatform.reserve({ DB: portalDb }, a),
+      enrollAccess: (a) => portalPlatform.enroll({ DB: portalDb }, a),
+      declineAccess: (a) => portalPlatform.declineRequest({ DB: portalDb }, a),
     },
     AGENT_MODEL: 'dev',
     AGENT_CHANNELS: 'C0ACMEAEM',

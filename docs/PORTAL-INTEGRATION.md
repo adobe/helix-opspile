@@ -27,14 +27,25 @@ chat platform, email domain or channel naming convention.
 
    ```sql
    -- Bound parameters, not literal secrets. Only PUBLIC key material belongs here.
-   INSERT INTO integration_hosts(id, service_id, issuer, jwks, scopes)
+   INSERT INTO integration_hosts(id, service_id, issuer, jwks, scopes, product)
      VALUES (:host, :access_client_id, :issuer, :public_jwks,
-       '["threads:create","threads:read","threads:reply","changes:read"]');
+       '["threads:create","threads:read","threads:reply","changes:read"]', :product);
    ```
+
+   `product` (optional; lowercase letters, digits and `-`, up to 30) is what the host's channels
+   are named after: our convention is `#<product>-<customer>`, so a host with product `agents`
+   gets channels like `agents-paper-mill`. The inbox suggests these names when it approves
+   [access requests](#access-requests); an admin can always change them. To set it on a host
+   registered before: `UPDATE integration_hosts SET product = :product WHERE id = :host`.
 
    A host whose users sign in with a provider Opspile trusts can instead forward their token
    ([User tokens](#user-tokens)). Register it with the provider and **no** assertion keys; a host
    uses one mode or the other, and the database refuses a host with both.
+
+   **For a user-token host, steps 4 and 5 are done in the inbox:** whoever signs in and is not
+   enrolled becomes an [access request](#access-requests) that the admin team approves. The SQL
+   below is for assertion hosts, and for what an approval refuses (a suspended channel, a
+   revoked member).
 
 4. Map the host's stable tenant ID (for a user-token host, the provider's organization ID, such
    as `0123456789ABCDEF01234567@AdobeOrg`) to an approved customer key and a channel name of your choice.
@@ -174,8 +185,9 @@ the profile's `ownerOrg`: the organization owning the profile the user chose at 
 Enterprise, Federated or Business ID). Someone in several organizations has a profile per
 organization, and the sign-in is where they pick one; each has its own `user_id`, so it is a
 different subject. Memberships listed by `/ims/organizations` (an Adobe ID added to other
-organizations, administrators of several) are **not** used: nothing the host sends can choose
-among them. A profile without `ownerOrg` (a personal Adobe ID, or a sign-in without the
+organizations, administrators of several) never choose the tenant: nothing the host sends can
+choose among them. The list is only read for the name of the `ownerOrg` itself, on an
+[access request](#access-requests). A profile without `ownerOrg` (a personal Adobe ID, or a sign-in without the
 `additional_info.ownerOrg` scope) gets `403 not_enrolled`. With Directory Trust the owner is the
 organization that owns the directory; enroll that one.
 
@@ -184,7 +196,7 @@ organization that owns the directory; enroll that one.
 | Header | Value |
 | --- | --- |
 | `CF-Access-Client-Id`, `CF-Access-Client-Secret` | The host's service token for this environment. |
-| `Authorization` | `Bearer <the user's IMS access token>`, as issued; sign-in scopes at least `AdobeID,openid,additional_info.ownerOrg`. |
+| `Authorization` | `Bearer <the user's IMS access token>`, as issued; sign-in scopes at least `AdobeID,openid,additional_info.ownerOrg`, and `read_organizations` for the organization's name on an access request. |
 | `Content-Type` | `application/json` on `POST` and `PUT`. |
 | `Idempotency-Key` | On both `POST`s, as below. |
 
@@ -207,6 +219,70 @@ admitted operation for the rate limits itself. Unlike an assertion, a user token
 one request or single-use: only the host's backend, with its service credentials, can present it.
 On `401`, have the user sign in again; on `503`, back off and keep the session.
 
+## Access requests
+
+A host with an identity provider ([User tokens](#user-tokens)) needs no SQL per person: a caller
+the provider verified, of a host that allows the operation, who is not enrolled, **asks for
+access by calling**. The portal records one request per `(host, tenant, subject)` and answers
+`403 not_enrolled` with the request's state (below). The inbox's admin team (the people who open
+the portal's lobbies) sees it in its inbox, as a thread of *Integration access*, with the host
+and its product, the organization's name and ID, the person's name, verified email and IMS user
+ID, and when they first asked. They decide it there (or with the admin API, README):
+
+- **Approve, new organization.** The organization has no channel on this host. The admin names
+  the channel (suggested: `<product>-<customer>`; see below), the customer and the team. The
+  portal reserves the channel, disabled. The inbox creates the customer and files the channel
+  by hand (the manual rules of step 4: source `portal`, field `channel_id`,
+  `^<reserved ID>$`, priority 10, one for the team and one for the org). Only then is the person
+  enrolled and the channel enabled. If filing fails, nobody is enrolled. The channel stays
+  reserved, and approving again finishes it.
+- **Approve, known organization.** The organization has an enabled channel on this host already
+  (made by an approval or by hand). The person is enrolled in it. Nothing else changes, and its
+  routing stays as it was.
+- **Decline**, with an optional reason. The person's host is told the reason (below), so write
+  it for them. After 30 days, their next call opens the request again.
+
+Enrollment keeps the rules of step 5: an approval enrolls the request's own subject only, as a
+new actor without an email (the subject is the provider's user ID). It never links an ordinary
+portal user, staff or bot, and records who approved it (`integration_members.approved_by`,
+`integration_requests.decided_by`). A subject with a member row of any state (revoked, or
+enrolled under another verified email) is not captured. Neither is a channel that was enabled
+and suspended since, or that an operator reserved by hand and has not enabled. Those stay with
+an operator, as before.
+
+**What is recorded.** The provider's display name, the email only when the provider says it is
+verified, the tenant (the IMS organization ID) and the organization's name. The name comes from
+`GET /ims/organizations/v6` with the user's token, only from the entry whose `orgRef` is the
+tenant. It needs the `read_organizations` sign-in scope; without the scope, or when IMS does not
+answer within three seconds, the name is left empty. Each organization's name is kept a day (a
+miss ten minutes) in a bounded cache, and the response is read up to 256 KB. Tokens are never
+stored. A request is refreshed at most every 15 minutes. At most 1,000 requests wait per host,
+100 per tenant, and 120 new ones per host and hour. Beyond that nothing is recorded, and the
+error says so (no `request`). Decided requests, and pending ones not repeated for 180 days, are
+pruned.
+
+**Assertion hosts** don't capture: the host names its users itself, and its operator enrolls them
+as in steps 4 and 5. Capture is for providers Opspile verifies.
+
+**The suggested name.** The customer part is kept short, because IMS names are often long
+(`Paper Mill International Holdings Inc. - Marketing (Prod)`). It is built from the part before
+` - `, `:`, `|` or `(`, without legal forms and filler words, from the first words that fit in
+20 characters (`paper-mill`). When the verified email's domain gives a company name no longer
+than that (`ada@mill.example` gives `mill`; public mail providers give nothing), the inbox
+suggests that instead. A customer the inbox already knows (by that domain, slug or name) is
+suggested as the customer.
+
+**The error body.** `403` keeps the code `not_enrolled`, so a host that knows only the code
+still works:
+
+| Body | Meaning |
+| --- | --- |
+| `{"error":{"code":"not_enrolled","request":"pending"}}` | Recorded (or refreshed), waiting for approval. |
+| `{"error":{"code":"not_enrolled","request":"declined","reason":"…"}}` | Declined; `reason` only when the admin gave one (plain text, for the person). |
+| `{"error":{"code":"not_enrolled"}}` | Nothing recorded: an assertion host, a scope the host lacks, a profile without `ownerOrg`, a member row (revoked or another email), or the bounds reached. |
+
+Once approved, the person's next call is admitted as any member's.
+
 ## HTTPS/JSON contract
 
 All paths below are relative to `/integrations/portal/v1`. Write bodies accept only the fields
@@ -223,7 +299,8 @@ listed. Strings are text, not HTML. Render public message bodies as text or sani
 
 - Title: one nonblank line, at most 120 characters; body: nonblank, at most 2,000 (UTF-16 code
   units). A host can register public topic keys (`integration_hosts.topics`, a JSON array); no
-  topics by default. The portal root is title, optional topic and body separated by blank lines.
+  topics by default. The portal root is title, optional topic and body separated by blank lines;
+  a body that is the title again (`body.trim() === title.trim()`, a one-line request) is left out.
 - Both POSTs require `Idempotency-Key` (1–128 ASCII letters, digits, `.`, `_`, `:`, `-`). Keep one
   key per user intent; a timeout doesn't mean the message wasn't committed. The same member,
   operation and input return `200` with the original IDs. Reusing the key with different input
@@ -252,7 +329,8 @@ listed. Strings are text, not HTML. Render public message bodies as text or sani
 
 Errors have shape `{"error":{"code":"…"}}`: `400 invalid_input` / `invalid_cursor`, `401
 invalid_assertion` (also a user token refused), `403 not_enrolled` (including scope denial and
-a user without an organization), `404 not_found` (including a
+a user without an organization; for a user-token host it may say an
+[access request](#access-requests)'s `request` and `reason`), `404 not_found` (including a
 foreign object), `409 key_conflict`, `410 cursor_expired`, `429 rate_limited`, `503 unavailable`.
 The pilot allows 60 admitted operations/minute per viewer, 600 per channel and 6,000 per host.
 Honor `Retry-After` on 429; back off with jitter on transient failures. Use a **fresh assertion**

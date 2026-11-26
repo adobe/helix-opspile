@@ -2,7 +2,8 @@
 
 opspile has seven status columns, `channel_requests.status`, `bash_requests.status`,
 `tool_requests.status`, `portal_requests.status`, `org_merge_requests.status`,
-`member_requests.status` and `questions.status` (and the customer portal, in its own database, `lobbies.status`). Everything
+`member_requests.status` and `questions.status` (and the customer portal, in its own database, `lobbies.status` and
+`integration_requests.status`). Everything
 else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
 this is the list of them, so that a change to one can start from what it is.
@@ -892,6 +893,23 @@ makes a second channel, which the request allows on purpose (a lobby may get mor
 the page does not send it again by itself. If filing the new channel fails after the portal made
 it, the answer says so and names it: it is in the inbox under the admin team (the rule of last
 resort), to be assigned on a team's page.
+
+**Integration access request.** pending → approved | declined → (30 days) pending
+(`integration_requests.status` in the portal, `src/portal/integration-requests.js`; the inbox keeps
+nothing of it, `src/integrationrequests.js`). A verified caller of a user-token host with no member
+row in its tenant's channel is recorded on a `not_enrolled` (one row per host, tenant and subject,
+`UNIQUE`), refreshed at most every 15 minutes, and only within the bounds (1,000 pending per host,
+100 per tenant, 120 new per host and hour, all in the `INSERT … WHERE NOT EXISTS` itself). A
+member row of any state, or an approved row, stops capture: those are an operator's. Approving is
+claimed by the row's status in the same batch that inserts the actor and the member and enables
+a mapping the flow reserved, each conditional on the claim, so a decision made meanwhile inserts
+nothing. A new tenant's mapping is reserved first (`integration_customers.approved_by`, disabled),
+then routed in the inbox, then enrolled and enabled (`enabled_at`, set by trigger on the first
+enable): a routing failure leaves it reserved, and approving again finishes it; a mapping enabled
+once and disabled since, or made by hand and never enabled, is never re-enabled from here. A
+decline is conditional on `pending`, and a later call after 30 days makes the row pending again,
+with the decision cleared. Decided rows and pending rows not seen for 180 days are pruned by the
+cron, a thousand at a time.
 
 **Managed channel and member.** Reserved → enabled ⇄ suspended (`integration_customers`).
 Reserve the channel ID, pre-file it by that ID in the inbox, then enable the tenant. The first

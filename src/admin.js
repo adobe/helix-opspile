@@ -74,6 +74,9 @@ import {
   reopenDeclined,
 } from './portalrequests.js';
 import { resetTeamVendors } from './vendors.js';
+import {
+  getIntegrationRequest, integrationOpenCount, listIntegrationRequests, mailCompany,
+} from './integrationrequests.js';
 
 /**
  * The admin team's API for teams (#17) and orgs (#18), behind `/api/admin/*`:
@@ -110,6 +113,11 @@ import { resetTeamVendors } from './vendors.js';
  * filed under a team and a customer by hand, shared with more teams, and gets its welcome
  * message) or declines (`portal/decline`); a team's managers open one for their team when it
  * follows a technology the lobby picked.
+ *
+ * And people a host of the portal's integration signed in (src/integrationrequests.js): the admin
+ * team approves one (`portal/integration/approve`: a new organization gets its channel, filed
+ * by hand as `portal/open` files a lobby's, and the person is enrolled; one with a channel on that
+ * host has the person enrolled in it) or declines it (`portal/integration/decline`).
  *
  * Every rule change can be tried first (`dryRun`): the answer lists the channels that would
  * move. Applied, the moves go to the NORMALIZE queue as `refile` jobs (src/refile.js).
@@ -762,7 +770,19 @@ async function requestList(env, me, { status, count }) {
   const accounts = isAdmin(me) ? await unlinkedCount(env) : 0;
   // And a customer's two accounts that may be one person (src/accountpairs.js), the admin team's.
   const pairs = isAdmin(me) ? await undecidedPairCount(env) : 0;
-  const open = await openCount(env, teams) + await portalOpenCount(env, teams)
+  // And the people waiting for access through a host of the portal's integration, the admin
+  // team's too; best effort, as the portal may not answer.
+  const integration = isAdmin(me) && !count
+    ? await listIntegrationRequests(env).catch((e) => {
+      console.warn(JSON.stringify({ route: 'admin', integration: 'not listed', error: e.message }));
+      return [];
+    }) : [];
+  let integrationOpen = 0;
+  if (isAdmin(me)) {
+    integrationOpen = count ? await integrationOpenCount(env)
+      : integration.filter((r) => r.status === 'pending').length;
+  }
+  const open = await openCount(env, teams) + await portalOpenCount(env, teams) + integrationOpen
     + await memberOpenCount(env, teams)
     + conflicts.filter((c) => !c.kept).length + rules.filter((c) => !c.kept).length + merges + bots
     + accounts + pairs;
@@ -773,6 +793,7 @@ async function requestList(env, me, { status, count }) {
     requests: await listRequests(env, { teams, status: ['open', 'decided'].includes(status) ? status : null }),
     memberRequests: await listMemberRequests(env, { teams, limit: 50 }),
     portal: await listPortalRequests(env, { teams }),
+    integration,
     portalBound: portalBound(env),
     conflicts,
     ruleConflicts: rules,
@@ -1125,6 +1146,153 @@ async function declinePortal(env, me, body) {
     route: 'admin', portal: 'declined', by: me.id, id: r.id,
   }));
   return json({ ok: true, request: await getPortalRequest(env, r.id) });
+}
+
+// ---- integration access requests ----------------------------------------------------------
+
+/** A pending integration request, or the answer that says why it cannot be decided. */
+async function pendingIntegration(env, id) {
+  if (!portalBound(env)) {
+    return { error: json({ error: 'the customer portal is not connected to this inbox' }, 409) };
+  }
+  const r = await getIntegrationRequest(env, id);
+  if (!r) {
+    return { error: json({ error: 'no such request' }, 404) };
+  }
+  if (r.status !== 'pending') {
+    return { error: json({ error: `this request is ${r.status} already`, request: r }, 409) };
+  }
+  return { request: r };
+}
+
+/** A portal call's refusal as an answer: its status where it said one, else 502. */
+const portalRefused = (res, extra = {}) => json(
+  { error: res.error || 'the portal did not answer', ...extra },
+  res.status && res.status < 500 ? res.status : 502,
+);
+
+/**
+ * POST /api/admin/portal/integration/approve `{ id, team?, name?, org?, person? }`: the admin team
+ * approves access request `id` of a host of the portal's integration. The person is enrolled as
+ * `person` (the name the provider gave, by default), a new actor without an email, and who approved
+ * it is recorded. An organization with an enabled channel on that host has them enrolled in it,
+ * nothing else. One without gets its channel first: the portal reserves it (named `name`, by
+ * default `<product>-<customer>`), it is filed under `team` and the customer `org` by hand (the
+ * manual rules of `portal/open`: source `portal`, field `channel_id`, `^<id>$`), and only then is
+ * the person enrolled and the channel enabled, so no message arrives before its route. A channel
+ * suspended, or set up by hand and never enabled, is for an operator.
+ */
+async function approveIntegration(env, me, body) {
+  const { request: r, error } = await pendingIntegration(env, body.id);
+  if (error) {
+    return error;
+  }
+  const person = clean(body.person, 120) || r.suggest.person;
+  const by = { email: me.email || String(me.id), name: me.name || null };
+  const m = r.mapping;
+  if (m && !m.enabled && !m.resumable) {
+    return json({ error: 'this organization\'s channel on the host is suspended, or set up by hand: an operator enables it first', request: r }, 409);
+  }
+  let channel = m && m.enabled ? { id: m.channel, name: m.name, existing: true } : null;
+  let route = m && m.enabled ? m.route : null;
+  if (!channel) {
+    const slug = toSlug(clean(body.team) || r.suggest.team || '');
+    if (!await env.DB.prepare('SELECT 1 FROM teams WHERE slug = ?').bind(slug).first()) {
+      return bad('give the team the channel is for');
+    }
+    const customer = toSlug(clean(body.org) || r.suggest.org);
+    if (!SLUG.test(customer)) {
+      return bad('a customer is lowercase letters, digits and -, like acme');
+    }
+    const name = toSlug(clean(body.name, 80) || r.suggest.name).slice(0, 80);
+    if (!SLUG.test(name)) {
+      return bad('a channel name is lowercase letters, digits and -, like agents-acme');
+    }
+    const reserved = await portalCall(env, 'reserveAccess', {
+      id: r.id, customer: name, name, by,
+    });
+    if (reserved.error || !reserved.channel) {
+      return portalRefused(reserved);
+    }
+    channel = { ...reserved.channel, existing: Boolean(reserved.existing) };
+    if (!reserved.existing) {
+      // The channel as the inbox knows it, its customer and its route, before anyone can post.
+      const tenant = `${channel.id}.embed.invalid`;
+      const now = new Date().toISOString();
+      await env.DB.prepare(`INSERT INTO channels (source, tenant, channel_id, name, group_id,
+          group_name, shared, connected, topic, fetched_at)
+        VALUES ('portal', ?, ?, ?, ?, ?, 1, '[]', NULL, ?) ON CONFLICT DO NOTHING`)
+        .bind(tenant, channel.id, channel.name, tenant, r.orgName, now).run();
+      const domain = r.email && mailCompany(r.email) ? r.email.split('@')[1] : null;
+      await env.DB.prepare(`INSERT INTO orgs (slug, name, type, icon, updated_at)
+        VALUES (?, ?, 'customer', ?, ?) ON CONFLICT (slug) DO NOTHING`)
+        .bind(customer, r.orgName || null, domain, now).run();
+      await ensureKnowledgeBase(env, 'org', customer).catch(() => null);
+      for (const [target, value] of [['team', slug], ['org', customer]]) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await assign(env, me, {
+          target, source: 'portal', channelId: channel.id, value, move: true,
+        }, false);
+        if (!res.ok) {
+          // eslint-disable-next-line no-await-in-loop
+          const { error: why } = await res.json().catch(() => ({}));
+          return json({
+            error: `the channel is reserved in the portal, but could not be filed under ${value}: ${why || res.status}. Nobody is enrolled yet: approve again.`,
+            channel: { source: 'portal', channelId: channel.id },
+          }, 502);
+        }
+      }
+      route = { team: slug, org: customer };
+    } else {
+      route = (await getIntegrationRequest(env, r.id))?.mapping?.route || null;
+    }
+  }
+  const enrolled = await portalCall(env, 'enrollAccess', {
+    id: r.id, name: person, by, enable: !channel.existing,
+  });
+  if (enrolled.error) {
+    return portalRefused(enrolled, { channel: { source: 'portal', channelId: channel.id } });
+  }
+  console.log(JSON.stringify({
+    route: 'admin', integration: 'approved', by: me.id, id: r.id, existing: channel.existing,
+  }));
+  return json({
+    ok: true,
+    request: await getIntegrationRequest(env, r.id),
+    channel: {
+      source: 'portal',
+      tenant: `${channel.id}.embed.invalid`,
+      channelId: channel.id,
+      name: channel.name,
+      existing: channel.existing,
+      team: route && route.team,
+      org: route && route.org,
+    },
+  });
+}
+
+/**
+ * POST /api/admin/portal/integration/decline `{ id, reason? }`: the admin team declines access
+ * request `id`, with a reason the person is told (the error body's `reason`). After 30 days their
+ * next call asks again.
+ */
+async function declineIntegration(env, me, body) {
+  const { request: r, error } = await pendingIntegration(env, body.id);
+  if (error) {
+    return error;
+  }
+  const res = await portalCall(env, 'declineAccess', {
+    id: r.id,
+    reason: clean(body.reason, 500) || null,
+    by: { email: me.email || String(me.id), name: me.name || null },
+  });
+  if (res.error) {
+    return portalRefused(res, { request: await getIntegrationRequest(env, r.id) });
+  }
+  console.log(JSON.stringify({
+    route: 'admin', integration: 'declined', by: me.id, id: r.id,
+  }));
+  return json({ ok: true, request: await getIntegrationRequest(env, r.id) });
 }
 
 // ---- teams and members ------------------------------------------------------------------
@@ -1987,6 +2155,8 @@ async function adminRoute(request, env, url, me) {
     case 'POST member-requests/decline': return declineMemberRequest(env, me, body);
     case 'POST portal/open': return openPortal(env, me, body);
     case 'POST portal/decline': return declinePortal(env, me, body);
+    case 'POST portal/integration/approve': return approveIntegration(env, me, body);
+    case 'POST portal/integration/decline': return declineIntegration(env, me, body);
     case 'POST conflicts': return settleConflict(env, me, body);
     case 'POST rule-conflicts': return settleRuleConflict(env, me, body);
     // Channel threads labeled again though they did not change (src/label.js queueRelabel).
@@ -2033,7 +2203,7 @@ async function adminRoute(request, env, url, me) {
  */
 const DECIDING = new Set(['DELETE requests', 'POST member-requests/confirm',
   'POST member-requests/decline', 'POST portal/open', 'POST portal/decline',
-  'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
+  'POST portal/integration/approve', 'POST portal/integration/decline', 'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
   'DELETE org-merge', 'POST members', 'POST assign', 'DELETE assign', 'POST rules', 'PUT rules',
   'DELETE rules', 'PUT bots', 'PUT accounts', 'PUT account-pairs', 'POST conflicts',
   'POST rule-conflicts']);

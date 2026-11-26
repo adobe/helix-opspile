@@ -19,6 +19,7 @@ import { getMemberRequest, listMemberRequests } from './memberrequests.js';
 import { getMergeRequest, listMergeRequests } from './orgmerge.js';
 import { getBot, listBots } from './ourbots.js';
 import { getPortalRequest, listPortalRequests } from './portalrequests.js';
+import { getIntegrationRequest, listIntegrationRequests } from './integrationrequests.js';
 import { portalBound } from './portalsource.js';
 import { announceRequest, parseRequestKey, requestKey } from './requestkeys.js';
 import { getRequest, listRequests } from './requests.js';
@@ -65,6 +66,7 @@ export const KIND_NAMES = {
   channel: 'Channel requests',
   member: 'Membership requests',
   portal: 'Portal customers',
+  integration: 'Integration access',
   merge: 'Customer merges',
   bot: 'Bots',
   account: 'Admin accounts',
@@ -166,7 +168,7 @@ const CHANNEL_DONE = {
 /** What a decided request's row says of it: by whom, and what came of it. */
 function rowDecision(r, did = '') {
   const word = {
-    confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged',
+    confirmed: 'Confirmed', declined: 'Declined', withdrawn: 'Withdrawn', opened: 'Opened', merged: 'Merged', approved: 'Approved',
   }[r.status] || r.status;
   const reason = r.reason ? `: ${md(r.reason)}` : '';
   return `**${word}** by ${md(who(r.decidedBy))}${did ? `: ${did}` : reason}`;
@@ -390,6 +392,102 @@ const portalKind = {
       decidedAt: open ? null : r.decidedAt,
       decidedBy: r.decidedBy,
       decision: open ? null : rowDecision(r, r.status === 'opened' && c ? `filed under ${md(n.team(c.team))}` : ''),
+      actions,
+    };
+  },
+};
+
+/** Where an integration request comes from: its host, and the product it calls its channels. */
+const hostOf = (r) => (r.product ? `${r.host} (${r.product})` : r.host);
+
+const integrationKind = {
+  list: (env) => listIntegrationRequests(env, { limit: LIMIT }),
+  get: (env, id) => getIntegrationRequest(env, id),
+  id: (r) => r.id,
+  describe(r, n, { portalBound: bound = false } = {}) {
+    const person = r.name || r.email || 'Someone';
+    const org = r.orgName || r.tenant;
+    const open = r.status === 'pending';
+    const m = r.mapping;
+    const into = m && m.enabled;
+    const where = m
+      ? `#${md(m.name)} ${code(m.channel)}${m.route && (m.route.team || m.route.org) ? `, filed under **${md(n.team(m.route.team))}**, customer **${md(n.org(m.route.org))}**` : ''}${m.enabled ? '' : ' (not enabled)'}`
+      : '';
+    const facts = [
+      `- Host ${code(r.host)}${r.product ? `, product ${code(r.product)}` : ''}`,
+      `- Organization **${md(org)}** ${code(r.tenant)}${r.orgName ? '' : ' (its name was not readable)'}`,
+      `- ${md(person)}, ${r.email ? `${md(r.email)} (verified)` : 'no verified mail address'}, user ${code(r.subject)}`,
+      `- First asked ${md(String(r.requestedAt || '').slice(0, 16).replace('T', ' '))}${r.attempts > 1 ? `, ${plural(r.attempts, 'call')} since` : ''}`,
+      into || m ? `- ${into ? 'Joins' : 'Its channel:'} ${where}` : '- New organization for this host: approving makes its channel',
+    ].join('\n');
+    const teams = n.teams.filter((t) => t.slug !== ADMIN_TEAM);
+    const first = r.suggest.team || teams[0]?.slug || '';
+    let off = null;
+    if (!bound) {
+      off = 'The customer portal is not connected to this inbox yet (PORTAL_WORKER): nobody can be enrolled from here.';
+    } else if (m && !m.enabled && !m.resumable) {
+      off = 'This organization\'s channel on the host is suspended, or was set up by hand and is not enabled: an operator enables it first.';
+    } else if (!into && !teams.length) {
+      off = 'There is no team to file its channel under.';
+    }
+    const personField = {
+      name: 'person', label: 'Their name, as the channel shows it', type: 'text', max: 120, required: true, value: r.suggest.person,
+    };
+    const fields = into ? [personField] : [
+      {
+        name: 'name', label: 'Channel name', type: 'text', max: 80, required: true, value: m ? m.name : r.suggest.name,
+      },
+      {
+        name: 'org', label: `Customer${r.suggest.known ? `: ${r.suggest.orgName || r.suggest.org}` : ' (new)'}`, type: 'text', max: 63, required: true, value: (m && m.route && m.route.org) || r.suggest.org,
+      },
+      {
+        name: 'team',
+        label: 'Team',
+        type: 'select',
+        value: (m && m.route && m.route.team) || first,
+        options: teams.map((t) => ({ value: t.slug, label: t.name })),
+      },
+      personField,
+    ];
+    const actions = open ? [
+      {
+        id: 'approve',
+        label: into ? `Add to #${m.name}` : 'Approve',
+        tone: 'accent',
+        off,
+        hint: into
+          ? `Enrolls ${md(person)} in the channel ${md(org)} has on ${md(r.host)}: they see its threads and write there. Recorded as approved by you.`
+          : 'Makes the organization\'s channel in the portal, files it under the team and the customer by hand (a channel-id rule with priority 10 each), then enrolls the person and enables the channel, in that order. Recorded as approved by you.',
+        fields,
+        run: (v) => ({
+          method: 'POST',
+          path: 'portal/integration/approve',
+          body: {
+            id: r.id, person: v.person, ...(into ? {} : { name: v.name, org: v.org, team: v.team }),
+          },
+        }),
+        done: (a) => `${md(person)} is enrolled in #${md(a.channel?.name || '')}${a.channel && !a.channel.existing ? `, filed under ${md(n.team(a.channel.team))}` : ''}.`,
+      },
+      {
+        id: 'decline',
+        label: 'Decline',
+        tone: 'negative',
+        fields: [reasonField('Reason, which the person is shown (optional)')],
+        run: (v) => ({ method: 'POST', path: 'portal/integration/decline', body: { id: r.id, reason: v.reason || undefined } }),
+        done: () => `Declined ${md(person)}.`,
+      },
+    ] : [];
+    const status = { pending: 'waiting', approved: 'approved', declined: 'declined' }[r.status] || r.status;
+    return {
+      title: `${person} (${org.length > 40 ? `${org.slice(0, 39).trim()}…` : org}) asks for ${r.product || r.host}`,
+      open,
+      status,
+      askedAt: r.requestedAt,
+      askedBy: { name: r.name, email: r.email, customer: true },
+      body: `Asks to use Enterprise Support in ${md(hostOf(r))}, signed in with the host's identity provider, which verified who they are. Nobody has enrolled them yet.\n\n${facts}`,
+      decidedAt: open ? null : r.decidedAt,
+      decidedBy: r.decidedBy,
+      decision: open ? null : rowDecision(r, r.status === 'approved' ? `enrolled${r.channel ? ` in ${code(r.channel)}` : ''}` : ''),
       actions,
     };
   },
@@ -949,6 +1047,7 @@ const KIND = {
   channel: channelKind,
   member: memberKind,
   portal: portalKind,
+  integration: integrationKind,
   merge: mergeKind,
   bot: botKind,
   account: accountKind,

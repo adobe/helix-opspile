@@ -12,20 +12,23 @@
 
 import { accessClaims, signedClaims } from '../access.js';
 import { hostIdentity, tokenUser, UpstreamError } from './integration-identity.js';
+import { captureAccess, pruneAccess } from './integration-requests.js';
 
 export const BASE = '/integrations/portal/v1';
 export const WEEK = 7 * 24 * 60 * 60;
 const id = (s) => typeof s === 'string' && s.trim().length > 0 && s.length <= 256;
 
 export class IntegrationError extends Error {
-  constructor(status, code) {
+  constructor(status, code, detail = null) {
     super(code);
     this.status = status;
+    // More of the error body: an access request's state (`{ request, reason? }`).
+    this.detail = detail;
   }
 }
 
-export function fail(status, code) {
-  throw new IntegrationError(status, code);
+export function fail(status, code, detail = null) {
+  throw new IntegrationError(status, code, detail);
 }
 
 /** A host-signed assertion: short-lived, single-use, bound to the request's method and path. */
@@ -71,7 +74,7 @@ async function userToken(identity, host, jwt, scope, options, invalid) {
   if (!id(c.tenant)) {
     fail(403, 'not_enrolled');
   }
-  return { ...c, jti: `token:${crypto.randomUUID()}` };
+  return { ...c, jti: `token:${crypto.randomUUID()}`, organization: user.organization };
 }
 
 /** Only Access's signed service identity selects the host and therefore how it names users. */
@@ -114,7 +117,22 @@ export async function authorize(request, env, scope, options = {}) {
       AND u.kind = 'customer' AND u.email IS NULL`).bind(host.id, c.tenant, c.sub).first();
   if (!member || (member.verified_email !== null && (c.email_verified !== true
     || !id(c.email) || c.email.trim().toLowerCase() !== member.verified_email))) {
-    fail(403, 'not_enrolled');
+    // A verified caller of a provider host asks for access by calling: recorded for the admin
+    // team, and the body says how it stands. An assertion host enrolls its users by hand.
+    const detail = identity ? await captureAccess(env, host, c, {
+      now: options.now ?? Date.now(),
+      organization: c.organization,
+      notify: (requestId) => {
+        const told = Promise.resolve()
+          .then(() => env.OPSPILE?.accessRequested?.({ id: requestId }))
+          .catch(() => console.warn('portal integration: access request not announced'));
+        options.waitUntil?.(told);
+      },
+    }).catch(() => {
+      console.warn('portal integration: access request not recorded');
+      return null;
+    }) : null;
+    fail(403, 'not_enrolled', detail);
   }
   // One atomic admission: count only authenticated operations in the last minute. The nonce
   // lives at least the full assertion lifetime, including for a host that issues shorter JWTs.
@@ -186,5 +204,6 @@ export async function pruneIntegration(env, now = Date.now()) {
       WHERE at < ? ORDER BY at LIMIT 5000)`).bind(sec - WEEK),
     env.DB.prepare(`DELETE FROM integration_nonces WHERE rowid IN (SELECT rowid FROM integration_nonces
       WHERE used_at <= ? LIMIT 20000)`).bind(sec - 60),
+    pruneAccess(env.DB, sec),
   ]);
 }

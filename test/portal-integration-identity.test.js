@@ -130,6 +130,10 @@ function fixture() {
       const published = [keys[environment].jwk, keys.shared.jwk];
       return Response.json({ keys: [...published, ...upstream.rotated ? [keys.rotated.jwk] : []] });
     }
+    if (u.pathname === '/ims/organizations/v6') {
+      // Signed in without `read_organizations`: an access request has no organization name.
+      return Response.json({ error: 'insufficient_scope' }, { status: 403 });
+    }
     assert.equal(u.pathname, '/ims/profile/v1');
     upstream.profile += 1;
     if (upstream.fail === 'network') {
@@ -383,6 +387,9 @@ describe('registered portal hosts with a trusted identity provider', () => {
     const stranger = 'FFFFFFFFFFFFFFFFFFFFFFFF@AdobeID';
     const unknown = { claims: { user_id: stranger }, profile: { userId: stranger } };
     assert.equal(await status(unknown), 403);
+    // Recorded as an access request for the admin team (test/portal-integration-requests.test.js).
+    assert.deepEqual((await list({ bearer: await token(unknown) })).error, { code: 'not_enrolled', request: 'pending' });
+    assert.equal(db.rows('SELECT org_name FROM integration_requests')[0].org_name, null);
     assert.equal(await status({ profile: { userId: stranger } }), 401);
     // An alias enrollment takes only the verified email of the IMS profile.
     db.sqlite.exec(`UPDATE integration_actors SET verified_email = 'ada@mill.example'
