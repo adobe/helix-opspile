@@ -68,6 +68,60 @@ const ctx = {
   topicHref: (id) => `/inbox/topics?${new URLSearchParams({ sel: id })}`,
 };
 
+describe('a team\'s numbers, drawn', () => {
+  const busy = {
+    ...profile,
+    // Two past weeks of days, from Monday (a day still to come has no cell): Tuesdays busiest.
+    weeks: ['2025-11-17', '2025-11-24'],
+    activity: {
+      messages: [3, 4],
+      staff: [2, 2],
+      threads: [1, 2],
+      days: [0, 2, 0, 1, 0, 0, 0, 1, 3, 0, 0, 0, 0, 0],
+    },
+    members: [profile.members[0], {
+      ...profile.members[0], id: 8, name: 'Bo Quiet', role: 'member', messages: 0, weekly: [0, 0],
+    }],
+    customers: [{
+      slug: 'acme', name: 'ACME', type: 'customer', icon: null, messages: 6, staff: 4, threads: 1, weekly: [3, 3], last: null, members: [7],
+    }, {
+      slug: 'globex', name: null, type: 'customer', icon: null, messages: 2, staff: 2, threads: 1, weekly: [1, 1], last: null, members: [],
+    }],
+    customerCount: 2,
+    collaborators: [{
+      id: 9, name: 'Cy Forms', avatar: null, teams: [{ slug: 'forms', name: 'Forms ops' }], messages: 3, weekly: [1, 2],
+    }, {
+      id: null, name: 'Dee', avatar: null, teams: [], messages: 1, weekly: [0, 1],
+    }],
+    collaboratorCount: 2,
+  };
+  const html = TeamView.html(busy, ctx);
+  const tiles = html.slice(html.indexOf('<div class="tv-stats tv-team">'), html.indexOf('<div class="tv-chart"'));
+
+  it('sizes its people by what they said, the quiet faint, each a link to them', () => {
+    assert.match(tiles, /<div class="tv-k"><b>2<\/b> people, 1 posted<\/div><span class="tv-bubbles"><a href="\/inbox\/topics\?sel=person%3A7" title="Ada &lt;Ops&gt;: 7 messages"><span class="av ps-av tv-b" [^>]*data-f="1\.000"/);
+    assert.match(tiles, /<span class="av ps-av tv-b tiny quiet" [^>]*data-f="0\.350"/);
+  });
+
+  it('splits what was said by customer, and between them and Adobe', () => {
+    assert.match(tiles, /<div class="tv-parts-bar"><a href="\/org\/acme" class="tv-seg" title="ACME: 6 messages, 75%" data-series="s0" data-f="0\.7500"><span>ACME<\/span><\/a><a href="\/org\/globex"[^>]*data-series="s1" data-f="0\.2500"><span>globex<\/span><\/a><\/div>/);
+    assert.match(tiles, /aria-label="Who wrote them: Customers 43%, Adobe 57%"/);
+  });
+
+  it('draws its threads day by day, two columns of seven, and its busiest weekday', () => {
+    const rects = [...tiles.matchAll(/<rect class="(l\d)" x="(\d+)" y="(\d+)"/g)];
+    assert.equal(rects.length, 14);
+    assert.deepEqual(rects.slice(7, 9).map((m) => [m[1], m[2], m[3]]), [['l2', '10', '0'], ['l4', '10', '10']]);
+    assert.match(tiles, /<title>Tue, Nov 18: 2 active threads<\/title>/);
+    assert.match(tiles, /<div class="tv-stat wide">/);
+    assert.match(tiles, /<small>2 active in a week, the most on Tuesdays<\/small>/);
+  });
+
+  it('puts its collaborators by team, those on none last', () => {
+    assert.match(tiles, /<ul class="tv-crews"><li data-hue="\d"><span class="tv-pile"><span [^>]*title="Cy Forms">CF<\/span><\/span><a href="\/team\/forms"[^>]*>Forms ops<\/a><\/li><li><span class="tv-pile"><span [^>]*title="Dee">D<\/span><\/span><span class="sub">on no team<\/span><\/li><\/ul><small>from Adobe, not on the team<\/small>/);
+  });
+});
+
 describe('a team\'s overview, drawn', () => {
   it('links a person\'s areas, products and name to the Topics page, and ends their card with their customers', () => {
     const html = TeamView.html(profile, ctx);

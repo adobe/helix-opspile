@@ -4,9 +4,11 @@
  * ui/spectrum.css and ui/spectrum-admin.css, all under `.ov`. Only Spectrum 2 tokens.
  *
  * What each part is in Spectrum 2 (https://s2.spectrum.corp.adobe.com):
- * - the numbers at the top: a row of big numbers with their labels (a dashboard's KPIs), then an
- *   area chart of the weeks, Adobe's part in indigo under the customers' in seafoam, with its
- *   legend; a week under the pointer says its numbers in a Tooltip.
+ * - the numbers at the top: each said in words, its number bold in them, over a small chart of
+ *   its own (faces, a balance, a bar of parts, cells of weeks or days, a dot per wait, a status
+ *   page's weeks, faces by team), then an area chart of the weeks, Adobe's part in indigo under
+ *   the customers' in seafoam, with its legend; a week under the pointer says its numbers in a
+ *   Tooltip.
  * - a person: a Card (layer 2, a large radius), an Avatar, their name a Heading, their role (or a
  *   customer's partner) a Badge, the line of their weeks a sparkline, what they know as Tags.
  * - the rankings: a ListView of rows, each with its rank, an Avatar or a favicon, a Meter (the
@@ -24,7 +26,58 @@
 
 /* The numbers, then the chart of the weeks: its scale at the left, the months under it. */
 .ov .tv-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(9em, 1fr)); gap: var(--spectrum-spacing-300); }
-.ov .tv-stat { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); min-width: 0; }
+.ov .tv-stat { display: flex; flex-direction: column; gap: var(--spectrum-spacing-100); min-width: 0; }
+/* A team's: a row of five over its chart, its days twice as wide as the rest; two across where
+   its page is narrow, the days on a row of their own. */
+.ov .tv-hero { container-type: inline-size; }
+.ov .tv-stats.tv-team { grid-template-columns: repeat(6, minmax(0, 1fr)); grid-auto-flow: row dense; gap: var(--spectrum-spacing-500) var(--spectrum-spacing-400); }
+.ov .tv-stats.tv-team .wide { grid-column: span 2; }
+@container (max-width: 58em) { .ov .tv-stats.tv-team { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container (max-width: 36em) { .ov .tv-stats.tv-team { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* The drawings of the numbers (ui/overview.js). Faces, one over the next, and how many more. */
+.ov .tv-pile { display: flex; align-items: center; min-width: 0; }
+.ov .tv-pile > * + * { margin-inline-start: calc(-1 * var(--spectrum-spacing-75)); }
+.ov .tv-pile .ps-av { width: var(--spectrum-avatar-size-300); height: var(--spectrum-avatar-size-300); }
+.ov .tv-crews .tv-pile .ps-av { width: var(--spectrum-avatar-size-200); height: var(--spectrum-avatar-size-200); }
+.ov .tv-pmore { display: inline-grid; flex: none; place-items: center; min-width: var(--spectrum-avatar-size-300); height: var(--spectrum-avatar-size-300); padding: 0 var(--spectrum-spacing-75); }
+/* Who carries a conversation: the two sides as wide as their share, the middle marked. */
+.ov .tv-bal { display: flex; flex-direction: column; gap: var(--spectrum-spacing-75); }
+.ov .tv-bal-bar { position: relative; display: flex; gap: var(--spectrum-spacing-50); height: var(--spectrum-spacing-200); }
+.ov .tv-bal-bar > span { flex: var(--f, 1) 1 0; min-width: var(--spectrum-spacing-50); }
+.ov .tv-bal-bar::after { content: ""; position: absolute; left: 50%; top: calc(-1 * var(--spectrum-spacing-75)); bottom: calc(-1 * var(--spectrum-spacing-75)); }
+.ov .tv-bal-k, .ov .tv-ends { display: flex; justify-content: space-between; gap: var(--spectrum-spacing-200); }
+.ov .tv-bal-k > span { display: flex; gap: var(--spectrum-spacing-50); min-width: 0; white-space: nowrap; }
+.ov .tv-bal-k > span:last-child { flex: none; }
+.ov .tv-bal-k .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* A whole in parts, side by side, each named inside where it fits. */
+.ov .tv-parts-bar { display: flex; gap: var(--spectrum-spacing-50); height: var(--spectrum-component-height-75); }
+.ov .tv-seg { display: flex; flex: var(--f, 1) 1 0; align-items: center; min-width: var(--spectrum-spacing-100); overflow: hidden; padding: 0 var(--spectrum-spacing-75); }
+.ov .tv-seg > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Weeks as a row of cells; days as a grid of them, a column a week. */
+.ov .tv-strip { display: block; width: 100%; height: var(--spectrum-spacing-300); }
+.ov .tv-days { display: block; width: 100%; height: auto; }
+/* A dot per wait, on a scale from a minute to a week, its marks under it. */
+.ov .tv-waits { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); }
+.ov .tv-waits svg { display: block; width: 100%; height: auto; overflow: visible; }
+.ov .tv-ticks { position: relative; height: calc(var(--spectrum-font-size-75) * 1.5); }
+.ov .tv-ticks span { position: absolute; left: calc(var(--at, 0) * 100%); transform: translateX(-50%); white-space: nowrap; }
+.ov .tv-ticks span:first-child { transform: none; }
+.ov .tv-ticks span:last-child { transform: translateX(-100%); }
+/* A status page's weeks. */
+.ov .tv-uptime { display: flex; flex-direction: column; gap: var(--spectrum-spacing-50); }
+.ov .tv-uptime svg { display: block; width: 100%; height: var(--spectrum-spacing-400); }
+/* Faces by team, a pile each with the team's name; faces as big as what each said. */
+.ov .tv-crews { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-300); margin: 0; padding: 0; list-style: none; }
+.ov .tv-crews li { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-100); min-width: 0; }
+.ov .tv-crews li > :last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov .tv-bubbles { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75); }
+.ov .tv-bubbles > a { display: inline-flex; }
+.ov .tv-b { width: calc(var(--spectrum-spacing-700) * var(--f, 1)); height: calc(var(--spectrum-spacing-700) * var(--f, 1)); }
+/* Cases as tags; a vendor's products, then the customers' icons. */
+.ov .tv-chips, .ov .tv-flow { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; }
+.ov .tv-chips .tag { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov .tv-icon { display: inline-flex; }
 .ov .tv-chart { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); margin-top: var(--spectrum-spacing-400); }
 .ov .tv-axis { display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; height: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-700)); }
 .ov .tv-plot { position: relative; min-width: 0; }
@@ -39,13 +92,17 @@
 .ov .tv-legend span { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
 .ov .tv-legend span::before { content: ""; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-small-size-medium); }
 
-/* A customer's top (ui/customer.js): its numbers in a column of tiles at the left, the chart of
-   its weeks at the right, with the focus it is broken down by above it. */
-.ov .cv-hero { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 5fr); gap: var(--spectrum-spacing-600); align-items: start; }
-.ov .cv-hero .tv-stats { grid-template-columns: minmax(0, 1fr); align-content: start; gap: 0; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-300); }
-/* A number and what it counts on one line, the rest under them. */
-.ov .cv-hero .tv-stat { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 0 var(--spectrum-spacing-200); padding: var(--spectrum-spacing-200) 0; }
-.ov .cv-hero .tv-stat small { grid-column: 2; }
+/* A customer's top (ui/customer.js): its numbers on a card, three across (its answers and Adobe's
+   people two across, under them), over the chart of its weeks with the focus it is broken down
+   by above it; two across where its page is narrow. */
+.ov .cv-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--spectrum-spacing-600); }
+.ov .cv-hero .tv-stats { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--spectrum-spacing-500); padding: var(--spectrum-spacing-400); }
+.ov .cv-hero .tv-stat { grid-column: span 2; }
+.ov .cv-hero .tv-stat.w3 { grid-column: span 3; }
+@container (max-width: 40em) {
+  .ov .cv-hero .tv-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov .cv-hero .tv-stat, .ov .cv-hero .tv-stat.w3 { grid-column: span 1; }
+}
 .ov .tv-bars .tv-axis, .ov .tv-bars .tv-plot svg { height: calc(var(--spectrum-spacing-1000) * 2 + var(--spectrum-spacing-500)); }
 .ov .cv-activity { display: flex; flex-direction: column; gap: var(--spectrum-spacing-300); min-width: 0; }
 .ov .cv-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--spectrum-spacing-200); }
@@ -57,10 +114,6 @@
 .ov .tv-parts .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ov .tv-bars .dot, .ov .tv-tip .dot { flex: none; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); border-radius: var(--spectrum-corner-radius-small-size-medium); }
 .ov .tv-tip .tv-tr { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--spectrum-spacing-100); }
-@media (max-width: 999px) {
-  .ov .cv-hero { grid-template-columns: minmax(0, 1fr); }
-  .ov .cv-hero .tv-stats { grid-template-columns: repeat(auto-fit, minmax(14em, 1fr)); gap: 0 var(--spectrum-spacing-400); }
-}
 
 /* The people: a grid of cards, the quiet ones in a row after them. Every card is the same size,
    with the same six parts in the same order (ui/person.js `card`), so that a part is where it is
@@ -182,10 +235,66 @@
 .spectrum .ov .tv-sec > h2 .sub { font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-regular-font-weight); }
 .spectrum .ov h3 { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); }
 
-/* The numbers: big and bold, what they count under them. */
-.spectrum .ov .tv-stat b { color: var(--spectrum-heading-color); font-size: var(--spectrum-font-size-700); font-weight: var(--spectrum-extra-bold-font-weight); line-height: var(--spectrum-heading-line-height); font-variant-numeric: tabular-nums; }
-.spectrum .ov .tv-stat span { color: var(--spectrum-neutral-content-color-default); font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .ov .tv-stat small { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+/* The numbers: in their words, the number big and bold in them, a line under the drawing. */
+.spectrum .ov .tv-k { color: var(--spectrum-neutral-content-color-default); font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-medium-font-weight); line-height: var(--spectrum-heading-line-height); }
+.spectrum .ov .tv-k > b { color: var(--spectrum-heading-color); font-size: var(--spectrum-font-size-500); font-weight: var(--spectrum-extra-bold-font-weight); font-variant-numeric: tabular-nums; }
+.spectrum .ov .tv-stat > small, .spectrum .ov :is(.tv-bal-k, .tv-ends, .tv-ticks, .tv-waits .sub) { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); font-variant-numeric: tabular-nums; }
+.spectrum .ov .tv-ticks { font-size: var(--spectrum-font-size-50); }
+.spectrum .ov .tv-bal-k b { color: var(--spectrum-neutral-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+
+/* Faces apart by a ring of what is behind them; a partner's in fuchsia, as the chart has them,
+   and on its line. */
+.spectrum .ov .tv-pile .ps-av { box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--pile-bg, var(--content)); }
+.spectrum .ov .cv-hero { --pile-bg: var(--card); }
+.spectrum .ov .tv-pile .ps-av.partner { box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--pile-bg, var(--content)), 0 0 0 calc(2 * var(--spectrum-border-width-200)) var(--spectrum-fuchsia-visual-color); }
+.spectrum .ov .tv-partner-k::before { content: ""; display: inline-block; width: var(--spectrum-spacing-100); height: var(--spectrum-spacing-100); margin-inline-end: var(--spectrum-spacing-75); border-radius: 50%; background: var(--spectrum-fuchsia-visual-color); }
+.spectrum .ov .tv-pmore { color: var(--spectrum-neutral-content-color-default); background: var(--spectrum-gray-200); border-radius: var(--s2-pill); box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--pile-bg, var(--content)); font-size: var(--spectrum-font-size-50); font-weight: var(--spectrum-bold-font-weight); }
+/* The two sides: theirs in seafoam, Adobe's in indigo, as the charts; the middle a dashed line. */
+.spectrum .ov .tv-bal-bar > span { border-radius: var(--s2-pill); }
+.spectrum .ov .tv-bal-bar > .them { background: var(--spectrum-seafoam-visual-color); }
+.spectrum .ov .tv-bal-bar > .us { background: var(--spectrum-indigo-visual-color); }
+.spectrum .ov .tv-bal-bar::after { border-left: var(--spectrum-border-width-200) dashed var(--spectrum-neutral-content-color-default); }
+/* The parts in the stacked bars' colors, named in white. */
+.spectrum .ov .tv-seg { color: var(--spectrum-white); background: var(--s2-series); border-radius: var(--s2-radius); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); text-decoration: none; transition: opacity var(--s2-ease); }
+.spectrum .ov a.tv-seg:hover { opacity: 0.8; }
+/* Cells: empty ones gray, the others in the accent color, the fuller the stronger. */
+.spectrum .ov :is(.tv-strip, .tv-days) rect { fill: var(--spectrum-accent-visual-color); }
+.spectrum .ov :is(.tv-strip, .tv-days) rect.l0 { fill: var(--spectrum-gray-200); }
+.spectrum .ov :is(.tv-strip, .tv-days) rect.l1 { opacity: 0.3; }
+.spectrum .ov :is(.tv-strip, .tv-days) rect.l2 { opacity: 0.55; }
+.spectrum .ov :is(.tv-strip, .tv-days) rect.l3 { opacity: 0.8; }
+/* The waits: Adobe's answers in indigo, a vendor's in purple (as its tags); the median a line. */
+.spectrum .ov .tv-waits circle { fill: var(--spectrum-indigo-visual-color); }
+.spectrum .ov .tv-waits.them circle { fill: var(--spectrum-purple-visual-color); }
+.spectrum .ov .tv-waits .axis { stroke: var(--spectrum-gray-300); stroke-width: var(--spectrum-border-width-100); vector-effect: non-scaling-stroke; }
+.spectrum .ov .tv-waits .mid { stroke: var(--spectrum-neutral-content-color-default); stroke-width: var(--spectrum-border-width-200); vector-effect: non-scaling-stroke; }
+/* A status page's weeks: quiet ones green, those with a post in the notice color. */
+.spectrum .ov .tv-uptime rect.off { fill: var(--spectrum-positive-visual-color); }
+.spectrum .ov .tv-uptime rect.on { fill: var(--spectrum-notice-visual-color); }
+/* A team's faces ringed in its hue (`data-hue`, the avatars' colors), those on none in gray. */
+.spectrum .ov .tv-crews li { --crew: var(--spectrum-gray-visual-color); }
+.spectrum .ov .tv-crews li[data-hue="0"] { --crew: var(--spectrum-cinnamon-visual-color); }
+.spectrum .ov .tv-crews li[data-hue="1"] { --crew: var(--spectrum-seafoam-visual-color); }
+.spectrum .ov .tv-crews li[data-hue="2"] { --crew: var(--spectrum-purple-visual-color); }
+.spectrum .ov .tv-crews li[data-hue="3"] { --crew: var(--spectrum-magenta-visual-color); }
+.spectrum .ov .tv-crews li[data-hue="4"] { --crew: var(--spectrum-blue-visual-color); }
+.spectrum .ov .tv-crews li[data-hue="5"] { --crew: var(--spectrum-green-visual-color); }
+.spectrum .ov .tv-crews li[data-hue="6"] { --crew: var(--spectrum-brown-visual-color); }
+.spectrum .ov .tv-crews li[data-hue="7"] { --crew: var(--spectrum-cyan-visual-color); }
+.spectrum .ov .tv-crews .tv-pile .ps-av { box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--crew); }
+.spectrum .ov .tv-crews li > a { color: var(--spectrum-neutral-content-color-default); font-size: var(--spectrum-font-size-75); font-weight: var(--spectrum-bold-font-weight); text-decoration: none; }
+.spectrum .ov .tv-crews li > a:hover { color: var(--link); text-decoration: underline; }
+.spectrum .ov .tv-crews li.sub { font-size: var(--spectrum-font-size-75); }
+/* Faces as big as what each said: the initials as big, hidden where too small, the quiet faint. */
+.spectrum .ov .tv-b { font-size: calc(var(--spectrum-font-size-200) * var(--f, 1)); }
+.spectrum .ov .tv-b.tiny { color: transparent; }
+.spectrum .ov .tv-b.quiet { opacity: 0.4; }
+/* Cases as tags, links in the text's color. */
+.spectrum .ov .tv-chips a.tag { color: var(--spectrum-neutral-content-color-default); text-decoration: none; }
+.spectrum .ov .tv-chips a.tag:hover { text-decoration: underline; }
+.spectrum .ov .tv-to { color: var(--spectrum-neutral-subdued-content-color-default); }
+/* A partner's customers: a confirmed one's icon ringed in the positive color. */
+.spectrum .ov .tv-icon.confirmed > * { border-radius: var(--spectrum-corner-radius-small-size-medium); box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--spectrum-positive-visual-color); }
 
 /* The chart: Adobe's in indigo, under the customers' in seafoam; a quiet grid. */
 .spectrum .ov .tv-axis, .spectrum .ov .tv-months, .spectrum .ov .tv-legend { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); font-variant-numeric: tabular-nums; }
@@ -204,8 +313,6 @@
 
 /* A customer's numbers: one card on layer 2, a row each, divided. */
 .spectrum .ov .cv-hero .tv-stats { background: var(--card); border-radius: var(--spectrum-corner-radius-large-default); box-shadow: var(--content-shadow); }
-.spectrum .ov .cv-hero .tv-stat + .tv-stat { border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
-.spectrum .ov .cv-hero .tv-stat b { font-size: var(--spectrum-font-size-600); }
 
 /* The stacked bars: each part its color (`data-series`), the week and the part under the pointer
    lit, the others subdued; the legend's part under the pointer bold. Who said it has a color per

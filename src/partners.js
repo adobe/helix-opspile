@@ -378,7 +378,8 @@ const isCustomer = (o) => (o ? (o.type || 'customer') === 'customer' : true);
  *   own channels and in customers', how much, and in whose;
  * - `posts`: what its people said in its channels and in customers', week by week;
  * - `waiting`: what waits on Adobe in its channels and in the customers' threads its people are in;
- * - `answers`: how soon Adobe answers what its people start, in its channels and in customers'.
+ * - `answers`: how soon Adobe answers what its people start, in its channels and in customers'
+ *   (the median, and every wait).
  *
  * `customers` is what src/orgpartners.js `customersOf` says of it, which the caller reads: that
  * file reaches this one through src/orgmerge.js.
@@ -558,7 +559,13 @@ export async function partnerNumbers(env, slug, weeks, { customers: linked = [] 
   const answers = (rows) => {
     const waits = rows.filter((f) => f.answered)
       .map((f) => (Date.parse(f.answered) - Date.parse(f.first)) / 60000);
-    return { asked: rows.length, answered: waits.length, median: middle(waits) };
+    return {
+      asked: rows.length,
+      answered: waits.length,
+      median: middle(waits),
+      // Every wait, in whole minutes, shortest first: the page draws each one (ui/customer.js).
+      waits: waits.map((m) => Math.max(0, Math.round(m))).sort((a, b) => a - b),
+    };
   };
   const ownFirsts = firsts.filter((f) => f.org === slug);
   const custFirsts = firsts.filter((f) => f.org !== slug && keyOf.has(f.key));

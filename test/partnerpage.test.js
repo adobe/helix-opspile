@@ -166,8 +166,12 @@ describe('a partner\'s page', () => {
     // Its threads: a1 (an hour) and a2 (none). Customers': c1 (two hours) and c2 (none) are
     // Pia's; Hal started h1.
     assert.deepEqual(v.answers, {
-      own: { asked: 2, answered: 1, median: 60 },
-      customers: { asked: 2, answered: 1, median: 120 },
+      own: {
+        asked: 2, answered: 1, median: 60, waits: [60],
+      },
+      customers: {
+        asked: 2, answered: 1, median: 120, waits: [120],
+      },
     });
   });
 

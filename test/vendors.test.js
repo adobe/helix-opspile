@@ -140,7 +140,7 @@ describe('a vendor\'s page', () => {
     const p = await orgProfile(env, as(ADA), 'cdnco', { now: NOW });
     // Adobe started v1, v2 and v3; CDN Co answered each in an hour, five hours, an hour.
     assert.deepEqual(p.answers, {
-      by: 'them', asked: 3, answered: 3, median: 60,
+      by: 'them', asked: 3, answered: 3, median: 60, waits: [60, 60, 300],
     });
     assert.equal(p.vendor.cases.list.length, 2);
     assert.match(p.vendor.cases.list[0].inbox, /^\/inbox\?team=edge&t=t%3Av2$/);

@@ -179,6 +179,13 @@ describe('a team\'s overview', () => {
     const sum = (list) => list.reduce((a, v) => a + v, 0);
     assert.equal(sum(p.activity.messages), 23);
     assert.equal(sum(p.activity.staff), 20);
+    // And day by day, from the first week's Monday: a thread on each of six days (ACME's first on
+    // two, by Sam and Ada, then by the workflow).
+    assert.equal(p.activity.days.length, 7 * p.weeks.length);
+    assert.equal(sum(p.activity.days), 6);
+    const first = Date.parse(p.weeks[0]);
+    const at = (ago) => Math.round((Date.parse(day(ago).slice(0, 10)) - first) / 86400000);
+    assert.deepEqual([2, 3, 5, 9, 10, 20].map((a) => p.activity.days[at(a)]), [1, 1, 1, 1, 1, 1]);
     // Customers, the internal one left out; ACME's who of the team works it most.
     assert.deepEqual(p.customers.map((c) => [c.slug, c.name, c.messages, c.staff, c.threads]), [
       ['acme', 'ACME Corp', 12, 9, 2],

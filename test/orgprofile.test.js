@@ -151,9 +151,10 @@ describe('a customer\'s overview', () => {
     assert.equal(p.threadCount, 3);
     assert.equal(sum(p.activity.messages), 12);
     assert.equal(sum(p.activity.staff), 6);
-    // a1 and a2 were started by its people, answered in 2 h and in 30 min; a3 by Adobe.
+    // a1 and a2 were started by its people, answered in 2 h and in 30 min; a3 by Adobe. Every
+    // wait, in minutes, shortest first.
     assert.deepEqual(p.answers, {
-      by: 'adobe', asked: 2, answered: 2, median: 75,
+      by: 'adobe', asked: 2, answered: 2, median: 75, waits: [30, 120],
     });
   });
 

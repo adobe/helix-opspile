@@ -16,10 +16,13 @@
  * (src/orgprofile.js) of the customer's last half year, for everyone at Adobe, drawn with
  * ui/overview.js (`Overview`) as a team's is (ui/team.js).
  *
- * - Its threads, week by week: a stacked bar chart of what was said, broken down by the focus
- *   picked above it (who said it, which of its people, the team a thread is filed under, its
- *   area, its product or its channel), beside its numbers: how many people it has, and how soon
- *   Adobe answers what they start.
+ * - Its numbers, each over a drawing of its own: its people's faces (a partner's ringed), who
+ *   carries the conversation (its side against Adobe's), its threads' weeks as cells, every first
+ *   answer of Adobe's a dot (the median a line), and Adobe's people by the team of theirs that
+ *   works it most.
+ * - Its threads, week by week, under them: a stacked bar chart of what was said, broken down by
+ *   the focus picked above it (who said it, which of its people, the team a thread is filed
+ *   under, its area, its product or its channel).
  * - Its people: a card each, with their picture and title, a partner's marked, how often they
  *   post, what they ask about (Clef's areas and technologies of their threads) and their Contact
  *   in its knowledge base.
@@ -32,13 +35,17 @@
  *   and its stack drawing where it has one.
  *
  * A vendor's (`p.vendor`, src/vendors.js) is the other way round: Adobe is its customer. Its
- * numbers are its open cases and how soon it answers what Adobe starts; under them its open cases
+ * numbers are its open cases (as tags, in the color of who has the next move), how soon it answers
+ * what Adobe starts (a dot each), its status posts (a status page's weeks), the customers on its
+ * products (the products, then their icons) and Adobe's people; under them its open cases
  * and its status posts, then the customers whose threads show its products, and those of their
  * threads that wait on a third party. Titles only of the threads the viewer works.
  *
  * A partner's (`p.partner`, src/partners.js `partnerNumbers`), an agency's or a system
- * integrator's, works for customers: its numbers are its customers, its people, what waits on
- * Adobe and how soon Adobe answers, in its channels and in the customers'; under them the
+ * integrator's, works for customers: its numbers are its customers (their icons, a confirmed one
+ * ringed), its people (their faces), where they post (its channels against customers'), what
+ * waits on Adobe (as tags) and how soon Adobe answers (a dot each), in its channels and in the
+ * customers'; under them the
  * customers it works for (confirmed, likely, or where its people post) with what links them, what
  * waits on Adobe, and its people with where they post. A customer's lists its partners
  * (`p.partners`), each a link to its page, with what links them.
@@ -91,60 +98,184 @@ globalThis.CustomerView = (() => {
 
   /** `p`'s name, as the page shows it: the one the admin team gave it, else its slug. */
   const nameOf = (p) => p.org.name || p.org.slug;
+  const { num } = Overview;
 
-  /** A vendor's numbers: its cases, how soon it answers, what of the customers' depends on it. */
-  function vendorStats(p) {
+  // ---- the numbers, each with a drawing of its own ------------------------------------------
+
+  /** Who carries the conversation: the customer's side (partners too) against Adobe's. */
+  function messagesTile(p) {
     const total = sum(p.activity.messages);
     const ours = sum(p.activity.staff);
+    return {
+      label: `${num(total)} ${total === 1 ? 'message' : 'messages'}`,
+      pic: total ? Overview.balance([nameOf(p), total - ours], ['Adobe', ours]) : '',
+      note: total ? '' : 'none in these weeks',
+    };
+  }
+
+  /** How soon the first answer comes, every one a dot: Adobe's, or a vendor's to Adobe. */
+  function answerTile(p) {
     const a = p.answers;
+    const who = p.vendor ? nameOf(p) : 'Adobe';
+    const what = p.vendor ? 'case' : 'thread';
+    const started = p.vendor ? 'Adobe opened' : 'they started';
+    if (!a.asked) {
+      return {
+        label: 'No first answer to time',
+        note: esc(`no ${what} ${started} in these weeks`),
+      };
+    }
+    const open = a.asked - a.answered;
+    if (!a.answered) {
+      return {
+        cls: p.vendor ? '' : 'w3',
+        label: `No first answer of ${esc(who)}'s yet`,
+        note: esc(`in the ${plural(a.asked, what)} ${started}`),
+      };
+    }
+    return {
+      cls: p.vendor ? '' : 'w3',
+      label: `${num(Overview.wait(a.median))} to ${esc(who)}'s first answer`,
+      title: p.vendor ? 'Median time to the vendor\'s first answer, in cases Adobe opened'
+        : 'Median time to Adobe\'s first answer, in threads the customer started',
+      pic: a.answered ? Overview.waitDots(a.waits || [], a.median, { who }) : '',
+      note: esc(`typically, in the ${plural(a.asked, what)} ${started}${open ? `; ${open} not answered yet` : ''}`),
+    };
+  }
+
+  /**
+   * Adobe's people in its threads, by team: each in the team of theirs that works the customer
+   * most (`p.teams`), those on none last.
+   */
+  function staffTile(p, ctx) {
+    const rank = new Map(p.teams.map((t, i) => [t.slug, i]));
+    const groups = new Map();
+    for (const c of p.staff) {
+      const best = [...c.teams].sort((x, y) => (rank.get(x.slug) ?? 99) - (rank.get(y.slug) ?? 99))[0] || null;
+      const key = best ? best.slug : '';
+      if (!groups.has(key)) {
+        groups.set(key, {
+          name: best ? best.name : null, href: best ? ctx.teamHref(best.slug) : null, people: [], at: best ? rank.get(best.slug) ?? 98 : 99,
+        });
+      }
+      groups.get(key).people.push({ name: c.name, avatar: c.avatar });
+    }
+    const list = [...groups.values()].sort((x, y) => x.at - y.at);
+    const more = p.staffCount - p.staff.length;
+    if (!p.staffCount) return { cls: p.vendor ? '' : 'w3', label: 'Nobody from Adobe posted', note: 'in these weeks' };
+    return {
+      cls: p.vendor ? '' : 'w3',
+      label: `${num(p.staffCount)} from Adobe, on ${esc(plural(p.teamCount, 'team'))}`,
+      pic: list.length ? Overview.crews(list) : '',
+      note: more > 0 ? esc(`and ${plural(more, 'more person', 'more people')} who posted less`) : '',
+    };
+  }
+
+  /** A vendor's numbers: its cases, how soon it answers, what of the customers' depends on it. */
+  function vendorStats(p, ctx) {
     const { cases: c, status, dependents: d } = p.vendor;
-    const answered = a.asked ? `${a.answered} of the ${plural(a.asked, 'case')} Adobe opened` : 'no case opened in these weeks';
+    const latest = status.list[0];
+    const icons = d.customers.slice(0, 8).map((x) => link(ctx.orgHref(x.slug), ctx.orgIcon(x.slug, x.icon), { cls: 'tv-icon', title: x.name || x.slug })).join('');
+    const moreCustomers = d.customerCount - Math.min(8, d.customers.length);
+    const products = d.products.slice(0, 3).map((t) => chip(t.name, t.threads, { cls: 'tech', href: ctx.topicHref(`product:tech:${t.tech}`) })).join('');
     return Overview.stats([
-      [c.open, c.open === 1 ? 'open case' : 'open cases', `${c.them} waiting on them, ${c.us} on Adobe`],
-      [Overview.wait(a.median), 'first answer', a.answered ? `typically; ${answered}` : answered,
-        'Median time to the vendor\'s first answer, in cases Adobe opened'],
-      [total, total === 1 ? 'message' : 'messages', total ? `${Math.round((100 * ours) / total)}% by Adobe` : ''],
-      [status.total, status.total === 1 ? 'status post' : 'status posts', `in the last ${p.weeks.length} weeks`],
-      [d.customerCount, d.customerCount === 1 ? 'customer' : 'customers', `use ${nameOf(p)}'s products, in ${plural(d.threads, 'thread')}`],
-      [p.staffCount, p.staffCount === 1 ? 'person from Adobe' : 'people from Adobe', `on ${plural(p.teamCount, 'team')}`],
+      {
+        label: `${num(c.open)} open ${c.open === 1 ? 'case' : 'cases'}`,
+        pic: c.list.length ? Overview.caseTags(c.list) : '',
+        note: esc(c.open ? `${c.them} waiting on them, ${c.us} on Adobe${c.hidden ? `, ${c.hidden} in channels of teams you are not on` : ''}` : `Nothing is open with ${nameOf(p)}.`),
+      },
+      answerTile(p),
+      messagesTile(p),
+      {
+        label: `${num(status.total)} status ${status.total === 1 ? 'post' : 'posts'}`,
+        pic: Overview.statusWeeks(status.weekly, p.weeks),
+        note: esc(latest ? `the latest ${ago(latest.at)}: ${latest.title || 'a status post'}` : 'none in these weeks'),
+      },
+      {
+        label: `${num(d.customerCount)} ${d.customerCount === 1 ? 'customer' : 'customers'} on its products`,
+        pic: d.customerCount ? `<span class="tv-flow">${products}${products && icons ? '<span class="tv-to" aria-hidden="true">→</span>' : ''}${icons}${moreCustomers > 0 ? `<span class="tv-pmore">+${moreCustomers}</span>` : ''}</span>` : '',
+        note: esc(d.customerCount ? `in ${plural(d.threads, 'thread')}${d.waiting ? `, ${d.waiting} waiting on a third party` : ''}` : `no customer's thread shows a product of ${nameOf(p)}`),
+      },
+      staffTile(p, ctx),
     ]);
   }
 
   /** A partner's numbers: its customers and people, what waits on Adobe, how soon it answers. */
-  function partnerStats(p) {
+  function partnerStats(p, ctx) {
     const {
       customers: c, people: who, posts, waiting: w, answers: a,
     } = p.partner;
     const all = posts.own + posts.customers;
     const likely = c.linked - c.confirmed;
-    const answered = (x, where) => (x.asked ? `typically; ${x.answered} of the ${plural(x.asked, 'thread')} ${where}` : `no thread ${where}`);
+    const linked = c.list.filter((x) => x.linked);
+    const icons = linked.slice(0, 8).map((x) => link(ctx.orgHref(x.slug), ctx.orgIcon(x.slug, x.icon), { cls: `tv-icon${x.confirmed ? ' confirmed' : ''}`, title: `${x.name || x.slug}, ${x.confirmed ? 'confirmed' : 'likely'}` })).join('');
+    const answer = (x, { where, title }) => {
+      if (!x.asked) return { label: `No first answer ${esc(where)} to time`, note: 'no thread started there in these weeks' };
+      if (!x.answered) return { label: `No first answer of Adobe's ${esc(where)} yet`, note: esc(`in the ${plural(x.asked, 'thread')} started there`) };
+      return {
+        label: `${num(Overview.wait(x.median))} to Adobe's first answer ${esc(where)}`,
+        title,
+        pic: Overview.waitDots(x.waits || [], x.median),
+        note: esc(`typically, in the ${plural(x.asked, 'thread')} started there${x.asked > x.answered ? `; ${x.asked - x.answered} not answered yet` : ''}`),
+      };
+    };
     return Overview.stats([
-      [c.linked, c.linked === 1 ? 'customer' : 'customers', [c.confirmed ? `${c.confirmed} confirmed` : '', likely ? `${likely} likely` : '', c.count > c.linked ? `its people post for ${c.count - c.linked} more` : ''].filter(Boolean).join(', ') || 'none found yet'],
-      [who.count, who.count === 1 ? 'person' : 'people', who.count ? `${who.inCustomers} of them in customers' threads` : 'none known by their mail domain'],
-      [all, all === 1 ? 'message' : 'messages', all ? `by its people, ${Math.round((100 * posts.customers) / all)}% in customers' threads` : `by its people in the last ${p.weeks.length} weeks`],
-      [w.count, 'waiting on Adobe', `${w.own} in its channels, ${w.customers} in customers'`],
-      [Overview.wait(a.own.median), 'first answer', answered(a.own, 'started in its channels'),
-        'Median time to Adobe\'s first answer, in threads started outside Adobe in its channels'],
-      [Overview.wait(a.customers.median), 'first answer for customers', answered(a.customers, 'its people started in customers\' channels'),
-        'Median time to Adobe\'s first answer, in threads its people started in customers\' channels'],
+      {
+        label: `${num(c.linked)} ${c.linked === 1 ? 'customer' : 'customers'}`,
+        pic: icons ? `<span class="tv-flow">${icons}${linked.length > 8 ? `<span class="tv-pmore">+${linked.length - 8}</span>` : ''}</span>` : '',
+        note: esc([c.confirmed ? `${c.confirmed} confirmed` : '', likely ? `${likely} likely` : '', c.count > c.linked ? `its people post for ${c.count - c.linked} more` : ''].filter(Boolean).join(', ') || 'none found yet'),
+      },
+      {
+        label: `${num(who.count)} ${who.count === 1 ? 'person' : 'people'}`,
+        pic: who.list.length ? Overview.faces(who.list.map((m) => ({ name: m.name, avatar: m.avatar })), { more: who.count - who.list.length }) : '',
+        note: esc(who.count ? `${who.inCustomers} of them in customers' threads` : 'none known by their mail domain'),
+      },
+      {
+        label: `${num(all)} ${all === 1 ? 'message' : 'messages'} by its people`,
+        pic: all ? Overview.partsBar([
+          { name: 'Its channels', n: posts.own, series: 's0' },
+          { name: 'Customers\'', n: posts.customers, series: 's1' },
+        ]) : '',
+        note: esc(all ? `${Math.round((100 * posts.customers) / all)}% in customers' threads` : `none in the last ${p.weeks.length} weeks`),
+      },
+      {
+        label: `${num(w.count)} waiting on Adobe`,
+        pic: w.list.length ? Overview.caseTags(w.list) : '',
+        note: esc(`${w.own} in its channels, ${w.customers} in customers'${w.hidden ? `, ${w.hidden} in channels of teams you are not on` : ''}`),
+      },
+      answer(a.own, { where: 'in its channels', title: 'Median time to Adobe\'s first answer, in threads started outside Adobe in its channels' }),
+      answer(a.customers, { where: 'for customers', title: 'Median time to Adobe\'s first answer, in threads its people started in customers\' channels' }),
     ]);
   }
 
-  function stats(p) {
-    if (p.vendor) return vendorStats(p);
-    if (p.partner) return partnerStats(p);
-    const total = sum(p.activity.messages);
-    const ours = sum(p.activity.staff);
-    const threads = sum(p.activity.threads);
-    const a = p.answers;
-    const answered = a.asked ? `${a.answered} of the ${plural(a.asked, 'thread')} they started` : 'no thread of theirs started in these weeks';
+  function stats(p, ctx) {
+    if (p.vendor) return vendorStats(p, ctx);
+    if (p.partner) return partnerStats(p, ctx);
+    const t = p.activity.threads;
+    const partners = [...new Set(p.people.map((m) => m.partner).filter(Boolean))];
+    let partnerNote = '';
+    if (p.partnerCount) {
+      const from = partners.length === 1 ? partners[0] : `${plural(partners.length || p.partnerCount, 'partner')}`;
+      partnerNote = `<span class="tv-partner-k">${esc(`${p.partnerCount} from ${from}`)}</span>`;
+    }
+    const low = Math.min(...t);
+    const high = Math.max(...t);
     return Overview.stats([
-      [p.peopleCount, p.peopleCount === 1 ? 'person' : 'people', p.partnerCount ? `posted, ${p.partnerCount} of them from ${p.partnerCount === 1 ? 'a partner' : 'partners'}` : `posted in the last ${p.weeks.length} weeks`],
-      [total, total === 1 ? 'message' : 'messages', total ? `${Math.round((100 * ours) / total)}% by Adobe` : ''],
-      [p.threadCount, p.threadCount === 1 ? 'thread' : 'threads', `${Math.round(threads / p.weeks.length)} active in a week`],
-      [Overview.wait(a.median), 'first answer', a.answered ? `typically; ${answered}` : answered,
-        'Median time to Adobe\'s first answer, in threads the customer started'],
-      [p.staffCount, p.staffCount === 1 ? 'person from Adobe' : 'people from Adobe', `on ${plural(p.teamCount, 'team')}`],
+      {
+        label: `${num(p.peopleCount)} ${p.peopleCount === 1 ? 'person' : 'people'} posted`,
+        pic: p.people.length ? Overview.faces(p.people.map((m) => ({
+          name: m.name, avatar: m.avatar, cls: m.partner ? 'partner' : '', title: m.partner ? `${m.name || 'Someone'}, of ${m.partner}` : m.name,
+        })), { more: p.peopleCount - p.people.length }) : '',
+        note: partnerNote || esc(`in the last ${p.weeks.length} weeks`),
+      },
+      messagesTile(p),
+      {
+        label: `${num(p.threadCount)} ${p.threadCount === 1 ? 'thread' : 'threads'}`,
+        pic: Overview.strip(t, p.weeks),
+        note: esc(`${Math.round(sum(t) / t.length)} active in a week${high > low ? `, from ${low} to ${high}` : ''}`),
+      },
+      answerTile(p),
+      staffTile(p, ctx),
     ]);
   }
 
@@ -443,7 +574,7 @@ globalThis.CustomerView = (() => {
       channels: p.channels.map((c) => ({ ...c, teamName: ctx.teamName(c.team), sharedNames: c.shared.map(ctx.teamName) })),
     };
     return `<div class="tv">
-      <section class="tv-sec tv-hero cv-hero" aria-labelledby="cvActivity">${stats(p)}${activity(p)}</section>
+      <section class="tv-sec tv-hero cv-hero" aria-labelledby="cvActivity">${stats(p, ctx)}${activity(p)}</section>
       ${p.vendor ? `<div class="tv-two">${cases(p)}${statusPosts(p)}</div>
       <div class="tv-two">${dependents(p, ctx)}${thirdParty(p)}</div>` : ''}
       ${p.partner ? `<div class="tv-two">${partnerCustomers(p, ctx)}${partnerWaiting(p)}</div>

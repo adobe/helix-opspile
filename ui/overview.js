@@ -17,9 +17,11 @@
  *
  * - `face`, `spark` and `chip` (ui/person.js's, as the people cards have them) and `bar`: a
  *   person's picture over their initials, a line of weeks, a tag, a meter.
- * - `stats` and `chart`: the big numbers at the top, and the weeks as an area chart of what
- *   Adobe's people said under what the others did (a team's); a week under the pointer says its
- *   numbers. `bars` and `wireBars`: the weeks as stacked bars of any breakdown (a customer's).
+ * - `stats` and `chart`: the numbers at the top, each in its words over a drawing of its own
+ *   (`faces`, `balance`, `partsBar`, `strip`, `days`, `waitDots`, `statusWeeks`, `crews`,
+ *   `bubbles`, `caseTags`), and the weeks as an area chart of what Adobe's people said under what
+ *   the others did (a team's); a week under the pointer says its numbers. `bars` and `wireBars`:
+ *   the weeks as stacked bars of any breakdown (a customer's).
  * - `ranked`: a ranking, each row with its rank, a face or an icon, a meter and a line in the
  *   color of its face (`tint`) or icon (`tintIcons`, in `wire`).
  * - `tabs` and `layers`: tabs over a list, and a list of technologies by the layer of a stack.
@@ -185,10 +187,159 @@ globalThis.Overview = (() => {
     for (const s of box.querySelectorAll('.tv-months [data-at]')) s.style.setProperty('--at', s.dataset.at);
   }
 
-  /** The big numbers: `tiles` of `[n, what, sub]` (n a number, or words). */
-  function stats(tiles) {
-    const tile = ([n, what, sub, title]) => `<div class="tv-stat"${title ? ` title="${esc(title)}"` : ''}><b>${typeof n === 'number' ? n.toLocaleString('en') : esc(n)}</b><span>${esc(what)}</span>${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
-    return `<div class="tv-stats">${tiles.map(tile).join('')}</div>`;
+  // ---- the numbers at the top --------------------------------------------------------------
+
+  /**
+   * The numbers at the top: `tiles` of `{ label, pic, note, title, cls }`, each its words (HTML,
+   * the number in them a `num`), a drawing of it under them (`pic`, HTML, optional) and a line
+   * under that (`note`, HTML). No two of them need the same drawing, and no number lines up with
+   * another's: each is read in its own words. `cls` names the list (a team's row, `tv-team`).
+   */
+  function stats(tiles, { cls = '' } = {}) {
+    const tile = (t) => `<div class="tv-stat${t.cls ? ` ${t.cls}` : ''}"${t.title ? ` title="${esc(t.title)}"` : ''}><div class="tv-k">${t.label}</div>${t.pic || ''}${t.note ? `<small>${t.note}</small>` : ''}</div>`;
+    return `<div class="tv-stats${cls ? ` ${cls}` : ''}">${tiles.filter(Boolean).map(tile).join('')}</div>`;
+  }
+
+  /** A number, as the numbers at the top write it: bold, with its thousands. */
+  const num = (n) => `<b>${esc(typeof n === 'number' ? n.toLocaleString('en') : n)}</b>`;
+  const share = (n, of) => (of ? n / of : 0).toFixed(4);
+  /** How full a cell of `v` is, where the fullest has `max`: 0 (empty) to 4. */
+  const level = (v, max) => (v > 0 ? Math.max(1, Math.ceil((4 * v) / Math.max(1, max))) : 0);
+
+  /**
+   * Faces, one over the next: `people` of `{ name, avatar, cls, title }` (`cls` a ring, `partner`),
+   * the first `most`, and how many more there are (`more`, added to those left out).
+   */
+  function faces(people, { most = 8, more = 0, cls = '' } = {}) {
+    const shown = people.slice(0, most);
+    const rest = more + people.length - shown.length;
+    const one = (m) => Person.face(m.name, m.avatar, { cls: m.cls || '', attrs: ` title="${esc(m.title || m.name || 'Someone')}"` });
+    return `<span class="tv-pile${cls ? ` ${cls}` : ''}">${shown.map(one).join('')}${rest > 0 ? `<span class="tv-pmore" title="${esc(plural(rest, 'more person', 'more people'))}">+${rest}</span>` : ''}</span>`;
+  }
+
+  /**
+   * Who carries a conversation: `[name, n]` of the other side at the left, Adobe's at the right, a
+   * bar of the two with a line at the middle: past it, one side says more than half.
+   */
+  function balance([them, a], [us, b]) {
+    const all = a + b;
+    const pct = (n) => `${Math.round((100 * n) / Math.max(1, all))}%`;
+    const words = `${them} ${pct(a)}, ${us} ${pct(b)}`;
+    return `<div class="tv-bal" role="img" aria-label="${esc(`Who wrote them: ${words}`)}">
+      <span class="tv-bal-bar"><span class="them" data-f="${share(a, all)}"></span><span class="us" data-f="${share(b, all)}"></span></span>
+      <span class="tv-bal-k"><span><span class="nm">${esc(them)}</span> <b>${pct(a)}</b></span><span><span class="nm">${esc(us)}</span> <b>${pct(b)}</b></span></span></div>`;
+  }
+
+  /**
+   * A whole in parts: `parts` of `{ name, n, href, series }` side by side, as wide as their share,
+   * each named inside where it fits and a link where it goes somewhere.
+   */
+  function partsBar(list, { unit = 'message' } = {}) {
+    const all = list.reduce((s, x) => s + x.n, 0);
+    const one = (x) => {
+      const title = `${x.name}: ${plural(x.n, unit)}, ${Math.round((100 * x.n) / Math.max(1, all))}%`;
+      // A sliver is named in its title only.
+      const named = x.n / Math.max(1, all) >= 0.08;
+      return link(x.href || null, named ? `<span>${esc(x.name)}</span>` : '', { cls: 'tv-seg', title, attrs: ` data-series="${esc(x.series)}" data-f="${share(x.n, all)}"` });
+    };
+    return `<div class="tv-parts-bar">${list.filter((x) => x.n > 0).map(one).join('')}</div>`;
+  }
+
+  /** The weeks as a row of cells, the fuller the more there was: `values` of `weeks`. */
+  function strip(values, weeks, { unit = 'active thread' } = {}) {
+    const max = Math.max(...values, 1);
+    const cells = values.map((v, i) => `<rect class="l${level(v, max)}" x="${i * 10}" y="0" width="8" height="10"><title>${esc(`Week of ${dayOf(weeks[i])}: ${plural(v, unit)}`)}</title></rect>`).join('');
+    return `<svg class="tv-strip" viewBox="0 0 ${values.length * 10 - 2} 10" preserveAspectRatio="none" role="img" aria-label="${esc(`${unit}s, week by week, the last ${values.length} weeks`)}">${cells}</svg>`;
+  }
+
+  /**
+   * The days as a grid, a column a week from Monday to Sunday, a cell a day, the fuller the more
+   * threads were active then (`days`, from the Monday of `weeks[0]`), as a contribution graph.
+   */
+  function days(values, weeks) {
+    const max = Math.max(...values, 1);
+    const day = (i) => new Date(Date.parse(`${weeks[0]}T00:00:00Z`) + i * 86400000)
+      .toLocaleString('en', {
+        weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
+      });
+    // The days still to come this week have no cell.
+    const today = Math.floor((Date.now() - Date.parse(`${weeks[0]}T00:00:00Z`)) / 86400000);
+    const cells = values.slice(0, Math.max(0, today + 1)).map((v, i) => `<rect class="l${level(v, max)}" x="${Math.floor(i / 7) * 10}" y="${(i % 7) * 10}" width="8" height="8" rx="1.5"><title>${esc(`${day(i)}: ${plural(v, 'active thread')}`)}</title></rect>`).join('');
+    return `<svg class="tv-days" viewBox="0 0 ${weeks.length * 10 - 2} 68" role="img" aria-label="${esc(`Active threads, day by day, the last ${weeks.length} weeks`)}">${cells}</svg>`;
+  }
+
+  /** What the drawing of waits spans, in minutes: a minute to a week; its marks under it. */
+  const SPAN = 7 * 1440;
+  const TICKS = [[1, '1 min'], [60, '1 h'], [1440, '1 day'], [SPAN, '1 wk']];
+  const along = (min) => Math.log(Math.min(SPAN, Math.max(1, min))) / Math.log(SPAN);
+
+  /**
+   * Every first answer a dot (`waits`, in minutes), on a scale of a minute to a week (longer ones
+   * at its end), piled where they fall; the median a line. A dot is several where there are many.
+   */
+  function waitDots(waits, median, { who = 'Adobe' } = {}) {
+    const W = 120;
+    const R = 2;
+    const ROWS = 6;
+    const bins = new Map();
+    for (const m of waits) {
+      const b = Math.min(W / (2 * R) - 1, Math.floor((along(m) * W) / (2 * R)));
+      bins.set(b, (bins.get(b) || 0) + 1);
+    }
+    const per = Math.max(1, Math.ceil(Math.max(0, ...bins.values()) / ROWS));
+    const H = ROWS * 2 * R;
+    const dots = [...bins].flatMap(([b, n]) => Array.from({ length: Math.ceil(n / per) }, (_, k) => `<circle cx="${b * 2 * R + R}" cy="${H - k * 2 * R - R}" r="${R * 0.8}"></circle>`)).join('');
+    const mid = median === null || median === undefined ? '' : `<line class="mid" x1="${(along(median) * W).toFixed(1)}" x2="${(along(median) * W).toFixed(1)}" y1="0" y2="${H}"></line>`;
+    const within = (min) => Math.round((100 * waits.filter((m) => m <= min).length) / Math.max(1, waits.length));
+    const label = `${who}'s first answers: half within ${wait(median)}, ${within(60)}% within an hour, ${within(1440)}% within a day`;
+    return `<div class="tv-waits${who === 'Adobe' ? '' : ' them'}"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}"><line class="axis" x1="0" x2="${W}" y1="${H}" y2="${H}"></line>${dots}${mid}</svg>
+      <div class="tv-ticks">${TICKS.map(([m, l]) => `<span data-at="${along(m).toFixed(3)}">${esc(l)}</span>`).join('')}</div>${per > 1 ? `<span class="sub">A dot is ${per} threads.</span>` : ''}</div>`;
+  }
+
+  /** A status page's weeks: a bar each, a week with a post `on`; `values` of `weeks`. */
+  function statusWeeks(values, weeks) {
+    const weekBars = values.map((v, i) => `<rect class="${v ? 'on' : 'off'}" x="${i * 10}" y="0" width="7" height="20"><title>${esc(`Week of ${dayOf(weeks[i])}: ${v ? plural(v, 'status post') : 'no status post'}`)}</title></rect>`).join('');
+    return `<div class="tv-uptime"><svg viewBox="0 0 ${values.length * 10 - 3} 20" preserveAspectRatio="none" role="img" aria-label="${esc(`Weeks with a status post: ${values.filter(Boolean).length} of the last ${values.length}`)}">${weekBars}</svg>
+      <span class="tv-ends"><span>${values.length} weeks ago</span><span>this week</span></span></div>`;
+  }
+
+  /**
+   * People by their team: `groups` of `{ name, href, people }` (people as `faces` has them), a
+   * pile of faces each, ringed in the team's hue, its name beside it; a group without `name` is
+   * those on no team.
+   */
+  function crews(groups, { most = 4 } = {}) {
+    const shown = groups.slice(0, most);
+    const rest = groups.length - shown.length;
+    const one = (g) => `<li${g.name ? ` data-hue="${Person.hueOf(g.name)}"` : ''}>${faces(g.people, { most: 5 })}${g.name ? link(g.href || null, esc(g.name), { title: g.href ? 'Open the team\'s overview' : '' }) : '<span class="sub">on no team</span>'}</li>`;
+    return `<ul class="tv-crews">${shown.map(one).join('')}${rest > 0 ? `<li class="sub">and ${esc(plural(rest, 'more team'))}</li>` : ''}</ul>`;
+  }
+
+  /**
+   * People as faces as big as their share of what was said (`people` of `{ name, avatar, n,
+   * href }`, the most first), the busiest the biggest.
+   */
+  function bubbles(people, { most = 10 } = {}) {
+    const shown = people.slice(0, most);
+    const top = Math.max(1, ...shown.map((m) => m.n));
+    const one = (m) => {
+      const f = Math.max(0.35, Math.sqrt(m.n / top));
+      const title = `${m.name || 'Someone'}: ${plural(m.n, 'message')}`;
+      const pic = Person.face(m.name, m.avatar, { cls: `tv-b${f < 0.6 ? ' tiny' : ''}${m.n ? '' : ' quiet'}`, attrs: ` data-f="${f.toFixed(3)}" aria-hidden="true"` });
+      return link(m.href || null, pic, { title });
+    };
+    const rest = people.length - shown.length;
+    return `<span class="tv-bubbles">${shown.map(one).join('')}${rest > 0 ? `<span class="tv-pmore">+${rest}</span>` : ''}</span>`;
+  }
+
+  /** Links as small tags, each in who has its next move's color (`waiting`, as `waitTag`). */
+  function caseTags(rows, { most = 4 } = {}) {
+    const tag = (r) => {
+      const w = WAIT[r.waiting] || WAIT.vendor;
+      const title = `${w[1]}: ${r.title || 'a thread without a title'}`;
+      return link(r.inbox || null, esc(r.title || 'A thread without a title'), { cls: `tag ${w[0]}`, title });
+    };
+    return `<span class="tv-chips">${rows.slice(0, most).map(tag).join('')}</span>`;
   }
 
   /** The teams of a person, a chip each that opens its overview. */
@@ -456,12 +607,15 @@ globalThis.Overview = (() => {
         if (onTab) onTab(b);
       };
     }
-    // The months, where their weeks are.
-    for (const m of el.querySelectorAll('.tv-months [data-at]')) m.style.setProperty('--at', m.dataset.at);
+    // The months, where their weeks are, as the marks under the waits; and how big or wide a
+    // drawing's part is (`data-f`: a share, a face's size).
+    for (const m of el.querySelectorAll('.tv-months [data-at], .tv-ticks [data-at]')) m.style.setProperty('--at', m.dataset.at);
+    for (const x of el.querySelectorAll('[data-f]')) x.style.setProperty('--f', x.dataset.f);
   }
 
   return {
     esc, face, plural, ago, often, wait, link, spark, bar, chart, bars, wireBars, stats, chip, teamChips, ranked, tabs,
-    layers, knowledge, wire, threads, waitTag,
+    layers, knowledge, wire, threads, waitTag, num, faces, balance, partsBar, strip, days, waitDots, statusWeeks, crews,
+    bubbles, caseTags,
   };
 })();
