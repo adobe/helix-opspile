@@ -113,7 +113,7 @@ export function stackDot(view, { detected = [], title = '' } = {}) {
     const kind = kindOf(p);
     const t = p.tech && seen.get(p.tech);
     const note = plainNote(p.note);
-    const tip = [p.name, note.replace(/`/g, ''), t ? `${t.name}: ${pct(t.p)} sure from their threads` : '']
+    const tip = [p.name, note.replace(/`/g, ''), t ? `${t.name}: ${pct(t.p)} confidence` : '']
       .filter(Boolean).join('\n');
     const attrs = [`label=${q(p.name)}`, `part=${i}`, `tooltip=${q(tip)}`];
     if (note) {

@@ -185,8 +185,8 @@ const channelKind = {
       ? `move **${md(name)}** to **${md(team)}**: filed under it${c.team && c.team !== r.team ? ` instead of ${md(n.team(c.team))}` : ''}`
       : `add **${md(name)}** to **${md(team)}**'s inbox`;
     const facts = [
-      `- ${platformOf(c)} · ${code(c.channelId)}`,
-      `- Now ${c.team ? `filed under **${md(n.team(c.team))}**` : 'no threads yet'}${org ? ` · customer **${md(org)}**` : ''} · ${plural(c.threads, 'thread')}`,
+      `- ${platformOf(c)}, ${code(c.channelId)}`,
+      `- Now ${c.team ? `filed under **${md(n.team(c.team))}**` : 'no threads yet'}${org ? `, customer **${md(org)}**` : ''}, ${plural(c.threads, 'thread')}`,
       `- For [${md(team)}](/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}&view=manage)`,
       r.thread ? `- Asked in [the sidebar of a thread](/inbox?team=${encodeURIComponent(c.team || r.team)}&t=${encodeURIComponent(r.thread)}) of this channel, through its agent` : '',
     ].filter(Boolean).join('\n');
@@ -245,7 +245,7 @@ const memberKind = {
     const team = n.team(r.team);
     const open = r.status === 'open';
     const facts = [
-      `- ${md(p.email)}${p.id ? '' : ' · new to the inbox'}`,
+      `- ${md(p.email)}${p.id ? '' : ', new to the inbox'}`,
       `- Now ${p.teams.length ? `on ${md(p.teams.map(n.team).join(', '))}` : 'on no team'}`,
       `- For [${md(team)}](/inbox/admin?tab=teams&team=${encodeURIComponent(r.team)}&view=manage)`,
       r.thread ? `- Asked in [the sidebar of a thread](/inbox?t=${encodeURIComponent(r.thread)}), through its agent` : '',
@@ -297,11 +297,11 @@ const portalKind = {
     const follows = new Map(r.teams.map((t) => [t.team, t]));
     const c = r.channel;
     const facts = [
-      `- ${md(r.domain)} · ${md(r.requestedBy.email || '')}`,
+      `- ${md(r.domain)}, ${md(r.requestedBy.email || '')}`,
       `- Uses ${r.tech.length ? r.tech.map((t) => `**${md(t.name)}**`).join(', ') : 'nothing they picked'}`,
       `- Followed by ${r.teams.length ? r.teams.map((t) => `${md(t.name)} (${md(t.tech.map((id) => techName.get(id) || id).join(', '))})`).join(', ') : 'no team: none follows these'}`,
       `- People: ${r.members.map((m) => `${md(m.name || m.email)}${m.joined ? '' : ' (invited)'}`).join(', ') || 'none yet'}`,
-      c ? `- Channel filed under **${md(n.team(c.team))}** · customer **${md(n.org(c.org))}**` : '',
+      c ? `- Channel filed under **${md(n.team(c.team))}**, customer **${md(n.org(c.org))}**` : '',
     ].filter(Boolean).join('\n');
     // The teams it may go to, those that follow what the customer picked first.
     const teams = [...n.teams].filter((t) => t.slug !== ADMIN_TEAM || follows.has(t.slug))
@@ -576,7 +576,7 @@ const accountKind = {
 /** One side of a pair of accounts, as its thread lists it. */
 function sideText(s, n) {
   const where = s.orgs.slice(0, 4).map((o) => `${md(n.org(o.org))} (${o.n})`).join(', ');
-  return `- **${md(s.name)}** · ${PLATFORM[s.source] || md(s.source)} · ${s.mails.length ? s.mails.map(code).join(', ') : 'no mail address'}${s.keys.length > 1 ? ` · ${plural(s.keys.length, 'account')}` : ''}\n  ${s.messages ? `${plural(s.messages, 'message')}${where ? `, for ${where}` : ''}${s.orgs.length > 4 ? ' and more' : ''}, the latest ${md(String(s.last).slice(0, 10))}` : 'No messages'}`;
+  return `- **${md(s.name)}**, ${PLATFORM[s.source] || md(s.source)}, ${s.mails.length ? s.mails.map(code).join(', ') : 'no mail address'}${s.keys.length > 1 ? `, ${plural(s.keys.length, 'account')}` : ''}\n  ${s.messages ? `${plural(s.messages, 'message')}${where ? `, for ${where}` : ''}${s.orgs.length > 4 ? ' and more' : ''}, the latest ${md(String(s.last).slice(0, 10))}` : 'No messages'}`;
 }
 
 const personKind = {
@@ -644,7 +644,7 @@ const techKind = {
     const what = c.kind === 'diverging'
       ? `${plural(c.definitions.length, 'team')} define ${code(c.tech)} otherwise (${md(c.fields.map((x) => FIELD_NAMES[x] || x).join(', '))}). Each team's is what Clef asks in its channels. Keep it if that is meant, or use one of them everywhere.`
       : `"${md(c.name)}" is a name or alias of ${c.techs.map((t) => `${code(t)}`).join(' and ')}: a thread that names it matches either. Take it off the aliases of one, merge them into one technology, or keep it.`;
-    const defs = c.definitions.map((d) => `- **${md(d.name)}** ${code(d.tech)}, ${md(poss(n.team(d.team)))}${d.enabled ? '' : ' (turned off)'}: ${md(d.description)}${d.product ? ` · product ${md(d.product)}` : ''}${d.layer ? ` · layer ${md(d.layer)}` : ''}${d.aliases.length ? ` · also called ${md(d.aliases.join(', '))}` : ''}${d.path ? ` · [${md(d.path)}](/inbox/admin?tab=teams&team=${encodeURIComponent(d.team)}&view=kb&path=${encodeURIComponent(d.path)})` : ''}`).join('\n');
+    const defs = c.definitions.map((d) => `- **${md(d.name)}** ${code(d.tech)}, ${md(poss(n.team(d.team)))}${d.enabled ? '' : ' (turned off)'}: ${md(d.description)}${d.product ? `, product ${md(d.product)}` : ''}${d.layer ? `, layer ${md(d.layer)}` : ''}${d.aliases.length ? `, also called ${md(d.aliases.join(', '))}` : ''}${d.path ? `, [${md(d.path)}](/inbox/admin?tab=teams&team=${encodeURIComponent(d.team)}&view=kb&path=${encodeURIComponent(d.path)})` : ''}`).join('\n');
     const settle = (id, label, body, done, extra = {}) => ({
       id,
       label,

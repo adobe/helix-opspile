@@ -100,7 +100,7 @@ globalThis.Person = (() => {
   /** A tag of theirs, linked to it on the Topics page where there is one (`href`). */
   const chip = (name, threads, { cls = '', href = null } = {}) => link(href, esc(name), {
     cls: `ps-chip${cls ? ` ${cls}` : ''}`,
-    title: `${name}: ${plural(threads, 'thread')} of theirs${href ? '. Open it on the Topics page' : ''}`,
+    title: `${name}: ${plural(threads, 'thread')}`,
   });
 
   /** Tags past the first `most`, as a count of them that names them all when pointed at. */
@@ -120,7 +120,7 @@ globalThis.Person = (() => {
     const areas = dl(label, all.areas, (a) => chip(a.name, a.threads, { href: ctx.topicHref(`tag:${a.id}`) }));
     const tech = dl('Products', all.tech, (t) => chip(t.name, t.threads, { cls: 'tech', href: ctx.topicHref(`product:tech:${t.id}`) }));
     const keys = (w.customers || []).length ? `<dl class="ps-keys"><dt>Key customers</dt><dd>${w.customers.map((c) => link(ctx.orgHref(c.slug), `${ctx.orgIcon(c.slug, c.icon)}<span>${esc(ctx.orgName(c.slug, c.name))}</span>`, {
-      cls: 'ps-org', title: `${ctx.orgName(c.slug, c.name)}: ${plural(c.n, 'message')} of theirs in ${plural(c.threads, 'thread')}`,
+      cls: 'ps-org', title: `${ctx.orgName(c.slug, c.name)}: ${plural(c.n, 'message')} in ${plural(c.threads, 'thread')}`,
     })).join('')}</dd></dl>` : '';
     return {
       knows: areas || tech ? `<dl class="ps-knows">${areas}${tech}</dl>` : '',

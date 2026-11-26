@@ -57,7 +57,7 @@ export const MANIFEST = {
 // (base background, neutral content, gray-100 and gray-300 for the button), in its typeface
 // where the browser has it already.
 const OFFLINE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Enterprise Support · offline</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Enterprise Support – Offline</title>
 <style>:root{color-scheme:light dark}body{font:14px/1.5 adobe-clean-spectrum-vf,adobe-clean,system-ui,sans-serif;
 background:#111111;color:#dbdbdb;display:grid;place-items:center;min-height:100vh;margin:0}
 main{text-align:center;padding:24px}h1{font-size:22px;font-weight:800}

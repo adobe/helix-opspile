@@ -212,15 +212,15 @@ describe('customer card', () => {
     const { orgCardOverview } = page();
     assert.equal(orgCardOverview('ACME', null), '');
     assert.equal(orgCardOverview('ACME', { failed: true }), '');
-    assert.equal(orgCardOverview('ACME', { pending: true }), '<div class="kb pending">Looking up its overview…</div>');
+    assert.equal(orgCardOverview('ACME', { pending: true }), '<div class="kb pending">Loading…</div>');
     const html = orgCardOverview('ACME', { p: PROFILE });
     assert.match(html, /^<div class="ps-part"><div class="ps-freq">/);
     assert.match(html, /60 messages in 9 threads/);
     assert.match(html, /<dt>Answered<\/dt><dd>by Adobe in 1\.5 h, typically<\/dd>/);
-    assert.match(html, /<span class="av ps-av small" data-hue="\d" role="img" aria-label="Sam Reyes" title="Sam Reyes · Web lead">SR<\/span>/);
+    assert.match(html, /<span class="av ps-av small" data-hue="\d" role="img" aria-label="Sam Reyes" title="Sam Reyes, Web lead">SR<\/span>/);
     assert.match(html, /aria-label="Jordan Pike" title="Jordan Pike">JP<img src="https:\/\/pics\.example\/jp\.png"/);
     assert.match(html, /<span class="oc-more">\+2<\/span>/);
-    assert.match(html, /<a href="\/inbox\/admin\?tab=teams&amp;team=platform" title="Platform ops&#39;s overview in Teams">Platform ops<\/a>/);
+    assert.match(html, /<a href="\/inbox\/admin\?tab=teams&amp;team=platform" title="Open in Teams">Platform ops<\/a>/);
     assert.match(html, /<dl class="ps-knows"><dt>Topics<\/dt><dd><a href="\/inbox\/topics\?sel=tag%3Acdn" class="ps-chip"/);
     assert.match(html, /<dt>Products<\/dt><dd><a href="\/inbox\/topics\?sel=product%3Atech%3Afastly%2Fcdn" class="ps-chip tech"/);
     // A technology in none of its threads is only in its drawing: not the card's.
@@ -248,12 +248,12 @@ describe('customer card', () => {
     const local = p.orgLocal('acme');
     const html = p.orgCardHtml('acme', local, { p: PROFILE }, { slug: 'acme', channel: 'aem-acme' }, { href: 'https://slack.example/t1', platform: 'Slack' });
     assert.match(html, /^<div class="top"><span class="logo oc-logo"><span class="ico av">A<\/span><img src="\/fav\/acme\.example"><\/span>/);
-    assert.match(html, /<div class="ttl">2 channels · acme\.example<\/div>/);
+    assert.match(html, /<div class="ttl">2 channels, acme\.example<\/div>/);
     assert.match(html, /<span class="rel customer">Customer<\/span><span class="fo" data-fo="org" data-fo-id="acme">ACME Corporation<\/span>/);
-    assert.match(html, /<dt>Here<\/dt><dd>1 thread · 1 waiting on us · 1 unread<\/dd>/);
-    assert.match(html, /<dt>Channel<\/dt><dd>aem-acme <a href="https:\/\/slack\.example\/t1" target="_blank" rel="noopener" title="Open the thread in Slack">Open in Slack<\/a><\/dd>/);
+    assert.match(html, /<dt>Here<\/dt><dd>1 thread, 1 waiting on us, 1 unread<\/dd>/);
+    assert.match(html, /<dt>Channel<\/dt><dd>aem-acme <a href="https:\/\/slack\.example\/t1" target="_blank" rel="noopener">Open in Slack<\/a><\/dd>/);
     assert.match(html, /<dt>Active<\/dt><dd>/);
-    assert.match(html, /<button type="button" class="oc-act" data-org-only="acme" title="Only ACME Corporation&#39;s threads in the inbox">Only its threads<\/button>/);
+    assert.match(html, /<button type="button" class="oc-act" data-org-only="acme">Only ACME Corporation<\/button>/);
     // Another customer's thread says nothing of its channel; a vendor and a partner say so.
     const other = p.orgCardHtml('acme', local, null, { slug: 'globex', channel: 'aem-globex' });
     assert.doesNotMatch(other, /Channel|Open in/);
@@ -270,7 +270,7 @@ describe('customer card', () => {
     assert.deepEqual([...p.state.sel.customer], ['acme']);
     assert.deepEqual([...p.state.not.customer], ['globex']);
     assert.deepEqual(p.calls, ['hideCard', 'render', 'toUrl']);
-    assert.match(p.orgCardHtml('acme', { threads: 0 }, null), /data-org-only="" title="Every customer&#39;s threads again">All customers<\/button>/);
+    assert.match(p.orgCardHtml('acme', { threads: 0 }, null), /data-org-only="">All customers<\/button>/);
     p.state.not.customer = new Set(['acme']);
     p.onlyOrg('acme');
     assert.equal(p.state.not.customer, undefined);
@@ -307,7 +307,7 @@ describe('where the customer card shows', () => {
 
   it('leads from a person\'s card to their customer\'s profile', () => {
     const body = js.slice(js.indexOf('function cardHtml('), js.indexOf('// ---------------------------------------------------------------- customer cards'));
-    assert.match(body, /cardOrg\(ctx\.slug\) \? `<a href="\$\{esc\(orgHref\(ctx\.slug\)\)\}" title="\$\{esc\(`\$\{ctx\.org\}'s profile in Customers`\)\}">/);
+    assert.match(body, /cardOrg\(ctx\.slug\) \? `<a href="\$\{esc\(orgHref\(ctx\.slug\)\)\}" title="Open in Customers">/);
     assert.match(js, /thread: key \|\| null, slug: t\.org \|\| th\.org \|\| null,/);
   });
 });

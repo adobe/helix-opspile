@@ -60,9 +60,9 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
 
 // The kinds shown, each a hierarchy (ui/topicgraph.js).
 const TYPES = [
-  { id: 'topic', label: 'Topics', title: 'What the threads are about, found from what was said in them, in the areas Clef puts them in (the teams author those)' },
-  { id: 'person', label: 'People', title: 'Who posted in the threads: Adobe\'s people in their teams, the others in the customers they are of' },
-  { id: 'product', label: 'Products', title: 'The technologies of the tech stack Clef says the threads are about: features in their products, or the vendor\'s (on maps from before, outlined ones were not in the tech stack)' },
+  { id: 'topic', label: 'Topics', title: 'What the threads are about, grouped by area' },
+  { id: 'person', label: 'People', title: 'Who posted, grouped by team or customer' },
+  { id: 'product', label: 'Products', title: 'Products the threads are about, grouped by vendor' },
 ];
 const TYPE = Object.fromEntries(TYPES.map((t) => [t.id, t]));
 // The lists of the panel: what a node's threads are joined to.
@@ -74,10 +74,10 @@ const RELATED = [
 const MIN = 5;
 // What the trees show: everything, or only what is trending, declining or peaked (ui/trends.js).
 const LISTS = [
-  { id: '', label: 'All', title: 'The areas with their topics, the products with their features' },
-  { id: 'trending', label: 'Trending', title: 'Up on the 12 weeks before, surely and often enough, and not falling again: the faster it rises, the higher' },
-  { id: 'declining', label: 'Declining', title: 'Down on the 12 weeks before, surely, from often enough' },
-  { id: 'peaked', label: 'Peaked', title: 'Had a peak well above what is usual for it, more than four weeks ago, and is far below it now' },
+  { id: '', label: 'All' },
+  { id: 'trending', label: 'Trending', title: 'Up against the 12 weeks before' },
+  { id: 'declining', label: 'Declining', title: 'Down against the 12 weeks before' },
+  { id: 'peaked', label: 'Peaked', title: 'Peaked more than four weeks ago, far below the peak now' },
 ];
 const THREADS_SHOWN = 30;
 
@@ -223,7 +223,7 @@ async function drawGraph({ refit = false } = {}) {
   });
   if (!ok) {
     $('graphEmpty').hidden = false;
-    $('graphEmpty').textContent = 'This browser cannot draw the map (it needs WebGL). The panel has all of it.';
+    $('graphEmpty').textContent = 'The map needs WebGL, which this browser does not support.';
     return;
   }
   // A later draw may have taken its place while three.js loaded.
@@ -261,11 +261,11 @@ function tip(id, ev, hold) {
     return;
   }
   const acts = [
-    hold?.act === 'pop' && `Hold to open its ${n.children.length}`,
+    hold?.act === 'pop' && `Hold to expand ${n.children.length}`,
     hold?.act === 'fold' && `Hold to fold into ${hold.group.label}`,
-    `Double-click for only its threads${state.q.only === id ? ' (shown)' : ''}`,
+    state.q.only === id ? 'Double-click to show all' : 'Double-click to isolate',
   ].filter(Boolean);
-  t.innerHTML = `<b>${esc(n.label)}</b><span class="sub">${esc(n.one)}${n.gap ? ', not in the tech stack' : ''} · ${n.threads.length} thread${n.threads.length === 1 ? '' : 's'}</span><span class="sub">${esc(acts.join(' · '))}</span>`;
+  t.innerHTML = `<b>${esc(n.label)}</b><span class="sub">${esc(n.one)}${n.gap ? ', not in the tech stack' : ''}, ${n.threads.length} thread${n.threads.length === 1 ? '' : 's'}</span><span class="sub">${esc(acts.join('. '))}</span>`;
   t.hidden = false;
   const box = $('graph').getBoundingClientRect();
   t.style.left = `${Math.min(ev.clientX - box.left + 14, box.width - t.offsetWidth - 8)}px`;
@@ -321,7 +321,7 @@ function threadList(threads) {
   const link = (t) => `/inbox?team=${encodeURIComponent(t.team)}&t=${encodeURIComponent(t.key)}`;
   return `<section><h3>Threads <span class="sub">${list.length}</span></h3>
     <ol class="threads">${shown.map((t) => `<li><a href="${esc(link(t))}" target="_blank" rel="noopener">${esc(t.title || '(no title)')}</a>
-      <div class="sub">${esc(orgName(t.org))} · ${esc(t.team)} · ${plural(t.messages, 'message')}${state.q.sel.startsWith('topic:') ? '' : ` · ${esc(m.topics[t.topic]?.label || '')}`}${(t.tags || []).length ? '' : ' · <span class="untagged">no tag</span>'}</div></li>`).join('')}</ol>
+      <div class="sub">${esc(orgName(t.org))}, ${esc(t.team)}, ${plural(t.messages, 'message')}${state.q.sel.startsWith('topic:') ? '' : `, ${esc(m.topics[t.topic]?.label || '')}`}${(t.tags || []).length ? '' : ', <span class="untagged">no tag</span>'}</div></li>`).join('')}</ol>
     ${list.length > shown.length ? `<button class="link" id="moreThreads">Show all ${list.length}</button>` : ''}</section>`;
 }
 
@@ -347,8 +347,8 @@ function trendMark(it) {
   const s = it.stats;
   const lift = Math.round((s.lift - 1) * 100);
   const [cls, mark, title] = {
-    trending: ['up', '↑', `Trending: ${lift >= 0 ? '+' : ''}${lift}% on its share in the ${Trends.BASE} weeks before`],
-    declining: ['down', '↓', `Declining: ${lift}% on its share in the ${Trends.BASE} weeks before`],
+    trending: ['up', '↑', `Trending: ${lift >= 0 ? '+' : ''}${lift}% against the ${Trends.BASE} weeks before`],
+    declining: ['down', '↓', `Declining: ${lift}% against the ${Trends.BASE} weeks before`],
     peaked: ['peak', '↓', `Peaked in the week of ${TrendView.data.weeks[s.peak.week]}, far below that now`],
   }[it.list];
   return `<span class="trend ${cls}" title="${esc(title)}">${mark}</span>`;
@@ -376,8 +376,8 @@ function navRows() {
     const it = item(n);
     const few = n.type === 'topic' && n.threads.length && tagged(n.threads) / n.threads.length < 0.25;
     const share = it ? TrendView.pct(100 * it.stats.share) : '–';
-    const title = [n.label, n.one, plural(n.threads.length, 'thread'), few && 'Clef tags few of its threads',
-      it && `${share} of the active channels, the last ${Trends.RECENT} weeks (${it.stats.perWeek.toFixed(1)} channels a week)`].filter(Boolean).join(' · ');
+    const title = [n.label, n.one, plural(n.threads.length, 'thread'), few && 'few threads tagged',
+      it && `${share} of active channels in the last ${Trends.RECENT} weeks`].filter(Boolean).join(', ');
     const chev = depth === 0 && shows(n)
       ? `<button class="chev" data-fold="${esc(n.id)}" aria-expanded="${Boolean(n.open)}" aria-label="${n.open ? 'Fold' : 'Open'} ${esc(n.label)}"></button>`
       : '<span class="chev none" aria-hidden="true"></span>';
@@ -458,10 +458,7 @@ function overview() {
   const topics = [...g.all.values()].filter((n) => n.type === 'topic');
   const none = threads.length - tagged(threads);
   return `<h2>${plural(topics.length, 'topic')} <span class="sub">${plural(threads.length, 'thread')}</span></h2>
-    <p class="hint">Found from what was said in the threads with ${m.min_messages} messages or more (not meetings or
-      people's comings and goings), named all at once from their most typical threads, Clef topics and products. <b>${none} of them (${pct(none, threads.length)})
-      have no tag from Clef</b>: the topics Clef rarely tags are what its topic questions miss.</p>
-    ${TrendView.data ? `<p class="hint">The sidebar has each one's share of the active channels (those with a message that week) that talk about it, the last ${Trends.RECENT} full weeks; trending, declining and peaked are said of those weeks against the ${Trends.BASE} before. A click picks it on the map and adds its line to the chart, which keeps it until × takes it off.</p>` : ''}
+    <p class="hint">From threads with ${m.min_messages} or more messages. ${none} (${pct(none, threads.length)}) have no tag.</p>
     ${gaps()}
     ${areasSection()}`;
 }
@@ -470,7 +467,7 @@ function overview() {
 function gaps() {
   const all = [...state.graph.all.values()].filter((n) => n.type === 'product');
   if (!all.length) {
-    return '<h3>Products</h3><p class="hint">No products yet: Clef says which technologies a thread is about when it labels it.</p>';
+    return '<h3>Products</h3><p class="hint">No products yet.</p>';
   }
   const list = all.filter((n) => n.gap).sort((a, b) => b.threads.length - a.threads.length
     || a.label.localeCompare(b.label));
@@ -494,13 +491,11 @@ function gaps() {
       <span class="meter"><span class="fill" data-w="${Math.round((100 * n.threads.length) / max)}"></span></span>
       <span class="n" title="${plural(customers(n), 'customer')}">${n.threads.length}</span></button></li>`).join('')}</ul>`;
   return `<h3>Not in the tech stack <span class="sub">${list.length}</span></h3>
-    <p class="hint">Products the threads are about that no technology of the tech stack names
-      (${pct(missed, missed + named)} of the products found). Add them, or their names to an
-      entry's aliases, on the Agents page, and Clef asks about them.</p>
+    <p class="hint">${pct(missed, missed + named)} of the products found. Add them to a team's catalog, or as aliases of an entry.</p>
     ${shown.length ? rows(shown) : '<p class="sub">None that two customers name.</p>'}
     ${one.length ? `<details class="gaps"><summary>Named by one customer <span class="sub">${one.length}</span></summary>${rows(one)}</details>` : ''}
-    ${past ? `<div class="sub more">and ${past} more named in several threads (Find shows them)</div>` : ''}
-    ${once ? `<div class="sub more">and ${once} named in one thread each (Find shows them)</div>` : ''}`;
+    ${past ? `<div class="sub more">and ${past} more named in several threads</div>` : ''}
+    ${once ? `<div class="sub more">and ${once} named in one thread each</div>` : ''}`;
 }
 
 /** A group's children (its topics, people or features), by their threads; a click picks one. */
@@ -510,7 +505,7 @@ function childList(n) {
     .sort((a, b) => b.threads.length - a.threads.length || a.label.localeCompare(b.label));
   if (!rows.length) return '';
   const max = rows[0].threads.length;
-  const what = { tag: 'Its topics', team: 'Its people', org: 'Its people' }[n.type] || 'Its features';
+  const what = { tag: 'Topics', team: 'People', org: 'People' }[n.type] || 'Features';
   return `<section><h3>${what} <span class="sub">${rows.length}</span></h3>
     <ul class="rel">${rows.map((c) => `<li><button class="pickr" data-sel="${esc(c.id)}" data-type="${c.type}">
       <span class="dot" data-type="${dotType(c)}"${c.gap ? ' data-gap' : ''}></span><span class="nm">${esc(c.label)}</span>
@@ -523,7 +518,7 @@ function foldButton(n) {
   const g = state.graph;
   const parent = n.parent && g.all.get(n.parent);
   if (n.children?.length && (n.type === 'org' || n.children.length > 1)) {
-    return `<button class="fold" data-fold="${esc(n.id)}">${n.open ? 'Fold' : `Open its ${n.children.length}`}</button>`;
+    return `<button class="fold" data-fold="${esc(n.id)}">${n.open ? 'Fold' : `Expand ${n.children.length}`}</button>`;
   }
   if (parent && parent.open) {
     return `<button class="fold" data-fold="${esc(parent.id)}" title="Fold back into ${esc(parent.label)}">Fold into ${esc(parent.label)}</button>`;
@@ -572,14 +567,14 @@ function areaForm() {
   return `<form class="areaform" id="areaForm" autocomplete="off">
     <h3>${e.new ? 'New area' : `Change ${esc(def.name || e.id)}`}</h3>
     ${e.new ? `<label class="fld"><span>In the knowledge base of</span><select id="afTeam">${teams.map((t) => `<option value="${esc(t)}">${esc(teamLabel(t))}</option>`).join('')}</select></label>
-      <label class="fld"><span>Id (lower case, digits and -; it stays when the area is renamed)</span><input id="afId" required pattern="[a-z][a-z0-9-]*" maxlength="40"></label>` : ''}
+      <label class="fld"><span>Id (lowercase letters, digits and -)</span><input id="afId" required pattern="[a-z][a-z0-9-]*" maxlength="40"></label>` : ''}
     <label class="fld"><span>Name</span><input id="afTitle" required maxlength="80" value="${esc(def.name || '')}"></label>
-    <label class="fld"><span>Clef is asked: “Is this thread about …?”</span><textarea id="afWhat" rows="3" required maxlength="500">${esc(def.what || '')}</textarea></label>
-    ${e.new ? '' : `<label class="only"><input type="checkbox" id="afOn"${def.enabled === false ? '' : ' checked'}> Asked in every label</label>`}
-    <p class="hint">Every area is one more question Clef answers for every thread. A change shows on the threads as they are labeled again.</p>
+    <label class="fld"><span>Threads about…</span><textarea id="afWhat" rows="3" required maxlength="500">${esc(def.what || '')}</textarea></label>
+    ${e.new ? '' : `<label class="only"><input type="checkbox" id="afOn"${def.enabled === false ? '' : ' checked'}> On</label>`}
+    <p class="hint">Changes apply as threads are labeled again.</p>
     <div class="acts"><button class="primary" type="submit">${e.new ? 'Add' : 'Save'}</button>
       <button type="button" id="afCancel">Cancel</button>
-      ${e.new ? '' : `<button type="button" class="danger" id="afDelete"${e.confirm ? ' data-confirm' : ''}>${e.confirm ? 'Delete it, for good' : 'Delete'}</button>`}</div>
+      ${e.new ? '' : `<button type="button" class="danger" id="afDelete"${e.confirm ? ' data-confirm' : ''}>${e.confirm ? 'Delete for good' : 'Delete'}</button>`}</div>
   </form>`;
 }
 
@@ -591,12 +586,12 @@ async function saveArea(method, body) {
   if (res && res.ok) {
     state.areas = out.areas || state.areas;
     state.editArea = null;
-    state.note = { text: method === 'DELETE' ? 'Deleted. Clef stops asking it from the next labels.' : 'Saved. Clef asks it from the next labels.' };
+    state.note = { text: method === 'DELETE' ? 'Deleted.' : 'Saved.' };
     // The bubbles take the areas' names as they are now: drawn again.
     render();
     return;
   }
-  state.note = { err: true, text: out.error || 'That did not work.' };
+  state.note = { err: true, text: out.error || 'Could not save.' };
   renderPanel();
 }
 
@@ -609,13 +604,12 @@ function areasSection() {
   const may = (state.may.areas || []).length;
   const note = state.note ? `<p class="hint${state.note.err ? ' err' : ''}">${esc(state.note.text)}</p>` : '';
   return `<h3>Areas <span class="sub">${list.length}</span></h3>
-    <p class="hint">What Clef puts the threads in: each area is a question it answers for every thread. The teams author them${may ? '; you change those of the teams you manage' : ''}. Follow one and its threads are in your personal view.</p>
     ${note}${areaForm()}
     <table class="topics areas"><thead><tr><th>Area</th><th class="n">Topics</th><th class="n">Threads</th><th></th></tr></thead><tbody>${list.map((a) => {
     const team = a.teams.find(mayArea);
     return `<tr${a.enabled ? '' : ' class="off"'}><td><button class="link pickr-a" data-sel="tag:${esc(a.id)}" title="${esc(a.what)}">${esc(a.name)}</button>${a.enabled ? '' : ' <span class="sub">off</span>'}</td>
       <td class="n">${topics(a.id) || '–'}</td>
-      <td class="n"${count(a.id) ? '' : ' title="None on this map: it was built before the area, or Clef put no thread in it"'}>${count(a.id) || '–'}</td>
+      <td class="n"${count(a.id) ? '' : ' title="No threads on this map"'}>${count(a.id) || '–'}</td>
       <td class="acts">${followButton({ kind: 'area', target: a.id }, a.name)}${team ? `<button data-edit-area="${esc(team)}|${esc(a.id)}">Change</button>` : ''}</td></tr>`;
   }).join('')}</tbody></table>
     ${may && !state.editArea ? '<button id="newArea">New area</button>' : ''}`;
@@ -689,7 +683,7 @@ function productAsks(n, info) {
     rule: `Suggest an extraction rule that detects ${name}${ids.length ? ` (${ids.join(', ')})` : ''} in messages: a link, a hostname, a header or an error that only it has. Try it on its recent threads before you add it.`,
     entry: `Read the recent threads about ${name} and write what the knowledge base is missing about it: its known issues, how customers set it up, and who knows it.`,
     // The record of it: its catalog file, written out (its frontmatter is what Clef is asked).
-    record: (path, team) => `Write ${path}, the catalog entry for ${name} in ${team}'s knowledge base, as the record of what we know of it: what it is and what customers use it for with Adobe's products, how it is usually set up, its known issues and their fixes, who knows it best, and links to the entries of the knowledge base about it. Read the recent threads about ${name} first. Keep its frontmatter as it is: Clef is asked its description.`,
+    record: (path, team) => `Write ${path}, the catalog entry for ${name} in ${team}'s knowledge base, as the record of what we know of it: what it is and what customers use it for with Adobe's products, how it is usually set up, its known issues and their fixes, who knows it best, and links to the entries of the knowledge base about it. Read the recent threads about ${name} first. Keep its frontmatter as it is.`,
     catalog: `${name} comes up in threads but no catalog entry names it. Find the threads that name it, and add it to the catalog (products/) as what it is, or its name to the aliases of the entry that covers it.`,
   };
 }
@@ -753,7 +747,7 @@ function syncAgent(n) {
 function askButton(n) {
   const a = agentOf(n);
   if (!a) return '';
-  const title = `Talk to ${a.name}'s knowledge-base agent${a.about ? ` about ${a.about}` : ''}: only you see it`;
+  const title = `Ask ${a.name}'s knowledge-base agent${a.about ? ` about ${a.about}` : ''}`;
   return `<button class="ask" id="askAgent" title="${esc(title)}">
     <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>Ask the agent</button>`;
 }
@@ -808,15 +802,15 @@ function fileHtml(body, { kind, slug, path }) {
  */
 function record(team, entry, { n, ask }) {
   const path = entry.path || team.path;
-  const where = `${linkTo(adminHref('team', team.team), team.name, `${poss(team.name)} overview`)}${/s$/i.test(team.name) ? '\'' : '\'s'} catalog · ${linkTo(kbHref('team', team.team, path), path, `Open it in ${team.name}'s knowledge base`)}`;
+  const where = `${linkTo(adminHref('team', team.team), team.name, `${poss(team.name)} overview`)}${/s$/i.test(team.name) ? '\'' : '\'s'} catalog: ${linkTo(kbHref('team', team.team, path), path, `Open in ${team.name}'s knowledge base`)}`;
   const little = thin(entry.body);
   const body = little && STUB.test(entry.body) ? '' : fileHtml(entry.body, { kind: 'team', slug: team.team, path });
   return `<div class="tk-record">
     <p class="sub tk-where">${where}${team.enabled === false ? ' (off there)' : ''}</p>
     ${body ? `<div class="tk-md${little ? '' : ' folded'}" id="rec-${esc(team.team)}">${body}</div>
       ${little ? '' : `<button class="link tk-more" data-unfold="rec-${esc(team.team)}">Show all</button>`}
-      ${entry.truncated ? `<p class="sub">${linkTo(kbHref('team', team.team, path), 'Open it for the rest')}</p>` : ''}` : ''}
-    ${little ? `<p class="hint">${body ? 'It says little yet' : 'Its file says nothing of it yet'}: it is where the team keeps what it knows of ${esc(n.label)}. ${ask ? askFor(n, ask, 'Ask the agent to write it') : ''}</p>` : ''}
+      ${entry.truncated ? `<p class="sub">${linkTo(kbHref('team', team.team, path), 'Open the full entry')}</p>` : ''}` : ''}
+    ${little ? `<p class="hint">${body ? 'This entry is short.' : 'This entry is empty.'} ${ask ? askFor(n, ask, 'Ask the agent to write the entry') : ''}</p>` : ''}
   </div>`;
 }
 
@@ -843,7 +837,7 @@ function records(n, teams, { agent, ask, entryOf = (t) => t.entry }) {
   const unread = teams.filter((t) => !entryOf(t) && t !== first);
   // The record the agent asked writes is its own knowledge base's.
   return `${record(first, entryOf(first), { n, ask: first.team === agent?.slug ? ask(first) : null })}
-    ${others.map((t) => `<details class="tk-other"><summary>${esc(poss(t.name))} own entry, for its channels</summary>${record(t, entryOf(t), { n, ask: null })}</details>`).join('')}
+    ${others.map((t) => `<details class="tk-other"><summary>${esc(poss(t.name))} entry</summary>${record(t, entryOf(t), { n, ask: null })}</details>`).join('')}
     ${unread.length ? `<p class="sub facts">Also in the catalog of ${unread.map((t) => esc(t.name)).join(', ')}</p>` : ''}`;
 }
 
@@ -864,9 +858,9 @@ function catalogSection(n, info, asks) {
     const asked = shown.description || leaf.description;
     return `<section class="tk-cat"><h3>In the catalog</h3>
       ${records(n, leaf.teams, { agent, ask: (t) => asks.record(t.path, t.name) })}
-      ${asked ? `<p class="theme">Clef is asked whether a thread shows ${esc(asked)}${leaf.teams.length > 1 ? ` <span class="sub">(in ${esc(poss(shown.name))} words)</span>` : ''}.</p>` : ''}
+      ${asked ? `<p class="theme">${esc(asked)}${leaf.teams.length > 1 ? ` <span class="sub">(${esc(poss(shown.name))} description)</span>` : ''}</p>` : ''}
       ${names.length ? `<p class="chips facts"><span class="sub">Also called</span>${names.map((a) => `<span class="ps-chip tech">${esc(a)}</span>`).join('')}</p>` : ''}
-      ${facts.length ? `<p class="sub facts">${esc(facts.join(' · '))}</p>` : ''}</section>`;
+      ${facts.length ? `<p class="sub facts">${esc(facts.join(', '))}</p>` : ''}</section>`;
   }
   if (!info.tech.length) return '';
   // A product of features: its record, and whose catalogs its features are in.
@@ -885,7 +879,7 @@ function catalogSection(n, info, asks) {
   return `<section class="tk-cat"><h3>In the catalog <span class="sub">${plural(info.tech.length, 'technology', 'technologies')}</span></h3>
     ${p ? records(n, [pTeam], { agent, ask: (t) => asks.record(t.path, t.name), entryOf: () => p.entry }) : ''}
     ${p?.description && p.description !== p.title ? `<p class="theme">${esc(p.description)}</p>` : ''}
-    <p class="sub facts">Its features are in the catalog of ${[...teams.values()].sort((a, b) => b.n - a.n)
+    <p class="sub facts">Features in the catalog of ${[...teams.values()].sort((a, b) => b.n - a.n)
     .map((t) => `${linkTo(adminHref('team', t.team), t.name)} <span class="n">${t.n}</span>`).join(', ')}</p></section>`;
 }
 
@@ -894,14 +888,13 @@ function knowledgeSection(n, info, asks) {
   const rows = info.knowledge;
   const head = `<h3>Knowledge base <span class="sub">${rows.length}</span></h3>`;
   if (!rows.length) {
-    return `<section class="tk-kb">${head}<p class="hint">No entry of the knowledge bases you read is about it yet.
+    return `<section class="tk-kb">${head}<p class="hint">No entries yet.
       ${askFor(n, asks.entry, 'Ask the agent to write what is missing')}</p></section>`;
   }
   return `<section class="tk-kb">${head}<ul class="kbhits">${rows.map((k) => `<li>
       ${linkTo(kbHref(k.kind, k.slug, k.path), k.title || k.path, k.path)}
-      <div class="sub">${esc([k.type, k.kind === 'org' ? `${k.name}, a customer` : k.name].filter(Boolean).join(' · '))}</div>
-      ${k.description ? `<div class="sub desc">${esc(k.description)}</div>` : ''}</li>`).join('')}</ul>
-    <p class="hint">The entries of the knowledge bases you read that are about it, by its name and by what they say, the closest first.</p></section>`;
+      <div class="sub">${esc([k.type, k.kind === 'org' ? `${k.name}, a customer` : k.name].filter(Boolean).join(', '))}</div>
+      ${k.description ? `<div class="sub desc">${esc(k.description)}</div>` : ''}</li>`).join('')}</ul></section>`;
 }
 
 /** The extraction rules that detect it, each a link to its team's rules. */
@@ -910,14 +903,13 @@ function rulesSection(n, info, asks) {
   const hidden = info.hiddenRules ? `<div class="sub more">and ${plural(info.hiddenRules, 'rule')} of teams whose knowledge base you do not read</div>` : '';
   const head = `<h3>Extraction rules <span class="sub">${rules.length}</span></h3>`;
   if (!rules.length) {
-    return `<section class="tk-rules">${head}<p class="hint">No rule detects it in a message: only Clef says which threads are about it.
+    return `<section class="tk-rules">${head}<p class="hint">No rules yet.
       ${info.tech.length ? askFor(n, asks.rule, 'Ask the agent for one') : ''}</p>${hidden}</section>`;
   }
   return `<section class="tk-rules">${head}<ul class="rules">${rules.map((r) => `<li${r.enabled ? '' : ' class="off"'}>
       ${linkTo(adminHref('team', r.team, { view: 'extraction' }), r.name, `${r.teamName}'s extraction rules`)}
-      <span class="sub">${esc(r.teamName)}${r.enabled ? '' : ' · off'}</span>
-      ${r.pattern === null ? '<div class="sub">a script</div>' : `<code title="${esc(`/${r.pattern}/${r.flags}`)}">/${esc(r.pattern)}/${esc(r.flags)}</code>`}</li>`).join('')}</ul>${hidden}
-    <p class="hint">A rule finds it in what was said and tells Clef, from the next labeling of a thread.</p></section>`;
+      <span class="sub">${esc(r.teamName)}${r.enabled ? '' : ', off'}</span>
+      ${r.pattern === null ? '<div class="sub">a script</div>' : `<code title="${esc(`/${r.pattern}/${r.flags}`)}">/${esc(r.pattern)}/${esc(r.flags)}</code>`}</li>`).join('')}</ul>${hidden}</section>`;
 }
 
 /** Who follows it, and the customers whose stack drawing has it. */
@@ -927,9 +919,8 @@ function whoSection(info) {
   const followed = teams.length || follows.people ? `<section class="tk-who"><h3>Followed by</h3>
     <p class="chips">${teams.join('')}${follows.people ? `<span class="sub">${teams.length ? 'and ' : ''}${plural(follows.people, 'person', 'people')}</span>` : ''}</p></section>` : '';
   const drawn = stacks.length ? `<section class="tk-stacks"><h3>In customers' stacks <span class="sub">${stacks.length + info.moreStacks}</span></h3>
-    <p class="chips">${stacks.map((s) => `<a class="ps-chip" href="${esc(adminHref('org', s.org))}" title="${esc(`On ${s.name}'s stack drawing: ${s.parts.map((x) => x.name).join(', ')}`)}">${esc(s.name)}</a>`).join('')}
-      ${info.moreStacks ? `<span class="sub">and ${info.moreStacks} more</span>` : ''}</p>
-    <p class="hint">The customers whose stack drawing names it, whatever their threads are about.</p></section>` : '';
+    <p class="chips">${stacks.map((s) => `<a class="ps-chip" href="${esc(adminHref('org', s.org))}" title="${esc(s.parts.map((x) => x.name).join(', '))}">${esc(s.name)}</a>`).join('')}
+      ${info.moreStacks ? `<span class="sub">and ${info.moreStacks} more</span>` : ''}</p></section>` : '';
   return followed + drawn;
 }
 
@@ -938,11 +929,11 @@ function productSections(n) {
   const t = techOf(n);
   if (!t) return '';
   if (t.loading) return '<p class="sub tk-wait">Reading the catalog and the knowledge bases…</p>';
-  if (t.error) return `<p class="hint err">The catalog and the knowledge bases: ${esc(t.error)}</p>`;
+  if (t.error) return `<p class="hint err">Could not load the catalog: ${esc(t.error)}</p>`;
   const info = t.data;
   const asks = productAsks(n, info);
-  const gap = !info.tech.length ? `<p class="hint gap">No catalog entry names it, so Clef is not asked about it.
-    ${askFor(n, asks.catalog, 'Ask the agent to add it')}</p>` : '';
+  const gap = !info.tech.length ? `<p class="hint gap">Not in any catalog.
+    ${askFor(n, asks.catalog, 'Ask the agent to add to the catalog')}</p>` : '';
   // A rule detects a technology of the catalog: none without one.
   const rules = info.tech.length || info.rules.length ? rulesSection(n, info, asks) : '';
   return `${gap}${catalogSection(n, info, asks)}${knowledgeSection(n, info, asks)}${rules}${whoSection(info)}`;
@@ -952,13 +943,15 @@ function details(n) {
   const m = map();
   const topic = n.type === 'topic' ? m.topics[Number(n.key)] : null;
   const org = n.type === 'org' ? m.orgs[n.key] : null;
+  const parentOf = n.parent && map() && state.graph.all.get(n.parent);
   const facts = [
+    `${n.one}${parentOf ? ` in ${parentOf.label}` : ''}`,
     plural(n.threads.length, 'thread'),
     ...(topic ? [`cohesion ${topic.cohesion}`] : []),
     ...(org ? [org.type] : []),
     ...(n.type === 'product' && n.gap ? ['not in the tech stack'] : []),
     ...(n.type === 'product' && !n.gap && !n.key.startsWith('group:') ? [`tech stack: ${products()[n.key]?.name}`] : []),
-    ...(n.type === 'tag' ? [] : [`${pct(tagged(n.threads), n.threads.length)} tagged by Clef`]),
+    ...(n.type === 'tag' ? [] : [`${pct(tagged(n.threads), n.threads.length)} tagged`]),
   ];
   const others = RELATED.map((t) => t.id).filter((t) => t !== n.type || t === 'person');
   const area = n.type === 'tag' ? areaList().find((a) => a.id === n.key) : null;
@@ -968,17 +961,17 @@ function details(n) {
   const teamSlug = n.type === 'team' ? n.key : (n.type === 'person' && parent?.type === 'team' ? parent.key : null);
   const teamLink = teamSlug && !teamSlug.startsWith('_')
     ? `<p class="sub facts"><a href="/inbox/admin?${new URLSearchParams({ tab: 'teams', team: teamSlug })}">${esc(n.type === 'team' ? 'The team\'s overview in Teams' : `${teamLabel(teamSlug)}'s overview in Teams`)}</a></p>` : '';
-  return `<div class="head"><span class="dot" data-type="${dotType(n)}"></span><div><div class="sub">${esc(n.one)}${parent ? ` in ${esc(parent.label)}` : ''}</div>
+  return `<div class="head"><span class="dot" data-type="${dotType(n)}"></span><div>
       <h2>${esc(n.label)}</h2></div><button class="close" id="unpick" aria-label="Back to the topics" title="Back to the topics">✕</button></div>
     ${followButton(followOf(n), n.label) || foldButton(n) || team || askButton(n) ? `<div class="acts">${followButton(followOf(n), n.label)}${foldButton(n)}${team ? `<button data-edit-area="${esc(team)}|${esc(area.id)}">Change</button>` : ''}${askButton(n)}</div>` : ''}
     ${area && state.editArea && !state.editArea.new && state.editArea.id === area.id ? areaForm() : ''}
-    ${area?.what ? `<p class="theme">Clef is asked: is this thread about ${esc(area.what)}?</p>` : ''}
+    ${area?.what ? `<p class="theme">Threads about ${esc(area.what)}</p>` : ''}
     ${topic && topic.theme ? `<p class="theme">${esc(topic.theme)}</p>` : ''}
-    <p class="sub facts">${facts.map(esc).join(' · ')}</p>
+    <p class="sub facts">${facts.map(esc).join(', ')}</p>
     ${teamLink}
     ${TrendView.summary(TrendView.moving(trendCtx())?.items.get(n.id))}
 
-    ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">Clef gave none of these threads a tag: a topic its questions miss.</p>' : ''}
+    ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">None of these threads has a tag.</p>' : ''}
     ${n.type === 'product' ? '' : childList(n)}
     ${n.type === 'product' ? `${productSections(n)}${childList(n)}` : ''}
     ${others.map((t) => relatedList(n, t)).join('')}
@@ -1111,11 +1104,11 @@ function renderBar() {
   $('find').disabled = !m;
   $('names').innerHTML = m && state.graph ? [...state.graph.all.values()].map((n) => `<option value="${esc(n.label)}">${esc(n.one)}</option>`).join('') : '';
   const built = state.latest;
-  $('built').textContent = built ? `Built ${ago(built.built_at)} by ${built.built_by === 'cron' ? 'the cron' : built.built_by}` : '';
+  $('built').textContent = built ? `Built ${ago(built.built_at)}${built.built_by === 'cron' ? '' : ` by ${built.built_by}`}` : '';
   $('rebuild').hidden = !state.may.rebuild;
   $('rebuild').disabled = state.building || !state.available;
   $('rebuild').title = state.available
-    ? 'Cluster the threads again, from their vectors as they are now (takes about half a minute)'
+    ? 'Rebuild the topic map (about 30 s)'
     : 'A topic map needs the CONTENT index and Workers AI';
   $('rebuild').textContent = state.building ? 'Building…' : (built ? 'Rebuild' : 'Build');
   $('rebuild').classList.toggle('primary', !built);
@@ -1139,8 +1132,8 @@ function render({ refit = false } = {}) {
   }
   if (!map()) {
     body.innerHTML = state.available
-      ? '<div class="empty">No topic map yet: the cron builds one once a week, or Build makes one now.</div>'
-      : '<div class="empty">A topic map needs the CONTENT index and Workers AI, which this inbox does not have.</div>';
+      ? '<div class="empty">No topic map yet.</div>'
+      : '<div class="empty">Topic maps need the CONTENT index and Workers AI.</div>';
     renderBar();
     renderNav();
     return;
@@ -1148,7 +1141,7 @@ function render({ refit = false } = {}) {
   if (!$('graph')) {
     body.innerHTML = `<div class="split">
       <div class="col"><div class="card graph" id="graph"><div class="empty" id="graphEmpty" hidden>Nothing to draw: show more kinds, or fewer shared threads.</div>
-        <p class="sub how">Drag to turn, scroll to zoom. Click to pick; hold a bubble to open it, or its shell to fold it; double-click for only its threads, and on nothing for all again.</p>
+        <p class="sub how">Drag to rotate, scroll to zoom, hold a bubble to expand.</p>
         <div class="tip" id="tip" hidden></div>
         ${TrendView.card()}</div></div>
       <aside class="card panel" id="panel"></aside></div>
@@ -1242,7 +1235,7 @@ async function rebuild() {
     if (state.q.only.startsWith('topic:')) state.q.only = '';
     toUrl({ push: false });
   } catch (e) {
-    state.error = `Could not build it: ${e.message}`;
+    state.error = `Could not build the map: ${e.message}`;
   }
   state.building = false;
   $('body').classList.remove('busy');

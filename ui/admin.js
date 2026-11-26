@@ -85,7 +85,7 @@ const missing = new Set();
 const ico = (icon, domain) => {
   const shown = icon || domain;
   if (!shown || missing.has(shown)) return `<span class="ico none" title="${shown ? `No favicon for ${esc(shown)}` : 'No icon'}"></span>`;
-  const title = icon || `The favicon of ${domain}, the mail domain of its people`;
+  const title = icon || domain;
   return `<img class="ico" src="${esc(favicon(shown))}" data-icon="${esc(shown)}" alt="" title="${esc(title)}">`;
 };
 /** Whether an org has no icon the inbox can show (as far as the page knows). */
@@ -125,7 +125,7 @@ function showStatus() {
   if (!el) return;
   const saving = queue.pending ? `Saving ${queue.pending} change${queue.pending === 1 ? '' : 's'}…` : '';
   el.className = `status ${failures.length ? 'err' : note.kind}`;
-  el.textContent = [...failures, note.text, saving].filter(Boolean).join(' · ');
+  el.textContent = [...failures, note.text, saving].filter(Boolean).join(' ');
 }
 function status(kind, text) {
   if (kind === 'err') {
@@ -301,7 +301,7 @@ async function ruleChange(method, path, body, what = 'Rule change') {
   const { moves } = done.body;
   // An assignment names its channel already; a rule says which channels it moved.
   const which = path === '/api/admin/assign' ? '' : ` (${movesText(moves)})`;
-  status('ok', moves.length ? `${what}: re-filing ${moves.length} channel${moves.length === 1 ? '' : 's'}${which}.` : `${what}: saved, no channel moves.`);
+  status('ok', moves.length ? `${what}: re-filing ${moves.length} channel${moves.length === 1 ? '' : 's'}${which}.` : `${what}: saved.`);
   return done.body;
 }
 
@@ -546,7 +546,7 @@ function listError(text) {
 const activityTitle = (x) => (x.recent === undefined || x.recent === null ? ''
   : `${x.recent} ${x.recent === 1 ? 'thread' : 'threads'} active in the last 30 days${x.latest ? `, the last message ${ago(x.latest)}` : ''}`);
 /** What a row says of itself, on one line, as its title. */
-const rowTitle = (...parts) => parts.filter(Boolean).join(' · ');
+const rowTitle = (...parts) => parts.filter(Boolean).join(', ');
 /** A list in the sidebar's order (ui/sidenav.js, `rank`). */
 const ranked = (list, name) => SideNav.rank(list, SideNav.sortOf(state.tab), {
   activity: (x) => x.recent, latest: (x) => x.latest, name,
@@ -566,8 +566,8 @@ const orgRow = (o) => SideNav.row({
     o.name ? `${o.name} (${o.slug})` : o.slug,
     o.type !== 'customer' && o.type,
     o.channels !== undefined && channelCount(o.channels),
-    followsOrg(o.slug) && 'you follow it',
-    Follow.muted('org', o.slug) && 'you muted it',
+    followsOrg(o.slug) && 'following',
+    Follow.muted('org', o.slug) && 'muted',
     o.base && Agent.activity(o.base),
     activityTitle(o),
   ),
@@ -671,7 +671,7 @@ function drawList() {
     const others = ranked(all.filter((t) => !mine.has(t.slug)), (t) => t.name);
     const un = state.unassigned && state.unassigned.channels && (!f || 'unassigned'.includes(f))
       ? SideNav.todo({
-        sel: UNASSIGNED, on: state.sel === UNASSIGNED, label: 'Unassigned channels', count: state.unassigned.channels, title: 'The channels no rule files under a team',
+        sel: UNASSIGNED, on: state.sel === UNASSIGNED, label: 'Unassigned channels', count: state.unassigned.channels, title: 'Channels not filed under a team',
       }) : '';
     body = `${un}${state.me.admin ? groupList(f) : ''}
       ${navSection('Your teams', yours.map(teamRow))}
@@ -691,12 +691,11 @@ function drawList() {
       const slugs = new Set(ours.map((o) => o.slug));
       rest = rest.filter((o) => !slugs.has(o.slug));
       middle = navSection('Your teams\' customers', ranked(ours, orgName).map(orgRow), {
-        hint: 'The customers with a channel filed under or shared with one of your teams, once their thread agents started a knowledge base',
       });
     }
     const un = state.me.admin && state.orgsUnassigned && state.orgsUnassigned.channels && (!f || 'unassigned'.includes(f))
       ? SideNav.todo({
-        sel: UNASSIGNED, on: state.sel === UNASSIGNED, label: 'Unassigned channels', count: state.orgsUnassigned.channels, title: 'The channels no rule files under an org',
+        sel: UNASSIGNED, on: state.sel === UNASSIGNED, label: 'Unassigned channels', count: state.orgsUnassigned.channels, title: 'Channels not filed under an org',
       }) : '';
     const yours = followed.length || middle;
     body = `${un}${onATeam() ? dupSection(f) : ''}
@@ -746,7 +745,6 @@ function newForm(button) {
   } else {
     el.innerHTML = `<form class="form" id="newOrg"><p class="what">New org</p><label class="fld grow"><span>Display name</span><input id="noName" required></label>
         <label class="fld"><span>Type</span><select id="noType">${state.types.map((t) => `<option>${t}</option>`).join('')}</select></label><button class="primary">Create</button></form>
-      <p class="hint">Channels are filed under an org by the rules (<code>aem-&lt;slug&gt;</code>) or a manual assignment.</p>
       <div class="status err" id="listStatus">${esc(state.listError)}</div>`;
     $('newOrg').onsubmit = async (e) => {
       e.preventDefault();
@@ -826,12 +824,6 @@ const SECTIONS = ['agents', 'mcp', 'extraction', 'kb', 'history'];
 const SECTION_LABEL = {
   agents: 'Thread agents', mcp: 'Tools and MCP servers', extraction: 'Extraction rules', kb: 'Knowledge base',
 };
-const SECTION_TITLE = {
-  agents: 'Which of its channels have thread agents, and whether your inbox shows their thinking',
-  mcp: 'Tools its agents get where they are turned on, and MCP servers they call from code mode',
-  extraction: 'What labeling finds in the threads of its channels: facts and the tech stack',
-  kb: 'Its knowledge base: the agent instructions, the files the agents keep, and their history',
-};
 const inKb = (section) => section === 'kb' || section === 'history';
 
 /** The knowledge base of a team (`teams`) or a customer (`orgs`), where you see one. */
@@ -866,17 +858,9 @@ function sectionTabs() {
   const label = {
     overview: 'Overview', vendors: 'Vendors', own: 'Manage', ...SECTION_LABEL,
   };
-  const orgTitle = state.me.admin ? 'Its name, icon, type, channels and who follows it' : 'Its channels and who follows it';
-  const title = {
-    overview: state.tab === 'teams' ? 'Its people, customers, collaborators, technologies and knowledge base'
-      : 'Its people, Adobe\'s people and teams on it, what it asks about, its channels, technologies and knowledge base',
-    vendors: 'The vendors it works with: their cases, how soon they answer, and what waits on them',
-    own: state.tab === 'teams' ? 'Its members, rules, channels and technologies: for its managers and the admin team' : orgTitle,
-    ...SECTION_TITLE,
-  };
   const open = state.section === 'history' ? 'kb' : state.section;
   return sectionsOf(state.tab, state.sel).filter((x) => x !== 'history').map((x) => `<a href="${esc(address({ section: x, path: null }))}"
-    data-section="${x}"${open === x ? ' aria-current="page"' : ''} title="${esc(title[x])}"><span>${esc(label[x])}</span>${tags[x] || ''}</a>`).join('');
+    data-section="${x}"${open === x ? ' aria-current="page"' : ''}><span>${esc(label[x])}</span>${tags[x] || ''}</a>`).join('');
 }
 /** The tabs under the title, where there is more than one. */
 const sectionsNav = () => (sectionsOf(state.tab, state.sel).length > 1
@@ -919,7 +903,7 @@ function showPicked({ channel = null, flash = null, fresh = false } = {}) {
     loadingPage();
     state.view = null;
     $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(tab === 'teams' ? teamLabel(sel) : orgLabel(sel))}</h1></div>
-      <div class="empty">${tab === 'teams' ? 'This team has no knowledge base yet.' : 'None of your teams works with this customer, or its agents have not started a knowledge base yet.'}</div>`;
+      <div class="empty">${tab === 'teams' ? 'This team has no knowledge base yet.' : 'No knowledge base yet.'}</div>`;
     return;
   }
   if (section === 'overview' || section === 'own' || section === 'vendors') {
@@ -1168,12 +1152,12 @@ const pct = (p) => `${Math.round((p || 0) * 100)}%`;
 /** Clef's pick for a channel, as a tag. */
 function clefTag(clef, here) {
   if (!clef) return '';
-  const kind = clef.kind && clef.kind !== 'channel' ? ` · ${esc(clef.kind)}` : '';
-  const title = `Clef: ${clef.team === 'none' ? 'no ops team' : teamLabel(clef.team)} (${pct(clef.p)}), ${clef.kind || '?'} (${pct(clef.kindP)})`;
+  const kind = clef.kind && clef.kind !== 'channel' ? `, ${esc(clef.kind)}` : '';
+  const title = `Suggested: ${clef.team === 'none' ? 'no ops team' : teamLabel(clef.team)} (${pct(clef.p)}), ${clef.kind || '?'} (${pct(clef.kindP)})`;
   if (here !== undefined) {
-    return `<span class="tag clef${here >= 0.5 ? ' yes' : ''}" title="${esc(title)}">Clef ${pct(here)}${kind}</span>`;
+    return `<span class="tag clef${here >= 0.5 ? ' yes' : ''}" title="${esc(title)}">${pct(here)} match${kind}</span>`;
   }
-  return `<span class="tag clef" title="${esc(title)}">Clef: ${esc(clef.team === 'none' ? 'none' : teamLabel(clef.team))} ${pct(clef.p)}${kind}</span>`;
+  return `<span class="tag clef" title="${esc(title)}">Suggested: ${esc(clef.team === 'none' ? 'none' : teamLabel(clef.team))} ${pct(clef.p)}${kind}</span>`;
 }
 
 /**
@@ -1196,15 +1180,12 @@ function channelsCard(target) {
   if (!state.me.admin) {
     return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
     <div class="form picker"><label class="fld grow"><span>Ask for a channel</span><input id="pick" autocomplete="off"></label><div class="picks s2-float" id="picks" hidden></div></div>
-    <p class="hint">Search by channel, Teams team, customer or id.</p>
-    <div id="askSlot"></div>
-    <p class="hint">The admin team decides which channels a team gets. Pick a channel to ask them to add it to this team, with a note; they confirm or decline, and the answer shows here. A channel another team holds is shared with this one: it stays filed under its team, and is in this team's inbox too.</p></div>`;
+    <p class="hint">Search by channel, Teams team, customer or id. The admin team confirms or declines your request.</p>
+    <div id="askSlot"></div></div>`;
   }
   return `<div class="card"><h2>Channels</h2><div id="channelsTable"></div>
     <div class="form picker"><label class="fld grow"><span>${target === 'team' ? 'Add a channel to this team' : 'Assign a channel here by hand'}</span><input id="pick" autocomplete="off"></label><div class="picks s2-float" id="picks" hidden></div></div>
-    <p class="hint">Search by channel, Teams team, customer, team or id. ${target === 'team'
-    ? `A channel has one team it is filed under (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. Adding a channel ${esc(teamLabel('admin'))} holds files it under this team whatever the rules say (a channel-id rule with priority 10); adding one another team holds shares it with this team, and it stays where it is. <b>Make primary</b> files a channel shared with this team under it instead, and the team it was filed under keeps it, shared. Click a channel's name to move it to another team.${state.view.value !== 'admin' ? ` <b>→ ${esc(teamLabel('admin'))}</b> hands a channel back to the admin team.` : ''}`
-    : 'A manual assignment files one channel under this org whatever the rules say (a channel-id rule with priority 10).'}</p></div>`;
+    <p class="hint">Search by channel, Teams team, customer, team or id.${target === 'team' ? ' A channel another team holds is shared with this team.' : ''}</p></div>`;
 }
 
 /**
@@ -1233,7 +1214,7 @@ function assignHere(c, value = state.view.value, { move = false, target = state.
         const row = state.teams.find((t) => t.slug === value);
         if (row) row.shared = (row.shared || 0) + 1;
       }
-      status('ok', `Shared: ${plainName(c)} is in ${teamLabel(value)}'s inbox too, and stays filed under ${teamLabel(res.shared.from)}.`);
+      status('ok', `Shared ${plainName(c)} with ${teamLabel(value)}. Still filed under ${teamLabel(res.shared.from)}.`);
     }
     applyMoves(res.moves, v);
     // Moved away with no thread to re-file: the API names no move, but it left all the same.
@@ -1296,9 +1277,9 @@ function renderChannels() {
   const swappable = (c) => !isHolding(c.team) && manages(c.team) && manages(state.view.value);
   const rows = channels.map((c) => {
     if (c.left) {
-      return `<tr class="left"><td>${channelName(c)}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
-        <td colspan="${triage ? 5 : 4}" class="sub">${c.left.unshared ? `Out of this team's inbox; it stays filed under ${esc(teamLabel(c.left.team))}.`
-  : `Moved to ${esc(teamLabel(c.left.team))} / ${esc(orgLabel(c.left.org))}${c.left.kind !== 'channel' ? ` (${esc(c.left.kind)})` : ''}; its threads are re-filed in the background.`}</td></tr>`;
+      return `<tr class="left"><td>${channelName(c)}<div class="sub">${esc(platform(c))}, <span class="mono">${esc(c.channelId)}</span></div></td>
+        <td colspan="${triage ? 5 : 4}" class="sub">${c.left.unshared ? `Removed from this team's inbox. Still filed under ${esc(teamLabel(c.left.team))}.`
+  : `Moved to ${esc(teamLabel(c.left.team))} / ${esc(orgLabel(c.left.org))}${c.left.kind !== 'channel' ? ` (${esc(c.left.kind)})` : ''}. Threads are being re-filed.`}</td></tr>`;
     }
     const manual = c.manual[target];
     const shares = c.sharedWith || [];
@@ -1306,28 +1287,28 @@ function renderChannels() {
     const sharedHere = target === 'team' && c.team !== state.view.value && shares.includes(state.view.value);
     const also = shares.filter((t) => t !== state.view.value);
     const alsoTag = target === 'team' && also.length
-      ? ` <span class="tag" title="Shared: in these teams' inboxes too">also ${esc(also.map(teamLabel).join(', '))}</span>` : '';
-    const teamCell = `${esc(teamLabel(c.team))}${shares.length ? ` <span class="tag" title="Shared: in these teams' inboxes too">+ ${esc(shares.map(teamLabel).join(', '))}</span>` : ''}`;
+      ? ` <span class="tag" title="Also in these teams' inboxes">also ${esc(also.map(teamLabel).join(', '))}</span>` : '';
+    const teamCell = `${esc(teamLabel(c.team))}${shares.length ? ` <span class="tag" title="Also in these teams' inboxes">+ ${esc(shares.map(teamLabel).join(', '))}</span>` : ''}`;
     const pick = triage && c.clef && c.clef.team !== 'none' && c.clef.team !== 'admin' && state.teams.some((t) => t.slug === c.clef.team) ? c.clef.team : null;
     // The admin team moves a channel filed here to any team: its name opens the list of them.
     const name = movable && !sharedHere
-      ? `<button class="link chan" data-move="${esc(c.channelId)}" aria-haspopup="dialog" title="Move it to another team">${channelName(c)}</button>`
+      ? `<button class="link chan" data-move="${esc(c.channelId)}" aria-haspopup="dialog" title="Move to another team">${channelName(c)}</button>`
       : channelName(c);
-    return `<tr><td>${name}<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div></td>
+    return `<tr><td>${name}<div class="sub">${esc(platform(c))}, <span class="mono">${esc(c.channelId)}</span></div></td>
       <td>${other === 'org' ? esc(orgLabel(c.org)) : teamCell}${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}${alsoTag}</td>
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
-      ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}"${off(assignKey(target, c.channelId, pick))} title="Assign it to ${esc(teamLabel(pick))} by hand">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
-      <td class="nw">${sharedHere ? `<span class="tag manual" title="Filed under ${esc(teamLabel(c.team))}, and in this team's inbox too">shared by ${esc(teamLabel(c.team))}</span>
-        ${swappable(c) ? `<button class="link" data-swap="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`swap:${c.channelId}`)} title="File it under ${esc(teamLabel(state.view.value))} (its folders, knowledge base and agents move here); ${esc(teamLabel(c.team))} keeps it in its inbox, shared">Make primary</button>` : ''}
-        ${(c.followedByRule || []).includes(state.view.value) ? '<span class="sub" title="A follow rule of this team shares it: change the rule to take it out">by a follow rule</span>'
-    : `${state.me.admin ? `<button class="link" data-unshare="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unshare:${state.view.value}:${c.channelId}`)} title="Take it out of this team's inbox; it stays filed under ${esc(teamLabel(c.team))}">Remove</button>` : ''}`}`
-    : `${manual ? `<span class="tag manual" title="Assigned by hand, whatever the rules say">manual</span>
+      ${triage ? `<td class="nw">${clefTag(c.clef)}${pick ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="${esc(pick)}"${off(assignKey(target, c.channelId, pick))} title="Assign to ${esc(teamLabel(pick))}">→ ${esc(teamLabel(pick))}</button>` : ''}</td>` : ''}
+      <td class="nw">${sharedHere ? `<span class="tag manual" title="Filed under ${esc(teamLabel(c.team))}">shared by ${esc(teamLabel(c.team))}</span>
+        ${swappable(c) ? `<button class="link" data-swap="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`swap:${c.channelId}`)} title="File under ${esc(teamLabel(state.view.value))}. ${esc(teamLabel(c.team))} keeps sharing the channel.">Make primary</button>` : ''}
+        ${(c.followedByRule || []).includes(state.view.value) ? '<span class="sub" title="Shared by a follow rule of this team">by a follow rule</span>'
+    : `${state.me.admin ? `<button class="link" data-unshare="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unshare:${state.view.value}:${c.channelId}`)} title="Remove from this team's inbox. Stays filed under ${esc(teamLabel(c.team))}.">Remove</button>` : ''}`}`
+    : `${manual ? `<span class="tag manual" title="Assigned by hand, overriding the rules">manual</span>
         ${state.me.admin ? `<button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unassign:${target}:${c.channelId}`)}>Undo</button>` : ''}` : '<span class="sub">by rule</span>'}
-        ${back && c.team !== 'admin' ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="admin"${off(assignKey(target, c.channelId, 'admin'))} title="Move it back to ${esc(teamLabel('admin'))}: assigned there by hand, whatever the rules say">→ ${esc(teamLabel('admin'))}</button>` : ''}`}</td></tr>`;
+        ${back && c.team !== 'admin' ? ` <button class="link" data-give="${esc(c.channelId)}" data-source="${esc(c.source)}" data-team="admin"${off(assignKey(target, c.channelId, 'admin'))} title="Move back to ${esc(teamLabel('admin'))}">→ ${esc(teamLabel('admin'))}</button>` : ''}`}</td></tr>`;
   }).join('');
   $('channelsTable').innerHTML = rows
-    ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th>${triage ? '<th>Clef suggests</th>' : ''}<th></th></tr>${rows}</table>`
-    : '<div class="empty">No channel is filed here.</div>';
+    ? `<table><tr><th>Channel</th><th>${other === 'org' ? 'Org' : 'Team'}</th><th>Threads</th><th>Latest</th>${triage ? '<th>Suggested</th>' : ''}<th></th></tr>${rows}</table>`
+    : '<div class="empty">No channels.</div>';
   const v = state.view;
   const find = (id) => channels.find((c) => c.channelId === id);
   for (const b of $('channelsTable').querySelectorAll('[data-unassign]')) {
@@ -1367,7 +1348,7 @@ function renderChannels() {
       if (here) here.shared = Math.max(0, (here.shared || 0) - 1);
       const there = state.teams.find((t) => t.slug === from);
       if (there && swapped.shared) there.shared = (there.shared || 0) + 1;
-      status('ok', `${plainName(c)} is filed under ${teamLabel(team)} now${moves.length ? ', its threads re-filed in the background' : ''}${swapped.shared ? `; ${teamLabel(from)} keeps it in its inbox, shared` : ''}.`);
+      status('ok', `${plainName(c)} is filed under ${teamLabel(team)}.${swapped.shared ? ` ${teamLabel(from)} keeps sharing the channel.` : ''}`);
       if (v === state.view) renderChannels();
       renderList();
     });
@@ -1386,7 +1367,7 @@ function renderChannels() {
       }
       const row = state.teams.find((t) => t.slug === team);
       if (row) row.shared = Math.max(0, (row.shared || 0) - 1);
-      status('ok', `${plainName(c)} is out of ${teamLabel(team)}'s inbox; it stays filed under ${teamLabel(c.team)}.`);
+      status('ok', `Removed ${plainName(c)} from ${teamLabel(team)}'s inbox. Still filed under ${teamLabel(c.team)}.`);
       if (v === state.view) renderChannels();
       renderList();
     });
@@ -1414,7 +1395,7 @@ function moveMenu(button, c) {
   el.innerHTML = `<p class="what">Move ${channelName(c)} to</p>
     <label class="s2-search"><input class="search" type="search" aria-label="Find a team" autocomplete="off"></label>
     <div class="opts" role="listbox" aria-label="Teams"></div>
-    <p class="hint">Filed there by hand, whatever the rules say; its threads are re-filed. The teams it is shared with keep it.</p>`;
+    <p class="hint">Assigned by hand, overriding the rules. Shared teams keep the channel.</p>`;
   const input = el.querySelector('input');
   const opts = el.querySelector('.opts');
   const go = (t) => {
@@ -1538,17 +1519,17 @@ function wireChannelPicker() {
       const org = c.org && !c.org.startsWith('_') ? (c.orgName || c.org) : '';
       // The org's slug only when the search found it there and not in the display name.
       const slug = c.orgName && match.includes('org') && !match.includes('orgName') ? ` <span class="mono">${hl(c.org, words)}</span>` : '';
-      const id = match.length === 1 && match[0] === 'channelId' ? ` · id <span class="mono">${hl(c.channelId, words)}</span>` : '';
+      const id = match.length === 1 && match[0] === 'channelId' ? `, id <span class="mono">${hl(c.channelId, words)}</span>` : '';
       const here = c[target] === value;
       // Adding a team to a channel another team holds shares it; one the admin team holds moves.
       const shares = target === 'team' && !here && !isHolding(c.team) && !isHolding(value);
       return `<div class="row pickrow${i === at ? ' on' : ''}" data-i="${i}">
         <span class="name"><span class="ch">${channelName(c, words)}</span>
-          <span class="sub">${esc(platform(c))}${org ? ` · customer <b>${hl(org, words)}</b>${slug}` : ''}${id}
-          · ${c.threads} thread${c.threads === 1 ? '' : 's'}${c.latest ? `, ${esc(ago(c.latest))}` : ''}</span></span>
-        <span class="where">${pending(c) ? '<span class="tag open" title="Asked for already: waiting for the admin team">requested</span><br>' : ''}${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${hl(teamLabel(c.team), words)}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}${shares ? '<br><span class="sub" title="It stays filed under its team, and is in this team\'s inbox too">shares it here</span>' : ''}`}
+          <span class="sub">${esc(platform(c))}${org ? `, customer <b>${hl(org, words)}</b>${slug}` : ''}${id},
+          ${c.threads} thread${c.threads === 1 ? '' : 's'}${c.latest ? `, ${esc(ago(c.latest))}` : ''}</span></span>
+        <span class="where">${pending(c) ? '<span class="tag open" title="Waiting for the admin team">requested</span><br>' : ''}${here ? '<span class="tag manual">here by rule</span>' : `<span class="sub">now in</span> ${hl(teamLabel(c.team), words)}${target === 'org' ? ` / ${esc(orgLabel(c.org))}` : ''}${shares ? '<br><span class="sub" title="Stays filed under its team">shared here</span>' : ''}`}
           ${target === 'team' && c.clef ? `<br>${clefTag(c.clef, c.clef.teams[value] ?? 0)}` : ''}</span></div>`;
-    }).join('') || '<div class="empty pad">No channel matches.</div>';
+    }).join('') || '<div class="empty pad">No channels match.</div>';
     // Placed first: it settles from the side it opens on (ui/spectrum.css, `.s2-float`).
     placePicks(input, picks);
     picks.hidden = false;
@@ -1605,10 +1586,10 @@ function suggestionRow(c, total) {
     const did = [p.posted ? `${p.posted} post${p.posted === 1 ? '' : 's'}` : '', p.reacted ? `${p.reacted} reaction${p.reacted === 1 ? '' : 's'}` : '', p.member ? 'member' : '']
       .filter(Boolean).join(', ');
     // The rank weighs each person down by how many of the admin team's channels they are in.
-    const where = p.channels && total ? `; active in ${p.channels} of the admin team's ${total} channels, weight ${p.weight}` : '';
-    return `<span class="person" title="${esc(did + where)}">${esc(p.name)}<span class="sub"> · ${esc(did)}</span></span>`;
+    const where = p.channels && total ? `; active in ${p.channels} of ${total} admin team channels` : '';
+    return `<span class="person" title="${esc(did + where)}">${esc(p.name)}<span class="sub">, ${esc(did)}</span></span>`;
   }).join('');
-  return `<tr><td>${channelName(c)}<div class="sub">${esc(platform(c))}${org ? ` · customer <b>${esc(org)}</b>` : ''}${c.topic ? ` · <span title="${esc(c.topic)}">${esc(c.topic.length > 80 ? `${c.topic.slice(0, 80)}…` : c.topic)}</span>` : ''}</div></td>
+  return `<tr><td>${channelName(c)}<div class="sub">${esc(platform(c))}${org ? `, customer <b>${esc(org)}</b>` : ''}${c.topic ? `, <span title="${esc(c.topic)}">${esc(c.topic.length > 80 ? `${c.topic.slice(0, 80)}…` : c.topic)}</span>` : ''}</div></td>
     <td>${who || '<span class="sub">nobody yet</span>'}</td>
     <td>${c.clef ? clefTag(c.clef, c.clef.here) : '<span class="sub">not yet</span>'}</td>
     <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td>
@@ -1621,15 +1602,15 @@ function renderSuggestions() {
   const clefOnly = suggestions.filter((c) => !c.people.length);
   const shown = showAllClef ? clefOnly : clefOnly.slice(0, CLEF_SHOWN);
   const row = (c) => suggestionRow(c, coverage && coverage.channels);
-  const head = '<tr><th>Channel</th><th>Active here from this team</th><th>Clef</th><th>Threads</th><th>Latest</th><th></th></tr>';
-  const none = '<tr><td colspan="6" class="sub">No member of this team posts, reacts or is a member in a channel the admin team holds.</td></tr>';
+  const head = '<tr><th>Channel</th><th>Active team members</th><th>Suggested</th><th>Threads</th><th>Latest</th><th></th></tr>';
+  const none = '<tr><td colspan="6" class="sub">No team members are active in the admin team\'s channels.</td></tr>';
   const table = suggestions.length ? `<table>${head}${active.length ? active.map(row).join('') : none}
-    ${clefOnly.length ? `<tr class="section"><td colspan="6">Clef also suggests, though nobody from this team is active there</td></tr>${shown.map(row).join('')}` : ''}</table>
+    ${clefOnly.length ? `<tr class="section"><td colspan="6">Also suggested, with no team members active</td></tr>${shown.map(row).join('')}` : ''}</table>
     ${clefOnly.length > shown.length ? `<button class="link" id="sMore">Show ${clefOnly.length - shown.length} more</button>` : ''}`
-    : '<div class="empty">No channel of the admin team has members of this team in it, and Clef suggests none.</div>';
+    : '<div class="empty">No suggestions.</div>';
   $('suggestTable').innerHTML = `${table}
-    ${coverage ? `<p class="hint">Of the admin team's ${coverage.channels} channels, Clef has classified ${coverage.classified} and the members of ${coverage.membersListed} are listed; the cron does a batch every 20 minutes.
-      ${coverage.classified < coverage.channels ? '<button class="link" id="sClassify">Classify a batch now</button>' : ''}</p>` : ''}`;
+    ${coverage ? `<p class="hint">${coverage.classified} of ${coverage.channels} channels classified.
+      ${coverage.classified < coverage.channels ? '<button class="link" id="sClassify">Classify more now</button>' : ''}</p>` : ''}`;
   for (const b of $('suggestTable').querySelectorAll('[data-add]')) {
     b.onclick = () => press(b, () => assignHere(state.view.suggestions.find((x) => x.channelId === b.dataset.add)));
   }
@@ -1638,7 +1619,7 @@ function renderSuggestions() {
     const b = $('sClassify');
     b.onclick = () => hold(b, 'classify', async () => {
       const v = state.view;
-      status('', 'Clef is classifying a batch of channels…');
+      status('', 'Classifying channels…');
       // A batch takes a while: not in the queue, so changes made meanwhile go out.
       const r = await call('/api/admin/classify', 'POST', { limit: 10 }, { parallel: true });
       if (!r.ok) { failed('Classify', r); return; }
@@ -1680,7 +1661,7 @@ function renderFollows() {
       <td>${esc(name(f.kind, f.id))} <span class="sub mono">${esc(f.id)}</span></td><td>${esc(f.kind === 'tech' ? tech.get(f.id)?.product || '' : '')}</td>
       <td>${esc(f.by || '')}</td>
       <td><button class="link" data-unfollow="${esc(f.id)}" data-kind="${f.kind}"${offFor(f.kind, f.id)}>Unfollow</button></td></tr>`).join('')}</table>`
-    : '<div class="empty">None yet: the inbox has the team\'s channels and the channels shared with it.</div>';
+    : '<div class="empty">Nothing followed yet.</div>';
   const followed = new Set(rows.map((f) => `${f.kind}:${f.id}`));
   const groups = new Map();
   for (const t of v.followable.filter((x) => !followed.has(`tech:${x.tech}`))) {
@@ -1702,7 +1683,7 @@ function renderFollows() {
       v.follows = now.body.follows || [];
       v.followsBy = now.body.followsBy || [];
     }
-    status('ok', follow ? `${team.name} follows ${name(kind, id)}: its threads are in its inbox.` : `${team.name} no longer follows ${name(kind, id)}.`);
+    status('ok', follow ? `${team.name} follows ${name(kind, id)}.` : `${team.name} no longer follows ${name(kind, id)}.`);
   }).then(() => { if (v === state.view) renderFollows(); });
   for (const b of $('followsTable').querySelectorAll('[data-unfollow]')) {
     b.onclick = () => change(b.dataset.kind, b.dataset.unfollow, false, b);
@@ -1867,11 +1848,11 @@ async function loadMemberSuggestions(v) {
 /** Why someone is suggested, in words: what they did in the team's threads, channels and topics. */
 function suggestedWhy(p) {
   return [
-    p.posted ? `posted in ${p.posted} of its threads` : '',
+    p.posted ? `posted in ${p.posted} of the team's threads` : '',
     p.reacted ? `reacted in ${p.reacted} ${p.reacted === 1 ? 'thread' : 'threads'}` : '',
-    p.channels ? `in ${p.channels} of its channels` : '',
+    p.channels ? `in ${p.channels} of the team's channels` : '',
     p.topics.length ? `works on ${p.topics.map((t) => t.label).join(', ')}` : '',
-  ].filter(Boolean).join(' · ');
+  ].filter(Boolean).join(', ');
 }
 
 function renderMemberSuggestions() {
@@ -1882,22 +1863,16 @@ function renderMemberSuggestions() {
   const slug = v.team.slug;
   const key = (email) => `msug:${slug}:${email}`;
   const rows = s.suggestions.map((p) => `<tr>
-      <td>${esc(p.name || p.email)}<div class="sub">${esc(p.email)}${p.teams.length ? ` · on ${esc(p.teams.map(teamLabel).join(', '))}` : ''}</div></td>
-      <td class="sub">${esc(suggestedWhy(p))}${p.last ? ` · last ${esc(ago(p.last))}` : ''}</td>
+      <td>${esc(p.name || p.email)}<div class="sub">${esc(p.email)}${p.teams.length ? `, on ${esc(p.teams.map(teamLabel).join(', '))}` : ''}</div></td>
+      <td class="sub">${esc(suggestedWhy(p))}${p.last ? `, last ${esc(ago(p.last))}` : ''}</td>
       <td class="nw">${p.added ? '<span class="tag manual">added</span>' : `<button data-sadd="${esc(p.email)}"${off(key(p.email))}>Add</button>
         <button class="link" data-sdismiss="${esc(p.email)}"${off(key(p.email))} title="Not suggested for this team again">Dismiss</button>`}</td></tr>`).join('');
-  const { coverage: c } = s;
-  const covered = [
-    'Threads of the last six months',
-    `the members of ${c.membersListed} of its ${channelCount(c.channels)} are listed`,
-    c.topicMap ? (c.topics.length ? `its topics: ${c.topics.join(', ')}` : 'no topic of the topic map is mostly this team\'s') : 'there is no topic map yet',
-  ].join('; ');
   const dismissed = s.dismissed.length ? `<p class="hint">${s.showDismissed
-    ? `Not suggested: ${s.dismissed.map((d) => `${esc(d.name || d.email)} <span class="sub">(${d.why === 'removed' ? 'taken off the team' : 'dismissed'}${d.by ? ` by ${esc(d.by)}` : ''} ${esc(ago(d.at))})</span> <button class="link" data-sagain="${esc(d.email)}"${off(key(d.email))}>Suggest again</button>`).join(' · ')}`
+    ? `Not suggested: ${s.dismissed.map((d) => `${esc(d.name || d.email)} <span class="sub">(${d.why === 'removed' ? 'taken off the team' : 'dismissed'}${d.by ? ` by ${esc(d.by)}` : ''} ${esc(ago(d.at))})</span> <button class="link" data-sagain="${esc(d.email)}"${off(key(d.email))}>Suggest again</button>`).join(', ')}`
     : `<button class="link" id="sDismissed">${peopleCount(s.dismissed.length)} not suggested any more</button>`}</p>` : '';
   el.innerHTML = `${rows ? `<table><tr><th>Name</th><th>Why</th><th></th></tr>${rows}</table>`
-    : '<div class="empty">Nobody: everyone who works this team\'s threads, is in its channels or works its topics is on it.</div>'}
-    <p class="hint">${esc(covered)}.</p>${dismissed}`;
+    : '<div class="empty">No suggestions.</div>'}
+    ${dismissed}`;
   for (const b of el.querySelectorAll('[data-sadd]')) {
     const p = s.suggestions.find((x) => x.email === b.dataset.sadd);
     b.onclick = () => hold(b, key(p.email), async () => {
@@ -1973,7 +1948,7 @@ function describe(r) {
 }
 
 function ruleRow(r) {
-  const does = r.target === 'follow' ? '<span class="tag" title="Shares the channels it matches with the team; files none">follows</span>' : '<span class="tag manual" title="Files the channels it matches under the team">files</span>';
+  const does = r.target === 'follow' ? '<span class="tag" title="Shares matching channels with the team">follows</span>' : '<span class="tag manual" title="Files matching channels under the team">files</span>';
   // A customer the team follows (PUT /api/admin/org-follows): changed on the customer's page.
   const org = followedOrg(r);
   if (org) {
@@ -1992,7 +1967,7 @@ function ruleForm(r = {}) {
   const prefix = r.pattern ? prefixOf(r.pattern) : '';
   const mode = prefix !== null ? 'prefix' : 'regex';
   return `<form class="form" id="ruleForm" data-id="${r.id || ''}">
-    <label class="fld"><span>Does</span><select id="rTarget" title="A follow rule shares the channels it matches with the team, filed wherever the other rules say"><option value="team">files channels</option><option value="follow"${r.target === 'follow' ? ' selected' : ''}>follows channels</option></select></label>
+    <label class="fld"><span>Does</span><select id="rTarget"><option value="team">files channels</option><option value="follow"${r.target === 'follow' ? ' selected' : ''}>follows channels</option></select></label>
     <label class="fld"><span>Field</span><select id="rField">${Object.entries(FIELD_LABEL).map(([k, v]) => `<option value="${k}"${(r.field || 'name') === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
     <label class="fld"><span>Match</span><select id="rMode"><option value="prefix"${mode === 'prefix' ? ' selected' : ''}>starts with</option><option value="regex"${mode === 'regex' ? ' selected' : ''}>regular expression</option></select></label>
     <label class="fld grow"><span>Pattern</span><input id="rPattern" class="mono" value="${esc(mode === 'prefix' ? prefix : r.pattern)}" required></label>
@@ -2121,7 +2096,7 @@ async function drawTeamStack(slug, current) {
   const view = r.body.drawing;
   const name = teamLabel(slug);
   slot.innerHTML = `<div class="tv-drawing"><h3>Stack drawing</h3>${Stack.html(view)}
-    <p class="hint"><a href="${esc(address({ section: 'kb', path: r.body.path }))}">${r.body.may ? 'Edit it in its knowledge base' : 'Open it in its knowledge base'}</a></p></div>`;
+    <p class="hint"><a href="${esc(address({ section: 'kb', path: r.body.path }))}">${r.body.may ? 'Edit in the knowledge base' : 'Open in the knowledge base'}</a></p></div>`;
   Stack.wire(slot, view, { title: `${name}'s stack` });
 }
 
@@ -2158,8 +2133,8 @@ async function showOverview(slug) {
   const facts = [
     p.team.self_managed ? '<span title="Every member is a team manager">Self-managed</span>' : '',
     `${channelCount(p.team.channels)}${p.team.shared ? ` + ${p.team.shared} shared` : ''}`,
-    onTeam && slug !== 'admin' ? `<a href="/inbox?team=${encodeURIComponent(slug)}">Its inbox</a>` : '',
-  ].filter(Boolean).join(' · ');
+    onTeam && slug !== 'admin' ? `<a href="/inbox?team=${encodeURIComponent(slug)}">Open inbox</a>` : '',
+  ].filter(Boolean).join(', ');
   $('detail').innerHTML = `
     <div class="title">${backButton()}<h1 class="fill">${esc(p.team.name)}</h1>
       <span class="sub">${facts}</span><span class="sub mono">${esc(p.team.slug)}</span></div>
@@ -2249,32 +2224,27 @@ async function showTeam(slug) {
     <div class="status" id="status"></div>
     ${real ? `<div class="card"><label class="inline">
       <input type="checkbox" id="tSelf"${team.self_managed ? ' checked' : ''}${admin ? '' : ' disabled'}>
-      <span><b>Self-managed</b>: every member is a team manager and may add and remove members and edit the team's knowledge base.</span></label>
-      <p class="hint">${admin ? 'Turning it on makes every member a manager, now and when they join. Turning it off keeps the roles as they are; new members join as members, and managers can be demoted.' : 'Only the admin team changes this.'}</p></div>` : ''}
+      <span><b>Self-managed</b>: every member is a team manager.</span></label>
+      ${admin ? '' : '<p class="hint">Only the admin team can change this.</p>'}</div>` : ''}
     ${real ? `<div class="card"><h2>Members</h2><div id="membersTable"></div>
       <div class="form picker"><label class="fld grow"><span>Add a member</span><input id="mFind" autocomplete="off"></label><div class="picks s2-float" id="mPicks" hidden></div></div>
-      <p class="hint">Type a name or an email. Members see this team's inbox. They also need to be in the Access policy of the inbox.</p></div>
-    ${real && v.memberRequests.length ? `<div class="card"><h2>People asked for</h2><div id="memberRequestsTable"></div><div id="mrSlot"></div>
-      <p class="hint">People asked to be added to this team, in a thread's sidebar, through its agent. Confirming one adds them as a member, as adding them above does; declining takes a reason, for whoever asked.</p></div>` : ''}
+      <p class="hint">Members also need to be in the inbox's Access policy.</p></div>
+    ${real && v.memberRequests.length ? '<div class="card"><h2>People asked for</h2><div id="memberRequestsTable"></div><div id="mrSlot"></div></div>' : ''}
     ${slug !== 'admin' ? `<div class="card"><h2>Suggested members</h2>
-      <p class="hint lead">Adobe people who are not on ${esc(team.name)} but work its threads, are members of its channels on Slack or Teams, or work the topics its threads are about elsewhere, the likeliest first. Add makes one a member.</p>
       <div id="memberSuggest"><div class="empty">Looking for people…</div></div></div>` : ''}
 
     ${admin ? `<div class="card"><h2>Rules</h2><div id="rulesTable"></div>
       <div id="ruleSlot">${ruleForm()}</div>
-      <p class="hint">A channel goes to the team of the matching rule with the lowest priority. Example: channel name starts with <code>aem-</code>. A follow rule files nothing: the channels it matches are shared with the team, wherever they are filed. Conflicts between the teams' rules are threads of the admin team's inbox.</p>
+      <p class="hint">The matching rule with the lowest priority wins. Example: channel name starts with <code>aem-</code>.</p>
       ${templates.length ? `<p class="hint">${templates.length} rule${templates.length === 1 ? '' : 's'} name the team from the match ($1) and may also apply.</p>` : ''}</div>` : ''}` : ''}
     ${channelsCard('team')}
     ${real ? `<div class="card"><h2>Following</h2><div id="followsTable"></div>
       <form class="form" id="followForm"><label class="fld grow"><span>Follow a topic or a technology</span><select id="fTech"></select></label>
       <button class="primary" id="fAdd">Follow</button></form>
-      <p class="hint">Threads that show one of these technologies, or that Clef puts in one of these topics, are in this team's inbox, in any team's channels, and its members work them there. Clef tags each thread with what the thread itself shows, not what its channel uses. A customer the team follows is on the customer's page. The channels stay filed where they are, and the thread's agent gets this team's knowledge base too.</p></div>` : ''}
-    ${real && (!admin || v.requests.length) ? `<div class="card"><h2>Requests</h2><div id="requestsTable"></div>
-      <p class="hint">${admin ? 'Channels this team\'s managers asked for. Review one to confirm or decline it.' : 'The channels this team asked the admin team for, and their answers.'}</p></div>` : ''}
-    ${real && v.portal.length ? `<div class="card"><h2>Customers in the portal</h2><div id="portalTable"></div>
-      <p class="hint">Customers who signed in to the customer portal and picked a technology this team follows. Opening a channel makes it in the portal, filed under this team, with your welcome message as its first thread.</p></div>` : ''}
+      <p class="hint">Threads about these show in this team's inbox, from any channel.</p></div>` : ''}
+    ${real && (!admin || v.requests.length) ? '<div class="card"><h2>Requests</h2><div id="requestsTable"></div></div>' : ''}
+    ${real && v.portal.length ? '<div class="card"><h2>Customers in the portal</h2><div id="portalTable"></div></div>' : ''}
     ${suggestions ? `<div class="card"><h2>Suggested channels</h2>
-      <p class="hint lead">Channels the admin team holds (no rule files them under a team) where members of ${esc(team.name)} post, react or are members, and the ones Clef thinks are this team's. Add assigns one here by hand.</p>
       <div id="suggestTable"></div></div>` : ''}`;
   showStatus();
   tabInView();
@@ -2303,7 +2273,7 @@ async function showTeam(slug) {
     if (on) for (const m of v.members) m.role = 'manager';
     const row = state.teams.find((t) => t.slug === slug);
     if (row) row.self_managed = on;
-    status('ok', on ? 'Self-managed: every member is a team manager now.' : 'Not self-managed any more: roles stay as they are.');
+    status('ok', on ? 'Every member is a team manager now.' : 'No longer self-managed. Roles stay as they are.');
     if (v === state.view) renderMembers();
     renderList();
   };
@@ -2325,7 +2295,7 @@ async function showTeam(slug) {
     // only once you have said so: its members and their roles go with it.
     $('tDelete').onclick = async () => (await confirmFirst(
       `Delete ${team.name}?`,
-      'The team goes, and its members are no longer on it. A team that still has rules or threads is not deleted.',
+      'Members are removed from the team. A team with rules or threads cannot be deleted.',
       'Delete team',
     )) && hold($('tDelete'), `delete:${slug}`, async () => {
       const res = await call('/api/admin/teams', 'DELETE', { slug });
@@ -2394,7 +2364,7 @@ function renderGroupPeople() {
   $('gPeople').innerHTML = g.people.length
     ? `<table><tr><th></th><th>Name</th><th>In these channels</th><th>In the admin team's</th><th>Teams</th></tr>${g.people.map((p, i) => `<tr>
       <td><input type="checkbox" id="gp${i}" data-email="${esc(p.email)}"${v.checked.has(p.email) ? ' checked' : ''}></td>
-      <td><label for="gp${i}">${esc(p.name || p.email)}</label><div class="sub">${esc(p.email)}${did(p) ? ` · ${esc(did(p))}` : ''}</div></td>
+      <td><label for="gp${i}">${esc(p.name || p.email)}</label><div class="sub">${esc(p.email)}${did(p) ? `, ${esc(did(p))}` : ''}</div></td>
       <td class="nw">${p.channels} of ${g.size}</td>
       <td class="nw">${p.everywhere}${total ? ` of ${total}` : ''}</td>
       <td>${esc(p.teams.map(teamLabel).join(', '))}</td></tr>`).join('')}</table>`
@@ -2412,13 +2382,13 @@ function renderGroupMoves() {
   const v = state.view;
   const el = $('gMoves');
   if (!el) return;
-  if (!v.moves) { el.innerHTML = `<span class="sub">${v.movesError ? esc(v.movesError) : 'Looking at what the rules would move…'}</span>`; return; }
+  if (!v.moves) { el.innerHTML = `<span class="sub">${v.movesError ? esc(v.movesError) : 'Checking what the rules would move…'}</span>`; return; }
   const mine = new Set(v.group.channels.map((c) => `${c.source}:${c.channelId}`));
   // What changes team: a rule change also re-files what the rules say otherwise already.
   const moved = v.moves.filter((m) => m.from.some((f) => f.team !== m.to.team));
   const others = moved.filter((m) => !mine.has(`${m.channel.source}:${m.channel.channelId}`));
   el.innerHTML = `<div class="status ${others.length ? 'warn' : 'ok'}">The rules re-file ${channelCount(moved.length)} under the team.</div>
-    ${others.length ? `<p class="hint">Not only these channels: they also take ${others.map((m) => `<b>${esc(plainName(m.channel))}</b> from ${esc(m.from.map((x) => teamLabel(x.team)).join(', '))}`).join(', ')}.</p>` : ''}`;
+    ${others.length ? `<p class="hint">The rules also move ${others.map((m) => `<b>${esc(plainName(m.channel))}</b> from ${esc(m.from.map((x) => teamLabel(x.team)).join(', '))}`).join(', ')}.</p>` : ''}`;
 }
 
 function renderGroupApply() {
@@ -2451,7 +2421,7 @@ function showGroup(prefix) {
   if (!g) {
     // A link to a group, opened before the groups are there (loadGroups opens it then).
     if (!state.groupCoverage) { state.view = { target: 'group-pending' }; return; }
-    $('detail').innerHTML = `<div class="title">${backButton()}</div><div class="empty">No channel of the admin team starts with <code>${esc(prefix)}</code> now: a team has them, or they were renamed.</div>`;
+    $('detail').innerHTML = `<div class="title">${backButton()}</div><div class="empty">No admin team channels start with <code>${esc(prefix)}</code>.</div>`;
     return;
   }
   const teams = state.teams.filter((t) => t.slug !== 'admin');
@@ -2461,26 +2431,25 @@ function showGroup(prefix) {
   };
   state.view = v;
   const checked = v.checked.size;
-  const listed = g.membersListed < g.size ? ` The members of ${g.membersListed} of them are listed; in the others, only who posted or reacted is known.` : '';
+  const listed = g.membersListed < g.size ? ` Members listed for ${g.membersListed}.` : '';
   $('detail').innerHTML = `
     <div class="title">${backButton()}<h1 class="fill">Channels starting with <code>${esc(g.prefix)}</code></h1>
-      ${g.dismissed ? '<button id="gAgain">Suggest again</button>' : '<button id="gDismiss" title="Not a team: hidden until more channels start with it">Dismiss</button>'}</div>
+      ${g.dismissed ? '<button id="gAgain">Suggest again</button>' : '<button id="gDismiss" title="Hide until more channels start with this prefix">Dismiss</button>'}</div>
     <div class="status" id="status"></div>
-    <p class="hint lead">${channelCount(g.size)} the admin team holds start with <code>${esc(g.prefix)}</code>: no rule files them under an ops team.${listed}
-      ${g.dismissed ? ` Dismissed by ${esc(g.dismissed.by || 'someone')} ${esc(ago(g.dismissed.at))}, at ${channelCount(g.dismissed.channels)}: suggested again once more start with it.` : ''}</p>
+    <p class="hint lead">${channelCount(g.size)} without a team.${listed}
+      ${g.dismissed ? ` Dismissed by ${esc(g.dismissed.by || 'someone')} ${esc(ago(g.dismissed.at))}.` : ''}</p>
     <div class="card wizteam"><h2>Team</h2>
       <label class="inline"><input type="radio" name="gMode" value="new"${v.mode === 'new' ? ' checked' : ''}><span>A new team</span></label>
       <div class="form"><label class="fld grow"><span>Name</span><input id="gName" value="${esc(g.slugTaken ? '' : g.name)}"></label>
         <label class="fld"><span>Slug</span><input id="gSlug" pattern="[a-z0-9][a-z0-9-]*" value="${esc(g.slugTaken ? '' : g.slug)}"></label></div>
-      <label class="inline"><input type="radio" name="gMode" value="existing"${v.mode === 'existing' ? ' checked' : ''}><span>An ops team that exists</span>
+      <label class="inline"><input type="radio" name="gMode" value="existing"${v.mode === 'existing' ? ' checked' : ''}><span>An existing team</span>
         <select id="gTeam" aria-label="Ops team">${teams.map((t) => `<option value="${esc(t.slug)}"${t.slug === preferred ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>
-      ${g.team ? `<p class="hint">${g.team.people} of the ${peopleCount(checked)} checked below ${g.team.people === 1 ? 'is' : 'are'} on ${esc(teamLabel(g.team.slug))} already: these channels may be its.</p>` : ''}
+      ${g.team ? `<p class="hint">${g.team.people} of the ${peopleCount(checked)} checked below ${g.team.people === 1 ? 'is' : 'are'} already on ${esc(teamLabel(g.team.slug))}.</p>` : ''}
       ${g.slugTaken && !g.team ? `<p class="hint">There is a team <span class="mono">${esc(g.slug)}</span> already.</p>` : ''}</div>
     <div class="card"><h2>Members</h2><div id="gPeople"></div>
-      <p class="hint">The Adobe people who are members of these channels, post or react in them, those in the most first. Checked: in at least half of them, and in them more than twice as often as in the admin team's channels at large, so that someone who is in all of those does not count. They join the team as members; make one a manager on its page.</p></div>
+      <p class="hint">They join as members.</p></div>
     <div class="card"><h2>Rules</h2><table><tr><th>Field</th><th>Rule</th><th>Platform</th></tr>${g.rules.map((r) => `<tr><td>${esc(FIELD_LABEL[r.field] || r.field)}</td><td>${describe(r)}</td><td>${r.source ? esc(platform({ source: r.source })) : 'All'}</td></tr>`).join('')}</table>
-      <div class="preview" id="gMoves"></div>
-      <p class="hint">The rules file every channel that starts with <code>${esc(g.prefix)}</code> under the team, now and when one is made, at priority 100 as the other prefix rules.</p></div>
+      <div class="preview" id="gMoves"></div></div>
     <div class="card"><h2>Channels</h2><table><tr><th>Channel</th><th>Platform</th><th>Threads</th><th>Latest</th></tr>${g.channels.map((c) => `<tr>
       <td>${channelName(c)}${c.membersListed ? '' : '<div class="sub">members not listed</div>'}</td><td>${esc(platform(c))}</td><td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td></tr>`).join('')}</table>
       ${g.size > g.channels.length ? `<p class="hint">And ${g.size - g.channels.length} more.</p>` : ''}</div>
@@ -2597,9 +2566,9 @@ function decisionText(r) {
     return `${statusTag(r)} by ${who(r.decidedBy)}${when}${r.reason ? `: <span class="note">${esc(r.reason)}</span>` : ''}`;
   }
   const did = {
-    moved: `filed under ${esc(teamLabel(r.team))}; its threads are re-filed`,
-    shared: `shared with ${esc(teamLabel(r.team))}; it stays filed under ${esc(teamLabel(r.channel.team))}`,
-    assigned: `assigned to ${esc(teamLabel(r.team))}; nothing to move yet`,
+    moved: `filed under ${esc(teamLabel(r.team))}`,
+    shared: `shared with ${esc(teamLabel(r.team))}, still filed under ${esc(teamLabel(r.channel.team))}`,
+    assigned: `assigned to ${esc(teamLabel(r.team))}`,
   }[r.outcome] || '';
   return `${statusTag(r)} by ${who(r.decidedBy)}${when}${did ? `: ${did}` : ''}`;
 }
@@ -2644,16 +2613,16 @@ async function refreshRequests() {
 /** The team page's requests: what was asked for, by whom, and the answer. */
 function renderRequests() {
   const v = state.view;
-  const rows = v.requests.map((r) => `<tr><td>${channelName(r.channel)}<div class="sub">${esc(platform(r.channel))} · <span class="mono">${esc(r.channel.channelId)}</span></div></td>
+  const rows = v.requests.map((r) => `<tr><td>${channelName(r.channel)}<div class="sub">${esc(platform(r.channel))}, <span class="mono">${esc(r.channel.channelId)}</span></div></td>
     <td class="nw">${who(r.requestedBy)}<div class="sub">${esc(ago(r.requestedAt))}</div></td>
     <td class="note">${esc(r.note || '')}</td>
     <td>${decisionText(r)}</td>
     <td class="nw">${r.status !== 'open' ? '' : state.me.admin
-    ? `<a href="${esc(requestThread('channel', r.id))}" title="Its thread in the admin team's inbox">Review</a>`
-    : `<button class="link" data-withdraw="${r.id}"${off(`request:${r.id}`)} title="Take the request back">Withdraw</button>`}</td></tr>`).join('');
+    ? `<a href="${esc(requestThread('channel', r.id))}" title="Open in the admin team's inbox">Review</a>`
+    : `<button class="link" data-withdraw="${r.id}"${off(`request:${r.id}`)} >Withdraw</button>`}</td></tr>`).join('');
   $('requestsTable').innerHTML = rows
     ? `<table><tr><th>Channel</th><th>Asked by</th><th>Note</th><th>Answer</th><th></th></tr>${rows}</table>`
-    : '<div class="empty">Nothing asked for yet. Search for a channel above to ask for it.</div>';
+    : '<div class="empty">No requests yet.</div>';
   for (const b of $('requestsTable').querySelectorAll('[data-withdraw]')) {
     const r = v.requests.find((x) => String(x.id) === b.dataset.withdraw);
     b.onclick = () => hold(b, `request:${r.id}`, async () => {
@@ -2674,14 +2643,14 @@ function askFor(c) {
   const v = state.view;
   const asked = v.requests.find((x) => x.status === 'open' && x.channel.channelId === c.channelId);
   if (asked) {
-    status('', `${plainName(c)} is asked for already; it waits for the admin team.`);
+    status('', `${plainName(c)} is already requested.`);
     return;
   }
   const shares = !isHolding(c.team);
   $('askSlot').innerHTML = `<form class="form" id="askForm">
     <span class="what">Ask the admin team to add <b>${channelName(c)}</b> to ${esc(teamLabel(v.value))}
-      <span class="sub">(now in ${esc(teamLabel(c.team))}${shares ? '; it would be shared with this team and stay filed there' : ''})</span></span>
-    <label class="fld grow"><span>Why this team should have it (optional)</span><input id="askNote" maxlength="500"></label>
+      <span class="sub">(now in ${esc(teamLabel(c.team))}${shares ? ', would be shared' : ''})</span></span>
+    <label class="fld grow"><span>Reason (optional)</span><input id="askNote" maxlength="500"></label>
     <button class="primary">Send request</button><button type="button" id="askCancel">Cancel</button></form>`;
   $('askNote').focus();
   $('askCancel').onclick = () => { $('askSlot').innerHTML = ''; $('pick').focus(); };
@@ -2696,7 +2665,7 @@ function askFor(c) {
       }, { idempotent: true });
       if (res.body.request) updateRequest(res.body.request);
       if (!res.ok) failed(`Ask for ${plainName(c)}`, res);
-      else status('ok', `Asked for ${plainName(c)}; the admin team confirms or declines it.`);
+      else status('ok', `Requested ${plainName(c)}.`);
       if (v === state.view) renderRequests();
     });
   };
@@ -2764,7 +2733,7 @@ function decideMember(b, r, reason, after) {
 /** The team page's people asked for: who, by whom, why, and Confirm or Decline. */
 function renderMemberRequests() {
   const v = state.view;
-  const rows = v.memberRequests.map((r) => `<tr><td>${esc(memberName(r))}<div class="sub">${esc(r.person.email)}${r.person.teams.length ? ` · on ${esc(r.person.teams.map(teamLabel).join(', '))}` : ''}</div></td>
+  const rows = v.memberRequests.map((r) => `<tr><td>${esc(memberName(r))}<div class="sub">${esc(r.person.email)}${r.person.teams.length ? `, on ${esc(r.person.teams.map(teamLabel).join(', '))}` : ''}</div></td>
     <td class="nw">${who(r.requestedBy)}<div class="sub">${esc(ago(r.requestedAt))}</div></td>
     <td class="note">${esc(r.note || '')}</td>
     <td>${r.status === 'open' ? '' : memberDecisionText(r)}</td>
@@ -2834,30 +2803,30 @@ function drawPortalRequest(r, forTeam = null) {
   const c = r.channel;
   $('detail').innerHTML = `
     <div class="title">${forTeam ? `<button class="back shown" id="pqBack" title="Back to ${esc(teamLabel(forTeam))}" aria-label="Back to ${esc(teamLabel(forTeam))}"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg></button>` : backButton()}
-      ${r.logo ? `<img class="ico" src="${esc(r.logo)}" alt="" title="The logo ${esc(r.company || r.domain)} uploaded in the portal">` : ''}
+      ${r.logo ? `<img class="ico" src="${esc(r.logo)}" alt="" title="Logo uploaded in the portal">` : ''}
       <h1 class="fill">${esc(r.company || r.domain)} <span class="sub">${esc(r.domain)}</span></h1>${statusTag(r)}</div>
     <div class="status" id="status"></div>
     <div class="card"><div class="field">
       <label>Asks for</label><span>a channel in the customer portal</span>
       <label>Uses</label><span>${r.tech.map((t) => `<span class="tag">${esc(t.name)}</span>`).join(' ') || '<span class="sub">nothing picked</span>'}</span>
-      <label>Followed by</label><span>${r.teams.length ? r.teams.map((t) => `<a href="/inbox/admin?tab=teams&team=${encodeURIComponent(t.team)}&view=manage">${esc(t.name)}</a> <span class="sub">${esc(t.tech.map((id) => techName.get(id) || id).join(', '))}</span>`).join(' · ') : '<span class="sub">no team follows any of these</span>'}</span>
+      <label>Followed by</label><span>${r.teams.length ? r.teams.map((t) => `<a href="/inbox/admin?tab=teams&team=${encodeURIComponent(t.team)}&view=manage">${esc(t.name)}</a> <span class="sub">${esc(t.tech.map((id) => techName.get(id) || id).join(', '))}</span>`).join(', ') : '<span class="sub">no team follows any of these</span>'}</span>
       ${r.note ? `<label>Needs</label><span class="note">${esc(r.note)}</span>` : ''}
-      <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(r.requestedBy.email || '')} · ${esc(ago(r.requestedAt))}</span></span>
+      <label>Asked by</label><span>${who(r.requestedBy)} <span class="sub">${esc(r.requestedBy.email || '')}, ${esc(ago(r.requestedAt))}</span></span>
       <label>People</label><span>${r.members.map((m) => `${esc(m.name || m.email)}${m.joined ? '' : ' <span class="sub">(invited)</span>'}`).join(', ')}</span>
-      ${c ? `<label>Channel</label><span>filed under <a href="/inbox/admin?tab=teams&team=${encodeURIComponent(c.team)}&view=manage">${esc(teamLabel(c.team))}</a> · customer <b>${esc(orgLabel(c.org))}</b> <span class="sub mono">${esc(c.channelId)}</span></span>` : ''}
+      ${c ? `<label>Channel</label><span>filed under <a href="/inbox/admin?tab=teams&team=${encodeURIComponent(c.team)}&view=manage">${esc(teamLabel(c.team))}</a>, customer <b>${esc(orgLabel(c.org))}</b> <span class="sub mono">${esc(c.channelId)}</span></span>` : ''}
       ${open ? '' : `<label>Answer</label><span>${statusTag(r)} by ${who(r.decidedBy)} ${esc(ago(r.decidedAt))}${r.reason ? `: <span class="note">${esc(r.reason)}</span>` : ''}</span>`}
     </div></div>
     ${r.status === 'declined' ? '' : `<div class="card"><h2>${c ? 'Opening another channel' : 'Opening a channel'}</h2>
-      ${state.portalBound ? '' : '<p class="hint lead">The customer portal is not connected to this inbox yet (PORTAL_WORKER): no channel can be opened from here.</p>'}
+      ${state.portalBound ? '' : '<p class="hint lead">The customer portal is not connected (PORTAL_WORKER).</p>'}
       <form class="form portalopen" id="pqForm">
         <label class="fld"><span>Channel name</span><input id="pqName" maxlength="80" value="${esc(c ? '' : r.suggest.name)}" required></label>
         ${admin ? `<label class="fld"><span>Customer${r.suggest.known ? `: ${esc(r.suggest.orgName || r.suggest.org)}` : ' (new)'}</span><input id="pqOrg" class="mono" maxlength="63" value="${esc(c ? c.org : r.suggest.org)}" required></label>` : ''}
         <label class="fld"><span>Team</span><select id="pqTeam"${forTeam ? ' disabled' : ''}>${teams.map((t) => `<option value="${esc(t.slug)}"${t.slug === first ? ' selected' : ''}>${esc(t.name)}${esc(why(t.slug))}</option>`).join('')}</select></label>
         ${admin && teams.length > 1 ? `<fieldset class="what shares"><legend>Also in the inbox of</legend>${teams.map((t) => `<label class="only"><input type="checkbox" name="pqShare" value="${esc(t.slug)}"> ${esc(t.name)}</label>`).join('')}</fieldset>` : ''}
-        <label class="fld what"><span>Welcome message, posted as you: the channel's first thread</span><textarea id="pqWelcome" rows="4" maxlength="8000">${esc(first ? welcomeText(r, first) : '')}</textarea></label>
+        <label class="fld what"><span>Welcome message, posted as you</span><textarea id="pqWelcome" rows="4" maxlength="8000">${esc(first ? welcomeText(r, first) : '')}</textarea></label>
         <button class="primary" id="pqOpen"${state.portalBound && teams.length ? '' : ' disabled'}${off(`portal:${r.id}`)}>Open channel</button></form>
-      <p class="hint">${admin ? 'The portal makes the channel, with everyone of the customer\'s lobby in it. Here it is filed under the team and the customer by hand (a channel-id rule with priority 10 each), and is in the other teams\' inboxes too.' : 'The portal makes the channel, with everyone of the customer\'s lobby in it, and it is filed under your team.'}</p></div>`}
-    ${open && admin ? `<div class="card"><h2>Declining it</h2><form class="form" id="pqDeclineForm"><label class="fld grow"><span>Reason, for the customer (optional)</span><input id="pqReason" maxlength="500"></label>
+      <p class="hint">Everyone in the customer's lobby joins the channel.</p></div>`}
+    ${open && admin ? `<div class="card"><h2>Decline</h2><form class="form" id="pqDeclineForm"><label class="fld grow"><span>Reason, for the customer (optional)</span><input id="pqReason" maxlength="500"></label>
       <button class="danger" id="pqDecline"${off(`portal:${r.id}`)}>Decline</button></form></div>` : ''}`;
   showStatus();
   if ($('pqBack')) $('pqBack').onclick = () => showTeam(forTeam);
@@ -2967,7 +2936,7 @@ async function drawOrgStack(slug, current) {
   const view = r.body.drawing;
   const kb = baseOf('orgs', slug);
   slot.innerHTML = `<div class="tv-drawing"><h3>Stack drawing</h3>${Stack.html(view)}
-    ${kb ? `<p class="hint"><a href="${esc(address({ section: 'kb', path: r.body.path }))}">${r.body.may ? 'Edit it in its knowledge base' : 'Open it in its knowledge base'}</a></p>` : ''}</div>`;
+    ${kb ? `<p class="hint"><a href="${esc(address({ section: 'kb', path: r.body.path }))}">${r.body.may ? 'Edit in the knowledge base' : 'Open in the knowledge base'}</a></p>` : ''}</div>`;
   Stack.wire(slot, view, { title: `${orgLabel(slug)}'s stack` });
 }
 
@@ -3010,8 +2979,8 @@ async function showOrgOverview(slug) {
   const inbox = orgInbox(slug, p.teams);
   const facts = [
     channelCount(p.org.channels),
-    inbox ? `<a href="${esc(inbox)}" title="Its threads in your inbox">Its threads</a>` : '',
-  ].filter(Boolean).join(' · ');
+    inbox ? `<a href="${esc(inbox)}" title="Open in your inbox">Threads</a>` : '',
+  ].filter(Boolean).join(', ');
   $('detail').innerHTML = `
     <div class="title">${backButton()}${ico(p.org.icon || row?.icon || null, p.org.domain || row?.domain || null)}<h1 class="fill">${esc(name)}</h1>
       ${p.org.type !== 'customer' ? `<span class="tag ${esc(p.org.type)}">${esc(p.org.type)}</span>` : ''}
@@ -3066,7 +3035,7 @@ async function showOrg(slug) {
   }
   $('detail').innerHTML = `
     <div class="title">${backButton()}<span id="oIco">${ico(org.icon, domain)}</span><h1 class="fill" id="oTitle">${esc(org.name || org.slug)}</h1>
-      <span class="sub mono">${esc(org.slug)}</span><button class="danger" id="oDelete" title="Forget the name, icon and type"${org.updated_at ? '' : ' hidden'}>Reset</button></div>
+      <span class="sub mono">${esc(org.slug)}</span><button class="danger" id="oDelete" title="Reset the name, icon and type"${org.updated_at ? '' : ' hidden'}>Reset</button></div>
     ${sectionsNav()}
     <div class="status" id="status"></div>
     ${followCard()}
@@ -3075,7 +3044,7 @@ async function showOrg(slug) {
       <label>Type</label><span class="seg" id="oType">${types.map((t) => `<button type="button" data-type="${t}" aria-pressed="${org.type === t}">${t}</button>`).join('')}</span>
       <label for="oIcon">Icon</label><span class="inline"><input id="oIcon" class="mono fill" value="${esc(org.icon || '')}"></span>
       <label>Suggestions</label><div class="icons" id="oIcons"><span class="sub">Looking for icons…</span></div>
-    </div><p class="hint">The inbox shows the display name and icon instead of the slug and the favicon of the customer's mail domain${domain ? ` (here ${esc(domain)})` : ''}. A domain shows its favicon; an https URL is used as the image. The suggestions are the favicons of the websites its name and its people's mail domains suggest, and the icons those sites name, most likely first as Clef sees them; pick one to use it.</p></div>
+    </div><p class="hint">Icon: a domain (uses the favicon) or an https image URL.${domain ? ` Defaults to the favicon of ${esc(domain)}.` : ''}</p></div>
     ${orgChannelsCard()}
     ${orgMergeCard(slug, merged)}
     ${rules.length ? `<div class="card"><h2>Rules naming this org</h2><table><tr><th>Field</th><th>Pattern</th><th>Value</th><th>Priority</th><th>Note</th></tr>
@@ -3127,16 +3096,15 @@ async function showOrg(slug) {
   };
   const tile = (c) => {
     const share = c.p === null || c.p === undefined ? '' : `${Math.round(c.p * 100)}%`;
-    const what = c.via === 'favicon' ? `The favicon of ${c.host}` : `${c.icon}, named by ${c.host}`;
-    // Clef does not read SVGs: they are offered without its verdict.
-    const verdict = c.svg ? ': an SVG, which Clef does not check' : share && `: ${share} the org's, says Clef`;
+    const what = c.via === 'favicon' ? `Favicon of ${c.host}` : `${c.icon}, from ${c.host}`;
+    const verdict = c.svg ? '' : share && `: ${share} match`;
     return `<button type="button" class="iconpick${c.p !== null && c.p < FITS ? ' weak' : ''}" data-icon="${esc(c.icon)}"
       title="${esc(`${what}${c.title ? ` (“${c.title}”)` : ''}${verdict}`)}"><img src="${esc(c.via === 'favicon' ? favicon(c.icon) : c.src)}" alt="">
       <span class="host">${esc(c.host)}${c.via === 'site' ? ' <span class="sub">site</span>' : ''}</span><span class="sub">${c.svg ? 'SVG' : share}</span></button>`;
   };
   const drawIcons = () => {
-    $('oIcons').innerHTML = `${found.map(tile).join('') || '<span class="sub">No icon found on the websites its name suggests.</span>'}
-      <button type="button" class="again" id="oIconsAgain" title="Fetch the icons and ask Clef again">Look again</button>`;
+    $('oIcons').innerHTML = `${found.map(tile).join('') || '<span class="sub">No icons found.</span>'}
+      <button type="button" class="again" id="oIconsAgain" title="Fetch the icons again">Look again</button>`;
     markIcons();
     for (const b of $('oIcons').querySelectorAll('[data-icon]')) {
       b.onclick = () => {
@@ -3198,8 +3166,7 @@ async function showOrg(slug) {
 const managesHere = (slug) => Boolean(state.me.admin || (state.me.manages || []).includes(slug));
 
 function followCard() {
-  return `<div class="card"><h2>Following</h2><div id="orgFollows"></div>
-    <p class="hint">You following it puts its threads in your personal view; muting it takes them out until you post in one of them. A team that follows it has every channel of it in its inbox, shared, now and later (a follow rule on the team's page); the channels stay filed under their teams. Follow's chevron has your teams, for those you manage.</p></div>`;
+  return '<div class="card"><h2>Following</h2><div id="orgFollows"></div></div>';
 }
 
 /** Who follows the customer: your Follow and Mute (ui/follow.js, as on its overview), and every team that does. */
@@ -3209,7 +3176,7 @@ function renderOrgFollows() {
   const name = v.org.name || slug;
   const teams = [...new Set(v.follows.map((f) => f.team))].sort((a, b) => teamLabel(a).localeCompare(teamLabel(b)));
   $('orgFollows').innerHTML = `<div class="fo-at">${Follow.button({ kind: 'org', id: slug, name })}</div>
-    <p class="sub">${teams.length ? `Followed by ${teams.map((t) => `<a href="${esc(address({ tab: 'teams', sel: t, section: 'overview' }))}">${esc(teamLabel(t))}</a>`).join(', ')}.` : 'No team follows it.'}</p>`;
+    <p class="sub">${teams.length ? `Followed by ${teams.map((t) => `<a href="${esc(address({ tab: 'teams', sel: t, section: 'overview' }))}">${esc(teamLabel(t))}</a>`).join(', ')}.` : 'No team follows this customer.'}</p>`;
 }
 
 /**
@@ -3246,9 +3213,7 @@ async function followChanged(change) {
 function orgChannelsCard() {
   return `<div class="card"><h2>Channels</h2><div id="orgChannels"></div>
     ${state.me.admin ? '<div class="form picker"><label class="fld grow"><span>Assign a channel here by hand</span><input id="pick" autocomplete="off"></label><div class="picks s2-float" id="picks" hidden></div></div>' : ''}
-    <p class="hint">Each channel is filed under one team (its folders, knowledge base and agents) and can be shared with more, whose inboxes have it too. ${state.me.admin
-    ? 'Click a channel\'s name to move it to another team. <b>Remove</b> hands one back to the admin team, or takes it out of a team\'s inbox it is shared with. A manual assignment files one channel under this org whatever the rules say (a channel-id rule with priority 10).'
-    : `${(state.me.manages || []).length ? '<b>Remove</b> hands a channel of your team back to the admin team, or takes it out of your team\'s inbox where it is shared with it. <b>Ask for</b> asks the admin team to move one to your team; the answer shows on your team\'s page.' : 'Your team managers change which channels your teams have.'}`}</p></div>`;
+    ${state.me.admin || (state.me.manages || []).length ? '' : '<p class="hint">Only team managers can change channels.</p>'}</div>`;
 }
 
 function renderOrgChannels() {
@@ -3256,33 +3221,33 @@ function renderOrgChannels() {
   const asked = (c, team) => v.requests.some((r) => r.team === team && r.channel.channelId === c.channelId && r.channel.source === c.source);
   const movable = state.me.admin && state.teams.length > 1;
   const rows = v.channels.map((c) => {
-    const where = `<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div>`;
+    const where = `<div class="sub">${esc(platform(c))}, <span class="mono">${esc(c.channelId)}</span></div>`;
     if (c.left) {
       return `<tr class="left"><td>${channelName(c)}${where}</td><td colspan="4" class="sub">${c.left.unshared ? `Out of ${esc(teamLabel(c.left.team))}'s inbox.`
-        : `Filed under ${esc(teamLabel(c.left.team))} / ${esc(orgLabel(c.left.org))} now; its threads are re-filed in the background.`}</td></tr>`;
+        : `Filed under ${esc(teamLabel(c.left.team))} / ${esc(orgLabel(c.left.org))} now. Threads are being re-filed.`}</td></tr>`;
     }
     const byRule = c.followedByRule || [];
     const shares = (c.sharedWith || []).map((t) => `<li>${esc(teamLabel(t))} <span class="sub">${byRule.includes(t) ? (v.follows.some((f) => f.team === t) ? 'follows the customer' : 'by a follow rule') : 'shared'}</span>
-      ${managesHere(t) && !byRule.includes(t) ? `<button class="link" data-unshare="${esc(c.channelId)}" data-team="${esc(t)}"${off(`unshare:${t}:${c.channelId}`)} title="Take it out of ${esc(teamLabel(t))}'s inbox; it stays filed under ${esc(teamLabel(c.team))}">Remove</button>` : ''}</li>`).join('');
+      ${managesHere(t) && !byRule.includes(t) ? `<button class="link" data-unshare="${esc(c.channelId)}" data-team="${esc(t)}"${off(`unshare:${t}:${c.channelId}`)} title="Remove from ${esc(teamLabel(t))}'s inbox. Stays filed under ${esc(teamLabel(c.team))}.">Remove</button>` : ''}</li>`).join('');
     const split = (c.split || []).filter((x) => x.threads);
     const home = `<li><b>${esc(teamLabel(c.team))}</b> <span class="sub">filed${c.manual?.team ? ' by hand' : ''}</span>
-      ${!isHolding(c.team) && managesHere(c.team) ? `<button class="link" data-release="${esc(c.channelId)}"${off(`release:${c.channelId}`)} title="Hand it back to ${esc(teamLabel('admin'))}: filed there by hand, its threads re-filed">Remove</button>` : ''}</li>`;
+      ${!isHolding(c.team) && managesHere(c.team) ? `<button class="link" data-release="${esc(c.channelId)}"${off(`release:${c.channelId}`)} title="Return to ${esc(teamLabel('admin'))}">Remove</button>` : ''}</li>`;
     // A manager asks for it for their teams that do not have it filed.
     const ask = state.me.admin ? '' : (state.me.manages || []).filter((t) => t !== c.team).map((t) => (asked(c, t)
       ? `<span class="tag manual" title="Waiting for the admin team">asked for ${esc(teamLabel(t))}</span>`
-      : `<button class="link" data-ask="${esc(c.channelId)}" data-team="${esc(t)}"${off(`ask:${t}:${c.channelId}`)} title="Ask the admin team to file it under ${esc(teamLabel(t))} (a move: its folders, knowledge base and agents go there)">Ask for ${esc(teamLabel(t))}</button>`)).join(' ');
+      : `<button class="link" data-ask="${esc(c.channelId)}" data-team="${esc(t)}"${off(`ask:${t}:${c.channelId}`)} title="Ask the admin team to move this channel to ${esc(teamLabel(t))}">Ask for ${esc(teamLabel(t))}</button>`)).join(' ');
     const manualOrg = state.me.admin && c.manual?.org
-      ? `<span class="tag manual" title="Assigned to this org by hand, whatever the rules say">manual</span> <button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unassign:org:${c.channelId}`)}>Undo</button>` : '';
+      ? `<span class="tag manual" title="Assigned by hand, overriding the rules">manual</span> <button class="link" data-unassign="${esc(c.channelId)}" data-source="${esc(c.source)}"${off(`unassign:org:${c.channelId}`)}>Undo</button>` : '';
     const name = movable
-      ? `<button class="link chan" data-move="${esc(c.channelId)}" aria-haspopup="dialog" title="Move it to another team">${channelName(c)}</button>` : channelName(c);
+      ? `<button class="link chan" data-move="${esc(c.channelId)}" aria-haspopup="dialog" title="Move to another team">${channelName(c)}</button>` : channelName(c);
     return `<tr><td>${name}${where}</td>
-      <td><ul class="teams">${home}${shares}</ul>${split.length ? `<div class="sub" title="Its threads are being re-filed under ${esc(teamLabel(c.team))}">${split.map((x) => `${x.threads} ${x.threads === 1 ? 'thread' : 'threads'} still under ${esc(teamLabel(x.team))}`).join(', ')}</div>` : ''}
+      <td><ul class="teams">${home}${shares}</ul>${split.length ? `<div class="sub" title="Being re-filed under ${esc(teamLabel(c.team))}">${split.map((x) => `${x.threads} ${x.threads === 1 ? 'thread' : 'threads'} still under ${esc(teamLabel(x.team))}`).join(', ')}</div>` : ''}
         ${c.kind !== 'channel' ? ` <span class="tag">${esc(c.kind)}</span>` : ''}</td>
       <td class="n">${c.threads}</td><td class="sub">${esc(ago(c.latest))}</td><td class="nw">${manualOrg}${ask}</td></tr>`;
   }).join('');
   $('orgChannels').innerHTML = rows
     ? `<table><tr><th>Channel</th><th>Teams</th><th>Threads</th><th>Latest</th><th></th></tr>${rows}</table>`
-    : '<div class="empty">No channel is filed here.</div>';
+    : '<div class="empty">No channels.</div>';
   const find = (id) => v.channels.find((c) => c.channelId === id && !c.left);
   const redraw = () => { if (v === state.view) renderOrgChannels(); renderList(); };
   for (const b of $('orgChannels').querySelectorAll('[data-move]')) {
@@ -3292,7 +3257,7 @@ function renderOrgChannels() {
     const c = find(b.dataset.release);
     const from = c.team;
     b.onclick = async () => {
-      if (!(await confirmFirst(`Remove ${plainName(c)} from ${teamLabel(from)}?`, `It goes back to ${teamLabel('admin')}, filed there by hand, and its threads are re-filed. ${teamLabel(from)} gets it again only from ${teamLabel('admin')}.`, 'Remove'))) return;
+      if (!(await confirmFirst(`Remove ${plainName(c)} from ${teamLabel(from)}?`, `The channel goes back to ${teamLabel('admin')}. Only ${teamLabel('admin')} can give it back to ${teamLabel(from)}.`, 'Remove'))) return;
       hold(b, `release:${c.channelId}`, async () => {
         const res = await ruleChange('POST', '/api/admin/release', { team: from, source: c.source, channelId: c.channelId }, `${plainName(c)} → ${teamLabel('admin')}`);
         if (!res) return;
@@ -3315,7 +3280,7 @@ function renderOrgChannels() {
       c.sharedWith = (c.sharedWith || []).filter((t) => t !== team);
       const row = state.teams.find((t) => t.slug === team);
       if (row) row.shared = Math.max(0, (row.shared || 0) - 1);
-      status('ok', `${plainName(c)} is out of ${teamLabel(team)}'s inbox; it stays filed under ${teamLabel(c.team)}.`);
+      status('ok', `Removed ${plainName(c)} from ${teamLabel(team)}'s inbox. Still filed under ${teamLabel(c.team)}.`);
       redraw();
     });
   }
@@ -3329,7 +3294,7 @@ function renderOrgChannels() {
       }, { idempotent: true });
       if (res.body.request) v.requests = [...v.requests.filter((r) => r.id !== res.body.request.id), res.body.request];
       if (!res.ok) failed(`Ask for ${plainName(c)}`, res);
-      else status('ok', `Asked the admin team to move ${plainName(c)} to ${teamLabel(team)}; the answer shows on ${teamLabel(team)}'s page.`);
+      else status('ok', `Requested ${plainName(c)} for ${teamLabel(team)}.`);
       redraw();
     });
   }
@@ -3361,7 +3326,7 @@ function showUnassigned(body) {
   $('detail').innerHTML = `<div class="title">${backButton()}<span class="ico none"></span><h1 class="fill">Unassigned</h1></div>
     <div class="status" id="status"></div>
     <div class="card"><h2>Channels without an org</h2><div id="unassignedTable"></div>
-    <p class="hint">No rule files these channels under an org: their names are not <code>&lt;product&gt;-&lt;org&gt;</code>, and nobody assigned them. Give each one an org: one the inbox suggests (its Slack Connect or Teams team, its people's mail domain, a word of its name), any other, or a new one. It is assigned there by hand (a channel-id rule with priority 10), and its threads are re-filed. Ignored channels are not listed.</p></div>`;
+    <p class="hint">Pick an org for each channel.</p></div>`;
   showStatus();
   renderUnassigned(v);
 }
@@ -3369,9 +3334,9 @@ function showUnassigned(body) {
 function renderUnassigned(v) {
   if (v !== state.view || !$('unassignedTable')) return;
   const rows = v.channels.map((c) => {
-    const where = `<div class="sub">${esc(platform(c))} · <span class="mono">${esc(c.channelId)}</span></div>`;
+    const where = `<div class="sub">${esc(platform(c))}, <span class="mono">${esc(c.channelId)}</span></div>`;
     if (c.left) {
-      return `<tr class="left"><td>${channelName(c)}${where}</td><td colspan="4" class="sub">Filed under ${esc(orgLabel(c.left.org))} now; its threads are re-filed in the background.</td></tr>`;
+      return `<tr class="left"><td>${channelName(c)}${where}</td><td colspan="4" class="sub">Filed under ${esc(orgLabel(c.left.org))}. Threads are being re-filed.</td></tr>`;
     }
     const sug = v.suggestions[c.channelId] || { orgs: [], fresh: null };
     const key = (slug) => `assign:org:${c.channelId}:${slug}`;
@@ -3451,8 +3416,7 @@ function orgMenu(button, v, c) {
   el.innerHTML = `<p class="what">File ${channelName(c)} under</p>
     <label class="s2-search"><input class="search" type="search" aria-label="Find an org, or name a new one" autocomplete="off"></label>
     <div class="opts" role="listbox" aria-label="Orgs"></div>
-    <div class="newtype" hidden><span class="sub">A new org, a</span><select aria-label="Its type">${state.types.map((t) => `<option>${t}</option>`).join('')}</select></div>
-    <p class="hint">Assigned there by hand, whatever the rules say; its threads are re-filed.</p>`;
+    <div class="newtype" hidden><span class="sub">New org of type</span><select aria-label="Type">${state.types.map((t) => `<option>${t}</option>`).join('')}</select></div>`;
   const input = el.querySelector('input');
   const opts = el.querySelector('.opts');
   const typeOf = el.querySelector('select');
@@ -3552,15 +3516,15 @@ async function loadDups({ fresh = false, round = 0 } = {}) {
 function dupRow(p) {
   const { orgs } = state.dups;
   const asked = openAsks(p).length;
-  const said = p.p === null ? 'Clef has not said yet' : `${pct(p.p)} one, says Clef`;
-  const why = [`${p.a}, ${p.b}`, said, asked ? 'merge asked for' : '', p.dismissed ? 'not the same' : ''].filter(Boolean).join(' · ');
+  const said = p.p === null ? 'not checked yet' : `${pct(p.p)} likely the same`;
+  const why = [`${p.a}, ${p.b}`, said, asked ? 'merge asked for' : '', p.dismissed ? 'not the same' : ''].filter(Boolean).join(', ');
   return SideNav.row({
     sel: pairSel(p.a, p.b),
     on: state.sel === pairSel(p.a, p.b),
     cls: 'dup',
     lead: `${ico(orgs[p.a].icon, orgs[p.a].domain)}${ico(orgs[p.b].icon, orgs[p.b].domain)}`,
     labelHtml: `${esc(dupName(p.a))} <span class="sep">and</span> ${esc(dupName(p.b))}`,
-    title: `${dupName(p.a)} (${p.a}) and ${dupName(p.b)} (${p.b}) · ${why}`,
+    title: `${dupName(p.a)} (${p.a}) and ${dupName(p.b)} (${p.b}), ${why}`,
     count: asked ? 'asked' : (p.p === null ? '' : pct(p.p)),
     countTitle: said,
   });
@@ -3574,7 +3538,7 @@ function dupSection(f) {
   const top = d.pairs.filter((p) => likelyPair(p) && match(p));
   const rest = d.pairs.filter((p) => !likelyPair(p) && match(p));
   if (!top.length && !rest.length && !d.unchecked) return '';
-  const checking = d.unchecked ? `<div class="navnote">Clef is looking at ${d.unchecked} more…</div>` : '';
+  const checking = d.unchecked ? `<div class="navnote">Checking ${d.unchecked} more…</div>` : '';
   const holds = (list) => list.some((p) => state.sel === pairSel(p.a, p.b));
   const more = rest.length ? SideNav.group({
     key: 'orgs:dups:more', label: `${rest.length} less likely`, body: rest.map(dupRow).join(''), holds: holds(rest),
@@ -3583,7 +3547,6 @@ function dupSection(f) {
     key: 'orgs:dups',
     label: 'Likely duplicates',
     count: top.length,
-    title: 'Two orgs that may be one, as Clef sees them: merge them, or say they are not',
     body: `${top.map(dupRow).join('') || `<div class="navempty">${f ? 'Nothing matches.' : 'None for now.'}</div>`}${checking}${more}`,
     holds: (Boolean(f) && (top.length + rest.length) > 0) || holds(top) || holds(rest),
   });
@@ -3614,7 +3577,7 @@ const askText = (r, v = null) => `${who(r.requestedBy)} asked to merge <b>${esc(
 /** One side of a pair: what the inbox knows of the org. */
 function pairSide(o, kept) {
   const page = address({ tab: 'orgs', sel: o.slug, section: 'overview' });
-  const chans = o.channelNames.map((c) => `<li>${esc(c.label)} <span class="sub">${esc(platform(c))} · ${c.threads} ${c.threads === 1 ? 'thread' : 'threads'}</span>${c.topic ? `<div class="sub">${esc(c.topic)}</div>` : ''}</li>`).join('');
+  const chans = o.channelNames.map((c) => `<li>${esc(c.label)} <span class="sub">${esc(platform(c))}, ${c.threads} ${c.threads === 1 ? 'thread' : 'threads'}</span>${c.topic ? `<div class="sub">${esc(c.topic)}</div>` : ''}</li>`).join('');
   return `<div class="side${kept ? ' kept' : ''}">
     <div class="inline">${ico(o.icon, o.domain)}<a href="${esc(page)}"><b>${esc(o.name || o.slug)}</b></a>${kept ? '<span class="tag confirmed">kept</span>' : ''}</div>
     <div class="sub mono">${esc(o.slug)}</div>
@@ -3630,7 +3593,7 @@ function pairSide(o, kept) {
 /** What merging would do, from its dry run. */
 function mergePreviewText(v) {
   const pr = v.preview;
-  if (!pr) return '<span class="sub">Trying it…</span>';
+  if (!pr) return '<span class="sub">Checking…</span>';
   if (!pr.ok) return `<span class="err">${esc(pr.body.error || `failed (${pr.status})`)}</span>`;
   const { moves, moved = {}, kb = {} } = pr.body;
   const from = nameIn(v, v.from);
@@ -3639,16 +3602,16 @@ function mergePreviewText(v) {
     mcp_servers: ['MCP server', 'MCP servers'],
     agent_secrets: ['secret', 'secrets'],
     agent_repos: ['repository', 'repositories'],
-    person_follows_by: ['person who follows it', 'people who follow it'],
+    person_follows_by: ['follower', 'followers'],
     org_stacks: ['stack drawing', 'stack drawings'],
     portal_requests: ['portal lobby', 'portal lobbies'],
   };
   const along = Object.entries(moved).map(([k, n]) => `${n} ${(what[k] || [k, k])[n === 1 ? 0 : 1]}`);
   return `<ul>
-    <li>${moves.length ? `Re-files ${moves.length} ${moves.length === 1 ? 'channel' : 'channels'} under ${esc(into)}: ${moves.slice(0, 6).map((m) => esc(plainName(m.channel))).join(', ')}${moves.length > 6 ? ` and ${moves.length - 6} more` : ''}.` : 'Re-files no channel: it has none with threads.'} What the rules file under ${esc(v.from)} later goes there too.</li>
-    ${along.length ? `<li>Gives ${esc(into)} its ${esc(along.join(', '))}.</li>` : ''}
-    ${kb.entries ? `<li>Copies the ${kb.entries} entries of its knowledge base that ${esc(into)}'s has not; a file both have stays as ${esc(into)}'s.</li>` : ''}
-    <li>${esc(into)} keeps its name, icon and type; ${esc(from)}'s fill in where it has none.</li>
+    <li>${moves.length ? `Re-files ${moves.length} ${moves.length === 1 ? 'channel' : 'channels'} under ${esc(into)}: ${moves.slice(0, 6).map((m) => esc(plainName(m.channel))).join(', ')}${moves.length > 6 ? ` and ${moves.length - 6} more` : ''}.` : 'No channels to re-file.'}</li>
+    ${along.length ? `<li>Moves ${esc(along.join(', '))} to ${esc(into)}.</li>` : ''}
+    ${kb.entries ? `<li>Copies ${kb.entries} knowledge-base entries to ${esc(into)}.</li>` : ''}
+    <li>Keeps the name, icon and type of ${esc(into)}, filling gaps from ${esc(from)}.</li>
   </ul>`;
 }
 
@@ -3690,35 +3653,34 @@ function drawPair(v) {
   const asks = pair.requests || [];
   const open = openAsks(pair);
   const mine = open.find((q) => q.requestedBy.email === state.me.email);
-  const clef = pair.p === null ? 'Clef has not been asked yet; it is, the next time the list loads.'
-    : `Clef says ${pct(pair.p)} that they are one company${pair.stale ? ' (from before their channels changed: it is asked again)' : ''}${pair.checked ? `, asked ${esc(ago(pair.checked))}` : ''}.`;
+  const clef = pair.p === null ? 'Not checked yet.'
+    : `${pct(pair.p)} likely the same company${pair.stale ? ' (out of date)' : ''}${pair.checked ? `, checked ${esc(ago(pair.checked))}` : ''}.`;
   const seg = `<span class="seg" id="pKeep">${[pair.a, pair.b].map((s) => `<button type="button" data-keep="${esc(s)}" aria-pressed="${v.keep === s}">${esc(nameIn(v, s))}</button>`).join('')}</span>`;
   let act = '';
   if (v.done) {
     act = `<div class="card"><h2>Merged</h2><p>${esc(nameIn(v, v.done.from))} is part of <a href="${esc(address({ tab: 'orgs', sel: v.done.into, section: 'overview' }))}">${esc(nameIn(v, v.done.into))}</a> now${v.done.moves ? `; ${v.done.moves} ${v.done.moves === 1 ? 'channel is' : 'channels are'} re-filed` : ''}${v.done.kb ? `; ${v.done.kb}` : ''}.</p>
       <div class="form"><button id="pUndo"${off(`unmerge:${v.done.from}`)}>Undo the merge</button></div></div>`;
   } else if (admin) {
-    act = `<div class="card"><h2>Merge them</h2><div class="field"><label>Keep</label>${seg}</div>
+    act = `<div class="card"><h2>Merge</h2><div class="field"><label>Keep</label>${seg}</div>
       <div class="preview" id="pPreview">${mergePreviewText(v)}</div>
       <div class="form"><button class="primary" id="pMerge"${v.preview && v.preview.ok ? '' : ' disabled'}${off(`merge:${v.value}`)}>Merge ${esc(nameIn(v, v.from))} into ${esc(nameIn(v, v.keep))}</button>
         ${pair.dismissed ? `<button id="pDismiss" data-undo="1"${off(`dismiss:${v.value}`)}>They may be one after all</button>` : `<button id="pDismiss"${off(`dismiss:${v.value}`)}>Not the same</button>`}</div>
-      <p class="hint">${pair.dismissed ? `Said not to be the same by ${who({ email: pair.dismissed.by })} ${esc(ago(pair.dismissed.at))}: the list shows them last, and nobody else sees them unless they ask for a merge.` : 'Not the same takes them off the list, until somebody asks for their merge.'} A merge is undone on the page of the org kept: its channels go back; what moved with it stays.</p></div>`;
+      ${pair.dismissed ? `<p class="hint">Marked not the same by ${who({ email: pair.dismissed.by })} ${esc(ago(pair.dismissed.at))}.</p>` : ''}</div>`;
   } else if (mine) {
-    act = `<div class="card"><h2>Your request</h2><p>${askText(mine, v)}</p><div class="form"><button id="pWithdraw"${off(`ask:${mine.id}`)}>Take it back</button></div></div>`;
+    act = `<div class="card"><h2>Your request</h2><p>${askText(mine, v)}</p><div class="form"><button id="pWithdraw"${off(`ask:${mine.id}`)}>Withdraw</button></div></div>`;
   } else if (!open.length) {
     act = `<div class="card"><h2>Ask for a merge</h2><form class="form" id="pAskForm"><div class="fld"><span class="sub">Keep</span>${seg}</div>
-      <label class="fld grow"><span>Why they are one (optional)</span><input id="pNote" maxlength="500"></label>
-      <button class="primary" id="pAsk"${off(`ask:${v.value}`)}>Ask the admin team</button></form>
-      <p class="hint">The admin team merges customers: the one is filed under the other from then on, its channels, knowledge and agents' set-up too. They answer in their inbox.</p></div>`;
+      <label class="fld grow"><span>Reason (optional)</span><input id="pNote" maxlength="500"></label>
+      <button class="primary" id="pAsk"${off(`ask:${v.value}`)}>Ask the admin team</button></form></div>`;
   }
   // Your own open request is the card that takes it back.
   const listed = asks.filter((q) => q !== mine);
-  const asked = listed.length ? `<div class="card"><h2>Asked for</h2><ul class="asks">${listed.map((q) => `<li>${askText(q, v)}${q.status === 'open' ? '' : ` · ${decisionText(q)}`}
+  const asked = listed.length ? `<div class="card"><h2>Asked for</h2><ul class="asks">${listed.map((q) => `<li>${askText(q, v)}${q.status === 'open' ? '' : `, ${decisionText(q)}`}
       ${admin && q.status === 'open' ? `<form class="form" data-decline="${q.id}"><label class="fld grow"><span>Reason, for ${who(q.requestedBy)} (optional)</span><input maxlength="500"></label><button class="danger"${off(`ask:${q.id}`)}>Decline</button></form>` : ''}</li>`).join('')}</ul></div>` : '';
   $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">${esc(dupName(pair.a, orgs))} <span class="sub">and</span> ${esc(dupName(pair.b, orgs))}</h1></div>
     <div class="status" id="status"></div>
     <div class="card"><div class="pair">${pairSide(orgs[pair.a], !v.done && v.keep === pair.a)}${pairSide(orgs[pair.b], !v.done && v.keep === pair.b)}</div></div>
-    <div class="card"><h2>Why they may be one</h2><p>${clef}</p>${pair.signals.length ? `<ul>${pair.signals.map((x) => `<li>${esc(x.text[0].toUpperCase() + x.text.slice(1))}.</li>`).join('')}</ul>` : '<p class="sub">Nothing they share says so.</p>'}</div>
+    <div class="card"><h2>Likely the same</h2><p>${clef}</p>${pair.signals.length ? `<ul>${pair.signals.map((x) => `<li>${esc(x.text[0].toUpperCase() + x.text.slice(1))}.</li>`).join('')}</ul>` : '<p class="sub">No shared signals.</p>'}</div>
     ${asked}${act}`;
   showStatus();
   wirePair(v);
@@ -3751,7 +3713,7 @@ function wirePair(v) {
   if ($('pMerge')) {
     $('pMerge').onclick = () => hold($('pMerge'), `merge:${v.value}`, async () => {
       const [from, into] = [v.from, v.keep];
-      const ok = await confirmFirst(`Merge ${nameIn(v, from)} into ${nameIn(v, into)}?`, `${from} is filed under ${into} from now on: its channels, the ones the rules name it later, its agents' set-up and its knowledge. Undo moves its channels back.`, 'Merge');
+      const ok = await confirmFirst(`Merge ${nameIn(v, from)} into ${nameIn(v, into)}?`, `${from}'s channels, agent setup and knowledge move to ${into}. Undo moves the channels back.`, 'Merge');
       if (!ok) return;
       const res = await call('/api/admin/org-merge', 'POST', { from, into });
       if (!res.ok) { failed('Merge', res); return; }
@@ -3761,9 +3723,9 @@ function wirePair(v) {
       state.orgs = state.orgs.filter((o) => o.slug !== from);
       if (state.dups && !state.dups.error) state.dups.pairs = state.dups.pairs.filter((p) => p.a !== from && p.b !== from);
       const copied = kb.copied ? `${kb.copied} knowledge-base ${kb.copied === 1 ? 'entry' : 'entries'} copied` : '';
-      const left = kb.kept && kb.kept.length ? `${kb.kept.length} kept in ${from}'s, as ${into}'s has them too` : '';
+      const left = kb.kept && kb.kept.length ? `${kb.kept.length} already in ${into}` : '';
       v.done = {
-        from, into, moves: moves.length, kb: [copied, left, kb.error ? `its knowledge base was not copied: ${kb.error}` : ''].filter(Boolean).join(', '),
+        from, into, moves: moves.length, kb: [copied, left, kb.error ? `knowledge base not copied: ${kb.error}` : ''].filter(Boolean).join(', '),
       };
       status(kb.error || (kb.failed && kb.failed.length) ? 'warn' : 'ok', `Merged ${nameIn(v, from)} into ${nameIn(v, into)}.`);
       renderList();
@@ -3790,7 +3752,7 @@ function wirePair(v) {
       const res = await call('/api/admin/org-duplicates/dismiss', 'POST', { a: pair.a, b: pair.b, undo });
       if (!res.ok) { failed('Save', res); return; }
       pair.dismissed = res.body.dismissed;
-      status('ok', undo ? 'Back on the list.' : 'Not the same: off the list.');
+      status('ok', undo ? 'Back on the list.' : 'Marked not the same.');
       updatePair(pair, v.orgs);
       renderList();
       if (v === state.view) drawPair(v);
@@ -3806,7 +3768,7 @@ function wirePair(v) {
           if (res.body.request) pair.requests = [res.body.request, ...(pair.requests || [])];
         } else {
           pair.requests = [res.body.request, ...(pair.requests || [])];
-          status('ok', 'Asked: the admin team answers in its inbox.');
+          status('ok', 'Merge requested.');
         }
         updatePair(pair, v.orgs);
         renderList();
@@ -3819,7 +3781,7 @@ function wirePair(v) {
     $('pWithdraw').onclick = () => hold($('pWithdraw'), `ask:${mine.id}`, async () => {
       const res = await call('/api/admin/org-merge-requests', 'DELETE', { id: mine.id });
       if (!res.ok) failed('Take back', res);
-      else status('ok', 'Taken back.');
+      else status('ok', 'Request withdrawn.');
       if (res.body.request) Object.assign(mine, res.body.request);
       updatePair(pair, v.orgs);
       renderList();
@@ -3853,7 +3815,7 @@ async function unmerge(slug) {
   const res = await call('/api/admin/org-merge', 'DELETE', { slug });
   if (!res.ok) { failed('Undo', res); return null; }
   applyMoves(res.body.moves, null);
-  status('ok', `${slug} is an org of its own again${res.body.moves.length ? `; ${res.body.moves.length} ${res.body.moves.length === 1 ? 'channel goes' : 'channels go'} back` : ''}.`);
+  status('ok', `Unmerged ${slug}${res.body.moves.length ? `; ${res.body.moves.length} ${res.body.moves.length === 1 ? 'channel moves' : 'channels move'} back` : ''}.`);
   const orgs = await call('/api/admin/orgs');
   if (orgs.ok) state.orgs = orgs.body.orgs;
   loadDups({ fresh: true });
@@ -3868,15 +3830,14 @@ function orgMergeCard(slug, merged) {
   const pairs = (state.dups && !state.dups.error ? state.dups.pairs : []).filter((p) => p.a === slug || p.b === slug);
   const others = state.orgs.filter((o) => o.slug !== slug);
   return `<div class="card"><h2>Duplicates</h2>
-    ${merged.length ? `<table id="mergedTable"><tr><th>Merged into it</th><th>By</th><th></th></tr>${merged.map((m) => `<tr><td>${esc(m.name || m.slug)} <span class="sub mono">${esc(m.slug)}</span></td>
+    ${merged.length ? `<table id="mergedTable"><tr><th>Merged in</th><th>By</th><th></th></tr>${merged.map((m) => `<tr><td>${esc(m.name || m.slug)} <span class="sub mono">${esc(m.slug)}</span></td>
       <td class="sub">${who({ email: m.merged_by })}, ${esc(ago(m.merged_at))}</td><td class="n"><button class="quiet" data-unmerge="${esc(m.slug)}"${off(`unmerge:${m.slug}`)}>Undo</button></td></tr>`).join('')}</table>` : ''}
     ${pairs.length ? `<ul class="dups">${pairs.map((p) => {
     const other = p.a === slug ? p.b : p.a;
-    return `<li><a href="${esc(address({ tab: 'orgs', sel: pairSel(p.a, p.b) }))}">${esc(dupName(other))}</a> <span class="sub">${p.p === null ? 'Clef has not said yet' : `${pct(p.p)} one, says Clef`}${p.dismissed ? ' · not the same' : ''}</span></li>`;
+    return `<li><a href="${esc(address({ tab: 'orgs', sel: pairSel(p.a, p.b) }))}">${esc(dupName(other))}</a> <span class="sub">${p.p === null ? 'not checked yet' : `${pct(p.p)} likely the same`}${p.dismissed ? ', not the same' : ''}</span></li>`;
   }).join('')}</ul>` : ''}
     <form class="form" id="oCompare"><label class="fld grow"><span>Compare with another org</span><input id="oOther" list="oOthers" autocomplete="off"></label>
-      <datalist id="oOthers">${others.map((o) => `<option value="${esc(o.slug)}">${esc(o.name || '')}</option>`).join('')}</datalist><button>Compare</button></form>
-    <p class="hint">Two orgs that are one company: merged, the one is filed under the other from then on, its channels, knowledge and agents' set-up too. Undo moves its channels back.</p></div>`;
+      <datalist id="oOthers">${others.map((o) => `<option value="${esc(o.slug)}">${esc(o.name || '')}</option>`).join('')}</datalist><button>Compare</button></form></div>`;
 }
 
 function wireOrgMerge(slug) {

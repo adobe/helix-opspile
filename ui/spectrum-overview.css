@@ -281,7 +281,6 @@
 .spectrum .ov .tv-tabs button[aria-selected="true"] { color: var(--spectrum-gray-25); background: var(--spectrum-neutral-background-color-default); border-color: transparent; }
 .spectrum .ov .tv-tabs button[aria-selected="true"] .sub { color: inherit; }
 .spectrum .ov .tv-tabs button:focus-visible { outline: var(--s2-focus); }
-.spectrum .ov .tv-layer h3 { text-transform: uppercase; letter-spacing: 0.04em; }
 .spectrum .ov .tv-layer li { border-radius: var(--s2-radius); }
 .spectrum .ov .tv-layer li:hover { background: var(--spectrum-gray-100); }
 .spectrum .ov .tv-layer .tv-line { font-weight: var(--spectrum-medium-font-weight); }

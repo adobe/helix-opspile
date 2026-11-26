@@ -249,8 +249,8 @@
     const pace = item.list === 'trending' && s.accel > 0.05 ? ', speeding up' : '';
     const title = item.list === 'peaked'
       ? `Peaked in the week of ${st.data.weeks[s.peak.week]}; now ${Math.round((100 * s.now) / (s.peak.share || 1))}% of that`
-      : `${pctOf(100 * s.share)} of the active channels (${s.perWeek.toFixed(1)} a week), ${lift >= 0 ? '+' : ''}${lift}% on its share in the ${Trends.BASE} weeks before${pace}`;
-    return `<span class="badge ${item.list}${item.top > Trends.MOSTLY_ONE ? ' one' : ''}" title="${esc(title)}${item.top > Trends.MOSTLY_ONE ? ' · mostly one customer' : ''}">${esc(text)}</span>`;
+      : `${pctOf(100 * s.share)} of the active channels (${s.perWeek.toFixed(1)} a week), ${lift >= 0 ? '+' : ''}${lift}% against the ${Trends.BASE} weeks before${pace}`;
+    return `<span class="badge ${item.list}${item.top > Trends.MOSTLY_ONE ? ' one' : ''}" title="${esc(title)}${item.top > Trends.MOSTLY_ONE ? ', mostly one customer' : ''}">${esc(text)}</span>`;
   }
 
   /** A sentence on a node's trend, for its details. */
@@ -262,7 +262,7 @@
       declining: 'Declining',
       peaked: `Peaked in the week of ${st.data.weeks[s.peak.week]}, now at ${Math.round((100 * s.now) / (s.peak.share || 1))}% of that`,
     }[item.list] || 'Steady';
-    return `<p class="trend">${spark(item)}<span>${esc(what)}: ${pctOf(100 * s.share)} of the active channels in the last ${Trends.RECENT} weeks (${s.perWeek.toFixed(1)} a week), against ${pctOf(100 * s.baseShare)} in the ${Trends.BASE} before${item.list === 'trending' && s.accel > 0.05 ? ', speeding up' : ''} · ${item.orgs} customer${item.orgs === 1 ? '' : 's'}${item.top > Trends.MOSTLY_ONE ? ', mostly one' : ''}</span></p>`;
+    return `<p class="trend">${spark(item)}<span>${esc(what)}: ${pctOf(100 * s.share)} of the active channels in the last ${Trends.RECENT} weeks (${s.perWeek.toFixed(1)} a week), against ${pctOf(100 * s.baseShare)} in the ${Trends.BASE} before${item.list === 'trending' && s.accel > 0.05 ? ', speeding up' : ''}; ${item.orgs} customer${item.orgs === 1 ? '' : 's'}${item.top > Trends.MOSTLY_ONE ? ', mostly one' : ''}</span></p>`;
   }
 
   function drawChart(ctx) {
@@ -341,7 +341,7 @@
       cursor.setAttribute('visibility', 'visible');
       tip.innerHTML = `<b>Week of ${esc(weeks[i])}${i === n - 1 ? ' (so far)' : ''}</b>
         ${shown.map((s) => `<span class="row"><span class="swatch ${s.paint}"></span>${esc(s.label)}: ${totals[first + i] ? pctOf((100 * s.counts[first + i]) / totals[first + i]) : '0%'} (${s.counts[first + i]} of ${totals[first + i]} active channels)</span>`).join('')}
-        <span class="sub">Active: a channel with a message that week · click for its threads</span>`;
+        <span class="sub">Click to see the threads</span>`;
       tip.hidden = false;
       const box2 = $('tchart').getBoundingClientRect();
       tip.style.left = `${Math.min(ev.clientX - box2.left + 14, box2.width - tip.offsetWidth - 8)}px`;
@@ -356,11 +356,11 @@
       const mt = s.match;
       const note = (mt && mt.pending && 'looking…') || (mt && mt.error) || (mt && mt.capped && 'some months have more than shown')
         || (mt && mt.semantic && 'by meaning') || (s.picked && 'picked') || (s.hovered && 'pointed at') || '';
-      return `<li${st.hidden.has(s.term) ? ' class="off"' : ''}><button class="term" data-term="${esc(s.term)}" title="Shift-click hides it">
+      return `<li${st.hidden.has(s.term) ? ' class="off"' : ''}><button class="term" data-term="${esc(s.term)}" title="Shift-click to hide">
         <span class="swatch ${s.paint}"></span>${esc(s.label)}${note ? ` <span class="sub">${esc(note)}</span>` : ''}</button>
         <button class="x" data-drop="${esc(s.term)}" aria-label="Take ${esc(s.label)} off the chart">×</button></li>`;
     }).join('')}${series.some((s) => !s.hovered) ? '<li><button class="clear" data-clear>Clear</button></li>'
-      : '<li class="sub">Nothing on the chart: pick a bubble, or search, to add its line.</li>'}`;
+      : '<li class="sub">Pick a bubble or search to add a line.</li>'}`;
   }
 
   /** Draws the chart, asking for the words and phrases it does not have yet. */
@@ -379,7 +379,7 @@
    * each line, week by week. What it compares comes from the page's search (`compare`).
    */
   function card() {
-    return `<section class="tchart" id="tchart" aria-label="The share of the active channels (with a message that week) that talk about it, week by week">
+    return `<section class="tchart" id="tchart" aria-label="Share of active channels, week by week">
       <svg id="tsvg" role="img" aria-label="Week by week"></svg><ul class="legend tlegend" id="tlegend"></ul>
       <div class="tip" id="ttip" hidden></div></section>`;
   }
@@ -473,11 +473,11 @@
     const byId = new Map(body.threads.map((t) => [t.id, t]));
     const orgName = (slug) => st.data.orgs.find((o) => o.slug === slug)?.name || slug;
     const link = (x) => `/inbox?team=${encodeURIComponent(x.team)}&t=${encodeURIComponent(x.key)}`;
-    return `<div class="head"><div><div class="sub">Threads</div><h2>The week of ${esc(st.data.weeks[week])}</h2></div>
+    return `<div class="head"><div><h2>Threads in the week of ${esc(st.data.weeks[week])}</h2></div>
         <button class="close" id="unweek" aria-label="Back" title="Back">✕</button></div>
       ${series.map((s, i) => `<section><h3><span class="swatch ${s.paint}"></span>${esc(s.label)} <span class="sub">${lists[i].length}</span></h3>
         <ol class="threads">${lists[i].slice(0, LISTED).map((r) => byId.get(r[I.id])).filter(Boolean).map((x) => `<li><a href="${esc(link(x))}" target="_blank" rel="noopener">${esc(x.title || '(no title)')}</a>
-          <div class="sub">${esc(orgName(x.org))} · ${esc(x.team)} · ${esc(x.source)} · ${esc(String(x.at).slice(0, 10))} · ${x.messages} message${x.messages === 1 ? '' : 's'}</div></li>`).join('') || '<li class="sub">None</li>'}</ol></section>`).join('')}`;
+          <div class="sub">${esc(orgName(x.org))}, ${esc(x.team)}, ${esc(x.source)}, ${esc(String(x.at).slice(0, 10))}, ${x.messages} message${x.messages === 1 ? '' : 's'}</div></li>`).join('') || '<li class="sub">None</li>'}</ol></section>`).join('')}`;
   }
 
   globalThis.TrendView = {

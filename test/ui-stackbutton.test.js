@@ -99,7 +99,7 @@ describe('the thread header\'s stack drawing', () => {
   it('leads to the customer\'s profile in Customers at the dropdown\'s foot, not for threads of none', () => {
     const page = load();
     const menu = page.techMenu(thread('acme', PARTS));
-    assert.match(menu, /<div class="hms"><a class="hmi foot" href="\/inbox\/admin\?tab=orgs&amp;org=acme" title="ACME&#39;s overview in Customers[^"]*"><span>ACME's profile<\/span><small>Customers<\/small><\/a><\/div><\/menu>$/);
+    assert.match(menu, /<div class="hms"><a class="hmi foot" href="\/inbox\/admin\?tab=orgs&amp;org=acme"><span>ACME's profile<\/span><small>Customers<\/small><\/a><\/div><\/menu>$/);
     assert.doesNotMatch(page.techMenu(thread('_unassigned', PARTS)), /class="hmi foot"/);
     // Opening the dropdown focuses its first link, not the one at its foot.
     assert.match(html, /\.hmpop a\.hmi:not\(\.foot\)`\)\?\.focus\(\)/);

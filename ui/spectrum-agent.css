@@ -92,8 +92,7 @@ dialog.ask .apply { display: flex; justify-content: flex-end; gap: var(--spectru
 :where(.agent) .ch .sub.err { overflow-wrap: anywhere; }
 :where(.agent) .mono { font: var(--spectrum-font-size-75) var(--s2-code); }
 :where(.agent) .mcpform { display: grid; grid-template-columns: calc(var(--spectrum-spacing-1000) + var(--spectrum-spacing-400)) 1fr; gap: var(--spectrum-spacing-100) var(--spectrum-spacing-200); align-items: center; margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-50) 0; }
-:where(.agent) .mcpform h3 { grid-column: 1 / -1; margin: 0; font-size: var(--spectrum-font-size-75); font-weight: 600; letter-spacing: var(--spectrum-detail-letter-spacing);
-  text-transform: uppercase; color: var(--mute); }
+:where(.agent) .mcpform h3 { grid-column: 1 / -1; margin: 0; font-size: var(--spectrum-font-size-75); font-weight: 600; color: var(--mute); }
 :where(.agent) .mcpform label { color: var(--mute); font-size: var(--spectrum-font-size-100); }
 :where(.agent) .mcpform .hint { grid-column: 2; color: var(--faint); font-size: var(--spectrum-font-size-75); margin-top: calc(-1 * var(--spectrum-spacing-75)); }
 :where(.agent) .mcpform .hint.wide { margin-top: 0; }
@@ -101,8 +100,7 @@ dialog.ask .apply { display: flex; justify-content: flex-end; gap: var(--spectru
 :where(.agent) .mcpform [hidden] { display: none; }
 :where(.agent) .mcpform .apply { grid-column: 2; display: flex; gap: var(--spectrum-spacing-100); }
 /* Global MCP servers: opspile's own, switched per team and per channel. */
-:where(.agent) .channels h3.group { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-50) var(--spectrum-spacing-50); font-size: var(--spectrum-font-size-75); font-weight: 600; letter-spacing: var(--spectrum-detail-letter-spacing);
-  text-transform: uppercase; color: var(--mute); }
+:where(.agent) .channels h3.group { margin: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)) var(--spectrum-spacing-50) var(--spectrum-spacing-50); font-size: var(--spectrum-font-size-75); font-weight: 600; color: var(--mute); }
 :where(.agent) .channels h3.group:first-child { margin-top: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-75)); }
 :where(.agent) .ch.global { flex-wrap: wrap; row-gap: 0; }
 /* What you are switching: its name and switch stay on top of its long list of channels, at

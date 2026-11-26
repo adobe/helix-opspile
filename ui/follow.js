@@ -48,11 +48,11 @@ globalThis.Follow = (() => {
   };
   // What following one puts in your personal view.
   const BRINGS = {
-    thread: 'it stays in your personal view',
-    account: 'the threads they post in come into your personal view',
-    person: 'the threads they post in come into your personal view',
+    thread: () => 'keep this thread in Personal',
+    account: (name) => `see the threads ${name} posts in, in Personal`,
+    person: (name) => `see the threads ${name} posts in, in Personal`,
   };
-  const brings = (kind) => BRINGS[kind] || 'its threads come into your personal view, in any channel';
+  const brings = (kind, name) => (BRINGS[kind] || ((n) => `see threads about ${n} in Personal`))(name);
   // Past this many teams to follow for (the admin team's), the others are found by name.
   const SHOWN_TEAMS = 6;
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
@@ -149,9 +149,9 @@ globalThis.Follow = (() => {
     // A thread's name is its title, already beside the button.
     const name = kind === 'thread' ? 'this thread' : raw;
     const by = shownTeams(kind, id, team).map(teamName);
-    const also = by.length ? ` ${and(by)} ${by.length === 1 ? 'follows' : 'follow'} it.` : '';
-    return on ? `You follow ${name}: ${kind === 'thread' ? 'it is' : 'its threads are'} in your personal view. Click to stop.${also}`
-      : `Follow ${name}: ${brings(kind)}.${also}`;
+    const also = by.length ? ` Followed by ${and(by)}.` : '';
+    return on ? `Following ${name}. Click to stop.${also}`
+      : `Follow to ${brings(kind, name)}.${also}`;
   }
 
   /** What the button holds for `{ kind, id, name }`. */
@@ -165,11 +165,11 @@ globalThis.Follow = (() => {
     // The chevron: where you may follow for a team, or, on a team's page, where you are on it.
     const split = team ? relevant(kind, team).length > 0 : may.length > 0;
     const more = split ? `<button type="button" class="fo-more" data-fo-act="who" aria-haspopup="menu" aria-expanded="false"
-      aria-label="${esc(`Who follows ${name}: you, or a team`)}" title="Who follows it: you, or a team you manage">${n ? `<span class="fo-n">${n}</span>` : ''}<span class="s2-chevron" aria-hidden="true"></span></button>` : '';
+      aria-label="${esc(`Who follows ${name}: you, or a team`)}" title="Follow for yourself or a team">${n ? `<span class="fo-n">${n}</span>` : ''}<span class="s2-chevron" aria-hidden="true"></span></button>` : '';
     const isMuted = withMute && muted(kind, id);
     const muteBtn = withMute ? `<button type="button" class="fo-mute" data-fo-act="mute" aria-pressed="${isMuted}"
-      title="${esc(isMuted ? `You muted ${name}: its threads are back in your personal view once you post in one of them. Click to unmute.`
-    : `Mute ${name}: its threads leave your personal view until you post in one of them, or follow it.`)}"${busy.has(`${key(kind, id)}:mute`) ? ' disabled' : ''}><span class="fo-ico" aria-hidden="true"></span>${isMuted ? 'Muted' : 'Mute'}</button>` : '';
+      title="${esc(isMuted ? `Muted. Click to unmute ${name}.`
+    : `Hide ${name}'s threads from Personal until you post in one`)}"${busy.has(`${key(kind, id)}:mute`) ? ' disabled' : ''}><span class="fo-ico" aria-hidden="true"></span>${isMuted ? 'Muted' : 'Mute'}</button>` : '';
     return `<span class="fo-follow${more ? ' split' : ''}">${main}${more}</span>${muteBtn}`;
   }
 
@@ -253,10 +253,9 @@ globalThis.Follow = (() => {
     if (!ready()) return Promise.resolve(false);
     const on = !follows(kind, id, who);
     const team = who === 'me' ? null : who;
-    const inbox = kind === 'org' ? 'its channels are in its inbox, shared' : 'its threads are in its inbox';
     const text = team
-      ? (on ? `${teamName(team)} follows ${name}: ${inbox}.` : `${teamName(team)} no longer follows ${name}.`)
-      : (on ? `Following ${name}: ${kind === 'thread' ? 'it is' : 'its threads are'} in your personal view.` : `No longer following ${name}.`);
+      ? (on ? `${teamName(team)} follows ${name}.` : `${teamName(team)} no longer follows ${name}.`)
+      : (on ? `Following ${name}.` : `No longer following ${name}.`);
     const wasMuted = !team && on && muted(kind, id);
     return send({
       kind,
@@ -289,7 +288,7 @@ globalThis.Follow = (() => {
       guessed,
       said: {
         verb: on ? 'mute' : 'unmute',
-        text: on ? `Muted ${name}: its threads are back once you post in one of them.${wasFollowing ? ' You no longer follow it.' : ''}`
+        text: on ? `Muted ${name}.${wasFollowing ? ` You no longer follow ${name}.` : ''}`
           : `${name} is no longer muted.`,
       },
       // Undone: unmuted, and followed again if it was.
@@ -351,16 +350,14 @@ globalThis.Follow = (() => {
     const ro = relevant(kind, team || null)
       .filter((t) => !may.includes(t) && (team || following.includes(t)));
     const sorted = (list) => [...list].sort((a, b) => teamName(a).localeCompare(teamName(b)));
-    const what = kind === 'org' ? 'every channel of it is in its inbox, shared, now and later'
-      : 'its threads are in its inbox, in any team\'s channels';
     const html = `<div class="fo-h">Who follows ${esc(name)}</div>
       ${row('me', 'You', follows(kind, id), true, 'your personal view')}
       <div class="fo-sep" role="separator"></div><div class="fo-h sub">Teams</div>
       ${sorted([...first, ...(all ? rest : [])]).map((t) => row(t, teamName(t), follows(kind, id, t), true)).join('')}
-      ${sorted(ro).map((t) => row(t, teamName(t), following.includes(t), false, 'you do not manage it')).join('')}
+      ${sorted(ro).map((t) => row(t, teamName(t), following.includes(t), false, 'not a team you manage')).join('')}
       ${all ? '' : `<label class="fo-another"><span class="hint">Another team</span><input type="search" class="fo-find" autocomplete="off" spellcheck="false" value="${esc(pop.find)}"></label>
         ${sorted(found).slice(0, SHOWN_TEAMS).map((t) => row(t, teamName(t), follows(kind, id, t), true)).join('')}`}
-      <p class="hint fo-hint">A team that follows it: ${what}.</p>`;
+      <p class="hint fo-hint">${kind === 'org' ? `Teams share ${esc(name)}'s channels in their inbox.` : `Teams see threads about ${esc(name)} in their inbox.`}</p>`;
     const el = popEl();
     const focused = keepFind && document.activeElement?.matches?.('.fo-find');
     // The row that had the focus keeps it, drawn again.
@@ -457,16 +454,16 @@ globalThis.Follow = (() => {
     const mutedList = ids(st.muted.org).map((id) => ['org', id]);
     const item = (kind, id, act, title) => `<button class="item" role="switch" aria-checked="true" data-fo-menu="${act}" data-kind="${esc(kind)}" data-id="${esc(id)}"
       title="${esc(title)}"><span class="${act === 'mute' ? 'fo-ico' : 'ck s2-check'}" aria-hidden="true"></span><span class="fo-who">${esc(nameOf(kind, id))}</span><small>${esc(NOUN[kind])}</small></button>`;
-    list.innerHTML = followed.map(([k, id]) => item(k, id, 'follow', `A ${NOUN[k]}: click to stop following it`)).join('')
-      + (mutedList.length ? `<div class="fo-h sub">Muted</div>${mutedList.map(([k, id]) => item(k, id, 'mute', 'Muted: its threads are back once you post in one of them. Click to unmute it')).join('')}` : '');
+    list.innerHTML = followed.map(([k, id]) => item(k, id, 'follow', 'Click to stop following')).join('')
+      + (mutedList.length ? `<div class="fo-h sub">Muted</div>${mutedList.map(([k, id]) => item(k, id, 'mute', 'Click to unmute')).join('')}` : '');
     const yours = mine();
     const said = Object.entries(st.teams).filter(([t]) => yours.has(t))
       .map(([t, f]) => [t, ['tech', 'area', 'org'].flatMap((k) => ids(f[k]).map((id) => nameOf(k, id)))])
       .filter(([, names]) => names.length)
-      .map(([t, names]) => `${teamName(t)} follows ${and(names)} in its inbox.`);
+      .map(([t, names]) => `${teamName(t)} follows ${and(names)}.`);
     box.querySelector('#followHint').textContent = `${followed.length
-      ? 'Their threads are in your personal view, in any channel. Click one to stop.'
-      : 'Follow products, topics, customers and people: their threads come into your personal view, in any channel.'}${said.length ? ` ${said.join(' ')}` : ''}`;
+      ? 'Their threads show in Personal.'
+      : 'Follow products, topics, customers and people to see their threads in Personal.'}${said.length ? ` ${said.join(' ')}` : ''}`;
     if (!box.dataset.wired) {
       box.dataset.wired = '1';
       list.addEventListener('click', (e) => {

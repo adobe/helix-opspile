@@ -46,9 +46,9 @@ describe('ui markdown', () => {
     assert.match(html, /^<p>See these\.<\/p><div class="files">/);
     assert.doesNotMatch(html, /Attachments:/);
     assert.match(html, /data-kind="table" data-home="Slack"><span class="file-ico" aria-hidden="true">CSV<\/span>/);
-    assert.match(html, /title="Open in Slack: table \(3\)\.csv">table \(3\)\.csv<\/a><span class="file-sub">Table · Slack<\/span>/);
+    assert.match(html, /title="Open in Slack: table \(3\)\.csv">table \(3\)\.csv<\/a><span class="file-sub">Table, Slack<\/span>/);
     assert.match(html, /<button type="button" class="file-act" data-preview="table" aria-expanded="false"/);
-    assert.match(html, />Quiz \[v2\]\.mov<\/a><span class="file-sub">Video · Slack<\/span><\/span><a class="file-go"/);
+    assert.match(html, />Quiz \[v2\]\.mov<\/a><span class="file-sub">Video, Slack<\/span><\/span><a class="file-go"/);
     assert.match(html, /data-kind="text" data-home="Discord">.*data-preview="text"/);
     // A file of another workspace: a card without a link.
     const unseen = render('Attachments:\n- CSV file (shared from another workspace; opspile cannot see it)');
@@ -186,14 +186,14 @@ describe('ui markdown', () => {
       'teams:19:cdn@thread.tacv2': {
         name: 'CDN tickets', href: '/inbox?team=ops&filters=1', inbox: true, title: '#CDN tickets: Ops',
       },
-      'slack:C0BBBBBBBB2': { name: 'beta-help', title: '#beta-help is not in your inbox: open it in Slack' },
+      'slack:C0BBBBBBBB2': { name: 'beta-help', title: 'Open #beta-help in Slack' },
     };
     const html = render(`${teams} or [the CDN channel](${teams}), https://acme.slack.com/archives/C0BBBBBBBB2 and https://acme.slack.com/archives/C0ZZZZZZZZ9`, {
       channelUrl: (href) => known[channelUrlKey(href)],
     }).replace(/\n/g, '');
     assert.equal(html, '<p><a class="channel" href="/inbox?team=ops&amp;filters=1" data-inbox title="#CDN tickets: Ops">#CDN tickets</a> '
       + 'or <a class="channel" href="/inbox?team=ops&amp;filters=1" data-inbox title="#CDN tickets: Ops">the CDN channel</a>, '
-      + '<a target="_blank" rel="noopener" class="channel" href="https://acme.slack.com/archives/C0BBBBBBBB2" title="#beta-help is not in your inbox: open it in Slack">#beta-help</a> '
+      + '<a target="_blank" rel="noopener" class="channel" href="https://acme.slack.com/archives/C0BBBBBBBB2" title="Open #beta-help in Slack">#beta-help</a> '
       + 'and <a target="_blank" rel="noopener" href="https://acme.slack.com/archives/C0ZZZZZZZZ9">https://acme.slack.com/archives/C0ZZZZZZZZ9</a></p>');
   });
 

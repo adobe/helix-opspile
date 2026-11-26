@@ -61,7 +61,7 @@ describe('a command request\'s card', () => {
   it('is a form: the command, the agent\'s reason, a secret field per variable, Deny and Run', () => {
     const html = bashCard(request, { decide: true });
     assert.match(html, /^<form class="br pending" data-id="r1" autocomplete="off">/);
-    assert.match(html, /the agent asks · 9m · <span title="Until [^"]+: after that, nobody can run it">open for 23h<\/span>/);
+    assert.match(html, /the agent asks, 9m, <span title="Expires [^"]+">open for 23h<\/span>/);
     // Its id, as the agent names it in its notes.
     assert.match(html, /Command<\/span><code class="id" title="[^"]+">r1<\/code><span class="by">/);
     // What the agent wrote is text, never markup.
@@ -78,15 +78,15 @@ describe('a command request\'s card', () => {
     assert.ok(html.includes('<code>$API_TOKEN</code>'));
     assert.ok(html.includes('<span class="ds">Your &quot;API&quot; token</span>'));
     assert.equal(html.match(/class="ds"/g).length, 1);
-    assert.match(html, /<label class="keep" title="Encrypted in this browser's storage[^"]+"><input type="checkbox" name="remember">Remember on this device, encrypted<\/label>/);
-    assert.match(html, /<span class="note" title="[^"]*read it before you run it\.">Runs on the agent's computer, for up to 60 s\. The agent gets what it prints, never what you fill in\.<\/span>/);
+    assert.match(html, /<label class="keep" title="Stored encrypted in this browser[^"]+"><input type="checkbox" name="remember">Remember on this device, encrypted<\/label>/);
+    assert.match(html, /<span class="note" title="[^"]*read it before you run it\.">Runs on the agent's computer, for up to 60 s\. The agent gets the output, never the values you enter\.<\/span>/);
     assert.match(html, /<button type="button" class="deny" data-bash="deny">Deny<\/button><button type="submit" class="run" data-bash="run">Run<\/button>/);
   });
 
   it('has no fields without variables, and none at all for who cannot decide', () => {
     const plain = bashCard({ ...request, env: [] }, { decide: true });
     assert.doesNotMatch(plain, /<input|class="vars"|class="keep"/);
-    assert.match(plain, /for up to 60 s\. The agent gets what it prints\.<\/span>/);
+    assert.match(plain, /for up to 60 s\. The agent gets the output\.<\/span>/);
     assert.match(plain, /data-bash="run"/);
     const seen = bashCard(request, {});
     assert.match(seen, /^<div class="br pending" data-id="r1">/);
@@ -115,17 +115,17 @@ describe('a command request\'s card', () => {
       const html = bashCard({ ...request, finished_at: at, ...r }, { decide: true });
       assert.doesNotMatch(html, /<form|<input|<button|class="why"/);
       assert.ok(html.includes('<pre class="cmd"><code>curl -H'));
-      assert.ok(html.includes('<code class="id" title="This request\'s id: the agent names it in its notes">r1</code>'));
+      assert.ok(html.includes('<code class="id" title="Request id">r1</code>'));
       return html.match(/<span class="by">(.*?)<\/span><\/div>/)[1]
         .replace(/<span class="st bad" title="[^"]*">/, '[!]').replace(/<span class="st" title="[^"]*">|<\/span>/g, '');
     };
     assert.equal(line({ status: 'running', by: { id: 1, name: 'Dana' } }), '<i class="spin"></i>Running, started by you');
-    assert.equal(line({ status: 'done', exit_code: 0, by: ada }), 'Ran, exit code 0 · by Ada · 9m');
-    assert.equal(line({ status: 'done', exit_code: 3, by: ada }), '[!]Ran, exit code 3 · by Ada · 9m');
-    assert.equal(line({ status: 'timeout', by: ada }), '[!]Stopped after 60 s, its timeout · by Ada · 9m');
-    assert.equal(line({ status: 'failed', error: 'the computer <failed>', by: ada }), '[!]Did not run to its end: the computer &lt;failed&gt; · by Ada · 9m');
-    assert.equal(line({ status: 'denied', by: ada }), 'Denied by Ada · 9m');
-    assert.equal(line({ status: 'expired' }), 'Expired at 14:00: nobody ran it');
+    assert.equal(line({ status: 'done', exit_code: 0, by: ada }), 'Ran, exit code 0, by Ada, 9m');
+    assert.equal(line({ status: 'done', exit_code: 3, by: ada }), '[!]Ran, exit code 3, by Ada, 9m');
+    assert.equal(line({ status: 'timeout', by: ada }), '[!]Timed out after 60 s, by Ada, 9m');
+    assert.equal(line({ status: 'failed', error: 'the computer <failed>', by: ada }), '[!]Failed: the computer &lt;failed&gt;, by Ada, 9m');
+    assert.equal(line({ status: 'denied', by: ada }), 'Denied by Ada, 9m');
+    assert.equal(line({ status: 'expired' }), 'Expired at 14:00');
     const done = {
       ...request, status: 'done', exit_code: 0, by: ada,
     };
@@ -267,7 +267,7 @@ describe('a script request\'s card', () => {
     assert.ok(html.includes('<pre class="cmd"><code>const r = await tools.search_threads({ query: &quot;&lt;cards&gt;&quot; });\nreturn r.threads.length;</code></pre>'));
     assert.match(html, /<div class="tools"><span class="ds">Calls as you, reading what you may read:<\/span><code>search_threads<\/code><code>get_thread<\/code><\/div>/);
     assert.doesNotMatch(html, /<input/);
-    assert.match(html, /Runs in the agent's code mode as you, for up to 60 s\. The agent gets what it outputs\./);
+    assert.match(html, /Runs as you, for up to 60 s\. The agent gets the output\./);
     assert.match(html, /<button type="button" class="deny" data-bash="deny">Deny<\/button><button type="submit" class="run" data-bash="run">Run as me<\/button>/);
     // Running as you: the buttons wait, the one you clicked with a spinner.
     assert.match(bashCard(script, { decide: true, busy: true }), /class="run" data-bash="run" disabled><i class="spin"><\/i>Run as me/);
@@ -289,9 +289,9 @@ describe('a script request\'s card', () => {
   it('says how a decided script stands: ran, threw, as whom', () => {
     const ended = (r) => bashCard({ ...script, finished_at: '2026-11-05T10:05:00Z', ...r });
     assert.match(ended({ status: 'running', by: { id: 2, name: 'Bo' } }), /<i class="spin"><\/i><span class="st" title="[^"]+">Running as Bo<\/span>/);
-    assert.match(ended({ status: 'done', by: { id: 1, name: 'Ada' } }), /<span class="st" title="The agent was told what the script output\.">Ran<\/span> · by you · 9m/);
+    assert.match(ended({ status: 'done', by: { id: 1, name: 'Ada' } }), /<span class="st" title="The agent was told what the script output\.">Ran<\/span>, by you, 9m/);
     assert.match(ended({ status: 'done', error: 'Not found', by: { id: 1 } }), /<span class="st bad" [^>]+>Ran, and threw: Not found<\/span>/);
-    assert.match(ended({ status: 'failed', error: 'the agent restarted while it ran' }), /<span class="st bad" [^>]+>Did not run to its end: the agent restarted while it ran<\/span>/);
+    assert.match(ended({ status: 'failed', error: 'the agent restarted while it ran' }), /<span class="st bad" [^>]+>Failed: the agent restarted while it ran<\/span>/);
     assert.match(ended({ status: 'denied', by: { id: 2, name: 'Bo' } }), />Denied by Bo</);
   });
 });
@@ -342,7 +342,7 @@ describe('a request the agent made in a sidebar conversation', () => {
     assert.deepEqual(barRequests('t').map((r) => r.id), ['a1', 'a2', 'a3']);
     const options = bashOptions('t');
     const html = bar(barRequests('t'), { options: (r) => ({ ...options(r), side: r.sidebar ? 'sb1' : null }) });
-    assert.match(html, /data-id="a1"[^]*the agent asks <button type="button" class="toside" data-side-toggle="sb1" title="[^"]+">in the sidebar<\/button> · 9m/);
+    assert.match(html, /data-id="a1"[^]*the agent asks <button type="button" class="toside" data-side-toggle="sb1" title="[^"]+">in the sidebar<\/button>, 9m/);
     assert.equal(html.match(/data-side-toggle/g).length, 1);
   });
 

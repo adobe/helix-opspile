@@ -54,12 +54,12 @@ globalThis.CustomerView = (() => {
    * one picked stays picked from one customer to the next. `who` has a color of its own per part.
    */
   const FOCUS = [
-    { id: 'who', label: 'Who', hint: 'Who said it: their people, partners\' people in their threads, or Adobe\'s.' },
-    { id: 'people', label: 'Their people', hint: 'What each of their people (and the partners\') said; Adobe\'s is left out.' },
-    { id: 'teams', label: 'Teams', hint: 'Each thread under the team it is filed under.' },
-    { id: 'areas', label: 'Topics', hint: 'Each thread under the likeliest of Clef\'s areas of it.' },
-    { id: 'tech', label: 'Products', hint: 'Each thread under the technology Clef is surest it shows.' },
-    { id: 'channels', label: 'Channels', hint: 'Each thread under its channel.' },
+    { id: 'who', label: 'Who' },
+    { id: 'people', label: 'Their people', hint: 'Without Adobe\'s messages' },
+    { id: 'teams', label: 'Teams' },
+    { id: 'areas', label: 'Topics' },
+    { id: 'tech', label: 'Products' },
+    { id: 'channels', label: 'Channels' },
   ];
   let focus = 'who';
   const focusOf = (p) => FOCUS.filter((f) => f.id === 'who' || (p.breakdowns?.[f.id] || []).length > 1);
@@ -69,14 +69,14 @@ globalThis.CustomerView = (() => {
     return `${Overview.bars(p.weeks, partsOf(p, id), {
       label: `Messages in ${nameOf(p)}'s threads, by ${f.label.toLowerCase()}`,
       key: id === 'who' ? (x) => x.id : undefined,
-    })}<p class="hint">Messages a week. ${esc(f.hint)}</p>`;
+    })}`;
   };
 
   function activity(p) {
     const shown = focusOf(p);
     const on = shown.some((f) => f.id === focus) ? focus : 'who';
     return `<div class="cv-activity">
-      <div class="cv-head"><h2 id="cvActivity">What was said, week by week</h2>
+      <div class="cv-head"><h2 id="cvActivity">Messages per week</h2>
         ${Overview.tabs(shown, on, { label: 'Broken down by', attr: 'data-focus' })}</div>
       <div id="cvBars">${barsOf(p, on)}</div>
     </div>`;
@@ -95,10 +95,10 @@ globalThis.CustomerView = (() => {
     return Overview.stats([
       [c.open, c.open === 1 ? 'open case' : 'open cases', `${c.them} waiting on them, ${c.us} on Adobe`],
       [Overview.wait(a.median), 'first answer', a.answered ? `typically; ${answered}` : answered,
-        'How long its first answer took in the threads Adobe started, the middle of them'],
+        'Median time to the vendor\'s first answer, in cases Adobe opened'],
       [total, total === 1 ? 'message' : 'messages', total ? `${Math.round((100 * ours) / total)}% by Adobe` : ''],
       [status.total, status.total === 1 ? 'status post' : 'status posts', `in the last ${p.weeks.length} weeks`],
-      [d.customerCount, d.customerCount === 1 ? 'customer' : 'customers', `use its products, in ${plural(d.threads, 'thread')}`],
+      [d.customerCount, d.customerCount === 1 ? 'customer' : 'customers', `use ${nameOf(p)}'s products, in ${plural(d.threads, 'thread')}`],
       [p.staffCount, p.staffCount === 1 ? 'person from Adobe' : 'people from Adobe', `on ${plural(p.teamCount, 'team')}`],
     ]);
   }
@@ -115,7 +115,7 @@ globalThis.CustomerView = (() => {
       [total, total === 1 ? 'message' : 'messages', total ? `${Math.round((100 * ours) / total)}% by Adobe` : ''],
       [p.threadCount, p.threadCount === 1 ? 'thread' : 'threads', `${Math.round(threads / p.weeks.length)} active in a week`],
       [Overview.wait(a.median), 'first answer', a.answered ? `typically; ${answered}` : answered,
-        'How long Adobe\'s first post took in the threads its people started, the middle of them'],
+        'Median time to Adobe\'s first answer, in threads the customer started'],
       [p.staffCount, p.staffCount === 1 ? 'person from Adobe' : 'people from Adobe', `on ${plural(p.teamCount, 'team')}`],
     ]);
   }
@@ -134,10 +134,10 @@ globalThis.CustomerView = (() => {
     let follow = null;
     if (m.id) follow = { kind: 'person', id: m.id, name: m.name };
     else if (m.account) follow = { kind: 'account', id: m.account, name: m.name || 'Someone' };
-    const foot = href && !m.profile.description ? `<dl class="ps-keys"><dt>Contact</dt><dd><a class="tv-contact" href="${esc(href)}" title="Their Contact in the knowledge base">In the knowledge base</a></dd></dl>` : '';
+    const foot = href && !m.profile.description ? `<dl class="ps-keys"><dt>Contact</dt><dd><a class="tv-contact" href="${esc(href)}" title="Open their contact page">In the knowledge base</a></dd></dl>` : '';
     return Person.card(m, {
       face: face(m.name, m.avatar, 'big'),
-      name: link(m.id ? ctx.topicHref(`person:${m.id}`) : null, esc(m.name || 'Someone'), { title: m.id ? 'Their topics and products on the Topics page' : '' }),
+      name: link(m.id ? ctx.topicHref(`person:${m.id}`) : null, esc(m.name || 'Someone'), { title: m.id ? 'Open on the Topics page' : '' }),
       badge: partner,
       title: m.title,
       weeks: p.weeks.length,
@@ -154,8 +154,7 @@ globalThis.CustomerView = (() => {
   function cases(p) {
     const c = p.vendor.cases;
     return `<section class="tv-sec" aria-labelledby="cvCases"><h2 id="cvCases">Open cases <span class="sub">${esc(`${c.them} waiting on them, ${c.us} on Adobe`)}</span></h2>
-      ${Overview.threads(c.list, { hidden: c.hidden, empty: `Nothing is open with ${nameOf(p)}.` })}
-      <p class="hint">Its threads of these weeks that are not resolved and wait on someone, the latest first. Adobe is the customer here: a case waits on them until they answer, investigate or fix.</p></section>`;
+      ${Overview.threads(c.list, { hidden: c.hidden, empty: `Nothing is open with ${nameOf(p)}.` })}</section>`;
   }
 
   function statusPosts(p) {
@@ -163,8 +162,7 @@ globalThis.CustomerView = (() => {
     const rows = s.list.map((x) => ({ ...x, last: x.at }));
     return `<section class="tv-sec" aria-labelledby="cvStatus"><h2 id="cvStatus">Status posts <span class="sub">${esc(plural(s.total, 'post'))}</span></h2>
       ${s.total ? `<div class="cv-status">${spark(s.weekly, { cls: 'status', label: 'status posts, week by week' })}<span class="sub">week by week, the last ${p.weeks.length} weeks</span></div>` : ''}
-      ${Overview.threads(rows, { hidden: s.hidden, empty: 'No status post in these weeks.' })}
-      <p class="hint">What its status page and its bots post in its channels (maintenance, incidents), as alerts: nobody needs to answer them.</p></section>`;
+      ${Overview.threads(rows, { hidden: s.hidden, empty: 'No status post in these weeks.' })}</section>`;
   }
 
   function dependents(p, ctx) {
@@ -174,14 +172,13 @@ globalThis.CustomerView = (() => {
       count: plural(c.threads, 'thread'),
       lead: ctx.orgIcon(c.slug, c.icon),
       name: link(ctx.orgHref(c.slug), esc(c.name || c.slug)),
-      sub: esc([c.type !== 'customer' ? c.type : '', c.last ? ago(c.last) : ''].filter(Boolean).join(' · ')),
-      tail: c.waiting ? `<span class="tag tv-them" title="Its threads of these that wait on a third party">${esc(plural(c.waiting, 'waits', 'wait'))} on a third party</span>` : '',
+      sub: esc([c.type !== 'customer' ? c.type : '', c.last ? ago(c.last) : ''].filter(Boolean).join(', ')),
+      tail: c.waiting ? `<span class="tag tv-them">${esc(plural(c.waiting, 'waits', 'wait'))} on a third party</span>` : '',
     }));
     const products = d.products.length ? `<p class="sub">${d.products.map((t) => chip(t.name, t.threads, { cls: 'tech', href: ctx.topicHref(`product:tech:${t.tech}`) })).join('')}</p>` : '';
-    return `<section class="tv-sec" aria-labelledby="cvDepends"><h2 id="cvDepends">Customers on its products <span class="sub">${d.customers.length < d.customerCount ? `${d.customers.length} of ${d.customerCount}` : esc(plural(d.customerCount, 'customer'))}</span></h2>
+    return `<section class="tv-sec" aria-labelledby="cvDepends"><h2 id="cvDepends">Customers using ${esc(nameOf(p))} <span class="sub">${d.customers.length < d.customerCount ? `${d.customers.length} of ${d.customerCount}` : esc(plural(d.customerCount, 'customer'))}</span></h2>
       ${products}
-      ${rows.length ? ranked(rows, p.weeks.length) : `<div class="empty">No customer's thread shows a product of ${esc(nameOf(p))} in these weeks.</div>`}
-      <p class="hint">The customers whose threads of these weeks Clef sees one of its products in (its catalog entries, products/${esc(p.org.slug)}/), by how many.</p></section>`;
+      ${rows.length ? ranked(rows, p.weeks.length) : `<div class="empty">No customer's thread shows a product of ${esc(nameOf(p))} in these weeks.</div>`}</section>`;
   }
 
   function thirdParty(p) {
@@ -189,16 +186,14 @@ globalThis.CustomerView = (() => {
     return `<section class="tv-sec" aria-labelledby="cvThird"><h2 id="cvThird">Customers waiting on a third party <span class="sub">${esc(plural(d.waiting, 'thread'))}</span></h2>
       ${Overview.threads(d.list, {
     hidden: d.hidden, withOrg: true, orgName: (slug) => d.customers.find((c) => c.slug === slug)?.name || slug, empty: 'None of them waits on a third party.',
-  })}
-      <p class="hint">Customers' threads that show its products and that Clef says wait on someone who is neither Adobe nor the customer: maybe ${esc(nameOf(p))}, maybe a partner.</p></section>`;
+  })}</section>`;
   }
 
   function people(p, ctx) {
     const more = p.peopleCount - p.people.length;
-    return `<section class="tv-sec" aria-labelledby="tvPeople"><h2 id="tvPeople">Their people <span class="sub">${esc(plural(p.peopleCount, 'person', 'people'))} posted, the busiest first</span></h2>
+    return `<section class="tv-sec" aria-labelledby="tvPeople"><h2 id="tvPeople">Their people <span class="sub">${esc(plural(p.peopleCount, 'person', 'people'))}</span></h2>
       ${p.people.length ? `<div class="tv-people">${p.people.map((m) => person(m, p, ctx)).join('')}</div>` : `<div class="empty">Nobody of ${esc(nameOf(p))} posted in these weeks.</div>`}
-      ${more > 0 ? `<p class="sub tv-more">And ${esc(plural(more, 'more person', 'more people'))} who posted less.</p>` : ''}
-      <p class="hint">Its people and the partners' who posted in its threads, the last ${p.weeks.length} weeks. What they ask about is Clef's areas and technologies of their threads, those they have more of than the rest of them first.</p></section>`;
+      ${more > 0 ? `<p class="sub tv-more">And ${esc(plural(more, 'more person', 'more people'))} who posted less.</p>` : ''}</section>`;
   }
 
   function staff(p, ctx) {
@@ -207,13 +202,12 @@ globalThis.CustomerView = (() => {
       lead: face(c.name, c.avatar),
       tint: Person.tintOf(c.name),
       name: `<b>${esc(c.name || 'Someone')}</b>`,
-      sub: [c.title ? esc(c.title) : '', c.last ? esc(`last ${ago(c.last)}`) : ''].filter(Boolean).join(' · '),
+      sub: [c.title ? esc(c.title) : '', c.last ? esc(`last ${ago(c.last)}`) : ''].filter(Boolean).join(', '),
       weekly: c.weekly,
       tail: Overview.teamChips(c.teams, ctx.teamHref),
     }));
     return `<section class="tv-sec" aria-labelledby="tvStaff"><h2 id="tvStaff">Adobe's people <span class="sub">${p.staffCount > p.staff.length ? `${p.staff.length} of ${p.staffCount}` : esc(plural(p.staffCount, 'person', 'people'))}</span></h2>
-      ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">Nobody of Adobe posted in its threads in these weeks.</div>'}
-      <p class="hint">Who of Adobe posted in its threads, by what they said there, with the teams they are on.</p></section>`;
+      ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">Nobody from Adobe posted in these weeks.</div>'}</section>`;
   }
 
   function teams(p, ctx) {
@@ -224,13 +218,12 @@ globalThis.CustomerView = (() => {
         t.people ? plural(t.people, 'person', 'people') : '',
         t.filed ? `${plural(t.filed, 'channel')} filed` : '',
         t.shared ? `${t.shared} shared` : '',
-      ].filter(Boolean).join(' · ') || 'no post in these weeks'),
+      ].filter(Boolean).join(', ') || 'no posts in these weeks'),
       weekly: t.weekly,
-      tail: t.follows ? '<span class="tag tv-follow" title="Every channel of the customer is in the team\'s inbox, shared, now and later">Follows it</span>' : '',
+      tail: t.follows ? '<span class="tag tv-follow">Following</span>' : '',
     }));
     return `<section class="tv-sec" aria-labelledby="tvTeams"><h2 id="tvTeams">Teams <span class="sub">${p.teamCount > p.teams.length ? `${p.teams.length} of ${p.teamCount}` : esc(plural(p.teamCount, 'team'))}</span></h2>
-      ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">No team works with it yet.</div>'}
-      <p class="hint">The ops teams whose people post in its threads, by what they said there, and those its channels are filed under or shared with, or that follow it.</p></section>`;
+      ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">No teams yet.</div>'}</section>`;
   }
 
   function areas(p, ctx) {
@@ -238,12 +231,11 @@ globalThis.CustomerView = (() => {
     const rows = p.areas.map((a) => ({
       n: a.threads,
       count: plural(a.threads, 'thread'),
-      name: `<span class="tv-line">${link(ctx.topicHref(`tag:${a.id}`), esc(a.name), { title: 'Open it on the Topics page' })}${ctx.follow?.({ kind: 'area', id: a.id, name: a.name }) || ''}</span>`,
+      name: `<span class="tv-line">${link(ctx.topicHref(`tag:${a.id}`), esc(a.name), { title: 'Open on the Topics page' })}${ctx.follow?.({ kind: 'area', id: a.id, name: a.name }) || ''}</span>`,
       weekly: a.weekly,
     }));
     return `<section class="tv-sec" aria-labelledby="tvAreas"><h2 id="tvAreas">${p.vendor ? 'What the cases are about' : 'What they ask about'}</h2>
-      ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">Clef has not tagged its threads of these weeks yet.</div>'}
-      <p class="hint">Clef's areas of its threads, by how many of them are about one; the line is what was said in them week by week.</p></section>`;
+      ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">No topics yet.</div>'}</section>`;
   }
 
   function channels(p) {
@@ -256,19 +248,18 @@ globalThis.CustomerView = (() => {
         `filed under ${c.teamName}`,
         c.shared.length ? `shared with ${c.sharedNames.join(', ')}` : '',
         c.last ? ago(c.last) : '',
-      ].filter(Boolean).join(' · ')),
+      ].filter(Boolean).join(', ')),
       weekly: c.weekly,
       tail: c.archived ? '<span class="tag">Archived</span>' : '',
     }));
     return `<section class="tv-sec" aria-labelledby="tvChannels"><h2 id="tvChannels">Channels <span class="sub">${p.channelCount > p.channels.length ? `${p.channels.length} of ${p.channelCount}` : esc(plural(p.channelCount, 'channel'))}</span></h2>
-      ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">No channel is filed under it.</div>'}
-      <p class="hint">By what was said in them in these weeks, with the team each is filed under.</p></section>`;
+      ${rows.length ? ranked(rows, p.weeks.length) : '<div class="empty">No channels yet.</div>'}</section>`;
   }
 
   const TECH_TABS = [
     { id: 'all', label: 'All' },
-    { id: 'stack', label: 'Their stack', hint: 'The parts of its stack drawing, in its knowledge base' },
-    { id: 'seen', label: 'In their threads', hint: 'What else Clef sees most in its threads' },
+    { id: 'stack', label: 'Their stack', hint: 'From the stack diagram in the knowledge base' },
+    { id: 'seen', label: 'Other', hint: 'Seen in their threads, not in the stack diagram' },
   ];
   const techIn = (t, tab) => tab === 'all' || (tab === 'stack' && t.stack) || (tab === 'seen' && !t.stack);
 
@@ -277,12 +268,12 @@ globalThis.CustomerView = (() => {
     const row = (t) => {
       // What it is, and that its stack drawing has it, under its name.
       const sub = [t.vendor !== t.name && t.vendor, t.kind && t.kind !== 'Product' ? t.kind.toLowerCase() : '',
-        t.stack ? 'in their stack' : ''].filter(Boolean).join(' · ');
+        t.stack ? 'in their stack' : ''].filter(Boolean).join(', ');
       const href = t.tech ? ctx.topicHref(`product:tech:${t.tech}`) : null;
-      const name = href ? `<a href="${esc(href)}" title="Open it on the Topics page">${esc(t.name)}</a>` : esc(t.name);
+      const name = href ? `<a href="${esc(href)}" title="Open on the Topics page">${esc(t.name)}</a>` : esc(t.name);
       const button = (t.tech && ctx.follow?.({ kind: 'tech', id: t.tech, name: t.name })) || '';
       return `<li><span class="tv-name"><span class="tv-line">${name}${button}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>
-        <span class="tv-meter">${bar(t.threads / most)}<span class="sub">${esc(plural(t.threads, 'thread'))}</span></span>${spark(t.weekly, { cls: 'tech', label: 'messages in its threads, week by week' })}</li>`;
+        <span class="tv-meter">${bar(t.threads / most)}<span class="sub">${esc(plural(t.threads, 'thread'))}</span></span>${spark(t.weekly, { cls: 'tech', label: `messages about ${t.name}, week by week` })}</li>`;
     };
     return Overview.layers(p.tech.filter((t) => techIn(t, tab)), p.layers, row);
   }
@@ -292,8 +283,7 @@ globalThis.CustomerView = (() => {
     const list = TECH_TABS.map((t) => ({ ...t, n: p.tech.filter((x) => techIn(x, t.id)).length }));
     return `<section class="tv-sec" aria-labelledby="tvTech"><h2 id="tvTech">Products and technologies</h2>
       ${p.stack ? Overview.tabs(list, tab, { label: 'Which technologies' }) : ''}
-      <div class="tv-stack" id="tvTechRows">${techRows(p, ctx, tab)}</div>
-      <p class="hint">By the layer of its stack they are in. The count is its threads Clef sees one in, the line what was said in them week by week.</p></section>`;
+      <div class="tv-stack" id="tvTechRows">${techRows(p, ctx, tab)}</div></section>`;
   }
 
   // ---- the page -----------------------------------------------------------------------------
@@ -320,7 +310,7 @@ globalThis.CustomerView = (() => {
       ${Overview.knowledge(p.kb, {
     name: nameOf(p),
     kbHref: ctx.kbHref,
-    readers: 'The teams that work with it read the entries themselves.',
+    readers: 'Only the teams that work with this customer can read the entries.',
   })}
     </div>`;
   }

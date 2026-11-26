@@ -157,7 +157,7 @@ globalThis.Overview = (() => {
       for (const g of svg.querySelectorAll('.col')) g.classList.toggle('on', g.dataset.week === String(i));
       const total = parts.reduce((s, x) => s + x.weekly[i], 0);
       const rows = parts.map((x, j) => [x, j]).filter(([x]) => x.weekly[i]).reverse();
-      tip.innerHTML = `<b>Week of ${esc(dayOf(weeks[i]))} \u00b7 ${esc(plural(total, unit))}</b>${rows.map(([x, j]) => `<span class="tv-tr${String(j) === String(part) ? ' on' : ''}"><span class="dot" data-series="${esc(seriesOf(j))}"></span><span>${esc(x.name)}</span><span>${esc(x.weekly[i].toLocaleString('en'))}</span></span>`).join('')}`;
+      tip.innerHTML = `<b>Week of ${esc(dayOf(weeks[i]))}: ${esc(plural(total, unit))}</b>${rows.map(([x, j]) => `<span class="tv-tr${String(j) === String(part) ? ' on' : ''}"><span class="dot" data-series="${esc(seriesOf(j))}"></span><span>${esc(x.name)}</span><span>${esc(x.weekly[i].toLocaleString('en'))}</span></span>`).join('')}`;
       tip.hidden = false;
       const f = (i + 0.5) / n;
       tip.classList.toggle('left', f > 0.6);
@@ -214,8 +214,8 @@ globalThis.Overview = (() => {
 
   /** Who has a thread's next move (`waiting`, src/threads.js), as a tag; null for nobody. */
   const WAIT = {
-    vendor: ['tv-them', 'Waiting on them', 'The vendor has the next move: chase them if it takes too long'],
-    third: ['tv-them', 'Waiting on a third party', 'Someone who is neither Adobe nor the customer has the next move: a vendor, a partner or an agency'],
+    vendor: ['tv-them', 'Waiting on them', 'The vendor has the next move'],
+    third: ['tv-them', 'Waiting on a third party', 'A vendor, partner or agency has the next move'],
     customer: ['tv-them', 'Waiting on them', 'The customer has the next move'],
     us: ['tv-us', 'Waiting on Adobe', 'Adobe has the next move'],
   };
@@ -242,8 +242,8 @@ globalThis.Overview = (() => {
         r.urgency && r.urgency !== 'low' ? `${r.urgency} urgency` : '',
         r.kind && r.kind !== 'other' ? r.kind : '',
         r.last ? ago(r.last) : '',
-      ].filter(Boolean).join(' · ');
-      return `<li><span class="tv-name">${r.inbox ? `<a href="${esc(r.inbox)}" title="Open it in the inbox">${title}</a>` : `<span>${title}</span>`}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>${waitTag(r.waiting, r.third)}</li>`;
+      ].filter(Boolean).join(', ');
+      return `<li><span class="tv-name">${r.inbox ? `<a href="${esc(r.inbox)}" title="Open in the inbox">${title}</a>` : `<span>${title}</span>`}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>${waitTag(r.waiting, r.third)}</li>`;
     };
     const more = hidden ? `<p class="sub tv-more">And ${esc(plural(hidden, 'more thread'))} in channels of teams you are not on.</p>` : '';
     if (!rows.length) return `${hidden ? '' : `<div class="empty">${esc(empty || 'None.')}</div>`}${more}`;
@@ -274,13 +274,13 @@ globalThis.Overview = (() => {
    * for none), a tile each; its stack drawing goes into `#tvStack` under them. `name` is whose it
    * is, `kbHref(path)` an entry's link (null where the viewer may not open it).
    */
-  function knowledge(kb, { name, kbHref, readers = 'The members of the ops teams read the entries themselves.' }) {
-    if (!kb) return `<section class="tv-sec" aria-labelledby="tvKb"><h2 id="tvKb">Knowledge base</h2><div class="empty">${esc(name)} has no knowledge base yet: its thread agents start one.</div></section>`;
+  function knowledge(kb, { name, kbHref, readers = 'Only ops team members can read the entries.' }) {
+    if (!kb) return `<section class="tv-sec" aria-labelledby="tvKb"><h2 id="tvKb">Knowledge base</h2><div class="empty">${esc(name)} has no knowledge base yet.</div></section>`;
     const total = kb.types.reduce((s, t) => s + t.n, 0);
     const tiles = kb.types.map((t) => `<div class="tv-kbtype"><h3><b>${t.n.toLocaleString('en')}</b> ${esc(`${t.type.toLowerCase()}${t.n === 1 ? '' : 's'}`)}</h3>
       ${t.entries.length ? `<ul>${t.entries.map((e) => `<li>${kbHref(e.path) ? `<a href="${esc(kbHref(e.path))}"${e.description ? ` title="${esc(e.description)}"` : ''}>${esc(e.title)}</a>` : esc(e.title)}</li>`).join('')}${t.n > t.entries.length ? `<li class="sub">and ${t.n - t.entries.length} more</li>` : ''}</ul>` : ''}</div>`).join('');
     return `<section class="tv-sec" aria-labelledby="tvKb"><h2 id="tvKb">Knowledge base <span class="sub">${esc(plural(total, 'entry', 'entries'))}</span></h2>
-      ${tiles ? `<div class="tv-kb">${tiles}</div>` : '<div class="empty">Nothing in it yet but its catalog: its thread agents add what they learn.</div>'}
+      ${tiles ? `<div class="tv-kb">${tiles}</div>` : '<div class="empty">Only the catalog so far.</div>'}
       <div id="tvStack"></div>
       ${kb.readable ? '' : `<p class="hint">${esc(readers)}</p>`}</section>`;
   }

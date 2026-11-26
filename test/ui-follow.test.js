@@ -126,7 +126,7 @@ describe('Follow (ui/follow.js)', () => {
     const edge = Follow.button({ kind: 'tech', id: 'da', name: 'Document Authoring' }, { team: 'edge' });
     assert.match(edge, /data-fo-team="edge"/);
     assert.match(edge, /<span class="fo-n">1<\/span>/);
-    assert.match(edge, /Edge ops follows it/);
+    assert.match(edge, /Followed by Edge ops/);
     assert.doesNotMatch(edge, /Platform ops/);
     assert.doesNotMatch(Follow.button({ kind: 'tech', id: 'xw', name: 'X' }, { team: 'platform' }), /class="fo-n"/);
     // A person is never a team's.
@@ -153,7 +153,7 @@ describe('Follow (ui/follow.js)', () => {
     // A card's made-up key is no account.
     assert.equal(Follow.button({ kind: 'account', id: 'local:person:0::Cy', name: 'Cy' }), '');
     const thread = Follow.button({ kind: 'thread', id: 'slack:T1:C1:2.1', name: 'Outage' });
-    assert.match(thread, /title="Follow this thread: it stays in your personal view\."/);
+    assert.match(thread, /title="Follow to keep this thread in Personal\."/);
     assert.doesNotMatch(thread, /fo-more|fo-mute/);
     assert.equal(Follow.follows('thread', 'slack:T1:C1:1.1'), true);
     assert.equal(Follow.name('thread', 'slack:T1:C1:1.1'), 'Go-live');
@@ -184,7 +184,7 @@ describe('Follow (ui/follow.js)', () => {
     next = { ok: true, status: 200, data: { ...STATE, me: { ...STATE.me, org: [] }, muted: { org: ['globex', 'acme'] } } };
     await Follow.mute('org', 'acme', 'ACME');
     assert.deepEqual(sent.at(-1).body, { kind: 'org', target: 'acme', mute: true });
-    assert.match(said.at(-1).text, /^Muted ACME: .* You no longer follow it\.$/);
+    assert.match(said.at(-1).text, /^Muted ACME\. You no longer follow ACME\.$/);
     assert.equal(Follow.muted('org', 'acme'), true);
     assert.equal(Follow.follows('org', 'acme'), false);
     // A refusal leaves it as it was.

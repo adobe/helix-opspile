@@ -42,12 +42,12 @@
 window.Header = (() => {
   const PAGES = [
     { id: 'inbox', label: 'Inbox', href: '/inbox', title: 'Threads with customers, partners and vendors', member: true, internal: true },
-    { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams: their people, customers, collaborators and technologies; their members, channels and rules, and their agents: thread agents, tools, instructions and knowledge base', member: true, internal: true },
-    { id: 'orgs', label: 'Customers', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors: their people, Adobe\'s people and teams on them, what they ask about and their technologies; their channels, and their agents: thread agents, tools, instructions and knowledge base', member: true, internal: true },
-    { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about: their areas and topics, with the people, customers and products on each', member: true, internal: true },
-    { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs at list prices: per service, message, thread, customer and month', admin: true },
+    { id: 'teams', label: 'Teams', href: '/inbox/admin?tab=teams', title: 'Ops teams, their people, channels and agents', member: true, internal: true },
+    { id: 'orgs', label: 'Customers', href: '/inbox/admin?tab=orgs', title: 'Customers, partners and vendors', member: true, internal: true },
+    { id: 'topics', label: 'Topics', href: '/inbox/topics', title: 'What the threads are about', member: true, internal: true },
+    { id: 'cogs', label: 'COGS', href: '/inbox/cogs', title: 'What the inbox costs, at list prices', admin: true },
     // On klickhaus, in a new tab: its address comes from /api/me (`stats.url`).
-    { id: 'stats', label: 'Stats', href: null, title: 'Statistics of all threads, every team\'s, in klickhaus (opens in a new tab)', external: true },
+    { id: 'stats', label: 'Stats', href: null, title: 'Statistics of all threads in klickhaus (opens in a new tab)', external: true },
   ];
   const KEY = 'opspile.page.';
   /** The admin team's open requests: its inbox, filtered to them (ui/inbox.js, the Type card). */
@@ -69,7 +69,7 @@ window.Header = (() => {
 
   const SCHEME = 'opspile.scheme';
   const SCHEMES = [
-    { id: 'system', label: 'System', title: 'Light or dark, as this device is set' },
+    { id: 'system', label: 'System' },
     { id: 'light', label: 'Light' },
     { id: 'dark', label: 'Dark' },
   ];
@@ -266,7 +266,7 @@ window.Header = (() => {
       if (asks) el.innerHTML = `${BUBBLE}${n}`;
       else el.textContent = String(n);
       el.hidden = !n;
-      el.title = `${asks ? waitText(n, 'question', 'you', ' from thread agents') : waitText(n, 'request', 'the admin team')}: click to see ${n === 1 ? 'it' : 'them'}`;
+      el.title = `${asks ? waitText(n, 'question', 'you', ' from thread agents') : waitText(n, 'request', 'the admin team')}`;
       el.closest('a').title = said ? `${said}, in the inbox` : PAGES.find((p) => p.id === 'inbox').title;
     }
     sync();

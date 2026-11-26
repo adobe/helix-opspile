@@ -55,7 +55,7 @@ export function summary(text) {
   const lines = text.split('\n').length - 2;
   const parts = [type && type[1] ? `type: ${type[1].replace(/^["']|["']$/g, '')}` : 'frontmatter'];
   parts.push(`${lines} line${lines === 1 ? '' : 's'}`);
-  return parts.join(' · ');
+  return parts.join(', ');
 }
 
 const style = HighlightStyle.define([

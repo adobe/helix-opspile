@@ -165,7 +165,7 @@ describe('message header', () => {
   it('has the name, with its profile card, and the time, with its date, in the header', () => {
     const html = page().message(msg({ authorKey: 'slack:U1' }), null, false);
     const [, who] = html.match(/<div class="who">(.*?)<\/div>/);
-    assert.equal(who, '<b data-p="slack:U1" role="button" tabindex="0">Sam Reyes</b> · <time datetime="2026-11-12T10:43:00.000Z" title="whole">time</time>');
+    assert.equal(who, '<b data-p="slack:U1" role="button" tabindex="0">Sam Reyes</b> <time datetime="2026-11-12T10:43:00.000Z" title="whole">time</time>');
   });
 
   it('says the day in the header of the thread\'s latest message only', () => {
@@ -232,10 +232,10 @@ describe('message header', () => {
 
   it('gives system lines, the line between a group\'s posts and the sidebar the same time', () => {
     const html = page().message(msg({ author: { kind: 'system' }, body: 'Sam joined.' }), null, false);
-    assert.match(html, /^<div class="sys " data-id="[^"]+"><p>Sam joined\.<\/p> · <time datetime="2026-11-12T10:43:00\.000Z" title="whole">time<\/time><\/div>$/);
-    assert.match(js, /<div class="post"><span>new post · \$\{timeTag\(m\.at\)\}<\/span><\/div>/);
+    assert.match(html, /^<div class="sys " data-id="[^"]+"><p>Sam joined\.<\/p> <time datetime="2026-11-12T10:43:00\.000Z" title="whole">time<\/time><\/div>$/);
+    assert.match(js, /<div class="post"><span>new post \$\{timeTag\(m\.at\)\}<\/span><\/div>/);
     // The sidebar's messages too.
-    assert.equal(js.match(/<div class="who"><b>[^<]*<\/b> · \$\{(?:m\.pending \? 'sending…' : )?timeTag\(m\.at\)\}<\/div>/g).length, 2);
+    assert.equal(js.match(/<div class="who"><b>[^<]*<\/b> \$\{(?:m\.pending \? 'sending…' : )?timeTag\(m\.at\)\}<\/div>/g).length, 2);
   });
 });
 

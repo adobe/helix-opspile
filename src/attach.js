@@ -147,7 +147,7 @@ export function checkFiles(rule, files) {
     total += f.size;
   }
   if (total > rule.total) {
-    return `the files are ${size(total)} together: up to ${size(rule.total)} per message`;
+    return `the files are ${size(total)}. The limit is ${size(rule.total)} per message`;
   }
   return null;
 }
