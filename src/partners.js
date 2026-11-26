@@ -28,19 +28,25 @@ import { UNASSIGNED } from './rules.js';
  * then by how many people write from it; other domains of nearly as many of them count too, as
  * do those of the same name (`acme.co.uk` beside `acme.com`). Free mail, tenant and staff domains
  * never count (`orgDomain`), and neither does a customer's own domain: one that names a customer
- * (its slug or display name) in whose threads its people post, or, for any but a partner's first
- * domain, the domain most of a customer's people write from. A partner's first domain may be
+ * (its slug or display name) in whose threads its people post, one whose org part is that of a
+ * customer's icon (`orgs.icon`, a domain or the host of its URL: a subsidiary's people may write
+ * from its parent's domain), or, for any but a partner's first domain, the domain most of a
+ * customer's people write from. A partner's first domain may be
  * that of a customer whose channels only its people post in, which is how partners work. A domain
  * two partners have is the one's with more of its people there. Each is named by its org's
  * display name.
  *
  * They are found from every message there is (a few hundred thousand rows), so an isolate keeps
  * what it found for an hour (`DERIVED_MS`) and finds them again in the background after that.
+ * What changes them forgets them in its isolate (`forgetPartnerDomains`: an org's name, type or
+ * icon, a merge, an edit of `partner_domains`); the other isolates find them again within the hour.
  * The rows of `partner_domains` (migration 0013, `org` and `excluded` in 0109) are the admin
  * team's overrides, read every time: a domain added by hand (with a name or a partner org), a
  * found one renamed or given to another partner, and one that is not a partner's (`excluded`),
  * which leaves out its subdomains too unless one of them is listed itself.
  */
+
+// ---- partner domains: who is a partner's, by mail domain ------------------------------------
 
 /** How long an isolate keeps the domains it found. */
 export const DERIVED_MS = 60 * 60 * 1000;
@@ -66,12 +72,33 @@ export function namesOrg(domain, { slug, name }) {
 }
 
 /**
+ * The org part of the domain an org's icon (`orgs.icon`) is of: the icon itself, a domain, or the
+ * host of its URL (the domain a favicon service's URL asks for); none for one this Worker serves
+ * (a portal logo) or one that is no domain.
+ */
+export function iconDomain(env, icon) {
+  let host = String(icon || '').trim().toLowerCase();
+  if (/^https?:\/\//.test(host)) {
+    try {
+      const url = new URL(host);
+      const own = new URL(String(env.PUBLIC_ORIGIN || 'https://invalid.invalid')).hostname;
+      host = url.hostname === own ? '' : url.searchParams.get('domain') || url.hostname;
+    } catch {
+      return null;
+    }
+  }
+  host = host.replace(/^www\./, '');
+  return DOMAIN.test(host) ? registrable(host) : null;
+}
+
+/**
  * The partner domains the threads show, from `rows` (`[{ org, type, name, domain, people,
- * threads }]`, a row per org and mail domain of its people outside Adobe): `{ found: [{ domain,
+ * threads }]`, a row per org and mail domain of its people outside Adobe, and `icons`, `[{ slug,
+ * icon }]` of the customers): `{ found: [{ domain,
  * org, name, people, threads }], left: [{ domain, org, name, people, threads, customer }] }`,
  * `left` those a partner's people write from that are a customer's own (`customer` is which).
  */
-export function derive(env, rows) {
+export function derive(env, rows, icons = []) {
   const by = new Map();
   for (const r of rows || []) {
     const domain = String(r.domain || '').toLowerCase();
@@ -97,6 +124,15 @@ export function derive(env, rows) {
       postsIn.set(d.domain, [...(postsIn.get(d.domain) || []), o]);
     }
   }
+  // The org part of each customer's icon: its people may write from it, though they post from
+  // others (a subsidiary, its parent's).
+  const pictured = new Map();
+  for (const { slug, icon } of icons || []) {
+    const d = iconDomain(env, icon);
+    if (d && !pictured.has(d)) {
+      pictured.set(d, { slug });
+    }
+  }
   const found = new Map();
   const left = new Map();
   for (const o of orgs.filter((x) => x.type === 'partner')) {
@@ -109,6 +145,7 @@ export function derive(env, rows) {
       const same = d === first || label(d.domain) === label(first.domain);
       if (same || d.people >= most * SHARE) {
         const own = (postsIn.get(d.domain) || []).find((c) => namesOrg(d.domain, c))
+          || pictured.get(registrable(d.domain))
           || (!same && (tops.get(d.domain) || [])[0]);
         const entry = {
           domain: d.domain,
@@ -150,6 +187,14 @@ async function loadRows(env) {
   return results || [];
 }
 
+/** The customers' icons, as `derive` reads them. */
+async function loadIcons(env) {
+  const { results } = await env.DB.prepare(`SELECT slug, icon FROM orgs
+    WHERE COALESCE(type, 'customer') = 'customer' AND icon IS NOT NULL
+      AND slug NOT IN (SELECT slug FROM org_merges)`).all();
+  return results || [];
+}
+
 let kept = null;
 const NONE = Object.freeze({ found: [], left: [], at: null });
 /** After a failed look, the next one is this much later, with what was found before kept. */
@@ -168,8 +213,8 @@ export async function derivedDomains(env, { fresh = false } = {}) {
     return k.value;
   }
   const next = { db, at: Date.now(), last: k ? k.last : null };
-  next.value = loadRows(env).then((rows) => {
-    next.last = { ...derive(env, rows), at: new Date().toISOString() };
+  next.value = Promise.all([loadRows(env), loadIcons(env)]).then(([rows, icons]) => {
+    next.last = { ...derive(env, rows, icons), at: new Date().toISOString() };
     return next.last;
   }, (e) => {
     console.error('partner domains:', e && e.message);
@@ -184,19 +229,13 @@ export async function derivedDomains(env, { fresh = false } = {}) {
   return !fresh && next.last ? next.last : next.value;
 }
 
-/** Forgets the domains found (tests). */
+/**
+ * Forgets the domains found in this isolate: the next request finds them again. Whatever changes
+ * an org's name, type or icon, merges one, or edits `partner_domains` calls it, as src/orgmerge.js
+ * `forgetFacts` for the duplicate search.
+ */
 export function forgetPartnerDomains() {
   kept = null;
-}
-
-/**
- * Has the domains found looked for again on the next request (an org's name or type changed),
- * which until then get what was found.
- */
-export function stalePartnerDomains() {
-  if (kept) {
-    kept.at = 0;
-  }
 }
 
 /** The admin team's rows of `partner_domains`, with the name of the partner org one names. */
@@ -225,7 +264,7 @@ export async function partnerDomains(env) {
   return out;
 }
 
-// ---- the admin team's editor --------------------------------------------------------------
+// ---- partner domains: the admin team's editor ------------------------------------------------
 
 /**
  * GET /api/admin/partner-domains: every partner domain, found or the admin team's, with where it
@@ -318,6 +357,7 @@ export async function savePartnerDomain(env, me, body) {
       updated_at = ?6`)
     .bind(domain, name, org, excluded ? 1 : 0, me.email || String(me.id || ''), new Date().toISOString())
     .run();
+  forgetPartnerDomains();
   return json({ ok: true, domain });
 }
 
@@ -328,5 +368,6 @@ export async function deletePartnerDomain(env, body) {
     return bad('a mail domain');
   }
   const { meta } = await env.DB.prepare('DELETE FROM partner_domains WHERE domain = ?').bind(domain).run();
+  forgetPartnerDomains();
   return json({ ok: true, domain, removed: (meta && meta.changes) || 0 });
 }

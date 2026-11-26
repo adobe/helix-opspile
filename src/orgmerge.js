@@ -24,6 +24,7 @@ import { announceRequest } from './requestkeys.js';
 import { isAdmin } from './roles.js';
 import { mergeRule, UNASSIGNED } from './rules.js';
 import { ownedCustomers } from './shares.js';
+import { forgetPartnerDomains } from './partners.js';
 
 /**
  * Duplicate customers, and merging them (migration 0091). An org is a slug the rules give a
@@ -951,6 +952,7 @@ export async function mergeOrgs(env, me, body, { applyRules }) {
       ];
       await env.DB.batch(statements);
       forgetFacts();
+      forgetPartnerDomains();
       console.log(JSON.stringify({
         route: 'orgmerge', merged: true, by: me.id,
       }));
@@ -993,6 +995,7 @@ export async function unmergeOrg(env, me, body, { applyRules }) {
           .bind(slug, m.name, m.type || 'customer', m.icon, new Date().toISOString())] : []),
       ]);
       forgetFacts();
+      forgetPartnerDomains();
       console.log(JSON.stringify({ route: 'orgmerge', unmerged: true, by: me.id }));
       return {};
     },

@@ -3716,16 +3716,18 @@ post in the threads of each org of type `partner` (`derive`):
   one's name (`acme.co.uk` beside `acme.com`);
 - free mail, Microsoft tenant and staff domains never count (`orgDomain`, src/favicons.js);
 - a customer's own domain is never a partner's: one that names a customer in whose threads its
-  people post, and, for any but a partner's first domain, one most of a customer's people write
-  from. A partner's first domain may well be the domain most people in a customer's channel write
+  people post; one whose org part is that of a customer's icon (`orgs.icon`, a domain or the host
+  of its URL, `iconDomain`), since a subsidiary's people may write from its parent's domain; and,
+  for any but a partner's first domain, one most of a customer's people write from. A partner's first domain may well be the domain most people in a customer's channel write
   from, where only the partner's people post: that is how partners work, so it stays;
 - a domain two partners have is the one's with more of its people there, and each is named by its
   org's display name.
 
 Guessing from "not staff and not the customer's domain" would call a customer's second domain a
 partner; this starts from the orgs said to be partners instead, and leaves out what names a
-customer. It reads every message, so an isolate keeps it an hour (docs/STATE-MACHINES.md,
-"Partner domain"). The rows of `partner_domains` (migration 0109) are the admin team's over it,
+customer. It reads every message, so an isolate keeps it an hour; what changes it (an org's
+name, type or icon, a merge, an edit of `partner_domains`) forgets it in its own isolate, and the
+others find it again within the hour (docs/STATE-MACHINES.md, "Partner domain"). The rows of `partner_domains` (migration 0109) are the admin team's over it,
 under **Partner domains** in Customers (`GET`, `PUT`, `DELETE /api/admin/partner-domains`): a
 domain added by hand with a partner org or a name, a found one renamed or given to another partner,
 and one that is not a partner's (`excluded`), which its subdomains are not either unless one of

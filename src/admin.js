@@ -75,7 +75,7 @@ import {
 } from './portalrequests.js';
 import { resetTeamVendors } from './vendors.js';
 import {
-  deletePartnerDomain, listPartnerDomains, savePartnerDomain, stalePartnerDomains,
+  deletePartnerDomain, forgetPartnerDomains, listPartnerDomains, savePartnerDomain,
 } from './partners.js';
 
 /**
@@ -1042,6 +1042,8 @@ async function openPortal(env, me, body) {
   await env.DB.prepare(`INSERT INTO orgs (slug, name, type, icon, updated_at)
     VALUES (?, ?, 'customer', ?, ?) ON CONFLICT (slug) DO NOTHING`)
     .bind(customer, r.company || null, icon, now).run();
+  // A new customer, and its icon: neither is a partner's domain (src/partners.js).
+  forgetPartnerDomains();
   await ensureKnowledgeBase(env, 'org', customer).catch(() => null);
   for (const [target, value] of [['team', slug], ['org', customer]]) {
     // eslint-disable-next-line no-await-in-loop
@@ -1763,14 +1765,17 @@ async function saveOrg(env, body, create) {
       ON CONFLICT (slug) DO UPDATE SET name = excluded.name, type = excluded.type,
         icon = excluded.icon, updated_at = excluded.updated_at`).bind(slug, f.name, f.type, f.icon, now).run();
   }
-  // Its name, type and icon are what the duplicate search compares.
+  // Its name, type and icon are what the duplicate search compares, and what tells a partner's
+  // domains (src/partners.js).
   forgetFacts();
+  forgetPartnerDomains();
   return json({ ok: true, org: { slug, ...f, updated_at: now } });
 }
 
 async function deleteOrg(env, body) {
   const { meta } = await env.DB.prepare('DELETE FROM orgs WHERE slug = ?').bind(clean(body.slug)).run();
   forgetFacts();
+  forgetPartnerDomains();
   return meta.changes ? json({ ok: true }) : json({ error: 'this org has no name, icon or type to delete' }, 404);
 }
 
@@ -1922,18 +1927,6 @@ async function addMemberSettling(env, me, body) {
 export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests',
   'GET orgs', 'GET org'];
 
-/**
- * What changes an org's name or type, or merges it: this isolate finds the partner domains again
- * (src/partners.js) on the next request, the others within the hour.
- */
-async function anew(res) {
-  try {
-    return await res;
-  } finally {
-    stalePartnerDomains();
-  }
-}
-
 async function adminRoute(request, env, url, me) {
   const p = url.pathname;
   if (!p.startsWith('/api/admin/')) {
@@ -2013,16 +2006,16 @@ async function adminRoute(request, env, url, me) {
       limit: Math.min(Math.max(Number(body.limit) || 10, 1), 25),
     }));
     case 'GET orgs': return listOrgs(env);
-    case 'POST orgs': return anew(saveOrg(env, body, true));
-    case 'PUT orgs': return anew(saveOrg(env, body, false));
-    case 'DELETE orgs': return anew(deleteOrg(env, body));
+    case 'POST orgs': return saveOrg(env, body, true);
+    case 'PUT orgs': return saveOrg(env, body, false);
+    case 'DELETE orgs': return deleteOrg(env, body);
     case 'GET org': return org(env, q('slug'), me);
     case 'PUT org-follows': return followOrg(env, me, body);
     case 'POST release': return releaseChannel(env, me, body);
     case 'GET org-duplicates': return orgDuplicates(env, me, { pair: q('pair'), fresh: Boolean(q('fresh')) });
     case 'POST org-duplicates/dismiss': return dismissPair(env, me, body);
-    case 'POST org-merge': return anew(mergeOrgs(env, me, body, { applyRules }));
-    case 'DELETE org-merge': return anew(unmergeOrg(env, me, body, { applyRules }));
+    case 'POST org-merge': return mergeOrgs(env, me, body, { applyRules });
+    case 'DELETE org-merge': return unmergeOrg(env, me, body, { applyRules });
     case 'POST org-merge-requests': return requestMerge(env, me, body);
     case 'DELETE org-merge-requests': return closeMergeRequest(env, me, body, 'withdrawn');
     case 'POST org-merge-requests/decline': return closeMergeRequest(env, me, body, 'declined');

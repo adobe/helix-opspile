@@ -14,8 +14,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { api } from '../src/api.js';
 import {
-  derive, derivedDomains, domainOf, forgetPartnerDomains, namesOrg, partnerDomains,
-  stalePartnerDomains,
+  derive, derivedDomains, domainOf, forgetPartnerDomains, iconDomain, namesOrg, partnerDomains,
 } from '../src/partners.js';
 import { profiles } from '../src/profiles.js';
 import { d1 } from './d1.js';
@@ -77,6 +76,38 @@ describe('derive', () => {
     ]);
     assert.deepEqual(found.map((f) => f.domain), ['agency.example']);
     assert.deepEqual(left.map((f) => [f.domain, f.customer]), [['acme.example', 'acme'], ['initech.example', 'initech']]);
+  });
+
+  it('leaves out the domain of a customer\'s icon, a subsidiary\'s parent\'s', () => {
+    const rows = [
+      row('agency', 'partner', 'agency.example', 3),
+      // A subsidiary's people write from its parent's domain, in the partner's threads too.
+      row('agency', 'partner', 'mail.parent.example', 3),
+      row('subsidiary', 'customer', 'subsidiary.example', 5),
+      row('subsidiary', 'customer', 'mail.parent.example', 2),
+      row('solo', 'partner', 'holding.example', 2),
+    ];
+    const icons = [
+      { slug: 'subsidiary', icon: 'https://www.parent.example/logo.png' },
+      { slug: 'other', icon: 'holding.example' },
+    ];
+    const { found, left } = derive(ENV, rows, icons);
+    assert.deepEqual(found.map((f) => f.domain), ['agency.example']);
+    assert.deepEqual(left.map((f) => [f.domain, f.customer]), [
+      ['mail.parent.example', 'subsidiary'], ['holding.example', 'other'],
+    ]);
+    // Without the icons, both would be partners'.
+    assert.equal(derive(ENV, rows).found.length, 3);
+  });
+
+  it('reads the domain of an icon', () => {
+    const env = { PUBLIC_ORIGIN: 'https://inbox.example' };
+    assert.equal(iconDomain(env, 'www.Acme.example'), 'acme.example');
+    assert.equal(iconDomain(env, 'https://cdn.acme.co.uk/a.png'), 'acme.co.uk');
+    assert.equal(iconDomain(env, 'https://favicons.example/s2?domain=globex.example&sz=64'), 'globex.example');
+    assert.equal(iconDomain(env, 'https://inbox.example/api/portal/logo/x.example'), null);
+    assert.equal(iconDomain(env, 'not an icon'), null);
+    assert.equal(iconDomain(env, null), null);
   });
 
   it('gives a domain two partners have to the one with more of its people', () => {
@@ -172,18 +203,38 @@ describe('partnerDomains', () => {
     assert.equal(cards['slack:E1:U3'].relation, 'customer');
   });
 
-  it('keeps what it found for the isolate, and looks again once told', async () => {
+  it('keeps what it found for the isolate, until it is forgotten', async () => {
     const e = world();
     await derivedDomains(e);
     e.DB.sqlite.exec('UPDATE orgs SET name = \'Agency Co\' WHERE slug = \'agency\'');
     assert.equal((await partnerDomains(e)).get('agency.example').name, 'The Agency');
-    stalePartnerDomains();
-    // What it found before, while it looks again; then what it found now.
-    assert.equal((await partnerDomains(e)).get('agency.example').name, 'The Agency');
-    await new Promise((r) => {
-      setTimeout(r, 10);
-    });
+    forgetPartnerDomains();
     assert.equal((await partnerDomains(e)).get('agency.example').name, 'Agency Co');
+  });
+
+  it('is found again in the isolate once an org changes there', async () => {
+    const e = world();
+    assert.ok((await partnerDomains(e)).has('agency.example'));
+    // Its type, on its page.
+    const put = await call(e, ADA, 'PUT', '/api/admin/orgs', { slug: 'agency', name: 'The Agency', type: 'customer' });
+    assert.equal(put.status, 200);
+    assert.equal((await partnerDomains(e)).has('agency.example'), false);
+    await call(e, ADA, 'PUT', '/api/admin/orgs', { slug: 'agency', name: 'Agency Co', type: 'partner' });
+    assert.equal((await partnerDomains(e)).get('agency.example').name, 'Agency Co');
+    // A customer's icon.
+    await call(e, ADA, 'PUT', '/api/admin/orgs', {
+      slug: 'acme', name: 'Acme', type: 'customer', icon: 'agency.example',
+    });
+    assert.equal((await partnerDomains(e)).has('agency.example'), false);
+  });
+
+  it('shows an edit of the admin team\'s at once', async () => {
+    const e = world();
+    assert.equal((await profiles(e, ['slack:E1:U1']))['slack:E1:U1'].relation, 'partner');
+    await call(e, ADA, 'PUT', '/api/admin/partner-domains', { domain: 'agency.example', excluded: true });
+    assert.equal((await profiles(e, ['slack:E1:U1']))['slack:E1:U1'].relation, 'customer');
+    await call(e, ADA, 'DELETE', '/api/admin/partner-domains', { domain: 'agency.example' });
+    assert.equal((await profiles(e, ['slack:E1:U1']))['slack:E1:U1'].partner, 'The Agency');
   });
 
   it('has none found when looking fails, and the admin team\'s rows still', async () => {
