@@ -2988,6 +2988,9 @@ async function showOrgOverview(slug) {
       const o = state.orgs.find((x) => x.slug === org);
       return ico(icon || o?.icon || null, o?.domain || null);
     },
+    // The admin team's: a pair nothing links yet, its page in Likely partners (see "partners"),
+    // whether or not org_partners has a row of the two.
+    review: state.me.admin ? (customer, partner) => address({ tab: 'orgs', sel: linkSel(customer, partner) }) : null,
   };
   const name = p.org.name || p.org.slug;
   const inbox = orgInbox(slug, p.teams);

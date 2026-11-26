@@ -40,6 +40,7 @@ import {
   openMergeCount, orgDuplicates, requestMerge, unmergeOrg,
 } from './orgmerge.js';
 import { decidePartner, orgPartners } from './orgpartners.js';
+import { forgetOrgProfiles } from './orgprofile.js';
 import {
   claimRequest, closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf,
   recordOutcome,
@@ -2237,8 +2238,13 @@ async function adminRoute(request, env, url, me) {
     case 'POST org-duplicates/dismiss': return dismissPair(env, me, body);
     // Which customers each partner works for (src/orgpartners.js).
     case 'GET org-partners': return orgPartners(env, me, { pair: q('pair'), fresh: Boolean(q('fresh')) });
-    case 'POST org-partners/confirm': return decidePartner(env, me, body, 'confirm');
-    case 'POST org-partners/dismiss': return decidePartner(env, me, body, 'dismiss');
+    // Both orgs' pages say so at once, in this isolate (src/orgprofile.js).
+    case 'POST org-partners/confirm':
+    case 'POST org-partners/dismiss': {
+      const res = await decidePartner(env, me, body, route.endsWith('confirm') ? 'confirm' : 'dismiss');
+      forgetOrgProfiles(String(body.customer || ''), String(body.partner || ''));
+      return res;
+    }
     case 'POST org-merge': return mergeOrgs(env, me, body, { applyRules });
     case 'DELETE org-merge': return unmergeOrg(env, me, body, { applyRules });
     case 'POST org-merge-requests': return requestMerge(env, me, body);

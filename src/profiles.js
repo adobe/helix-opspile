@@ -11,7 +11,9 @@
  */
 
 import { isStaffDomain } from './lookup.js';
-import { partnerDomains } from './partners.js';
+import { partnerDomains, partnerOf } from './partners.js';
+
+export { partnerOf };
 
 /**
  * Profile cards: what the inbox knows about an author, keyed by their identity
@@ -29,28 +31,6 @@ import { partnerDomains } from './partners.js';
  */
 
 const domainOf = (email) => (email && email.includes('@') ? email.split('@').pop().toLowerCase() : null);
-
-/**
- * The partner a mail domain belongs to, `{ domain, name, org }`, matching the domain or any
- * parent domain: `partners` is src/partners.js `partnerDomains`, whose `null` (a domain that is
- * not a partner's) ends the search there. A plain name instead of `{ name, org }` does too.
- */
-export function partnerOf(domain, partners) {
-  const parts = String(domain || '').toLowerCase().split('.');
-  for (let i = 0; i < parts.length - 1; i += 1) {
-    const d = parts.slice(i).join('.');
-    if (partners.has(d)) {
-      const p = partners.get(d);
-      if (p === null) {
-        return null;
-      }
-      return typeof p === 'object'
-        ? { domain: d, name: p.name || d, org: p.org || null }
-        : { domain: d, name: p || d, org: null };
-    }
-  }
-  return null;
-}
 
 /** `adobe`, `partner`, `customer` or `bot`. */
 export function relationOf(env, { kind, staff, email }, partners) {
