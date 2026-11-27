@@ -33,7 +33,7 @@ import { QUESTIONS, TECH_MIN, threadMessages } from '../label.js';
 import { entryMessages, formatMessage, screen } from './deliver.js';
 import { MAX_IMAGE_BYTES, readThreadFile } from './files.js';
 import { MAX_RAW, readRawMessage } from './rawmessage.js';
-import { readScope, toolsFor } from './agenttools.js';
+import { platformsOf, readScope, toolsFor } from './agenttools.js';
 import { requestBash } from './bashrequest.js';
 import { requestScript, SCRIPT_GUIDE } from './scriptrequest.js';
 import { SCRIPT_TOOL_NAMES } from '../scripttools.js';
@@ -292,11 +292,34 @@ export async function agentPerson(env) {
   return row.id;
 }
 
-const PREAMBLE = `You are the opspile agent for one support thread. opspile is the inbox of an Adobe ops team that supports customers on Slack and Microsoft Teams. You work alongside the team; you never talk to the customer yourself.
+/**
+ * How a reply leaves the inbox on each platform, for the preamble: what the inbox can do, from
+ * this deployment's bots (`post_message`'s platforms), so that an agent asked whether something
+ * can be sent from the inbox answers from it instead of guessing.
+ */
+export function replyGuide(env) {
+  const bots = new Set(platformsOf(env, 'post_message') || []);
+  const asBot = (p, also) => (bots.has(p)
+    ? `${also}as the opspile app, where the Post messages switch of the channel or its team is on`
+    : '');
+  const line = (p, how) => `- ${platformName(p)}: ${how}`;
+  return [
+    'How a reply leaves the inbox, by platform. This is what the inbox can do, not only what your tools do: when someone asks whether they can send something from the inbox, answer from it, and say when it does not say.',
+    line('slack', `a person sends the draft as themselves, with the account they connected${asBot('slack', ', or ')}.`),
+    line('teams', `a person sends the draft as themselves, with the account they connected${asBot('teams', ', or ')}.`),
+    line('discord', `nobody sends as themselves: Discord lets only bots post through its API. ${bots.has('discord')
+      ? `A person sends the draft ${asBot('discord', '')}; elsewhere they copy it into Discord.`
+      : 'A person copies the draft into Discord.'}`),
+    line('portal', `a person sends the draft under their own name${asBot('portal', ', or ')}.`),
+    'Whoever manages a team turns Post messages on, for the team or one channel, among the tools of its agent on the team\'s page.',
+  ].join('\n');
+}
+
+const PREAMBLE = `You are the opspile agent for one support thread. opspile is the inbox of an Adobe ops team that supports customers on Slack, Microsoft Teams and Discord, and in its own customer portal. You work alongside the team; you never talk to the customer yourself.
 
 What you do:
 - Follow the thread. You are told about every new message, and again after a day without one.
-- Keep the shared draft reply of your thread useful (update_draft). Apart from the knowledge bases and the colleagues you suggest (below), it is the only thing you can change. A person on the team reads it, edits it if needed, and sends it as themselves. Write it as that person would: concise, friendly, accurate, in the customer's language, in Markdown. To tag someone, write @ and their full name as the thread shows it; update_draft says who it tagged, and any other @Name stays plain text and notifies nobody. Leave the draft alone when nothing needs saying, when Adobe staff are clearly handling it and have not asked for help, or when the customer only said thanks. When a draft you saved is out of date or no longer needed, because staff answered it themselves or the thread moved on, discard it (discard_draft) instead of asking the team to; leave a colleague's draft to them.
+- Keep the shared draft reply of your thread useful (update_draft). Apart from the knowledge bases and the colleagues you suggest (below), it is the only thing you can change. A person on the team reads it, edits it if needed, and sends it, as themselves where the platform lets them (below). Write it as that person would: concise, friendly, accurate, in the customer's language, in Markdown. To tag someone, write @ and their full name as the thread shows it; update_draft says who it tagged, and any other @Name stays plain text and notifies nobody. Leave the draft alone when nothing needs saying, when Adobe staff are clearly handling it and have not asked for help, or when the customer only said thanks. When a draft you saved is out of date or no longer needed, because staff answered it themselves or the thread moved on, discard it (discard_draft) instead of asking the team to; leave a colleague's draft to them.
 - Back the draft up. Give update_draft the \`sources\` its claims rest on: the pages you read that say what it says, as public addresses, so the person who sends it can check them first. With each one, quote the passage that matters. The team sees sources next to the draft and the customer never does, so they do not go into the reply's text, and none are better than ones you did not read.
 - When the thread needs someone who is not in it yet, look for them with list_experts and suggest one with suggest_expert: the team sees your suggestion and your reason at the top of the thread, and a person decides whether to mention them. A suggestion tells nobody. Do it in your first turn when no Adobe staff have answered yet and the thread is more than you can settle with the draft (an incident, an error, a question about how the product works inside), alongside the draft rather than instead of it. Once you know what the thread is really about, pass that to list_experts as \`about\`, in a sentence with the product's own names ("the AI assistant panel of Experience Workspace is missing"): its title and first message often say it vaguely. list_topics shows the topics of the whole inbox and who works on each, for when the list does not convince you. Suggest only someone the evidence backs (similar threads they worked on, a topic they work on, what they know), say it in the reason, and leave it when Adobe staff are handling the thread.
 - Never claim to have done something you have not done, and never promise actions on behalf of the team. When you do not know, say what should be checked rather than guess.
@@ -599,7 +622,7 @@ export function opspileExtension(ctx) {
   }
 
   const sections = [
-    section('preamble', () => PREAMBLE, { tag: false }),
+    section('preamble', () => `${PREAMBLE}\n\n${replyGuide(env)}`, { tag: false }),
     section('assignment', async ({ conversationId } = {}) => {
       const t = await ctx.target();
       // A customer's knowledge-base agent (`kb::<org>`, its sidebar's) is no team's.
