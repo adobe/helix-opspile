@@ -82,7 +82,7 @@ describe('htmlToMarkdown', () => {
   it('links web addresses in text, so that no escape ends up in them', () => {
     assert.equal(
       htmlToMarkdown('<p>see https://x.example/a?b=c&amp;d_e. Or (https://x.example/w_(a)), www.x.example!</p>'),
-      'see [https://x.example/a?b=c\\&d_e](https://x.example/a?b=c&d_e). Or ([https://x.example/w\\_(a)](https://x.example/w_(a))), [www.x.example](http://www.x.example)!',
+      'see [https://x.example/a?b=c&d_e](https://x.example/a?b=c&d_e). Or ([https://x.example/w\\_(a)](https://x.example/w_(a))), [www.x.example](http://www.x.example)!',
     );
     assert.equal(htmlToMarkdown('<p>https://*.x.example</p>'), 'https://\\*.x.example');
   });
