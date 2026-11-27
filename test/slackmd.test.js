@@ -123,6 +123,24 @@ describe('slackBlocksToMarkdown', () => {
     assert.deepEqual(blockUsers(blocks), ['U1']);
   });
 
+  it('writes a link as its address was sent: without the entities Slack keeps from mrkdwn', () => {
+    const url = 'https://example.com/inbox?team=a&filters=1&t=b%3Ac';
+    const link = (e) => slackBlocksToMarkdown([{
+      type: 'rich_text',
+      elements: [{ type: 'rich_text_section', elements: [{ type: 'link', ...e }] }],
+    }]);
+    const written = `[${url}](${url})`;
+    // Pasted in Slack: the address as it is.
+    assert.equal(link({ url }), written);
+    // Posted from the inbox as a person (mrkdwn `<…&amp;…>`): Slack's blocks keep `&amp;`.
+    assert.equal(link({ url: url.replaceAll('&', '&amp;'), text: url }), written);
+    assert.equal(link({ url: url.replaceAll('&', '&amp;'), text: 'the inbox' }), `[the inbox](${url})`);
+    // Posted as the app (a markdown block): Slack shortens the label, so the address is it.
+    assert.equal(link({ url, text: 'example.com/inbox?t=b%3Ac&team=a&…', truncated: true }), written);
+    // A `&` is escaped only where it would start a character reference.
+    assert.equal(slackToMarkdown('&amp;copy; and &amp;#38; but a&amp;b'), '\\&copy; and \\&#38; but a&b');
+  });
+
   it('writes what apps send: headers, sections, fields, context, dividers and markdown', () => {
     assert.equal(
       slackBlocksToMarkdown([
