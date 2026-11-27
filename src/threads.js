@@ -328,10 +328,11 @@ export function readState(threads, marks, mentions, me, yours = new Map()) {
  * What the red badge counts of `threads` for person `me`, as Slack counts its badge: the
  * messages they have not read (after their watermark on the message's thread) that mention them,
  * and in a thread of theirs (one they posted or were mentioned in; a re-threaded group's members
- * among `threads` are one thread) the messages from someone else since they first were in it:
- * people's, and bots' as well (an agent's `post_message` answers them as a person's reply does),
- * but not Teams' system notices, nor what they posted themselves as the opspile app
- * (`app_posts`). A message counts once. Deleted ones do not.
+ * among `threads` are one thread) the people's messages from someone else since they first were
+ * in it, and a bot's that answers them: the people's message before it is theirs (an agent's
+ * `post_message` after their question). A bot's that answers someone else is not theirs to read,
+ * nor are Teams' system notices and what they posted themselves as the opspile app
+ * (`app_posts`). A message counts once. Deleted ones do not, but a bot's mention does.
  *
  * @returns {Promise<Map<string, number>>} thread to count, without the threads of none
  */
@@ -355,7 +356,10 @@ export async function unreadInYours(db, threads, me) {
       JOIN messages m ON m.thread = g.thread AND m.at >= s.at
       LEFT JOIN watermarks w ON w.thread = g.thread AND w.person = ?2
     WHERE m.deleted = 0 AND (w.read_at IS NULL OR m.at > w.read_at)
-      AND ((m.person IS NOT ?2 AND (m.counted = 1 OR m.author_kind = 'bot')
+      AND ((m.counted = 1 AND m.person IS NOT ?2)
+        OR (m.author_kind = 'bot'
+          AND (SELECT p.person FROM messages p WHERE p.thread = m.thread AND p.counted = 1
+            AND p.deleted = 0 AND p.at < m.at ORDER BY p.at DESC LIMIT 1) = ?2
           AND NOT EXISTS (SELECT 1 FROM app_posts a WHERE a.source = m.source
             AND a.tenant = m.tenant AND a.channel_id = m.channel_id AND a.id = m.id
             AND a.person = ?2))

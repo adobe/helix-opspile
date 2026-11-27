@@ -127,6 +127,11 @@ function load() {
     avatar: (name) => `<span class="av">${esc(name)}</span>`,
     profileKey: () => '',
     AT: '<svg/>',
+    AGENT_NAME: 'opspile',
+    isRequestKey: (k) => String(k).startsWith('request:'),
+    isQuestionKey: (k) => String(k).startsWith('request:question:'),
+    adminRequests: () => false,
+    personal: views.personal,
   });
   bar = piece('function filtButton(on) {', '/*\n * The thread list stays put', 'filtButton', {
     state,
@@ -162,6 +167,8 @@ const outline = () => list().map((x) => {
 });
 /** The red badge in a piece of HTML, or null. */
 const badge = (s) => (/<b class="men"[^>]*>([^<]*)<\/b>/.exec(s) || [])[1] || null;
+/** Why a row says it waits for you ("Mentions you", "Reply for you"), or null. */
+const why = (s) => (/<b class="why[^"]*"[^>]*>([^<]*)<\/b>/.exec(s) || [])[1] || null;
 /** The customer column's row of `v` (`''`: All customers). */
 function columnRow(v) {
   const col = page.simpleCustomers();
@@ -222,7 +229,7 @@ describe('the simple personal view', () => {
       let r = page.row(t);
       assert.match(r, /^<div class="t unread[^"]* mention simple"/);
       assert.doesNotMatch(r, /class="faces"|class="mks"|class="cust"|mentions<\/b>/);
-      assert.equal(badge(r), '2');
+      assert.equal(why(r), 'Mentions you');
       state.settings.expert = true;
       r = page.row(t);
       assert.doesNotMatch(r, / simple"/);
@@ -230,7 +237,9 @@ describe('the simple personal view', () => {
       assert.match(r, /<span class="faces"><span class="av">Sam Reyes<\/span><\/span>/);
       // The customer shows its card (ui/inbox.js `custChip`), by keyboard too.
       assert.match(r, /<span class="cust" data-org="acme" role="button" tabindex="0" aria-label="ACME">[\s\S]*ACME<\/span>/);
-      assert.match(r, /<b class="men" title="Unread mentions of you">2 mentions<\/b>/);
+      // Why it waits for you, not how many: the thread is one of those Inbox counts.
+      assert.equal(why(r), 'Mentions you');
+      assert.doesNotMatch(r, /2 mentions/);
       // The list by customer is the simple view's only.
       assert.equal(page.grouped(), false);
     });
@@ -428,16 +437,17 @@ describe('the simple personal view', () => {
       assert.deepEqual(column(), ['acme', 'globex', 'initech']);
     });
 
-    it('puts the most mentions first, and goes by name, not by latest activity, within a pile', () => {
+    it('puts the most threads for you first, and goes by name, not by messages or activity, within a pile', () => {
       const i1 = state.data.threads.find((t) => t.thread === 'i1');
       Object.assign(i1, { unread: true, unreadMentions: 5, mentionedMe: true });
-      assert.deepEqual(column(), ['initech', 'acme', 'globex']);
-      i1.unreadMentions = 2;
       page.forgetColumn();
-      // ACME and Initech have two each: by name.
-      assert.deepEqual(column(), ['acme', 'initech', 'globex']);
-      state.data.threads.find((t) => t.thread === 'g1').last_at = '2026-11-06T10:00Z';
-      assert.deepEqual(column(), ['acme', 'initech', 'globex']);
+      // One thread each waits for you, however many messages: by name.
+      assert.deepEqual(column(), ['acme', 'globex', 'initech']);
+      Object.assign(state.data.threads.find((t) => t.thread === 'g1'), { unreadForYou: 1 });
+      page.forgetColumn();
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
+      state.data.threads.find((t) => t.thread === 'a4').last_at = '2026-11-06T10:00Z';
+      assert.deepEqual(column(), ['globex', 'acme', 'initech']);
     });
 
     it('keeps a customer where it is while you read it, and moves it down only after a while away', () => {
@@ -461,9 +471,14 @@ describe('the simple personal view', () => {
       column();
       read('a1');
       assert.deepEqual(column(), ['acme', 'globex', 'initech']);
-      // Initech had nothing unread: a mention of you moves it to the top, past the held places.
+      // Initech had nothing unread: two threads for you move it to the top, past the held places
+      // of one each.
       Object.assign(state.data.threads.find((t) => t.thread === 'i1'), { unread: true, unreadMentions: 3, mentionedMe: true });
+      state.data.threads.push({
+        ...state.data.threads.find((t) => t.thread === 'i1'), thread: 'i2', unreadMentions: 0, mentionedMe: false, unreadForYou: 1,
+      });
       assert.deepEqual(column(), ['initech', 'acme', 'globex']);
+      read('i2');
       // Read, it stays there.
       read('i1');
       assert.deepEqual(column(), ['initech', 'acme', 'globex']);
@@ -528,8 +543,8 @@ describe('the simple personal view', () => {
     });
 
     it('counts nothing of an excluded customer: no badge, not bold, not in All customers', () => {
-      assert.equal(badge(columnRow('')), '3');
-      assert.equal(badge(bar.filtButton(0)), '3');
+      assert.equal(badge(columnRow('')), '2');
+      assert.equal(badge(bar.filtButton(0)), '2');
       exclude('acme');
       assert.equal(badge(columnRow('acme')), null);
       assert.match(columnRow('acme'), /<span class="lab">ACME<\/span>/);
@@ -592,51 +607,54 @@ describe('the simple personal view', () => {
       delete state.not.customer;
       assert.deepEqual(column(), ['acme', 'globex', 'initech']);
       assert.deepEqual(heads(), ['# acme', '# globex', '# initech']);
-      assert.equal(badge(columnRow('')), '3');
+      assert.equal(badge(columnRow('')), '2');
     });
   });
 
   describe('the red badge', () => {
-    it('counts the unread messages that mention you: beside each customer, in all, and on the rows', () => {
-      assert.equal(badge(columnRow('acme')), '2');
+    it('counts the threads that wait for you beside each customer and in all; a row says why', () => {
+      assert.equal(badge(columnRow('acme')), '1');
       assert.equal(badge(columnRow('globex')), '1');
       assert.equal(badge(columnRow('initech')), null);
-      assert.equal(badge(columnRow('')), '3');
-      assert.equal(badge(rowOf('a1')), '2');
-      assert.equal(badge(rowOf('g2')), '1');
-      assert.equal(badge(rowOf('a2')), null);
-      assert.match(columnRow('acme'), /title="2 unread messages for you: mentions, and replies in threads you are in"/);
-      assert.match(rowOf('g2'), /title="1 unread message for you: mentions, and replies in threads you are in"/);
+      assert.equal(badge(columnRow('')), '2');
+      assert.equal(why(rowOf('a1')), 'Mentions you');
+      assert.equal(why(rowOf('g2')), 'Mentions you');
+      assert.equal(why(rowOf('a2')), null);
+      assert.match(columnRow('acme'), /title="1 thread waits for you: a reply or a mention for you, a question or a request"/);
     });
 
-    it('counts what is new in the threads you are in too, as Slack does, each message once', () => {
+    it('counts a thread with replies for you once, however many came, a bot\'s that answers you too', () => {
       // g1: you posted in it, and three replies came since (src/threads.js unreadInYours).
       const g1 = state.data.threads.find((t) => t.thread === 'g1');
       g1.unreadForYou = 3;
-      assert.equal(badge(rowOf('g1')), '3');
+      assert.equal(why(rowOf('g1')), 'Reply for you');
       assert.match(rowOf('g1'), /^<div class="t unread[^"]* mention simple"/);
-      assert.equal(badge(columnRow('globex')), '4');
-      assert.equal(badge(columnRow('')), '6');
-      // a1: two mentions and one more reply since you were first mentioned.
+      assert.equal(badge(columnRow('globex')), '2');
+      assert.equal(badge(columnRow('')), '3');
+      // a1: two mentions and one more reply: still one thread, which mentions you.
       state.data.threads.find((t) => t.thread === 'a1').unreadForYou = 3;
-      assert.equal(badge(rowOf('a1')), '3');
-      assert.equal(badge(columnRow('')), '7');
-      // The expert view's row says how many are new; with mentions only, how many mentions.
+      assert.equal(why(rowOf('a1')), 'Mentions you');
+      assert.equal(badge(columnRow('')), '3');
       state.settings.expert = true;
-      assert.match(rowOf('g1'), /<b class="men" title="3 unread messages for you[^"]*">3 new<\/b>/);
-      assert.match(rowOf('g2'), /<b class="men" title="Unread mentions of you">1 mention<\/b>/);
+      assert.equal(why(rowOf('g1')), 'Reply for you');
       state.settings.expert = false;
       read('g1');
-      assert.equal(badge(rowOf('g1')), null);
+      assert.equal(why(rowOf('g1')), null);
       assert.equal(badge(columnRow('globex')), '1');
       // Not unread: nothing counts, whatever the inbox says.
       Object.assign(g1, { unreadForYou: 2 });
-      assert.equal(badge(rowOf('g1')), null);
+      assert.equal(why(rowOf('g1')), null);
+    });
+
+    it('counts a question an agent asked you until it is answered, read or not', () => {
+      const q = { thread: 'request:question:q1', team: 'edge', request: { open: true } };
+      assert.equal(page.youCount(q), 1);
+      assert.equal(page.youCount({ ...q, request: { open: false } }), 0);
     });
 
     it('goes from the row and its customer once the thread is read, and the row stays', () => {
       read('a1');
-      assert.equal(badge(rowOf('a1')), null);
+      assert.equal(why(rowOf('a1')), null);
       assert.doesNotMatch(rowOf('a1'), /class="t unread| mention/);
       assert.equal(badge(columnRow('acme')), null);
       assert.equal(badge(columnRow('')), '1');
@@ -648,17 +666,17 @@ describe('the simple personal view', () => {
 
     it('is never on a thread you have read, whatever else the thread still says', () => {
       Object.assign(state.data.threads.find((t) => t.thread === 'a1'), { unread: false });
-      assert.equal(badge(rowOf('a1')), null);
+      assert.equal(why(rowOf('a1')), null);
       assert.equal(badge(columnRow('acme')), null);
       assert.equal(badge(columnRow('')), '1');
     });
 
-    it('counts a mention the inbox has no count for as one, and caps at 99+', () => {
+    it('counts a thread with a mention the inbox has no count for, once however many', () => {
       Object.assign(state.data.threads.find((t) => t.thread === 'g1'), { mentionedMe: true });
-      assert.equal(badge(rowOf('g1')), '1');
+      assert.equal(why(rowOf('g1')), 'Mentions you');
       assert.equal(badge(columnRow('globex')), '2');
       state.data.threads.find((t) => t.thread === 'a1').unreadMentions = 120;
-      assert.equal(badge(columnRow('acme')), '99+');
+      assert.equal(badge(columnRow('acme')), '1');
     });
 
     it('sets the names of customers with unread threads in bold, until they are read', () => {
@@ -686,7 +704,7 @@ describe('the simple personal view', () => {
       // The column keeps only the customers that mention you, with their badges.
       const col = page.simpleCustomers();
       assert.deepEqual([...col.matchAll(/data-v="([^"]+)"/g)].map((m) => m[1]), ['acme', 'globex']);
-      assert.equal(badge(columnRow('')), '3');
+      assert.equal(badge(columnRow('')), '2');
     });
 
     it('keeps a thread once you read it: its mention stays in the thread', () => {

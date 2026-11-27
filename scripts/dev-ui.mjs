@@ -857,9 +857,15 @@ function unreadInYours(rows) {
       }
     }
   }
-  // Someone else's: a person's, or a bot's but what the viewer posted as the opspile app.
+  // Someone else's: a person's, or a bot's that answers the viewer (the people's message before
+  // it is theirs), but not what the viewer posted as the opspile app.
+  const answers = (r, m) => {
+    const before = live(r).filter((x) => x.author.kind === 'person' && x.at < m.at)
+      .sort((a, b) => a.at.localeCompare(b.at)).pop();
+    return before?.author.name === name;
+  };
   const fromOther = (r, m) => (m.author.kind === 'person' && m.author.name !== name)
-    || (m.author.kind === 'bot' && !store.appPosts.has(`${r.thread}|${m.id}`));
+    || (m.author.kind === 'bot' && answers(r, m) && !store.appPosts.has(`${r.thread}|${m.id}`));
   const out = new Map();
   for (const r of rows) {
     const from = since.get(groupOf(r));
@@ -891,7 +897,14 @@ function waitingThreads() {
   return rows.filter((r) => counts.get(r.thread))
     .sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))
     .map((r) => ({
-      thread: r.thread, team: r.team, org: r.org, n: counts.get(r.thread),
+      thread: r.thread,
+      team: r.team,
+      org: r.org,
+      title: r.title,
+      at: r.any_at,
+      n: counts.get(r.thread),
+      mention: store.mentions.some((m) => m.thread === r.thread && m.person === ME
+        && m.at > (store.watermarks.get(`${ME}|${r.thread}`)?.read_at || '')),
     }));
 }
 

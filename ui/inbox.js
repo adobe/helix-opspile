@@ -1645,7 +1645,7 @@ const GROUPS = {
   fold: 'all', mark: 'badge', headBadge: false, sticky: true,
 };
 /** The red badge's tooltip: `n` messages for you (youCount). */
-const youTitle = (n) => `${n} unread ${n === 1 ? 'message' : 'messages'} for you: mentions, and replies in threads you are in`;
+const youTitle = (n) => `${n} ${n === 1 ? 'thread waits' : 'threads wait'} for you: a reply or a mention for you, a question or a request`;
 const youBadge = (n) => (n ? `<b class="men" title="${esc(youTitle(n))}">${n > 99 ? '99+' : n}</b>` : '');
 /** Mentions (see mentionsOn): an @ at the top right of the customers, filled while it filters. */
 const atButton = () => `<button class="atme" type="button" data-atme aria-pressed="${state.mentions}" title="${state.mentions ? 'Showing only threads that mention you' : 'Show only threads that mention you'}" aria-label="Mentions of me">${AT}</button>`;
@@ -1654,8 +1654,38 @@ const atButton = () => `<button class="atme" type="button" data-atme aria-presse
  * mention you, and in a thread you posted or were mentioned in, the others' since
  * (`unreadForYou`, src/threads.js unreadInYours); at least one while it mentions you.
  */
-const youCount = (t) => (t.unread
+const youMessages = (t) => (t.unread
   ? Math.max(t.unreadForYou || 0, mentionsMe(t) ? (t.unreadMentions || 1) : 0) : 0);
+/**
+ * Why a thread waits for you, or null: a question an agent asked you (`question`, until you
+ * answer), the admin team's request in its inbox (`request`, until it is decided), a mention of
+ * you you have not read (`mention`), or a reply for you in a thread of yours (`reply`: a person's,
+ * or a bot's that answers you; youMessages). Inbox in the header counts them so, by thread.
+ */
+function waitReason(t) {
+  if (isQuestionKey(t.thread)) return t.request?.open && (personal() || t.team === state.team) ? 'question' : null;
+  if (isRequestKey(t.thread)) return t.request?.open && adminRequests() ? 'request' : null;
+  if (!youMessages(t)) return null;
+  return mentionsMe(t) ? 'mention' : 'reply';
+}
+const WAIT_SAID = {
+  question: 'Question for you', request: 'Request for the admin team', mention: 'Mentions you', reply: 'Reply for you',
+};
+const WAIT_HINT = {
+  question: 'A thread agent asked you, and waits for your answer',
+  request: 'A request for the admin team: it waits until it is decided',
+  mention: 'Someone mentioned you since you last read it',
+  reply: 'Someone answered in a thread you are in (a person, or a bot answering you), since you last read it',
+};
+/** The red badge counts threads: one for a thread that waits for you (waitReason). */
+const youCount = (t) => (waitReason(t) ? 1 : 0);
+/** A row's say of why it waits for you: "Reply for you", "Question for you", … */
+const waitTag = (t) => {
+  const why = waitReason(t);
+  return why ? `<b class="why why-${why}" title="${esc(WAIT_HINT[why])}">${WAIT_SAID[why]}</b>` : '';
+};
+/** The purple badge, but on a question asked of you: that one waits for you, its tag says so. */
+const sideMark = (t) => (isQuestionKey(t.thread) ? '' : sideBadge(sideCount(t), t));
 /**
  * The purple badge: the agent's answers to you in a thread's sidebar that you have not seen
  * (`sideNew`, src/sidebar.js unseenAnswers), less those this page has shown you since (seeSide).
@@ -2166,11 +2196,8 @@ function row(t, hit = null) {
   if (n > 1) count = `${n}×`;
   else if (replies) count = `${replies} ${replies === 1 ? 'reply' : 'replies'}`;
   // The red badge's count: mentions of you, or with replies in a thread of yours, what is new.
-  const m = youCount(t);
-  const only = m && mentionsMe(t) && m <= (t.unreadMentions || 1);
-  let what = 'new';
-  if (only) what = m === 1 ? 'mention' : 'mentions';
-  const mentions = m ? `<b class="men" title="${esc(only ? 'Unread mentions of you' : youTitle(m))}">${count ? ', ' : ''}${m} ${what}</b>` : '';
+  // Why it waits for you, said, not counted: the thread is one of those Inbox counts.
+  const mentions = '';
   // The latest reply: the inbox sends it (see `preview`). Not for a thread without replies (its
   // latest message is its title) or a search result (it shows the message that matched).
   const p = replies && !hit ? preview(t) : null;
@@ -2183,7 +2210,7 @@ function row(t, hit = null) {
     <div class="l2">${cust}${linkedTag(t)}
       <span class="faces">${faces}</span>
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
-      <span class="tags">${sideBadge(sideCount(t), t)}${moods(t)}</span>
+      <span class="tags">${waitTag(t)}${sideMark(t)}${moods(t)}</span>
     </div>${hit ? hitLine(hit) : ''}</div>`;
 }
 
@@ -2207,7 +2234,7 @@ function simpleRow(t, hit = null) {
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}${linkedTag(t)}${said}${sideBadge(sideCount(t), t)}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
+    <div class="l2">${cust}${linkedTag(t)}${said}${sideMark(t)}${GROUPS.mark === 'badge' && n ? waitTag(t) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
 }
 /**
  * The list by customer (`shown` in the view's order, latest activity first): each customer
@@ -2909,7 +2936,26 @@ function viewSwitch() {
   }, ...(state.teams || []).map((t) => ({
     slug: t.slug, name: t.name, on: !mine && t.slug === state.team,
   }))];
-  return `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}">${esc(v.name)}</button>`).join('')}</span>`;
+  return `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}">${esc(v.name)}${viewBadge(v.slug)}</button>`).join('')}</span>`;
+}
+/**
+ * The threads that wait for you in a view, as its rows say it (waitReason): in Personal those
+ * with something for you and the questions agents asked you; in a team's inbox those of its
+ * threads, and in the admin team's its requests too. Inbox in the header counts each once:
+ * Personal's, and the admin team's requests. A click on it opens the list, Waiting for you.
+ */
+function viewWaits(slug) {
+  if (state.as || !globalThis.Header?.counts) return 0;
+  const c = Header.counts();
+  if (!slug) return c.you + c.questions;
+  const asked = rqList.entries.filter((t) => isQuestionKey(t.thread) && t.request?.open && t.team === slug).length;
+  return (Header.youByTeam()[slug] || 0) + asked + (slug === 'admin' && state.me?.admin ? c.admin : 0);
+}
+function viewBadge(slug) {
+  const n = viewWaits(slug);
+  if (!n) return '';
+  const said = `${n} ${n === 1 ? 'thread waits' : 'threads wait'} for you here: show the list`;
+  return ` <b class="men" data-waits="${esc(slug)}" title="${esc(said)}" aria-label="${esc(said)}">${n > 99 ? '99+' : n}</b>`;
 }
 /**
  * The view switch on a phone scrolls sideways when its views do not fit (see the styles): the
@@ -3304,7 +3350,9 @@ function tellHeader() {
   for (const t of state.data.threads) {
     if (isRequestKey(t.thread)) continue;
     for (const m of t.members || []) known[m.thread] = { n: 0 };
-    known[t.thread] = { n: youCount(t), team: t.team || null, org: t.org || null };
+    known[t.thread] = {
+      n: youCount(t), team: t.team || null, org: t.org || null, orgName: orgName(t), title: t.title, at: activityOf(t), mention: waitReason(t) === 'mention',
+    };
   }
   const said = JSON.stringify(known);
   if (said === toldHeader) return;
@@ -11888,6 +11936,9 @@ async function start() {
   window.addEventListener('resize', seenSoon, { passive: true });
   $('threads').onclick = (e) => {
     if (e.target.closest('[data-filters]')) { setFiltering(!state.filtering); return; }
+    // A view's number: the list of what waits for you, as Inbox's in the header opens it.
+    const waits = e.target.closest('[data-waits]');
+    if (waits) { Header.toggleList(waits); return; }
     const view = e.target.closest('[data-view]');
     // A click on the view already shown sorts it afresh, without the threads unread only kept.
     if (view) {
@@ -12088,9 +12139,11 @@ async function start() {
       orgs: () => (customerOnScreen() ? `/inbox/admin?tab=orgs&org=${encodeURIComponent(customerOnScreen())}` : null),
       stats: () => Header.stats({ org: customerOnScreen(), team: personal() ? null : state.team }),
     },
-    // The number on Inbox, clicked: the open requests, in this tab.
+    // A thread of the list under the number on Inbox, clicked: there, in this tab.
     open: openInbox,
     count: !state.as,
+    // Its numbers changed: the views say them too.
+    changed: () => { if (state.data) renderThreads(); },
   });
   if (state.me.admin) {
     const sel = $('as');

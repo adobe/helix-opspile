@@ -724,9 +724,8 @@ can open it), never the person the agent is answering in the sidebar, one open q
 thread and two per thread at a time; one waits three days. Unlike the requests above, it is theirs,
 not the admin team's: a thread of their inbox ("Requests as threads", kind `question`, **Questions
 for you**), in their personal view and in the inbox of the first of the thread's teams they are on,
-with the agent's purple badge (as its unseen answers in a sidebar have) until they answer, and a
-purple number of its own beside **Inbox** in the header, which opens them (the blue one stays the
-admin team's requests). A personal listing has none of the admin team's kinds, and leaves what
+saying **Question for you** until they answer, and one of the threads that wait for them on
+**Inbox** in the header ("What waits for you"). A personal listing has none of the admin team's kinds, and leaves what
 `request_threads` tracks of them alone. Its card answers instead of deciding: **Answer** (a choice for each
 guess, preset to it, and the person's own words), **Ask someone else** (whom) or **I don't know**.
 The agent is told as an input of its own, trusted as the person's, with what it asked the answer for
@@ -748,9 +747,24 @@ a conflict's key), and the inbox lists it in the admin team's view only, with th
 threads, under a "customer" of its kind (Channel requests, Bots, Rule conflicts, …), of kind
 `request`, waiting on us while it is open and resolved once it is decided; the decided ones stay
 (the latest hundred of each kind). Their own type on the Type card, **Admin requests** (`f.type=request`,
-beside Conversations and Alerts), filters to them. The number on Inbox in every page's header counts
-the open ones of every kind (`GET /api/admin/requests?count=1`), and a click on it opens them: the
-admin team's inbox, on Admin requests that are unresolved (`REQUESTS` in `ui/header.js`). Its thread is in no channel and nothing of it is posted: the
+beside Conversations and Alerts), filters to them, and its red badge counts the open ones while
+Conversations is picked. The number on Inbox in every page's header counts the open ones of every
+kind (`GET /api/admin/requests?count=1`) among the threads that wait for you, and its list has
+them, with a link to all of them: the admin team's inbox, on Admin requests that are unresolved
+(`REQUESTS` in `ui/header.js`).
+
+**What waits for you** is counted in threads, the same from the header down to a row. On
+**Inbox** in every page's header, a red number: the threads with a message for you that you have
+not read, wherever they are (`GET /api/waiting`, `src/waiting.js`: your threads of the last 30
+days with something after your last read), the questions agents asked you, and for the admin team
+its open requests. A click on it opens their list, **Waiting for you** (a popover, on every page):
+each thread with why it waits and how long ago, by kind (replies and mentions, questions, the
+admin team's requests), and a click opens it where it is. In the inbox, each view of the switch
+carries how many wait for you there (Personal: your threads and questions; a team's: those of its
+threads, and the admin team's its requests), and a click on that number opens the list too; each
+card's rows count them, and each row says why. The inbox tells the header what it knows better
+than its last `GET /api/waiting` (the threads it has loaded, and those you just read,
+`Header.waiting`, `Header.readHere`). Its thread is in no channel and nothing of it is posted: the
 request as whoever asked said it (or, for a bot, an account or a conflict, as the inbox sees it),
 what the admin team writes about it, and what was decided. What they write is the request's
 **decision log** (`POST /api/requests/note`, `request_log`, migration 0100), the reply box's place;
@@ -1427,12 +1441,19 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   you (mentioned you, you posted, 🛟 or 👀 by a colleague). Opening a thread by clicking it in
   the list records the pick, with the threads on screen and their features, in `rank_events`
   (`POST /api/rank/pick`, migration 0040), for that training. A facet value with threads
-  you have not read has its label in bold, and a red badge counts the messages for you that you
-  have not read yet, as Slack's badge does: those that mention you, and in a thread you posted or
-  were mentioned in (any member of a re-threaded group), the messages of other people since
-  you first were in it, each message once (`unreadForYou`, `unreadInYours` in `src/threads.js`).
-  The same count is on the customers of the personal view and on its rows, which it marks red;
-  a thread's
+  you have not read has its label in bold, and a red badge counts the threads that wait for you
+  there ("What waits for you", below): a thread waits while it has a message for you that you
+  have not read, as Slack counts them (`unreadForYou`, `unreadInYours` in `src/threads.js`): one
+  that mentions you, and in a thread you posted or were mentioned in (any member of a re-threaded
+  group), another person's since you first were in it, or a bot's that answers you (the people's
+  message before it is yours: an agent's `post_message` after your question; not one answering a
+  colleague, nor your own posts as the app, `app_posts`, nor Teams' system notices). A bot's reply
+  moves no `last_at`, which is people's, so it makes the thread unread by itself, the row
+  previews it (`bot_reply`), and opening a thread reads it up to its latest message (`any_at`). An
+  open request that waits for you (a question an agent asked you; in the admin team's inbox, its
+  requests) waits until it is answered or decided, read or not. Each row says why it waits
+  (**Reply for you**, **Mentions you**, **Question for you**, **Request for the admin team**),
+  not how many messages; a thread's
   "N replies" is bold and blue while it has replies you have not read.
 - **Channels a message names** (`#name`, or `#C…` where Slack sent the id without the name, as
   it does for bots) are resolved when the thread is read (`src/channelrefs.js`, the `channels`

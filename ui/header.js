@@ -18,13 +18,7 @@
  * where you manage them) and Topics (the topic map) for every member of a team (Inbox, Teams and
  * Customers, for their overviews, and Topics for Adobe's people on none, `staff` from /api/me,
  * to find what to follow), and
- * COGS (what the inbox costs) too for the admin team, whose requests (channels and people asked
- * for, customers in the portal, bots, conflicts) are threads of its inbox, their number on Inbox
- * (a click on the number opens them: the admin team's inbox, on its open requests, `REQUESTS`);
- * the questions thread agents ask you (src/questions.js) have a number of their own beside it, for
- * everyone on a team, purple with the agent's bubble as its badge in the inbox is (a click opens
- * them: the inbox of the first one's team, on its open requests, `questionsHref`);
- * and Stats, klickhaus' statistics of all threads in a new tab,
+ * COGS (what the inbox costs) too for the admin team; and Stats, klickhaus' statistics of all threads in a new tab,
  * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
@@ -32,6 +26,15 @@
  * there. A page may send another elsewhere: the inbox sends Customers to the customer on screen,
  * Teams to the team picked, and Stats to either (`stats`). The page you
  * are on does nothing when clicked; on a phone it opens the menu of the others.
+ *
+ * What waits for you is a number of threads on Inbox, in red, and a click on it opens their list,
+ * **Waiting for you** (`#waitlist`, a popover under Inbox, on every page): the threads with a
+ * reply for you or a mention of you that you have not read (GET /api/waiting, src/waiting.js; a
+ * bot's reply counts for the one it answers), the questions thread agents asked you
+ * (src/questions.js), and for the admin team its open requests (channels and people asked for,
+ * customers in the portal, bots, conflicts), threads of its inbox; each says why it waits and
+ * opens its thread, where it is. The inbox counts them the same way, by thread: on each view of
+ * its switch, on its cards' rows, and on each row the reason it waits.
  *
  * The color scheme, in your menu's Appearance: the system's (as the browser prefers), light or
  * dark, per browser (localStorage `opspile.scheme`), set as `data-scheme` on <html>, which the
@@ -52,8 +55,6 @@ window.Header = (() => {
   const KEY = 'opspile.page.';
   /** The admin team's open requests: its inbox, filtered to them (ui/inbox.js, the Type card). */
   const REQUESTS = '/inbox?team=admin&filters=1&f.type=request&f.resolved=open';
-  /** The open requests of team `team`'s inbox: the questions asked of you there. */
-  const questionsHref = (team) => `/inbox?team=${encodeURIComponent(team)}&filters=1&f.type=request&f.resolved=open`;
   // What waits: the admin team's requests (for its members), and your questions, with the team
   // of the first one.
   const counts = {
@@ -66,15 +67,16 @@ window.Header = (() => {
   const yours = new Map();
   const held = new Map();
   const HELD_MS = 30 * 1000;
-  const youTotal = () => [...yours].reduce((n, [k, x]) => n + ((held.get(k) || 0) > Date.now() ? 0 : x.n), 0);
-  const BUBBLE = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
+  // Threads, not messages: a thread waits or it does not.
+  const youTotal = () => [...yours].reduce((n, [k, x]) => n + ((held.get(k) || 0) > Date.now() || !x.n ? 0 : 1), 0);
   const CHEV = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
   const $ = (id) => document.getElementById(id);
   const phone = matchMedia('(max-width: 699px)');
   const opts = {
-    prefer: {}, fallback: {}, go: null, open: null, stats: null,
+    prefer: {}, fallback: {}, go: null, open: null, stats: null, changed: null, admin: false,
   };
+  let countsSaid = '';
   let shut = 0;
 
   const SCHEME = 'opspile.scheme';
@@ -217,12 +219,14 @@ window.Header = (() => {
    * screen, in it (the inbox: the open requests, from the number on Inbox).
    */
   function init(me, {
-    prefer = {}, fallback = {}, go = null, open = null, count = true,
+    prefer = {}, fallback = {}, go = null, open = null, count = true, changed = null,
   } = {}) {
     Object.assign(opts.prefer, prefer);
     Object.assign(opts.fallback, fallback);
     opts.go = go;
     opts.open = open;
+    opts.changed = changed;
+    opts.admin = Boolean(me.admin);
     opts.stats = me.stats?.url || null;
     const own = PAGES.filter((p) => !p.external);
     let shown = [];
@@ -234,7 +238,7 @@ window.Header = (() => {
     const nav = $('pages');
     const item = (p) => (p.external
       ? `<a data-page="${p.id}" href="${href(p.id)}" title="${p.title}" target="_blank" rel="noopener">${p.label}<span class="ext" aria-hidden="true">↗</span></a>`
-      : `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'inbox' && me.admin ? '<span class="count" hidden></span>' : ''}${p.id === 'inbox' && me.teams?.length ? '<span class="count asks" hidden></span>' : ''}</a>`);
+      : `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'inbox' && (me.admin || me.teams?.length) ? '<span class="count waits" hidden aria-haspopup="dialog" aria-controls="waitlist"></span>' : ''}</a>`);
     nav.innerHTML = shown.map(item).join('');
     nav.hidden = !shown.length;
     let menu = $('pagemenu');
@@ -258,30 +262,131 @@ window.Header = (() => {
     }
   }
 
-  const waitText = (n, what, whom, from = '') => `${n} ${what}${n === 1 ? '' : 's'}${from} wait${n === 1 ? 's' : ''} for ${whom}`;
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  /** What the number on Inbox counts, said: "2 threads with a reply for you, 1 question, …". */
+  function waitText() {
+    return [
+      counts.you ? `${plural(counts.you, 'thread')} with something for you` : '',
+      counts.questions ? `${plural(counts.questions, 'question')} from thread agents` : '',
+      counts.admin ? `${plural(counts.admin, 'request')} for the admin team` : '',
+    ].filter(Boolean).join(', ');
+  }
+  /** Every thread that waits for you: the number on Inbox. */
+  const total = () => counts.you + counts.questions + counts.admin;
   /**
-   * The numbers on Inbox: the admin team's requests that wait (`admin`, blue), and the questions
-   * thread agents asked you (`questions`, the first one's `team`, purple), each kept until it is
-   * given again. Both are threads of an inbox; the page you are on, on a phone, shows their sum.
+   * The number on Inbox: the threads with something for you (`you`, see `waiting`), the
+   * questions thread agents asked you (`questions`, the first one's `team`) and the admin team's
+   * requests that wait (`admin`), each kept until it is given again: one number of threads.
    */
   function setCounts(next) {
     Object.assign(counts, next);
-    $('pages').dataset.count = String(counts.admin + counts.questions);
-    const said = [
-      counts.admin ? waitText(counts.admin, 'request', 'the admin team') : '',
-      counts.questions ? waitText(counts.questions, 'question', 'you') : '',
-    ].filter(Boolean).join(', and ');
+    const n = total();
+    $('pages').dataset.count = String(n);
+    const said = waitText();
     for (const el of document.querySelectorAll('[data-page="inbox"] .count:not(.total)')) {
-      const asks = el.classList.contains('asks');
-      const n = asks ? counts.questions : counts.admin;
-      if (asks) el.innerHTML = `${BUBBLE}${n}`;
-      else el.textContent = String(n);
+      el.textContent = n > 99 ? '99+' : String(n);
       el.hidden = !n;
-      el.title = `${asks ? waitText(n, 'question', 'you', ' from thread agents') : waitText(n, 'request', 'the admin team')}`;
+      el.title = said ? `Waiting for you: ${said}. Click for the list` : '';
       el.closest('a').title = said ? `${said}, in the inbox` : PAGES.find((p) => p.id === 'inbox').title;
     }
     sync();
+    if ($('waitlist')?.matches?.(':popover-open')) drawList();
+    // The page shows the same numbers where they are (the inbox: on its views): told of a change.
+    const now = JSON.stringify(counts);
+    if (now !== countsSaid) {
+      countsSaid = now;
+      if (opts.changed) queueMicrotask(opts.changed);
+    }
   }
+
+  // ------------------------------------------------------------ Waiting for you, the list
+  const listed = { requests: [], at: 0, loading: null };
+  const LIST_MAX = 8;
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+  const agoOf = (at) => {
+    const m = Math.max(0, Math.round((Date.now() - Date.parse(at)) / 60000));
+    if (!at || Number.isNaN(m)) return '';
+    if (m < 60) return `${m}m`;
+    if (m < 60 * 24) return `${Math.round(m / 60)}h`;
+    return `${Math.round(m / 60 / 24)}d`;
+  };
+  /** The questions asked of you and, for the admin team, its requests, as GET /api/requests has them. */
+  function loadListed() {
+    if (listed.loading) return listed.loading;
+    if (typeof fetch !== 'function') return Promise.resolve();
+    if (Date.now() - listed.at < 60 * 1000) return Promise.resolve();
+    const asks = (url) => fetch(url, { credentials: 'same-origin', redirect: 'manual' })
+      .then((r) => (r.ok ? r.json() : { threads: [] })).then((b) => b.threads || []).catch(() => []);
+    listed.loading = Promise.all([asks('/api/requests?mine=1'), opts.admin ? asks('/api/requests') : []])
+      .then(([mine, all]) => {
+        const keys = new Set();
+        listed.requests = [...mine, ...all].filter((t) => t.request?.open && !keys.has(t.thread) && keys.add(t.thread));
+        listed.at = Date.now();
+      })
+      .finally(() => { listed.loading = null; });
+    return listed.loading;
+  }
+  const isQuestion = (k) => String(k).startsWith('request:question:');
+  /** Where a thread of the list opens: its inbox, with what shows it. */
+  const itemHref = (key) => (String(key).startsWith('request:') && !isQuestion(key)
+    ? `${REQUESTS}&t=${encodeURIComponent(key)}` : `/inbox?view=personal&t=${encodeURIComponent(key)}`);
+  const item = (key, title, sub, why, at) => `<a class="wl-item" href="${esc(itemHref(key))}" data-to="${esc(itemHref(key))}">
+      <span class="wl-title">${esc(title || '(no text)')}</span><span class="wl-when">${esc(agoOf(at))}</span>
+      <span class="wl-sub"><span class="wl-why">${esc(why)}</span>${sub ? ` · ${esc(sub)}` : ''}</span></a>`;
+  const section = (head, rows, more = '') => (rows.length ? `<section><h4>${head}</h4>${rows.join('')}${more}</section>` : '');
+  /** The list, drawn from what is known; the questions and requests come along once asked for. */
+  function drawList() {
+    const box = $('waitlist');
+    if (!box) return;
+    const now = Date.now();
+    const threads = [...yours].filter(([k, x]) => x.n && (held.get(k) || 0) <= now)
+      .sort((a, b) => String(b[1].at || '').localeCompare(String(a[1].at || '')));
+    const why = (x) => (x.mention ? 'Mentions you' : 'Reply for you');
+    const replies = threads.slice(0, LIST_MAX).map(([k, x]) => item(k, x.title, x.orgName || x.org, why(x), x.at));
+    const moreReplies = threads.length > LIST_MAX
+      ? `<a class="wl-more" href="/inbox?view=personal" data-to="/inbox?view=personal">${threads.length - LIST_MAX} more in your personal view</a>` : '';
+    const questions = listed.requests.filter((t) => isQuestion(t.thread))
+      .map((t) => item(t.thread, t.title, '', 'Question for you', t.any_at || t.last_at));
+    const requests = counts.admin ? listed.requests.filter((t) => !isQuestion(t.thread)) : [];
+    const reqRows = requests.slice(0, LIST_MAX)
+      .map((t) => item(t.thread, t.title, t.org_name || '', 'Request for the admin team', t.any_at || t.last_at));
+    const moreReq = counts.admin ? `<a class="wl-more" href="${REQUESTS}" data-to="${REQUESTS}">All ${plural(counts.admin, 'open request')} of the admin team</a>` : '';
+    const body = section('Replies and mentions for you', replies, moreReplies)
+      + section('Questions for you', questions)
+      + section('Requests for the admin team', reqRows.length ? reqRows : (counts.admin ? ['<p class="wl-wait">…</p>'] : []), moreReq);
+    box.innerHTML = `<h3>Waiting for you</h3>${body || '<p class="wl-none">Nothing waits for you.</p>'}`;
+  }
+  /** Opens the list under Inbox (or closes it), and asks for the questions and requests. */
+  function toggleList(anchor) {
+    let box = $('waitlist');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'waitlist';
+      box.className = 'menu waitlist';
+      box.popover = 'auto';
+      box.setAttribute('role', 'dialog');
+      box.setAttribute('aria-label', 'Waiting for you');
+      box.addEventListener('click', (e) => {
+        const a = e.target.closest('a[data-to]');
+        if (!a || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        box.hidePopover();
+        const to = a.dataset.to;
+        if (pageOf(location.href) === 'inbox' && opts.open) opts.open(to);
+        else if (opts.go) opts.go('inbox', to);
+        else location.assign(to);
+      });
+      document.body.append(box);
+    }
+    if (box.matches(':popover-open')) { box.hidePopover(); return; }
+    box.style.left = `${Math.round(anchor.getBoundingClientRect().left)}px`;
+    drawList();
+    box.showPopover();
+    loadListed().then(() => { if (box.matches(':popover-open')) drawList(); });
+  }
+
   /** What waits for you, asked again (GET /api/waiting): after a while, or when the inbox says. */
   function loadWaiting() {
     return fetch('/api/waiting', { credentials: 'same-origin', redirect: 'manual' })
@@ -289,7 +394,11 @@ window.Header = (() => {
       .then((b) => {
         if (!b) return;
         yours.clear();
-        for (const t of b.threads || []) yours.set(t.thread, { n: Number(t.n) || 0, team: t.team, org: t.org });
+        for (const t of b.threads || []) {
+          yours.set(t.thread, {
+            n: Number(t.n) || 0, team: t.team, org: t.org, title: t.title, at: t.at, mention: t.mention,
+          });
+        }
         setCounts({
           you: youTotal(),
           ...(b.questions ? { questions: b.questions.open || 0, team: b.questions.team || null } : {}),
@@ -304,7 +413,10 @@ window.Header = (() => {
   function waiting(known) {
     for (const [k, x] of Object.entries(known || {})) {
       if (x && x.n > 0) {
-        yours.set(k, { n: x.n, team: x.team ?? yours.get(k)?.team ?? null, org: x.org ?? null });
+        const was = yours.get(k) || {};
+        yours.set(k, {
+          ...was, ...Object.fromEntries(Object.entries(x).filter(([, v]) => v != null)),
+        });
         // Something came in since you read it here.
         held.delete(k);
       } else yours.delete(k);
@@ -316,22 +428,17 @@ window.Header = (() => {
     for (const k of keys || []) held.set(k, Date.now() + HELD_MS);
     setCounts({ you: youTotal() });
   }
-  /** What waits for you, by team its thread is filed under: `{ [team]: n }`. */
+  /** The threads that wait for you, by team their thread is filed under: `{ [team]: n }`. */
   function youByTeam() {
     const out = {};
     for (const [k, x] of yours) {
       if ((held.get(k) || 0) > Date.now() || !x.n) continue;
-      out[x.team || ''] = (out[x.team || ''] || 0) + x.n;
+      out[x.team || ''] = (out[x.team || ''] || 0) + 1;
     }
     return out;
   }
   /** The number of the admin team's requests that wait, on Inbox: they are threads of its inbox. */
   const setCount = (n) => setCounts({ admin: n });
-  /**
-   * Where a number on Inbox opens: the purple one, the inbox of your questions; the blue one (or
-   * the sum on a phone, when admin requests wait), the admin team's requests.
-   */
-  const countHref = (asks) => ((asks || !counts.admin) && counts.team ? questionsHref(counts.team) : REQUESTS);
 
   /** You, at the right end: your face (picture over initials), your name, `sub` under it; your menu. */
   function user(me, sub = '') {
@@ -383,10 +490,7 @@ window.Header = (() => {
     if (badge && Number($('pages').dataset.count)) {
       e.preventDefault();
       if (menu?.matches(':popover-open')) menu.hidePopover();
-      const to = countHref(Boolean(badge.classList?.contains('asks')));
-      if (pageOf(location.href) === 'inbox' && opts.open) opts.open(to);
-      else if (opts.go) opts.go('inbox', to);
-      else location.assign(to);
+      toggleList(badge);
       return;
     }
     if (a.hasAttribute('aria-current')) {
@@ -422,6 +526,6 @@ window.Header = (() => {
 
   return {
     init, sync, setCount, setCounts, user, role, remember, href, pageOf, stats, scheme, REQUESTS,
-    loadWaiting, waiting, readHere, youByTeam, counts: () => ({ ...counts }),
+    loadWaiting, waiting, readHere, youByTeam, counts: () => ({ ...counts }), toggleList,
   };
 })();

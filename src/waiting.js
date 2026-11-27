@@ -31,7 +31,8 @@ export const WAITING_MAX = 300;
 
 /**
  * The threads of person `me` (`{ id, email }`) with messages for them they have not read:
- * `[{ thread, team, org, n }]`, latest first.
+ * `[{ thread, team, org, title, at, n, mention }]`, latest first: the list Inbox's number opens
+ * (`mention`: one of them mentions you).
  */
 export async function waitingThreads(db, me, now = new Date()) {
   const since = new Date(now.getTime() - WAITING_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -40,7 +41,7 @@ export async function waitingThreads(db, me, now = new Date()) {
       UNION SELECT thread FROM mentions WHERE person = ?1 AND at > ?2),
     groups AS (SELECT COALESCE(t.logical_thread, t.thread) AS g FROM threads t
       WHERE t.thread IN (SELECT thread FROM mine))
-    SELECT t.thread, t.team, t.org FROM threads t
+    SELECT t.thread, t.team, t.org, t.title, t.any_at FROM threads t
       LEFT JOIN watermarks w ON w.thread = t.thread AND w.person = ?1
     WHERE (t.thread IN (SELECT thread FROM mine)
         OR COALESCE(t.logical_thread, t.thread) IN (SELECT g FROM groups))
@@ -49,10 +50,26 @@ export async function waitingThreads(db, me, now = new Date()) {
       AND COALESCE(t.org, '') NOT IN (${mutedOrgs('?1')})
     ORDER BY t.any_at DESC LIMIT ?3`).bind(me.id, since, WAITING_MAX).all();
   const rows = results || [];
-  const counts = await unreadInYours(db, rows.map((r) => r.thread), me.id);
+  const keys = rows.map((r) => r.thread);
+  const [counts, { results: named }] = await Promise.all([
+    unreadInYours(db, keys, me.id),
+    // Which of them mention you since you last read them: the list says why each waits.
+    keys.length ? db.prepare(`SELECT DISTINCT n.thread FROM mentions n
+        LEFT JOIN watermarks w ON w.thread = n.thread AND w.person = ?1
+      WHERE +n.person = ?1 AND n.thread IN (SELECT value FROM json_each(?2))
+        AND (w.read_at IS NULL OR n.at > w.read_at)`).bind(me.id, JSON.stringify(keys)).all()
+      : { results: [] },
+  ]);
+  const mention = new Set((named || []).map((r) => r.thread));
   return rows.filter((r) => counts.get(r.thread))
     .map((r) => ({
-      thread: r.thread, team: r.team || null, org: r.org || null, n: counts.get(r.thread),
+      thread: r.thread,
+      team: r.team || null,
+      org: r.org || null,
+      title: r.title || '',
+      at: r.any_at,
+      n: counts.get(r.thread),
+      mention: mention.has(r.thread),
     }));
 }
 

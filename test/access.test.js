@@ -286,7 +286,7 @@ describe('personal view', () => {
     });
   });
 
-  it('counts a bot\'s reply in my thread as a person\'s, not my own post as the app', async () => {
+  it('counts a bot\'s reply in my thread for me when it answers me, not my own post as the app', async () => {
     const DB = fresh();
     const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
     await say(DB, {
@@ -311,8 +311,16 @@ describe('personal view', () => {
     assert.deepEqual(await count(), { asked: [true, 1] });
     assert.deepEqual((await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads
       .map((t) => [t.thread, t.n]), [['asked', 1]]);
+    // A colleague asks, and the app answers them: their question is new for me, its answer theirs.
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', person: 2, at: at(5),
+    });
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(6), author: 'bot',
+    });
+    assert.deepEqual(await count(), { asked: [true, 2] });
     // Read up to its latest message, as the inbox reads it.
-    await advanceWatermark(DB, 1, 'asked', at(4), 'open');
+    await advanceWatermark(DB, 1, 'asked', at(6), 'open');
     assert.deepEqual(await count(), { asked: [false, 0] });
     assert.deepEqual((await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads, []);
   });

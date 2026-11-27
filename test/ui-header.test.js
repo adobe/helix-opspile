@@ -109,7 +109,9 @@ function clickInbox(t, { count = true, asks = false } = {}) {
     getAttribute: () => '/inbox?team=edge',
     closest: () => null,
   };
-  const badge = { hidden: false, classList: { contains: (c) => asks && c === 'asks' } };
+  const badge = {
+    hidden: false, classList: { contains: (c) => asks && c === 'asks' }, getBoundingClientRect: () => ({ left: 10 }),
+  };
   let prevented = false;
   t.header.on.click({
     button: 0,
@@ -253,74 +255,63 @@ describe('the header', () => {
     assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs', 'stats']);
     const admin = nav({ admin: true });
     assert.deepEqual(admin.pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs']);
-    // The requests that wait for the admin team are counted on Inbox: they are threads there.
-    assert.match(admin.html, /<a data-page="inbox" href="\/inbox" title="[^"]*">Inbox<span class="count" hidden><\/span><\/a>/);
-    // The questions thread agents ask a member have their own, the agent's purple.
-    assert.match(nav({ teams: [{ slug: 'edge' }] }).html, /Inbox<span class="count asks" hidden><\/span><\/a>/);
-    assert.match(nav({ admin: true, teams: [{ slug: 'admin' }] }).html, /Inbox<span class="count" hidden><\/span><span class="count asks" hidden><\/span>/);
+    // What waits for you is one number of threads on Inbox, which opens their list.
+    assert.match(admin.html, /<a data-page="inbox" href="\/inbox" title="[^"]*">Inbox<span class="count waits" hidden aria-haspopup="dialog" aria-controls="waitlist"><\/span><\/a>/);
+    assert.match(nav({ teams: [{ slug: 'edge' }] }).html, /Inbox<span class="count waits" hidden/);
+    assert.equal([...nav({ admin: true, teams: [{ slug: 'admin' }] }).html.matchAll(/class="count/g)].length, 1);
     assert.doesNotMatch(nav({ staff: true }).html, /class="count/);
   });
 
-  it('counts the questions asked of you on their own, and opens them', () => {
-    const inbox = tab('/inbox?team=edge');
-    const opened = [];
-    inbox.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 2, team: 'helix' } }, { open: (url) => opened.push(url) });
+  it('counts the threads that wait for you, and opens their list, Waiting for you', () => {
+    const list = {
+      open: false,
+      style: {},
+      innerHTML: '',
+      matches() { return this.open; },
+      showPopover() { this.open = true; },
+      hidePopover() { this.open = false; },
+    };
+    const inbox = tab('/inbox?team=edge', new Map(), new Map(), { waitlist: list });
+    inbox.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 1, team: 'helix' } }, { open: () => {} });
+    assert.equal(inbox.byId('pages').dataset.count, '1');
+    // Threads, not messages: three replies in one thread are one; a bot's that answers you too.
+    inbox.Header.waiting({
+      a: {
+        n: 3, team: 'edge', title: 'Purge fails', orgName: 'ACME', at: '2026-11-27T10:00:00Z',
+      },
+      b: {
+        n: 1, team: 'helix', title: 'Robots.txt', mention: true, at: '2026-11-27T11:00:00Z',
+      },
+    });
+    assert.equal(inbox.byId('pages').dataset.count, '3');
+    assert.deepEqual({ ...inbox.Header.youByTeam() }, { edge: 1, helix: 1 });
+    // A click on the number opens the list: each thread, why it waits, the latest first.
+    assert.equal(clickInbox(inbox), true);
+    assert.equal(list.open, true);
+    assert.match(list.innerHTML, /<h3>Waiting for you<\/h3>/);
+    const titles = [...list.innerHTML.matchAll(/class="wl-title">([^<]*)</g)].map((m) => m[1]);
+    assert.deepEqual(titles, ['Robots.txt', 'Purge fails']);
+    assert.match(list.innerHTML, /data-to="\/inbox\?view=personal&amp;t=b"[\s\S]*Mentions you/);
+    assert.match(list.innerHTML, /Reply for you<\/span> · ACME/);
+    // Read here: off the list and the number at once.
+    inbox.Header.readHere(['b']);
     assert.equal(inbox.byId('pages').dataset.count, '2');
-    assert.equal(clickInbox(inbox, { asks: true }), true);
-    const questions = '/inbox?team=helix&filters=1&f.type=request&f.resolved=open';
-    assert.deepEqual(opened, [questions]);
-    // An admin's: the blue number opens the admin team's requests, the purple one the questions;
-    // the sum (a phone's) the admin team's.
+    assert.doesNotMatch(list.innerHTML, /Robots\.txt/);
+    // Clicked again: closed.
+    clickInbox(inbox);
+    assert.equal(list.open, false);
+    // An admin's requests are threads that wait too.
     inbox.Header.setCounts({ admin: 3 });
     assert.equal(inbox.byId('pages').dataset.count, '5');
+    // Nothing waits: nothing to open.
+    inbox.Header.waiting({ a: { n: 0 } });
+    inbox.Header.setCounts({ admin: 0, questions: 0 });
     clickInbox(inbox);
-    clickInbox(inbox, { asks: true });
-    assert.deepEqual(opened.slice(1), [inbox.Header.REQUESTS, questions]);
-    // None of either: nothing to click.
-    inbox.Header.setCounts({ admin: 0, questions: 0, team: null });
-    clickInbox(inbox);
-    assert.equal(opened.length, 3);
+    assert.equal(list.open, false);
     // Viewing as someone else (`count: false`), theirs are not counted.
     const as = tab('/inbox?team=edge');
     as.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 1, team: 'edge' } }, { count: false });
     assert.equal(as.byId('pages').dataset.count, '0');
-  });
-
-  it('opens the admin team\'s open requests from the number on Inbox', () => {
-    const requests = '/inbox?team=admin&filters=1&f.type=request&f.resolved=open';
-    // In the inbox: the inbox opens them itself, in the tab.
-    const inbox = tab('/inbox?team=edge');
-    const opened = [];
-    inbox.Header.init({ admin: true }, { count: false, open: (url) => opened.push(url) });
-    assert.equal(inbox.Header.REQUESTS, requests);
-    inbox.Header.setCount(1);
-    assert.equal(clickInbox(inbox), true);
-    assert.deepEqual(opened, [requests]);
-    // Inbox's name, on the inbox: nothing to open.
-    clickInbox(inbox, { count: false });
-    assert.deepEqual(opened, [requests]);
-    // No request waits: the number is not there to click.
-    inbox.Header.setCount(0);
-    clickInbox(inbox);
-    assert.deepEqual(opened, [requests]);
-
-    // A page that opens the others itself (Teams, which saves what its agent has open first).
-    const admin = tab('/inbox/admin?tab=teams');
-    const went = [];
-    admin.Header.init({ admin: true }, { count: false, go: (id, url) => went.push([id, url]) });
-    admin.Header.setCount(2);
-    assert.equal(clickInbox(admin), true);
-    assert.deepEqual(went, [['inbox', requests]]);
-    // Its name: the inbox as it was left.
-    clickInbox(admin, { count: false });
-    assert.deepEqual(went, [['inbox', requests], ['inbox', '/inbox?team=edge']]);
-
-    // Any other page: the browser goes there.
-    const cogs = tab('/inbox/cogs');
-    cogs.Header.init({ admin: true }, { count: false });
-    cogs.Header.setCount(1);
-    assert.equal(clickInbox(cogs), true);
-    assert.equal(cogs.location.href, `${ORIGIN}${requests}`);
   });
 
   it('opens Stats on the org and the team the page on screen sends', () => {

@@ -630,34 +630,51 @@ header .note { white-space: nowrap; }
   background: var(--spectrum-gray-200);
   font-weight: var(--spectrum-bold-font-weight);
 }
-/* Counts: Spectrum 2's notification Badge, in the accent color. */
+/* What waits for you: Spectrum 2's notification Badge, negative, the inbox's red badge. A click
+   opens its list. */
 .spectrum header .count, .spectrum .pagemenu .count {
   min-width: var(--spectrum-component-height-50);
   height: var(--spectrum-component-height-50);
   padding: 0 var(--spectrum-spacing-75);
   border-radius: calc(var(--spectrum-component-height-50) / 2);
   color: var(--spectrum-white);
-  background: var(--spectrum-accent-background-color-default);
+  background: var(--spectrum-negative-background-color-default);
   font-size: var(--spectrum-font-size-50);
   font-weight: var(--spectrum-bold-font-weight);
 }
 .spectrum header .count:not(.total):hover, .spectrum .pagemenu .count:hover {
-  background: var(--spectrum-accent-background-color-hover);
+  background: var(--spectrum-negative-background-color-hover);
 }
-/* The questions thread agents ask you: the agent's purple, with its bubble, as in the inbox. */
-.spectrum header .count.asks, .spectrum .pagemenu .count.asks {
-  display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50);
-  background: var(--spectrum-purple-background-color-default);
+/* Waiting for you: a Popover under Inbox, every thread that waits, why, and where it is. */
+.waitlist {
+  inset: calc(var(--head, calc(var(--spectrum-spacing-700) + var(--spectrum-spacing-50))) - var(--spectrum-spacing-75)) auto auto var(--spectrum-spacing-100);
+  margin: 0;
+  width: min(calc(100vw - var(--spectrum-spacing-400)), calc(var(--spectrum-spacing-1000) * 6));
+  max-height: calc(100vh - var(--spectrum-spacing-1000) * 2);
+  overflow: auto;
+  padding: var(--spectrum-spacing-200) var(--spectrum-spacing-100);
 }
-.spectrum header .count.asks:hover, .spectrum .pagemenu .count.asks:hover {
-  background: var(--spectrum-purple-background-color-default);
-  filter: brightness(0.92);
+.spectrum .waitlist h3 {
+  margin: 0 var(--spectrum-spacing-200) var(--spectrum-spacing-100);
+  font-size: var(--spectrum-font-size-200);
+  font-weight: var(--spectrum-extra-bold-font-weight);
 }
-.spectrum header .count.asks[hidden], .spectrum .pagemenu .count.asks[hidden] { display: none; }
-.spectrum header .count.asks .bubble-ico, .spectrum .pagemenu .count.asks .bubble-ico {
-  position: static; flex: none; padding: 0; color: inherit; background: none;
-  width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200);
+.spectrum .waitlist section { padding-top: var(--spectrum-spacing-100); border-top: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .waitlist h4 { margin: var(--spectrum-spacing-100) var(--spectrum-spacing-200); }
+.spectrum .waitlist .wl-item {
+  display: grid; grid-template-columns: 1fr auto; gap: 0 var(--spectrum-spacing-200);
+  padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200);
+  border-radius: var(--spectrum-corner-radius-100);
+  color: var(--spectrum-neutral-content-color-default);
+  text-decoration: none;
 }
+.spectrum .waitlist .wl-item:hover, .spectrum .waitlist .wl-item:focus-visible { background: var(--s2-down); }
+.spectrum .waitlist .wl-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .waitlist .wl-when { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .waitlist .wl-sub { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+.spectrum .waitlist .wl-why { color: var(--spectrum-negative-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .waitlist .wl-more { display: block; padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200); color: var(--link); font-size: var(--spectrum-font-size-75); text-decoration: none; }
+.spectrum .waitlist :is(.wl-none, .wl-wait) { margin: var(--spectrum-spacing-100) var(--spectrum-spacing-200); color: var(--spectrum-neutral-subdued-content-color-default); }
 /* The modes a page is in: Spectrum 2's Tag, with its clear button. */
 .spectrum header .mode {
   padding: 0 var(--spectrum-spacing-75) 0 var(--spectrum-component-edge-to-text-75);
