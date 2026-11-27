@@ -2073,6 +2073,37 @@ and an unchanged thread is never labeled twice):
   until a thread is labeled again; a topic map built before lists the names no entry covered as
   gaps.
 
+### Fact weights
+
+The facts say much of what a thread is about where they are rare, and nothing where every thread
+has them: a documentation page, a pull request, an error endpoint or an AEM Cloud Service
+environment a few customers' threads share marks a how-to topic or one incident across customers,
+while a 404, the admin API's `config`, `query-index.json` or the support portal's link in every
+other thread's signature mark none. `src/factweights.js` weighs them, for the topic map and the
+Trends (and anything else that needs it, through `factWeights`, its one function for the weights):
+
+- **One key per value** (`factKey`), whatever form a thread wrote it in: an aem.live page as the
+  doc rule writes it (`doc:docs/limits`, from `https://www.aem.live/docs/limits#rate-limits` too),
+  a documentation site's page in any language as one (`doc:experienceleague.adobe.com/en/…`), a
+  GitHub pull request or issue without its tabs (`url:github.com/<owner>/<repo>/pull/<n>`), any
+  other GitHub link as its repository, a tools.aem.live page as its tool, a URL without its query,
+  fragment, trailing slash and line and column, Clairic's error that is a status code as that
+  status. No key: Clairic's problem (free text, one value per thread), deadlines and go-live dates,
+  placeholders (`org/site`, `{owner}/{repo}`, `https://main`, a host with no dot), generic hosts
+  (gmail.com, schema.org, link wrappers) and a front page that names no topic (`github.com`,
+  `workers.dev`, the docs' index).
+- **tf-idf over the threads**: a key's weight is its idf over every thread counted, normalised (one
+  thread's key 1, one in every thread 0), and for a field of a few values (fewer distinct values
+  than `CATEGORICAL`, 15%, of the threads with that field, of 20 threads or more: status codes,
+  admin API operations, configuration files, tools) times its idf among the threads with that
+  field, so a 404, in nearly half the threads with a status code, weighs 0.05 even where it is
+  rare among all threads. On production (Nov 2026, the topic map's 3,985 threads, 16,910 facts, 8,226 keys): a
+  404 weighs 0.05, the admin API's `config` 0.03, `query-index.json` 0.12, `docs/limits` 0.54, a
+  pull request of three threads 0.87. Each key also counts the customers of its threads: a link of
+  one customer's threads only (its own site, its scripts) is theirs, not a topic's, and neither
+  the topic map nor the Trends use it. What weighs less than `MIN_WEIGHT` (0.1) names no topic and
+  is no trend.
+
 ### Topic maps
 
 Clef's topics are asked: each is a question someone wrote, and a thread about something nobody
@@ -2100,10 +2131,27 @@ twice its share of all the map's threads). The lift keeps what is
   everywhere (Edge Delivery, the team with most channels) from concentrating anything. Each
   topic has its `area` (null: the threads in none, the candidates for new areas). A few hundred
   threads take a quarter of a second.
+- Each topic's **docs and links** (`topics[].facts`, src/topicmap.js `topicFacts`): the facts its
+  threads share (see "Fact weights"), those of two threads and two customers or more, weighing
+  `MIN_WEIGHT` or more, in twice the share of its threads as of all the map's, the most weighed by
+  tf-idf first (the share of its threads that have it times its weight), at most five. On the
+  production map (107 topics, Nov 2026), 72 have one, 64 lead with a doc, a link, a repository, a
+  tool or a configuration file, 29 have one in a tenth of their threads or more, and 18 a doc so;
+  of the 12 pairs of topics named alike ("… (2)"), 10 have docs or links to tell them apart by.
+  They are no feature of the clustering, measured there: each thread's vector with its facts'
+  tf-idf vector beside it (the facts of two customers' threads or more, at a weight β of the
+  vector) made topics more alike in those facts (a thread to its topic's, 0.35 at β 0 to 0.39 at
+  β 1) and less alike in what was said (0.448 to 0.440); with half the facts held out of the
+  clustering, the topics were no more alike in the other half (0.43 at every β, within the
+  spread of five seeds), so the facts only pulled together the threads that shared a link.
+  Neither do they assign a thread to a topic better: left out of its topic, a thread of the map
+  went back to it 55% of the time by its vector, and less often with its facts' share in the
+  topics added to that.
 - One call names every topic (two to five words) and says in a sentence what its customers
   need: it reads all of them at once, each as the titles of its fifteen most typical threads
-  (nearest its centre), the Clef topics and the products they have, with how many threads have
-  each, so the names tell the topics apart. The model is the agents' (Claude on Bedrock, through
+  (nearest its centre), the Clef topics and the products they have, and its docs and links (but
+  a site, an AEM Cloud Service environment or a ticket, which name a customer more than a
+  subject), with how many threads have each, so the names tell the topics apart. The model is the agents' (Claude on Bedrock, through
   AI Gateway, counted for COGS) where agents are configured, else the language model of the
   titles. A name that is vague (made of words such as "issues", "management", "content
   delivery"), too long, or another topic's, and a topic it did not name, are named on their own
@@ -2179,8 +2227,10 @@ lists the gaps first (**Not in the tech stack**: the products no entry names, by
 those two customers or more name, then, folded, those of one customer, which are as likely a
 brand or a system of theirs, and a count of the names of one thread; adding one in a team's
 **Extraction rules**, or its name to an entry's description, makes Clef ask about it), then the
-topics with the share of their threads Clef tagged at all, the fewest first on a click: the
-topics Clef rarely tags are what its topic questions miss.
+**rising docs and links** (see "Trends"), then the topics with the share of their threads Clef
+tagged at all, the fewest first on a click: the topics Clef rarely tags are what its topic
+questions miss. A topic picked lists its docs and links (`topics[].facts`), each with a link to
+its page, its line and its trend; a click puts one on the chart.
 
 A **product or technology** picked says what the rest of the inbox knows of it, beside its threads
 (`GET /api/topics/tech`, `src/techinfo.js`, read as the viewer may): first its record, the team's
@@ -2251,6 +2301,12 @@ there.
     the phrase's mean similarity to the map's sample of vectors, because bge makes any two threads
     0.4 to 0.6 alike. The response is `capped` when a month returned all 100, so that month's
     count is too low.
+  - **A doc or a link** (`docs/limits`, a URL, `owner/repo`, `cdn.yaml`, `p1-e2`, or a key as it
+    is, `http_status:404`) is the threads with that fact (`factTerms`, "Fact weights"), whatever
+    form a thread wrote it in. The data has the threads' facts already (below), so one of those is
+    counted in the page; anything else is asked of the server, which reads the facts whose value
+    has it (`LIKE`) and keeps those of the same key. A word with a dot that no thread has as a fact
+    (`node.js`) is looked for as a word.
 
   A click on a week lists that week's threads in the panel (`GET /api/topics/trends/threads`, by
   the rowids the data names them by).
@@ -2268,6 +2324,17 @@ there.
   listed as declining. What never came up before (an area Clef was only just given) is not
   trending. Anything mostly one customer's (more than 60% of its channel-weeks) counts half and
   is marked as such.
+- **Docs and links.** Each thread comes with its facts (`trendsData`'s `facts`, and a twelfth
+  element of a thread, their indexes): those of two customers' threads or more that weigh
+  `MIN_WEIGHT` or more over the counted threads (a re-threaded group's members' are its first's).
+  They are series as the map's nodes are, and the panel without a pick lists the **rising** ones:
+  trending (as above) across customers (two or more, none of them 60%), or a **spike** (`spikes`
+  in ui/trends.js): in one of the last six weeks (the one under way too), four customers' threads
+  or more had it, three times the customers of its usual week in the twelve before. One pull
+  request or error endpoint in many customers' threads at once is news though it was never there
+  before, which trending is not; the older the week, the lower it ranks (half at twelve weeks).
+  On production (Nov 2026: 8,754 counted threads, 1,727 with one of the 441 facts counted), 5
+  docs and links were trending across customers and 10 had spiked in the last six weeks.
 
 ### Translation
 

@@ -63,6 +63,7 @@ on:
       - 'src/expertise.js'
       - 'src/experts.js'
       - 'src/extract.js'
+      - 'src/factweights.js'
       - 'src/favicons.js'
       - 'src/filecache.js'
       - 'src/follows.js'

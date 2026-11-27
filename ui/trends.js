@@ -13,8 +13,9 @@
 /*
  * The counting of the Topics page's trends (ui/trendview.js draws them), over what
  * GET /api/topics/trends sends (src/trends.js `trendsData`): a thread is
- * `[id, week, channel, org, team, source, kind, topic, areas, tech, weeks]`, `weeks` its messages
- * as `[week, count, …]`. Its global `Trends`, with nothing of the page in it, so Node tests it.
+ * `[id, week, channel, org, team, source, kind, topic, areas, tech, weeks, facts]`, `weeks` its
+ * messages as `[week, count, …]`, `facts` its docs and links (indexes into the data's `facts`).
+ * Its global `Trends`, with nothing of the page in it, so Node tests it.
  *
  * A week counts in one of three units:
  * - `channels` (the default): the channels with a message in a matching thread that week, each
@@ -37,6 +38,11 @@
  *   again is not listed as peaked, nor what peaked as declining.
  * Each is also said of how many customers it is about, and whether it is mostly one's: one
  * customer's project is not a trend, and counts half.
+ *
+ * A doc or a link is also a **spike** (`spikes`) when, in one of the last RECENT weeks, the
+ * threads of SPIKE_ORGS customers or more had it, SPIKE_LIFT times as many as in a usual week of
+ * the BASE before: one pull request or error endpoint in many customers' threads at once is news
+ * even when it was never there before (which `moving` does not call trending).
  */
 (() => {
   const RECENT = 6;
@@ -50,9 +56,11 @@
   const MIN_PEAK = 12;
   const MESSAGE_FACTOR = 4;
   const MOSTLY_ONE = 0.6;
+  const SPIKE_ORGS = 4;
+  const SPIKE_LIFT = 3;
 
   const I = {
-    id: 0, week: 1, channel: 2, org: 3, team: 4, source: 5, kind: 6, topic: 7, areas: 8, tech: 9, weeks: 10,
+    id: 0, week: 1, channel: 2, org: 3, team: 4, source: 5, kind: 6, topic: 7, areas: 8, tech: 9, weeks: 10, facts: 11,
   };
 
   /** The weeks a thread counts in, with how much, in `unit`. */
@@ -288,8 +296,57 @@
     };
   }
 
+  /**
+   * The series `keysOf` makes that spiked across customers: in a week of the last RECENT (the one
+   * under way too), the threads of SPIKE_ORGS customers or more, and SPIKE_LIFT times the
+   * customers of its usual week in the BASE before. Each `{ key, week, orgs, usual, score }`, at
+   * its strongest week, the strongest first; `score` a Poisson z of its customers that week, less
+   * the older the week (half at 2 × RECENT weeks back): what spiked last week is newer than what
+   * spiked a month ago. A thread of no customer counts for none.
+   */
+  function spikes(data, { keep = () => true, keysOf, now = Date.now() }) {
+    const n = data.weeks.length;
+    const { last } = lastFull(data, now);
+    const none = new Set((data.orgs || []).map((o, i) => (o.slug ? -1 : i)).filter((i) => i >= 0));
+    const by = new Map();
+    for (const t of data.threads) {
+      if (!keep(t) || none.has(t[I.org])) continue;
+      const keys = keysOf(t);
+      if (!keys.length) continue;
+      for (const [w] of parts(t, 'channels')) {
+        for (const k of keys) {
+          let weeks = by.get(k);
+          if (!weeks) {
+            weeks = Array.from({ length: n }, () => new Set());
+            by.set(k, weeks);
+          }
+          weeks[w].add(t[I.org]);
+        }
+      }
+    }
+    const out = [];
+    for (const [key, weeks] of by) {
+      let best = null;
+      for (let w = Math.max(0, last - RECENT + 1); w < n; w += 1) {
+        const x = weeks[w].size;
+        const from = Math.max(0, w - BASE);
+        const usual = w > from ? weeks.slice(from, w).reduce((s, o) => s + o.size, 0) / (w - from) : 0;
+        if (x >= SPIKE_ORGS && x >= SPIKE_LIFT * usual) {
+          const score = ((x - usual) / Math.sqrt(usual + 1)) * (1 - Math.max(0, last - w) / (4 * RECENT));
+          if (!best || score > best.score) {
+            best = {
+              key, week: w, orgs: x, usual, score,
+            };
+          }
+        }
+      }
+      if (best) out.push(best);
+    }
+    return out.sort((a, b) => b.score - a.score || b.week - a.week);
+  }
+
   globalThis.Trends = {
-    I, RECENT, BASE, PEAK_AGO, UNITS, MOSTLY_ONE,
-    parts, weekly, smooth, stats, classify, moving, lastFull, firstOf, customers,
+    I, RECENT, BASE, PEAK_AGO, UNITS, MOSTLY_ONE, SPIKE_ORGS,
+    parts, weekly, smooth, stats, classify, moving, lastFull, firstOf, customers, spikes,
   };
 })();

@@ -16,7 +16,9 @@ import { api } from '../src/api.js';
 import {
   buildTopicMap, centered, coveredBy, KEEP, kmeans, latestTopicMap, MIN_THREADS, NAMER_ALL,
   areaTopics, shares, parseNames, productKey, productsOf, sweepTopicMap, techIndex, topicCount,
+  topicFacts,
 } from '../src/topicmap.js';
+import { factWeights } from '../src/factweights.js';
 import { threadVectorId } from '../src/vectors.js';
 import { d1 } from './d1.js';
 
@@ -449,6 +451,86 @@ describe('topic map: building', () => {
     assert.equal(label('checkout'), 'Storefront');
     assert.equal(env.calls.ai.length, 2);
     assert.equal(map.namer, '@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+  });
+
+  it('names and describes a topic with the docs and links its threads share', async () => {
+    const env = await setup();
+    const q = (sql, ...args) => env.DB.sqlite.prepare(sql).run(...args);
+    const fact = (thread, field, value, source = 'rule') => q(`INSERT INTO facts (thread, source,
+      field, value) VALUES (?, ?, ?, ?)`, thread, source, field, value);
+    // Two of the cache threads are Globex's: the BYO CDN doc is two customers', as the rule and
+    // as a link; a page of Acme's own is in its checkout threads only; a status in every thread.
+    q("UPDATE threads SET org = 'globex' WHERE thread IN ('slack:E1:C1:0.0', 'slack:E1:C1:0.1')");
+    for (let i = 0; i < 6; i += 1) {
+      fact(`slack:E1:C1:0.${i}`, i % 2 ? 'doc' : 'url', i % 2 ? 'docs/byo-cdn-akamai-setup'
+        : 'https://www.aem.live/docs/byo-cdn-akamai-setup#push');
+      fact(`slack:E1:C1:2.${i}`, 'url', 'https://shop.acme.example/cart');
+    }
+    for (let g = 0; g < 3; g += 1) {
+      for (let i = 0; i < 10; i += 1) {
+        fact(`slack:E1:C1:${g}.${i}`, 'http_status', '404');
+        fact(`slack:E1:C1:${g}.${i}`, 'site', `fake-org/site-${g}-${i}`);
+      }
+    }
+    fact('slack:E1:C1:0.2', 'problem', 'The CDN keeps old pages', 'clairic');
+    env.calls.allAnswer = () => '[]';
+    const { map } = await buildTopicMap(env, { now: NOW });
+    const cache = map.topics[map.threads.find((t) => t.title.startsWith('cache')).topic];
+    assert.deepEqual(cache.facts, [{
+      key: 'doc:docs/byo-cdn-akamai-setup',
+      field: 'doc',
+      label: 'docs/byo-cdn-akamai-setup',
+      href: 'https://www.aem.live/docs/byo-cdn-akamai-setup',
+      threads: 6,
+      orgs: 2,
+    }]);
+    assert.ok(map.topics.filter((t) => t !== cache).every((t) => t.facts.length === 0));
+    // The namer reads them, the topics without any too.
+    assert.match(env.calls.all[0], /Docs and links: docs\/byo-cdn-akamai-setup \(6\)/);
+    assert.match(env.calls.all[0], /Docs and links: none/);
+  });
+
+  it('picks a topic\'s facts by tf-idf, of two customers, more often in it than in all', () => {
+    const rows = [];
+    const members = [];
+    for (let i = 0; i < 40; i += 1) {
+      const org = `org${i % 4}`;
+      const thread = `t${i}`;
+      if (i < 10) {
+        members.push({ thread, org });
+      }
+      // In the topic: a doc in 5 of its 10; a PR in 2 (two customers); a site of one customer in
+      // 4. Everywhere: a config file in every other thread.
+      if (i < 5) {
+        rows.push({
+          thread, org, field: 'doc', value: 'docs/limits',
+        });
+      }
+      if (i === 0 || i === 1) {
+        rows.push({
+          thread, org, field: 'url', value: 'https://github.com/fake-org/x/pull/1',
+        });
+      }
+      if (i < 10 && i % 4 === 0) {
+        rows.push({
+          thread, org, field: 'site', value: 'fake-org/own',
+        });
+      }
+      if (i % 2) {
+        rows.push({
+          thread, org, field: 'config_file', value: 'cdn.yaml',
+        });
+      }
+      rows.push({
+        thread, org, field: 'doc', value: `docs/page-${i}`,
+      });
+    }
+    const weighed = factWeights(rows, { threads: 40 });
+    const got = topicFacts(members, weighed, 40);
+    assert.deepEqual(got.map((f) => f.key), ['doc:docs/limits', 'url:github.com/fake-org/x/pull/1']);
+    assert.equal(got[0].threads, 5);
+    assert.equal(got[0].orgs, 4);
+    assert.equal(topicFacts(members, weighed, 40, { max: 1 }).length, 1);
   });
 
   it('names with the agents\' model on Bedrock where agents are configured', async () => {
