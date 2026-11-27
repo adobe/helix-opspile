@@ -3173,6 +3173,14 @@ main.simple .fr.all { margin-bottom: var(--spectrum-spacing-75); }
 .logo .pm .av { font-size: var(--spectrum-font-size-50); }
 .spectrum .logo > .pms { border-radius: 0; }
 .spectrum .logo .pm > *, .spectrum .logo .pm .av { border-radius: var(--spectrum-corner-radius-75); box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--content); }
+/* A row's customer, as its icon, with the partners at work in the thread on its corner. */
+.t .cust .logo.cl { width: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-200)); }
+.t .cust .logo.cl > .pms { inset: auto calc(-1 * var(--spectrum-spacing-50)) calc(-1 * var(--spectrum-spacing-50)) auto; }
+.t .cust .logo.cl .pm { width: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-50)); height: calc(var(--spectrum-spacing-100) + var(--spectrum-spacing-50)); }
+.t .cust .logo.cl .pm > img { width: 100%; height: 100%; }
+.t .cust .logo.cl .pm + .pm { margin-left: calc(-1 * var(--spectrum-spacing-50)); }
+.t .cust .logo.cl .av { font-size: var(--spectrum-font-size-50); }
+.t .cust .logo.cl .pm .av { font-size: 0; }
 main.simple .t .l2 { padding-left: 0; }
 main.simple .t.dotted .l2 { padding-left: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100)); }
 main.simple .t .cust { flex: none; }

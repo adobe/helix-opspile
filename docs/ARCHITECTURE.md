@@ -511,8 +511,9 @@ two. A minute after each labelling of a thread (the normalizer queues `{ link: t
   found, with its score, and not asked about again.
 
 The inbox shows them: a row's tag, "About ACME" on a partner's thread, "With Agency Co" on a
-customer's (`linked` on `GET /api/inbox`'s entries; in the list by customer the partners are no
-tag but their logos, small on the customer's heading's, of those at work in the threads it shows),
+customer's (`linked` on `GET /api/inbox`'s entries; where a row or its heading shows the
+customer's logo the partners are no tag but their logos, small on its corner: on a row, those at
+work in its thread; on the list by customer's heading, those in the threads it shows),
 and in the open thread a dropdown of its
 header with both and the threads possibly about the same issue (`linked` and `related` on `GET
 /api/thread`), each with how sure the inbox is. A related thread the viewer may not see (`canSee`:

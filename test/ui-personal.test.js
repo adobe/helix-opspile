@@ -235,6 +235,30 @@ describe('the simple personal view', () => {
       assert.equal(page.grouped(), false);
     });
 
+    it('puts the partners at work in a thread on its customer\'s icon, not in a tag', () => {
+      state.settings.expert = true;
+      const t = (key) => state.data.threads.find((x) => x.thread === key);
+      t('a2').linked = {
+        about: [],
+        with: [{
+          slug: 'agency', name: 'Agency Co', icon: 'agency.example', role: 'partner',
+        }],
+      };
+      t('i1').linked = { about: [], with: [{ slug: 'studio', name: 'Studio', role: 'partner' }, { slug: 'globex', name: 'Globex', role: 'customer' }] };
+      const a2 = rowOf('a2');
+      assert.match(a2, /<span class="cust" data-org="acme" role="button" tabindex="0" aria-label="ACME, with Agency Co"><span class="logo cl"><img src="https:\/\/icons.test\/acme.example" alt="" data-fav data-fb="[^"]*"><span class="pms" role="img" aria-label="With Agency Co: the partner&#39;s people post in this thread" title="[^"]*"><span class="pm"><img src="https:\/\/icons.test\/agency.example"/);
+      assert.doesNotMatch(a2, /class="lkd"/);
+      // A customer without an icon has its initial under the partners; a customer stays a tag.
+      const i1 = rowOf('i1');
+      assert.match(i1, /<span class="logo cl"><span class="ico av">I<\/span><span class="pms"[^>]*><span class="pm"><span class="ico av">S<\/span><\/span><\/span><\/span>Initech/);
+      assert.match(i1, /<span class="lkd"[^>]*>With Globex<\/span>/);
+      // Without a partner, the favicon alone.
+      assert.match(rowOf('a1'), /aria-label="ACME"><img src="https:\/\/icons.test\/acme.example" alt="" data-fav>ACME/);
+      // With the customer picked the rows name none: the tag says who is in the thread.
+      views.toggleFilter('customer', 'acme', false);
+      assert.match(rowOf('a2'), /<span class="lkd"[^>]*>With Agency Co<\/span>/);
+    });
+
     it('filters by customer only: a platform picked in the expert view is kept, not applied', () => {
       state.sel.platform = new Set(['teams']);
       assert.deepEqual(outline().filter((x) => !x.startsWith('#')), ['a1', 'a2', 'a3', 'a4', 'g1', 'g2', 'i1']);
