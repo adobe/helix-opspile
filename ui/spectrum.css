@@ -644,7 +644,11 @@ header .note { white-space: nowrap; }
 .spectrum header .count:not(.total):hover, .spectrum .pagemenu .count:hover {
   background: var(--spectrum-accent-background-color-hover);
 }
-/* The questions thread agents ask you: the agent's purple, with its bubble, as in the inbox. */
+/* Who waits, by color, as in the inbox: people red (S2's negative), the bots purple, with the
+   agent's bubble (their replies to you, and the questions agents ask you), the admin team's
+   requests blue (the accent, above). */
+.spectrum header .count.people, .spectrum .pagemenu .count.people { background: var(--spectrum-negative-background-color-default); }
+.spectrum header .count.people:hover, .spectrum .pagemenu .count.people:hover { background: var(--spectrum-negative-background-color-hover); }
 .spectrum header .count.asks, .spectrum .pagemenu .count.asks {
   display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50);
   background: var(--spectrum-purple-background-color-default);

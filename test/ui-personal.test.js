@@ -90,7 +90,7 @@ function load() {
     FACETS, state, pass: null, keptUnread: (t) => t.unread, viewerId: () => ME,
   });
   const activityOf = (t) => String(t.last_at || t.any_at || '');
-  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, forgetColumn, row, grouped, groupPlan, groupHtml, youCount, youBadge, stackLine, mergeStacks', {
+  page = piece('const GROUPS = {', '/** Markdown as one line', 'GROUPS, simpleCustomers, forgetColumn, row, grouped, groupPlan, groupHtml, youCount, botCount, youBadge, stackLine, mergeStacks', {
     state,
     esc,
     notButton: views.notButton,
@@ -127,6 +127,11 @@ function load() {
     avatar: (name) => `<span class="av">${esc(name)}</span>`,
     profileKey: () => '',
     AT: '<svg/>',
+    AGENT_NAME: 'opspile',
+    isRequestKey: (k) => String(k).startsWith('request:'),
+    isQuestionKey: (k) => String(k).startsWith('request:question:'),
+    adminRequests: () => false,
+    personal: views.personal,
   });
   bar = piece('function filtButton(on) {', '/*\n * The thread list stays put', 'filtButton', {
     state,
@@ -597,6 +602,19 @@ describe('the simple personal view', () => {
   });
 
   describe('the red badge', () => {
+    it('counts the people\'s messages red and a bot\'s reply to you purple, apart', () => {
+      const t = {
+        thread: 't', unread: true, unreadForYou: 3, unreadFromBots: 1,
+      };
+      assert.equal(page.youCount(t), 2);
+      assert.equal(page.botCount(t), 1);
+      // Only a bot's reply: nothing red, one purple.
+      assert.equal(page.youCount({ ...t, unreadForYou: 1 }), 0);
+      assert.equal(page.botCount({ ...t, unreadForYou: 1 }), 1);
+      // Read: neither.
+      assert.equal(page.botCount({ ...t, unread: false }), 0);
+    });
+
     it('counts the unread messages that mention you: beside each customer, in all, and on the rows', () => {
       assert.equal(badge(columnRow('acme')), '2');
       assert.equal(badge(columnRow('globex')), '1');
@@ -605,8 +623,8 @@ describe('the simple personal view', () => {
       assert.equal(badge(rowOf('a1')), '2');
       assert.equal(badge(rowOf('g2')), '1');
       assert.equal(badge(rowOf('a2')), null);
-      assert.match(columnRow('acme'), /title="2 unread messages for you: mentions, and replies in threads you are in"/);
-      assert.match(rowOf('g2'), /title="1 unread message for you: mentions, and replies in threads you are in"/);
+      assert.match(columnRow('acme'), /title="2 unread messages for you from people: mentions, and replies in threads you are in"/);
+      assert.match(rowOf('g2'), /title="1 unread message for you from people: mentions, and replies in threads you are in"/);
     });
 
     it('counts what is new in the threads you are in too, as Slack does, each message once', () => {

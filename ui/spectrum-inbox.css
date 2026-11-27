@@ -1793,13 +1793,18 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .offview .ov-out { text-decoration: line-through; }
 .spectrum .offview :is(.ov-n, .ov-more) { font-variant-numeric: tabular-nums; font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .offview .ov-more { color: var(--spectrum-neutral-subdued-content-color-default); }
-/* Unread mentions of you: S2's NotificationBadge (accent, white figures, a pill). */
-.spectrum .fr .men, .spectrum #threads .count .filt b {
+/* Who waits for you, by color, as on Inbox in the header: S2's NotificationBadge, white figures
+   in a pill, negative for people, the accent for the admin team's requests (the bots' purple is
+   `.sidebadge`); on the filters, the Filters button and each view. */
+.spectrum .fr .men, .spectrum #threads .count .filt b, .spectrum #threads .count .order .men, .spectrum .reqbadge {
+  display: inline-block;
   min-width: var(--spectrum-component-height-50);
   height: var(--spectrum-component-height-50);
   padding: 0 var(--spectrum-spacing-75);
+  box-sizing: border-box;
+  text-align: center;
   border-radius: calc(var(--spectrum-component-height-50) / 2);
-  background: var(--spectrum-accent-background-color-default);
+  background: var(--spectrum-negative-background-color-default);
   color: var(--spectrum-white);
   font-family: var(--s2-font);
   font-size: var(--spectrum-font-size-50);
@@ -1850,6 +1855,19 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .t.unread .when { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t.unread .replies.re { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .replies .men { color: var(--spectrum-red-900); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .reqbadge { flex: none; background: var(--spectrum-accent-background-color-default); }
+/* Several who wait, in a row of the filters: side by side, in the badges' one track. */
+.fr .bdg { flex: none; display: inline-flex; align-items: center; gap: var(--spectrum-spacing-50); }
+@media (min-width: 1100px) {
+  main:not(.rail):not(.simple) #facets .fr :is(.bdg, .sidebadge, .reqbadge) { grid-column: 4; grid-row: 1; justify-self: end; }
+}
+main.simple .fr > :is(.bdg, .sidebadge) { grid-column: 4; grid-row: 1; }
+/* A view's dots: one in the color of each who waits there. */
+.wdots { display: inline-flex; gap: var(--spectrum-spacing-50); margin-left: var(--spectrum-spacing-75); vertical-align: middle; }
+.wdot { display: inline-block; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); border-radius: 50%; }
+.spectrum .wdot.people { background: var(--spectrum-negative-background-color-default); }
+.spectrum .wdot.bots { background: var(--spectrum-purple-background-color-default); }
+.spectrum .wdot.asks { background: var(--spectrum-accent-background-color-default); cursor: pointer; }
 .spectrum .t .snip { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .t .cust img, .spectrum .ph .sub img, .spectrum .chans img { border-radius: var(--spectrum-corner-radius-75); }
 /* Faces: an AvatarGroup, each ringed in the row's own layer. */

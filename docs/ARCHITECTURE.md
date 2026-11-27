@@ -724,9 +724,8 @@ can open it), never the person the agent is answering in the sidebar, one open q
 thread and two per thread at a time; one waits three days. Unlike the requests above, it is theirs,
 not the admin team's: a thread of their inbox ("Requests as threads", kind `question`, **Questions
 for you**), in their personal view and in the inbox of the first of the thread's teams they are on,
-with the agent's purple badge (as its unseen answers in a sidebar have) until they answer, and a
-purple number of its own beside **Inbox** in the header, which opens them (the blue one stays the
-admin team's requests). A personal listing has none of the admin team's kinds, and leaves what
+with the agent's purple badge (as its unseen answers in a sidebar have) until they answer,
+counted in the purple number on **Inbox** in the header ("What waits for you"). A personal listing has none of the admin team's kinds, and leaves what
 `request_threads` tracks of them alone. Its card answers instead of deciding: **Answer** (a choice for each
 guess, preset to it, and the person's own words), **Ask someone else** (whom) or **I don't know**.
 The agent is told as an input of its own, trusted as the person's, with what it asked the answer for
@@ -748,9 +747,23 @@ a conflict's key), and the inbox lists it in the admin team's view only, with th
 threads, under a "customer" of its kind (Channel requests, Bots, Rule conflicts, …), of kind
 `request`, waiting on us while it is open and resolved once it is decided; the decided ones stay
 (the latest hundred of each kind). Their own type on the Type card, **Admin requests** (`f.type=request`,
-beside Conversations and Alerts), filters to them. The number on Inbox in every page's header counts
-the open ones of every kind (`GET /api/admin/requests?count=1`), and a click on it opens them: the
-admin team's inbox, on Admin requests that are unresolved (`REQUESTS` in `ui/header.js`). Its thread is in no channel and nothing of it is posted: the
+beside Conversations and Alerts), filters to them, and its blue badge counts the open ones while
+Conversations is picked. The blue number on Inbox in every page's header counts the open ones of
+every kind (`GET /api/admin/requests?count=1`), and so does the admin team's blue dot in the
+inbox's view switch; a click on either opens them: the admin team's inbox, on Admin requests that
+are unresolved (`REQUESTS` in `ui/header.js`).
+
+**What waits for you** has a color for who waits, the same from the header down to a row: red,
+people (a colleague's or a customer's reply in a thread of yours, a mention of you); purple, the
+bots (an agent's reply to you, a bot's mention, the agent's answers to you in a sidebar, the
+questions agents asked you); blue, the admin team's requests. **Inbox** in every page's header has
+a number in each (`GET /api/waiting`, `src/waiting.js`: your threads of the last 30 days with
+something after your last read, and your questions; and the requests); the red and the purple open
+the personal view, the blue the requests. Each view of the inbox's switch has a dot in the color
+of each who waits there (Personal: your threads and questions; a team's: those of its threads, and
+the admin team's its requests), each card's rows and each row the numbers. The inbox tells the
+header what it knows better than its last `GET /api/waiting` (the threads it has loaded, and those
+you just read, `Header.waiting`, `Header.readHere`). Its thread is in no channel and nothing of it is posted: the
 request as whoever asked said it (or, for a bot, an account or a conflict, as the inbox sees it),
 what the admin team writes about it, and what was decided. What they write is the request's
 **decision log** (`POST /api/requests/note`, `request_log`, migration 0100), the reply box's place;
@@ -1429,10 +1442,16 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   (`POST /api/rank/pick`, migration 0040), for that training. A facet value with threads
   you have not read has its label in bold, and a red badge counts the messages for you that you
   have not read yet, as Slack's badge does: those that mention you, and in a thread you posted or
-  were mentioned in (any member of a re-threaded group), the messages of other people since
-  you first were in it, each message once (`unreadForYou`, `unreadInYours` in `src/threads.js`).
-  The same count is on the customers of the personal view and on its rows, which it marks red;
-  a thread's
+  were mentioned in (any member of a re-threaded group), the messages of others since you first
+  were in it, each message once (`unreadForYou`, `unreadInYours` in `src/threads.js`). A bot's
+  count too (an agent's `post_message` answers you as a colleague would; not your own posts as the
+  app, `app_posts`, nor Teams' system notices), but in the bots' purple, apart from the people's
+  red (`unreadFromBots`, with the agent's answers in the sidebar and its questions to you). A
+  bot's reply moves no `last_at`, which is people's, so it makes the thread unread by itself, the
+  row previews it (`bot_reply`), and opening a thread reads it up to its latest message
+  (`any_at`). The same colors are on the customers of the personal view and on its rows, on each
+  view of the switch (a dot each), and on Inbox in the header ("What waits for you", below); a
+  thread's
   "N replies" is bold and blue while it has replies you have not read.
 - **Channels a message names** (`#name`, or `#C…` where Slack sent the id without the name, as
   it does for bots) are resolved when the thread is read (`src/channelrefs.js`, the `channels`

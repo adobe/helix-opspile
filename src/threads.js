@@ -306,6 +306,8 @@ export function readState(threads, marks, mentions, me, yours = new Map()) {
       mentionedMe,
       unreadMentions,
       unreadForYou: Math.max(unreadMentions, imported ? 0 : yours.get(t.thread) || 0),
+      // Of them, a bot's (an agent's reply to you): the purple badge's.
+      unreadFromBots: imported ? 0 : yours.bots?.get(t.thread) || 0,
       mentionedTeam,
     };
     // A bot's reply for me (an agent's post_message in a thread of mine) moves no `last_at`, which
@@ -333,6 +335,10 @@ export function readState(threads, marks, mentions, me, yours = new Map()) {
  * but not Teams' system notices, nor what they posted themselves as the opspile app
  * (`app_posts`). A message counts once. Deleted ones do not.
  *
+ * @returns {Promise<Map<string, number>>} thread to count, without the threads of none; its
+ *   `bots` (a Map too) says how many of each are a bot's, which the inbox shows in the bots'
+ *   purple, apart from the people's red
+ *
  * @returns {Promise<Map<string, number>>} thread to count, without the threads of none
  */
 export async function unreadInYours(db, threads, me) {
@@ -350,7 +356,7 @@ export async function unreadInYours(db, threads, me) {
         COALESCE((SELECT MIN(b.at) FROM mentions b WHERE b.thread = g.thread
           AND +b.person = ?2), '~'))) AS at
       FROM g GROUP BY g.g HAVING at < '~')
-    SELECT m.thread, COUNT(*) AS n
+    SELECT m.thread, COUNT(*) AS n, SUM(m.author_kind = 'bot') AS b
     FROM g JOIN since s ON s.g = g.g
       JOIN messages m ON m.thread = g.thread AND m.at >= s.at
       LEFT JOIN watermarks w ON w.thread = g.thread AND w.person = ?2
@@ -363,7 +369,10 @@ export async function unreadInYours(db, threads, me) {
         WHERE n.thread = m.thread AND n.person = ?2
           AND n.message = m.source || ':' || m.tenant || ':' || m.channel_id || ':' || m.id))
     GROUP BY m.thread`).bind(JSON.stringify(threads), me).all();
-  return new Map((results || []).map((r) => [r.thread, r.n]));
+  const out = new Map((results || []).map((r) => [r.thread, r.n]));
+  // Of those, the bots' (an agent's reply, a bot's mention): the purple badge's, not the red's.
+  out.bots = new Map((results || []).filter((r) => r.b > 0).map((r) => [r.thread, r.b]));
+  return out;
 }
 
 /**

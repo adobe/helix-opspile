@@ -1575,6 +1575,8 @@ function facetRows(f) {
   const mix = new Map(); // value -> { red, yellow, green, none }
   const unread = new Set(); // values with threads the viewer has not read
   const mentions = new Map(); // value -> messages for the viewer they have not read (youCount)
+  const bots = new Map(); // value -> the bots' for the viewer (botCount)
+  const asks = new Map(); // value -> the admin team's open requests (requestCount)
   for (const t of pool) {
     const counted = !state.unread || unreadNow(t);
     for (const v of valuesOf(f, t)) {
@@ -1584,6 +1586,10 @@ function facetRows(f) {
       if (t.unread) unread.add(v);
       const you = youCount(t);
       if (you) mentions.set(v, (mentions.get(v) || 0) + you);
+      const b = botCount(t);
+      if (b) bots.set(v, (bots.get(v) || 0) + b);
+      const r = requestCount(t);
+      if (r) asks.set(v, (asks.get(v) || 0) + r);
       const m = mix.get(v) || {};
       m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
       mix.set(v, m);
@@ -1617,7 +1623,7 @@ function facetRows(f) {
     return `${head}<div class="fr ${on.has(v) ? 'on' : ''}${out ? 'off' : ''}" data-f="${f.id}" data-v="${esc(v)}" title="${esc((f.hint && f.hint[v]) || label)}${out ? ' (excluded)' : ''}">
       <span class="ind ${v === '(none)' ? 'c-none' : color}"></span>
       ${f.id === 'customer' ? withOrg(ic ? favImg(ic, { cls: 'ico', fallback: withOrg(tile(customerName(v)), v) }) : face, v) || '<span></span>' : (ic ? favImg(ic, { cls: 'ico', fallback: '<span></span>' }) : (face || (em ? `<span class="ico wf wf-${em}" aria-hidden="true"></span>` : '<span></span>')))}
-      <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${mentionBadge(mentions.get(v))}</span>
+      <span class="lw"><span class="lab${v === '(none)' ? ' dim' : ''}${unread.has(v) ? ' new' : ''}"${unread.has(v) ? ' aria-description="unread threads"' : ''}>${esc(label)}</span>${badges(mentionBadge(mentions.get(v)), botBadge(bots.get(v)), reqBadge(asks.get(v)))}</span>
       ${notButton(out)}
       <span class="n">${n}</span>
       ${bar(f, v, n, max, mix.get(v), color)}</div>`;
@@ -1645,7 +1651,7 @@ const GROUPS = {
   fold: 'all', mark: 'badge', headBadge: false, sticky: true,
 };
 /** The red badge's tooltip: `n` messages for you (youCount). */
-const youTitle = (n) => `${n} unread ${n === 1 ? 'message' : 'messages'} for you: mentions, and replies in threads you are in`;
+const youTitle = (n) => `${n} unread ${n === 1 ? 'message' : 'messages'} for you from people: mentions, and replies in threads you are in`;
 const youBadge = (n) => (n ? `<b class="men" title="${esc(youTitle(n))}">${n > 99 ? '99+' : n}</b>` : '');
 /** Mentions (see mentionsOn): an @ at the top right of the customers, filled while it filters. */
 const atButton = () => `<button class="atme" type="button" data-atme aria-pressed="${state.mentions}" title="${state.mentions ? 'Showing only threads that mention you' : 'Show only threads that mention you'}" aria-label="Mentions of me">${AT}</button>`;
@@ -1654,8 +1660,31 @@ const atButton = () => `<button class="atme" type="button" data-atme aria-presse
  * mention you, and in a thread you posted or were mentioned in, the others' since
  * (`unreadForYou`, src/threads.js unreadInYours); at least one while it mentions you.
  */
-const youCount = (t) => (t.unread
-  ? Math.max(t.unreadForYou || 0, mentionsMe(t) ? (t.unreadMentions || 1) : 0) : 0);
+const youCount = (t) => {
+  if (!t.unread) return 0;
+  // The people's: a bot's (an agent's reply, a bot's mention) are the purple badge's (botCount).
+  const bots = t.unreadFromBots || 0;
+  return Math.max((t.unreadForYou || 0) - bots, mentionsMe(t) && !bots ? (t.unreadMentions || 1) : 0);
+};
+/**
+ * The purple badge: what the bots have for you, as Inbox's purple number in the header counts it:
+ * a bot's messages for you in the thread you have not read (an agent's reply to you, a bot's
+ * mention: `unreadFromBots`), and the agent's answers to you in its sidebar and its question to
+ * you (sideCount).
+ */
+const botCount = (t) => (t.unread ? t.unreadFromBots || 0 : 0) + sideCount(t);
+/** The blue badge: the admin team's request, in its inbox, until it is decided. */
+const requestCount = (t) => (isRequestKey(t.thread) && !isQuestionKey(t.thread)
+  && t.request?.open && adminRequests() ? 1 : 0);
+/** Who waits, in a row of the filters: red, purple and blue, side by side in one track. */
+const badges = (...bs) => {
+  const on = bs.filter(Boolean);
+  if (on.length < 2) return on.join('');
+  return `<span class="bdg">${on.join('')}</span>`;
+};
+const botBadge = (n) => (n ? `<b class="sidebadge" title="${esc(botTitle(n))}" aria-label="${esc(botTitle(n))}">${SIDE_ICON}${n > 99 ? '99+' : n}</b>` : '');
+const botTitle = (n) => `${n} for you from the bots: agents' replies to you, a bot's mention, answers in the sidebar, questions`;
+const reqBadge = (n) => (n ? `<b class="reqbadge" title="${esc(`${n} ${n === 1 ? 'request waits' : 'requests wait'} for the admin team`)}">${n > 99 ? '99+' : n}</b>` : '');
 /**
  * The purple badge: the agent's answers to you in a thread's sidebar that you have not seen
  * (`sideNew`, src/sidebar.js unseenAnswers), less those this page has shown you since (seeSide).
@@ -1664,9 +1693,13 @@ const youCount = (t) => (t.unread
  */
 const sideSeen = new Set();
 const sideCount = (t) => (t.sideNew || []).filter((id) => !sideSeen.has(id)).length;
-const sideTitle = (n, t = null) => (t && isQuestionKey(t.thread)
-  ? `${AGENT_NAME} has a question for you`
-  : `${n} new ${n === 1 ? 'answer' : 'answers'} from ${AGENT_NAME} to you in the sidebar`);
+const sideTitle = (n, t = null) => {
+  if (t && isQuestionKey(t.thread)) return `${AGENT_NAME} has a question for you`;
+  const replies = t ? (t.unread ? t.unreadFromBots || 0 : 0) : 0;
+  const side = n - replies;
+  return [replies ? `${replies} ${replies === 1 ? 'reply' : 'replies'} from a bot to you in the thread` : '',
+    side > 0 ? `${side} new ${side === 1 ? 'answer' : 'answers'} from ${AGENT_NAME} to you in the sidebar` : ''].filter(Boolean).join(', ');
+};
 const sideBadge = (n, t = null) => (n ? `<b class="sidebadge" title="${esc(sideTitle(n, t))}" aria-label="${esc(sideTitle(n, t))}">${SIDE_ICON}${n > 99 ? '99+' : n}</b>` : '');
 /**
  * A customer's logo: its icon (the admin team's, else its mail domain's favicon) over its
@@ -1769,12 +1802,13 @@ function simpleCustomers() {
   const on = state.sel.customer || new Set();
   const off = state.not.customer || new Set();
   const by = new Map();
-  for (const v of off) by.set(v, { unread: false, you: 0, out: true });
+  for (const v of off) by.set(v, { unread: false, you: 0, bots: 0, out: true });
   for (const t of all) {
-    const c = by.get(t.org) || { unread: false, you: 0 };
+    const c = by.get(t.org) || { unread: false, you: 0, bots: 0 };
     if (!c.out) {
       c.unread ||= Boolean(t.unread);
       c.you += youCount(t);
+      c.bots = (c.bots || 0) + botCount(t);
     }
     by.set(t.org, c);
   }
@@ -1793,11 +1827,12 @@ function simpleCustomers() {
     above = c;
     const why = c.out ? ' (excluded)' : (title && `. ${title}`);
     return `<div class="fr${on.has(v) ? ' on' : ''}${c.out ? ' off' : ''}${cls ? ` ${cls}` : ''}${cut ? ' cut' : ''}" data-f="customer" data-v="${esc(v)}" title="${esc(c.name)}${esc(why)}">
-      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${c.out ? '' : markButton(c.section)}${youBadge(c.you)}</div>`;
+      ${logo(v, all)}<span class="lab${c.unread ? ' new' : ''}">${esc(c.name)}</span>${notButton(Boolean(c.out))}${c.out ? '' : markButton(c.section)}${badges(botBadge(c.bots || 0), youBadge(c.you))}</div>`;
   }).join('');
   const you = [...by.values()].reduce((n, c) => n + c.you, 0);
+  const fromBots = [...by.values()].reduce((n, c) => n + (c.bots || 0), 0);
   return `<div class="card simple" data-f="customer"><h3>Customers${atButton()}</h3>
-    <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${youBadge(you)}</div>${rows}</div>`;
+    <div class="fr all${on.size ? '' : ' on'}" data-clear="1"><span class="logo"></span><span class="lab">All customers</span>${badges(botBadge(fromBots), youBadge(you))}</div>${rows}</div>`;
 }
 
 function renderFilters() { inPass(filterCards); keepFiltersAt(); }
@@ -2077,7 +2112,7 @@ function flags(t) {
   let out = '';
   if (isResolved(t)) out += ' resolved';
   if (youCount(t)) out += ' mention';
-  if (sideCount(t)) out += ' sidenew';
+  if (botCount(t)) out += ' sidenew';
   if (status === 'critical' || status === 'hot') out += ' urgent';
   return out;
 }
@@ -2183,7 +2218,7 @@ function row(t, hit = null) {
     <div class="l2">${cust}${linkedTag(t)}
       <span class="faces">${faces}</span>
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
-      <span class="tags">${sideBadge(sideCount(t), t)}${moods(t)}</span>
+      <span class="tags">${reqBadge(requestCount(t))}${sideBadge(botCount(t), t)}${moods(t)}</span>
     </div>${hit ? hitLine(hit) : ''}</div>`;
 }
 
@@ -2207,7 +2242,7 @@ function simpleRow(t, hit = null) {
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}${linkedTag(t)}${said}${sideBadge(sideCount(t), t)}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
+    <div class="l2">${cust}${linkedTag(t)}${said}${sideBadge(botCount(t), t)}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
 }
 /**
  * The list by customer (`shown` in the view's order, latest activity first): each customer
@@ -2909,7 +2944,34 @@ function viewSwitch() {
   }, ...(state.teams || []).map((t) => ({
     slug: t.slug, name: t.name, on: !mine && t.slug === state.team,
   }))];
-  return `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}">${esc(v.name)}</button>`).join('')}</span>`;
+  return `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}">${esc(v.name)}${viewBadges(v.slug)}</button>`).join('')}</span>`;
+}
+/**
+ * What waits for you in a view, in the colors of Inbox in the header (ui/header.js): red the
+ * people's messages for you, purple the bots' with the questions agents asked you, blue the admin
+ * team's requests. Personal has your threads and questions; a team's inbox those of its threads,
+ * and the admin team's its requests. The header counts each once: Personal's, and the requests.
+ */
+function viewWaits(slug) {
+  const none = { you: 0, bots: 0, asks: 0 };
+  if (state.as || !globalThis.Header?.counts) return none;
+  const c = Header.counts();
+  if (!slug) return { you: c.you, bots: c.bots + c.questions, asks: 0 };
+  const asked = rqList.entries.filter((t) => isQuestionKey(t.thread) && t.request?.open && t.team === slug).length;
+  const mine = Header.youByTeam()[slug] || { you: 0, bots: 0 };
+  return { you: mine.you, bots: mine.bots + asked, asks: slug === 'admin' && state.me?.admin ? c.admin : 0 };
+}
+/**
+ * A view's dots, one in the color of each who waits there (the numbers are in their titles, on
+ * Inbox in the header and on the filters): a view switch has no room for three numbers a view.
+ */
+function viewBadges(slug) {
+  const w = viewWaits(slug);
+  const dot = (who, n, said) => (n ? `<i class="wdot ${who}" data-waits="${who}" title="${esc(said)}"></i>` : '');
+  const dots = dot('people', w.you, youTitle(w.you)) + dot('bots', w.bots, botTitle(w.bots))
+    + dot('asks', w.asks, `${w.asks} ${w.asks === 1 ? 'request waits' : 'requests wait'} for the admin team: show them`);
+  const said = [w.you ? youTitle(w.you) : '', w.bots ? botTitle(w.bots) : '', w.asks ? `${w.asks} for the admin team` : ''].filter(Boolean).join('; ');
+  return dots ? `<span class="wdots" role="img" aria-label="${esc(said)}">${dots}</span>` : '';
 }
 /**
  * The view switch on a phone scrolls sideways when its views do not fit (see the styles): the
@@ -3304,7 +3366,9 @@ function tellHeader() {
   for (const t of state.data.threads) {
     if (isRequestKey(t.thread)) continue;
     for (const m of t.members || []) known[m.thread] = { n: 0 };
-    known[t.thread] = { n: youCount(t), team: t.team || null, org: t.org || null };
+    known[t.thread] = {
+      n: youCount(t), bots: t.unread ? t.unreadFromBots || 0 : 0, team: t.team || null, org: t.org || null,
+    };
   }
   const said = JSON.stringify(known);
   if (said === toldHeader) return;
@@ -11888,6 +11952,8 @@ async function start() {
   window.addEventListener('resize', seenSoon, { passive: true });
   $('threads').onclick = (e) => {
     if (e.target.closest('[data-filters]')) { setFiltering(!state.filtering); return; }
+    // The admin team's blue number, on its view: its open requests, whatever the filters were.
+    if (e.target.closest('[data-waits="asks"]')) { openInbox(Header.REQUESTS); return; }
     const view = e.target.closest('[data-view]');
     // A click on the view already shown sorts it afresh, without the threads unread only kept.
     if (view) {
@@ -12088,9 +12154,11 @@ async function start() {
       orgs: () => (customerOnScreen() ? `/inbox/admin?tab=orgs&org=${encodeURIComponent(customerOnScreen())}` : null),
       stats: () => Header.stats({ org: customerOnScreen(), team: personal() ? null : state.team }),
     },
-    // The number on Inbox, clicked: the open requests, in this tab.
+    // A number on Inbox, clicked: where it is, in this tab.
     open: openInbox,
     count: !state.as,
+    // Its numbers changed: the views say them too.
+    changed: () => { if (state.data) renderThreads(); },
   });
   if (state.me.admin) {
     const sel = $('as');

@@ -445,6 +445,7 @@ export function fold(threads) {
       mentionedMe: ms.some((m) => m.mentionedMe),
       unreadMentions: ms.reduce((n, m) => n + (m.unreadMentions || 0), 0),
       unreadForYou: ms.reduce((n, m) => n + (m.unreadForYou || 0), 0),
+      unreadFromBots: ms.reduce((n, m) => n + (m.unreadFromBots || 0), 0),
       mentionedTeam: [...new Set(ms.flatMap((m) => m.mentionedTeam || []))],
       readers: latest.readers,
       reactions: Object.values(ms.flatMap((m) => m.reactions || []).reduce((acc, r) => {

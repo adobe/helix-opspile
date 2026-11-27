@@ -307,10 +307,13 @@ describe('personal view', () => {
       VALUES ('slack', 'E1', 'C1', ?, 'asked', 1, ?)`).bind(own.split(':').pop(), at(4)).run();
     const count = async () => Object.fromEntries((await inbox({ DB }, me, null, { personal: true }))
       .threads.map((t) => [t.thread, [t.unread, t.unreadForYou]]));
-    // My message is the thread's last (a bot's moves no `last_at`), but the reply is mine to read.
+    // My message is the thread's last (a bot's moves no `last_at`), but the reply is mine to read:
+    // a bot's, which the inbox shows in the bots' purple.
     assert.deepEqual(await count(), { asked: [true, 1] });
+    const [t] = (await inbox({ DB }, me, null, { personal: true })).threads;
+    assert.equal(t.unreadFromBots, 1);
     assert.deepEqual((await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads
-      .map((t) => [t.thread, t.n]), [['asked', 1]]);
+      .map((x) => [x.thread, x.n, x.bots]), [['asked', 1, 1]]);
     // Read up to its latest message, as the inbox reads it.
     await advanceWatermark(DB, 1, 'asked', at(4), 'open');
     assert.deepEqual(await count(), { asked: [false, 0] });

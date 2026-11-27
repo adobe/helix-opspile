@@ -101,7 +101,7 @@ function tab(path, storage = new Map(), local = new Map(), preset = {}) {
  * A click on Inbox in the header, on its number (`count`) or on its name; says whether the
  * page took it (the browser follows the link otherwise).
  */
-function clickInbox(t, { count = true, asks = false } = {}) {
+function clickInbox(t, { count = true, asks = false, people = false } = {}) {
   const a = {
     dataset: { page: 'inbox' },
     target: '',
@@ -109,7 +109,7 @@ function clickInbox(t, { count = true, asks = false } = {}) {
     getAttribute: () => '/inbox?team=edge',
     closest: () => null,
   };
-  const badge = { hidden: false, classList: { contains: (c) => asks && c === 'asks' } };
+  const badge = { hidden: false, classList: { contains: (c) => (asks && c === 'asks') || (people && c === 'people') } };
   let prevented = false;
   t.header.on.click({
     button: 0,
@@ -253,33 +253,37 @@ describe('the header', () => {
     assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs', 'stats']);
     const admin = nav({ admin: true });
     assert.deepEqual(admin.pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs']);
-    // The requests that wait for the admin team are counted on Inbox: they are threads there.
-    assert.match(admin.html, /<a data-page="inbox" href="\/inbox" title="[^"]*">Inbox<span class="count" hidden><\/span><\/a>/);
-    // The questions thread agents ask a member have their own, the agent's purple.
-    assert.match(nav({ teams: [{ slug: 'edge' }] }).html, /Inbox<span class="count asks" hidden><\/span><\/a>/);
-    assert.match(nav({ admin: true, teams: [{ slug: 'admin' }] }).html, /Inbox<span class="count" hidden><\/span><span class="count asks" hidden><\/span>/);
+    // Who waits, by color: people red, the bots purple, the admin team's requests blue.
+    assert.match(admin.html, /<a data-page="inbox" href="\/inbox" title="[^"]*">Inbox<span class="count people" hidden><\/span><span class="count asks" hidden><\/span><span class="count" hidden><\/span><\/a>/);
+    assert.match(nav({ teams: [{ slug: 'edge' }] }).html, /Inbox<span class="count people" hidden><\/span><span class="count asks" hidden><\/span><\/a>/);
+    assert.match(nav({ admin: true, teams: [{ slug: 'admin' }] }).html, /Inbox<span class="count people" hidden><\/span><span class="count asks" hidden><\/span><span class="count" hidden><\/span>/);
     assert.doesNotMatch(nav({ staff: true }).html, /class="count/);
   });
 
-  it('counts the questions asked of you on their own, and opens them', () => {
+  it('counts who waits for you in a color each, and opens where they are', () => {
     const inbox = tab('/inbox?team=edge');
     const opened = [];
     inbox.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 2, team: 'helix' } }, { open: (url) => opened.push(url) });
     assert.equal(inbox.byId('pages').dataset.count, '2');
+    // The people's messages for you red, the bots' (an agent's reply to you) purple with the
+    // questions.
+    inbox.Header.waiting({ a: { n: 2, bots: 1, team: 'edge' }, b: { n: 1, team: 'helix' } });
+    assert.equal(inbox.Header.counts().you, 3);
+    assert.equal(inbox.Header.counts().bots, 1);
+    assert.equal(inbox.byId('pages').dataset.count, '6');
+    assert.deepEqual({ ...inbox.Header.youByTeam().edge }, { you: 2, bots: 1 });
+    // Both are in the personal view: the red and the purple open it.
+    assert.equal(clickInbox(inbox, { people: true }), true);
     assert.equal(clickInbox(inbox, { asks: true }), true);
-    const questions = '/inbox?team=helix&filters=1&f.type=request&f.resolved=open';
-    assert.deepEqual(opened, [questions]);
-    // An admin's: the blue number opens the admin team's requests, the purple one the questions;
-    // the sum (a phone's) the admin team's.
+    assert.deepEqual(opened, ['/inbox?view=personal', '/inbox?view=personal']);
+    // An admin's blue opens the admin team's requests.
     inbox.Header.setCounts({ admin: 3 });
+    assert.equal(inbox.byId('pages').dataset.count, '9');
+    clickInbox(inbox);
+    assert.deepEqual(opened.slice(2), [inbox.Header.REQUESTS]);
+    // Read here: gone at once.
+    inbox.Header.readHere(['a', 'b']);
     assert.equal(inbox.byId('pages').dataset.count, '5');
-    clickInbox(inbox);
-    clickInbox(inbox, { asks: true });
-    assert.deepEqual(opened.slice(1), [inbox.Header.REQUESTS, questions]);
-    // None of either: nothing to click.
-    inbox.Header.setCounts({ admin: 0, questions: 0, team: null });
-    clickInbox(inbox);
-    assert.equal(opened.length, 3);
     // Viewing as someone else (`count: false`), theirs are not counted.
     const as = tab('/inbox?team=edge');
     as.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 1, team: 'edge' } }, { count: false });

@@ -861,14 +861,19 @@ function unreadInYours(rows) {
   const fromOther = (r, m) => (m.author.kind === 'person' && m.author.name !== name)
     || (m.author.kind === 'bot' && !store.appPosts.has(`${r.thread}|${m.id}`));
   const out = new Map();
+  out.bots = new Map();
   for (const r of rows) {
     const from = since.get(groupOf(r));
     const read = store.watermarks.get(`${ME}|${r.thread}`)?.read_at;
     const mine = new Set(mentioned(r));
-    const n = from ? live(r).filter((m) => m.at >= from && (!read || m.at > read)
-      && (mine.has(m.at) || fromOther(r, m))).length : 0;
-    if (n) {
-      out.set(r.thread, n);
+    const ms = from ? live(r).filter((m) => m.at >= from && (!read || m.at > read)
+      && (mine.has(m.at) || fromOther(r, m))) : [];
+    if (ms.length) {
+      out.set(r.thread, ms.length);
+    }
+    const bots = ms.filter((m) => m.author.kind === 'bot').length;
+    if (bots) {
+      out.bots.set(r.thread, bots);
     }
   }
   return out;
@@ -891,7 +896,11 @@ function waitingThreads() {
   return rows.filter((r) => counts.get(r.thread))
     .sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))
     .map((r) => ({
-      thread: r.thread, team: r.team, org: r.org, n: counts.get(r.thread),
+      thread: r.thread,
+      team: r.team,
+      org: r.org,
+      n: counts.get(r.thread),
+      bots: counts.bots.get(r.thread) || 0,
     }));
 }
 
