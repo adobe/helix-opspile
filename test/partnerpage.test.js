@@ -214,6 +214,7 @@ describe('a customer\'s partners', () => {
       confirmed: false,
       since: null,
       until: null,
+      quiet: null,
       p: 0.9,
       signals: { posters: 2, owners: 1 },
       threads: 2,

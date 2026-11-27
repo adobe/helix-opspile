@@ -4292,6 +4292,12 @@ function linkState(pair, p, c) {
   else if (pair.standing?.status === 'sure') now = `Clef is sure: everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}, and nobody needs to decide it.`;
   else if (pair.p !== null && pair.p >= (state.links?.likely ?? 0.5)) now = `Likely, though Clef is unsure: everyone at Adobe sees ${esc(p)} as a partner of ${esc(c)}, and Clef asks the admin team to decide it.`;
   else if (pair.standing?.status === 'unsure') now = `Clef is unsure, so nobody at Adobe sees ${esc(p)} as a partner of ${esc(c)}: it asks the admin team to decide it.`;
+  // Quiet is no end (src/orgpartners.js `quietOf`): Clef asks to end it only when it judges so.
+  if (pair.quiet && !pair.until && !pair.dismissed) {
+    const judged = pair.endedP !== null && pair.endedP !== undefined && pair.endedFor === pair.quiet ? ` Clef judges ${pct(pair.endedP)} that it ended.` : '';
+    const seenBy = pair.seen ? ` A thread's agent saw them working together ${esc(ago(pair.seen.at))}.` : '';
+    now += ` Quiet: none of ${esc(possOf(p))} people posted in ${esc(possOf(c))} threads since ${esc(pair.quiet)}, which is no end; Clef asks the admin team to end it only when it judges it ended.${judged}${seenBy}`;
+  }
   const seen = pair.first
     ? `<p class="sub">${esc(possOf(p))} people posted in ${esc(possOf(c))} threads from ${esc(dayOf(pair.first))} to ${esc(dayOf(pair.last))}, as far back as the inbox reads.</p>`
     : `<p class="sub">None of ${esc(possOf(p))} people posted in ${esc(possOf(c))} threads that the inbox reads.</p>`;
@@ -4300,9 +4306,11 @@ function linkState(pair, p, c) {
 
 /** A request of the pair, as its page lists it: what it asks, who asked, where it stands. */
 function linkRequest(q, p, c) {
-  const asks = q.action === 'end' ? `${p} no longer works for ${c}${q.until ? `, until ${q.until}` : ''}` : `${p} works for ${c}${q.since ? `, since ${q.since}` : ''}`;
+  let asks = q.action === 'end' ? `${p} no longer works for ${c}${q.until ? `, until ${q.until}` : ''}` : `${p} works for ${c}${q.since ? `, since ${q.since}` : ''}`;
+  if (q.action === 'review') asks = `Look at ${p} and ${c}`;
+  const items = (q.evidence || []).length ? `, ${q.evidence.length} item${q.evidence.length === 1 ? '' : 's'} of evidence` : '';
   const stand = q.status === 'open' ? 'waiting for the admin team' : `${q.status}${q.decidedAt ? ` ${ago(q.decidedAt)}` : ''}`;
-  return `<li><a href="${esc(requestThread('partner', q.id))}">${esc(asks)}</a> <span class="sub">${esc(`asked by ${q.requestedBy.name || q.requestedBy.email || 'someone'} ${ago(q.requestedAt)}, ${stand}`)}</span></li>`;
+  return `<li><a href="${esc(requestThread('partner', q.id))}">${esc(asks)}</a> <span class="sub">${esc(`asked by ${q.requestedBy.name || q.requestedBy.email || 'someone'} ${ago(q.requestedAt)}, ${stand}${items}`)}</span></li>`;
 }
 
 function drawLink(v) {

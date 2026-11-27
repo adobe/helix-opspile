@@ -665,10 +665,34 @@ function pairNow(r) {
   if (x.until) {
     return `a former partner, until ${x.until}`;
   }
+  const quiet = x.quiet ? `; quiet since ${x.quiet}: none of its people posted in the customer's threads since, which is no end` : '';
   if (x.confirmed) {
-    return `confirmed by ${md(x.confirmed.by)}${x.since ? `, since ${x.since}` : ''}`;
+    return `confirmed by ${md(x.confirmed.by)}${x.since ? `, since ${x.since}` : ''}${quiet}`;
   }
-  return x.p === null ? 'not decided, and Clef has not said yet' : `not decided; Clef says ${Math.round(x.p * 100)}%`;
+  return x.p === null ? 'not decided, and Clef has not said yet' : `not decided; Clef says ${Math.round(x.p * 100)}%${quiet}`;
+}
+
+/**
+ * What says so, as a partner request's thread lists it: each item linked (the thread in the inbox,
+ * and the message where people open it), with why and who added it; Clef's own request lists its
+ * signals the same way.
+ */
+function evidenceLines(r) {
+  const items = (r.evidence || []).map((e) => {
+    const inbox = e.thread ? `/inbox?team=${encodeURIComponent(e.threadTeam || ADMIN_TEAM)}&t=${encodeURIComponent(e.thread)}` : null;
+    const what = e.message ? 'a message' : 'the thread';
+    const where = [
+      inbox ? `[${md(e.title ? `“${e.title}”` : 'a thread')}](${inbox})` : '',
+      e.link ? `[${what}](${e.link})` : '',
+    ].filter(Boolean).join(', ');
+    const by = e.addedBy.kind === 'person' ? md(e.addedBy.name || e.addedBy.email) : md(e.addedBy.name);
+    const still = e.kind === 'active' ? 'still working together: ' : '';
+    return `  - ${where ? `${where}: ` : ''}${still}${md(e.why)} — ${by}, ${dayOf(e.addedAt)}`;
+  });
+  if (r.requestedBy.kind === 'clef' && r.pair && r.pair.signals && r.pair.signals.length) {
+    items.unshift(...r.pair.signals.map((g) => `  - [${md(g.kind)}](/inbox/admin?tab=orgs&org=${encodeURIComponent(`partner:${r.customer}:${r.partner}`)}): ${md(g.text)} — Clef`));
+  }
+  return items.length ? `- Evidence:\n${items.join('\n')}` : '';
 }
 
 /**
@@ -701,12 +725,17 @@ const partnerKind = {
     let title = `${P} works for ${C}?`;
     if (r.action === 'end') {
       title = `${P} no longer works for ${C}?`;
+    } else if (r.action === 'review') {
+      title = `${P} and ${C}: please look`;
     } else if (again) {
       title = `${P} works for ${C} again?`;
     }
-    const asks = r.action === 'end'
-      ? `Asks to record that **${md(P)}** ${code(r.partner)} no longer works for **${md(C)}** ${code(r.customer)}: a former partner of theirs${r.until ? `, until ${r.until}` : ''}.`
-      : `Asks to confirm that **${md(P)}** ${code(r.partner)} works for **${md(C)}** ${code(r.customer)}${r.since ? `, since ${r.since}` : ''}: a partner of theirs, for everyone at Adobe.`;
+    let asks = `Asks to confirm that **${md(P)}** ${code(r.partner)} works for **${md(C)}** ${code(r.customer)}${r.since ? `, since ${r.since}` : ''}: a partner of theirs, for everyone at Adobe.`;
+    if (r.action === 'end') {
+      asks = `Asks to record that **${md(P)}** ${code(r.partner)} no longer works for **${md(C)}** ${code(r.customer)}: a former partner of theirs${r.until ? `, until ${r.until}` : ''}.`;
+    } else if (r.action === 'review') {
+      asks = `Asks the admin team to look at **${md(P)}** ${code(r.partner)} and **${md(C)}** ${code(r.customer)}: how the inbox pairs them looks wrong or uncertain.`;
+    }
     const thread = r.thread ? `/inbox?team=${encodeURIComponent(r.threadTeam || ADMIN_TEAM)}&t=${encodeURIComponent(r.thread)}` : null;
     let source = '';
     if (r.requestedBy.kind === 'agent' && thread) {
@@ -720,6 +749,7 @@ const partnerKind = {
       x && x.first ? `- ${md(poss(P))} people in ${md(poss(C))} threads: first ${dayOf(x.first)}, last ${dayOf(x.last)}, as far back as the inbox reads` : '',
       r.others.length ? `- ${md(poss(C))} other partners:\n${r.others.map((o) => otherLine(o, n)).join('\n')}` : `- No other partner of ${md(C)} is known.`,
       `- [What links them](/inbox/admin?tab=orgs&org=${encodeURIComponent(`partner:${r.customer}:${r.partner}`)})`,
+      evidenceLines(r),
     ].filter(Boolean).join('\n');
     const both = { customer: r.customer, partner: r.partner };
     const decline = (label, hint) => ({
@@ -775,10 +805,17 @@ const partnerKind = {
       },
       decline('Still a partner', `Leaves ${md(P)} a partner of ${md(C)}.`),
     ];
+    // A review: whichever the admin team finds right, or the pair as it is.
+    const review = [
+      { ...link[0], label: x && x.confirmed && !x.until ? 'Confirm' : link[0].label },
+      { ...end[0], tone: undefined },
+      link[1],
+      decline('Leave as it is', 'Leaves the pair as it is.'),
+    ];
     const person = r.requestedBy.kind === 'person' ? r.requestedBy : null;
     let actions = [];
     if (open) {
-      actions = r.action === 'end' ? end : link;
+      actions = { end, review }[r.action] || link;
     }
     return {
       title,

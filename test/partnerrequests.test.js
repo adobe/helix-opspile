@@ -16,8 +16,8 @@ import { api } from '../src/api.js';
 import { requestPartnerLink } from '../src/agent/partnerrequest.js';
 import { forgetFacts } from '../src/orgmerge.js';
 import {
-  AGAIN_DAYS, conflictOf, customersOf, forgetEvidence, GOING_ON_DAYS, LAPSED_DAYS, partnersOf,
-  partnerWants, standingOf, standingWords, UNSURE_HIGH, UNSURE_LOW,
+  AGAIN_DAYS, conflictOf, customersOf, ENDED_P, forgetEvidence, GOING_ON_DAYS, LAPSED_DAYS,
+  partnersOf, partnerWants, quietOf, standingOf, standingWords, UNSURE_HIGH, UNSURE_LOW,
 } from '../src/orgpartners.js';
 import { dateOf } from '../src/partnerrequests.js';
 import { forgetPartnerDomains } from '../src/partners.js';
@@ -290,14 +290,14 @@ describe('partner requests', () => {
     const pair = (more) => ({
       customer: 'globex', partner: 'agency', signals: [sig('posters'), sig('members')], p: 0.9, candidate: true, confirmed: null, dismissed: null, until: null, first: iso(now - 30 * day), last: iso(now - 2 * day), ...more,
     });
-    const wants = (more) => partnerWants([pair(more)], orgs, seen, now);
+    const wants = (more) => partnerWants([pair(more)], orgs, seen);
     // The band's edges ask; what is above or below it does not.
     const edges = [0.34, UNSURE_LOW, 0.5, UNSURE_HIGH, 0.66];
     assert.deepEqual(edges.map((p) => wants({ p }).length), [0, 1, 1, 1, 0]);
     assert.equal(wants({ p: UNSURE_LOW })[0].fingerprint, 'f');
     // Nobody asked Clef yet, or not on what it is shown now: no request.
     assert.deepEqual(wants({ p: null }), []);
-    assert.deepEqual(partnerWants([pair({ p: 0.5 })], orgs, new Map(), now), []);
+    assert.deepEqual(partnerWants([pair({ p: 0.5 })], orgs, new Map()), []);
     // Sure, on one kind alone that is no posting together.
     const [alone] = wants({ signals: [sig('owners')] });
     assert.deepEqual([alone.action, alone.fingerprint], ['link', 'f']);
@@ -305,16 +305,19 @@ describe('partner requests', () => {
     assert.equal(wants({ signals: [sig('members')] }).length, 1);
     assert.deepEqual(wants({ signals: [sig('posters')] }), []);
     assert.deepEqual(wants({ signals: [sig('channel')] }), []);
-    // Sure, and its people stopped posting while the customer's threads went on.
-    const lapsed = iso(now - (LAPSED_DAYS + 1) * day);
-    const [quietly] = wants({ last: lapsed });
-    assert.deepEqual([quietly.action, quietly.since, quietly.fingerprint], ['link', iso(now - 30 * day).slice(0, 10), `quiet:${lapsed.slice(0, 10)}`]);
-    assert.match(quietly.note, /but nobody of The Agency posted in Globex's threads since/);
-    const still = new Map([...orgs, ['globex', { slug: 'globex', name: 'Globex', latest: lapsed }]]);
-    assert.deepEqual(partnerWants([pair({ last: lapsed })], still, seen, now), []);
+    // Sure, and quiet: no request on silence alone, nor on one kind of evidence; an end only
+    // where Clef judged it ended, on this quiet.
+    const day0 = '2026-08-01';
+    assert.deepEqual(wants({ quiet: day0 }), []);
+    assert.deepEqual(wants({ quiet: day0, signals: [sig('owners')] }), []);
+    assert.deepEqual(wants({ quiet: day0, endedP: 0.7, endedFor: day0 }), []);
+    assert.deepEqual(wants({ quiet: day0, endedP: 0.9, endedFor: '2026-07-01' }), []);
+    const [ended] = wants({ quiet: day0, endedP: ENDED_P, endedFor: day0 });
+    assert.deepEqual([ended.action, ended.until, ended.fingerprint], ['end', day0, `end:${day0}`]);
+    assert.match(ended.note, /^Clef judges 80% that The Agency stopped working for Globex/);
     // A conflict is a sure pair's: the unsure one is asked as unsure.
     assert.match(wants({ p: 0.6, signals: [sig('owners')] })[0].note, /^Clef is unsure, 60%/);
-    assert.deepEqual(conflictOf(pair({}), orgs, now), null);
+    assert.deepEqual(conflictOf(pair({})), null);
   });
 
   it('say how a pair stands, in words for the agents', () => {
@@ -324,41 +327,104 @@ describe('partner requests', () => {
       said(null), said({ p: null }), said({ p: 0.2 }), said({ p: 0.4 }), said({ p: 0.55 }),
       said({ p: 0.9 }),
       said({ confirmed: at, p: 0.2 }), said({ confirmed: at, until: '2026-06' }), said({ dismissed: at, p: 0.9 }),
-    ], ['none', 'unknown', 'unlikely', 'unsure', 'likely', 'sure', 'confirmed', 'former', 'dismissed']);
+      said({ confirmed: at, quiet: '2026-06-01' }), said({ p: 0.9, quiet: '2026-06-01' }),
+      said({ p: 0.4, quiet: '2026-06-01' }), said({ confirmed: at, until: '2026-06', quiet: '2026-06-01' }),
+    ], ['none', 'unknown', 'unlikely', 'unsure', 'likely', 'sure', 'confirmed', 'former', 'dismissed',
+      'quiet', 'quiet', 'unsure', 'former']);
+    assert.equal(standingWords(standingOf({ confirmed: at, quiet: '2026-06-01' })), 'confirmed by the admin team, but quiet: none of its people posted in the customer\'s threads since 2026-06-01, which is no end');
+    assert.match(standingWords(standingOf({ p: 0.9, quiet: '2026-06-01' })), /^not decided; a partner as Clef says \(90%\), but quiet/);
     assert.equal(standingWords(standingOf({ p: 0.4 })), 'not decided and not linked; Clef is unsure (40%)');
     assert.equal(standingWords(standingOf({ confirmed: at, until: '2026-06' })), 'a former partner, until 2026-06, as the admin team said');
     assert.equal(standingWords(standingOf({ p: 0.92 })), 'not decided; Clef is sure (92%), so it counts as a partner');
   });
 
-  it('are Clef\'s for a partner whose people stopped posting, and one who posts again', () => {
+  it('call a partner quiet whose people stopped posting, and one again who posts again', () => {
     const day = 24 * 3600 * 1000;
     const now = Date.parse('2026-11-26T00:00:00Z');
     const iso = (ms) => new Date(ms).toISOString();
     const orgs = new Map([['globex', { slug: 'globex', name: 'Globex', latest: iso(now - day) }],
       ['agency', { slug: 'agency', name: 'The Agency' }]]);
     const pair = (more) => ({
-      customer: 'globex', partner: 'agency', signals: [], p: null, candidate: false, confirmed: { by: 'ada', at: AT }, dismissed: null, until: null, first: null, last: null, ...more,
+      customer: 'globex', partner: 'agency', signals: [], p: null, candidate: false, confirmed: { by: 'ada', at: AT }, dismissed: null, until: null, first: null, last: null, seen: null, ...more,
     });
     const lapsed = iso(now - (LAPSED_DAYS + 1) * day);
-    const [end] = partnerWants([pair({ last: lapsed })], orgs, new Map(), now);
-    assert.deepEqual([end.action, end.until, end.fingerprint], ['end', lapsed.slice(0, 10), `end:${lapsed.slice(0, 10)}`]);
-    // Not while it posts, nor while the customer is as quiet.
-    assert.deepEqual(partnerWants([pair({ last: iso(now - 10 * day) })], orgs, new Map(), now), []);
+    assert.equal(quietOf(pair({ last: lapsed }), orgs, now), lapsed.slice(0, 10));
+    // Quiet alone asks nothing: a confirmed partner of now, whatever its silence.
+    const quietPair = pair({ last: lapsed, quiet: lapsed.slice(0, 10) });
+    assert.deepEqual(partnerWants([quietPair], orgs, new Map()), []);
+    // Not while it posts, nor while the customer is as quiet, nor after an agent saw them at work.
+    assert.equal(quietOf(pair({ last: iso(now - 10 * day) }), orgs, now), null);
     const quietCustomer = new Map([...orgs, ['globex', {
       slug: 'globex', latest: iso(Date.parse(lapsed) + (GOING_ON_DAYS - 1) * day),
     }]]);
-    assert.deepEqual(partnerWants([pair({ last: lapsed })], quietCustomer, new Map(), now), []);
+    assert.equal(quietOf(pair({ last: lapsed }), quietCustomer, now), null);
+    assert.equal(quietOf(pair({ last: lapsed, seen: { by: 'agent', at: iso(now - 5 * day) } }), orgs, now), null);
+    // Nor a former partner, nor a pair nobody counts as partners.
+    assert.equal(quietOf(pair({ last: lapsed, until: '2026-06' }), orgs, now), null);
+    assert.equal(quietOf(pair({ last: lapsed, confirmed: null, p: 0.4 }), orgs, now), null);
+    const sure = pair({ last: lapsed, confirmed: null, p: 0.9 });
+    assert.equal(quietOf(sure, orgs, now), lapsed.slice(0, 10));
     // Ended, and its people post again: a partner again?
-    const [again] = partnerWants([pair({ until: '2026-09', last: iso(Date.parse('2026-09-28T23:59:59Z') + (AGAIN_DAYS + 1) * day) })], orgs, new Map(), now);
+    const [again] = partnerWants([pair({ until: '2026-09', last: iso(Date.parse('2026-09-28T23:59:59Z') + (AGAIN_DAYS + 1) * day) })], orgs, new Map());
     assert.deepEqual([again.action, again.fingerprint], ['link', 'again:2026-09']);
     // A dismissed pair, or one Clef finds unlikely, is no request.
     const seen = new Map([['globex\nagency', 'f']]);
     const dismissed = pair({
       confirmed: null, dismissed: { by: 'ada' }, p: 0.9, candidate: true,
     });
-    assert.deepEqual(partnerWants([dismissed], orgs, seen, now), []);
+    assert.deepEqual(partnerWants([dismissed], orgs, seen), []);
     const unlikely = pair({ confirmed: null, p: 0.3, candidate: true });
-    assert.deepEqual(partnerWants([unlikely], orgs, seen, now), []);
+    assert.deepEqual(partnerWants([unlikely], orgs, seen), []);
+  });
+
+  it('end a quiet partner only where Clef judges it ended, from its last posts and the customer\'s threads', async () => {
+    const e = env();
+    const sql = e.DB.sqlite;
+    const old = new Date(Date.now() - 200 * 86400000).toISOString();
+    const recent = new Date(Date.now() - 86400000).toISOString();
+    // The agency's people last posted 200 days ago; Globex's threads went on since.
+    sql.exec(`UPDATE messages SET at = '${old}' WHERE author_key IN ('slack:E1:U1', 'slack:E1:U2') AND channel_id = 'C1';
+      UPDATE messages SET at = '${recent}' WHERE author_key = 'slack:E1:U3';
+      UPDATE threads SET last_at = '${recent}', any_at = '${recent}' WHERE thread = 'slack:E1:C1:1.1'`);
+    await quiet(() => call(e, ADA, 'POST', '/api/admin/org-partners/confirm', { customer: 'globex', partner: 'agency' }));
+    // Clef's end request of before, filed on silence alone.
+    sql.exec(`INSERT INTO org_partner_requests (customer, partner, action, until, fingerprint, requested_by,
+      requested_at) VALUES ('globex', 'agency', 'end', '2026-05-01', 'end:2026-05-01', 'clef', '${AT}')`);
+    const asked = [];
+    let ended = 0.3;
+    e.AI = {
+      async run(model, input) {
+        if (input.questions.ended) {
+          asked.push(input.state);
+          return { answers: { ended: { type: 'noul', noul: ended } } };
+        }
+        return { answers: { works: { type: 'noul', noul: 0.2 } } };
+      },
+    };
+    const sync = () => quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners?fresh=1'));
+    await sync();
+    const day = old.slice(0, 10);
+    assert.deepEqual(rows(e, "SELECT quiet_since, ended_p, ended_fingerprint FROM org_partners WHERE partner = 'agency'"), [{ quiet_since: day, ended_p: 0.3, ended_fingerprint: day }]);
+    assert.equal(asked.length, 1);
+    assert.match(asked[0], /P's last posts in C's threads:\n- \[/);
+    assert.match(asked[0], /C's latest threads:\n- /);
+    // Quiet is no end: Clef's request of before is taken back, saying why.
+    assert.deepEqual(rows(e, "SELECT status, reason FROM org_partner_requests WHERE action = 'end'"), [{
+      status: 'withdrawn', reason: `Clef does not judge it ended, 30% that it ended: its people are only quiet since ${day}`,
+    }]);
+    // Everyone reads it quiet, and an agent hears so.
+    const [agency] = await partnersOf(e, 'globex');
+    assert.equal(agency.quiet, day);
+    // Judged again only after a week, or a new quiet: then it asks to end it.
+    await sync();
+    assert.equal(asked.length, 1);
+    ended = 0.9;
+    sql.exec("UPDATE org_partners SET ended_checked_at = '2020-01-01T00:00:00Z'");
+    await sync();
+    assert.equal(asked.length, 2);
+    const [q] = rows(e, "SELECT * FROM org_partner_requests WHERE status = 'open'");
+    assert.deepEqual([q.action, q.until, q.fingerprint], ['end', day, `end:${day}`]);
+    assert.match(q.note, /^Clef judges 90% that The Agency stopped working for Globex/);
   });
 
   it('follow a merge: its dates go with the decision, its requests are taken back', async () => {
@@ -377,24 +443,104 @@ describe('partner requests', () => {
   it('are an agent\'s, on its own or for the person in its sidebar, from its thread', async () => {
     const e = env();
     const t = {
-      key: 'slack:E1:C1:1.1', org: 'globex', orgType: 'customer', orgName: 'Globex', channelName: 'aem-globex',
+      key: 'slack:E1:C1:1.1', org: 'globex', orgType: 'customer', orgName: 'Globex', channelName: 'aem-globex', team: 'helix', channelId: 'C1', kind: 'channel', source: 'slack',
     };
-    assert.match((await requestPartnerLink(e, t, null, { action: 'link', note: 'x' })).error, /give the partner/);
-    assert.match((await requestPartnerLink(e, t, null, { action: 'link', partner: 'studio' })).error, /say why/);
+    const here = [{ why: 'Hank says Studio takes over the site in November' }];
+    assert.match((await requestPartnerLink(e, t, null, { action: 'link', note: 'x', evidence: here })).error, /give the partner/);
+    assert.match((await requestPartnerLink(e, t, null, { action: 'link', partner: 'studio', evidence: here })).error, /say why/);
+    // Never without evidence, each item with why, and only of what it may read.
+    assert.match((await requestPartnerLink(e, t, null, { action: 'link', partner: 'studio', note: 'x' })).error, /give `evidence`/);
+    assert.match((await requestPartnerLink(e, t, null, {
+      action: 'link', partner: 'studio', note: 'x', evidence: [{}],
+    })).error, /say `why`/);
+    assert.match((await requestPartnerLink(e, t, null, {
+      action: 'link', partner: 'studio', note: 'x', evidence: [{ ref: 'slack:E1:C9:9.9', why: 'x' }],
+    })).error, /no thread has/);
+    assert.match((await requestPartnerLink(e, t, null, {
+      action: 'link', partner: 'studio', note: 'x', evidence: [{ ref: 'slack:E1:C1:1.1|nope', why: 'x' }],
+    })).error, /no message nope/);
     const own = await quiet(() => requestPartnerLink(e, t, null, {
-      action: 'link', partner: 'studio', since: '2026-11', note: 'Hank says Studio takes over the site in November',
+      action: 'link',
+      partner: 'studio',
+      since: '2026-11',
+      note: 'Hank says Studio takes over the site in November',
+      evidence: [...here, { ref: 'slack:E1:C1:1.2|m4', why: 'Road asks Studio for the handover' }],
     }));
-    assert.deepEqual([own.request.customer, own.request.partner, own.request.requestedBy.kind, own.request.thread], ['globex', 'studio', 'agent', t.key]);
+    assert.deepEqual([own.request.customer, own.request.partner, own.request.requestedBy.kind, own.request.thread, own.evidence], ['globex', 'studio', 'agent', t.key, 2]);
     assert.equal(own.request.requestedBy.name, 'The agent of a thread in #aem-globex');
+    assert.deepEqual(own.request.evidence.map((x) => [x.thread, x.message, x.why]), [
+      [t.key, null, 'Hank says Studio takes over the site in November'],
+      ['slack:E1:C1:1.2', 'm4', 'Road asks Studio for the handover'],
+    ]);
     const th = await call(e, ADA, 'GET', `/api/thread?thread=${encodeURIComponent(requestKey('partner', own.request.id))}`);
     assert.match(th.body.messages[0].body, /The agent read it in \[a thread\]\(\/inbox\?team=helix&t=slack%3AE1%3AC1%3A1\.1\)/);
+    assert.match(th.body.messages[0].body, /- Evidence:\n {2}- \[a thread\]\(\/inbox\?team=helix&t=slack%3AE1%3AC1%3A1\.1\): Hank says Studio takes over the site in November — The agent of a thread in #aem-globex/);
+    // Asked again, its evidence goes to the request that waits, and the answer says so.
+    const again = await quiet(() => requestPartnerLink(e, t, null, {
+      action: 'review', partner: 'studio', note: 'Looks uncertain', evidence: [{ why: 'Hank is not sure' }],
+    }));
+    assert.deepEqual(
+      [again.added, again.request.id, again.request.evidence.length],
+      [true, own.request.id, 3],
+    );
+    assert.equal(rows(e, 'SELECT * FROM org_partner_requests').length, 1);
+    // Bo is no admin: he reads none of the agent's evidence.
+    const bo = await call(e, BO, 'GET', '/api/admin/org-partners?pair=globex:studio');
+    assert.deepEqual(bo.body.requests[0].evidence, []);
     // In a partner's thread, the partner is its own; for the person who asked, theirs.
     const theirs = {
       key: 'slack:E1:C2:2.1', org: 'agency', orgType: 'partner', channelName: 'aem-agency',
     };
     const asked = await quiet(() => requestPartnerLink(e, theirs, { email: 'bo@staff.example', name: 'Bo' }, {
-      action: 'end', customer: 'globex', until: '2026-10', note: 'Bo says the contract ended',
+      action: 'end', customer: 'globex', until: '2026-10', note: 'Bo says the contract ended', evidence: [{ why: 'Bo says so' }],
     }));
     assert.deepEqual([asked.request.partner, asked.request.customer, asked.request.requestedBy.email, asked.request.viaAgent], ['agency', 'globex', 'bo@staff.example', true]);
+  });
+
+  it('are an agent\'s review of a pair, with its own actions in the admin inbox', async () => {
+    const e = env();
+    const t = {
+      key: 'slack:E1:C1:1.1', org: 'globex', orgType: 'customer', channelName: 'aem-globex', team: 'helix', channelId: 'C1', kind: 'channel', source: 'slack',
+    };
+    const r = await quiet(() => requestPartnerLink(e, t, null, {
+      action: 'review', partner: 'agency', note: 'Hank says the agency works for another customer here', evidence: [{ why: 'Hank corrects it in the thread' }],
+    }));
+    assert.equal(r.request.action, 'review');
+    const key = requestKey('partner', r.request.id);
+    const th = await call(e, ADA, 'GET', `/api/thread?thread=${encodeURIComponent(key)}`);
+    assert.equal(th.body.thread.title, 'The Agency and Globex: please look');
+    assert.deepEqual(th.body.request.actions.map((a) => a.id), ['confirm', 'end', 'dismiss', 'decline']);
+    // Not partners settles it.
+    await quiet(() => call(e, ADA, 'POST', '/api/requests/resolve', { key, action: 'dismiss', values: {} }));
+    assert.deepEqual(rows(e, `SELECT status FROM org_partner_requests WHERE id = ${r.request.id}`), [{ status: 'dismissed' }]);
+  });
+
+  it('are taken back where an agent sees a quiet pair still working together, which decides nothing', async () => {
+    const e = env();
+    const sql = e.DB.sqlite;
+    await quiet(() => call(e, ADA, 'POST', '/api/admin/org-partners/confirm', { customer: 'globex', partner: 'agency' }));
+    sql.exec(`UPDATE org_partners SET quiet_since = '2026-05-01' WHERE partner = 'agency';
+      INSERT INTO org_partner_requests (customer, partner, action, until, fingerprint, requested_by,
+        requested_at) VALUES ('globex', 'agency', 'end', '2026-05-01', 'end:2026-05-01', 'clef', '${AT}')`);
+    const t = {
+      key: 'slack:E1:C2:2.1', org: 'agency', orgType: 'partner', channelName: 'aem-agency', team: 'helix', channelId: 'C2', kind: 'channel', source: 'slack',
+    };
+    const res = await quiet(() => requestPartnerLink(e, t, null, {
+      action: 'active', customer: 'globex', note: 'They plan Globex\'s next release here', evidence: [{ why: 'Wile plans the Globex release in this thread' }],
+    }));
+    assert.equal(res.active.withdrawn.length, 1);
+    const [pair] = rows(e, "SELECT confirmed_at IS NOT NULL AS c, quiet_since, seen_by, until FROM org_partners WHERE partner = 'agency'");
+    assert.deepEqual(pair, {
+      c: 1, quiet_since: null, seen_by: 'agent', until: null,
+    });
+    assert.deepEqual(rows(e, "SELECT status, decided_by FROM org_partner_requests WHERE action = 'end'"), [{ status: 'withdrawn', decided_by: 'agent' }]);
+    assert.deepEqual(rows(e, 'SELECT kind, request IS NOT NULL AS r, why FROM org_partner_evidence'), [{ kind: 'active', r: 1, why: 'Wile plans the Globex release in this thread' }]);
+    // A pair the admin team said is none, or ended, stays so.
+    await quiet(() => call(e, ADA, 'POST', '/api/admin/org-partners/end', { customer: 'globex', partner: 'agency', until: '2026-10' }));
+    const ended = await requestPartnerLink(e, t, null, {
+      action: 'active', customer: 'globex', note: 'x', evidence: [{ why: 'x' }],
+    });
+    assert.match(ended.error, /former partner/);
+    assert.equal(rows(e, "SELECT until FROM org_partners WHERE partner = 'agency'")[0].until, '2026-10');
   });
 });

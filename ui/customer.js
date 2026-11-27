@@ -442,6 +442,9 @@ globalThis.CustomerView = (() => {
   /** Whether the two work together: confirmed, likely as Clef says, a former partner, or neither yet. */
   function linkTag(x) {
     if (x.until) return `<span class="tag tv-former" title="${esc(`A partner until ${x.until}, as the admin team said`)}">Former</span>`;
+    // Quiet is no end: its people have not posted in the customer's threads since then.
+    const quiet = x.quiet ? `<span class="tag tv-lapsed" title="${esc(`None of their people posted in the customer's threads since ${x.quiet}: quiet, not ended`)}">Quiet</span>` : '';
+    if (quiet) return `${x.confirmed ? '<span class="tag tv-confirmed" title="The admin team confirmed it">Confirmed</span>' : ''}${quiet}`;
     if (x.confirmed) return '<span class="tag tv-confirmed" title="The admin team confirmed it">Confirmed</span>';
     if (x.linked) return `<span class="tag tv-likely" title="${esc(x.p === null ? 'Likely, from what links them' : `${Math.round(x.p * 100)}% likely, says Clef`)}">Likely</span>`;
     return '';

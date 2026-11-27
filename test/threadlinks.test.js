@@ -504,6 +504,15 @@ describe('what the thread agent is told', () => {
     sql("UPDATE org_partners SET p = 0.4 WHERE customer = 'globex'");
     note = await relatedNote(e, target(G1, 'globex', 'customer', { channelId: 'CG', team: 'edge' }));
     assert.match(note, /That it works for this customer: not decided and not linked; Clef is unsure \(40%\)\./);
+    // Quiet is said too, and is no end.
+    sql("UPDATE org_partners SET confirmed_at = '2026-01-01', p = 0.9, quiet_since = '2026-06-01' WHERE customer = 'globex'");
+    note = await relatedNote(e, target(G1, 'globex', 'customer', { channelId: 'CG', team: 'edge' }));
+    assert.match(note, /That it works for this customer: confirmed by the admin team, but quiet: none of its people posted in the customer's threads since 2026-06-01, which is no end\./);
+    const quietOne = await TOOLS.find((x) => x.name === 'get_thread').run(e, asMe(BO), { thread: G1 });
+    assert.deepEqual(quietOne.data.with_partners, [{
+      partner: 'agency', name: 'Agency Co', partner_link: 'quiet', partner_link_quiet_since: '2026-06-01',
+    }]);
+    sql("UPDATE org_partners SET confirmed_at = NULL, p = 0.4, quiet_since = NULL WHERE customer = 'globex'");
     // The list and the thread have it too, and the MCP server's get_thread.
     assert.deepEqual((await linkedOrgsOf(e, [G1])).get(G1).with[0].pair, { status: 'unsure', p: 0.4, until: null });
     sql("UPDATE org_partners SET confirmed_at = '2026-01-01', until = '2026-06' WHERE customer = 'globex'");

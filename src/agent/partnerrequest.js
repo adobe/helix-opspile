@@ -10,17 +10,25 @@
  * governing permissions and limitations under the License.
  */
 
-import { createPartnerRequest } from '../partnerrequests.js';
+import { askOrAdd, markActive } from '../partnerrequests.js';
+import { resolveAnyThread } from './history.js';
+import { readable } from './watches.js';
 
 /**
  * `request_partner_link` (src/agent/tools.js): an agent asks the admin team to decide whether a
- * partner works for a customer, or no longer does (src/partnerrequests.js), from what a thread
- * says ("we have moved to another agency", "they no longer support our site") or what the person
- * it talks to tells it. Unlike moving a channel or adding someone to a team, a thread's agent may
- * file one on its own: nothing changes until the admin team decides, in its inbox, where the
- * request says who asked, links the thread, and shows what the inbox knows of the two. For the
- * person in its sidebar, or in a knowledge base's conversation, it files it as theirs.
+ * partner works for a customer (`link`), no longer does (`end`), or to look at a pair that seems
+ * wrong or uncertain (`review`), from what a thread says ("we have moved to another agency", "they
+ * no longer support our site") or what the person it talks to tells it; or records that a pair
+ * still works together (`active`), which decides nothing. Every action takes evidence: threads and
+ * messages it may read, each with why. Unlike moving a channel or adding someone to a team, a
+ * thread's agent may file one on its own: nothing changes until the admin team decides, in its
+ * inbox, where the request says who asked, links the thread and its evidence, and shows what the
+ * inbox knows of the two. For the person in its sidebar, or in a knowledge base's conversation, it
+ * files it as theirs. A request of the pair that waits takes the evidence instead of a second one
+ * (src/partnerrequests.js `askOrAdd`).
  */
+
+const MAX_ITEMS = 10;
 
 /** How an agent is named where it asks on its own. */
 export function agentName(t) {
@@ -31,10 +39,61 @@ export function agentName(t) {
 }
 
 /**
- * Files the request: `t` is the agent's target (its thread, customer, channel), `asker` the person
- * it asks for (`{ email, name }`, from its sidebar or conversation) or null (its own), `args` the
- * tool's. The customer and the partner default to the thread's org, by its type. `{ request }`,
- * or `{ error, request? }` (the open one that asks the same).
+ * An item of evidence (`{ ref?, why }`) as the request keeps it, `{ thread, message, link, why }`,
+ * or `{ error }`: `ref` is a thread key, a thread key and a message id (`<thread>|<id>`, as
+ * get_thread and read_thread name messages), or a link to a message; none is the agent's own
+ * thread. Only what the agent may read (`readable`, its own thread always) is evidence.
+ */
+export async function evidenceItem(env, t, item) {
+  const why = String((item && item.why) || '').trim();
+  if (!why) {
+    return { error: 'say `why` of every item of evidence' };
+  }
+  const ref = String((item && item.ref) || '').trim();
+  let thread = null;
+  let message = null;
+  if (!ref) {
+    thread = t.key || null;
+  } else if (ref.includes('|') && !/^https?:/.test(ref)) {
+    [thread, message] = [ref.slice(0, ref.indexOf('|')), ref.slice(ref.indexOf('|') + 1)];
+  } else if (/^https?:/.test(ref)) {
+    const m = await env.DB.prepare('SELECT thread, id FROM messages WHERE permalink = ?').bind(ref).first();
+    if (m) {
+      [thread, message] = [m.thread, m.id];
+    } else {
+      const found = await resolveAnyThread(env, ref);
+      thread = found.key || null;
+    }
+  } else {
+    thread = ref;
+  }
+  const row = thread && await env.DB.prepare(`SELECT thread, COALESCE(logical_thread, thread) AS entry
+    FROM threads WHERE thread = ?`).bind(thread).first();
+  if (!row) {
+    return { error: `no thread has the key or link ${ref || '(your thread)'}` };
+  }
+  const own = t.key && (row.thread === t.key || row.entry === t.key);
+  if (!own && !await readable(env, t, row.entry).catch(() => null)) {
+    return { error: `you may not read ${ref}: cite only threads you may read` };
+  }
+  const link = message
+    ? await env.DB.prepare('SELECT permalink FROM messages WHERE thread = ? AND id = ?').bind(row.thread, message).first()
+    : await env.DB.prepare(`SELECT permalink FROM messages WHERE thread = ? AND permalink IS NOT NULL
+      ORDER BY at LIMIT 1`).bind(row.thread).first();
+  if (message && !link) {
+    return { error: `no message ${message} in thread ${row.thread}` };
+  }
+  return {
+    thread: row.entry, message: message || null, link: (link && link.permalink) || null, why,
+  };
+}
+
+/**
+ * Files the request, or adds its evidence to one that waits: `t` is the agent's target (its
+ * thread, customer, channel), `asker` the person it asks for (`{ email, name }`, from its sidebar
+ * or conversation) or null (its own), `args` the tool's. The customer and the partner default to
+ * the thread's org, by its type. `{ request, added? }`, `{ active }` for `active`, or `{ error,
+ * request? }` (the open one that asks the same).
  */
 export async function requestPartnerLink(env, t, asker, args) {
   const own = String(t.org || '').startsWith('_') ? '' : String(t.org || '');
@@ -48,10 +107,34 @@ export async function requestPartnerLink(env, t, asker, args) {
   if (!note) {
     return { error: 'say why in `note`: what the thread or the person said, and where' };
   }
+  const items = [].concat(args.evidence || []).slice(0, MAX_ITEMS);
+  if (!items.length) {
+    return { error: 'give `evidence`: the thread or messages that show it, each with why (`ref` left out is your thread)' };
+  }
+  const evidence = [];
+  for (const item of items) {
+    // eslint-disable-next-line no-await-in-loop
+    const e = await evidenceItem(env, t, item);
+    if (e.error) {
+      return { error: e.error };
+    }
+    evidence.push(e);
+  }
   const by = asker && asker.email ? { email: asker.email, name: asker.name || null }
     : { agent: true, name: agentName(t) };
-  const res = await createPartnerRequest(env, by, {
+  if (args.action === 'active') {
+    const res = await markActive(env, by, { customer, partner }, evidence);
+    return res.error ? { error: res.error } : {
+      active: {
+        customer, partner, withdrawn: res.withdrawn, quiet: res.quiet, evidence: evidence.length,
+      },
+    };
+  }
+  const res = await askOrAdd(env, by, {
     customer, partner, action: args.action, since: args.since, until: args.until, note,
-  }, { thread: t.key || null });
-  return res.error ? { error: res.error, request: res.request || null } : { request: res.request };
+  }, { thread: t.key || null, evidence });
+  if (res.error) {
+    return { error: res.error, request: res.request || null };
+  }
+  return { request: res.request, added: Boolean(res.added), evidence: evidence.length };
 }

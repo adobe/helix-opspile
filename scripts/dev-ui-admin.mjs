@@ -59,11 +59,14 @@ import { fakeMcpServers } from '../test/mcp-server.js';
 
 const PREVIEW_TOKEN = 'preview-token';
 
-/** Clef on a customer and a partner, made up: Pied Piper works for ACME (src/orgpartners.js). */
+/**
+ * Clef on a customer and a partner, made up: Pied Piper works for ACME (src/orgpartners.js), and
+ * Raviga, quiet at Soylent, did not stop working for it.
+ */
 const DEV_PARTNER_CLEF = {
-  run: async (model, { state }) => ({
-    answers: { works: { type: 'noul', noul: /C: slug acme,/.test(state) ? 0.92 : 0.34 } },
-  }),
+  run: async (model, { state, questions }) => (questions.ended
+    ? { answers: { ended: { type: 'noul', noul: 0.3 } } }
+    : { answers: { works: { type: 'noul', noul: /C: slug acme,/.test(state) ? 0.92 : 0.34 } } }),
 };
 
 /**
@@ -115,6 +118,15 @@ function seedPartnerPairs(DB) {
   }
   db.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at, since, first_at,
       last_at) VALUES ('soylent', 'raviga', 'priya@example.com', ?, '2025-02', ?, ?)`).run(at(3), at(240), at(110));
+  // Raviga's people last posted in Soylent's threads 110 days ago, and Soylent's went on: quiet.
+  db.prepare(`INSERT OR IGNORE INTO partner_domains (domain, name, org, excluded, updated_by, updated_at)
+    VALUES ('raviga.example', NULL, 'raviga', 0, 'priya@example.com', ?)`).run(at(30));
+  of('soylent', 1).forEach((t) => {
+    db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, email, fetched_at)
+      VALUES (?, ?, 'U-RV1', 'person', 'Laurie B.', 'laurie@raviga.example', ?)`).run(t.source, t.tenant, at(1));
+    db.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, deleted, author_key)
+      VALUES (?, ?, ?, 'rv-1', ?, ?, 0, 1, 0, ?)`).run(t.source, t.tenant, t.channel_id, t.thread, at(110), `${t.source}:${t.tenant}:U-RV1`);
+  });
   // Raviga worked for Hooli until the summer: a former partner, on both pages.
   db.prepare(`INSERT INTO org_partners (customer, partner, confirmed_by, confirmed_at, since, until,
       ended_by, ended_at, first_at, last_at)
@@ -135,6 +147,15 @@ function seedPartnerPairs(DB) {
     db.prepare(`INSERT INTO org_partner_requests (customer, partner, action, since, note, thread,
         requested_by, requested_name, requested_at) VALUES ('acme', 'agency', 'link', ?, ?, ?, 'agent', ?, ?)`)
       .run(day(5), 'Elena (ACME) wrote that Agency Co takes over the site\'s day-to-day support this month.', acmeThread.thread, 'The agent of a thread in #aem-acme', at(0.1));
+    // With its evidence (src/partnerrequests.js): the thread, and a second agent's, added later.
+    const { id } = db.prepare('SELECT MAX(id) AS id FROM org_partner_requests').get();
+    const evidence = db.prepare(`INSERT INTO org_partner_evidence (customer, partner, request, thread, why,
+        added_by, added_name, added_at) VALUES ('acme', 'agency', ?, ?, ?, 'agent', ?, ?)`);
+    evidence.run(id, acmeThread.thread, 'Elena says Agency Co takes over the day-to-day support this month.', 'The agent of a thread in #aem-acme', at(0.1));
+    const other = of('acme', 2)[1];
+    if (other) {
+      evidence.run(id, other.thread, 'Agency Co\'s people answer the support questions here since last week.', 'The agent of a thread in #aem-forms-acme', at(0.05));
+    }
   }
 }
 

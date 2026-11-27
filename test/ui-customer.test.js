@@ -430,6 +430,15 @@ describe('a partner\'s overview, and a customer\'s partners, drawn', () => {
     assert.ok(!CustomerView.html(profile, pctx).includes('cvPublic'));
   });
 
+  it('tags a quiet partner Quiet, beside Confirmed, and no Former', () => {
+    const row = {
+      slug: 'agency', name: 'Agency', type: 'partner', icon: null, linked: true, confirmed: true, until: null, quiet: '2026-06-01', p: 0.9, signals: {}, threads: 0, people: 0,
+    };
+    const html = CustomerView.html({ ...profile, partners: [row] }, pctx);
+    assert.match(html, /tv-confirmed[^>]*>Confirmed<\/span><span class="tag tv-lapsed" title="None of their people posted in the customer&#39;s threads since 2026-06-01: quiet, not ended">Quiet</);
+    assert.ok(!html.includes('tv-former'));
+  });
+
   it('says so when no partner is known to work for a customer', () => {
     const html = CustomerView.html({ ...profile, partners: [] }, pctx);
     assert.match(html, /No agency or system integrator is known to work for ACME\./);

@@ -175,7 +175,8 @@ const list = (v) => (v == null ? [] : [].concat(v).map((x) => String(x).trim().t
 
 /**
  * How a linked org and the thread's stand as partners (src/threadlinks.js `orgEntry`'s `pair`):
- * `{ partner_link, partner_link_p?, partner_link_until? }`, nothing in a public thread.
+ * `{ partner_link, partner_link_p?, partner_link_until?, partner_link_quiet_since? }`, nothing
+ * in a public thread.
  */
 const partnerLink = (o) => {
   // A public thread's org is nobody's customer or partner: its orgs have no pair.
@@ -186,8 +187,11 @@ const partnerLink = (o) => {
   return {
     partner_link: s.status,
     ...(s.p !== null && s.p !== undefined && !['confirmed', 'former', 'dismissed'].includes(s.status)
+      && !(s.status === 'quiet' && s.confirmed)
       ? { partner_link_p: Math.round(s.p * 100) / 100 } : {}),
     ...(s.until ? { partner_link_until: s.until } : {}),
+    // Quiet: a partner of now whose people have not posted in the customer's threads since.
+    ...(s.quiet ? { partner_link_quiet_since: s.quiet } : {}),
   };
 };
 

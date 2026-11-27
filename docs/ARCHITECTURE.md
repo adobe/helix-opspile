@@ -373,30 +373,47 @@ pair's open requests as the routes do; an undo opens none again. Three ask:
 - anyone on an ops team, on the pair's page (`POST /api/admin/org-partner-requests`), whose
   answers to them leave the admin team's evidence out as the page does; the page offers what may be
   asked (no `link` of a partner of now, no `end` of a former one);
-- an agent (`request_partner_link`): a thread's, on its own when the thread says a partner started
-  or stopped working for the customer, or for the person in its sidebar who tells it; a
-  knowledge base's, for the person in its conversation. The request names the thread. Unlike a
-  channel's move or a team's member, it needs no person to ask: nothing changes until the admin
-  team decides;
+- an agent (`request_partner_link`, src/agent/partnerrequest.js): a thread's, on its own when the
+  thread says a partner started or stopped working for the customer, or for the person in its
+  sidebar who tells it; a knowledge base's, for the person in its conversation. It asks `link`,
+  `end`, or `review` (a pair the inbox names looks wrong or uncertain: the admin team looks, and
+  decides as it would a `link` or an `end`, or leaves it), always with evidence: threads and
+  messages it may read (`readable`; a thread key, `<thread>|<message id>` or a message link), each
+  with why in its words (`org_partner_evidence`, migration 0114). Where a request of the pair waits
+  (of the same action; for a `review`, any), the evidence is added to it instead, and the tool says
+  so (`askOrAdd`). The request names the thread. Unlike a channel's move or a team's member, it
+  needs no person to ask: nothing changes until the admin team decides. Its fourth action,
+  `active`, is no request: a quiet pair still works together (the partner's people active for the
+  customer elsewhere, or someone says so), which records its evidence (`kind` `active`), takes back
+  Clef's open `end` of the pair (the evidence goes to it) and makes the pair's last sign now
+  (`seen_at`), so it is not quiet until it is quiet again (`markActive`); a pair the admin team
+  ended or dismissed stays so;
 - Clef, from every load and cron run (`partnerWants`), only where it is unsure: a likely pair needs
   nobody to decide it, and the admin team is not to decide every one each day. It asks of a pair
   nobody decided whose probability is in the unsure band, `UNSURE_LOW` (0.35) to `UNSURE_HIGH`
   (0.65), both included (`link`: linked from `LIKELY` on, and not below it, until someone
   decides); of one it is sure of (above the band) only while its signals conflict (`conflictOf`,
-  `link`), which is narrowly one of two: `alone`, everything found is of one kind and not one that
-  says they work together (not the partner's people posting in the customer's threads, nor a
-  channel named for both: a site owner both name, the partner's people among the channel's
-  members, the customer's in the partner's threads), or `quiet`, the partner's people posted in the
-  customer's threads but none for `LAPSED_DAYS` (90) while the customer's went on for
-  `GOING_ON_DAYS` (30) after their last post, and Clef's word stayed. A pair it is sure of
-  otherwise counts as linked with no request; one below the band is not linked, as before. And as
-  ever: a confirmed pair whose people posted nothing in the customer's threads for `LAPSED_DAYS`
-  while the customer's went on (`end`, until their last post); an ended one whose people post
-  `AGAIN_DAYS` (14) after its end (`link` again). Each carries the fingerprint of what it was found
-  on (Clef's, or `quiet:`, `end:`, `again:` and the day): declined, it is not asked again until
-  that changes, and Clef takes back its own that wait once the pair is no longer what it asked
-  about, saying why (`reason`: sure of it now, unlikely now, or no longer so), the ones it filed
-  for a pair it is sure of before it asked only when unsure among them.
+  `link`), which is narrowly `alone`: everything found is of one kind and not one that says they
+  work together (not the partner's people posting in the customer's threads, nor a channel named
+  for both: a site owner both name, the partner's people among the channel's members, the
+  customer's in the partner's threads). A pair it is sure of otherwise counts as linked with no
+  request; one below the band is not linked, as before. Silence is no end: a pair of partners of
+  now (confirmed, or likely and not decided) whose last sign (its people's last post in the
+  customer's threads, or an agent's `active`) is `LAPSED_DAYS` (90) old while the customer's
+  threads went on for `GOING_ON_DAYS` (30) after it is **quiet** (`quietOf`, `quiet_since`, written
+  by every sync), which both orgs' pages tag Quiet, the pair's page says, and the agents hear.
+  Clef asks to end a quiet pair (confirmed, or one it is sure of) only when it judges the
+  partnership ended (`ENDED_P`, 0.8): it is asked "has P stopped working for C?", shown the
+  partner's last posts in the customer's threads and the customer's latest threads with their last
+  messages (where someone may say another agency took over; `endedState`), four a sync, again once
+  quiet since another day or after `ENDED_RECHECK_DAYS` (7), its answer kept (`ended_p`,
+  `ended_fingerprint`: the day it was quiet since). Then `end`, until the last sign; and an ended
+  one whose people post `AGAIN_DAYS` (14) after its end (`link` again). Each carries the
+  fingerprint of what it was found on (Clef's, or `end:`, `again:` and the day): declined, it is not
+  asked again until that changes, and Clef takes back its own that wait once the pair is no longer
+  what it asked about, saying why (`reason`: sure of it now, unlikely now, not judged ended while
+  only quiet, not quiet any more, or no longer so). Clef's requests list their signals as evidence
+  in their threads, as an agent's list its items.
 
 A confirmed pair stays whatever the signals say later; a dismissed one is never shown as partners. A merge copies the merged org's
 decisions to the org kept, where it has none of its own (`merged_from`), and undoing it takes the
@@ -405,8 +422,9 @@ copies back: the rows it added go, a row the kept org had keeps its signals and 
 How a pair stands is said in one word wherever it is told (`standingOf`, src/orgpartners.js): the
 admin team's, `confirmed`, `former` (until when) or `dismissed`; else Clef's, `sure` (above the
 band), `likely` (from `LIKELY` to the band's top: linked, though Clef is unsure), `unsure` (in the
-band below `LIKELY`: not linked), `unlikely`, or `unknown` (not asked yet); `none` where
-`org_partners` has no row of the two. Everyone at Adobe reads an org's confirmed and likely pairs
+band below `LIKELY`: not linked), `unlikely`, or `unknown` (not asked yet); over `confirmed`,
+`sure` and `likely`, `quiet` (since a day, with whether the admin team confirmed it): partners of
+now, which is no end; `none` where `org_partners` has no row of the two. Everyone at Adobe reads an org's confirmed and likely pairs
 (Clef's probability at least `LIKELY`, 0.5, not dismissed): `partnersOf(env, customer)` and `customersOf(env, partner)` in
 src/orgpartners.js, and `GET /api/customers/partners?org=` with both, `{ org, partners, customers }`.
 Each is `{ slug, name, type, icon, confirmed, current, since, until, last, p, score, signals }`, the
@@ -3002,7 +3020,7 @@ written by people outside its control.
 | `list_any_channel_threads` | with `read_any_thread`: as `list_channel_threads`, for another channel (with `org_threads` the customer's, and of it the customer's threads only), by its id from `find_channels`, a link to it, or a thread key or message link in it |
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `channel_assignment`, `list_teams`, `request_channel_reassignment`, `request_team_membership` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"), which the admin team decides; or a membership request: add its author, or someone they name, to an ops team (see "Membership requests"), which an admin or that team's managers decide |
-| `request_partner_link` | asks the admin team to decide that a partner works for a customer (`link`, since when) or no longer does (`end`, until when), from what its thread says or the person in its sidebar tells it, on its own or for them, and where its thread shows that a pair the inbox names is wrong (`end` of a pair it has, `link` of one it lacks or is unsure of; `send_feedback` where it cannot tell); the customer and the partner default to the thread's org, by its type (see "Partners"). The knowledge base's agent has it too, for the person in its conversation |
+| `request_partner_link` | asks the admin team, with evidence (threads and messages it may read, each with why), that a partner works for a customer (`link`, since when), no longer does (`end`, until when), or that it look at a pair that seems wrong or uncertain (`review`), from what its thread says or the person in its sidebar tells it, on its own or for them; or records that a quiet pair still works together (`active`: Clef's request to end it withdrawn, the pair not quiet until it is again; no decision). A request of the pair that waits takes the evidence instead of a second one, and the answer says so; the customer and the partner default to the thread's org, by its type (see "Partners"). The knowledge base's agent has it too, for the person in its conversation |
 | `ask_teammate` | a question to one colleague on the thread's teams, with its best guess at each of up to three questions, for a runbook, a reply or a fact; they answer it in their inbox, and the agent is told in an input of its own (see "Questions") |
 | `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
 | `sidebar_followup` | tells the person who asked something in the sidebar (`message`, its `sb_…` id) what has happened since, from a later turn on the thread's messages (`addSidebarFollowup` in `src/sidebar.js`): a new answer of the agent's to them, under their question; refused while it answers a sidebar message, for a message it did not answer yet, over a week old, or followed up three times |

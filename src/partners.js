@@ -761,6 +761,8 @@ export async function partnerNumbers(env, slug, weeks, { customers: linked = [] 
       // A former partner of theirs (`until`), and since when it works for them.
       since: (l && l.since) || null,
       until: (l && l.until) || null,
+      // Quiet since then: no post of its people in the customer's threads (src/orgpartners.js).
+      quiet: (l && l.quiet) || null,
       p: l ? l.p : null,
       signals: l ? l.signals : {},
       theirs: c ? c.threads.size : 0,

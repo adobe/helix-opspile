@@ -175,6 +175,8 @@ async function partnersHere(env, slug, authors, threadsBy, partnerFor) {
     // Since when it works for them, and a former partner's end (src/orgpartners.js `linked`).
     since: x.since || null,
     until: x.until || null,
+    // Quiet: a partner of now whose people have not posted here since then (`quietOf`).
+    quiet: x.quiet || null,
     p: x.p,
     signals: x.signals,
     threads: (threads.get(x.slug) || new Set()).size,

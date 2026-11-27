@@ -13,11 +13,11 @@
 import { isolateCache } from './isolatecache.js';
 import { orgDomain } from './favicons.js';
 import { json } from './http.js';
-import { CLEF } from './label.js';
+import { CLEF, threadMessages } from './label.js';
 import { facts as orgFacts } from './orgmerge.js';
 import { partnerDomainLookup } from './partners.js';
 import {
-  clefRequests, dateOf, openRequestsByPair, pairRequests, requestFor, settleRequests,
+  clefRequests, dateOf, openRequestsByPair, pairRequests, requestFor, SETTLES, settleRequests,
 } from './partnerrequests.js';
 import { platformName } from './platforms.js';
 import { isAdmin } from './roles.js';
@@ -657,18 +657,18 @@ async function fingerprintOf(text) {
   return [...new Uint8Array(d).slice(0, 12)].map((x) => x.toString(16).padStart(2, '0')).join('');
 }
 
-/** Clef's probability that the partner of `state` works for its customer, or null. */
-async function askPair(env, state, wait = ASK_TIMEOUT_MS) {
+/** Clef's probability for one `noul` question `name` (`instructions`) on `state`, or null. */
+async function askNoul(env, state, name, instructions, wait = ASK_TIMEOUT_MS) {
   let timer;
   const timeout = new Promise((resolve) => {
     timer = setTimeout(() => resolve(null), wait);
   });
   try {
     const res = await Promise.race([env.AI.run(CLEF, {
-      model: 'clef', state, questions: { works: { type: 'noul', instructions: QUESTION } },
+      model: 'clef', state, questions: { [name]: { type: 'noul', instructions } },
     }), timeout]);
     // A timeout answers null, and Number(null) is 0: only a number Clef gave is a verdict.
-    const p = res && res.answers && res.answers.works && res.answers.works.noul;
+    const p = res && res.answers && res.answers[name] && res.answers[name].noul;
     return typeof p === 'number' && Number.isFinite(p) ? p : null;
   } catch (e) {
     console.log(JSON.stringify({ route: 'orgpartners', clef: 'failed', error: String(e && e.message) }));
@@ -676,6 +676,11 @@ async function askPair(env, state, wait = ASK_TIMEOUT_MS) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Clef's probability that the partner of `state` works for its customer, or null. */
+async function askPair(env, state, wait = ASK_TIMEOUT_MS) {
+  return askNoul(env, state, 'works', QUESTION, wait);
 }
 
 /** Runs `fn` on each of `items`, `n` at a time. */
@@ -718,6 +723,14 @@ function pairOf(r, c = null) {
     ended: r && r.ended_at ? { by: r.ended_by, at: r.ended_at } : null,
     first: (r && r.first_at) || null,
     last: (r && r.last_at) || null,
+    // Quiet since its last sign (`quietOf`); a thread's agent that saw the two still working
+    // together (`seen`); Clef's word that the partnership ended, given while it was quiet since
+    // `endedFor` (`endedP`).
+    quiet: (r && r.quiet_since) || null,
+    seen: r && r.seen_at ? { by: r.seen_by, at: r.seen_at } : null,
+    endedP: r && r.ended_p !== null && r.ended_p !== undefined ? r.ended_p : null,
+    endedFor: (r && r.ended_fingerprint) || null,
+    endedChecked: (r && r.ended_checked_at) || null,
   };
 }
 
@@ -729,8 +742,10 @@ const decided = (r) => Boolean(r && (r.confirmed_at || r.dismissed_at));
  * (confirmed and ended, until `until`) or `dismissed` (not partners); else Clef's on a pair
  * nobody decided: `sure` (`p` above `UNSURE_HIGH`), `likely` (from `LIKELY`, linked), `unsure` (in
  * the band below `LIKELY`, not linked), `unlikely`, or `unknown` (Clef has not said); `none`
- * where the inbox has no such pair. `x` has the pair's `confirmed`, `dismissed` (truthy for a
- * decision), `until` and `p`, or is null.
+ * where the inbox has no such pair. Over `confirmed`, `sure` and `likely`: `quiet`, a partner of
+ * now whose people have not posted in the customer's threads since `quiet` (a day; `quietOf`),
+ * which is no end (`confirmed` says whether the admin team confirmed it). `x` has the pair's
+ * `confirmed`, `dismissed` (truthy for a decision), `until`, `p` and `quiet`, or is null.
  */
 export function standingOf(x) {
   if (!x) {
@@ -740,8 +755,14 @@ export function standingOf(x) {
   let status = 'unlikely';
   if (x.dismissed) {
     status = 'dismissed';
+  } else if (x.confirmed && x.until) {
+    status = 'former';
+  } else if (x.quiet && (x.confirmed || (p !== null && p >= LIKELY))) {
+    return {
+      status: 'quiet', p, until: null, quiet: x.quiet, confirmed: Boolean(x.confirmed),
+    };
   } else if (x.confirmed) {
-    status = x.until ? 'former' : 'confirmed';
+    status = 'confirmed';
   } else if (p === null) {
     status = 'unknown';
   } else if (p > UNSURE_HIGH) {
@@ -766,6 +787,7 @@ export function standingWords(s) {
     case 'unsure': return `not decided and not linked; Clef is unsure${pc}`;
     case 'unlikely': return `not linked; unlikely, says Clef${pc}`;
     case 'unknown': return 'not decided, and Clef has not said yet';
+    case 'quiet': return `${s.confirmed ? 'confirmed by the admin team' : `not decided; a partner as Clef says${pc}`}, but quiet: none of its people posted in the customer's threads since ${s.quiet}, which is no end`;
     default: return 'not linked: the inbox found nothing else that pairs them';
   }
 }
@@ -779,30 +801,46 @@ export async function pairStandings(env, pairs) {
   if (!list.length) {
     return new Map();
   }
-  const found = await rows(env, `SELECT x.customer, x.partner, x.confirmed_at, x.dismissed_at, x.until, x.p
+  const found = await rows(env, `SELECT x.customer, x.partner, x.confirmed_at, x.dismissed_at, x.until, x.p,
+      x.quiet_since
     FROM org_partners x JOIN (SELECT json_extract(value, '$[0]') AS c, json_extract(value, '$[1]') AS p
       FROM json_each(?1)) j ON x.customer = j.c AND x.partner = j.p`, JSON.stringify(list.map((x) => [x.customer, x.partner])));
   const by = new Map(found.map((r) => [keyOf(r.customer, r.partner), r]));
   return new Map(list.map((x) => {
     const r = by.get(keyOf(x.customer, x.partner));
     return [keyOf(x.customer, x.partner), standingOf(r ? {
-      confirmed: r.confirmed_at, dismissed: r.dismissed_at, until: r.until, p: r.p,
+      confirmed: r.confirmed_at,
+      dismissed: r.dismissed_at,
+      until: r.until,
+      p: r.p,
+      quiet: r.quiet_since,
     } : null)];
   }));
 }
 
 /**
- * Why Clef takes back its open `link` request of each pair nobody decided that it no longer asks
- * about (src/partnerrequests.js `clefRequests`): sure now, or finding it unlikely.
+ * Why Clef takes back its open requests that it no longer asks for (src/partnerrequests.js
+ * `clefRequests`), by `customer\npartner\naction`: a `link` of a pair nobody decided that it is
+ * sure of now, or finds unlikely; an `end` of a quiet pair it does not judge ended (`ENDED_P`), or
+ * of one no longer quiet.
  */
 function takenBack(pairs) {
   const why = new Map();
   for (const x of pairs) {
+    const key = keyOf(x.customer, x.partner);
     if (!x.confirmed && !x.dismissed && x.p !== null && x.p !== undefined) {
       if (x.p > UNSURE_HIGH) {
-        why.set(keyOf(x.customer, x.partner), `Clef is sure of it, ${pctOf(x.p)}: it counts as a partner without a decision`);
+        why.set(`${key}\nlink`, `Clef is sure of it, ${pctOf(x.p)}: it counts as a partner without a decision`);
       } else if (x.p < UNSURE_LOW) {
-        why.set(keyOf(x.customer, x.partner), `Clef finds it unlikely now, ${pctOf(x.p)}`);
+        why.set(`${key}\nlink`, `Clef finds it unlikely now, ${pctOf(x.p)}`);
+      }
+    }
+    if (!x.dismissed && !x.until) {
+      if (x.quiet) {
+        const judged = x.endedFor === x.quiet && x.endedP !== null ? `, ${pctOf(x.endedP)} that it ended` : '';
+        why.set(`${key}\nend`, `Clef does not judge it ended${judged}: its people are only quiet since ${x.quiet}`);
+      } else {
+        why.set(`${key}\nend`, 'Its people are not quiet any more, or a thread showed them still working together');
       }
     }
   }
@@ -820,53 +858,137 @@ const dayOf = (iso) => String(iso || '').slice(0, 10);
 /** An `until` (a day or a month) as the last moment it covers. */
 const endOf = (until) => Date.parse(until.length === 7 ? `${until}-28T23:59:59Z` : `${until}T23:59:59Z`);
 /**
+ * The last sign of the partner working for the customer (ms): its people's last post in the
+ * customer's threads, or a thread's agent that saw them still working together (`seen`), the later.
+ */
+function lastSign(x) {
+  return Math.max(Date.parse(x.last || '') || 0, Date.parse((x.seen && x.seen.at) || '') || 0);
+}
+
+/**
  * Whether the partner's people stopped posting in the customer's threads (`x.last`, the pair's
  * span) for `LAPSED_DAYS` while the customer's went on for `GOING_ON_DAYS` after, at `now` (ms).
  */
 function lapsed(x, orgs, now) {
   const latest = Date.parse((orgs.get(x.customer) || {}).latest || '') || 0;
-  const last = Date.parse(x.last || '') || 0;
+  const last = lastSign(x);
   return Boolean(last) && now - last > LAPSED_DAYS * DAY && latest - last > GOING_ON_DAYS * DAY;
+}
+
+/** Whether a pair counts as partners now: confirmed and not ended, or likely and not decided. */
+const partnersNow = (x) => !x.dismissed && (x.confirmed
+  ? !x.until : x.p !== null && x.p !== undefined && x.p >= LIKELY);
+
+/**
+ * Since when a pair is quiet (a day), or null: partners now (`partnersNow`) whose last sign
+ * (`lastSign`) is `LAPSED_DAYS` old while the customer's threads went on (`lapsed`). Quiet is no
+ * end: Clef asks to end it only when it judges it ended (`ENDED_P`), and a thread's agent that sees
+ * the two still working together makes it not quiet (src/partnerrequests.js `markActive`).
+ */
+export function quietOf(x, orgs, now) {
+  return partnersNow(x) && lapsed(x, orgs, now) ? dayOf(new Date(lastSign(x)).toISOString()) : null;
+}
+
+/** From this probability on, Clef judges a quiet partnership ended, and asks to end it. */
+export const ENDED_P = 0.8;
+/** Clef judges a quiet pair again after this long, or once it is quiet since another day. */
+export const ENDED_RECHECK_DAYS = 7;
+/** Quiet pairs Clef judges per sync. */
+const ASK_ENDED = 4;
+/** Of the partner's last posts, and of the customer's latest threads, how many Clef is shown. */
+const ENDED_POSTS = 3;
+const ENDED_THREADS = 6;
+
+export const ENDED_QUESTION = 'Has partner P stopped working for customer C? Answer yes only where'
+  + ' what is shown says it ended: another agency or partner took over, C or Adobe runs the site'
+  + ' now, the project was finished or cancelled, P said goodbye. P\'s people only being quiet, or'
+  + ' C\'s threads being about other things, is no end.';
+
+/** Whether Clef judged the quiet pair ended, on what it is quiet since now. */
+const judgedEnded = (x) => Boolean(x.quiet) && x.endedFor === x.quiet && x.endedP !== null
+  && x.endedP >= ENDED_P;
+
+/** Whether Clef is to judge the quiet pair (again): not on this quiet, or long ago. */
+const toJudge = (x, now) => Boolean(x.quiet) && (x.confirmed || (x.p !== null && x.p > UNSURE_HIGH))
+  && (x.endedFor !== x.quiet || !x.endedChecked
+    || now - Date.parse(x.endedChecked) > ENDED_RECHECK_DAYS * DAY);
+
+const clip = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+/**
+ * What Clef is shown to judge whether quiet partner `p` stopped working for customer `c`: both
+ * orgs, the pair's span, the partner's last posts in the customer's threads, and the customer's
+ * latest threads with their last messages (where someone may say another agency took over).
+ */
+async function endedState(env, c, p, x, ctx) {
+  const last = x.last || new Date(lastSign(x)).toISOString();
+  const from = new Date((Date.parse(last) || 0) - 60 * DAY).toISOString();
+  const [posts, latest] = await Promise.all([
+    rows(env, `SELECT m.thread, m.id, m.at, t.path, COALESCE(l.title, t.title) AS title,
+        LOWER(SUBSTR(i.email, INSTR(i.email, '@') + 1)) AS domain
+      FROM messages m JOIN threads t ON t.thread = m.thread LEFT JOIN labels l ON l.thread = t.thread
+      JOIN identities i ON i.source || ':' || i.tenant || ':' || i.user_id = +m.author_key
+      WHERE t.org = ?1 AND m.staff = 0 AND m.deleted = 0 AND m.at >= ?2 AND m.at <= ?3
+        AND i.email LIKE '%_@_%'
+      ORDER BY m.at DESC LIMIT 400`, c.slug, from, last),
+    rows(env, `SELECT t.thread, t.path, t.last_at, COALESCE(l.title, t.title) AS title
+      FROM threads t LEFT JOIN labels l ON l.thread = t.thread
+      WHERE t.org = ?1 ORDER BY t.last_at DESC LIMIT ?2`, c.slug, ENDED_THREADS),
+  ]);
+  const theirs = posts.filter((r) => domainPartner(ctx.partnerOf, r.domain) === p.slug)
+    .slice(0, ENDED_POSTS);
+  const read = async (path) => (env.CHANNELS && path
+    ? threadMessages(env, { path }).catch(() => []) : []);
+  const lastPosts = await Promise.all(theirs.map(async (r) => {
+    const m = (await read(r.path)).find((y) => String(y.id) === String(r.id));
+    return `- [${dayOf(r.at)}] in "${clip(r.title, 120) || 'a thread'}": ${clip(m && m.body, 400) || '(no text)'}`;
+  }));
+  const recent = await Promise.all(latest.map(async (r) => {
+    const msgs = (await read(r.path)).filter((m) => !m.deletedAt).slice(-2);
+    const lines = msgs.map((m) => `  > [${dayOf(m.at)}] ${clip(m.body, 300)}`).join('\n');
+    return `- "${clip(r.title, 120) || '(untitled)'}", last ${dayOf(r.last_at)}${lines ? `\n${lines}` : ''}`;
+  }));
+  const until = dayOf(((ctx && c.latest) || '').toString());
+  return `${INTRO}\n${describeOrg('C', c, ctx.usual.get(c.slug))}\n${describeOrg('P', p, (ctx.partnerMail.get(p.slug) || []).join(', '))}`
+    + `\nP ${x.confirmed ? 'was confirmed by the admin team as' : 'is, as the inbox finds,'} a partner of C.`
+    + ` P's people posted in C's threads from ${dayOf(x.first) || 'unknown'} to ${dayOf(last)}; C's threads went on until ${until || 'unknown'}.`
+    + `\nP's last posts in C's threads:\n${lastPosts.join('\n') || '- none the inbox has'}`
+    + `\nC's latest threads:\n${recent.join('\n') || '- none'}`;
 }
 
 /** Kinds of signal that say the two work together, not only that they share something. */
 const DIRECT = new Set(['posters', 'channel']);
 
 /**
- * Why Clef's sureness of a pair is in doubt (`x.p` above `UNSURE_HIGH`), or null. Narrowly, two
- * things only:
- *
- * - `alone`: everything found is of one kind, and not one that says they work together (the
- *   partner's people posting in the customer's threads, a channel named for both): a site owner
- *   both name, the partner's people among the channel's members, the customer's in the partner's
- *   threads. One coincidence may make Clef sure;
- * - `quiet`: the partner's people posted in the customer's threads, and none did for
- *   `LAPSED_DAYS` while the customer's threads went on for `GOING_ON_DAYS` after (`lapsed`, as a
- *   confirmed pair's end): the posting that made Clef sure stopped, and Clef's word stays.
+ * Why Clef's sureness of a pair is in doubt (`x.p` above `UNSURE_HIGH`), or null, narrowly:
+ * `alone`, everything found is of one kind, and not one that says they work together (the
+ * partner's people posting in the customer's threads, a channel named for both): a site owner
+ * both name, the partner's people among the channel's members, the customer's in the partner's
+ * threads. One coincidence may make Clef sure. A pair whose people went quiet is no conflict:
+ * it is `quiet` (`quietOf`), and asked to end only when Clef judges it ended (`partnerWants`).
  */
-export function conflictOf(x, orgs, now) {
+export function conflictOf(x) {
   const kinds = new Set((x.signals || []).map((g) => g.kind));
-  if (kinds.size === 1 && !DIRECT.has([...kinds][0])) {
-    return { kind: 'alone' };
-  }
-  return lapsed(x, orgs, now) ? { kind: 'quiet' } : null;
+  return kinds.size === 1 && !DIRECT.has([...kinds][0]) ? { kind: 'alone' } : null;
 }
 
 /**
  * What Clef asks the admin team to decide (src/partnerrequests.js `clefRequests`), from the
  * pairs as `sync` has them, `orgs` the facts' and `fingerprints` what Clef was shown of each
- * candidate, at `now` (ms). Clef asks only where it is unsure, or its sureness is in doubt; the
- * pairs it is sure of count as linked without a decision, as the likely ones always did:
+ * candidate (the quiet ones as `judgeQuiet` left them). Clef asks only where it is unsure, or its
+ * sureness is in doubt; the pairs it is sure of count as linked without a decision, as the likely
+ * ones always did:
  *
  * - a pair nobody decided whose `p` is in the unsure band (`UNSURE_LOW` to `UNSURE_HIGH`): a
  *   partner? (`link`, on what Clef was shown);
  * - one nobody decided that Clef is sure of while its signals conflict (`conflictOf`): a partner
- *   still? (`link`; `alone` on what Clef was shown, `quiet` on the partner's last post);
- * - a confirmed one whose people posted nothing in the customer's threads for `LAPSED_DAYS`, while
- *   the customer's went on: one no more? (`end`, until their last post);
+ *   still? (`link`, on what Clef was shown);
+ * - a quiet one (`quietOf`: confirmed, or one Clef is sure of) that Clef judges ended, from its
+ *   last posts and the customer's latest threads (`endedP` at least `ENDED_P`, given on this
+ *   quiet): one no more? (`end`, until its last sign). Quiet alone asks nothing;
  * - an ended one whose people post again: one again? (`link`).
  */
-export function partnerWants(pairs, orgs, fingerprints, now) {
+export function partnerWants(pairs, orgs, fingerprints) {
   const wants = [];
   const name = (slug) => (orgs.get(slug) && orgs.get(slug).name) || slug;
   const poss = (slug) => (/s$/i.test(name(slug)) ? `${name(slug)}'` : `${name(slug)}'s`);
@@ -877,7 +999,7 @@ export function partnerWants(pairs, orgs, fingerprints, now) {
     const open = !x.confirmed && !x.dismissed && x.candidate && x.p !== null
       && fingerprints.has(key);
     const found = (x.signals || []).map((g) => g.text).join('; ');
-    const doubt = open && x.p > UNSURE_HIGH ? conflictOf(x, orgs, now) : null;
+    const doubt = open && x.p > UNSURE_HIGH ? conflictOf(x) : null;
     if (open && x.p >= UNSURE_LOW && x.p <= UNSURE_HIGH) {
       wants.push({
         customer: x.customer,
@@ -887,26 +1009,23 @@ export function partnerWants(pairs, orgs, fingerprints, now) {
         note: `Clef is unsure, ${pctOf(x.p)}, that ${name(x.partner)} works for ${name(x.customer)}: ${found}.`,
         fingerprint: fingerprints.get(key),
       });
-    } else if (doubt) {
-      const why = doubt.kind === 'quiet'
-        ? `but nobody of ${name(x.partner)} posted in ${poss(x.customer)} threads since ${dayOf(x.last)}, and its threads went on until ${dayOf(new Date(latest).toISOString())}`
-        : 'from one kind of evidence alone';
+    } else if (doubt && !x.quiet) {
       wants.push({
         customer: x.customer,
         partner: x.partner,
         action: 'link',
         since: x.first ? dayOf(x.first) : null,
-        note: `Clef is sure, ${pctOf(x.p)}, that ${name(x.partner)} works for ${name(x.customer)}, ${why}: ${found}.`,
-        fingerprint: doubt.kind === 'quiet' ? `quiet:${dayOf(x.last)}` : fingerprints.get(key),
+        note: `Clef is sure, ${pctOf(x.p)}, that ${name(x.partner)} works for ${name(x.customer)}, from one kind of evidence alone: ${found}.`,
+        fingerprint: fingerprints.get(key),
       });
-    } else if (x.confirmed && !x.until && lapsed(x, orgs, now)) {
+    } else if (!x.dismissed && !x.until && judgedEnded(x) && (x.confirmed || x.p > UNSURE_HIGH)) {
       wants.push({
         customer: x.customer,
         partner: x.partner,
         action: 'end',
-        until: dayOf(x.last),
-        note: `Nobody of ${name(x.partner)} posted in ${poss(x.customer)} threads since ${dayOf(x.last)}, and its threads went on until ${dayOf(new Date(latest).toISOString())}.`,
-        fingerprint: `end:${dayOf(x.last)}`,
+        until: x.quiet,
+        note: `Clef judges ${pctOf(x.endedP)} that ${name(x.partner)} stopped working for ${name(x.customer)}: nobody of it posted in ${poss(x.customer)} threads since ${x.quiet}, its threads went on until ${dayOf(new Date(latest).toISOString())}, and what they say reads as an end.`,
+        fingerprint: `end:${x.quiet}`,
       });
     } else if (x.confirmed && x.until && last && last - endOf(x.until) > AGAIN_DAYS * DAY) {
       wants.push({
@@ -920,6 +1039,41 @@ export function partnerWants(pairs, orgs, fingerprints, now) {
     }
   }
   return wants;
+}
+
+/**
+ * Brings each pair's quiet up to now (`quietOf`, `quiet_since`, written where it changed), and has
+ * Clef judge whether the quiet ones it is to judge (`toJudge`) ended, `ASK_ENDED` a sync, from
+ * what `endedState` shows it: its answer is kept with the day it was quiet since
+ * (`ended_fingerprint`) and when (`ended_checked_at`), and none Clef did not give.
+ */
+async function judgeQuiet(env, pairs, orgs, ctx, { wait = ASK_TIMEOUT_MS, judging = true } = {}) {
+  const nowMs = Date.now();
+  const writes = [];
+  for (const x of pairs) {
+    const q = orgs.has(x.customer) ? quietOf(x, orgs, nowMs) : null;
+    if (q !== x.quiet) {
+      writes.push(env.DB.prepare('UPDATE org_partners SET quiet_since = ? WHERE customer = ? AND partner = ?')
+        .bind(q, x.customer, x.partner));
+      x.quiet = q;
+    }
+  }
+  if (writes.length) {
+    await env.DB.batch(writes);
+  }
+  const judge = judging ? pairs.filter((x) => toJudge(x, nowMs) && orgs.has(x.customer)
+    && orgs.has(x.partner)).slice(0, ASK_ENDED) : [];
+  await pool(judge, ASK_PARALLEL, async (x) => {
+    const state = await endedState(env, orgs.get(x.customer), orgs.get(x.partner), x, ctx);
+    const p = await askNoul(env, state, 'ended', ENDED_QUESTION, wait);
+    if (p === null) {
+      return;
+    }
+    const at = new Date().toISOString();
+    Object.assign(x, { endedP: p, endedFor: x.quiet, endedChecked: at });
+    await env.DB.prepare(`UPDATE org_partners SET ended_p = ?, ended_fingerprint = ?, ended_checked_at = ?
+      WHERE customer = ? AND partner = ?`).bind(p, x.quiet, at, x.customer, x.partner).run();
+  });
 }
 
 /**
@@ -1032,9 +1186,10 @@ async function sync(env, {
   });
   const unchecked = pairs.filter((x) => x.candidate && !x.confirmed && !x.dismissed
     && (x.p === null || x.stale)).length;
+  await judgeQuiet(env, pairs, orgs, ctx, { wait, judging: Boolean(env.AI) });
   // What Clef asks the admin team to decide now, in its inbox; best effort, as the list is.
   if (requests) {
-    const wants = partnerWants(pairs, orgs, fingerprints, Date.now());
+    const wants = partnerWants(pairs, orgs, fingerprints);
     await clefRequests(env, wants, { why: takenBack(pairs) }).catch((e) => {
       console.error(JSON.stringify({ route: 'orgpartners', requests: 'failed', error: e.message }));
     });
@@ -1299,7 +1454,8 @@ export async function orgPartners(env, me, { pair = '', fresh = false } = {}) {
  * back, and Clef's verdict is what is said of the pair again; a confirmation undone clears its
  * dates too (`since`, and an end: an ended pair undoes its end first, `endPartner`). The pair's
  * open requests it settles are closed with it (src/partnerrequests.js `settleRequests`): a
- * confirmation the `link` ones, a dismissal all; an undo opens none again.
+ * confirmation the `link` and `review` ones, a dismissal all (`SETTLES`); an undo opens none
+ * again.
  */
 export async function decidePartner(env, me, body, what) {
   const customer = clean(body.customer);
@@ -1339,7 +1495,7 @@ export async function decidePartner(env, me, body, what) {
       ${set}_at = excluded.${set}_at${clear}, merged_from = NULL, merged_new = NULL`)
     .bind(customer, partner, by, at, since).run();
   if (!body.undo) {
-    await settleRequests(env, by, customer, partner, what === 'confirm' ? ['link'] : ['link', 'end'], what === 'confirm' ? 'confirmed' : 'dismissed');
+    await settleRequests(env, by, customer, partner, SETTLES[what], what === 'confirm' ? 'confirmed' : 'dismissed');
   }
   const row = await env.DB.prepare('SELECT * FROM org_partners WHERE customer = ? AND partner = ?')
     .bind(customer, partner).first();
@@ -1353,7 +1509,7 @@ export async function decidePartner(env, me, body, what) {
  * POST /api/admin/org-partners/end `{ customer, partner, until, undo? }`, for the admin team: the
  * partner worked for the customer until `until` (a day or a month), a former partner: confirmed,
  * by whoever ends it when nobody confirmed it before, and not dismissed. The pair's open `end`
- * requests are closed with it. `undo` makes it a partner again, as it was confirmed.
+ * and `review` requests are closed with it. `undo` makes it a partner again, as it was confirmed.
  */
 export async function endPartner(env, me, body) {
   const customer = clean(body.customer);
@@ -1386,7 +1542,7 @@ export async function endPartner(env, me, body) {
         dismissed_by = NULL, dismissed_at = NULL, until = excluded.until,
         ended_by = excluded.ended_by, ended_at = excluded.ended_at, merged_from = NULL, merged_new = NULL`)
       .bind(customer, partner, by, at, until).run();
-    await settleRequests(env, by, customer, partner, ['end'], 'ended');
+    await settleRequests(env, by, customer, partner, SETTLES.end, 'ended');
   }
   const row = await env.DB.prepare('SELECT * FROM org_partners WHERE customer = ? AND partner = ?')
     .bind(customer, partner).first();
@@ -1400,7 +1556,8 @@ export async function endPartner(env, me, body) {
 
 /**
  * The confirmed and likely pairs of an org, as everyone at Adobe reads them: `[{ slug, name,
- * type, icon, confirmed, current, since, until, last, p, score, signals: { <kind>: n } }]`, the
+ * type, icon, confirmed, current, since, until, last, quiet, p, score, signals: { <kind>: n } }]`
+ * (`quiet`: the day since which a partner of now is quiet, `quietOf`), the
  * confirmed partners of now first, then the likely ones by Clef's probability, then the former
  * ones (`until`, the latest ended first). `since` is the admin team's, else the day the partner's
  * people first posted in the customer's threads as the inbox has them; `last` their last post. No
@@ -1410,7 +1567,7 @@ export async function endPartner(env, me, body) {
 async function linked(env, slug, side) {
   const other = side === 'customer' ? 'partner' : 'customer';
   const list = await rows(env, `SELECT x.${other} AS slug, o.name, o.type, o.icon, x.p, x.score,
-      x.signals, x.confirmed_at, x.since, x.until, x.first_at, x.last_at
+      x.signals, x.confirmed_at, x.since, x.until, x.first_at, x.last_at, x.quiet_since
     FROM org_partners x LEFT JOIN orgs o ON o.slug = x.${other}
     WHERE x.${side} = ?1 AND x.dismissed_at IS NULL AND (x.confirmed_at IS NOT NULL OR x.p >= ?2)
       AND x.${other} NOT IN (SELECT slug FROM org_merges)
@@ -1433,6 +1590,8 @@ async function linked(env, slug, side) {
       since: r.since || (r.first_at ? String(r.first_at).slice(0, 10) : null),
       until: r.until || null,
       last: r.last_at || null,
+      // A partner of now whose people have not posted in the customer's threads since then.
+      quiet: (!r.until && r.quiet_since) || null,
       p: r.p ?? null,
       score: r.score || 0,
       signals: Object.fromEntries(signals.map((s) => [s.kind, s.n])),
