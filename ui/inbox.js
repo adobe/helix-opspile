@@ -5701,6 +5701,11 @@ function rqField(a, f) {
     date: () => `<input id="${id}" ${name} type="date" value="${esc(f.value || '')}"${f.required ? ' required' : ''}>`,
   }[f.type];
   const control = input ? input() : `<input id="${id}" ${name} type="${f.type === 'email' ? 'email' : 'text'}" value="${esc(f.value || '')}"${f.max ? ` maxlength="${f.max}"` : ''}${f.required ? ' required' : ''} autocomplete="off">`;
+  // An optional day can be left out, though it comes filled in (a request's since): a date input
+  // has no way of its own to be emptied again.
+  if (f.type === 'date' && !f.required) {
+    return `<div class="rq-date"><label class="fld" for="${id}"><span>${esc(f.label)}</span>${control}</label><button type="button" class="link" data-rq-clear="${id}"${f.value ? '' : ' disabled'}>Clear</button></div>`;
+  }
   return `<label class="fld" for="${id}"><span>${esc(f.label)}</span>${control}</label>`;
 }
 
@@ -5900,7 +5905,20 @@ function wireRequest(key, data) {
   const a = form && acts.find((x) => x.id === form.dataset.rqForm);
   if (form && a) {
     rqRestore(form, a);
+    const clears = [...form.querySelectorAll('[data-rq-clear]')];
+    const canClear = () => { for (const b of clears) b.disabled = !$(b.dataset.rqClear)?.value; };
+    canClear();
+    for (const b of clears) {
+      b.onclick = (e) => {
+        e.preventDefault();
+        const el = $(b.dataset.rqClear);
+        el.value = '';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.focus();
+      };
+    }
     form.oninput = (e) => {
+      canClear();
       const was = rq.values[a.id] || {};
       const now = rqValues(form, a);
       // A field that follows another (the welcome names the team) changes with it, until written by hand.
