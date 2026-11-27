@@ -3161,6 +3161,14 @@ main.simple .fr.all { margin-bottom: var(--spectrum-spacing-75); }
 .logo .av { display: grid; place-items: center; font-size: calc(var(--spectrum-spacing-100) + var(--spectrum-border-width-100)); line-height: 1; }
 .spectrum .logo > *, .spectrum .logo .av { border-radius: var(--spectrum-corner-radius-75); }
 .spectrum .logo img { background: var(--spectrum-background-layer-2-color); }
+/* The partners at work in a heading's threads: their logos, small on its lower corner. */
+.logo > .pms { inset: auto calc(-1 * var(--spectrum-spacing-75)) calc(-1 * var(--spectrum-spacing-75)) auto; display: flex; width: auto; height: auto; }
+.logo .pm { position: relative; flex: none; width: var(--spectrum-spacing-200); height: var(--spectrum-spacing-200); }
+.logo .pm + .pm { margin-left: calc(-1 * var(--spectrum-spacing-75)); }
+.logo .pm > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.logo .pm .av { font-size: var(--spectrum-font-size-50); }
+.spectrum .logo > .pms { border-radius: 0; }
+.spectrum .logo .pm > *, .spectrum .logo .pm .av { border-radius: var(--spectrum-corner-radius-75); box-shadow: 0 0 0 var(--spectrum-border-width-200) var(--content); }
 main.simple .t .l2 { padding-left: 0; }
 main.simple .t.dotted .l2 { padding-left: calc(var(--spectrum-spacing-300) + var(--spectrum-border-width-100)); }
 main.simple .t .cust { flex: none; }

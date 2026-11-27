@@ -1672,9 +1672,29 @@ const sideBadge = (n, t = null) => (n ? `<b class="sidebadge" title="${esc(sideT
  * A customer's logo: its icon (the admin team's, else its mail domain's favicon) over its
  * initial on its colour, which shows where there is no icon or it does not load (wireFavicons).
  */
-function logo(org, ts) {
+function logo(org, ts, partners = []) {
   const t = ts.find((x) => x.org === org && orgIcon(x));
-  return withOrg(`<span class="logo">${tile(customerName(org))}${t ? favImg(orgIcon(t)) : ''}</span>`, org);
+  return withOrg(`<span class="logo">${tile(customerName(org))}${t ? favImg(orgIcon(t)) : ''}${partnerMarks(partners)}</span>`, org);
+}
+/**
+ * The partners whose people post in `ts` (`linked.with`, src/threadlinks.js), once each in the
+ * order they first come: the threads a heading shows, so a partner is on it only while it is
+ * at work in one of them.
+ */
+function partnersIn(ts) {
+  const by = new Map();
+  for (const t of ts) {
+    for (const o of t.linked?.with || []) if (o.role !== 'customer' && !by.has(o.slug)) by.set(o.slug, o);
+  }
+  return [...by.values()];
+}
+/** The partners' logos, small on a customer's lower corner: two at most, the rest in its title. */
+function partnerMarks(partners) {
+  if (!partners.length) return '';
+  const name = (o) => o.name || o.slug;
+  const say = `With ${partners.map(name).join(', ')}: ${partners.length === 1 ? 'the partner\'s' : 'partners\''} people post in these threads`;
+  const marks = partners.slice(0, 2).map((o) => `<span class="pm">${favImg(o.icon, { fallback: tile(name(o)) }) || tile(name(o))}</span>`).join('');
+  return `<span class="pms" role="img" aria-label="${esc(say)}" title="${esc(say)}">${marks}</span>`;
 }
 /**
  * The customers' order in the column: those the red badge counts first (youCount), most
@@ -2117,9 +2137,9 @@ const oneCustomer = () => state.sel.customer?.size === 1;
  * it, on a public one the customers and partners whose people do, as `{ label, title }` for its
  * row and its header; null where it has neither.
  */
-function linkedLabel(linked) {
+function linkedLabel(linked, { partners = true } = {}) {
   const about = linked?.about || [];
-  const withs = linked?.with || [];
+  const withs = (linked?.with || []).filter((o) => partners || o.role === 'customer');
   const name = (o) => o.name || o.slug;
   const more = (list) => (list.length > 1 ? ` +${list.length - 1}` : '');
   if (about.length) {
@@ -2139,9 +2159,12 @@ function linkedLabel(linked) {
   }
   return null;
 }
-/** A row's tag of what its thread is linked with: "About Acme", "With Agency". */
-const linkedTag = (t) => {
-  const l = linkedLabel(t.linked);
+/**
+ * A row's tag of what its thread is linked with: "About Acme", "With Agency". Under a customer's
+ * heading the partners are not named: their logos are on the heading's (`partnersIn`).
+ */
+const linkedTag = (t, { partners = true } = {}) => {
+  const l = linkedLabel(t.linked, { partners });
   return l ? `<span class="lkd" title="${esc(l.title)}">${esc(l.label)}</span>` : '';
 };
 
@@ -2207,7 +2230,7 @@ function simpleRow(t, hit = null) {
   return `${rowOpen(t, hit, ` simple${dot ? ' dotted' : ''}`)}
     <div class="l1">${dot}<span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}${linkedTag(t)}${said}${sideBadge(sideCount(t), t)}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
+    <div class="l2">${cust}${linkedTag(t, { partners: !grouped() })}${said}${sideBadge(sideCount(t), t)}${GROUPS.mark === 'badge' ? youBadge(n) : ''}</div>${hit ? hitLine(hit) : ''}</div>`;
 }
 /**
  * The list by customer (`shown` in the view's order, latest activity first): each customer
@@ -2236,7 +2259,7 @@ function groupPlan(shown) {
     if (!rows.length) { quiet.push(org); continue; }
     for (const t of rows) L.grouped.add(t.thread);
     plan.push({
-      head: org, you: ts.reduce((n, t) => n + youCount(t), 0), unread: ts.some((t) => t.unread), picked: oneCustomer(),
+      head: org, you: ts.reduce((n, t) => n + youCount(t), 0), unread: ts.some((t) => t.unread), picked: oneCustomer(), partners: partnersIn(rows),
     });
     for (const t of rows) plan.push({ t });
     if (ts.length > rows.length) plan.push({ more: org, n: ts.length - rows.length });
@@ -2260,7 +2283,7 @@ function groupHtml(x) {
   const stack = keys.length
     ? `<button type="button" class="stk-line" data-stack="${esc(x.head)}" aria-haspopup="dialog" title="${esc(`${name}'s tech stack: ${keys.join(', ')}. Show the drawing`)}">${keys.map((k) => `<span>${esc(k)}</span>`).join('')}</button>`
     : '';
-  return `<div class="grp${x.unread ? ' new' : ''}${GROUPS.sticky ? ' sticky' : ''}${keys.length ? ' stacked' : ''}" data-group="${esc(x.head)}"><button type="button" class="gn" data-group="${esc(x.head)}" title="${x.picked ? 'Back to all customers' : `Only ${esc(name)}`}">${logo(x.head, listed())}<span class="nm">${esc(name)}</span>${GROUPS.headBadge ? youBadge(x.you) : ''}</button>${stack}${back}</div>`;
+  return `<div class="grp${x.unread ? ' new' : ''}${GROUPS.sticky ? ' sticky' : ''}${keys.length ? ' stacked' : ''}" data-group="${esc(x.head)}"><button type="button" class="gn" data-group="${esc(x.head)}" title="${x.picked ? 'Back to all customers' : `Only ${esc(name)}`}">${logo(x.head, listed(), x.partners)}<span class="nm">${esc(name)}</span>${GROUPS.headBadge ? youBadge(x.you) : ''}</button>${stack}${back}</div>`;
 }
 
 /*
