@@ -1529,6 +1529,8 @@ describe('inbox page', () => {
       valuesOf: (f, t) => [f.value(t)],
       youCount: (t) => (t.unread ? t.you || 0 : 0),
       youTitle: (n) => `${n}`,
+      badgePool: () => threads.filter((x) => x.unread && x.you),
+      viewCount: (x) => (x.unread ? x.you || 0 : 0),
       statusOf: () => 'quiet',
       rowLabel: (f, v) => v,
       notButton: () => '',

@@ -21,7 +21,7 @@ const ORIGIN = 'https://pile.example';
  * ui/header.js on a page at `path`, with a browser tab's sessionStorage and history, and the
  * browser's localStorage (`local`).
  */
-function tab(path, storage = new Map(), local = new Map(), preset = {}) {
+function tab(path, storage = new Map(), local = new Map(), preset = {}, counts = []) {
   const location = new URL(path, ORIGIN);
   const element = () => ({
     dataset: {},
@@ -79,7 +79,12 @@ function tab(path, storage = new Map(), local = new Map(), preset = {}) {
       documentElement: root,
       getElementById: byId,
       querySelector: (sel) => (sel === 'header' ? header : element()),
-      querySelectorAll: (sel) => (sel.startsWith('meta') ? metas : []),
+      querySelectorAll: (sel) => {
+        if (sel.startsWith('meta')) {
+          return metas;
+        }
+        return sel.includes('.count') ? counts : [];
+      },
     },
   };
   vm.runInNewContext(SCRIPTS['header.js'], context);
@@ -260,6 +265,24 @@ describe('the header', () => {
     assert.doesNotMatch(nav({ staff: true }).html, /class="count/);
   });
 
+  it('shows the number on Inbox but in the inbox, where its views and filters say it', () => {
+    const badge = () => ({ hidden: true, textContent: '', closest: () => ({}) });
+    const here = [badge()];
+    const inbox = tab('/inbox?team=edge', new Map(), new Map(), {}, here);
+    inbox.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 2, team: 'edge' } }, { count: true });
+    assert.deepEqual([here[0].hidden, here[0].textContent], [true, '2']);
+    const away = [badge()];
+    const teams = tab('/inbox/admin?tab=teams', new Map(), new Map(), {}, away);
+    teams.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 2, team: 'edge' } }, { count: true });
+    assert.deepEqual([away[0].hidden, away[0].textContent], [false, '2']);
+    // In a team's inbox only what is counted already changes: Personal has every one of them.
+    teams.Header.waiting({ a: { n: 1 } }, { update: true });
+    assert.equal(teams.Header.counts().you, 0);
+    teams.Header.waiting({ a: { n: 1 } });
+    teams.Header.waiting({ a: { n: 3 }, z: { n: 5 } }, { update: true });
+    assert.equal(teams.Header.counts().you, 3);
+  });
+
   it('counts what waits for you as one number, and opens where it is', () => {
     const inbox = tab('/inbox?team=edge');
     const opened = [];
@@ -268,7 +291,12 @@ describe('the header', () => {
     // The messages for you the inbox knows of (a bot's reply among them), with the questions.
     inbox.Header.waiting({ a: { n: 3, team: 'edge' }, b: { n: 1, team: 'helix' }, c: { n: 0 } });
     assert.equal(inbox.byId('pages').dataset.count, '6');
-    assert.deepEqual({ ...inbox.Header.youByTeam() }, { edge: 3, helix: 1 });
+    // Personal has each of them, by entry (a group's first thread).
+    assert.deepEqual([...inbox.Header.waitingEntries()], ['a', 'b']);
+    // One no inbox of yours has: not counted.
+    inbox.Header.forget(['b']);
+    assert.equal(inbox.byId('pages').dataset.count, '5');
+    inbox.Header.waiting({ b: { n: 1, team: 'helix' } });
     // Read here: gone at once, whatever the server says until it has the read.
     inbox.Header.readHere(['a']);
     assert.equal(inbox.byId('pages').dataset.count, '3');

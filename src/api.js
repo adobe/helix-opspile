@@ -1673,8 +1673,13 @@ async function route(request, env, url, {
     return json({ emoji: await closestEmoji(env, names) });
   }
   if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
+    // `g`: those entries only (their keys, at most 100), as Inbox in the header counts them.
+    const only = url.searchParams.getAll('g').slice(0, 100);
     return json(await inbox(env, me, null, {
-      personal: true, before: url.searchParams.get('before'), limit: url.searchParams.get('limit'),
+      personal: true,
+      before: only.length ? null : url.searchParams.get('before'),
+      limit: url.searchParams.get('limit'),
+      groups: only.length ? only : null,
     }));
   }
   if (url.pathname === '/api/inbox') {

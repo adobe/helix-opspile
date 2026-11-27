@@ -891,7 +891,11 @@ function waitingThreads() {
   return rows.filter((r) => counts.get(r.thread))
     .sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))
     .map((r) => ({
-      thread: r.thread, team: r.team, org: r.org, n: counts.get(r.thread),
+      thread: r.thread,
+      entry: r.logical_thread || r.thread,
+      team: r.team,
+      org: r.org,
+      n: counts.get(r.thread),
     }));
 }
 
@@ -2140,7 +2144,9 @@ async function api(req, res, url) {
     return json(res, { error: 'viewing as someone is for the admin team' }, 403);
   }
   if (url.pathname === '/api/inbox' && url.searchParams.get('view') === 'personal') {
-    const view = inbox(null, url.searchParams.get('before'), true, null, url.searchParams.get('limit'));
+    // `g`: those entries only, as src/api.js has them.
+    const only = url.searchParams.getAll('g');
+    const view = inbox(null, only.length ? null : url.searchParams.get('before'), true, only.length ? new Set(only) : null, url.searchParams.get('limit'));
     return json(res, as ? { ...view, me: { id: as.id, name: as.name, readonly: true } } : view);
   }
   if (url.pathname === '/api/inbox' && as) {

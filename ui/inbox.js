@@ -1574,7 +1574,15 @@ function facetRows(f) {
   const counts = new Map();
   const mix = new Map(); // value -> { red, yellow, green, none }
   const unread = new Set(); // values with threads the viewer has not read
-  const mentions = new Map(); // value -> messages for the viewer they have not read (youCount)
+  // Value -> what waits for you there (viewCount), over the whole view (badgePool): a card's add
+  // up to the view's number. Not on a card of several values a thread (topics), nor a card's
+  // second part (Draft, under Resolved): those would count a thread twice.
+  const mentions = new Map();
+  if (!f.multi && !f.into) {
+    for (const t of badgePool()) {
+      for (const v of valuesOf(f, t)) mentions.set(v, (mentions.get(v) || 0) + viewCount(t));
+    }
+  }
   for (const t of pool) {
     const counted = !state.unread || unreadNow(t);
     for (const v of valuesOf(f, t)) {
@@ -1582,14 +1590,14 @@ function facetRows(f) {
       if (!counted) continue;
       counts.set(v, (counts.get(v) || 0) + 1);
       if (t.unread) unread.add(v);
-      const you = youCount(t);
-      if (you) mentions.set(v, (mentions.get(v) || 0) + you);
       const m = mix.get(v) || {};
       m[statusOf(t)] = (m[statusOf(t)] || 0) + 1;
       mix.set(v, m);
     }
   }
   if (f.multi) held.delete('(none)');
+  // A value with something for you is there, whatever the filters (its badge adds up).
+  for (const v of mentions.keys()) if (!held.has(v)) held.set(v, 0);
   for (const v of state.sel[f.id] || []) if (!held.has(v)) held.set(v, 0);
   for (const v of state.not[f.id] || []) if (!held.has(v)) held.set(v, 0);
   let rows = [...held];
@@ -1599,7 +1607,7 @@ function facetRows(f) {
   const on = state.sel[f.id] || new Set();
   const off = state.not[f.id] || new Set();
   // Past the limit, the values picked or excluded stay, so they can be clicked off again.
-  if (f.limit) rows = rows.filter(([v], i) => i < f.limit || on.has(v) || off.has(v));
+  if (f.limit) rows = rows.filter(([v], i) => i < f.limit || on.has(v) || off.has(v) || mentions.has(v));
   if (f.group) rows.sort((a, b) => f.groups.indexOf(f.group(a[0])) - f.groups.indexOf(f.group(b[0])));
   rows = rows.map(([v]) => [v, counts.get(v) || 0]);
   const max = Math.max(1, ...rows.map((r) => r[1]));
@@ -1665,6 +1673,20 @@ const youCount = (t) => {
   if (isRequestKey(t.thread)) return t.request?.open && adminRequests() ? 1 : 0;
   return t.unread ? Math.max(t.unreadForYou || 0, mentionsMe(t) ? (t.unreadMentions || 1) : 0) : 0;
 };
+/**
+ * What of thread `t` the view on screen counts in its filters' red badges, which add up to its
+ * number in the switch (viewWaits): in Personal what waits for you (youCount); in the admin
+ * team's inbox an open request, one; elsewhere nothing, as what is yours there is Personal's.
+ */
+const viewCount = (t) => {
+  if (personal()) return t.kind === 'alert' ? 0 : youCount(t);
+  return isRequestKey(t.thread) && !isQuestionKey(t.thread) ? youCount(t) : 0;
+};
+/**
+ * The threads the filters' red badges count: every thread of the view, whatever the filters,
+ * unread only or a search, so that every card's add up to the view's number. None in a search.
+ */
+const badgePool = () => (searching() ? [] : (state.data?.threads || []).filter((t) => viewCount(t) > 0));
 /** The purple badge, but on a question asked of you: that one waits for you, the red badge. */
 const sideMark = (t) => (isQuestionKey(t.thread) ? '' : sideBadge(sideCount(t), t));
 /**
@@ -1803,10 +1825,14 @@ function simpleCustomers() {
   for (const v of off) by.set(v, { unread: false, you: 0, out: true });
   for (const t of all) {
     const c = by.get(t.org) || { unread: false, you: 0 };
-    if (!c.out) {
-      c.unread ||= Boolean(t.unread);
-      c.you += youCount(t);
-    }
+    if (!c.out) c.unread ||= Boolean(t.unread);
+    by.set(t.org, c);
+  }
+  // What waits for you, by customer, over the whole view (badgePool), an excluded customer's and
+  // one the @ leaves out too: the column adds up to Personal's number.
+  for (const t of badgePool()) {
+    const c = by.get(t.org) || { unread: Boolean(t.unread), you: 0 };
+    c.you += viewCount(t);
     by.set(t.org, c);
   }
   for (const v of on) if (!by.has(v)) by.set(v, { unread: false, you: 0 });
@@ -2822,7 +2848,7 @@ function renderThreads() { inPass(threadRows); }
  */
 function filtButton(on) {
   if (!simple()) return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the filters">${SLIDERS}<span class="word">Filters</span>${on ? `<b>${on}</b>` : ''}</button>`;
-  const you = listed().filter((t) => passes(t, 'customer') && !state.not.customer?.has(t.org)).reduce((n, t) => n + youCount(t), 0);
+  const you = badgePool().reduce((n, t) => n + viewCount(t), 0);
   const at = mentionsOn() ? `<span class="at" title="Showing only threads that mention you">${AT}</span>` : '';
   return `<button class="filt" data-filters aria-controls="filters" aria-expanded="${state.filtering}" title="Show the customers">${SLIDERS}<span class="word">Customers</span>${at}${youBadge(you)}</button>`;
 }
@@ -2945,28 +2971,28 @@ function viewSwitch() {
   }, ...(state.teams || []).map((t) => ({
     slug: t.slug, name: t.name, on: !mine && t.slug === state.team,
   }))];
-  return `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}">${esc(v.name)}${viewBadge(v.slug)}</button>`).join('')}</span>`;
+  return `<span class="order" role="radiogroup" aria-label="Inbox">${views.map((v) => `<button role="radio" aria-checked="${v.on}" data-view="${esc(v.slug)}"><span class="vn">${esc(v.name)}</span>${v.on ? '' : viewBadge(v.slug)}</button>`).join('')}</span>`;
 }
 /**
- * What waits for you in a view, as its red badges count it there (youCount): in Personal the
- * messages for you and the questions agents asked you; in a team's inbox, those of its threads,
- * and in the admin team's its requests too. Inbox in the header counts each once: Personal's and
- * the admin team's requests (ui/header.js).
+ * What waits for you in a view, its red number in the switch (not on the view on screen: its
+ * filters say it). Each thing that waits is in one view, so the views add up to Inbox's number in
+ * the header (ui/header.js): Personal has the messages for you, wherever their threads are filed,
+ * and the questions agents asked you; the admin team's inbox its requests; a team's, nothing of
+ * its own. A view's filters add up to it (viewCount).
  */
 function viewWaits(slug) {
   if (state.as || !globalThis.Header?.counts) return 0;
   const c = Header.counts();
   if (!slug) return c.you + c.questions;
-  const asked = rqList.entries.filter((t) => isQuestionKey(t.thread) && t.request?.open && t.team === slug).length;
-  return (Header.youByTeam()[slug] || 0) + asked + (slug === 'admin' && state.me?.admin ? c.admin : 0);
+  return slug === 'admin' && state.me?.admin ? c.admin : 0;
 }
 function viewBadge(slug) {
   const n = viewWaits(slug);
   if (!n) return '';
-  const said = slug === 'admin' && state.me?.admin && Header.counts().admin
-    ? `${n} ${n === 1 ? 'waits' : 'wait'} for you here, the admin team's requests among them: show the requests`
+  const said = slug
+    ? `${n} ${n === 1 ? 'request waits' : 'requests wait'} for the admin team: show them`
     : `${n} ${n === 1 ? 'waits' : 'wait'} for you here: messages for you, and questions`;
-  return ` <b class="men" data-waits="${esc(slug)}" title="${esc(said)}" aria-label="${esc(said)}">${n > 99 ? '99+' : n}</b>`;
+  return `<b class="men" data-waits="${esc(slug)}" title="${esc(said)}" aria-label="${esc(said)}">${n > 99 ? '99+' : n}</b>`;
 }
 /**
  * The view switch on a phone scrolls sideways when its views do not fit (see the styles): the
@@ -3359,14 +3385,52 @@ function tellHeader() {
   if (state.as || !state.data?.threads || !globalThis.Header?.waiting) return;
   const known = {};
   for (const t of state.data.threads) {
-    if (isRequestKey(t.thread)) continue;
-    for (const m of t.members || []) known[m.thread] = { n: 0 };
-    known[t.thread] = { n: youCount(t), team: t.team || null, org: t.org || null };
+    if (isRequestKey(t.thread) || t.kind === 'alert') continue;
+    for (const m of t.members || []) known[m.thread] = { n: 0, entry: t.thread };
+    known[t.thread] = {
+      n: youCount(t), team: t.team || null, org: t.org || null, entry: t.thread,
+    };
   }
-  const said = JSON.stringify(known);
+  const said = `${personal()}${JSON.stringify(known)}`;
   if (said === toldHeader) return;
   toldHeader = said;
-  Header.waiting(known);
+  // Personal has every thread with something for you: what it has loaded is what waits. A team's
+  // inbox only says what changed of those.
+  Header.waiting(known, { update: !personal() });
+  fillWaiting();
+}
+/**
+ * The threads with something for you that Personal has not loaded (older than its pages, say),
+ * asked for by entry, so that its filters add up to its number; those it does not have are not
+ * yours to see there, and are not counted. Each is asked once a page.
+ */
+const askedWaiting = new Set();
+let fillingWaiting = null;
+function fillWaiting() {
+  if (!personal() || state.as || fillingWaiting || !state.data || !globalThis.Header?.waitingEntries) return;
+  const have = new Set(state.data.threads.flatMap((t) => [t.thread, ...(t.members || []).map((m) => m.thread)]));
+  const missing = Header.waitingEntries().filter((k) => !have.has(k) && !askedWaiting.has(k)).slice(0, 50);
+  if (!missing.length) return;
+  for (const k of missing) askedWaiting.add(k);
+  const scope = scopeOf(state.data);
+  fillingWaiting = get(`/api/inbox?view=personal&${missing.map((k) => `g=${encodeURIComponent(k)}`).join('&')}`)
+    .then((p) => {
+      if (!state.data || scopeOf(state.data) !== scope) return;
+      const keys = new Set(state.data.threads.map((t) => t.thread));
+      const added = (p.threads || []).filter((t) => !keys.has(t.thread));
+      const got = new Set(added.flatMap((t) => [t.thread, ...(t.members || []).map((m) => m.thread)]));
+      if (added.length) {
+        state.data.threads.push(...added);
+        keepReads(added);
+        mergeProfiles(p.profiles);
+        state.data.people = { ...(state.data.people || {}), ...(p.people || {}) };
+        inPass(() => { for (const t of added) state.scores.set(t.thread, smartScore(t)); });
+      }
+      Header.forget(missing.filter((k) => !got.has(k) && !have.has(k)));
+      render();
+    })
+    .catch(() => {})
+    .finally(() => { fillingWaiting = null; });
 }
 
 // ---------------------------------------------------------------- messages
@@ -9819,6 +9883,17 @@ function keepFiltersAt() {
   if (box && box.scrollTop !== filtersAt) box.scrollTop = filtersAt;
 }
 /**
+ * What waits for you, asked again (ui/header.js, GET /api/waiting) when the inbox loads, at most
+ * every WAITING_MS: Inbox's numbers are of every view, the one on screen only says what it has.
+ */
+const WAITING_MS = 30 * 1000;
+let waitingAt = Date.now();
+function waitingSoon() {
+  if (state.as || Date.now() - waitingAt < WAITING_MS || !globalThis.Header?.loadWaiting) return;
+  waitingAt = Date.now();
+  Header.loadWaiting();
+}
+/**
  * Loads the inbox's first page, and keeps the older pages loaded but what it has folded since.
  * `fresh` keeps none of them: the view lists more channels now (a customer was unmuted), which
  * they lack; the filter column stays where it was scrolled while they load again (holdFilters).
@@ -9852,6 +9927,7 @@ async function loadInbox(early = null, { fresh = false } = {}) {
     first.threads.push(...entries.filter((t) => requestHere(t) && !keys.has(t.thread)).map((t) => ({ ...t })));
   }
   state.data = first;
+  waitingSoon();
   settleFolds();
   keepReads(first.threads);
   // Personal's rooms grow once you are in a channel of another team: listen there too.
@@ -12169,7 +12245,7 @@ async function start() {
     open: openInbox,
     count: !state.as,
     // Its numbers changed: the views say them too.
-    changed: () => { if (state.data) renderThreads(); },
+    changed: () => { if (state.data) { renderThreads(); renderFilters(); fillWaiting(); } },
   });
   if (state.me.admin) {
     const sel = $('as');

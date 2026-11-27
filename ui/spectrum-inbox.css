@@ -1574,7 +1574,7 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 
 
 
-  #threads .count .order span { padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-200) - var(--spectrum-border-width-100)); }
+  #threads .count .order span:not(.vn) { padding: var(--spectrum-spacing-75) calc(var(--spectrum-spacing-200) - var(--spectrum-border-width-100)); }
   #threads .count .clearq { height: calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-400) + var(--spectrum-border-width-100)); }
 
 
@@ -1799,7 +1799,7 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .offview .ov-more { color: var(--spectrum-neutral-subdued-content-color-default); }
 /* What waits for you: S2's NotificationBadge, negative (white figures, a pill), as on Inbox in
    the header: on the filters, the Filters button and each view. */
-.spectrum .fr .men, .spectrum #threads .count .filt b, .spectrum #threads .count .order .men {
+.spectrum .fr .men, .spectrum #threads .count .filt b {
   display: inline-block;
   min-width: var(--spectrum-component-height-50);
   height: var(--spectrum-component-height-50);
@@ -1858,7 +1858,27 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .t.unread .when { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t.unread .replies.re { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t .replies .men { color: var(--spectrum-negative-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
-.spectrum #threads .count .order .men { margin-left: var(--spectrum-spacing-75); cursor: pointer; vertical-align: middle; }
+/* The expert view's Filters button counts the filters set, in the accent: nothing waits there. */
+.spectrum #threads .count .filt b:not(.men) { background: var(--spectrum-accent-background-color-default); }
+/* A view's number in the switch: the same red badge, small enough for the segment, beside the
+   name, which shortens before it does. */
+#threads .count .order button { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); }
+#threads .count .order .vn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.spectrum #threads .count .order .men {
+  flex: none;
+  min-width: var(--spectrum-spacing-300);
+  height: var(--spectrum-spacing-300);
+  padding: 0 var(--spectrum-spacing-50);
+  box-sizing: border-box;
+  border-radius: var(--spectrum-spacing-200);
+  background: var(--spectrum-negative-background-color-default);
+  color: var(--spectrum-white);
+  font-size: var(--spectrum-font-size-50);
+  font-weight: var(--spectrum-bold-font-weight);
+  line-height: var(--spectrum-spacing-300);
+  text-align: center;
+  cursor: pointer;
+}
 .spectrum .t .snip { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .t .cust img, .spectrum .ph .sub img, .spectrum .chans img { border-radius: var(--spectrum-corner-radius-75); }
 /* Faces: an AvatarGroup, each ringed in the row's own layer. */

@@ -31,10 +31,11 @@
  * NotificationBadge): the messages for you that you have not read (a person's or a bot's reply
  * in a thread of yours, a mention of you: GET /api/waiting, src/waiting.js), the questions thread
  * agents asked you (src/questions.js), and for the admin team its requests (channels and people
- * asked for, customers in the portal, bots, conflicts), threads of its inbox. The same red number
- * is on each view of the inbox (Personal: your messages and questions; the admin team: its
- * requests), on the filters and on the rows it counts. A click on it opens where the first of
- * them is (`countHref`): the personal view, else the admin team's open requests (`REQUESTS`).
+ * asked for, customers in the portal, bots, conflicts), threads of its inbox. In the inbox it is
+ * not shown: the views of its switch say it, and add up to it (Personal: your messages and
+ * questions; the admin team: its requests), and the view on screen's filters to its share. A
+ * click on it opens where the first of them is (`countHref`): the personal view, else the admin
+ * team's open requests (`REQUESTS`).
  *
  * The color scheme, in your menu's Appearance: the system's (as the browser prefers), light or
  * dark, per browser (localStorage `opspile.scheme`), set as `data-scheme` on <html>, which the
@@ -61,10 +62,12 @@ window.Header = (() => {
     admin: 0, questions: 0, team: null, you: 0,
   };
   // The threads with messages for you that you have not read (GET /api/waiting, src/waiting.js),
-  // by key: `{ n, team, org }`. The inbox tells what it knows better (`waiting`): the threads it
-  // has loaded, and those you read there, which the server may not have yet (`readHere`, held
+  // by key: `{ n, team, org, entry }` (`entry`: the inbox entry it is of). The inbox tells what it
+  // knows better (`waiting`): the threads it has loaded (`told`, which GET /api/waiting leaves
+  // as they are), and those you read there, which the server may not have yet (`readHere`, held
   // for HELD_MS: the room writes a read a few seconds after it).
   const yours = new Map();
+  let told = new Set();
   const held = new Map();
   const HELD_MS = 30 * 1000;
   const youTotal = () => [...yours].reduce((n, [k, x]) => n + ((held.get(k) || 0) > Date.now() ? 0 : x.n), 0);
@@ -207,7 +210,8 @@ window.Header = (() => {
         total = cur.querySelector('.total');
       }
       if (total.textContent !== String(n)) total.textContent = String(n);
-      total.hidden = !n;
+      // In the inbox, its views and filters say what waits (see setCounts).
+      total.hidden = !n || here === 'inbox';
       if (!cur.querySelector('.chev')) cur.insertAdjacentHTML('beforeend', CHEV);
     }
   }
@@ -281,9 +285,11 @@ window.Header = (() => {
     const n = total();
     $('pages').dataset.count = String(n);
     const said = waitText();
+    // In the inbox its views say it, each but the one on screen, whose filters do.
+    const inInbox = pageOf(location.href) === 'inbox';
     for (const el of document.querySelectorAll('[data-page="inbox"] .count:not(.total)')) {
       el.textContent = n > 99 ? '99+' : String(n);
-      el.hidden = !n;
+      el.hidden = !n || inInbox;
       el.title = said ? `Waits for you: ${said}` : '';
       el.closest('a').title = said ? `${said}, in the inbox` : PAGES.find((p) => p.id === 'inbox').title;
     }
@@ -301,8 +307,15 @@ window.Header = (() => {
       .then((r) => (r.ok ? r.json() : null))
       .then((b) => {
         if (!b) return;
-        yours.clear();
-        for (const t of b.threads || []) yours.set(t.thread, { n: Number(t.n) || 0, team: t.team, org: t.org });
+        const now = new Set((b.threads || []).map((t) => t.thread));
+        for (const k of [...yours.keys()]) if (!now.has(k) && !told.has(k)) yours.delete(k);
+        for (const t of b.threads || []) {
+          if (!told.has(t.thread)) {
+            yours.set(t.thread, {
+              n: Number(t.n) || 0, team: t.team, org: t.org, entry: t.entry || t.thread,
+            });
+          }
+        }
         setCounts({
           you: youTotal(),
           ...(b.questions ? { questions: b.questions.open || 0, team: b.questions.team || null } : {}),
@@ -312,10 +325,15 @@ window.Header = (() => {
   }
   /**
    * What the inbox knows of threads for you (`{ [key]: { n, team, org } }`, `n` 0 for none):
-   * fresher than the last GET /api/waiting for those it has loaded.
+   * fresher than the last GET /api/waiting for those it has loaded. With `update`, of those
+   * already counted only (a team's inbox: what is yours there is counted in Personal, which
+   * has every one of them; another's, of a customer you muted, say, is not).
    */
-  function waiting(known) {
-    for (const [k, x] of Object.entries(known || {})) {
+  function waiting(known, { update = false } = {}) {
+    const keys = Object.keys(known || {}).filter((k) => !update || yours.has(k));
+    told = new Set(keys);
+    for (const k of keys) {
+      const x = known[k];
       if (x && x.n > 0) {
         yours.set(k, { n: x.n, team: x.team ?? yours.get(k)?.team ?? null, org: x.org ?? null });
         // Something came in since you read it here.
@@ -324,19 +342,18 @@ window.Header = (() => {
     }
     setCounts({ you: youTotal() });
   }
+  /** The inbox entries with something for you (none you read here): Personal has each of them. */
+  const waitingEntries = () => [...new Set([...yours].filter(([k, x]) => x.n && (held.get(k) || 0) <= Date.now())
+    .map(([k, x]) => x.entry || k))];
+  /** Takes threads off what waits for you (their keys): not in any inbox of yours. */
+  function forget(keys) {
+    for (const k of keys || []) yours.delete(k);
+    setCounts({ you: youTotal() });
+  }
   /** Threads you read here (their keys): none of theirs waits, whatever the server says for a while. */
   function readHere(keys) {
     for (const k of keys || []) held.set(k, Date.now() + HELD_MS);
     setCounts({ you: youTotal() });
-  }
-  /** What waits for you, by team its thread is filed under: `{ [team]: n }`. */
-  function youByTeam() {
-    const out = {};
-    for (const [k, x] of yours) {
-      if ((held.get(k) || 0) > Date.now() || !x.n) continue;
-      out[x.team || ''] = (out[x.team || ''] || 0) + x.n;
-    }
-    return out;
   }
   /** The number of the admin team's requests that wait, on Inbox: they are threads of its inbox. */
   const setCount = (n) => setCounts({ admin: n });
@@ -435,6 +452,6 @@ window.Header = (() => {
 
   return {
     init, sync, setCount, setCounts, user, role, remember, href, pageOf, stats, scheme, REQUESTS,
-    loadWaiting, waiting, readHere, youByTeam, counts: () => ({ ...counts }),
+    loadWaiting, waiting, readHere, waitingEntries, forget, counts: () => ({ ...counts }),
   };
 })();

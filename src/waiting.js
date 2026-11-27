@@ -31,7 +31,8 @@ export const WAITING_MAX = 300;
 
 /**
  * The threads of person `me` (`{ id, email }`) with messages for them they have not read:
- * `[{ thread, team, org, n }]`, latest first.
+ * `[{ thread, entry, team, org, n }]`, latest first (`entry`: the inbox entry it is of, a
+ * re-threaded group's first thread).
  */
 export async function waitingThreads(db, me, now = new Date()) {
   const since = new Date(now.getTime() - WAITING_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -40,7 +41,7 @@ export async function waitingThreads(db, me, now = new Date()) {
       UNION SELECT thread FROM mentions WHERE person = ?1 AND at > ?2),
     groups AS (SELECT COALESCE(t.logical_thread, t.thread) AS g FROM threads t
       WHERE t.thread IN (SELECT thread FROM mine))
-    SELECT t.thread, t.team, t.org FROM threads t
+    SELECT t.thread, t.team, t.org, COALESCE(t.logical_thread, t.thread) AS entry FROM threads t
       LEFT JOIN watermarks w ON w.thread = t.thread AND w.person = ?1
     WHERE (t.thread IN (SELECT thread FROM mine)
         OR COALESCE(t.logical_thread, t.thread) IN (SELECT g FROM groups))
@@ -52,7 +53,11 @@ export async function waitingThreads(db, me, now = new Date()) {
   const counts = await unreadInYours(db, rows.map((r) => r.thread), me.id);
   return rows.filter((r) => counts.get(r.thread))
     .map((r) => ({
-      thread: r.thread, team: r.team || null, org: r.org || null, n: counts.get(r.thread),
+      thread: r.thread,
+      entry: r.entry,
+      team: r.team || null,
+      org: r.org || null,
+      n: counts.get(r.thread),
     }));
 }
 
