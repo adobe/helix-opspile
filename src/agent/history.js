@@ -13,6 +13,7 @@
 import { entryOf } from '../drafts.js';
 import { EMBEDDING_MODEL } from '../rethread.js';
 import { likePattern as like } from '../like.js';
+import { individualOf, theirThreads, wroteIn } from '../individual.js';
 
 /**
  * The channel's earlier conversations, for a thread agent (list_channel_threads, and
@@ -21,7 +22,8 @@ import { likePattern as like } from '../like.js';
  * group is one conversation, under its first thread's key. The exceptions are an agent with the
  * `org_threads` tool (src/agent/agenttools.js), which resolves a thread of its customer's
  * channels (`resolveAnyThread` with `org`) and lists their threads (`threadsIn` with `org`,
- * src/agent/channelfind.js), and one with `any_thread`, which does so anywhere.
+ * src/agent/channelfind.js), and one with `any_thread`, which does so anywhere. In an individual
+ * channel (src/individual.js) it is narrower: the threads of its end user only.
  */
 
 export const MAX_LIST = 50;
@@ -75,12 +77,14 @@ async function similarRoots(env, here, query) {
  * channel of a customer can have older threads of another, which are not that customer's.
  */
 export async function threadsIn(env, here, {
-  query = '', before = null, limit = DEFAULT_LIST, org = null,
+  query = '', before = null, limit = DEFAULT_LIST, org = null, accounts = null,
 } = {}) {
   const n = Math.min(Math.max(Number(limit) || DEFAULT_LIST, 1), MAX_LIST);
+  // In an individual channel, the threads of the end user's accounts only (src/individual.js).
+  const own = accounts ? theirThreads(accounts) : { sql: '', bind: [] };
   const bind = [here.channel_id, here.source, here.tenant, JSON.stringify(here.keys || []),
-    ...(org ? [String(org)] : [])];
-  const notHere = `AND t.thread NOT IN (SELECT value FROM json_each(?))${org ? ' AND t.org = ?' : ''}`;
+    ...(org ? [String(org)] : []), ...own.bind];
+  const notHere = `AND t.thread NOT IN (SELECT value FROM json_each(?))${org ? ' AND t.org = ?' : ''}${own.sql}`;
   const q = String(query || '').trim();
   if (!q) {
     const { results } = await env.DB.prepare(`SELECT ${COLUMNS} ${FROM}
@@ -119,6 +123,17 @@ export async function threadsIn(env, here, {
 }
 
 /**
+ * In an individual channel, the accounts of the end user of entry `here` (`channelOf`'s), whose
+ * threads are the only others its agent reads (src/individual.js); null in a shared channel.
+ */
+async function ownScope(env, here) {
+  const individual = await individualOf(env, {
+    source: here.source, tenant: here.tenant, channelId: here.channel_id,
+  }, here.keys, { ensure: false });
+  return individual ? individual.accounts : null;
+}
+
+/**
  * The conversations of the channel of inbox entry `key` other than that entry, latest
  * activity first: `{ threads: [{ thread, title, root_at, last_at, messages, permalink }],
  * more }`. `query` keeps those whose title has it, then those whose first message is about
@@ -129,7 +144,7 @@ export async function channelThreads(env, key, opts = {}) {
   if (!here) {
     return { error: 'the thread is not known' };
   }
-  return threadsIn(env, here, opts);
+  return threadsIn(env, here, { ...opts, accounts: await ownScope(env, here) });
 }
 
 /**
@@ -208,7 +223,15 @@ export async function resolveThread(env, key, ref) {
     return { error: 'no thread of your channel has that key, link or message id; list_channel_threads lists them' };
   }
   const entry = await entryOf(env, thread);
-  return entry ? { key: entry.key } : { error: 'the thread is not known' };
+  if (!entry) {
+    return { error: 'the thread is not known' };
+  }
+  const accounts = (here.keys || []).includes(entry.key) ? null : await ownScope(env, here);
+  if (accounts && !await wroteIn(env, accounts, entry.keys)) {
+    // Another end user's: as if it were not there.
+    return { error: 'no thread of your channel has that key, link or message id; list_channel_threads lists them' };
+  }
+  return { key: entry.key };
 }
 
 /** The thread of the first of a link's message ids that opspile has, or null. */

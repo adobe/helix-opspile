@@ -98,10 +98,12 @@ async function otherTeamKbs(env, {
  * Every repository the agent may name, by the id it uses: `kb-team`, `kb-org`, the other
  * teams' knowledge bases by their own name (`kb-team-<slug>`), and `owner/name` for GitHub.
  * The agent writes its team's, its customer's and those of the teams its channel is shared
- * with (`scope` `own` or `shared`); the other teams' it only reads (`scope` `other`).
+ * with (`scope` `own` or `shared`); the other teams' it only reads (`scope` `other`). In an
+ * individual channel (`individual`, src/individual.js) `kb-person`, the end user's, stands for
+ * `kb-org`, which it neither reads nor writes.
  */
 export async function accessibleRepos(env, {
-  team, org, source, channelId, follows, owners,
+  team, org, source, channelId, follows, owners, individual = null,
 }) {
   const repos = [];
   const teamKb = repoName('team', team);
@@ -111,7 +113,15 @@ export async function accessibleRepos(env, {
       id: 'kb-team', artifact: teamKb, writable: true, kind: 'kb', scope: 'own', what: `knowledge base of the ops team ${team}`,
     });
   }
-  if (orgKb) {
+  if (individual) {
+    // An individual channel's customers are each their own: the end user's knowledge base, never
+    // the org's, which holds every other end user of the channel (src/individual.js).
+    if (individual.kb) {
+      repos.push({
+        id: 'kb-person', artifact: individual.kb, writable: true, kind: 'kb', scope: 'own', what: `knowledge base of ${individual.name || 'the person'}, the end user your thread is with: theirs alone`,
+      });
+    }
+  } else if (orgKb) {
     repos.push({
       id: 'kb-org', artifact: orgKb, writable: true, kind: 'kb', scope: 'own', what: `knowledge base of the customer ${org}`,
     });

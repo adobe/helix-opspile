@@ -193,6 +193,16 @@ function linkTo(prefix) {
   };
 }
 
+/**
+ * Text, escaped as mdast-util-to-markdown escapes it, but for `&`: it escapes one before every
+ * letter or `#` (`\&filters=1`), where only one that starts a character reference (`&amp;`,
+ * `&#38;`) has to be. A web address in a link's label is then readable as text too, by
+ * whatever reads the markdown without rendering it (Clairic's facts, the agents).
+ */
+function writeText(node, _, state, info) {
+  return state.safe(node.value, info).replace(/(?<!\\)\\&(?![#A-Za-z0-9]+;)/g, '&');
+}
+
 const OPTIONS = {
   bullet: '-',
   emphasis: '*',
@@ -204,6 +214,7 @@ const OPTIONS = {
   handlers: {
     link: linkTo(''),
     image: linkTo('!'),
+    text: writeText,
     // A line break is a new line, as the inbox shows one; in a table cell, a space.
     break: (node, _, state) => (state.stack.includes('tableCell') ? ' ' : '\n'),
   },

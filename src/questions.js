@@ -22,7 +22,7 @@
  *
  * An admin asks a colleague the same way from a request of the admin team's inbox ("Ask a
  * colleague", src/requestthreads.js): the question's `thread` is then the request's key, `asked_by`
- * the admin (migration 0115), and the answer goes into the request's decision log, not to an agent.
+ * the admin (migration 0117), and the answer goes into the request's decision log, not to an agent.
  *
  * This module keeps the rows.
  */

@@ -12,7 +12,7 @@
 
 import { admin, channelLabel } from './admin.js';
 import { json } from './http.js';
-import { listAccounts } from './accountlinks.js';
+import { linkCandidates, loadAccounts } from './accountlinks.js';
 import { listAccountPairs } from './accountpairs.js';
 import { isStaffDomain } from './lookup.js';
 import { getMemberRequest, listMemberRequests } from './memberrequests.js';
@@ -46,14 +46,14 @@ import { advanceWatermark, readState } from './threads.js';
 /**
  * The admin team's requests as threads of its inbox. What waits for the admin team (a channel a
  * team asked for, a person to add to a team, a customer in the portal, a merge of customers, a
- * bot nobody said whose it is, an admin account nobody linked, two accounts of a customer's that
- * may be one person, a conflict between technologies or between team rules) is an inbox entry
- * there, keyed `request:<kind>:<id>` (src/requestkeys.js), and decided ones stay as resolved
- * entries. Its thread is the request,
- * as whoever asked said it, then what the admin team writes about it (`note`s, its decision
- * log, `request_log`, migration 0100), and what was decided; the thread view offers what can be
- * decided (`actions`), and deciding runs the same `/api/admin/*` route the admin pages did, as
- * the person deciding, so the checks and the outcome are those of src/admin.js.
+ * bot nobody said whose it is, an account staff by itself nobody linked, two accounts of a
+ * customer's that may be one person, a conflict between technologies or between team rules) is
+ * an inbox entry there, keyed `request:<kind>:<id>` (src/requestkeys.js), and decided ones stay as
+ * resolved entries. Its thread is the request, as whoever asked said it, then what the admin team
+ * writes about it (`note`s, its decision log, `request_log`, migration 0100), and what was
+ * decided; the thread view offers what can be decided (`actions`), and deciding runs the same
+ * `/api/admin/*` route the admin pages did, as the person deciding, so the checks and the outcome
+ * are those of src/admin.js.
  *
  * Nothing here is a platform's: the threads are in no channel, nobody posts anywhere, and no
  * agent, label or draft is theirs. Their read state is the watermarks of their keys, as a
@@ -81,7 +81,7 @@ export const KIND_NAMES = {
   merge: 'Customer merges',
   partner: 'Partners of customers',
   bot: 'Bots',
-  account: 'Admin accounts',
+  account: 'Staff accounts',
   person: 'Two accounts, one person?',
   tech: 'Technology conflicts',
   rule: 'Rule conflicts',
@@ -639,7 +639,7 @@ const embedKind = {
         id: 'audience',
         label: 'Set audience',
         off: bound ? null : 'The customer portal is not connected to this inbox yet (PORTAL_WORKER).',
-        hint: 'Individual: each member sees only the threads they started, wrote in or were added to, and hears of no other member\'s (not their titles, counts or changes). Shared: every member sees every thread. Switching moves no thread, and the team sees them all either way.',
+        hint: 'Individual: each member sees only the threads they started, wrote in or were added to, and hears of no other member\'s (not their titles, counts or changes); the thread agent learns about each into a knowledge base of their own and reads only their threads. Shared: every member sees every thread. Switching moves no thread, and the team sees them all either way.',
         fields: [{
           name: 'individual', label: 'Individual customers: each person sees only their own threads', type: 'check', value: c.audience === 'individual',
         }],
@@ -961,12 +961,28 @@ const botKind = {
   },
 };
 
+/** What says an account is staff by itself, on its platform. */
+const STAFF_BY = {
+  teams: 'An admin account of the Teams tenant that hosts the teams: Adobe\'s, so its messages show on Adobe\'s side, but it is named by initials, and nothing in Teams says whose it is.',
+  discord: 'A Discord account with a staff role: Adobe\'s, so its messages show on Adobe\'s side, but Discord shares no mail address and nobody connected it in the inbox, so the inbox knows it only by its name. Until it is linked, its work counts towards nobody\'s profile, and agents cannot ask its person anything.',
+};
+
+/** Why a candidate may be the account's, in a few words. */
+function whyText(w) {
+  if (w.kind === 'contact') {
+    return `their Contact in ${md(w.kb)} goes by ${code(w.alias)}`;
+  }
+  return w.kind === 'name' ? 'the same name' : `${md(w.initials)} are the initials of their name`;
+}
+
 const accountKind = {
   async list(env) {
-    return (await (await listAccounts(env)).json()).accounts;
+    return loadAccounts(env);
   },
   async get(env, key) {
-    return (await this.list(env)).find((a) => a.key === key) || null;
+    const a = (await this.list(env)).find((x) => x.key === key) || null;
+    // The candidates only in its own thread: they are read from every staff person's name.
+    return a && !a.person ? { ...a, candidates: await linkCandidates(env, a) } : a;
   },
   id: (a) => a.key,
   /** What it wrote, and who of Adobe wrote in those threads: who it talks with. */
@@ -976,25 +992,48 @@ const accountKind = {
     return { sections, people: await whoCouldKnow(env, threadsOf({ sections })) };
   },
   describe(a) {
-    const name = a.name || a.email || a.id;
+    const name = a.name || a.handle || a.email || a.id;
     const open = !a.person;
     const person = a.person && (a.person.name || a.person.email);
+    const proposals = a.proposals || [];
+    const candidates = (a.candidates || [])
+      .filter((c) => !proposals.some((p) => p.person.id === c.person.id));
+    const other = [a.handle, ...(a.aliases || [])].filter((n) => n && n !== a.name);
+    const facts = [
+      a.email ? `- ${code(a.email)}` : '',
+      other.length ? `- Also goes by ${[...new Set(other)].map(code).join(', ')}` : '',
+      `- ${a.messages ? plural(a.messages, 'message') : 'No messages yet'}`,
+    ].filter(Boolean).join('\n');
+    const suggested = candidates.length
+      ? `\n\nIt may be (a suggestion links nobody):\n\n${candidates.map((c) => `- **${md(c.person.name || c.person.email)}**, ${code(c.person.email)}: ${c.why.map(whyText).join('; ')}`).join('\n')}`
+      : '';
+    const linkTo = (p, hint) => ({
+      id: `link:${p.id}`,
+      label: `${p.name || p.email}'s`,
+      tone: 'accent',
+      hint: `${hint} The inbox then shows it as them, with their name, the messages it wrote before too.`,
+      run: () => ({ method: 'PUT', path: 'accounts', body: { key: a.key, email: p.email } }),
+      done: (r) => `${md(name)} is ${md(r.account?.person?.name || p.name || p.email)}'s.`,
+    });
+    const byOf = (p) => (p.by.agent ? p.by.name : `${p.by.name || p.by.email}, through an agent`);
     return {
-      title: `${name}, admin account`,
-      question: `Whose is the Teams admin account ${name} (${a.email || a.id})?`,
+      title: `${name}, ${a.source === 'discord' ? 'Discord staff account' : 'admin account'}`,
+      question: `Whose is the ${a.source === 'discord' ? 'Discord staff' : 'Teams admin'} account ${name} (${a.email || a.handle || a.id})?`,
       open,
       status: open ? 'waiting' : 'linked',
       askedAt: null,
       askedBy: null,
-      body: `An admin account of the Teams tenant that hosts the teams: Adobe's, so its messages show on Adobe's side, but it is named by initials, and nothing in Teams says whose it is. Whose is it?\n\n- ${code(a.email || a.id)}\n- ${a.messages ? plural(a.messages, 'message') : 'No messages yet'}`,
+      body: `${STAFF_BY[a.source] || STAFF_BY.teams} Whose is it?\n\n${facts}${suggested}`,
       decidedAt: a.linkedAt,
       decidedBy: a.linkedBy ? { email: a.linkedBy } : null,
       decision: person ? `**Linked to ${md(person)}**, said ${md(a.linkedBy || 'an admin')}` : null,
       actions: [
+        ...(open ? proposals.map((p) => linkTo(p.person, `Proposed by ${md(byOf(p))}: ${md(p.note)}`)) : []),
+        ...(open ? candidates.map((c) => linkTo(c.person, `A suggestion: ${c.why.map(whyText).join('; ')}.`)) : []),
         {
           id: 'link',
-          label: person ? 'Someone else\'s' : 'Link',
-          tone: person ? undefined : 'accent',
+          label: person || proposals.length || candidates.length ? 'Someone else\'s' : 'Link',
+          tone: person || proposals.length || candidates.length ? undefined : 'accent',
           hint: 'The inbox then shows it as them, with their name and picture, the messages it wrote before too.',
           fields: [{
             name: 'email', label: 'The mail address of the colleague who uses it', type: 'email', max: 200, required: true,
@@ -1002,6 +1041,13 @@ const accountKind = {
           run: (v) => ({ method: 'PUT', path: 'accounts', body: { key: a.key, email: v.email } }),
           done: (r) => `${md(name)} is ${md(r.account?.person?.name || r.account?.person?.email || 'theirs')}'s.`,
         },
+        ...(open ? proposals.map((p) => ({
+          id: `decline:${p.person.id}`,
+          label: `Not ${p.person.name || p.person.email}'s`,
+          hint: 'Neither agents nor the suggestions name them for it again.',
+          run: () => ({ method: 'POST', path: 'accounts/decline', body: { key: a.key, person: p.person.id } }),
+          done: () => `${md(name)} is not ${md(p.person.name || p.person.email)}'s.`,
+        })) : []),
         ...(person ? [{
           id: 'unlink',
           label: 'Nobody\'s',

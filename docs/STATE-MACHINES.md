@@ -50,7 +50,8 @@ flushed. Until then the inbox has the thread unread, so the other pages reload o
 the read.
 
 **Thread grouping.** undecided → new topic, or folded by burst, reply, Clef, vector or skeleton → (a
-conversation's root folded by Clef that gets a person's reply in its own platform thread) splitting
+conversation's root folded by Clef that gets a person's reply in its own platform thread, or a burst
+member that somebody else answered in its own, as the root of its group before it) splitting
 → split (`threads.logical_*` and `split_from`, `src/rethread.js`). `skeleton_hash` is written
 before the work that can fail, and `rethreaded_at` after all of it. So a retry starts from the top, and hash without decision means
 the job died, which `sweepRethreads` picks up. A root skipped on purpose (a system notice) has no
@@ -65,8 +66,9 @@ reply's retry, a later reply, or re-threading (which `sweepRethreads` sends out 
 after `rethreaded_at`) finishes it; each step can be done again, a burst root that moved already is
 moved again, and `split_from` is cleared last. A fold as an addressed reply
 (`logical_via = 'reply'`: the root @-mentions somebody of the conversation, minutes after its latest
-message) is never split either, like a burst member's: the conversation went on in that platform
-thread, so the replies there are the group's. Routed is final the other way:
+message) is never split: the conversation went on in that platform thread, so the replies there are
+the group's. A burst member is split only as above (`apart` in `src/rethread.js`), by a reply to it
+or to the root before it, whichever comes second. Routed is final the other way:
 a folded root whose platform thread got one of its group's replies (the entry's latest, `target` in
 `src/post.js`) gets `routed_at`, set once (`routed_at IS NULL`) and before the post goes out, so the
 reply cannot arrive first and split it. It is never cleared, also not when the post fails: a root
@@ -233,8 +235,14 @@ row, which then stands alone.
 neither; and gone (`org_partners`, migration 0110, src/orgpartners.js). A candidate's row is written
 by a list load or a cron run (`sync`) with its signals and score; Clef's verdict is kept with the
 `fingerprint` of what it was shown, and asked again once that changes, `ASK_PER_LIST` a load or a
-run; one Clef did not give leaves `p` null, for the next. Confirmed (`confirmed_at`) and dismissed
-(`dismissed_at`) exclude each other: one replaces the other, and `undo` clears only its own. A
+run; one Clef did not give leaves `p` null, for the next. A pair's page (`?pair=`, `onePair`) writes
+only a candidate's first verdict, of that pair, where it has none, and files no request; where Clef
+gives none, the isolate keeps that for `UNANSWERED_MS` (five minutes) and the pair's pages show "no
+verdict yet" without asking again meanwhile (the next sync asks as ever). Confirmed (`confirmed_at`) and dismissed
+(`dismissed_at`) exclude each other: one replaces the other, and `undo` clears only its own (a
+confirmation's takes its dates with it: `since`, and an end). Clef's word on a pair nobody decided
+is one of three bands: sure (`p` above `UNSURE_HIGH`, 0.65), unsure (`UNSURE_LOW`, 0.35, to
+`UNSURE_HIGH`), and below; with `LIKELY` (0.5) inside the unsure band (`standingOf` says which). A
 decided pair is not asked about and stays whatever its signals; one nobody decided is deleted by the
 first `sync` that does not find it a candidate (its signals fell under `CANDIDATE` or to one
 `kb` or `place` signal alone, a partner's mail domains changed, an org was retyped or merged). Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
@@ -254,7 +262,10 @@ A pair's span (`first_at`, `last_at`, migration 0112) is what the threads show: 
 it where it changed, a decided pair's too. Over the decision: confirmed → ended (`until`, with
 `ended_by` and `ended_at`: a former partner; `POST /api/admin/org-partners/end`, which confirms
 one nobody had) → confirmed again (a confirmation clears `until`; `/end` with `undo` too). A
-confirmation keeps `since` unless it gives one; a dismissal clears `since` and `until`.
+confirmation keeps `since` unless it gives one; a dismissal clears `since` and `until`. The admin
+team's Undo on the pair's page takes back the last of them: an end (`/end` `undo`: confirmed
+again), else a confirmation (`/confirm` `undo`: neither, its dates gone), else a dismissal
+(`/dismiss` `undo`: neither); what Clef says counts again then.
 
 **Partner request.** open → confirmed, ended or dismissed (the pair decided), declined (the pair
 left as it is) or withdrawn (`org_partner_requests`, migration 0112, src/partnerrequests.js), a
@@ -264,11 +275,18 @@ decision on the pair, from the thread or the pair's page, closes the requests it
 (`settleRequests`): a confirmation the `link` ones (`confirmed`), an end the `end` ones (`ended`), a
 dismissal both (`dismissed`); an `end` that waits stays open over a confirmation, and a `link` over
 an end. Whoever asked takes theirs back, the admin team any; a merge withdraws the merged org's
-that wait, saying into which org (an undo does not bring them back). Clef's (`requested_by` `clef`, filed by
-each `sync` from `partnerWants`) carry the `fingerprint` of what they were found on: one waits per
-pair and action as any; one declined or withdrawn is not filed again on the same fingerprint; and
-Clef withdraws its own that wait once the sync does not want them (a pair no longer likely or a
-candidate, a lapsed partner posting again), with why in `reason`. Without the partner domains, a
+that wait, saying into which org (an undo does not bring them back). An undo of a decision on the
+pair's page opens no request again. Clef's (`requested_by` `clef`, filed by each `sync` from
+`partnerWants`) carry the `fingerprint` of what they were found on: one waits per pair and action as
+any; one declined or withdrawn is not filed again on the same fingerprint; and Clef withdraws its
+own that wait once the sync does not want them, with why in `reason`. A sync wants a `link` of a
+pair nobody decided only while Clef is unsure of it (its `p` in the band, on Clef's fingerprint) or
+sure of it while its signals conflict (`conflictOf`: of one kind alone that is no posting together,
+on Clef's fingerprint; the partner's people quiet for `LAPSED_DAYS` while the customer's threads go
+on, on `quiet:<last post's day>`). So a pair Clef becomes sure of has its `link` withdrawn ("Clef is
+sure of it, …: it counts as a partner without a decision"), the ones the first syncs filed for
+likely pairs among them, and one it finds unlikely too ("Clef finds it unlikely now, …"); the
+rest, a lapsed partner posting again and the like, say "Clef no longer finds it so". Without the partner domains, a
 `sync` files and withdraws nothing. Filing one announces it to the admin team's room (Clef's, once
 a sync).
 
@@ -341,7 +359,7 @@ thread again, which closes it first so that the partial unique index (one open p
 person) makes room. `told_at` is written after the agent took the answer (`ThreadAgent.answered`);
 one it could not be told stays closed, untold, and its thread says so. An admin asks the same way
 from a request of the admin team's inbox ("Ask a colleague", src/requestthreads.js; `asked_by`,
-migration 0115): its `thread` is the request's key, and closing it writes how it ended into that
+migration 0117): its `thread` is the request's key, and closing it writes how it ended into that
 request's `request_log`, as a note of whoever answered, then `told_at`; an expired one writes
 nothing there.
 
@@ -373,19 +391,37 @@ identity's refresh leaves them out of its upsert. Setting or clearing the name r
 name); their frontmatter keeps the name they were written with, which `accountAuthor` replaces in
 the thread view.
 
-**A host tenant's admin account.** a customer's (before migration 0097) → staff → linked ⇄
-unlinked (`identities.staff`, `person`, `linked_by`, `linked_at`; `src/lookup.js`,
-`src/accountlinks.js`). The Teams lookup says it is staff (`isHostAdmin`: a member, not a guest,
-of the host tenant, its user name `owner_…`) on every refresh; the migration said so of the ones
-seen before. Linking is the admin team's, in the account's thread of its inbox, and only of an
-account that is staff by itself and that no mail address links, to a staff person; the refresh
-keeps a link (`linked_at` set: `person` is not looked up by mail address) and only the admin team
-takes it back (all three NULL). A change of side or person rewrites `messages.person`, `staff` and, from
-the admin page, `author` of its messages, and `last_staff` and `last_author` of the threads they
-are in (`relabelAccount`); their frontmatter keeps what they were written with, which
-`accountAuthor` replaces in the thread view, until a replay writes them again: there its name is
-the one `toAuthor` gives the account now (its person's while linked, its own once unlinked), the
-messages written while it was linked too.
+**An account that is staff by itself.** a customer's (a host tenant's admin account, before
+migration 0097) → staff → linked ⇄ unlinked (`identities.staff`, `person`, `linked_by`,
+`linked_at`; `src/lookup.js`, `src/accountlinks.js`). Two kinds: a host tenant's admin account,
+which the Teams lookup says is staff (`isHostAdmin`: a member, not a guest, of the host tenant,
+its user name `owner_…`) on every refresh, as the migration said of the ones seen before; and a
+Discord account with one of the `DISCORD_STAFF_ROLES`, which the Discord lookup says on every
+refresh. Unlinked, it waits in the admin team's inbox (`unlinkedCount`): a Teams one always, a
+Discord one once it wrote a message. Linking is the admin team's, in the account's thread of its
+inbox, and only of an account that is staff by itself and that no mail address links (on
+Discord: that its person did not connect, `person` set with `linked_at` NULL, which stays
+theirs), to a staff person; on Discord the link is of the user's rows in every guild that are staff
+by themselves and nobody connected, or that the admin team linked. The refresh keeps a link
+(`linked_at` set: `person` is not looked up by mail address), whatever the role says later, and
+the person's disconnecting Discord leaves it (`disconnect` in `src/post.js` takes back only what
+connecting made); only the admin team takes it back (all three NULL), which it can as long as the
+link is there, staff or not. Nothing else links one: not a candidate the thread offers, not an
+agent's proposal (below), not a mail address or a merge key. A change of side or person rewrites
+`messages.person`, `staff` and, from the admin page, `author` of its messages, and `last_staff`
+and `last_author` of the threads they are in (`relabelAccount`); their frontmatter keeps what
+they were written with, which `accountAuthor` replaces in the thread view, until a replay writes
+them again: there its name is the one `toAuthor` gives the account now (its person's while
+linked, its own once unlinked), the messages written while it was linked too.
+
+**A proposal of whose a staff account is.** none → proposed → answered (deleted) | declined
+(`account_proposals`, migration 0116; `proposeAccountLink` in `src/accountlinks.js`). A thread
+agent's `request_account_link` files one, of an account that waits to be linked (above) and a
+staff person in D1, once per account and person, with a note in the account's thread
+(`request_log`); it links nothing. Linking the account, to whomever, deletes its open proposals
+(the decision is in the log). Declining one sets `declined_at` and `declined_by` and keeps the row:
+the same person is neither proposed for the account again nor suggested. A person's row deleted
+takes theirs with it. Unlinking the account later brings no proposal back.
 
 ## Drafts and replies
 
@@ -1041,6 +1077,30 @@ writes the row in the batch that reserves the mapping, before it is enabled: its
 already its author's alone. Setting it tells the inbox with a `channel` event when the channel
 exists, and every event of an individual channel says so (`channel.audience`); one that does not
 is of a shared channel. Switching moves no thread and rewrites nothing: who is in a thread decides.
+
+**What the inbox heard of a channel's audience.** none (shared) → individual ⇄ shared
+(`channel_audiences` in the inbox, migration 0115, src/individual.js `recordAudience`). Written
+from the portal's events by their outbox number (`seq`): a `channel` event says it either way, a
+message's only that it is individual; an older number changes nothing, and a shared one is written
+only over a row there is, so the channels nobody set have none. The admin team's change writes it
+at once too, with the number of the event the portal answered. The thread agents read it every
+turn (their target, src/agent/agent.js), so a switch changes the next turn's knowledge base and
+what it may read; what an agent filed before stays where it was.
+
+The agent's "their threads" are those one of the end user's accounts wrote in: narrower than the
+portal's `thread_members`, which also has the threads Adobe added them to and the inbox never hears
+of, so a thread they were added to joins their agent's reach once they write in it.
+
+**An end user's knowledge base.** absent → made (`knowledge_bases`, kind `person`): by the first
+turn of a thread of an individual channel with a customer author, keyed by who they are
+(`personSlug`). An end user whose address their provider verifies only later starts a second one
+(the key moves from the account to the address); nothing merges the two yet. Its owner for the
+COGS rollup (`owner_org`, `owner_team`) is the channel's customer and team it was last worked from,
+written by the agent's turn when it changed. Its key is the address, so an address given to someone
+new after its owner left keys their knowledge base to the former owner's: the reads are kept apart
+(accounts are joined by an embedded account's merge key only while it was verified in the last 30
+days, `identities.merge_at`, as the portal joins them), the knowledge base is not; there is no
+identity more stable than the address to key it by.
 
 **Thread member.** absent → in (`thread_members` in the portal). A customer is in a thread from
 their first message in it (a trigger on `messages`, `INSERT OR IGNORE`), and the migration put

@@ -39,7 +39,7 @@ describe('knowledge bases', () => {
       description: 'opspile knowledge base: org acme', setDefaultBranch: 'main',
     }]]);
     assert.deepEqual(e.DB.rows('SELECT * FROM knowledge_bases'), [{
-      repo: 'kb-org-acme', kind: 'org', slug: 'acme', remote: REMOTE('kb-org-acme'), created_at: now.toISOString(), entries: 0, catalog_commit: null, search_commit: '',
+      repo: 'kb-org-acme', kind: 'org', slug: 'acme', remote: REMOTE('kb-org-acme'), created_at: now.toISOString(), entries: 0, catalog_commit: null, search_commit: '', owner_org: null, owner_team: null,
     }]);
     // Nothing for the search to read yet (src/kbindex.js): `search_commit` is ''.
   });

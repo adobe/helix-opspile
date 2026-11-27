@@ -32,9 +32,10 @@ import { teamsOf } from './shares.js';
  * replies when it is decided is not folded, and one that gets them after it was folded is split
  * back out (`dethread`), for good, unless the inbox replied for the group in its platform thread
  * (`routed_at`), or it is a reply that landed top-level (REPLY): then it stays in the group for
- * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too. A root that says
- * nothing but @-mentions (the bot, a colleague) continues its author's root before it, minutes
- * later, as a burst (`mentionsOnly`, GREETING_MS).
+ * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too, and so does an item
+ * of a numbered series ("2/14 …", `numbersItem`). A root that says nothing but @-mentions (the
+ * bot, a colleague) continues its author's root before it, minutes later, as a burst
+ * (`mentionsOnly`, GREETING_MS).
  *
  * People continue a chat with more top-level messages where the chat is top-level messages.
  * Where its people reply in platform threads, a new top-level message is nearly always a topic
@@ -259,6 +260,28 @@ export const quotes = (body) => String(body || '').split('\n').some((l) => QUOTE
  * replies there, so it is a topic of its own, as nearly all of them are answered in theirs.
  */
 export const announcesThread = (body) => /🧵|:thread:/u.test(String(body || ''));
+/** Longer lists than that are not posted item by item. */
+const MAX_SERIES = 30;
+/**
+ * An item number of a series at the start of a root: "1/14", "(2/3)", "**3/14 …**", not a date
+ * ("1/14/2027"), a ratio ("3/40", "50/50") or a time ("24/7").
+ */
+const SERIES_ITEM = /^[\s*_~#>([]*(\d{1,2})\s*\/\s*(\d{1,2})(?![\d/%])/u;
+/**
+ * Whether a root numbers itself as an item of a series ("2/14 Forms: …"): its author posted a
+ * list of questions one by one, seconds apart, so that each is answered in its own platform
+ * thread. Each item is a topic of its own, never a burst of the one before it, nor Clef's to fold:
+ * an RFP's fourteen questions, posted in under three minutes, were one entry, whose replies the
+ * inbox would have sent to the last item's thread (src/post.js `target`).
+ */
+export function numbersItem(body) {
+  const m = SERIES_ITEM.exec(String(body || ''));
+  if (!m) {
+    return false;
+  }
+  const [n, of] = [Number(m[1]), Number(m[2])];
+  return of >= 2 && of <= MAX_SERIES && n >= 1 && n <= of;
+}
 const SALUTATION = /^(?:hi+|hel+o+|hey|heya|hiya|howdy|greetings|dear|hallo|moin|servus|hola|bonjour|bonsoir|salut|ciao|buongiorno|ol[aá]|good|guten|morning|afternoon|evening|day|morgen|tag)$/;
 const ADDRESSEE = /^(?:all|everyone|everybody|team|folks|guys|people|there|again|y'?all|you|both|zusammen|alle|miteinander|tous|à|a|le|la|l'équipe|équipe|and|und|et)$/;
 /**
@@ -319,9 +342,12 @@ export function mentionsOnly(body) {
 /**
  * Whether `next`, its author's root right after `prev` (nobody else's root between them),
  * continues it as a burst: within BURST_MS, or GREETING_MS when `prev` only greets or `next` only
- * mentions (`mentionsOnly`).
+ * mentions (`mentionsOnly`). An item of a numbered series continues nothing (`numbersItem`).
  */
 const continues = (prev, prevBody, next, nextBody) => {
+  if (numbersItem(nextBody)) {
+    return false;
+  }
   const gap = Date.parse(next.root_at) - Date.parse(prev.root_at);
   return gap <= BURST_MS || (gap <= GREETING_MS && (greets(prevBody) || mentionsOnly(nextBody)));
 };
@@ -615,16 +641,66 @@ async function splitOut(env, thread, group) {
 }
 
 /**
+ * Whether a root has a reply of its own by somebody else than its author: the author adding to
+ * their own message ("Attachments:", a correction) answers nothing.
+ */
+async function answeredByOthers(env, thread) {
+  return Boolean(await env.DB.prepare(`SELECT 1 FROM messages m
+    WHERE m.thread = ?1 AND m.id != ?2 AND m.counted = 1 AND m.deleted = 0
+      AND m.author_key IS NOT (SELECT author_key FROM messages WHERE thread = ?1 AND id = ?2)
+    LIMIT 1`).bind(thread.thread, thread.root_id).first());
+}
+
+/**
+ * Whether `next`, a burst of `prev` (its author's root before it), is a conversation of its own
+ * after all: somebody else answered each of them in its own platform thread, so they were two
+ * requests, each answered where it was asked (consecutive feature requests, a question and a
+ * second question). Not when `prev` only greets (its replies greet back) or `next` only mentions
+ * (its replies answer the question it pinged for).
+ */
+async function apart(env, prev, prevBody, next, nextBody) {
+  return !greets(prevBody) && !mentionsOnly(nextBody)
+    && await answeredByOthers(env, next) && answeredByOthers(env, prev);
+}
+
+/**
+ * Whether a folded root is to be split out of its group (`dethread`): one of a conversation that
+ * has replies of its own, or a burst member that is `apart` from the root of its group before it.
+ */
+async function splittable(env, thread) {
+  if (!thread || thread.kind !== 'channel' || !thread.logical_thread || !thread.root_id
+    || thread.logical_via === REPLY || thread.routed_at) {
+    return false;
+  }
+  if (thread.logical_via !== 'burst') {
+    return answered(env, thread);
+  }
+  const prev = await env.DB.prepare(`SELECT * FROM threads WHERE (thread = ?1 OR logical_thread = ?1)
+      AND thread != ?2 AND root_at < ?3 ORDER BY root_at DESC LIMIT 1`)
+    .bind(thread.logical_thread, thread.thread, thread.root_at).first();
+  return Boolean(prev) && apart(
+    env,
+    prev,
+    (await rootBody(env, prev))?.parsed.body,
+    thread,
+    (await rootBody(env, thread))?.parsed.body,
+  );
+}
+
+/**
  * De-threading: a conversation's root that was folded into an earlier conversation, and then
  * gets replies in its own platform thread, is split back out into an inbox entry of its own
  * (see answered()). Called for every reply a person posts; only a folded root changes, once:
  * `logical_via` becomes SPLIT, which re-threading leaves alone. The roots that followed it in a
- * burst go with it. A burst member itself, a reply that landed top-level (REPLY) and alerts stay
- * in their group: a burst is one request in pieces, somebody answering one of a series of alerts
- * answers all of them, and a reply's platform thread is where the conversation went on, so those
- * who answer it there answer the group. So does a root the inbox sent a reply of its group to
- * (`routed_at`, src/post.js routeReply): the group's conversation goes on in its platform thread,
- * and those who answer there answer the group.
+ * burst go with it. A burst member stays in its group, as a burst is one request in pieces,
+ * unless somebody else answered both it and the root of its group before it, each in its own
+ * platform thread (`apart`): a reply to either may be the one that shows it, so the burst member
+ * right after the replied root is looked at too. A reply that landed top-level (REPLY) and alerts
+ * stay in their group: somebody answering one of a series of alerts answers all of them, and a
+ * reply's platform thread is where the conversation went on, so those who answer it there answer
+ * the group. So does a root the inbox sent a reply of its group to (`routed_at`, src/post.js
+ * routeReply): the group's conversation goes on in its platform thread, and those who answer there
+ * answer the group.
  * `rethreaded_at` moves to now, so the export sweep writes the threads again.
  *
  * The split is written first, since it is conditional on the group the root is in, and
@@ -637,20 +713,29 @@ export async function dethread(env, key) {
   if (thread && thread.logical_via === SPLIT && thread.split_from) {
     return splitOut(env, thread, thread.split_from);
   }
-  if (!thread || thread.kind !== 'channel' || !thread.logical_thread || thread.logical_via === 'burst'
-    || thread.logical_via === REPLY
-    || thread.routed_at || !thread.root_id || !await answered(env, thread)) {
+  if (!thread || thread.kind !== 'channel' || !thread.root_id) {
     return { result: 'unchanged' };
   }
-  const group = thread.logical_thread;
+  let split = await splittable(env, thread) ? thread : null;
+  if (!split) {
+    // The burst member after it, answered already, may be a request of its own now.
+    const next = await env.DB.prepare(`SELECT * FROM threads WHERE logical_thread = ? AND logical_via = 'burst'
+        AND root_at > ? ORDER BY root_at LIMIT 1`)
+      .bind(thread.logical_thread || thread.thread, thread.root_at).first();
+    split = next && await splittable(env, next) ? next : null;
+  }
+  if (!split) {
+    return { result: 'unchanged' };
+  }
+  const group = split.logical_thread;
   // Only from the group it is in now: a job that decided otherwise meanwhile wins.
   const { meta } = await env.DB.prepare(`UPDATE threads SET logical_thread = NULL, logical_via = ?,
       logical_p = NULL, rethreaded_at = ?, split_from = ? WHERE thread = ? AND logical_thread = ?`)
-    .bind(SPLIT, new Date().toISOString(), group, key, group).run();
+    .bind(SPLIT, new Date().toISOString(), group, split.thread, group).run();
   if (!meta || !meta.changes) {
     return { result: 'unchanged' };
   }
-  return splitOut(env, thread, group);
+  return splitOut(env, split, group);
 }
 
 // Longer than a job's retries take.
@@ -750,9 +835,12 @@ export async function rethread(env, key, { force = false } = {}) {
   // Not once someone answered it in its thread: the next root is no piece of it then, but a
   // message of its own (the next of several questions, each in its thread). Later than BURST_MS,
   // only a greeting's, or a root that only mentions (GREETING_MS).
+  // Nor once somebody else answered each in its own platform thread (`apart`, on a replay).
+  const previousBody = previous && (await rootBody(env, previous))?.parsed.body;
   const soon = previous && previous.author_key === author
-    && continues(previous, (await rootBody(env, previous))?.parsed.body, thread, root.parsed.body);
-  const burst = soon && !await answered(env, previous, thread.root_at) ? previous : null;
+    && continues(previous, previousBody, thread, root.parsed.body);
+  const burst = soon && !await answered(env, previous, thread.root_at)
+    && !await apart(env, previous, previousBody, thread, root.parsed.body) ? previous : null;
 
   const values = await embed(env, text);
   const found = await env.VECTORS.query(values, {
@@ -781,7 +869,8 @@ export async function rethread(env, key, { force = false } = {}) {
   let asked = null;
   const quoting = quotes(root.parsed.body);
   const announcing = conversation && !quoting && announcesThread(root.parsed.body);
-  const asking = Boolean(conversation && !quoting && !announcing && !burst);
+  const numbering = conversation && !quoting && !announcing && numbersItem(root.parsed.body);
+  const asking = Boolean(conversation && !quoting && !announcing && !numbering && !burst);
   // The channel's latest conversations and the similar ones, read as a transcript.
   const convs = asking ? await conversations(env, thread, earlier.slice(0, 4)) : [];
   // A reply that landed top-level: it @-mentions somebody who spoke in one of them, minutes
@@ -797,8 +886,8 @@ export async function rethread(env, key, { force = false } = {}) {
   // in its own platform thread is a conversation of its own, unless it is such a reply.
   const own = asking && await answered(env, thread);
   const replied = own && !addressed;
-  if (quoting || announcing || replied) {
-    // On its own: see quotes(), announcesThread() and answered().
+  if (quoting || announcing || numbering || replied) {
+    // On its own: see quotes(), announcesThread(), numbersItem() and answered().
   } else if (burst) {
     match = { thread: burst.thread, via: 'burst', p: 1 };
   } else if (conversation) {
@@ -915,7 +1004,8 @@ export async function rethread(env, key, { force = false } = {}) {
   const nextRoot = nextFree && next.author_key === author && await rootBody(env, next);
   const nextBody = nextRoot && nextRoot.parsed.body;
   const nextBurst = nextRoot && continues(thread, root.parsed.body, next, nextBody)
-    && !await answered(env, thread, next.root_at);
+    && !await answered(env, thread, next.root_at)
+    && !await apart(env, thread, root.parsed.body, next, nextBody);
   const nextOwn = nextBurst && (quotes(nextBody) || announcesThread(nextBody));
   if (nextBurst && !nextOwn) {
     await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = 'burst', logical_p = 1,
@@ -958,6 +1048,7 @@ export async function rethread(env, key, { force = false } = {}) {
     p: match ? match.p : null,
     ...(quoting ? { reason: 'quotes a message' } : {}),
     ...(announcing ? { reason: 'starts a thread' } : {}),
+    ...(numbering ? { reason: 'numbers an item' } : {}),
     ...(replied ? { reason: 'has replies of its own' } : {}),
     // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF), and whether
     // that one was held in threads (MIN_CLEF_THREADED).
