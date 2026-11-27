@@ -1480,7 +1480,8 @@ const single = (id) => personal() && id === 'customer';
  * the customers, beside unread only. It keeps the threads that mention you, read or not (a
  * mention you have read, too: `mentioned` has everyone ever mentioned in the thread); with
  * unread only, the ones with unread mentions of you (the red badge also counts what is new in
- * the threads you are in, which this does not keep). It is not a card, and team views do not have it
+ * the threads you are in, which this does not keep: a note under the list counts those, and its
+ * link turns the @ off, atNote). It is not a card, and team views do not have it
  * (their Involves card has "me"), so it filters nothing there.
  */
 const mentionsOn = () => personal() && state.mentions;
@@ -3083,6 +3084,24 @@ function allKinds() {
   delete state.sel.type;
   delete state.not.type;
 }
+/**
+ * What the @ hides of what waits for you (mentionsOn): the messages for you in threads that pass
+ * the other filters but do not mention you, replies in a thread you are in. The red badges count
+ * them (they add up to Personal's number), so without this a customer's badge said 12 over a list
+ * that said nobody mentions you, and nothing led to them. The note's link turns the @ off.
+ */
+function hiddenByAt() {
+  if (!mentionsOn() || searching()) return 0;
+  return badgePool()
+    .filter((t) => !namesMe(t) && viewFacets().every((f) => facetPasses(f, t)))
+    .reduce((n, t) => n + viewCount(t), 0);
+}
+function atNote() {
+  const n = hiddenByAt();
+  if (!n) return '';
+  const what = n === 1 ? 'message waits' : 'messages wait';
+  return `<div class="end" role="status">${n} more ${what} for you in threads you are in that do not mention you. <button type="button" class="linkish" data-atoff>Show ${n === 1 ? 'it' : 'them'}</button></div>`;
+}
 /** Shown once the personal unread list has nowhere left to scroll, and no facet is filtering it. */
 /**
  * An empty personal view, before any filter or search: what comes into it, and what to follow
@@ -3102,6 +3121,8 @@ function gettingStarted() {
 }
 
 function endNote() {
+  const at = atNote();
+  if (at) return at;
   if (!personal() || !state.unread || searching() || state.data?.page?.next) return '';
   if (mentionsOn() || viewFacets().some((f) => filterCount(f.id))) return '';
   return endHtml(state.data?.elsewhere);
@@ -3323,8 +3344,9 @@ function threadRows() {
   const note = endNote();
   if (!nodes.length) {
     for (const c of list.children) preload.unobserve(c);
-    const empty = note || (mentionsOn() ? '<div class="empty">No thread here mentions you.</div>'
-      : (gettingStarted() || '<div class="empty">Nothing matches these filters.</div>'));
+    const said = mentionsOn() ? '<div class="empty">No thread here mentions you.</div>' : '';
+    const empty = mentionsOn() ? `${said}${note}`
+      : (note || gettingStarted() || '<div class="empty">Nothing matches these filters.</div>');
     if (list.__empty !== empty) {
       list.innerHTML = empty;
       list.__empty = empty;
@@ -12171,6 +12193,7 @@ async function start() {
       render(); toUrl(); $('threads').scrollTop = 0; return;
     }
     if (e.target.closest('[data-unread]')) { setUnread(!state.unread); render(); toUrl(); return; }
+    if (e.target.closest('[data-atoff]')) { state.mentions = false; render(); toUrl(); return; }
     if (e.target.closest('[data-bell]')) { toggleBell(); return; }
     if (e.target.closest('[data-compose]')) { if (state.compose) closeThread(); else openCompose(); return; }
     if (e.target.closest('[data-clearq]')) { clearSearch(); $('q')?.focus(); return; }

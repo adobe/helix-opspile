@@ -1713,7 +1713,9 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   Besides its cards it has one switch, **Mentions** (the @ at the top right of the
   customers; `mentions=1` in the URL), keeps the threads that mention you, read or not (`mentioned`, all
   the thread's mentions, has you); with unread only, the ones with mentions of you you have not read. The
-  customers without such a thread leave the column while it is on. Team views do not have it:
+  customers without such a thread leave the column while it is on. The red badges still count
+  the replies for you in threads you are in, so a note under the list says how many of them the @
+  hides, and its link turns the @ off (`atNote`). Team views do not have it:
   their Involves card has Me (you posted or were mentioned). Its live updates come from the rooms of your teams and of the teams those channels are
   filed under; in the rooms of other teams, only about those channels (scoped sockets,
   `src/room.js`). Someone on no team (no-team mode, `SIGNIN_DOMAINS`) has only this view.
