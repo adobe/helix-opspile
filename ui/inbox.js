@@ -3299,7 +3299,7 @@ function render() { syncRail(); inPass(() => { renderFilters(); renderThreads();
  */
 let toldHeader = '';
 function tellHeader() {
-  if (state.as || !state.data?.threads || !window.Header?.waiting) return;
+  if (state.as || !state.data?.threads || !globalThis.Header?.waiting) return;
   const known = {};
   for (const t of state.data.threads) {
     if (isRequestKey(t.thread)) continue;
@@ -9465,7 +9465,7 @@ function markRead(t, { quiet = false } = {}) {
     else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: personal() ? undefined : state.team }), credentials: 'same-origin' });
     readsSent.set(m.thread, { at, until: Date.now() + READ_HOLD_MS });
   }
-  if (!state.as) window.Header?.readHere?.([t.thread, ...(t.members || []).map((m) => m.thread)]);
+  if (!state.as) globalThis.Header?.readHere?.([t.thread, ...(t.members || []).map((m) => m.thread)]);
   seeRead(t);
   if (!quiet) render();
 }
