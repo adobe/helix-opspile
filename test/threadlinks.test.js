@@ -20,6 +20,7 @@ import {
   FACT_OWNER_FEW, FACT_OWNER_ONLY, forgetOwners, linkedOrgsOf, linkThread, RELATED_SURE, shownLink,
 } from '../src/threadlinks.js';
 import { deliveryText } from '../src/agent/deliver.js';
+import { TOOLS } from '../src/mcp-tools.js';
 import { relatedNote, relatedThreads } from '../src/agent/related.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -356,6 +357,9 @@ describe('a public thread', () => {
     const linked = (await linkedOrgsOf(e, [PUB])).get(PUB);
     assert.deepEqual(linked.about, []);
     assert.deepEqual(linked.with.map((o) => [o.slug, o.role]), [['agency', 'partner'], ['globex', 'customer']]);
+    // A public org is nobody's customer or partner: its orgs have no pair with it, though the
+    // agency is Globex's confirmed partner.
+    assert.ok(linked.with.every((o) => !('pair' in o)));
     // The customer's filter takes it in; a dismissed customer is off it.
     assert.ok((await aboutThreads(e, 'globex', [PUB, G1])).has(PUB));
     assert.equal((await dismissAbout(e, ADA, { thread: PUB, org: 'globex', role: 'customer' })).ok, true);
@@ -388,6 +392,11 @@ describe('a public thread', () => {
     assert.match(note, /People of the customer Globex Corp \(globex\) post in this public thread/);
     assert.match(note, /never say in the channel whose people they are/);
     assert.match(note, /People of the partner Agency Co/);
+    assert.doesNotMatch(note, /works for this customer|confirmed by the admin team/);
+    // Nor does the MCP server's get_thread say how they stand.
+    const res = await TOOLS.find((t) => t.name === 'get_thread').run(e, asMe(ADA), { thread: PUB });
+    assert.deepEqual(res.data.with_partners, [{ partner: 'agency', name: 'Agency Co' }]);
+    assert.deepEqual(res.data.with_customers, [{ customer: 'globex', name: 'Globex Corp' }]);
   });
 });
 
@@ -457,6 +466,9 @@ describe('what the thread agent is told', () => {
     await linkThread(e, P1);
     const note = await relatedNote(e, target(P1, 'agency', 'partner'));
     assert.match(note, /about the customer Globex Corp \(globex\)/);
+    // With how sure the inbox is that the two are partners, and what to do when it is wrong.
+    assert.match(note, /That this partner works for it: confirmed by the admin team\./);
+    assert.match(note, /ask the admin team with request_partner_link/);
     assert.match(note, /1 more in channels you may not read/);
     assert.doesNotMatch(note, /Preview serves stale code/);
     assert.match(note, /never post what it says in this channel/);
@@ -473,11 +485,36 @@ describe('what the thread agent is told', () => {
     const e = env();
     await linkThread(e, P1);
     const out = await relatedThreads(e, target(P1, 'agency', 'partner'));
-    assert.match(out, /Linked organizations: 1\./);
+    assert.match(out, /Linked organizations: Globex Corp \(globex\), a customer: confirmed by the admin team\./);
     assert.match(out, /more in channels you may not read/);
     const none = await relatedThreads(e, target(I1, 'umbrella', 'customer', { channelId: 'CI' }));
     assert.match(none, /no partner of this customer/);
     const vendor = await relatedThreads(e, target(I1, 'initech', 'vendor', { channelId: 'CI' }));
     assert.match(vendor, /neither/);
+  });
+
+  it('hears how sure the inbox is of each pair it names, the admin team\'s word or Clef\'s', async () => {
+    const e = env();
+    await linkThread(e, G1);
+    const sql = (q) => e.DB.sqlite.exec(q);
+    // Nobody decided, and Clef is sure: a partner, though nobody confirmed it.
+    sql("UPDATE org_partners SET confirmed_at = NULL, confirmed_by = NULL, p = 0.9 WHERE customer = 'globex'");
+    let note = await relatedNote(e, target(G1, 'globex', 'customer', { channelId: 'CG', team: 'edge' }));
+    assert.match(note, /People of the partner Agency Co \(agency\).*That it works for this customer: not decided; Clef is sure \(90%\), so it counts as a partner\./);
+    sql("UPDATE org_partners SET p = 0.4 WHERE customer = 'globex'");
+    note = await relatedNote(e, target(G1, 'globex', 'customer', { channelId: 'CG', team: 'edge' }));
+    assert.match(note, /That it works for this customer: not decided and not linked; Clef is unsure \(40%\)\./);
+    // The list and the thread have it too, and the MCP server's get_thread.
+    assert.deepEqual((await linkedOrgsOf(e, [G1])).get(G1).with[0].pair, { status: 'unsure', p: 0.4, until: null });
+    sql("UPDATE org_partners SET confirmed_at = '2026-01-01', until = '2026-06' WHERE customer = 'globex'");
+    const get = TOOLS.find((t) => t.name === 'get_thread');
+    const res = await get.run(e, asMe(BO), { thread: G1 });
+    assert.deepEqual(res.data.with_partners, [{
+      partner: 'agency', name: 'Agency Co', partner_link: 'former', partner_link_until: '2026-06',
+    }]);
+    // A pair the inbox has no row of: the partner's people post here, and nothing else pairs them.
+    sql("DELETE FROM org_partners WHERE customer = 'globex'");
+    const none = await get.run(e, asMe(BO), { thread: G1 });
+    assert.deepEqual(none.data.with_partners, [{ partner: 'agency', name: 'Agency Co', partner_link: 'none' }]);
   });
 });

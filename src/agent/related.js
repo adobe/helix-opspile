@@ -11,6 +11,7 @@
  */
 
 import { entryRows, vectorOf } from '../expertise.js';
+import { pairStandings, standingWords } from '../orgpartners.js';
 import { platformName } from '../platforms.js';
 import { queryVector } from '../search.js';
 import {
@@ -39,11 +40,18 @@ const MAX_DAYS = 90;
 
 export const LINKED_GUIDE = 'A linked organization\'s thread is for the team: never post what it says in'
   + ' this channel, or that it exists, unless someone asks you to in the sidebar; say in your note'
-  + ' when it matters for this thread.';
+  + ' when it matters for this thread. Where this thread shows that a pair of a partner and a'
+  + ' customer is wrong, ask the admin team with request_partner_link, as your partner-links instructions say.';
 
 const pct = (p) => `${Math.round(p * 100)}%`;
 const names = (list) => list.map((o) => (o.name ? `${o.name} (${o.slug})` : o.slug)).join(', ');
 const one = (s) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+
+/**
+ * How sure the inbox is that each linked org and the thread's are partners (`o.pair`,
+ * src/orgpartners.js `standingOf`), in words: the admin team's decision, or Clef's.
+ */
+const pairsSaid = (list) => list.map((o) => `${list.length > 1 ? `${o.name || o.slug}, ` : ''}${standingWords(o.pair || { status: 'none' })}`).join('; ');
 
 /** The keys of the agent's entry. */
 const keysOf = (t) => (t.threads && t.threads.length ? t.threads : [t.key]).filter(Boolean);
@@ -68,12 +76,17 @@ export async function relatedNote(env, t) {
   const lines = [];
   if (links.about.length) {
     lines.push(`This partner's thread is about the customer ${names(links.about)}`
-      + ` (${links.about.map((o) => `${o.via.join(', ') || 'clef'}, ${pct(o.p)}`).join('; ')}).`);
+      + ` (${links.about.map((o) => `${o.via.join(', ') || 'clef'}, ${pct(o.p)}`).join('; ')}).`
+      + ` That this partner works for ${links.about.length === 1 ? 'it' : 'them'}: ${pairsSaid(links.about)}.`);
   }
   const partners = links.with.filter((o) => o.role !== 'customer');
   const customers = links.with.filter((o) => o.role === 'customer');
   if (partners.length) {
-    lines.push(`People of the partner ${names(partners)} (an agency or system integrator) post in this thread.`);
+    // In a customer's thread, with how sure the inbox is that each works for it; a public
+    // thread's org is nobody's customer, and its partners have no such pair (`pair` is none).
+    const paired = partners.filter((o) => o.pair);
+    const sure = paired.length ? ` That ${paired.length === 1 ? 'it works' : 'they work'} for this customer: ${pairsSaid(paired)}.` : '';
+    lines.push(`People of the partner ${names(partners)} (an agency or system integrator) post in this thread.${sure}`);
   }
   if (customers.length) {
     lines.push(`People of the customer ${names(customers)} post in this public thread, by their mail`
@@ -124,6 +137,27 @@ export async function relatedUpdate(agent, change) {
 }
 
 /**
+ * The linked orgs (`slugs`, `linkedOrgs`'s) as related_threads names them: each with how it and
+ * the agent's thread's org stand as partners (`pairStandings`).
+ */
+async function linkedSaid(env, t, slugs) {
+  const partner = t.orgType === 'partner';
+  const pairs = slugs.map((slug) => (partner
+    ? { customer: slug, partner: t.org } : { customer: t.org, partner: slug }));
+  const [standing, named] = await Promise.all([
+    pairStandings(env, pairs),
+    env.DB.prepare('SELECT slug, name FROM orgs WHERE slug IN (SELECT value FROM json_each(?))')
+      .bind(JSON.stringify(slugs)).all()
+      .then((r) => new Map((r.results || []).map((o) => [o.slug, o.name]))),
+  ]);
+  return slugs.map((slug, i) => {
+    const s = standing.get(`${pairs[i].customer}\n${pairs[i].partner}`) || { status: 'none' };
+    const name = named.get(slug);
+    return `${name ? `${name} (${slug})` : slug}, ${partner ? 'a customer' : 'a partner'}: ${standingWords(s)}`;
+  }).join('; ');
+}
+
+/**
  * related_threads: the threads of the linked orgs' channels like the agent's thread (or
  * `query`), of the last `days`, with those the inbox kept as possibly the same issue; named
  * where the agent may read them, counted otherwise.
@@ -168,7 +202,7 @@ export async function relatedThreads(env, t, { query = '', days = RELATED_DAYS }
       not += 1;
     }
   }
-  const out = [`Linked organizations: ${orgs.length}. Threads of their channels active in the last ${span} days${q ? ` about "${q}"` : ' like this one'}, most alike first.`];
+  const out = [`Linked organizations: ${await linkedSaid(env, t, orgs)}. Threads of their channels active in the last ${span} days${q ? ` about "${q}"` : ' like this one'}, most alike first.`];
   const shown = kept.related.filter((r) => r.can_see);
   if (shown.length) {
     out.push(`Kept as possibly the same issue:\n${shown.map(line).join('\n')}`);

@@ -235,8 +235,14 @@ row, which then stands alone.
 neither; and gone (`org_partners`, migration 0110, src/orgpartners.js). A candidate's row is written
 by a list load or a cron run (`sync`) with its signals and score; Clef's verdict is kept with the
 `fingerprint` of what it was shown, and asked again once that changes, `ASK_PER_LIST` a load or a
-run; one Clef did not give leaves `p` null, for the next. Confirmed (`confirmed_at`) and dismissed
-(`dismissed_at`) exclude each other: one replaces the other, and `undo` clears only its own. A
+run; one Clef did not give leaves `p` null, for the next. A pair's page (`?pair=`, `onePair`) writes
+only a candidate's first verdict, of that pair, where it has none, and files no request; where Clef
+gives none, the isolate keeps that for `UNANSWERED_MS` (five minutes) and the pair's pages show "no
+verdict yet" without asking again meanwhile (the next sync asks as ever). Confirmed (`confirmed_at`) and dismissed
+(`dismissed_at`) exclude each other: one replaces the other, and `undo` clears only its own (a
+confirmation's takes its dates with it: `since`, and an end). Clef's word on a pair nobody decided
+is one of three bands: sure (`p` above `UNSURE_HIGH`, 0.65), unsure (`UNSURE_LOW`, 0.35, to
+`UNSURE_HIGH`), and below; with `LIKELY` (0.5) inside the unsure band (`standingOf` says which). A
 decided pair is not asked about and stays whatever its signals; one nobody decided is deleted by the
 first `sync` that does not find it a candidate (its signals fell under `CANDIDATE` or to one
 `kb` or `place` signal alone, a partner's mail domains changed, an org was retyped or merged). Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
@@ -256,7 +262,10 @@ A pair's span (`first_at`, `last_at`, migration 0112) is what the threads show: 
 it where it changed, a decided pair's too. Over the decision: confirmed → ended (`until`, with
 `ended_by` and `ended_at`: a former partner; `POST /api/admin/org-partners/end`, which confirms
 one nobody had) → confirmed again (a confirmation clears `until`; `/end` with `undo` too). A
-confirmation keeps `since` unless it gives one; a dismissal clears `since` and `until`.
+confirmation keeps `since` unless it gives one; a dismissal clears `since` and `until`. The admin
+team's Undo on the pair's page takes back the last of them: an end (`/end` `undo`: confirmed
+again), else a confirmation (`/confirm` `undo`: neither, its dates gone), else a dismissal
+(`/dismiss` `undo`: neither); what Clef says counts again then.
 
 **Partner request.** open → confirmed, ended or dismissed (the pair decided), declined (the pair
 left as it is) or withdrawn (`org_partner_requests`, migration 0112, src/partnerrequests.js), a
@@ -266,11 +275,18 @@ decision on the pair, from the thread or the pair's page, closes the requests it
 (`settleRequests`): a confirmation the `link` ones (`confirmed`), an end the `end` ones (`ended`), a
 dismissal both (`dismissed`); an `end` that waits stays open over a confirmation, and a `link` over
 an end. Whoever asked takes theirs back, the admin team any; a merge withdraws the merged org's
-that wait, saying into which org (an undo does not bring them back). Clef's (`requested_by` `clef`, filed by
-each `sync` from `partnerWants`) carry the `fingerprint` of what they were found on: one waits per
-pair and action as any; one declined or withdrawn is not filed again on the same fingerprint; and
-Clef withdraws its own that wait once the sync does not want them (a pair no longer likely or a
-candidate, a lapsed partner posting again), with why in `reason`. Without the partner domains, a
+that wait, saying into which org (an undo does not bring them back). An undo of a decision on the
+pair's page opens no request again. Clef's (`requested_by` `clef`, filed by each `sync` from
+`partnerWants`) carry the `fingerprint` of what they were found on: one waits per pair and action as
+any; one declined or withdrawn is not filed again on the same fingerprint; and Clef withdraws its
+own that wait once the sync does not want them, with why in `reason`. A sync wants a `link` of a
+pair nobody decided only while Clef is unsure of it (its `p` in the band, on Clef's fingerprint) or
+sure of it while its signals conflict (`conflictOf`: of one kind alone that is no posting together,
+on Clef's fingerprint; the partner's people quiet for `LAPSED_DAYS` while the customer's threads go
+on, on `quiet:<last post's day>`). So a pair Clef becomes sure of has its `link` withdrawn ("Clef is
+sure of it, …: it counts as a partner without a decision"), the ones the first syncs filed for
+likely pairs among them, and one it finds unlikely too ("Clef finds it unlikely now, …"); the
+rest, a lapsed partner posting again and the like, say "Clef no longer finds it so". Without the partner domains, a
 `sync` files and withdraws nothing. Filing one announces it to the admin team's room (Clef's, once
 a sync).
 

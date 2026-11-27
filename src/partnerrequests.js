@@ -21,15 +21,16 @@ import { isAdmin } from './roles.js';
  * actions decide the pair through src/orgpartners.js (`decidePartner`, `endPartner`), which
  * closes the pair's open requests it settles. Nothing changes a pair until then.
  *
- * Who asks: the admin team, on the pair's page in Customers; anyone on an ops team through the API
- * (`requestPartner`; what it answers them leaves the admin team's evidence out, `requestFor`) or
- * an agent: a thread's agent
+ * Who asks: anyone on an ops team, on the pair's page in Customers (`requestPartner`; what it
+ * answers them leaves the admin team's evidence out, `requestFor`), the admin team too; an agent:
+ * a thread's agent
  * (`request_partner_link`, src/agent/partnerrequest.js), on its own from what a thread says, or for
- * the person in its sidebar; and Clef, from the pairs' sync (src/orgpartners.js): a likely pair
- * nobody decided, a confirmed one whose people stopped posting while the customer's go on, an ended
- * one whose people post again. Clef's requests carry the `fingerprint` of what they were found on:
- * one the admin team declined is not asked again until that changes, and Clef takes back its own
- * once the pair is no longer what it asked about.
+ * the person in its sidebar; and Clef, from the pairs' sync (src/orgpartners.js `partnerWants`): a
+ * pair nobody decided that it is unsure of, or sure of while its signals conflict, a confirmed one
+ * whose people stopped posting while the customer's go on, an ended one whose people post again.
+ * Clef's requests carry the `fingerprint` of what they were found on: one the admin team declined
+ * is not asked again until that changes, and Clef takes back its own once the pair is no longer
+ * what it asked about.
  */
 
 /** Who asked, when it was not a person: the requests' `requested_by`. */
@@ -113,8 +114,9 @@ export const requestOf = (r) => ({
 
 /**
  * A request as `me` may read it: the admin team all of it; anyone else without the pair's signals
- * (their text names domains, site owners and knowledge-base entries, the admin team's only), and
- * without Clef's note (which says them) and fingerprint.
+ * (their text names domains, site owners and knowledge-base entries, the admin team's only),
+ * without its fingerprint, and without its note unless it is their own: Clef's says what it found,
+ * in the signals' words, and an agent's what a thread said.
  */
 export function requestFor(me, r) {
   if (!r || isAdmin(me)) {
@@ -122,8 +124,9 @@ export function requestFor(me, r) {
   }
   const rest = { ...r };
   delete rest.fingerprint;
-  // Clef's note says what it found, in the signals' words.
-  if (rest.requestedBy && rest.requestedBy.kind === 'clef') {
+  const mine = rest.requestedBy && rest.requestedBy.email
+    && rest.requestedBy.email === String((me && me.email) || '').toLowerCase();
+  if (!mine) {
     rest.note = null;
   }
   if (rest.pair) {
@@ -394,10 +397,11 @@ export async function settleRequests(env, by, customer, partner, actions, status
  * Clef's requests now (`wants`, `[{ customer, partner, action, since?, until?, note,
  * fingerprint }]`, from the pairs' sync): each filed unless the same waits, or the admin team
  * declined one of Clef's on the same `fingerprint` (or Clef took it back); and Clef's open ones of
- * the pairs it wants no more taken back (`withdrawn`, with why). How many it filed and took back.
+ * the pairs it wants no more taken back (`withdrawn`, with why: `why`, `Map<customer\npartner,
+ * reason>`, says it of a `link`, else Clef no longer finds it so). How many it filed and took back.
  * One announcement for all.
  */
-export async function clefRequests(env, wants) {
+export async function clefRequests(env, wants, { why = new Map() } = {}) {
   const mine = await rows(env, `SELECT id, customer, partner, action, status, fingerprint
     FROM org_partner_requests WHERE requested_by = ?1`, CLEF_BY);
   const keyOf = (x) => `${x.customer}\n${x.partner}\n${x.action}`;
@@ -424,10 +428,12 @@ export async function clefRequests(env, wants) {
   let withdrawn = 0;
   for (const [key, r] of open) {
     if (!wanted.has(key)) {
+      const reason = (r.action === 'link' && why.get(`${r.customer}\n${r.partner}`))
+        || 'Clef no longer finds it so';
       // eslint-disable-next-line no-await-in-loop
       const { meta } = await env.DB.prepare(`UPDATE org_partner_requests SET status = 'withdrawn',
           decided_by = ?, decided_at = ?, reason = ? WHERE id = ? AND status = 'open'`)
-        .bind(CLEF_BY, new Date().toISOString(), 'Clef no longer finds it so', r.id).run();
+        .bind(CLEF_BY, new Date().toISOString(), reason, r.id).run();
       withdrawn += meta.changes ? 1 : 0;
     }
   }
