@@ -1049,7 +1049,7 @@ mentions, the badge, the unread counts and the feed with its watermark; in a sha
 does. Staff and the app are never rows, and read everything.
 
 **Embedded account's merge key.** none → an address → another address (`users.verified_email` in
-the portal, portal migration 0009; `identities.merge_email` in the inbox, migration 0113). Written
+the portal, portal migration 0009; `identities.merge_email` in the inbox, migration 0114). Written
 on an admitted call whose provider (or signed assertion) verified the address, when it differs
 from the one kept; a call without one keeps it, so a profile that stops saying it is not split
 off. The inbox takes it from the account's next message, and a reference that names none keeps
