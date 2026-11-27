@@ -20,6 +20,10 @@ import { ensureKnowledgeBase, repoName } from './kb.js';
 import { CLEF } from './label.js';
 import { domainList, loadRules } from './lookup.js';
 import { platformName } from './platforms.js';
+import {
+  byThread, md, namedIn, postedFrom, quoteLines, threadSection, threadsOf,
+  whoCouldKnow, withQuotes,
+} from './requestevidence.js';
 import { announceRequest } from './requestkeys.js';
 import { isAdmin } from './roles.js';
 import { mergeRule, UNASSIGNED } from './rules.js';
@@ -419,6 +423,83 @@ export function candidates({ orgs, members }) {
   return out.sort((x, y) => y.score - x.score || x.a.localeCompare(y.a)).slice(0, MAX_CANDIDATES);
 }
 
+// ---- what their messages say ----------------------------------------------------------------
+
+/** The names a message may call an org by: its display name, and its slug. */
+const callable = (o) => [o.name, o.slug].filter(Boolean);
+
+/**
+ * The messages of two orgs that say they may be one: each named in the other's threads, and the
+ * people of each one's usual mail domain posting in the other's threads (src/requestevidence.js).
+ */
+async function pairMessages(env, a, b, { limit } = {}) {
+  const [aInB, bInA, aPeople, bPeople] = await Promise.all([
+    namedIn(env, { orgs: [b.slug], names: callable(a), limit }),
+    namedIn(env, { orgs: [a.slug], names: callable(b), limit }),
+    a.domains[0] ? postedFrom(env, { orgs: [b.slug], domains: [a.domains[0]], limit }) : [],
+    b.domains[0] ? postedFrom(env, { orgs: [a.slug], domains: [b.domains[0]], limit }) : [],
+  ]);
+  return {
+    aInB, bInA, aPeople, bPeople,
+  };
+}
+
+/**
+ * What Clef is shown of two orgs' messages beside the signals (src/requestevidence.js
+ * `withQuotes`): short quotes, without who wrote them. None when they cannot be read.
+ */
+export async function mergeQuotes(env, a, b) {
+  try {
+    const m = await pairMessages(env, a, b, { limit: 60 });
+    const who = (x) => (x.staff ? 'Adobe staff' : 'someone outside Adobe');
+    return quoteLines([
+      { where: 'a thread of B', who, messages: m.aInB },
+      { where: 'a thread of A', who, messages: m.bInA },
+      { where: 'a thread of B', who: () => 'someone of A\'s usual mail domain', messages: m.aPeople },
+      { where: 'a thread of A', who: () => 'someone of B\'s usual mail domain', messages: m.bPeople },
+    ]);
+  } catch (e) {
+    console.log(JSON.stringify({ route: 'orgmerge', quotes: 'failed', error: String(e && e.message) }));
+    return [];
+  }
+}
+
+/**
+ * What says orgs `from` and `into` may be one, as the admin team's request to merge them shows it
+ * (src/requestthreads.js): `{ sections, people }` of src/requestevidence.js, the threads where each
+ * is named in the other's, where the people of each one's mail domain post in the other's, the
+ * channels in the same place; and who at Adobe worked those threads. Null when either is gone.
+ */
+export async function mergeEvidence(env, from, into) {
+  const f = await facts(env);
+  const a = f.orgs.get(from);
+  const b = f.orgs.get(into);
+  if (!a || !b) {
+    return null;
+  }
+  const m = await pairMessages(env, a, b);
+  const A = md(a.name || a.slug);
+  const B = md(b.name || b.slug);
+  const sections = [
+    threadSection(`${A} named in ${B}'s threads`, byThread(m.aInB)),
+    threadSection(`${B} named in ${A}'s threads`, byThread(m.bInA)),
+    threadSection(`People of ${md(a.domains[0] || '')}, ${A}'s usual mail domain, in ${B}'s threads`, byThread(m.aPeople)),
+    threadSection(`People of ${md(b.domains[0] || '')}, ${B}'s usual mail domain, in ${A}'s threads`, byThread(m.bPeople)),
+  ];
+  const pb = new Set(b.channels.flatMap((c) => c.places || []));
+  const together = a.channels.filter((c) => (c.places || []).some((x) => pb.has(x)));
+  if (together.length) {
+    const places = new Set(together.flatMap((c) => c.places));
+    const theirs = b.channels.filter((c) => (c.places || []).some((x) => places.has(x)));
+    const items = [...together, ...theirs].map((c) => ({ text: `${c.label} (${platformName(c.source)})`, note: 'in the same place as a channel of the other' }));
+    sections.push({
+      head: 'Channels', items: items.slice(0, 5), more: Math.max(0, items.length - 5), threads: [],
+    });
+  }
+  const people = await whoCouldKnow(env, threadsOf({ sections }));
+  return { sections, people };
+}
+
 // ---- Clef ------------------------------------------------------------------------------------
 
 const INTRO = 'An ops inbox at Adobe files Slack, Teams and Discord channels under organizations:'
@@ -499,7 +580,7 @@ async function pool(items, n, fn) {
  * strongest first), else the one kept from before (`stale`) or none. Sets `p`, `checked` and
  * `stale` on each.
  */
-async function judge(env, pairs, kept) {
+async function judge(env, pairs, kept, orgs = new Map()) {
   const ask = [];
   for (const pair of pairs) {
     const row = kept.get(pairKey(pair.a, pair.b));
@@ -512,7 +593,11 @@ async function judge(env, pairs, kept) {
   }
   const now = new Date().toISOString();
   await pool(ask, ASK_PARALLEL, async (pair) => {
-    const p = await askPair(env, pair.state);
+    // What their messages say, beside the signals: not part of the fingerprint.
+    const a = orgs.get(pair.a);
+    const b = orgs.get(pair.b);
+    const quotes = a && b ? await mergeQuotes(env, a, b) : [];
+    const p = await askPair(env, withQuotes(pair.state, quotes));
     if (p === null) {
       return;
     }
@@ -741,7 +826,8 @@ export async function orgDuplicates(env, me, { pair = '', fresh = false } = {}) 
   const open = (c) => c.requests.some((r) => r.status === 'open');
   // Not dismissed, unless somebody asks for it; for the admin team, the dismissed ones last.
   const shown = list.filter((c) => pair || admin || !c.dismissed || open(c));
-  const unchecked = await judge(env, shown.filter((c) => pair || !c.dismissed || open(c)), keptBy);
+  const judged = shown.filter((c) => pair || !c.dismissed || open(c));
+  const unchecked = await judge(env, judged, keptBy, f.orgs);
   shown.sort((x, y) => (open(y) - open(x)) || (Boolean(x.dismissed) - Boolean(y.dismissed))
     || ((y.p ?? -1) - (x.p ?? -1)) || (y.score - x.score));
   const orgs = {};

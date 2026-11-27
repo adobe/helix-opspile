@@ -277,7 +277,9 @@ orgs (names, type, icon, channels and their topics, mail domains) and the signal
 agency's people or Slack Connect team in both is no sign: "should A and B be one organization: do
 both names refer to the same company?" Its answers are kept in `org_pairs` with a fingerprint of what
 it was shown, and asked again once that changes, two dozen a load; the page loads the list again while
-Clef gets further. The orgs' facts are kept in the isolate for five minutes.
+Clef gets further. Beside the signals, and not part of the fingerprint, Clef is shown what the two
+orgs' messages say (`mergeQuotes`): each named in the other's threads, and the people of each one's
+usual mail domain in the other's, quoted short as for a partner (below), without names. The orgs' facts are kept in the isolate for five minutes.
 
 The admin team merges a pair from its page (`POST /api/admin/org-merge`, tried first with `dryRun`).
 The merge is a row of `org_merges` (migration 0091) that `loadRules` hands every caller of the rules
@@ -332,9 +334,14 @@ mail domains), the signals with their counts as one, a few or many, so a new thr
 make it ask again, and the customer's other partners the admin team confirmed, each with how many
 of its people post in the customer's threads (one person of a second agency beside the partner
 that builds the site does other work, or none; Clef's likely ones are left out, or their verdicts
-would move each other's): "does partner P work for customer C?" Its answer is kept with a fingerprint of
-what it was shown and asked again once that changes, two dozen per load of the admin team's list and
-per cron run, so the table fills in without anybody looking. Every load and run writes the
+would move each other's): "does partner P work for customer C?" Beside the signals it is shown what
+the messages behind them say (`pairQuotes`, src/requestevidence.js `quoteLines`): up to four quotes of
+at most 200 characters, one a thread, from the partner's people in the customer's threads, the
+customer named in the partner's threads and the partner in the customer's, and the customer's people
+in the partner's, each with where it was written and who in Clef's words ("one of P's people", "Adobe
+staff"), never a name. Its answer is kept with a fingerprint of what it was shown without the quotes,
+so a new thread does not make it ask again, and asked again once that changes (with the quotes of
+then), two dozen per load of the admin team's list and per cron run, so the table fills in without anybody looking. Every load and run writes the
 candidates' signals where they changed, every pair's span (`first_at`, `last_at`, migration 0112:
 the first and last post of the partner's people in the customer's threads, as far back as the
 inbox reads), and deletes the rows of pairs that are no candidate any more and that nobody decided.
@@ -351,7 +358,13 @@ since), Not partners (dismiss) and Decline for a `link`; End (with until), Not p
 confirmation that was a mistake) and Still a partner (decline) for an `end`; each runs a route of
 the pair (`POST /api/admin/org-partners/confirm`, `/dismiss`, `/end`, each with `undo`), which
 closes the pair's open requests it settles: a confirmation the `link` ones, an end the `end` ones, a
-dismissal all. The thread shows the pair as it is now, its span, and the customer's other partners.
+dismissal all. The thread shows the pair as it is now, its span, the customer's other partners, and
+the evidence (`partnerEvidence`; "Requests as threads"): the threads behind each signal, each opened
+at its message with the most to say, quoted, with the platform's permalink (the partner's people in
+the customer's threads; the customer named in the partner's threads and the partner in the
+customer's; the customer's people in the partner's; the threads that name the owners of both), the
+partner's knowledge-base entries that name the customer, the channels with the same Slack Connect or
+Teams team or named for both, and who at Adobe wrote in those threads most, who could know.
 
 A pair's page in Customers (`?pair=`, from the Likely partners of the admin team's review, and
 Review or Evidence on each partner of a customer's page and customer of a partner's) is anyone's on an ops
@@ -864,6 +877,33 @@ most every 30 seconds. A click on the header's number opens the personal view wh
 waits there, else the admin team's requests; a click on the admin team's number in the switch
 opens its requests.
 
+**A request's evidence.** Its first message, as its thread shows it (not the list's preview),
+ends with what the request is based on (`evidence` of its kind, src/requestevidence.js): the
+threads behind what it says in counts, each linked at the message that says the most (the
+inbox's `?t=…&m=…`), with its quote (the message's preview), its channel and day and the platform's
+permalink; then **Who could know**, the Adobe people who wrote in most of those threads (or the
+managers of the teams it is about). A thread the viewer may not see (src/shares.js `maySee`; the
+admin team sees them all) is named by its customer, its team and its channel only. Each kind's:
+
+- a partner link or end: see "Partners" (`partnerEvidence`, src/orgpartners.js);
+- a merge: each org named in the other's threads, and the people of each one's usual mail domain
+  in the other's; the channels in the same Slack Connect or Teams team (`mergeEvidence`,
+  src/orgmerge.js);
+- a channel request: the channel's latest threads, and who of Adobe wrote in them;
+- a membership: the threads the person wrote in, the team's managers and who wrote in those threads;
+- a bot: who of Adobe wrote in the threads it posted in (its latest messages are the request's);
+- an admin account: its latest messages, and who of Adobe wrote in those threads;
+- two accounts, one person?: the latest messages of each, and who of Adobe wrote in those threads;
+- a technology conflict: the latest threads that show each technology, and the teams' managers;
+- a rule conflict: the latest thread of each channel both rules match, and the two teams' managers.
+
+While it waits, **Ask a colleague** asks one of them (or anyone of Adobe, by address) the request's
+question: a question as a thread agent's teammate gets one (src/questions.js, kind `question`, in
+the inbox of their first team; migration 0117 `asked_by`), whose `thread` is the request's key. They
+answer, name someone, or say they do not know, within three days; what they say is a note of theirs
+in the request's decision log, and the asking one of the asker's (docs/STATE-MACHINES.md,
+"Question").
+
 Channel names and authors are not in the events, so the normalizer looks them up
 (`conversations.info` and `users.info` on Slack, Graph on Teams) and caches them in D1 for a
 day. These are its only platform calls. Files only move forward to a newer version, and a
@@ -985,7 +1025,19 @@ theirs to continue: one of a conversation's people, @-mentioned by name, is an a
 (below), and the same mention by its own asker, after somebody else's root, or later than 15
 minutes, is Clef's. In the case that showed it, a customer asked whether a tool had an issue,
 then pinged the bot three and a half minutes later, 30 seconds past BURST_MS, and the ping's own
-entry got an agent that asked the customer what he needed. When a
+entry got an agent that asked the customer what he needed. Timing alone does not make a burst, though: people also post several
+questions one by one, seconds apart, so that each is answered in its own thread. So before a root
+joins its author's previous one as a burst, Clef reads the two and is asked whether the new one is
+a separate, self-contained question or request (`separate`, SEPARATE_INSTRUCTIONS); at 0.8 or more
+(`MIN_SEPARATE`) it is no burst, and Clef's conversation question below is asked without the
+conversation it was just told apart from. Clef is not asked after a greeting or a root with
+nothing to read but attachments (the explanation of a picture comes next), nor about a root that
+only mentions: those are what bursts are for, and Clef takes what follows a greeting or a picture
+for a topic of its own. Asked the other way round, whether the new root continues the one before,
+Clef said no to most of the chat that bursts are ("apologies for that", "you did it"). Of
+production's 296 burst members, the question kept apart 10 of the 13 items of an RFP's numbered
+series, 5 of the 20 that were answered in their own thread, and 5 of the 252 nobody answered on
+their own, which were requests of their own as well. When a
 root message
 arrives, its *skeleton* (the text without timestamps, long numbers, hex and UUID ids, query
 strings and user agents; short numbers like status codes stay) is embedded and the most similar
