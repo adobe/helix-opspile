@@ -19,8 +19,8 @@ import {
 } from './integration-requests.js';
 import { listChannels, setAuto } from './integration-auto.js';
 import {
-  channelOf, declineLobby, editMessage, ensureBot, ensureUser, openChannel, reactTo, resend,
-  setTyping, writeMessage,
+  addToThread, channelOf, declineLobby, editMessage, ensureBot, ensureUser, openChannel, reactTo,
+  resend, setAudience, setTyping, writeMessage,
 } from './store.js';
 
 /**
@@ -203,3 +203,18 @@ export const declineRequest = (env, args = {}, now = Date.now()) => declineAcces
  */
 export const accessChannels = (env, args = {}, now = Date.now()) => listChannels(env, args, now);
 export const autoApprove = (env, args = {}, now = Date.now()) => setAuto(env, args, now);
+
+/**
+ * Individual channels (portal migration 0008): `setChannelAudience({ channel, audience, by })`
+ * sets who sees a channel's threads, `shared` or `individual`, a lobby's channel or an integration
+ * mapping's (before its first message too); `addToThread({ domain, channel, root, account, by })`
+ * adds a customer of the channel to a thread, which in an individual channel they then see.
+ */
+export const setChannelAudience = (env, args = {}, now = Date.now()) => setAudience(env, args, now);
+export async function addThreadMember(env, args = {}, now = Date.now()) {
+  const channel = await place(env, args);
+  if (!channel) {
+    return fail('no such channel', 404);
+  }
+  return addToThread(env, channel, { root: args.root, account: args.account, by: args.by }, now);
+}

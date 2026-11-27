@@ -32,9 +32,10 @@ import { teamsOf } from './shares.js';
  * replies when it is decided is not folded, and one that gets them after it was folded is split
  * back out (`dethread`), for good, unless the inbox replied for the group in its platform thread
  * (`routed_at`), or it is a reply that landed top-level (REPLY): then it stays in the group for
- * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too. A root that says
- * nothing but @-mentions (the bot, a colleague) continues its author's root before it, minutes
- * later, as a burst (`mentionsOnly`, GREETING_MS).
+ * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too, and so does an item
+ * of a numbered series ("2/14 …", `numbersItem`). A root that says nothing but @-mentions (the
+ * bot, a colleague) continues its author's root before it, minutes later, as a burst
+ * (`mentionsOnly`, GREETING_MS).
  *
  * People continue a chat with more top-level messages where the chat is top-level messages.
  * Where its people reply in platform threads, a new top-level message is nearly always a topic
@@ -259,6 +260,28 @@ export const quotes = (body) => String(body || '').split('\n').some((l) => QUOTE
  * replies there, so it is a topic of its own, as nearly all of them are answered in theirs.
  */
 export const announcesThread = (body) => /🧵|:thread:/u.test(String(body || ''));
+/** Longer lists than that are not posted item by item. */
+const MAX_SERIES = 30;
+/**
+ * An item number of a series at the start of a root: "1/14", "(2/3)", "**3/14 …**", not a date
+ * ("1/14/2027"), a ratio ("3/40", "50/50") or a time ("24/7").
+ */
+const SERIES_ITEM = /^[\s*_~#>([]*(\d{1,2})\s*\/\s*(\d{1,2})(?![\d/%])/u;
+/**
+ * Whether a root numbers itself as an item of a series ("2/14 Forms: …"): its author posted a
+ * list of questions one by one, seconds apart, so that each is answered in its own platform
+ * thread. Each item is a topic of its own, never a burst of the one before it, nor Clef's to fold:
+ * an RFP's fourteen questions, posted in under three minutes, were one entry, whose replies the
+ * inbox would have sent to the last item's thread (src/post.js `target`).
+ */
+export function numbersItem(body) {
+  const m = SERIES_ITEM.exec(String(body || ''));
+  if (!m) {
+    return false;
+  }
+  const [n, of] = [Number(m[1]), Number(m[2])];
+  return of >= 2 && of <= MAX_SERIES && n >= 1 && n <= of;
+}
 const SALUTATION = /^(?:hi+|hel+o+|hey|heya|hiya|howdy|greetings|dear|hallo|moin|servus|hola|bonjour|bonsoir|salut|ciao|buongiorno|ol[aá]|good|guten|morning|afternoon|evening|day|morgen|tag)$/;
 const ADDRESSEE = /^(?:all|everyone|everybody|team|folks|guys|people|there|again|y'?all|you|both|zusammen|alle|miteinander|tous|à|a|le|la|l'équipe|équipe|and|und|et)$/;
 /**
@@ -319,9 +342,12 @@ export function mentionsOnly(body) {
 /**
  * Whether `next`, its author's root right after `prev` (nobody else's root between them),
  * continues it as a burst: within BURST_MS, or GREETING_MS when `prev` only greets or `next` only
- * mentions (`mentionsOnly`).
+ * mentions (`mentionsOnly`). An item of a numbered series continues nothing (`numbersItem`).
  */
 const continues = (prev, prevBody, next, nextBody) => {
+  if (numbersItem(nextBody)) {
+    return false;
+  }
   const gap = Date.parse(next.root_at) - Date.parse(prev.root_at);
   return gap <= BURST_MS || (gap <= GREETING_MS && (greets(prevBody) || mentionsOnly(nextBody)));
 };
@@ -781,7 +807,8 @@ export async function rethread(env, key, { force = false } = {}) {
   let asked = null;
   const quoting = quotes(root.parsed.body);
   const announcing = conversation && !quoting && announcesThread(root.parsed.body);
-  const asking = Boolean(conversation && !quoting && !announcing && !burst);
+  const numbering = conversation && !quoting && !announcing && numbersItem(root.parsed.body);
+  const asking = Boolean(conversation && !quoting && !announcing && !numbering && !burst);
   // The channel's latest conversations and the similar ones, read as a transcript.
   const convs = asking ? await conversations(env, thread, earlier.slice(0, 4)) : [];
   // A reply that landed top-level: it @-mentions somebody who spoke in one of them, minutes
@@ -797,8 +824,8 @@ export async function rethread(env, key, { force = false } = {}) {
   // in its own platform thread is a conversation of its own, unless it is such a reply.
   const own = asking && await answered(env, thread);
   const replied = own && !addressed;
-  if (quoting || announcing || replied) {
-    // On its own: see quotes(), announcesThread() and answered().
+  if (quoting || announcing || numbering || replied) {
+    // On its own: see quotes(), announcesThread(), numbersItem() and answered().
   } else if (burst) {
     match = { thread: burst.thread, via: 'burst', p: 1 };
   } else if (conversation) {
@@ -958,6 +985,7 @@ export async function rethread(env, key, { force = false } = {}) {
     p: match ? match.p : null,
     ...(quoting ? { reason: 'quotes a message' } : {}),
     ...(announcing ? { reason: 'starts a thread' } : {}),
+    ...(numbering ? { reason: 'numbers an item' } : {}),
     ...(replied ? { reason: 'has replies of its own' } : {}),
     // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF), and whether
     // that one was held in threads (MIN_CLEF_THREADED).

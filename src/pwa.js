@@ -23,7 +23,7 @@ export const MANIFEST = {
   id: '/inbox',
   name: 'Enterprise Support',
   short_name: 'Support',
-  description: 'The ops inbox for Slack and Microsoft Teams',
+  description: 'The ops inbox for Slack, Microsoft Teams, Discord and the customer portal',
   start_url: '/inbox',
   scope: '/',
   display: 'standalone',

@@ -16,8 +16,9 @@ import { json } from './http.js';
  * A customer's people with more than one account (migration 0106). The customers' people are no
  * person of D1, so their accounts are counted by themselves: the customers' overviews
  * (src/orgprofile.js) and the topic map (src/topicmap.js) count the accounts of one mail address
- * as one (a guest account and the one of their own workspace, on Slack Connect), and the accounts
- * the admin team says are one person too (`sameAccounts`).
+ * as one (a guest account and the one of their own workspace, on Slack Connect; two profiles of an
+ * embedded portal account, by the address their provider verified, `identities.merge_email`), and
+ * the accounts the admin team says are one person too (`sameAccounts`).
  *
  * What it is asked about (`listAccountPairs`): two accounts outside Adobe, of no person, with the
  * same full name and different mail addresses (the agency's and the customer's, a new job, a
@@ -99,7 +100,7 @@ export async function sameLinks(env) {
 export async function listAccountPairs(env) {
   const [{ results: accounts }, { results: decided }] = await Promise.all([
     env.DB.prepare(`SELECT ${KEY} AS key, i.source, COALESCE(i.display_name, i.name) AS name,
-        LOWER(i.email) AS mail FROM identities i
+        LOWER(COALESCE(i.email, i.merge_email)) AS mail FROM identities i
       WHERE i.kind = 'person' AND i.person IS NULL AND COALESCE(i.staff, 0) = 0`).all(),
     env.DB.prepare('SELECT * FROM account_pairs').all(),
   ]);

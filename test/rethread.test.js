@@ -17,7 +17,8 @@ import { parse, render } from '../src/channels.js';
 import { quoteMarkdown } from '../src/markdown.js';
 import { routeReply, target } from '../src/post.js';
 import {
-  addresses, ago, dethread, greets, mentionsOnly, REPLY, rethread, skeleton, SPLIT, sweepRethreads,
+  addresses, ago, dethread, greets, mentionsOnly, numbersItem, REPLY, rethread, skeleton, SPLIT,
+  sweepRethreads,
 } from '../src/rethread.js';
 import { d1 } from './d1.js';
 import { fakeBucket } from './fakes.js';
@@ -1081,6 +1082,38 @@ describe('conversations held in threads', () => {
       await rethread(env, a, { force: true });
       assert.deepEqual(row(env, b), { logical_thread: null, logical_via: null });
       assert.equal(env.clefCalls.length, 0);
+    }
+  });
+
+  it('leaves each item of a numbered series on its own, and out of a burst', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.999 }) };
+    const a = await seed(env, '34.0', 'Hello team, our questions for the tender follow', at(0));
+    const b = await seed(env, '34.1', '**1/3 \\[must] Login areas**\nWhich architecture do you recommend?', at(0.1));
+    const c = await seed(env, '34.2', '**2/3 \\[must] Forms**\nForms or our own toolkit?', at(0.2));
+    const d = await seed(env, '34.3', '(3/3) Search: which engine do you recommend?', at(2.5));
+    channel(env);
+    [[a, '34.0', 0], [b, '34.1', 0.1], [c, '34.2', 0.2], [d, '34.3', 2.5]]
+      .forEach(([k, id, m]) => post(env, k, id, at(m), 'U1'));
+    // In any order: the roots before them do not pull them in either.
+    for (const k of [d, c, b, a]) {
+      // eslint-disable-next-line no-await-in-loop
+      await rethread(env, k);
+    }
+    assert.deepEqual(await rethread(env, c, { force: true }), {
+      result: 'new-topic', via: null, p: null, reason: 'numbers an item',
+    });
+    for (const k of [b, c, d]) {
+      assert.deepEqual(row(env, k), { logical_thread: null, logical_via: null });
+    }
+    assert.equal(env.clefCalls.length, 0);
+  });
+
+  it('tells a series item from a date or a ratio', () => {
+    for (const body of ['1/14 Login', '**2/14 \\[grey] Forms**', '(3/3) Search', '[1/2] x', '> 4/5: y']) {
+      assert.equal(numbersItem(body), true, body);
+    }
+    for (const body of ['1/14/2027 outage', '3/40 pages fail', '50/50 chance', '24/7 support', '5/3 is when', 'see 1/2', '0/3 done', '1/1 ok', '2/3% of']) {
+      assert.equal(numbersItem(body), false, body);
     }
   });
 });

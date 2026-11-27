@@ -27,7 +27,7 @@ import { imageFor } from '../src/agent/kernel.js';
 import { messageIdOf } from '../src/agent/membership.js';
 import { build } from '../scripts/computer-images.mjs';
 import { appReaction, postAsApp, reactAsApp } from '../src/agent/posting.js';
-import { agentToolsExtension, opspileExtension } from '../src/agent/tools.js';
+import { agentToolsExtension, opspileExtension, replyGuide } from '../src/agent/tools.js';
 import { kbAdmin } from '../src/kbadmin.js';
 import { d1 } from './d1.js';
 import { fakeBucket, quiet } from './fakes.js';
@@ -93,6 +93,17 @@ const target = (key, source, channelId) => ({
 });
 
 describe('agent tools', () => {
+  it('tell the agent how a reply leaves the inbox on each platform, from the bots set up', () => {
+    const all = replyGuide({ SLACK_BOT_TOKEN: 'x', DISCORD_GUILDS: '900', DISCORD_BOT_TOKEN: 'x' });
+    assert.match(all, /- Slack: a person sends the draft as themselves, .*, or as the opspile app, where the Post messages switch/);
+    assert.match(all, /- Discord: nobody sends as themselves: Discord lets only bots post .* A person sends the draft as the opspile app, where the Post messages switch of the channel or its team is on; elsewhere they copy it into Discord\./);
+    // Without a bot, no platform is said to take the app's posts.
+    const none = replyGuide({});
+    assert.doesNotMatch(none, /as the opspile app/);
+    assert.match(none, /- Discord: .*A person copies the draft into Discord\./);
+    assert.match(none, /- Microsoft Teams: a person sends the draft as themselves, with the account they connected\./);
+  });
+
   it('are off until a team or a channel turns them on; a channel wins over its team', async () => {
     const e = env();
     const slack = target(SLACK, 'slack', 'C1');

@@ -19,6 +19,7 @@ import { PLATFORMS } from './platforms.js';
 import { json } from './http.js';
 import { likePattern } from './like.js';
 import { ensureKnowledgeBase } from './kb.js';
+import { recordAudience } from './individual.js';
 import { setTeamDefault } from './agent/enabled.js';
 import { AGENT_TOOLS, setToolSwitch } from './agent/agenttools.js';
 import { GLOBAL_SERVERS, setGlobalSwitch } from './agent/globals.js';
@@ -61,7 +62,9 @@ import {
 import {
   getBot, listBots, setBot, unreviewedCount,
 } from './ourbots.js';
-import { linkAccount, listAccounts, unlinkedCount } from './accountlinks.js';
+import {
+  declineProposal, linkAccount, listAccounts, unlinkedCount,
+} from './accountlinks.js';
 import { decideAccountPair, undecidedPairCount } from './accountpairs.js';
 import {
   followable, setTeamFollow, teamFollows, teamFollowsBy,
@@ -776,7 +779,8 @@ async function requestList(env, me, { status, count }) {
   const merges = isAdmin(me) ? await openMergeCount(env) + await openPartnerCount(env) : 0;
   // And the bots nobody said whose they are (src/ourbots.js), the admin team's too.
   const bots = isAdmin(me) ? await unreviewedCount(env) : 0;
-  // And the admin accounts nobody said whose they are (src/accountlinks.js), the admin team's too.
+  // And the accounts staff by themselves nobody said whose they are (src/accountlinks.js: the host
+  // tenant's admin accounts, Discord accounts with a staff role), the admin team's too.
   const accounts = isAdmin(me) ? await unlinkedCount(env) : 0;
   // And a customer's two accounts that may be one person (src/accountpairs.js), the admin team's.
   const pairs = isAdmin(me) ? await undecidedPairCount(env) : 0;
@@ -1193,7 +1197,9 @@ const portalRefused = (res, extra = {}) => json(
  * manual rules of `portal/open`: source `portal`, field `channel_id`, `^<id>$`), and only then is
  * the person enrolled and the channel enabled, so no message arrives before its route. A channel
  * suspended, or set up by hand and never enabled, is for an operator. With `auto`, the channel
- * auto-approves the organization's next members from then on (`portal/integration/auto`).
+ * auto-approves the organization's next members from then on (`portal/integration/auto`). With
+ * `audience: 'individual'`, a new organization's channel is an individual one from the start
+ * (`portal/integration/audience`): each member sees only their own threads.
  */
 async function approveIntegration(env, me, body) {
   const { request: r, error } = await pendingIntegration(env, body.id);
@@ -1221,13 +1227,24 @@ async function approveIntegration(env, me, body) {
     if (!SLUG.test(name)) {
       return bad('a channel name is lowercase letters, digits and -, like agents-acme');
     }
+    // An individual channel is one from before its first message (portal migration 0008).
     const reserved = await portalCall(env, 'reserveAccess', {
-      id: r.id, customer: name, name, by,
+      id: r.id,
+      customer: name,
+      name,
+      by,
+      audience: ['individual', 'shared'].includes(body.audience) ? body.audience : undefined,
     });
     if (reserved.error || !reserved.channel) {
       return portalRefused(reserved);
     }
     channel = { ...reserved.channel, existing: Boolean(reserved.existing) };
+    if (reserved.channel.audience) {
+      // Either way: a reservation resumed as shared was individual in the inbox until now.
+      await recordAudience(env, {
+        tenant: `${channel.id}.embed.invalid`, channelId: channel.id, audience: reserved.channel.audience,
+      });
+    }
     if (!reserved.existing) {
       // The channel as the inbox knows it, its customer and its route, before anyone can post.
       const tenant = `${channel.id}.embed.invalid`;
@@ -1286,6 +1303,7 @@ async function approveIntegration(env, me, body) {
       existing: channel.existing,
       team: route && route.team,
       org: route && route.org,
+      audience: channel.audience || (m && m.audience) || 'shared',
       ...(auto ? { autoApprove: Boolean(auto.ok && auto.channel?.autoApprove) } : {}),
     },
     ...(auto && auto.error ? { autoError: auto.error } : {}),
@@ -1326,6 +1344,43 @@ async function setIntegrationAuto(env, me, body) {
     route: 'admin', integration: 'auto', by: me.id, on: res.channel && res.channel.autoApprove,
   }));
   return json({ ok: true, channel: await getIntegrationChannel(env, res.channel.channel) });
+}
+
+/**
+ * PUT /api/admin/portal/integration/audience `{ channel, audience }`: the admin team says who sees
+ * the threads of a channel of the portal (an integration mapping's, or a lobby's by its id):
+ * `shared`, every customer of it, or `individual`, each customer only the threads they started,
+ * wrote in or were added to (portal migration 0008). Adobe's people see every thread either way.
+ * Switching moves no thread: each stays its people's.
+ */
+async function setIntegrationAudience(env, me, body) {
+  if (!portalBound(env)) {
+    return json({ error: 'the customer portal is not connected to this inbox' }, 409);
+  }
+  const audience = clean(body.audience, 20);
+  if (!['shared', 'individual'].includes(audience)) {
+    return bad('an audience is shared or individual');
+  }
+  const res = await portalCall(env, 'setAudience', {
+    channel: clean(body.channel, 20),
+    audience,
+    by: { email: me.email || String(me.id), name: me.name || null },
+  });
+  if (res.error) {
+    return portalRefused(res);
+  }
+  // The inbox's agents work it so from now on, not from the event (src/individual.js).
+  await recordAudience(env, {
+    tenant: res.channel.lobby, channelId: res.channel.id, audience, seq: res.seq || 0,
+  });
+  console.log(JSON.stringify({
+    route: 'admin', integration: 'audience', by: me.id, audience,
+  }));
+  return json({
+    ok: true,
+    audience: res.channel.audience,
+    channel: await getIntegrationChannel(env, res.channel.id) || res.channel,
+  });
 }
 
 /**
@@ -2229,6 +2284,7 @@ async function adminRoute(request, env, url, me) {
       channels: await listIntegrationChannels(env), portalBound: portalBound(env),
     });
     case 'PUT portal/integration/auto': return setIntegrationAuto(env, me, body);
+    case 'PUT portal/integration/audience': return setIntegrationAudience(env, me, body);
     case 'POST conflicts': return settleConflict(env, me, body);
     case 'POST rule-conflicts': return settleRuleConflict(env, me, body);
     // Channel threads labeled again though they did not change (src/label.js queueRelabel).
@@ -2279,6 +2335,7 @@ async function adminRoute(request, env, url, me) {
     case 'PUT bots': return setBot(env, me, body);
     case 'GET accounts': return listAccounts(env);
     case 'PUT accounts': return linkAccount(env, me, body);
+    case 'POST accounts/decline': return declineProposal(env, me, body);
     case 'PUT account-pairs': return decideAccountPair(env, me, body);
     case 'GET cogs': return json(await cogsReport(env, url));
     case 'POST cogs/rollup': return json(await rollupCogs(env));
@@ -2297,9 +2354,9 @@ async function adminRoute(request, env, url, me) {
 const DECIDING = new Set(['DELETE requests', 'POST member-requests/confirm',
   'POST member-requests/decline', 'POST portal/open', 'POST portal/decline',
   'POST portal/integration/approve', 'POST portal/integration/decline',
-  'PUT portal/integration/auto', 'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
+  'PUT portal/integration/auto', 'PUT portal/integration/audience', 'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
   'DELETE org-merge', 'POST members', 'POST assign', 'DELETE assign', 'POST rules', 'PUT rules',
-  'DELETE rules', 'PUT bots', 'PUT accounts', 'PUT account-pairs', 'POST conflicts',
+  'DELETE rules', 'PUT bots', 'PUT accounts', 'POST accounts/decline', 'PUT account-pairs', 'POST conflicts',
   'POST rule-conflicts']);
 
 export async function admin(request, env, url, me) {

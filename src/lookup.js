@@ -514,7 +514,8 @@ async function fetchTeamsUser(env, userId, fallbackName) {
 /**
  * A Discord account as a member of the guild: their server nickname and avatar, and whether
  * one of their roles is in DISCORD_STAFF_ROLES. Discord shares no email with bots, so the
- * account is linked to a person only when they connect it in the inbox (src/post.js).
+ * account is linked to a person only when they connect it in the inbox (src/post.js), or, for
+ * one with a staff role, when the admin team says whose it is (src/accountlinks.js).
  */
 async function fetchDiscordUser(env, guild, userId, fallbackName) {
   const member = await discordApi(env, `/guilds/${guild}/members/${userId}`, { allow: [404] });
@@ -600,6 +601,8 @@ export async function getIdentity(env, ref, now = Date.now()) {
     // A reference that says nothing of a picture (a mention's, a lobby member's) keeps the row's.
     const same = row && row.name === (ref.name || null)
       && (row.email || null) === (ref.email || null)
+      && (ref.mergeEmail === undefined || (row.merge_email || null) === ref.mergeEmail)
+      && (ref.mergeAt === undefined || (row.merge_at || null) === ref.mergeAt)
       && (ref.avatar === undefined || (ref.avatar ? row.avatar === ref.avatar
         : !String(row.avatar || '').startsWith('/api/portal/avatar/')));
     if (same && fresh(row, now)) {
@@ -623,6 +626,11 @@ export async function getIdentity(env, ref, now = Date.now()) {
           || await gravatar(ref.email),
         title: null,
         company: null,
+        // An embedded account's merge key: kept apart from `email`, so that it links nobody to a
+        // person of D1 and makes nobody staff, whatever its domain. A reference that says nothing
+        // of it keeps the row's.
+        merge_email: ref.mergeEmail || (row && row.merge_email) || null,
+        merge_at: (ref.mergeEmail && ref.mergeAt) || (row && row.merge_at) || null,
       };
     } else if (ref.source === 'slack') {
       f = await fetchSlackUser(env, ref.userId);
@@ -660,7 +668,7 @@ export async function getIdentity(env, ref, now = Date.now()) {
       ON CONFLICT (email) DO UPDATE SET staff = 1`).bind(f.email, f.name).run();
   }
   // An account the admin team said whose it is (src/accountlinks.js) stays that person's: its
-  // mail address, the host tenant's own, says nobody.
+  // mail address, the host tenant's own, says nobody, and a Discord account has none.
   const linked = Boolean(row && row.linked_at && row.person);
   let person = !linked && f.email
     ? await env.DB.prepare('SELECT id, staff, name FROM people WHERE email = ?').bind(f.email).first()
@@ -678,13 +686,15 @@ export async function getIdentity(env, ref, now = Date.now()) {
   const aliases = f.aliases ? JSON.stringify(f.aliases) : null;
   await env.DB.prepare(`INSERT INTO identities
     (source, tenant, user_id, kind, name, email, home, person, fetched_at, avatar, title, company,
-     staff, aliases, guest)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     staff, aliases, guest, merge_email, merge_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (source, tenant, user_id) DO UPDATE SET kind = excluded.kind,
       name = excluded.name, email = excluded.email, home = excluded.home,
       person = excluded.person, fetched_at = excluded.fetched_at, avatar = excluded.avatar,
       title = excluded.title, company = excluded.company, staff = excluded.staff,
-      aliases = COALESCE(excluded.aliases, identities.aliases), guest = excluded.guest`)
+      aliases = COALESCE(excluded.aliases, identities.aliases), guest = excluded.guest,
+      merge_email = COALESCE(excluded.merge_email, identities.merge_email),
+      merge_at = COALESCE(excluded.merge_at, identities.merge_at)`)
     .bind(
       ref.source,
       ref.tenant,
@@ -701,6 +711,8 @@ export async function getIdentity(env, ref, now = Date.now()) {
       f.staff ? 1 : null,
       aliases,
       typeof f.guest === 'boolean' ? Number(f.guest) : null,
+      ref.source === 'portal' ? f.merge_email || null : null,
+      ref.source === 'portal' ? f.merge_at || null : null,
     )
     .run();
   const identity = {
