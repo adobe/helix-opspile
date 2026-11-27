@@ -857,7 +857,9 @@ portal](#customer-portal).
 **Requests as threads.** What waits for the admin team is a thread of its inbox
 (`src/requestthreads.js`, `GET /api/requests`), not a page of the admin pages: a channel request,
 a membership request, a customer in the portal, a merge of customers, a bot or a staff account
-nobody said whose it is, two accounts of a customer's that may be one person, a conflict between the teams' technologies or their rules. Its key is
+nobody said whose it is, two accounts of a customer's that may be one person, a conflict between the teams' technologies or their rules, one of
+Adobe's GitHub organizations to install the GitHub App on (see "`github`" under "Global MCP
+servers"). Its key is
 `request:<kind>:<id>` (`src/requestkeys.js`: the row's id, a bot's or an account's identity key,
 a conflict's key), and the inbox lists it in the admin team's view only, with the team's own
 threads, under a "customer" of its kind (Channel requests, Bots, Rule conflicts, …), of kind
@@ -3368,6 +3370,25 @@ Web Crypto; GitHub's PKCS#1 key is wrapped as PKCS#8), trades it for a token per
 keeps it per isolate until shortly before it expires, and an agent's client is replaced
 before its token runs out. An app installed on several accounts is a server per account,
 `github_<account>`.
+
+**Installing it where Adobe's threads need it.** Threads name repositories and sites of Adobe's
+own GitHub organizations, not only `adobe`, and the app reads only those it is installed on. So the
+admin team is asked (`src/githubrequests.js`, migration 0119): the cron's sync counts, for each
+organization `ADOBE_GITHUB_ORGS` lists, the inbox entries of the last 90 days whose `repo` or
+`site` facts (`owner/name`) name it, and one that 5 entries name, with no allowed installation
+there, is a request in the admin team's inbox (kind `github`, **GitHub App installations**): the
+organization, how many threads and repositories and sites, the most named of them, the latest
+threads behind it and who of Adobe works them (its evidence, so **Ask a colleague** can find who
+owns the organization), and the app's install link (or, without an app, where to create it). An
+owner of the organization installs it there; while GitHub lists an installation there nobody
+allowed, the request offers **Allow**, which allows it as the tools and MCP servers do. It closes
+itself once an installation on the account is allowed, from either place or found by the next
+sync; **Dismiss** keeps it from coming back for 30, 90 or 365 days. Which organizations are
+Adobe's is that list and nothing else: no name, owner or domain is taken for Adobe's, so nobody is
+ever asked to install anything on a customer's or a partner's organization, however many threads
+name it. An agent whose `watch_related` names a repository of one of them it cannot read is told
+it is Adobe's, and whether the admin team is asked (docs/STATE-MACHINES.md, "GitHub App
+request").
 
 **`fluffyjaws`: FluffyJaws' MCP server, as a person or a service app.** FluffyJaws, Adobe's
 internal support assistant, serves MCP at `https://api.fluffyjaws.adobe.com/api/v1/mcp`

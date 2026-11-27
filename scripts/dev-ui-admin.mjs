@@ -19,6 +19,7 @@ import { kbAdmin } from '../src/kbadmin.js';
 import { pkcs8Pem } from '../src/github.js';
 import { consume } from '../src/normalizer.js';
 import { syncFollowRules } from '../src/followrules.js';
+import { syncGithubRequests } from '../src/githubrequests.js';
 import { advanceWatermark, previewOf } from '../src/threads.js';
 import { seal } from '../src/post.js';
 import {
@@ -161,6 +162,30 @@ function seedPartnerPairs(DB) {
       evidence.run(id, other.thread, 'Agency Co\'s people answer the support questions here since last week.', 'The agent of a thread in #aem-forms-acme', at(0.05));
     }
   }
+}
+
+/**
+ * What the threads say of GitHub organizations (src/githubrequests.js): `example-sites` and
+ * `example-demos` stand for Adobe's (ADOBE_GITHUB_ORGS, below), and `globex-web` for a
+ * customer's, which nobody is asked about however many threads name it. The app is installed on
+ * example-demos and waits to be allowed there (`githubApi`); acme-labs, Adobe's too, had a request
+ * that closed once its installation was allowed.
+ */
+function seedGithubFacts(DB) {
+  const db = DB.sqlite;
+  const recent = db.prepare(`SELECT thread FROM threads WHERE SUBSTR(org, 1, 1) != '_'
+    ORDER BY last_at DESC LIMIT 16`).all().map((r) => r.thread);
+  const fact = db.prepare(`INSERT OR IGNORE INTO facts (thread, source, field, value)
+    VALUES (?, 'rule', ?, ?)`);
+  const sites = ['www', 'www', 'blog', 'www', 'events', 'docs', 'www', 'blog', 'partners'];
+  recent.slice(0, 9).forEach((t, i) => fact.run(t, i % 3 ? 'site' : 'repo', `example-sites/${sites[i]}`));
+  recent.slice(4, 10).forEach((t, i) => fact.run(t, 'repo', `example-demos/demo-${['commerce', 'forms', 'commerce', 'gen-ai', 'forms', 'quickstart'][i]}`));
+  recent.slice(6, 14).forEach((t) => fact.run(t, 'site', 'globex-web/www'));
+  const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();
+  db.prepare(`INSERT INTO github_install_requests (account, threads, repo_count, repos, last_at,
+      counted_at, requested_at, status, decided_by, decided_at)
+    VALUES ('acme-labs', 7, 2, ?, ?, ?, ?, 'installed', 'dana@example.com', ?)`)
+    .run(JSON.stringify([{ repo: 'acme-labs/tools', threads: 5 }, { repo: 'acme-labs/site', threads: 2 }]), ago(26), ago(25), ago(30), ago(25));
 }
 
 /** Clef on two orgs, made up: one when their names are (src/orgmerge.js). */
@@ -359,6 +384,9 @@ function githubApi(request) {
       id: 4242, account: { login: 'acme-labs', type: 'Organization' }, repository_selection: 'selected', html_url: 'https://github.com/organizations/acme-labs/settings/installations/4242',
     }, {
       id: 4343, account: { login: 'someone-else', type: 'User' }, repository_selection: 'all',
+    }, {
+      // One of Adobe's (ADOBE_GITHUB_ORGS), installed by its owner: its request offers Allow.
+      id: 4444, account: { login: 'example-demos', type: 'Organization' }, repository_selection: 'all', html_url: 'https://github.com/organizations/example-demos/settings/installations/4444',
     }]);
   }
   if (/\/access_tokens$/.test(pathname)) {
@@ -1089,6 +1117,7 @@ export function createAdmin(store, {
     ('acme-co', 'ACME Corporation', 'customer', 'acme.example', '2026-10-20T09:00:00Z'),
     ('wonkaindustries', 'Wonka Industries Ltd', 'customer', NULL, '2026-10-20T09:00:00Z')`);
   seedPartnerPairs(DB);
+  seedGithubFacts(DB);
   // And Pied Piper's half year, a partner's page (dev-ui-partner.mjs).
   seedPartnerProfile(DB);
   // Channels Lena (a member of Edge ops) asked the admin team for: one the admin team holds
@@ -1361,6 +1390,8 @@ export function createAdmin(store, {
     AGENT_CHANNELS: 'C0ACMEAEM',
     // The fake inbox's staff (the team wizard counts only them).
     STAFF_DOMAINS: 'example.com',
+    // Adobe's GitHub organizations, made up (src/githubrequests.js, seedGithubFacts).
+    ADOBE_GITHUB_ORGS: 'acme-labs, example-sites, example-demos',
     // Seals the MCP servers' headers; made up for the preview.
     TOKEN_KEY: Buffer.alloc(32, 9).toString('base64url'),
     PUBLIC_ORIGIN: PREVIEW_ORIGIN,
@@ -1534,8 +1565,9 @@ export function createAdmin(store, {
       checkUrl,
       admins,
     ))));
-  // The follow rules' shares, as the Worker writes them after a rule change and on the cron.
-  const followed = syncFollowRules(env);
+  // The follow rules' shares, as the Worker writes them after a rule change and on the cron; and
+  // the GitHub App requests, as the cron files them (src/githubrequests.js).
+  const followed = Promise.all([syncFollowRules(env), seeded.then(() => syncGithubRequests(env))]);
   /** `/api/kb`, its channels, agents and MCP servers, by the real src/kbadmin.js. */
   const kb = async (req, url, body) => {
     await seeded;

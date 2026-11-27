@@ -26,12 +26,13 @@ export const PREFIX = 'request:';
  * and a channel of a user-token host with its auto-approval), merge (src/orgmerge.js), partner
  * (src/partnerrequests.js: whether a partner works for a customer, or no longer does), bot
  * (src/ourbots.js), account (src/accountlinks.js), person (src/accountpairs.js), tech
- * (src/techconflicts.js) and rule (src/ruleconflicts.js); and question (src/questions.js), a
+ * (src/techconflicts.js) and rule (src/ruleconflicts.js); github (src/githubrequests.js: install
+ * the GitHub App on one of Adobe's GitHub organizations); and question (src/questions.js), a
  * thread agent's question to one person, which is theirs, in whichever inbox they are, not the
  * admin team's.
  */
 export const KINDS = ['channel', 'member', 'portal', 'integration', 'embed', 'merge', 'partner',
-  'bot', 'account', 'person', 'tech', 'rule', 'question'];
+  'bot', 'account', 'person', 'tech', 'rule', 'question', 'github'];
 
 /** The team whose inbox has them (src/roles.js ADMIN_TEAM). */
 const ADMIN_TEAM = 'admin';

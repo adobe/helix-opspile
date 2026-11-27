@@ -26,6 +26,7 @@ import {
   appManifest, approveInstallation, createApp, currentApp, forgetGithub, installationsWithApprovals,
   manifestAction, shownApp,
 } from './github.js';
+import { closeInstalled } from './githubrequests.js';
 import { json, text } from './http.js';
 import { checkState, makeState, seal } from './post.js';
 import { repoName } from './kb.js';
@@ -664,6 +665,10 @@ async function githubInstallation(env, me, body) {
   const done = await approveInstallation(env, app, body.id, body.approved, by);
   if (!done) {
     return json({ error: 'the app has no such installation' }, 404);
+  }
+  if (body.approved) {
+    // A request to install it there is settled (src/githubrequests.js).
+    await closeInstalled(env, [done.account]);
   }
   console.log(JSON.stringify({
     route: 'kb',

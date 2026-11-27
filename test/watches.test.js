@@ -355,6 +355,9 @@ describe('watching a GitHub issue or pull request', () => {
     const e = env();
     await withGithub(e);
     assert.match((await setWatch(watcher(e), { url: 'https://github.com/someone-else/x/issues/1', why: 'x' }, NOW)).error, /does not read someone-else's/);
+    // One of Adobe's organizations: the agent hears the admin team installs the app there.
+    e.ADOBE_GITHUB_ORGS = 'labs-sites';
+    assert.match((await setWatch(watcher(e), { url: 'https://github.com/labs-sites/x/issues/1', why: 'x' }, NOW)).error, /does not read labs-sites's repositories .*labs-sites is one of Adobe's GitHub organizations/);
     const set = await quiet(() => setWatch(watcher(e), { url: PR_URL, why: 'The fix merges here' }, NOW));
     assert.equal(set.error, undefined);
     assert.deepEqual([set.watch.kind, set.watch.target, set.watch.installation, set.watch.seen], ['github', 'acme-labs/site#7', 41, hour(5)]);

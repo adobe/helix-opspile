@@ -103,6 +103,9 @@ jobs:
       # The agents' send_feedback (optional; off while FEEDBACK_REPO is empty;
       # src/agent/feedback.js): the repository its issues go to, `owner/name`.
       FEEDBACK_REPO: ${{ secrets.FEEDBACK_REPO }}
+      # Adobe's own GitHub organizations, which the admin team is asked to install the GitHub
+      # App on once threads name them (optional; off while empty; src/githubrequests.js).
+      ADOBE_GITHUB_ORGS: ${{ secrets.ADOBE_GITHUB_ORGS }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6

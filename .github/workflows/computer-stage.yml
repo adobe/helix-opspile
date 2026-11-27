@@ -69,6 +69,7 @@ on:
       - 'src/follows.js'
       - 'src/fulltext.js'
       - 'src/github.js'
+      - 'src/githubrequests.js'
       - 'src/graph.js'
       - 'src/har.js'
       - 'src/http.js'

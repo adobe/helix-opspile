@@ -19,6 +19,7 @@ import { agentEnabled } from './enabled.js';
 import {
   effective, forSource, globalServer, switchesFor,
 } from './globals.js';
+import { adobeOrgHint } from '../githubrequests.js';
 import { grantsOf } from '../toolrequests.js';
 import { resolveAnyThread } from './history.js';
 import { wroteIn } from '../individual.js';
@@ -179,7 +180,9 @@ export async function githubAccess(env, target, owner) {
   const mine = all.find((i) => i.approved && !i.suspended
     && String(i.account).toLowerCase() === String(owner).toLowerCase());
   if (!mine) {
-    return { error: `the opspile GitHub App does not read ${owner}'s repositories for your channel (it reads ${all.filter((i) => i.approved && !i.suspended).map((i) => i.account).join(', ') || 'none'})` };
+    // One of Adobe's organizations: whether the admin team was asked to install it there.
+    const hint = await adobeOrgHint(env, owner);
+    return { error: `the opspile GitHub App does not read ${owner}'s repositories for your channel (it reads ${all.filter((i) => i.approved && !i.suspended).map((i) => i.account).join(', ') || 'none'}).${hint}` };
   }
   return { app, installation: mine.id };
 }

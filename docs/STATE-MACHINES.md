@@ -1,8 +1,9 @@
 # State machines
 
-opspile has seven status columns, `channel_requests.status`, `bash_requests.status`,
+opspile has nine status columns, `channel_requests.status`, `bash_requests.status`,
 `tool_requests.status`, `portal_requests.status`, `org_merge_requests.status`,
-`member_requests.status` and `questions.status` (and the customer portal, in its own database, `lobbies.status` and
+`org_partner_requests.status`, `member_requests.status`, `github_install_requests.status` and
+`questions.status` (and the customer portal, in its own database, `lobbies.status` and
 `integration_requests.status`). Everything
 else that has a lifecycle keeps it in the shape of its data: a nullable timestamp, a watermark, whether a row exists, a lease,
 a key in a Durable Object's storage, a flag in the page. Those are state machines all the same, and
@@ -346,6 +347,31 @@ and tells nobody.
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status
 = 'open'`, and the merge closes every open request of its pair in the batch that writes the merge.
+
+**GitHub App request.** open → installed, dismissed or withdrawn (`github_install_requests`,
+migration 0119, src/githubrequests.js), a thread of the admin team's inbox
+(`request:github:<id>`) in either. Only for one of Adobe's GitHub organizations, as
+`ADOBE_GITHUB_ORGS` lists them: the list is the only source, so a customer's or a partner's
+organization is never asked about, however many threads name it. The cron's sync (every 20
+minutes) files one once `MIN_THREADS` (5) inbox entries of the last `WINDOW_DAYS` (90, by their
+latest message by a person) name the organization in a `repo` or `site` fact, a re-threaded group
+counting once, and no installation of the app on that account is allowed (`github_installations`,
+by account, case aside): one open per account (a partial unique index; `INSERT OR IGNORE`, so two
+syncs file one). While it is open each sync writes its counts as the threads are now (only what
+changed), and it stays open under `MIN_THREADS`: it was asked, and the repositories are named
+still. It closes as `installed` once an installation on the account is allowed, whoever allowed it
+its `decided_by`: at once when the admin team allows one, from the request's **Allow** (offered
+while GitHub lists an installation there that nobody allowed) or the tools and MCP servers (`PUT
+/api/kb/github/installation`), and on the next sync for an allowance written any other way. The
+sync takes it back (`withdrawn`, why in `reason`) once the organization is no longer listed, or no
+entry of the window names it. **Dismiss** (the admin team) writes `quiet_until` (30, 90 or 365
+days): until then no sync files another for the account; after it, one does if the threads still
+call for it, a new row, and the dismissed one stays a resolved thread. A revoked allowance closes
+nothing and reopens nothing: the next sync files a new request if the threads still name the
+account. Every close is `WHERE status = 'open'`, so a dismissal and an allowance at once leave one
+decision. What the request says of the app (its install link, an installation waiting to be
+allowed) is read when it is shown, from `github_apps` and GitHub (cached five minutes); GitHub not
+answering leaves that out and decides nothing.
 
 **Request thread.** waiting → decided, and for a conflict → gone (src/requestthreads.js). What a
 request is in the admin team's inbox follows from its own row (a channel, membership, portal or
@@ -858,7 +884,8 @@ again. A failure that may pass leaves it.
 `DELETE … RETURNING`, so two redemptions cannot both win. The cron removes what ran out.
 
 **GitHub installation.** seen → allowed → revoked. A row in `github_installations` is the allowance,
-and it is checked each time a client connects. An agent's open client can keep its token until that
+and it is checked each time a client connects. Allowing one closes the GitHub App requests of its
+account ("GitHub App request"). An agent's open client can keep its token until that
 expires, at most an hour.
 
 **Sign-in.** signed in → signed out → popup → back (`ui/app.js`). A redirect on any `/api` fetch is

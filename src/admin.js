@@ -44,6 +44,7 @@ import {
   decidePartner, endPartner, orgPartners, pairThreads,
 } from './orgpartners.js';
 import { closePartnerRequest, openPartnerCount, requestPartner } from './partnerrequests.js';
+import { openGithubCount } from './githubrequests.js';
 import { forgetOrgProfiles } from './orgprofile.js';
 import {
   claimRequest, closeRequest, createRequest, getRequest, listRequests, openCount, outcomeOf,
@@ -777,8 +778,10 @@ async function requestList(env, me, { status, count }) {
   // And the conflicts between team rules (src/ruleconflicts.js), the admin team's too.
   const rules = isAdmin(me) ? await ruleConflicts(env) : [];
   // And the merges of customers asked for (src/orgmerge.js), the admin team's too, and the pairs
-  // of a customer and a partner to decide (src/partnerrequests.js).
-  const merges = isAdmin(me) ? await openMergeCount(env) + await openPartnerCount(env) : 0;
+  // of a customer and a partner to decide (src/partnerrequests.js), and the GitHub App to
+  // install on one of Adobe's organizations (src/githubrequests.js).
+  const merges = isAdmin(me) ? await openMergeCount(env) + await openPartnerCount(env)
+    + await openGithubCount(env) : 0;
   // And the bots nobody said whose they are (src/ourbots.js), the admin team's too.
   const bots = isAdmin(me) ? await unreviewedCount(env) : 0;
   // And the accounts staff by themselves nobody said whose they are (src/accountlinks.js: the host
@@ -1440,7 +1443,8 @@ async function listTeams(env, me) {
     + await memberOpenCount(env, scope)
     + (everything ? await openConflictCount(env)
       + (await ruleConflicts(env, { kept: false })).length + await openMergeCount(env)
-      + await openPartnerCount(env) + await unreviewedCount(env) + await unlinkedCount(env) : 0);
+      + await openPartnerCount(env) + await openGithubCount(env) + await unreviewedCount(env)
+      + await unlinkedCount(env) : 0);
   // Every team's name, for a manager's page to say where a channel is now.
   const names = Object.fromEntries(all.map((t) => [t.slug, t.name]));
   return json({
