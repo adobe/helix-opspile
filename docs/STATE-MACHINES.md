@@ -357,7 +357,11 @@ so of two answers, or an answer at the deadline, one wins. Expired is read off t
 past its `deadline`, three days) and written only when the agent asks the same person on the same
 thread again, which closes it first so that the partial unique index (one open per thread and
 person) makes room. `told_at` is written after the agent took the answer (`ThreadAgent.answered`);
-one it could not be told stays closed, untold, and its thread says so.
+one it could not be told stays closed, untold, and its thread says so. An admin asks the same way
+from a request of the admin team's inbox ("Ask a colleague", src/requestthreads.js; `asked_by`,
+migration 0117): its `thread` is the request's key, and closing it writes how it ended into that
+request's `request_log`, as a note of whoever answered, then `told_at`; an expired one writes
+nothing there.
 
 **Membership request.** open → confirmed (added, or member: on the team already), declined or
 withdrawn (`member_requests`, migration 0096; `src/memberrequests.js`). One open request per team and

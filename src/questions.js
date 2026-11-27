@@ -20,6 +20,10 @@
  * told, as an input of its own. A question nobody answered within `DEADLINE_MS` is expired: read
  * off the clock, and written only when the agent asks the same person again.
  *
+ * An admin asks a colleague the same way from a request of the admin team's inbox ("Ask a
+ * colleague", src/requestthreads.js): the question's `thread` is then the request's key, `asked_by`
+ * the admin (migration 0117), and the answer goes into the request's decision log, not to an agent.
+ *
  * This module keeps the rows.
  */
 
@@ -72,6 +76,8 @@ function shape(r, now = new Date()) {
     passedTo: r.passed_to || null,
     decidedAt: r.decided_at || null,
     toldAt: r.told_at || null,
+    // An admin's, from a request of the admin team's inbox (its `thread` the request's key).
+    askedBy: r.asked_by ? { email: r.asked_by, name: r.asked_by_name || null } : null,
   };
 }
 
@@ -146,7 +152,7 @@ export async function openQuestions(env, email, now = new Date()) {
  * is closed as expired first, so the new one takes its place.
  */
 export async function createQuestion(env, id, {
-  thread, team, title, person, purpose, why, items, sidebar = null,
+  thread, team, title, person, purpose, why, items, sidebar = null, askedBy = null,
 }, now = new Date()) {
   const email = String(person.email).toLowerCase();
   const at = now.toISOString();
@@ -163,7 +169,8 @@ export async function createQuestion(env, id, {
     return { error: `${MAX_OPEN} of your questions wait for an answer already` };
   }
   await env.DB.prepare(`INSERT INTO questions (id, thread, team, title, email, name, purpose, why,
-      items, sidebar, asked_at, deadline) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      items, sidebar, asked_at, deadline, asked_by, asked_by_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(
       id,
       thread,
@@ -177,6 +184,8 @@ export async function createQuestion(env, id, {
       sidebar,
       at,
       new Date(now.getTime() + DEADLINE_MS).toISOString(),
+      askedBy ? String(askedBy.email || '').toLowerCase() || null : null,
+      askedBy ? askedBy.name || null : null,
     ).run();
   return { question: await getQuestion(env, id, now) };
 }

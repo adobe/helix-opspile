@@ -48,6 +48,7 @@ const THREADS = [
   ['piedpiper', 'Sitemap for a multi-region site', 90, 600, 1],
   ['piedpiper', 'Redirects after a repository move', 40, 55, 0],
   ['piedpiper', 'Font loading on the new header', 12, 25, 1],
+  ['piedpiper', 'Status of our projects', 8, 30, 2],
   ['piedpiper', 'Stale code after the repository move', 1, null, 0],
   ['acme', 'Launch checklist for the new storefront', 160, 20, 0],
   ['acme', 'Image renditions are cropped', 110, 75, 1],
@@ -58,6 +59,31 @@ const THREADS = [
   ['hooli', 'Header navigation is slow', 60, 160, 0],
   ['hooli', 'Preview shows the old fonts', 3, null, 2],
 ];
+
+/**
+ * What some of those threads say (`messages.preview`): the asker, Adobe, the asker, Adobe. What a
+ * partner request's evidence quotes (src/requestevidence.js): in ACME's channel, one of Pied
+ * Piper's people runs ACME's migration and its GitHub org; in Pied Piper's own, Adobe asks about
+ * ACME's go-live. The rest say their title, and that it is worked on.
+ */
+const SAID = {
+  'Launch checklist for the new storefront': [
+    'We ran the migration of the ACME storefront and are admins of its GitHub org: who signs off the launch checklist?',
+    'I can sign it off once the redirects are in place.',
+    'Redirects are merged in the acme-web repository.',
+    'Signed off. Good luck with the launch!',
+  ],
+  'Search index misses the product pages': [
+    'The search index of the ACME storefront misses the product pages since our last deploy.',
+    'The index config excludes /products: can you check the query index sheet?',
+  ],
+  'Status of our projects': [
+    'Weekly status of our projects with you: three sites in progress.',
+    'Thanks! When does ACME go live with the new storefront?',
+    'Planned for the second of next month.',
+    'Great, we keep the launch support slot for ACME then.',
+  ],
+};
 
 /** Adobe's people who answer (dev-ui-team.mjs has their accounts). */
 const OURS = [1, 31, 41];
@@ -84,7 +110,7 @@ export function seedPartnerProfile(DB, now = Date.now()) {
       kind, channel_name, title, path, root_at, last_at, any_at, last_staff, messages, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, 'channel', ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const message = db.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, person,
-      staff, counted, deleted, author_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)`);
+      staff, counted, deleted, author_key, preview, permalink) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`);
   const label = db.prepare(`INSERT OR REPLACE INTO labels (thread, next_actor, kind, urgency, resolved_p,
       labeled_through, model, labeled_at, title) VALUES (?, ?, 'question', ?, 0.1, ?, 'clef', ?, ?)`);
   THREADS.forEach(([org, title, daysAgo, answer, asker], i) => {
@@ -121,10 +147,12 @@ export function seedPartnerProfile(DB, now = Date.now()) {
       posts.length,
       at(last[2]),
     );
+    const said = SAID[title] || [title, 'Looking into it.', 'Thanks, that works.', 'Done: closing this.'];
     posts.forEach(([who, staff, when], n) => {
       const id = staff ? who : who.id;
       const author = staff ? `slack:T-FAKE:TP-${who}` : `slack:T-FAKE:${who.user}`;
-      message.run(c.source, c.tenant, c.channel_id, `${root}-${n}`, key, at(when), id, staff, author);
+      const permalink = `https://example.slack.com/archives/${c.channel_id}/p${Date.parse(at(when)) * 1000}`;
+      message.run(c.source, c.tenant, c.channel_id, `${root}-${n}`, key, at(when), id, staff, author, said[n] || null, permalink);
     });
     label.run(
       key,

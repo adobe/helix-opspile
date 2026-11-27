@@ -16,8 +16,8 @@ import { linkCandidates, loadAccounts } from './accountlinks.js';
 import { listAccountPairs } from './accountpairs.js';
 import { isStaffDomain } from './lookup.js';
 import { getMemberRequest, listMemberRequests } from './memberrequests.js';
-import { getMergeRequest, listMergeRequests } from './orgmerge.js';
-import { LIKELY } from './orgpartners.js';
+import { getMergeRequest, listMergeRequests, mergeEvidence } from './orgmerge.js';
+import { LIKELY, partnerEvidence } from './orgpartners.js';
 import { getPartnerRequest, listPartnerRequests, otherPartners } from './partnerrequests.js';
 import { getBot, listBots } from './ourbots.js';
 import { getPortalRequest, listPortalRequests } from './portalrequests.js';
@@ -25,10 +25,16 @@ import {
   getIntegrationChannel, getIntegrationRequest, listIntegrationChannels, listIntegrationRequests,
 } from './integrationrequests.js';
 import { portalBound } from './portalsource.js';
-import { announceRequest, parseRequestKey, requestKey } from './requestkeys.js';
+import {
+  announceRequest, isRequestKey, parseRequestKey, requestKey,
+} from './requestkeys.js';
+import {
+  byThread, channelThreads, evidenceText, managersOf, markSeen, PEOPLE, postedBy, postedByPerson,
+  techThreads, threadSection, threadsOf, together, whoCouldKnow,
+} from './requestevidence.js';
 import { getRequest, listRequests } from './requests.js';
 import {
-  closeQuestion, getQuestion, listQuestions, markTold,
+  closeQuestion, createQuestion, getQuestion, listQuestions, markTold,
 } from './questions.js';
 import { answerNote } from './agent/question.js';
 import { agentStub } from './agent/stub.js';
@@ -148,6 +154,15 @@ function movesText(moves, n) {
   }).join('\n') + (moves.length > 20 ? `\n- and ${moves.length - 20} more` : '');
 }
 
+/** Writes `body` to request `key`'s log, as `me`. */
+async function logEntry(env, me, key, type, body) {
+  const at = now();
+  await env.DB.prepare(`INSERT INTO request_log (request, type, body, person, author_name,
+      author_email, at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(key, type, body, me.id || null, me.name || null, me.email || null, at).run();
+  return at;
+}
+
 // ---- the kinds -------------------------------------------------------------------------------
 //
 // Each kind says of one of its requests (`r`, as its module lists it, `n` the names):
@@ -157,7 +172,12 @@ function movesText(moves, n) {
 // (what can be decided now). An action is `{ id, label, tone?, hint?, ask?, preview?, fields?,
 // off? }` for the thread view, with `run(values, dryRun)` (the admin route it takes: `{ method,
 // path, body }`), `done(answer, values)` (what came of it, markdown) and `previewed(answer)`
-// (what a dry run says, markdown) here.
+// (what a dry run says, markdown) here. `question` is what an admin asks a colleague of it
+// (the title, without one).
+//
+// A kind may say what its request is based on: `evidence(env, r, me)`, `{ sections, people }`
+// (src/requestevidence.js), the threads behind what it says and who at Adobe could know, which its
+// thread shows under the request, and which offers to ask one of them ("Ask a colleague").
 
 const reasonField = (label) => ({
   name: 'reason', label, type: 'text', max: 500,
@@ -185,6 +205,14 @@ const channelKind = {
   list: (env) => listRequests(env, { limit: LIMIT }),
   get: (env, id) => getRequest(env, id),
   id: (r) => r.id,
+  /** The channel's latest threads, and who of Adobe wrote in them most. */
+  async evidence(env, r) {
+    const c = r.channel;
+    const list = await channelThreads(env, { source: c.source, channelId: c.channelId });
+    const threads = byThread(list, { latest: true });
+    const sections = [threadSection(`The latest threads of ${md(chan(c))}`, threads)];
+    return { sections, people: await whoCouldKnow(env, threadsOf({ sections })) };
+  },
   describe(r, n) {
     const c = r.channel;
     const name = chan(c);
@@ -202,6 +230,7 @@ const channelKind = {
     const open = r.status === 'open';
     return {
       title: `${r.move ? 'Move' : 'Add'} ${name} ${r.move ? 'to' : '→'} ${team}`,
+      question: r.move ? `Should ${name} be filed under ${team}?` : `Should ${name} be in ${poss(team)} inbox?`,
       open,
       status: open ? 'waiting' : r.status,
       askedAt: r.requestedAt,
@@ -248,6 +277,18 @@ const memberKind = {
   list: (env) => listMemberRequests(env, { limit: LIMIT }),
   get: (env, id) => getMemberRequest(env, id),
   id: (r) => r.id,
+  /** The threads the person wrote in, and the team's managers and the people of those threads. */
+  async evidence(env, r) {
+    const p = r.person;
+    const not = [p.id].filter(Boolean);
+    const threads = byThread(await postedByPerson(env, p.id), { latest: true });
+    const sections = [threadSection(`Threads ${md(p.name || p.email)} wrote in`, threads)];
+    const [managers, active] = await Promise.all([
+      managersOf(env, [r.team], { not }),
+      whoCouldKnow(env, threadsOf({ sections }), { not }),
+    ]);
+    return { sections, people: together([managers, active]) };
+  },
   describe(r, n) {
     const p = r.person;
     const name = p.name || p.email;
@@ -262,6 +303,7 @@ const memberKind = {
     const did = { added: `added to ${md(team)}`, member: `on ${md(team)} already` }[r.outcome] || '';
     return {
       title: `${name} → ${team}`,
+      question: `Should ${name} be on ${team}?`,
       open,
       status: open ? 'waiting' : r.status,
       askedAt: r.requestedAt,
@@ -618,12 +660,15 @@ const mergeKind = {
   list: (env, me) => listMergeRequests(env, me, { limit: LIMIT }),
   get: (env, id) => getMergeRequest(env, id),
   id: (r) => r.id,
+  /** Each named in the other's threads, their people in each other's (src/orgmerge.js). */
+  evidence: (env, r) => mergeEvidence(env, r.from, r.into),
   describe(r, n) {
     const from = n.org(r.from);
     const into = n.org(r.into);
     const open = r.status === 'open';
     return {
       title: `Merge ${from} into ${into}`,
+      question: `Are ${from} and ${into} one company?`,
       open,
       status: open ? 'waiting' : r.status,
       askedAt: r.requestedAt,
@@ -718,6 +763,8 @@ const partnerKind = {
     return { ...r, others: (others.get(r.customer) || []).filter((o) => o.slug !== r.partner) };
   },
   id: (r) => r.id,
+  /** The threads behind each signal, and who of Adobe wrote in them (src/orgpartners.js). */
+  evidence: (env, r) => partnerEvidence(env, r.customer, r.partner),
   describe(r, n) {
     const P = n.org(r.partner);
     const C = n.org(r.customer);
@@ -807,6 +854,7 @@ const partnerKind = {
     }
     return {
       title,
+      question: r.action === 'end' ? `Does ${P} still work for ${C}?` : `Does ${P} work for ${C}?`,
       open,
       status: open ? 'waiting' : r.status,
       askedAt: r.requestedAt,
@@ -838,6 +886,11 @@ const botKind = {
     return { ...bot, recent };
   },
   id: (b) => b.key,
+  /** Who of Adobe wrote in the threads it posted in (its latest messages are the request's). */
+  async evidence(env, b) {
+    const threads = byThread(await postedBy(env, [b.key])).map((x) => x.thread.thread);
+    return { sections: [], people: await whoCouldKnow(env, threads) };
+  },
   describe(b, n) {
     const name = botName(b);
     const open = b.ours === null && b.messages > 0;
@@ -866,6 +919,7 @@ const botKind = {
     });
     return {
       title: name,
+      question: `Whose bot is ${name}, ${PLATFORM[b.source] || b.source}'s ${code(b.id)}: Adobe's or external?`,
       open,
       status: open ? 'waiting' : ({ true: 'adobe', false: 'external' })[b.ours] || 'mentioned',
       askedAt: null,
@@ -931,6 +985,12 @@ const accountKind = {
     return a && !a.person ? { ...a, candidates: await linkCandidates(env, a) } : a;
   },
   id: (a) => a.key,
+  /** What it wrote, and who of Adobe wrote in those threads: who it talks with. */
+  async evidence(env, a) {
+    const threads = byThread(await postedBy(env, [a.key]), { latest: true });
+    const sections = [threadSection('Its latest messages', threads)];
+    return { sections, people: await whoCouldKnow(env, threadsOf({ sections })) };
+  },
   describe(a) {
     const name = a.name || a.handle || a.email || a.id;
     const open = !a.person;
@@ -958,6 +1018,7 @@ const accountKind = {
     const byOf = (p) => (p.by.agent ? p.by.name : `${p.by.name || p.by.email}, through an agent`);
     return {
       title: `${name}, ${a.source === 'discord' ? 'Discord staff account' : 'admin account'}`,
+      question: `Whose is the ${a.source === 'discord' ? 'Discord staff' : 'Teams admin'} account ${name} (${a.email || a.handle || a.id})?`,
       open,
       status: open ? 'waiting' : 'linked',
       askedAt: null,
@@ -1010,6 +1071,15 @@ const personKind = {
     return (await listAccountPairs(env)).find((p) => p.id === id) || null;
   },
   id: (p) => p.id,
+  /** What each of the two wrote, latest first, and who of Adobe wrote in those threads. */
+  async evidence(env, p) {
+    const side = async (s) => threadSection(
+      `${md(s.name)}, ${s.mails.length ? md(s.mails.join(', ')) : 'no mail address'}`,
+      byThread(await postedBy(env, s.keys), { latest: true }),
+    );
+    const sections = await Promise.all([side(p.a), side(p.b)]);
+    return { sections, people: await whoCouldKnow(env, threadsOf({ sections })) };
+  },
   describe(p, n) {
     // As the busier of the two writes it.
     const { name } = p.b.messages > p.a.messages ? p.b : p.a;
@@ -1029,6 +1099,7 @@ const personKind = {
     });
     return {
       title: `${name}: one person?`,
+      question: `Are the two accounts named ${name} (${[...p.a.mails, ...p.b.mails].join(', ') || 'no mail address'}) one person?`,
       open,
       status: open ? 'waiting' : ({ true: 'one person', false: 'two people' })[p.same],
       askedAt: null,
@@ -1065,6 +1136,17 @@ const techKind = {
     return (await techConflicts(env)).find((c) => c.key === key) || null;
   },
   id: (c) => c.key,
+  /** The latest threads that show each technology, and the teams' managers. */
+  async evidence(env, c) {
+    const techs = [...new Set(c.definitions.map((d) => d.tech))].slice(0, 3);
+    const sections = await Promise.all(techs.map(async (t) => threadSection(
+      `Threads that show ${md(t)}`,
+      byThread(await techThreads(env, t), { latest: true }),
+    )));
+    const teams = [...new Set(c.definitions.map((d) => d.team))];
+    const people = await managersOf(env, teams, { most: 4 });
+    return { sections, people };
+  },
   describe(c, n) {
     const what = c.kind === 'diverging'
       ? `${plural(c.definitions.length, 'team')} define ${code(c.tech)} otherwise (${md(c.fields.map((x) => FIELD_NAMES[x] || x).join(', '))}). Each team's is what Clef asks in its channels. Keep it if that is meant, or use one of them everywhere.`
@@ -1135,6 +1217,16 @@ const ruleKind = {
     return (await ruleConflicts(env)).find((c) => c.key === key) || null;
   },
   id: (c) => c.key,
+  /** The latest thread of each channel both rules match, and the two teams' managers. */
+  async evidence(env, c) {
+    const lasts = await Promise.all(c.channels.slice(0, SHOWN_CHANNELS).map(async (ch) => byThread(
+      await channelThreads(env, { source: ch.source, channelId: ch.channelId }, { limit: 20 }),
+      { latest: true },
+    )[0]));
+    const sections = [threadSection('The latest thread of each channel both match', lasts.filter(Boolean))];
+    const people = await managersOf(env, [c.a.team, c.b.team], { most: 4 });
+    return { sections, people };
+  },
   describe(c, n) {
     const count = plural(c.channels.length, 'channel');
     const wins = [[c.b, c.b.wins], [c.a, c.a.wins]].filter(([, k]) => k)
@@ -1232,6 +1324,33 @@ const answersOf = (q, v) => q.items.map((item, i) => ({
   ...(v[`text${i}`] ? { text: v[`text${i}`] } : {}),
 }));
 
+/** How question `q` ended, as the decision log of the request it was asked from says it. */
+function answerLog(q) {
+  const note = q.note ? `\n\n${quote(q.note)}` : '';
+  if (q.status === 'passed') {
+    return `Does not know; says to ask ${q.passedTo ? `**${md(q.passedTo)}**` : 'someone else'}.${note}`;
+  }
+  if (q.status === 'unknown') {
+    return `Does not know.${note}`;
+  }
+  return `Answered:\n\n${answersText(q)}${note}`;
+}
+
+/**
+ * An admin's question from a request (`q.thread` the request's key, "Ask a colleague"): how it
+ * ended goes into the request's decision log, as a note of whoever answered (`me`), and the admin
+ * team's inboxes hear of it.
+ */
+async function tellRequest(env, q, me) {
+  const at = await logEntry(env, me, q.thread, 'note', answerLog(q));
+  await markTold(env, q.id, new Date(at));
+  const parsed = parseRequestKey(q.thread);
+  if (parsed) {
+    await announceRequest(env, parsed.kind, parsed.id);
+  }
+  return { ok: true };
+}
+
 /**
  * Tells the agent of question `q`'s thread how it ended (`answerNote`), and notes that it was
  * told. Best effort: a question the agent was not told about stays closed, and says so.
@@ -1262,13 +1381,18 @@ const questionKind = {
   id: (q) => q.id,
   describe(q) {
     const open = q.status === 'open';
+    // An admin's, from a request of the admin team's inbox, which only the admin team opens.
+    const fromRequest = isRequestKey(q.thread);
+    const asker = (q.askedBy && (q.askedBy.name || q.askedBy.email)) || 'The admin team';
     const link = `/inbox?team=${encodeURIComponent(q.team)}&t=${encodeURIComponent(q.thread)}`;
     const items = q.items.map((item, i) => `${i + 1}. **${md(item.text)}**${item.guess ? `\n   My guess: ${md(item.guess)}` : ''}`).join('\n');
     const facts = [
-      `- From [${md(q.title || 'a thread')}](${link})`,
+      fromRequest ? `- About the admin team's request **${md(q.title || 'a request')}**` : `- From [${md(q.title || 'a thread')}](${link})`,
       q.sidebar ? `- Asked while it answered ${md(q.askedFor || 'someone')} in the thread's sidebar` : '',
-      open ? `- Waits for you until ${q.deadline.slice(0, 10)}; the answer goes to the agent only, never to the customer` : '',
+      open && fromRequest ? `- Waits for you until ${q.deadline.slice(0, 10)}; the answer goes to the admin team's request, never to a customer` : '',
+      open && !fromRequest ? `- Waits for you until ${q.deadline.slice(0, 10)}; the answer goes to the agent only, never to the customer` : '',
     ].filter(Boolean).join('\n');
+    const by = fromRequest ? 'the admin team' : 'the agent';
     const fields = q.items.flatMap((item, i) => [
       ...(item.choices ? [{
         name: `pick${i}`,
@@ -1299,10 +1423,17 @@ const questionKind = {
       if (!await closeQuestion(env, q.id, shut)) {
         return { error: 'it is not waiting any more: answered meanwhile, or expired', status: 409 };
       }
-      const told = await tellAgent(env, await getQuestion(env, q.id), me.name || me.email);
+      const closed = await getQuestion(env, q.id);
+      const told = fromRequest ? await tellRequest(env, closed, me)
+        : await tellAgent(env, closed, me.name || me.email);
       return { ok: true, told };
     };
-    const told = (a) => (a.told && a.told.error ? ` The agent was not told (${md(a.told.error)}): tell it in the thread's sidebar.` : ' The agent goes on with it.');
+    const told = (a) => {
+      if (fromRequest) {
+        return ' The admin team reads it in its request.';
+      }
+      return a.told && a.told.error ? ` The agent was not told (${md(a.told.error)}): tell it in the thread's sidebar.` : ' The agent goes on with it.';
+    };
     let decision = null;
     if (!open) {
       const then = QUESTION_DONE[q.status] || q.status;
@@ -1316,12 +1447,14 @@ const questionKind = {
     return {
       title: q.title ? `Question on ${q.title}` : 'A question from a thread agent',
       team: q.team,
-      author: { name: 'Thread agent', kind: 'app', staff: true },
+      author: fromRequest && q.askedBy ? null : { name: 'Thread agent', kind: 'app', staff: true },
       open,
       status: open ? 'asked' : q.status,
       askedAt: q.askedAt,
-      askedBy: null,
-      body: `The thread's agent asks you, for ${PURPOSE[q.purpose]}:\n\n${quote(q.why)}\n\n${items}\n\n${facts}`,
+      askedBy: fromRequest ? q.askedBy : null,
+      body: fromRequest
+        ? `${md(asker)} of the admin team asks you, to decide a request of its inbox:\n\n${quote(q.why)}\n\n${items}\n\n${facts}`
+        : `The thread's agent asks you, for ${PURPOSE[q.purpose]}:\n\n${quote(q.why)}\n\n${items}\n\n${facts}`,
       decidedAt: q.decidedAt || (q.status === 'expired' ? q.deadline : null),
       decidedBy: null,
       // What they answered is theirs to say, as a reply in the thread; an expiry is the inbox's.
@@ -1332,17 +1465,18 @@ const questionKind = {
           id: 'answer',
           label: 'Answer',
           tone: 'accent',
-          hint: 'Pick or correct each guess. The agent gets your answer as yours, trusted, and finishes what it asked for with it.',
+          hint: fromRequest ? 'The admin team reads your answer as yours, in its request, and decides with it.'
+            : 'Pick or correct each guess. The agent gets your answer as yours, trusted, and finishes what it asked for with it.',
           fields: [...fields, {
-            name: 'note', label: 'Anything else it should know (optional)', type: 'textarea', rows: 2, max: 1000,
+            name: 'note', label: `Anything else ${fromRequest ? 'they' : 'it'} should know (optional)`, type: 'textarea', rows: 2, max: 1000,
           }],
           act: act('answered'),
-          done: (a) => `Sent to the agent.${told(a)}`,
+          done: (a) => `Sent to ${by}.${told(a)}`,
         },
         {
           id: 'pass',
           label: 'Ask someone else',
-          hint: 'The agent asks whom you name, when they are on the team.',
+          hint: fromRequest ? 'The admin team reads whom you name, and may ask them.' : 'The agent asks whom you name, when they are on the team.',
           fields: [
             {
               name: 'who', label: 'Who knows (a name or an address)', type: 'text', max: 200, required: true,
@@ -1358,7 +1492,7 @@ const questionKind = {
           id: 'unknown',
           label: 'I don\'t know',
           tone: 'negative',
-          hint: 'The agent does not ask you about it again, and leaves the gap open.',
+          hint: fromRequest ? 'The admin team reads that you do not know.' : 'The agent does not ask you about it again, and leaves the gap open.',
           fields: [{
             name: 'note', label: 'Who might know, or why nobody does (optional)', type: 'text', max: 500,
           }],
@@ -1661,8 +1795,142 @@ export async function requestEntries(env, me, { mine = false } = {}) {
   return { threads: readState(entries, marks, [], me.id) };
 }
 
-/** `{ kind, id, key, r, d }` of request `key` as it is now, or null. */
-async function findRequest(env, me, key) {
+/** What an admin asks a colleague of a request: its title as a question, without one. */
+const ASK_MAX = 300;
+const ASK_CONTEXT = 400;
+
+/** Twelve hex digits, as a question's id is. */
+const questionId = () => [...crypto.getRandomValues(new Uint8Array(6))]
+  .map((b) => b.toString(16).padStart(2, '0')).join('');
+
+/**
+ * Asks the colleague of `v` (`who`, or `email`) the question of request `key` as `me`: a question
+ * filed in the inbox of their first team (else the admin team's), noted in the request's log.
+ */
+async function askColleague(env, me, key, d, v) {
+  const email = clean(v.email || v.who, 200).toLowerCase();
+  const text = clean(v.question, ASK_MAX);
+  if (!email || !text) {
+    return { error: 'pick whom to ask, or give their address, and the question', status: 400 };
+  }
+  const person = await env.DB.prepare(`SELECT p.id, p.name, LOWER(p.email) AS email, p.staff,
+      (SELECT m.team FROM team_members m WHERE m.person = p.id ORDER BY m.team = ?2, m.team LIMIT 1)
+        AS team
+    FROM people p WHERE LOWER(p.email) = ?1`).bind(email, ADMIN_TEAM).first();
+  if (!person || !(person.staff || staffOf(env)(email))) {
+    return { error: `${email} is nobody of Adobe the inbox knows`, status: 404 };
+  }
+  if (person.id === me.id) {
+    return { error: 'that is you', status: 400 };
+  }
+  const asker = me.name || me.email || 'An admin';
+  const context = clean(v.context, ASK_CONTEXT);
+  const team = person.team || ADMIN_TEAM;
+  const res = await createQuestion(env, questionId(), {
+    thread: key,
+    team,
+    title: d.title,
+    person: { email, name: person.name },
+    purpose: 'fact',
+    why: `${asker} decides "${d.title}"${context ? `: ${context}` : ', and you worked the threads it is based on.'}`.slice(0, 500),
+    items: [{ text }],
+    askedBy: { email: me.email, name: me.name },
+  });
+  if (res.error) {
+    return {
+      error: /of your questions/.test(res.error) ? 'two questions of this request wait for an answer already' : res.error,
+      status: 409,
+    };
+  }
+  await logEntry(env, me, key, 'note', `Asked **${md(person.name || email)}**: ${md(text)}`);
+  await announceRequest(env, 'question', res.question.id, { teams: [team] });
+  return { ok: true, name: person.name || email };
+}
+
+/**
+ * "Ask a colleague" of request `key` (`d`, as its kind describes it): one of `people`, who could
+ * know (its evidence's, src/requestevidence.js), or anyone of Adobe by address, gets the question
+ * in their inbox as a thread agent's teammate does (src/questions.js, kind `question`), and how
+ * they answer comes into this request's decision log (`tellRequest`).
+ */
+function askAction(key, d, people, n) {
+  const label = (p) => (p.manages ? `${p.name}, manages ${n.team(p.manages)}`
+    : `${p.name}, in ${p.threads === 1 ? 'one' : p.threads} of these threads`);
+  return {
+    id: 'ask',
+    label: 'Ask a colleague',
+    hint: 'Asks them in their inbox, as a thread agent asks a teammate: they answer, name someone who knows, or say they do not, within three days. What they say comes into this thread; nothing goes to a customer.',
+    fields: [
+      {
+        name: 'who',
+        label: 'Whom',
+        type: 'select',
+        value: people[0].email,
+        options: [...people.map((p) => ({ value: p.email, label: label(p) })), { value: '', label: 'Someone else: their address below' }],
+      },
+      {
+        name: 'email', label: 'Someone else\'s mail address (optional)', type: 'email', max: 200,
+      },
+      {
+        name: 'question', label: 'The question', type: 'text', max: ASK_MAX, required: true, value: d.question || d.title,
+      },
+      {
+        name: 'context', label: 'What they should know (optional)', type: 'textarea', rows: 2, max: ASK_CONTEXT,
+      },
+    ],
+    act: (env, me, v) => askColleague(env, me, key, d, v),
+    done: (a) => `Asked ${md(a.name)}: what they say comes into this thread.`,
+  };
+}
+
+/**
+ * What kind `k` says request `r` is based on (`evidence`), with the threads `me` may see marked
+ * (src/requestevidence.js `markSeen`), or null: a kind that says none, or that could not be read
+ * (the request is shown without it).
+ */
+async function evidenceOf(env, me, kind, r) {
+  const k = KIND[kind];
+  if (!k.evidence) {
+    return null;
+  }
+  try {
+    const ev = await k.evidence(env, r, me);
+    if (!ev) {
+      return null;
+    }
+    // Whoever reads it is no one to ask.
+    ev.people = (ev.people || []).filter((p) => !me || p.id !== me.id).slice(0, PEOPLE);
+    return await markSeen(env, me, ev);
+  } catch (e) {
+    console.error(JSON.stringify({ route: 'requests', evidence: kind, error: e.message }));
+    return null;
+  }
+}
+
+/**
+ * `d` with its evidence (`ev`): the threads and who could know under the request's first
+ * message, and, while it waits, an action to ask one of them (`askAction`).
+ */
+function withEvidence(key, d, ev, n) {
+  if (!ev) {
+    return d;
+  }
+  const people = (ev.people || []).filter((p) => p.email);
+  const ask = d.open && people.length > 0;
+  const text = evidenceText(ev, n, { ask });
+  return {
+    ...d,
+    body: text ? `${d.body}\n\n${text}` : d.body,
+    evidence: ev,
+    actions: ask ? [...d.actions, askAction(key, d, people, n)] : d.actions,
+  };
+}
+
+/**
+ * `{ kind, id, key, r, d }` of request `key` as it is now, or null; with `evidence`, what it is
+ * based on in `d` (`withEvidence`), as its thread shows it and its actions are taken.
+ */
+async function findRequest(env, me, key, { evidence = true } = {}) {
   const parsed = parseRequestKey(key);
   if (!parsed || (!PERSONAL.has(parsed.kind) && !isAdmin(me))) {
     return null;
@@ -1671,8 +1939,10 @@ async function findRequest(env, me, key) {
   const r = await k.get(env, parsed.id, me);
   const n = await names(env);
   if (r) {
+    const ev = evidence ? await evidenceOf(env, me, parsed.kind, r) : null;
+    const d = k.describe(r, n, { portalBound: portalBound(env) });
     return {
-      ...parsed, key, r, n, d: k.describe(r, n, { portalBound: portalBound(env) }),
+      ...parsed, key, r, n, d: withEvidence(key, d, ev, n),
     };
   }
   const row = await env.DB.prepare('SELECT * FROM request_threads WHERE request = ?').bind(key).first();
@@ -1749,15 +2019,6 @@ function valuesOf(fields = [], given = {}) {
   return out;
 }
 
-/** Writes `body` to request `key`'s log, as `me`. */
-async function logEntry(env, me, key, type, body) {
-  const at = now();
-  await env.DB.prepare(`INSERT INTO request_log (request, type, body, person, author_name,
-      author_email, at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .bind(key, type, body, me.id || null, me.name || null, me.email || null, at).run();
-  return at;
-}
-
 /**
  * Request `key`'s thread as it is now that `me` decided it, read by them up to its end: what they
  * decided is the thread's latest message, and theirs, so it is not unread for them once the room
@@ -1797,7 +2058,7 @@ export async function addNote(env, me, body) {
   if (!text) {
     return json({ error: 'write something' }, 400);
   }
-  const x = await findRequest(env, me, key);
+  const x = await findRequest(env, me, key, { evidence: false });
   if (!x) {
     return json({ error: 'no such request' }, 404);
   }
@@ -1891,7 +2152,7 @@ export const mayDecide = (me) => isAdmin(me);
 
 /** The team whose room has request `key`'s reads: a question's thread's team, else the admin's. */
 export async function readRoom(env, me, key) {
-  const x = await findRequest(env, me, key);
+  const x = await findRequest(env, me, key, { evidence: false });
   if (!x) {
     return null;
   }
