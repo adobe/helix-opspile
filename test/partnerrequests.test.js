@@ -16,7 +16,8 @@ import { api } from '../src/api.js';
 import { requestPartnerLink } from '../src/agent/partnerrequest.js';
 import { forgetFacts } from '../src/orgmerge.js';
 import {
-  AGAIN_DAYS, customersOf, forgetEvidence, GOING_ON_DAYS, LAPSED_DAYS, partnersOf, partnerWants,
+  AGAIN_DAYS, conflictOf, customersOf, forgetEvidence, GOING_ON_DAYS, LAPSED_DAYS, partnersOf,
+  partnerWants, standingOf, standingWords, UNSURE_HIGH, UNSURE_LOW,
 } from '../src/orgpartners.js';
 import { dateOf } from '../src/partnerrequests.js';
 import { forgetPartnerDomains } from '../src/partners.js';
@@ -39,11 +40,11 @@ const viewer = (p) => ({
 });
 const AT = '2026-10-22T00:00:00Z';
 
-/** Clef, made up: the agency works for Globex, the studio for nobody. */
-const fakeAI = () => ({
+/** Clef, made up: the agency works for Globex (as sure as `p`), the studio for nobody. */
+const fakeAI = (p) => ({
   async run(model, input) {
     const yes = /C: slug globex,/.test(input.state) && /P: slug agency,/.test(input.state);
-    return { answers: { works: { type: 'noul', noul: yes ? 0.9 : 0.2 } } };
+    return { answers: { works: { type: 'noul', noul: yes ? p : 0.2 } } };
   },
 });
 
@@ -51,7 +52,7 @@ const fakeAI = () => ({
  * Globex, a customer, and two partners: two of the agency's people post in three of Globex's
  * threads, and the studio has a channel of its own and nothing in Globex's.
  */
-function env() {
+function env({ p = 0.9 } = {}) {
   const DB = d1({
     people: [ADA, BO, CY],
     teams: [{ slug: 'admin', name: 'Admin' }, { slug: 'helix', name: 'Helix ops' }],
@@ -84,7 +85,7 @@ function env() {
     post.run(ch, `m${n}`, `slack:E1:${ch}:${root}`, at, `slack:E1:${user}`);
   }
   return {
-    DB, AI: fakeAI(), STAFF_DOMAINS: 'staff.example', CHANNELS: fakeBucket(), NORMALIZE: { send: async () => {} },
+    DB, AI: fakeAI(p), STAFF_DOMAINS: 'staff.example', CHANNELS: fakeBucket(), NORMALIZE: { send: async () => {} },
   };
 }
 
@@ -114,7 +115,8 @@ describe('partner requests', () => {
   });
 
   it('are asked by anyone on a team, once, and decided in the admin team\'s inbox', async () => {
-    const e = env();
+    // Clef is unsure of the agency: it asks the admin team too.
+    const e = env({ p: 0.6 });
     // Nobody but an ops team's people asks; a partner must be one.
     assert.equal((await call(e, CY, 'POST', '/api/admin/org-partner-requests', { customer: 'globex', partner: 'studio', action: 'link' })).status, 403);
     assert.equal((await call(e, BO, 'POST', '/api/admin/org-partner-requests', { customer: 'studio', partner: 'globex', action: 'link' })).status, 409);
@@ -131,8 +133,9 @@ describe('partner requests', () => {
     const agency = await quiet(() => call(e, BO, 'POST', '/api/admin/org-partner-requests', { customer: 'globex', partner: 'agency', action: 'link' }));
     assert.equal(agency.status, 409);
     assert.equal(agency.body.request.requestedBy.name, 'Clef');
-    assert.ok(agency.body.request.pair && agency.body.request.pair.p === 0.9);
+    assert.ok(agency.body.request.pair && agency.body.request.pair.p === 0.6);
     assert.ok(!('signals' in agency.body.request.pair) && !('fingerprint' in agency.body.request));
+    assert.equal(agency.body.request.note, null);
     assert.ok(!JSON.stringify(agency.body).includes('agency.example'));
     const admin = await quiet(() => call(e, ADA, 'POST', '/api/admin/org-partner-requests', { customer: 'globex', partner: 'agency', action: 'link' }));
     assert.ok(admin.body.request.pair.signals.length);
@@ -217,15 +220,16 @@ describe('partner requests', () => {
     assert.deepEqual(rows(e, `SELECT status, decided_by FROM org_partner_requests WHERE id = ${r.body.request.id}`), [{ status: 'dismissed', decided_by: 'ada@staff.example' }]);
   });
 
-  it('are Clef\'s for a likely pair nobody decided, not again once declined', async () => {
-    const e = env();
+  it('are Clef\'s for a pair it is unsure of, not again once declined', async () => {
+    const e = env({ p: 0.6 });
     const load = () => quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners?fresh=1'));
     let list = await load();
     const pair = list.body.pairs.find((x) => x.partner === 'agency');
-    assert.deepEqual([pair.p, pair.first, pair.last], [0.9, '2026-09-01T10:00:00Z', AT]);
+    assert.deepEqual([pair.p, pair.standing.status, pair.first, pair.last], [0.6, 'likely', '2026-09-01T10:00:00Z', AT]);
+    assert.deepEqual(list.body.unsure, [UNSURE_LOW, UNSURE_HIGH]);
     const [q] = rows(e, 'SELECT * FROM org_partner_requests');
     assert.deepEqual([q.customer, q.partner, q.action, q.since, q.requested_by], ['globex', 'agency', 'link', '2026-09-01', 'clef']);
-    assert.match(q.note, /^Clef says 90% that The Agency works for Globex: 2 people from agency\.example/);
+    assert.match(q.note, /^Clef is unsure, 60%, that The Agency works for Globex: 2 people from agency\.example/);
     assert.deepEqual(pair.open, [{ id: q.id, action: 'link' }]);
     // Its thread is Clef's, not a person's.
     const t = await call(e, ADA, 'GET', `/api/thread?thread=${encodeURIComponent(requestKey('partner', q.id))}`);
@@ -241,6 +245,89 @@ describe('partner requests', () => {
     await load();
     await quiet(() => call(e, ADA, 'POST', '/api/admin/org-partners/confirm', { customer: 'globex', partner: 'agency' }));
     assert.deepEqual(rows(e, 'SELECT status FROM org_partner_requests'), [{ status: 'confirmed' }]);
+  });
+
+  it('are none for a pair Clef is sure of, which counts as a partner, and its own are taken back', async () => {
+    const e = env({ p: 0.9 });
+    // What the first syncs filed for a likely pair, before Clef asked only when unsure.
+    e.DB.sqlite.exec(`INSERT INTO org_partner_requests (customer, partner, action, note, fingerprint,
+        requested_by, requested_at) VALUES ('globex', 'agency', 'link', 'Clef says 90%', 'f0', 'clef', '${AT}')`);
+    const list = await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners?fresh=1'));
+    const pair = list.body.pairs.find((x) => x.partner === 'agency');
+    assert.deepEqual([pair.p, pair.standing.status, pair.confirmed], [0.9, 'sure', null]);
+    assert.deepEqual(rows(e, 'SELECT status, decided_by, reason FROM org_partner_requests'), [{
+      status: 'withdrawn', decided_by: 'clef', reason: 'Clef is sure of it, 90%: it counts as a partner without a decision',
+    }]);
+    // Linked without a decision, as a likely one is; and asked about no more.
+    assert.deepEqual((await partnersOf(e, 'globex')).map((x) => [x.slug, x.confirmed]), [['agency', false]]);
+    await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners?fresh=1'));
+    assert.equal(rows(e, "SELECT * FROM org_partner_requests WHERE status = 'open'").length, 0);
+    // Below the band, none either: an open one is taken back as unlikely.
+    const low = env({ p: 0.2 });
+    low.DB.sqlite.exec(`INSERT INTO org_partner_requests (customer, partner, action, fingerprint,
+        requested_by, requested_at) VALUES ('globex', 'agency', 'link', 'f0', 'clef', '${AT}')`);
+    await quiet(() => call(low, ADA, 'GET', '/api/admin/org-partners?fresh=1'));
+    assert.deepEqual(rows(low, 'SELECT status, reason FROM org_partner_requests'), [{ status: 'withdrawn', reason: 'Clef finds it unlikely now, 20%' }]);
+    // A person's request is theirs to take back, whatever Clef says.
+    const asked = await quiet(() => call(e, BO, 'POST', '/api/admin/org-partner-requests', {
+      customer: 'globex', partner: 'agency', action: 'link', note: 'Hank says so',
+    }));
+    assert.equal(asked.status, 200);
+    await quiet(() => call(e, ADA, 'GET', '/api/admin/org-partners?fresh=1'));
+    assert.equal(rows(e, `SELECT status FROM org_partner_requests WHERE id = ${asked.body.request.id}`)[0].status, 'open');
+  });
+
+  it('are Clef\'s for a sure pair only where its signals conflict', () => {
+    const day = 24 * 3600 * 1000;
+    const now = Date.parse('2026-11-26T00:00:00Z');
+    const iso = (ms) => new Date(ms).toISOString();
+    const orgs = new Map([['globex', { slug: 'globex', name: 'Globex', latest: iso(now - day) }],
+      ['agency', { slug: 'agency', name: 'The Agency' }]]);
+    const seen = new Map([['globex\nagency', 'f']]);
+    const sig = (kind) => ({
+      kind, weight: 2, n: 3, text: `${kind} found`,
+    });
+    const pair = (more) => ({
+      customer: 'globex', partner: 'agency', signals: [sig('posters'), sig('members')], p: 0.9, candidate: true, confirmed: null, dismissed: null, until: null, first: iso(now - 30 * day), last: iso(now - 2 * day), ...more,
+    });
+    const wants = (more) => partnerWants([pair(more)], orgs, seen, now);
+    // The band's edges ask; what is above or below it does not.
+    const edges = [0.34, UNSURE_LOW, 0.5, UNSURE_HIGH, 0.66];
+    assert.deepEqual(edges.map((p) => wants({ p }).length), [0, 1, 1, 1, 0]);
+    assert.equal(wants({ p: UNSURE_LOW })[0].fingerprint, 'f');
+    // Nobody asked Clef yet, or not on what it is shown now: no request.
+    assert.deepEqual(wants({ p: null }), []);
+    assert.deepEqual(partnerWants([pair({ p: 0.5 })], orgs, new Map(), now), []);
+    // Sure, on one kind alone that is no posting together.
+    const [alone] = wants({ signals: [sig('owners')] });
+    assert.deepEqual([alone.action, alone.fingerprint], ['link', 'f']);
+    assert.match(alone.note, /^Clef is sure, 90%, that The Agency works for Globex, from one kind of evidence alone: owners found\.$/);
+    assert.equal(wants({ signals: [sig('members')] }).length, 1);
+    assert.deepEqual(wants({ signals: [sig('posters')] }), []);
+    assert.deepEqual(wants({ signals: [sig('channel')] }), []);
+    // Sure, and its people stopped posting while the customer's threads went on.
+    const lapsed = iso(now - (LAPSED_DAYS + 1) * day);
+    const [quietly] = wants({ last: lapsed });
+    assert.deepEqual([quietly.action, quietly.since, quietly.fingerprint], ['link', iso(now - 30 * day).slice(0, 10), `quiet:${lapsed.slice(0, 10)}`]);
+    assert.match(quietly.note, /but nobody of The Agency posted in Globex's threads since/);
+    const still = new Map([...orgs, ['globex', { slug: 'globex', name: 'Globex', latest: lapsed }]]);
+    assert.deepEqual(partnerWants([pair({ last: lapsed })], still, seen, now), []);
+    // A conflict is a sure pair's: the unsure one is asked as unsure.
+    assert.match(wants({ p: 0.6, signals: [sig('owners')] })[0].note, /^Clef is unsure, 60%/);
+    assert.deepEqual(conflictOf(pair({}), orgs, now), null);
+  });
+
+  it('say how a pair stands, in words for the agents', () => {
+    const at = { by: 'ada', at: AT };
+    const said = (x) => standingOf(x).status;
+    assert.deepEqual([
+      said(null), said({ p: null }), said({ p: 0.2 }), said({ p: 0.4 }), said({ p: 0.55 }),
+      said({ p: 0.9 }),
+      said({ confirmed: at, p: 0.2 }), said({ confirmed: at, until: '2026-06' }), said({ dismissed: at, p: 0.9 }),
+    ], ['none', 'unknown', 'unlikely', 'unsure', 'likely', 'sure', 'confirmed', 'former', 'dismissed']);
+    assert.equal(standingWords(standingOf({ p: 0.4 })), 'not decided and not linked; Clef is unsure (40%)');
+    assert.equal(standingWords(standingOf({ confirmed: at, until: '2026-06' })), 'a former partner, until 2026-06, as the admin team said');
+    assert.equal(standingWords(standingOf({ p: 0.92 })), 'not decided; Clef is sure (92%), so it counts as a partner');
   });
 
   it('are Clef\'s for a partner whose people stopped posting, and one who posts again', () => {
