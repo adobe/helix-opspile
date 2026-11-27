@@ -387,12 +387,28 @@ export async function ownPosts(db, threads, me) {
 }
 
 /**
+ * SQL: whether bot message `m` answers person `?2`: the latest message before it in its platform
+ * thread that is a person's or theirs as the opspile app is theirs. A bot's answer to someone else
+ * (admin-bot's to a customer's `@admin-bot add`, a monitor's notice) is not for everyone who
+ * ever posted in the thread, any more than it moves the thread's `last_at`.
+ */
+const ANSWERS_ME = `COALESCE((SELECT p.person IS ?2 OR EXISTS (SELECT 1 FROM app_posts a
+      WHERE a.source = p.source AND a.tenant = p.tenant AND a.channel_id = p.channel_id
+        AND a.id = p.id AND a.person = ?2)
+    FROM messages p WHERE p.thread = m.thread AND p.deleted = 0 AND p.at < m.at
+      AND (p.counted = 1 OR EXISTS (SELECT 1 FROM app_posts a WHERE a.source = p.source
+        AND a.tenant = p.tenant AND a.channel_id = p.channel_id AND a.id = p.id
+        AND a.person = ?2))
+    ORDER BY p.at DESC LIMIT 1), 0)`;
+
+/**
  * What the red badge counts of `threads` for person `me`, as Slack counts its badge: the
  * messages they have not read (after their watermark on the message's thread) that mention them,
  * and in a thread of theirs (one they posted or were mentioned in; a re-threaded group's members
  * among `threads` are one thread) the messages from someone else since they first were in it:
- * people's, and bots' as well (an agent's `post_message` answers them as a person's reply does),
- * but not Teams' system notices, nor what they posted themselves (as themselves, or as the
+ * people's, and a bot's that answers them (ANSWERS_ME: an agent's `post_message`, admin-bot's
+ * answer to their `@admin-bot add`), but not a bot's that answers someone else, nor Teams' system
+ * notices, nor what they posted themselves (as themselves, or as the
  * opspile app: `app_posts`). A message counts once. Deleted ones do not.
  *
  * Nothing they have read counts: what came before their watermark on the message's thread, nor
@@ -430,7 +446,7 @@ export async function unreadInYours(db, threads, me) {
       AND NOT EXISTS (SELECT 1 FROM app_posts a WHERE a.source = m.source
         AND a.tenant = m.tenant AND a.channel_id = m.channel_id AND a.id = m.id
         AND a.person = ?2)
-      AND (m.counted = 1 OR m.author_kind = 'bot'
+      AND (m.counted = 1 OR (m.author_kind = 'bot' AND ${ANSWERS_ME})
         OR EXISTS (SELECT 1 FROM mentions n
         WHERE n.thread = m.thread AND n.person = ?2
           AND n.message = m.source || ':' || m.tenant || ':' || m.channel_id || ':' || m.id))

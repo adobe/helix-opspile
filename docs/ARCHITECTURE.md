@@ -1732,8 +1732,10 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   you have not read has its label in bold, and a red badge counts the messages for you that you
   have not read yet, as Slack's badge does: those that mention you, and in a thread you posted or
   were mentioned in (any member of a re-threaded group), the messages of others since you first
-  were in it, a bot's as a person's (an agent's `post_message` answers you as a colleague
-  would; never your own posts, as you or as the app, `app_posts`, nor Teams' system notices),
+  were in it, and a bot's that answers you (the latest person's message before it, or your post
+  as the app, is yours: an agent's `post_message` answers you as a colleague would, admin-bot
+  your `@admin-bot add`; its answer to someone else is not for you); never your own posts, as
+  you or as the app, `app_posts`, nor Teams' system notices),
   each message once (`unreadForYou`, `unreadInYours` in `src/threads.js`). Nothing you have read
   counts, and you have read a conversation up to your last post in it, in any of its threads and
   from wherever you posted (`ownPosts`, the read state too): a reply never adds to the badge, and

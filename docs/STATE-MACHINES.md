@@ -45,6 +45,9 @@ it: one's own message as it is indexed, a post as the opspile app as it is sent 
 What the viewer sees as read is the later of it and their last post anywhere in the thread's inbox
 entry (`ownPosts`): a group's other threads, and a thread folded in after the post, are read up to
 there too. Nothing read (before either) counts toward the red badge, or makes a thread unread.
+Before a bot's answer to you counted (migration 0121), the inbox read a thread up to its last
+person's message (`last_at`) only: that migration moved every watermark that had read that far past
+the bots' replies after it (`any_at`), so old threads did not come back unread.
 
 **Room read flush.** idle → pending → flushed (`read:*` and the alarm, `src/room.js`). The flush
 deletes a key only if it still holds what was written: D1 lets other events in, and a newer read may
