@@ -230,10 +230,28 @@ user agent (many answer a bot's with an error page); an `.ico` of bitmaps, which
 read, is decoded into a PNG for it (`src/ico.js`), and an SVG icon is offered without Clef's
 verdict.
 
+**Review.** What waits in Customers and in Teams is one row at the top of the sidebar, **Review**
+(`ui/review.js`), with one count: in Customers the unassigned channels, the likely duplicates and
+the partners to review; in Teams the unassigned channels and the suggested teams. Its page has a
+tab for each queue, each with its count and its address (`?tab=orgs&view=unassigned`,
+`view=duplicates`, `view=partners`, `view=domains`; `?tab=teams&view=unassigned`,
+`view=suggested`; `view=review` opens the first with something in it), and a queue's rows open
+their pages (a pair of duplicates, a partner and a customer, a suggested team), whose back button
+returns to the queue. The addresses the queues had as rows of the list (`org=_unassigned`,
+`team=_unassigned`, `org=domains:`) open their tabs. The row is drawn from the sidebar's first
+paint, before the duplicates and the partners are found (Clef is asked about them as they load),
+with its count once every queue is counted, so nothing is added above the rows of a list once it
+is drawn. The admin team has it always; a member of an ops team, whose only queue is the
+duplicates of the customers their teams own, only when some wait at the first paint, as far as
+what is kept says (`review` of `GET /api/admin/orgs`, `likelyPairCount` in `src/orgmerge.js`:
+Clef's likely pairs nobody dismissed, and those asked to be merged); it does not come or go until
+the page loads again. The merges asked for and the partners to decide are also requests in the
+admin team's inbox ("Requests as threads"): the queues are where their evidence is compared.
+
 **Unassigned channels.** A channel no rule files under an org (its name is not
-`<product>-<org>`, nobody assigned it) is in the org `_unassigned`, which Customers lists as
-Unassigned, with how many channels it has (`unassigned` of `GET /api/admin/orgs`; the ignored ones
-are not counted). Its page (`GET /api/admin/org?slug=_unassigned`) lists them, each with the orgs
+`<product>-<org>`, nobody assigned it) is in the org `_unassigned`, which Customers' review lists
+under Unassigned channels, with how many channels it has (`unassigned` of `GET /api/admin/orgs`;
+the ignored ones are not counted). Its tab (`GET /api/admin/org?slug=_unassigned`) lists them, each with the orgs
 it may belong to (`src/orgassign.js`): a Slack Connect team or Teams team it shares with the
 channels of an org and few others (the inbox's own Enterprise Grid is in every Connect channel), the
 usual mail domain of an org that the people outside Adobe in it or posting there write from, and an
@@ -245,8 +263,9 @@ assigns the channel there by hand (`POST /api/admin/assign`, target `org`).
 
 **Duplicate customers.** An org is a slug the rules give a channel (`aem-<slug>`,
 `<product>-<slug>`, a manual assignment), so one company can end up under two: a channel named
-`workfront-acmeco` and one named `aem-acme`. The admin pages' Customers list the pairs of orgs
-that may be one (`GET /api/admin/org-duplicates`, `src/orgmerge.js`), likeliest first. A pair is
+`workfront-acmeco` and one named `aem-acme`. The Duplicates of Customers' review list the pairs of
+orgs that may be one (`GET /api/admin/org-duplicates`, `src/orgmerge.js`), likeliest first, the
+less likely ones folded. A pair is
 a candidate when its signals add up: names (the same in letters and digits, one the start of the
 other, spelled alike, a word in common), the same icon (or one's icon the other's mail domain), the
 same usual mail domain of their people, channels with the same Slack Connect team, Teams team or
@@ -333,7 +352,7 @@ confirmation that was a mistake) and Still a partner (decline) for an `end`; eac
 open requests it settles: a confirmation the `link` ones, an end the `end` ones, a dismissal all.
 The thread shows the pair as it is now, its span, and the customer's other partners. Three ask:
 
-- the admin team, on a pair's page in Customers ("Likely partners", `GET
+- the admin team, on a pair's page in Customers (from the Likely partners of its review, `GET
   /api/admin/org-partners`, which shows both orgs, a customer's mail domains its own and none of a
   partner's, the evidence, Clef's verdict, the pair's dates and requests), and anyone on an ops team
   through `POST /api/admin/org-partner-requests`, whose answers to them leave the admin team's
@@ -392,8 +411,9 @@ customer's page lists its **partners** (`partners`): those that work for it (`pa
 those whose people posted in its threads of the window (as many, `UNLINKED_MIN`), each a link to
 the partner's page, with what links them (the signals' counts, in words), how many of its threads
 their people are in and whether it is confirmed or likely. Those nothing links yet come last: they
-are the evidence the review works from, and for the admin team each links to its pair's page in
-Likely partners, which shows the evidence of any two orgs (`?pair=`) and confirms or dismisses them,
+are the evidence the review works from, and for the admin team each links to its pair's page (of
+the review's Likely partners: to review, then those Clef is sure of, the less likely and the
+decided ones, folded), which shows the evidence of any two orgs (`?pair=`) and confirms or dismisses them,
 making their row where `org_partners` has none. The overviews are kept five minutes per isolate; a decision on a pair
 (`POST /api/admin/org-partners/confirm`, `/dismiss`, `/end`) forgets both orgs' in the isolate that made it
 (`forgetOrgProfiles`, src/orgprofile.js), and the other isolates show it within those five minutes,
@@ -601,7 +621,7 @@ looks again when the channel has new activity, the ops teams change, or the labe
 teams that do not exist yet. Channels are named by convention (`<product>-<customer>`), so a
 prefix that three or more of the admin team's channels share (up to the first or second `-` or
 `_` of a Slack or Discord channel's name, or of a Teams team's name, which is what is named so
-on Teams) is often a product without a rule. The list of teams has each such group under
+on Teams) is often a product without a rule. The review of Teams has each such group under
 **Suggested teams**, as they come up; its page lists its channels, the rules that would file them
 (channel name starts with the prefix, and the Teams team's name for its Teams channels), what a
 dry run of them moves, and the Adobe people present in them (members, posting or reacting; staff
@@ -3988,7 +4008,8 @@ partner; this starts from the orgs said to be partners instead, and leaves out w
 customer. It reads every message, so an isolate keeps it an hour; what changes it (an org's
 name, type or icon, a merge, an edit of `partner_domains`) forgets it in its own isolate, and the
 others find it again within the hour (docs/STATE-MACHINES.md, "Partner domain"). The rows of `partner_domains` (migration 0109) are the admin team's over it,
-under **Partner domains** in Customers (`GET`, `PUT`, `DELETE /api/admin/partner-domains`): a
+under **Partner domains**, a tab of Customers' review (`GET`, `PUT`, `DELETE
+/api/admin/partner-domains`), which adds nothing to its count: a
 domain added by hand with a partner org or a name, a found one renamed or given to another partner,
 and one that is not a partner's (`excluded`), which its subdomains are not either unless one of
 them has a row of its own. The page also lists the domains left out as a customer's, each one

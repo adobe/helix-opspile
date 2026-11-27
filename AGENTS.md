@@ -46,8 +46,14 @@ code and docs, is the decision model that labels threads and channels.
 - **The sidebar of Teams, Customers and Topics is one** (`ui/sidenav.js`, the global `SideNav`;
   its styles "the sidebar" in `ui/spectrum.css`): one-line rows of one height, ranked by activity
   (`recent`, the threads active in the last 30 days, `src/listactivity.js`) unless its footer's
-  sort asks for names, its filter on the footer's left, and what waits for someone a group at
-  the top. `ui/admin.js` and `ui/topics.js` draw their rows with it: change it there.
+  sort asks for names, and its filter on the footer's left. `ui/admin.js` and `ui/topics.js` draw
+  their rows with it: change it there.
+- **What waits in Teams and Customers is one sidebar row, Review** (`ui/review.js`, the global
+  `Review`; "review" in `ui/admin.js`): its page has a tab per queue (unassigned channels,
+  duplicates, likely partners, partner domains; suggested teams), each a `view=` of its own. The
+  row is drawn from the first paint, or not at all (`Review.shown`), and what loads later changes
+  its count only: nothing is ever added above the rows of a list once it is drawn
+  (`test/ui-review.test.js`). A new queue is a tab there, never a section of the sidebar.
 - **The pages are Spectrum 2** (README, "Spectrum 2"), and their styles are all in
   `ui/spectrum.css` (every page's: the base, the header, the shared look) and
   `ui/spectrum-<page>.css` (the page's layout, then its look), which the pages link. A page
