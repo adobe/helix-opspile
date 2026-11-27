@@ -1793,13 +1793,17 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum .offview .ov-out { text-decoration: line-through; }
 .spectrum .offview :is(.ov-n, .ov-more) { font-variant-numeric: tabular-nums; font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .offview .ov-more { color: var(--spectrum-neutral-subdued-content-color-default); }
-/* Unread mentions of you: S2's NotificationBadge (accent, white figures, a pill). */
-.spectrum .fr .men, .spectrum #threads .count .filt b {
+/* What waits for you: S2's NotificationBadge, negative (white figures, a pill), as on Inbox in
+   the header: on the filters, the Filters button and each view. */
+.spectrum .fr .men, .spectrum #threads .count .filt b, .spectrum #threads .count .order .men {
+  display: inline-block;
   min-width: var(--spectrum-component-height-50);
   height: var(--spectrum-component-height-50);
   padding: 0 var(--spectrum-spacing-75);
+  box-sizing: border-box;
+  text-align: center;
   border-radius: calc(var(--spectrum-component-height-50) / 2);
-  background: var(--spectrum-accent-background-color-default);
+  background: var(--spectrum-negative-background-color-default);
   color: var(--spectrum-white);
   font-family: var(--s2-font);
   font-size: var(--spectrum-font-size-50);
@@ -1849,7 +1853,8 @@ main.instant #threads, main.instant #pane, main.instant.reading #pane { transiti
 .spectrum #threads .kbmore:hover { text-decoration: underline; }
 .spectrum .t.unread .when { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
 .spectrum .t.unread .replies.re { color: var(--spectrum-accent-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
-.spectrum .t .replies .men { color: var(--spectrum-red-900); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .t .replies .men { color: var(--spectrum-negative-content-color-default); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum #threads .count .order .men { margin-left: var(--spectrum-spacing-75); cursor: pointer; vertical-align: middle; }
 .spectrum .t .snip { color: var(--spectrum-neutral-subdued-content-color-default); }
 .spectrum .t .cust img, .spectrum .ph .sub img, .spectrum .chans img { border-radius: var(--spectrum-corner-radius-75); }
 /* Faces: an AvatarGroup, each ringed in the row's own layer. */

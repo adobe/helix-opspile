@@ -18,13 +18,7 @@
  * where you manage them) and Topics (the topic map) for every member of a team (Inbox, Teams and
  * Customers, for their overviews, and Topics for Adobe's people on none, `staff` from /api/me,
  * to find what to follow), and
- * COGS (what the inbox costs) too for the admin team, whose requests (channels and people asked
- * for, customers in the portal, bots, conflicts) are threads of its inbox, their number on Inbox
- * (a click on the number opens them: the admin team's inbox, on its open requests, `REQUESTS`);
- * the questions thread agents ask you (src/questions.js) have a number of their own beside it, for
- * everyone on a team, purple with the agent's bubble as its badge in the inbox is (a click opens
- * them: the inbox of the first one's team, on its open requests, `questionsHref`);
- * and Stats, klickhaus' statistics of all threads in a new tab,
+ * COGS (what the inbox costs) too for the admin team; and Stats, klickhaus' statistics of all threads in a new tab,
  * for whom /api/me gives it (`stats`). Each page
  * opens as it was left in this browser tab: the address of every page is kept (sessionStorage)
  * whenever it changes, so the inbox comes back with its team, filters, open thread and "view
@@ -32,6 +26,15 @@
  * there. A page may send another elsewhere: the inbox sends Customers to the customer on screen,
  * Teams to the team picked, and Stats to either (`stats`). The page you
  * are on does nothing when clicked; on a phone it opens the menu of the others.
+ *
+ * What waits for you is one red number on Inbox, the inbox's red badge (S2's negative
+ * NotificationBadge): the messages for you that you have not read (a person's or a bot's reply
+ * in a thread of yours, a mention of you: GET /api/waiting, src/waiting.js), the questions thread
+ * agents asked you (src/questions.js), and for the admin team its requests (channels and people
+ * asked for, customers in the portal, bots, conflicts), threads of its inbox. The same red number
+ * is on each view of the inbox (Personal: your messages and questions; the admin team: its
+ * requests), on the filters and on the rows it counts. A click on it opens where the first of
+ * them is (`countHref`): the personal view, else the admin team's open requests (`REQUESTS`).
  *
  * The color scheme, in your menu's Appearance: the system's (as the browser prefers), light or
  * dark, per browser (localStorage `opspile.scheme`), set as `data-scheme` on <html>, which the
@@ -52,8 +55,6 @@ window.Header = (() => {
   const KEY = 'opspile.page.';
   /** The admin team's open requests: its inbox, filtered to them (ui/inbox.js, the Type card). */
   const REQUESTS = '/inbox?team=admin&filters=1&f.type=request&f.resolved=open';
-  /** The open requests of team `team`'s inbox: the questions asked of you there. */
-  const questionsHref = (team) => `/inbox?team=${encodeURIComponent(team)}&filters=1&f.type=request&f.resolved=open`;
   // What waits: the admin team's requests (for its members), and your questions, with the team
   // of the first one.
   const counts = {
@@ -67,14 +68,14 @@ window.Header = (() => {
   const held = new Map();
   const HELD_MS = 30 * 1000;
   const youTotal = () => [...yours].reduce((n, [k, x]) => n + ((held.get(k) || 0) > Date.now() ? 0 : x.n), 0);
-  const BUBBLE = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
   const CHEV = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
   const $ = (id) => document.getElementById(id);
   const phone = matchMedia('(max-width: 699px)');
   const opts = {
-    prefer: {}, fallback: {}, go: null, open: null, stats: null,
+    prefer: {}, fallback: {}, go: null, open: null, stats: null, changed: null,
   };
+  let countsSaid = '';
   let shut = 0;
 
   const SCHEME = 'opspile.scheme';
@@ -217,12 +218,13 @@ window.Header = (() => {
    * screen, in it (the inbox: the open requests, from the number on Inbox).
    */
   function init(me, {
-    prefer = {}, fallback = {}, go = null, open = null, count = true,
+    prefer = {}, fallback = {}, go = null, open = null, count = true, changed = null,
   } = {}) {
     Object.assign(opts.prefer, prefer);
     Object.assign(opts.fallback, fallback);
     opts.go = go;
     opts.open = open;
+    opts.changed = changed;
     opts.stats = me.stats?.url || null;
     const own = PAGES.filter((p) => !p.external);
     let shown = [];
@@ -234,7 +236,7 @@ window.Header = (() => {
     const nav = $('pages');
     const item = (p) => (p.external
       ? `<a data-page="${p.id}" href="${href(p.id)}" title="${p.title}" target="_blank" rel="noopener">${p.label}<span class="ext" aria-hidden="true">↗</span></a>`
-      : `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'inbox' && me.admin ? '<span class="count" hidden></span>' : ''}${p.id === 'inbox' && me.teams?.length ? '<span class="count asks" hidden></span>' : ''}</a>`);
+      : `<a data-page="${p.id}" href="${p.href}" title="${p.title}">${p.label}${p.id === 'inbox' && (me.admin || me.teams?.length) ? '<span class="count waits" hidden></span>' : ''}</a>`);
     nav.innerHTML = shown.map(item).join('');
     nav.hidden = !shown.length;
     let menu = $('pagemenu');
@@ -258,29 +260,40 @@ window.Header = (() => {
     }
   }
 
-  const waitText = (n, what, whom, from = '') => `${n} ${what}${n === 1 ? '' : 's'}${from} wait${n === 1 ? 's' : ''} for ${whom}`;
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  /** What the red number on Inbox counts, said: "2 messages for you, 1 question for you, …". */
+  function waitText() {
+    return [
+      counts.you ? `${plural(counts.you, 'message')} for you` : '',
+      counts.questions ? `${plural(counts.questions, 'question')} for you from thread agents` : '',
+      counts.admin ? `${plural(counts.admin, 'request')} for the admin team` : '',
+    ].filter(Boolean).join(', ');
+  }
+  /** Everything that waits for you, the one red number on Inbox. */
+  const total = () => counts.you + counts.questions + counts.admin;
   /**
-   * The numbers on Inbox: the admin team's requests that wait (`admin`, blue), and the questions
-   * thread agents asked you (`questions`, the first one's `team`, purple), each kept until it is
-   * given again. Both are threads of an inbox; the page you are on, on a phone, shows their sum.
+   * The numbers on Inbox: the messages for you (`you`, see `waiting`), the questions thread agents
+   * asked you (`questions`, the first one's `team`) and the admin team's requests that wait
+   * (`admin`), each kept until it is given again. One red number, their sum; its title says each.
    */
   function setCounts(next) {
     Object.assign(counts, next);
-    $('pages').dataset.count = String(counts.admin + counts.questions);
-    const said = [
-      counts.admin ? waitText(counts.admin, 'request', 'the admin team') : '',
-      counts.questions ? waitText(counts.questions, 'question', 'you') : '',
-    ].filter(Boolean).join(', and ');
+    const n = total();
+    $('pages').dataset.count = String(n);
+    const said = waitText();
     for (const el of document.querySelectorAll('[data-page="inbox"] .count:not(.total)')) {
-      const asks = el.classList.contains('asks');
-      const n = asks ? counts.questions : counts.admin;
-      if (asks) el.innerHTML = `${BUBBLE}${n}`;
-      else el.textContent = String(n);
+      el.textContent = n > 99 ? '99+' : String(n);
       el.hidden = !n;
-      el.title = `${asks ? waitText(n, 'question', 'you', ' from thread agents') : waitText(n, 'request', 'the admin team')}`;
+      el.title = said ? `Waits for you: ${said}` : '';
       el.closest('a').title = said ? `${said}, in the inbox` : PAGES.find((p) => p.id === 'inbox').title;
     }
     sync();
+    // The page shows the same numbers where they are (the inbox: on its views): told of a change.
+    const now = JSON.stringify(counts);
+    if (now !== countsSaid) {
+      countsSaid = now;
+      if (opts.changed) queueMicrotask(opts.changed);
+    }
   }
   /** What waits for you, asked again (GET /api/waiting): after a while, or when the inbox says. */
   function loadWaiting() {
@@ -328,10 +341,10 @@ window.Header = (() => {
   /** The number of the admin team's requests that wait, on Inbox: they are threads of its inbox. */
   const setCount = (n) => setCounts({ admin: n });
   /**
-   * Where a number on Inbox opens: the purple one, the inbox of your questions; the blue one (or
-   * the sum on a phone, when admin requests wait), the admin team's requests.
+   * Where the red number on Inbox opens: the personal view while a message or a question waits
+   * for you there (the inbox's red numbers say where), else the admin team's requests.
    */
-  const countHref = (asks) => ((asks || !counts.admin) && counts.team ? questionsHref(counts.team) : REQUESTS);
+  const countHref = () => (counts.you || counts.questions || !counts.admin ? '/inbox?view=personal' : REQUESTS);
 
   /** You, at the right end: your face (picture over initials), your name, `sub` under it; your menu. */
   function user(me, sub = '') {
@@ -383,7 +396,7 @@ window.Header = (() => {
     if (badge && Number($('pages').dataset.count)) {
       e.preventDefault();
       if (menu?.matches(':popover-open')) menu.hidePopover();
-      const to = countHref(Boolean(badge.classList?.contains('asks')));
+      const to = countHref();
       if (pageOf(location.href) === 'inbox' && opts.open) opts.open(to);
       else if (opts.go) opts.go('inbox', to);
       else location.assign(to);

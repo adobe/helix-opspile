@@ -127,6 +127,11 @@ function load() {
     avatar: (name) => `<span class="av">${esc(name)}</span>`,
     profileKey: () => '',
     AT: '<svg/>',
+    AGENT_NAME: 'opspile',
+    isRequestKey: (k) => String(k).startsWith('request:'),
+    isQuestionKey: (k) => String(k).startsWith('request:question:'),
+    adminRequests: () => false,
+    personal: views.personal,
   });
   bar = piece('function filtButton(on) {', '/*\n * The thread list stays put', 'filtButton', {
     state,
@@ -597,6 +602,14 @@ describe('the simple personal view', () => {
   });
 
   describe('the red badge', () => {
+    it('counts a question an agent asked you as one until it is answered, read or not', () => {
+      const q = { thread: 'request:question:q1', team: 'edge', request: { open: true } };
+      assert.equal(page.youCount(q), 1);
+      assert.equal(page.youCount({ ...q, unread: false, request: { open: false } }), 0);
+      // A thread's bot reply for you counts as a person's (unreadForYou), once it is unread.
+      assert.equal(page.youCount({ thread: 't', unread: true, unreadForYou: 1 }), 1);
+    });
+
     it('counts the unread messages that mention you: beside each customer, in all, and on the rows', () => {
       assert.equal(badge(columnRow('acme')), '2');
       assert.equal(badge(columnRow('globex')), '1');
@@ -605,8 +618,8 @@ describe('the simple personal view', () => {
       assert.equal(badge(rowOf('a1')), '2');
       assert.equal(badge(rowOf('g2')), '1');
       assert.equal(badge(rowOf('a2')), null);
-      assert.match(columnRow('acme'), /title="2 unread messages for you: mentions, and replies in threads you are in"/);
-      assert.match(rowOf('g2'), /title="1 unread message for you: mentions, and replies in threads you are in"/);
+      assert.match(columnRow('acme'), /title="Waits for you: 2 unread messages for you, mentions and replies \(a person&#39;s or a bot&#39;s\) in threads you are in"/);
+      assert.match(rowOf('g2'), /title="Waits for you: 1 unread message for you, mentions and replies \(a person&#39;s or a bot&#39;s\) in threads you are in"/);
     });
 
     it('counts what is new in the threads you are in too, as Slack does, each message once', () => {
@@ -623,7 +636,7 @@ describe('the simple personal view', () => {
       assert.equal(badge(columnRow('')), '7');
       // The expert view's row says how many are new; with mentions only, how many mentions.
       state.settings.expert = true;
-      assert.match(rowOf('g1'), /<b class="men" title="3 unread messages for you[^"]*">3 new<\/b>/);
+      assert.match(rowOf('g1'), /<b class="men" title="Waits for you: 3 unread messages for you[^"]*">3 new<\/b>/);
       assert.match(rowOf('g2'), /<b class="men" title="Unread mentions of you">1 mention<\/b>/);
       state.settings.expert = false;
       read('g1');

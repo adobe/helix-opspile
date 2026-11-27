@@ -253,33 +253,42 @@ describe('the header', () => {
     assert.deepEqual(nav({ admin: true, stats }).pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs', 'stats']);
     const admin = nav({ admin: true });
     assert.deepEqual(admin.pages, ['inbox', 'teams', 'orgs', 'topics', 'cogs']);
-    // The requests that wait for the admin team are counted on Inbox: they are threads there.
-    assert.match(admin.html, /<a data-page="inbox" href="\/inbox" title="[^"]*">Inbox<span class="count" hidden><\/span><\/a>/);
-    // The questions thread agents ask a member have their own, the agent's purple.
-    assert.match(nav({ teams: [{ slug: 'edge' }] }).html, /Inbox<span class="count asks" hidden><\/span><\/a>/);
-    assert.match(nav({ admin: true, teams: [{ slug: 'admin' }] }).html, /Inbox<span class="count" hidden><\/span><span class="count asks" hidden><\/span>/);
+    // What waits for you is one red number on Inbox: the admin team's requests among it.
+    assert.match(admin.html, /<a data-page="inbox" href="\/inbox" title="[^"]*">Inbox<span class="count waits" hidden><\/span><\/a>/);
+    assert.match(nav({ teams: [{ slug: 'edge' }] }).html, /Inbox<span class="count waits" hidden><\/span><\/a>/);
+    assert.equal([...nav({ admin: true, teams: [{ slug: 'admin' }] }).html.matchAll(/class="count/g)].length, 1);
     assert.doesNotMatch(nav({ staff: true }).html, /class="count/);
   });
 
-  it('counts the questions asked of you on their own, and opens them', () => {
+  it('counts what waits for you as one number, and opens where it is', () => {
     const inbox = tab('/inbox?team=edge');
     const opened = [];
     inbox.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 2, team: 'helix' } }, { open: (url) => opened.push(url) });
     assert.equal(inbox.byId('pages').dataset.count, '2');
-    assert.equal(clickInbox(inbox, { asks: true }), true);
-    const questions = '/inbox?team=helix&filters=1&f.type=request&f.resolved=open';
-    assert.deepEqual(opened, [questions]);
-    // An admin's: the blue number opens the admin team's requests, the purple one the questions;
-    // the sum (a phone's) the admin team's.
+    // The messages for you the inbox knows of (a bot's reply among them), with the questions.
+    inbox.Header.waiting({ a: { n: 3, team: 'edge' }, b: { n: 1, team: 'helix' }, c: { n: 0 } });
+    assert.equal(inbox.byId('pages').dataset.count, '6');
+    assert.deepEqual({ ...inbox.Header.youByTeam() }, { edge: 3, helix: 1 });
+    // Read here: gone at once, whatever the server says until it has the read.
+    inbox.Header.readHere(['a']);
+    assert.equal(inbox.byId('pages').dataset.count, '3');
+    // Something came in since: it counts again.
+    inbox.Header.waiting({ a: { n: 1 } });
+    assert.equal(inbox.byId('pages').dataset.count, '4');
+    // They are in the personal view: the number opens it.
+    assert.equal(clickInbox(inbox), true);
+    assert.deepEqual(opened, ['/inbox?view=personal']);
+    // An admin's requests are in the same number; with nothing else waiting, it opens them.
     inbox.Header.setCounts({ admin: 3 });
-    assert.equal(inbox.byId('pages').dataset.count, '5');
+    assert.equal(inbox.byId('pages').dataset.count, '7');
+    inbox.Header.waiting({ a: { n: 0 }, b: { n: 0 } });
+    inbox.Header.setCounts({ questions: 0, team: null });
     clickInbox(inbox);
-    clickInbox(inbox, { asks: true });
-    assert.deepEqual(opened.slice(1), [inbox.Header.REQUESTS, questions]);
-    // None of either: nothing to click.
-    inbox.Header.setCounts({ admin: 0, questions: 0, team: null });
+    assert.deepEqual(opened.slice(1), [inbox.Header.REQUESTS]);
+    // None: nothing to click.
+    inbox.Header.setCounts({ admin: 0 });
     clickInbox(inbox);
-    assert.equal(opened.length, 3);
+    assert.equal(opened.length, 2);
     // Viewing as someone else (`count: false`), theirs are not counted.
     const as = tab('/inbox?team=edge');
     as.Header.init({ teams: [{ slug: 'edge' }], questions: { open: 1, team: 'edge' } }, { count: false });
