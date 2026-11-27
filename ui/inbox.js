@@ -7340,12 +7340,16 @@ function renderBashBar(key) {
 // notice color), and a tap opens them as a sheet from the screen's bottom edge, over the
 // thread. ✕, a tap beside the sheet and Escape close it; so does taking the draft into the
 // reply box or sending it, which happen in the thread; and so does opening another thread.
-// The stylesheet decides where this is a drawer (ui/spectrum-inbox.css, at the phone's
-// breakpoint): on a wider screen the tab is not shown, and the lines are where they were.
+// The stylesheet decides where this is a drawer (ui/spectrum-inbox.css, a phone's width or a
+// short screen's height): on a larger screen the tab is not shown, and the lines are where they
+// were.
 
-// Where the stylesheet makes it a drawer. A screen that grows past that (a phone turned, a
-// window widened) has no drawer left to be open.
-const LINES_DRAWER = matchMedia('(max-width: 699px)');
+// Where the stylesheet makes it a drawer, and the thread's header scroll away (wireHeadAway):
+// a phone, and a screen with the list beside the thread too short for the lines under it (a
+// foldable unfolded on its side): ui/spectrum-inbox.css, "Short screens". A screen that grows
+// past that (a phone turned, a window widened) has no drawer left to be open.
+const SHORT_OR_PHONE = '(max-width: 699px), (max-width: 1099px) and (max-height: 640px)';
+const LINES_DRAWER = matchMedia(SHORT_OR_PHONE);
 LINES_DRAWER.addEventListener('change', () => {
   if (LINES_DRAWER.matches) return;
   if (linesDrawer.key) setLines(linesDrawer.key, false);
@@ -11665,9 +11669,13 @@ function wireDrawerSwipes() {
   main.addEventListener('touchcancel', end);
 }
 
-// On a phone the thread's header scrolls away with the thread, as if it were its top, and
-// comes back as you scroll up again, as far as you do: it lies over the thread, which leaves it
-// room at its top (`--ph-h`), and moves up by as much as the thread scrolled down (`--ph-off`).
+// Where the thread's header scrolls away: where the lines are a drawer (SHORT_OR_PHONE).
+const HEAD_AWAY = matchMedia(SHORT_OR_PHONE);
+
+// On a phone, and on a screen too short to spare it (a foldable unfolded on its side), the
+// thread's header scrolls away with the thread, as if it were its top, and comes back as you
+// scroll up again, as far as you do: it lies over the thread, which leaves it room at its top
+// (`--ph-h`), and moves up by as much as the thread scrolled down (`--ph-off`).
 // A thread opened, or opened at a message, shows its header; an open dropdown of the header
 // keeps it where it is. Only a scroll you drive moves it (a finger, the wheel, a key, and the
 // scroll they set going): not the page placing the thread as it opens, or keeping its bottom in
@@ -11700,7 +11708,7 @@ function wireHeadAway() {
     const now = pane.querySelector(':scope > .scroller');
     if (now !== scroller) { scroller = now; off = 0; place(); }
   }).observe(pane, { childList: true });
-  TAKING_TURNS.addEventListener('change', () => { off = 0; place(); });
+  HEAD_AWAY.addEventListener('change', () => { off = 0; place(); });
   // Yours: while a finger is down, and for a moment after it, the wheel or a key; a scroll that
   // comes on the heels of one of yours (momentum) is yours too.
   let touching = false;
@@ -11721,7 +11729,7 @@ function wireHeadAway() {
     seen.set(el, top);
     if (!touching && performance.now() > yours) return;
     drive();
-    if (!TAKING_TURNS.matches || state.headOpen || state.expertsOpen) return;
+    if (!HEAD_AWAY.matches || state.headOpen || state.expertsOpen) return;
     off = headAway(off, top - last, head.offsetHeight);
     place();
   }, true);

@@ -1271,15 +1271,16 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .bashbar .br:not(.pending) .more { grid-column: 2; grid-row: 1; }
   .bashbar .br:not(.pending) .cmd { grid-column: 1 / -1; grid-row: 2; }
 }
-/* The drawer of the draft's line and the command cards. On a phone they would leave the thread
-   a few lines of the screen, so under the reply box there is only the drawer's tab: one line of
+/* The drawer of the draft's line and the command cards. On a phone, and on a screen under 641px
+   high beside the list (a foldable unfolded on its side), they would leave the thread a few
+   lines of the screen, so under the reply box there is only the drawer's tab: one line of
    chips that say what waits in it. A tap opens the drawer over the thread: a sheet from the
    screen's bottom edge, as tall as what it holds, up to most of the screen, the rest dimmed.
-   On a wider screen there is no tab, and the drawer and its sheet are no boxes: the lines are
+   On a larger screen there is no tab, and the drawer and its sheet are no boxes: the lines are
    the reply box's own. */
 .linestab, .lineshead { display: none; }
 .linesdrawer, .linesdrawer .sheet { display: contents; }
-@media (max-width: 699px) {
+@media (max-width: 699px), (max-width: 1099px) and (max-height: 640px) {
   .linestab { flex-basis: 100%; display: flex; align-items: center; gap: var(--spectrum-spacing-200); min-width: 0; cursor: pointer; text-align: left; }
   .linestab[hidden] { display: none; }
   .linestab .chip { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); min-width: 0; }
@@ -1628,12 +1629,6 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
   .ph { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--spectrum-spacing-75); padding: var(--spectrum-spacing-100) var(--spectrum-spacing-200) calc(var(--spectrum-spacing-50) + var(--spectrum-spacing-100)) var(--spectrum-spacing-75); }
   .ph > :not(.close) { grid-column: 2; }
   .ph .close { display: grid; grid-row: 1 / span 4; margin-top: calc(-1 * var(--spectrum-spacing-75)); }
-  /* The thread's header scrolls away with the thread and back (wireHeadAway in ui/inbox.js):
-     over its top, which leaves it room, moved up as far as the thread scrolled. */
-  #pane > .ph { position: absolute; z-index: 5; top: 0; left: 0; right: 0; transform: translateY(calc(-1 * var(--ph-off, 0px))); }
-  #pane > .ph ~ .scroller { padding-top: var(--ph-h, 0px); }
-  /* The day stays under the header, which is that room, as far as the header is in view. */
-  .day { top: calc(-1 * var(--ph-off, 0px)); }
   .ph h2 { flex-wrap: wrap; }
   .feed { padding: var(--spectrum-spacing-75) var(--spectrum-spacing-200) var(--spectrum-spacing-400); }
   .msg { gap: var(--spectrum-spacing-100); --msg-line: calc(100cqw - var(--spectrum-spacing-500) + var(--spectrum-spacing-50) - var(--spectrum-spacing-100)); }
@@ -1647,6 +1642,24 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
 
   .mentions { left: var(--spectrum-spacing-200); min-width: 0; width: calc(100% - var(--spectrum-spacing-400)); }
   .empty { padding: var(--spectrum-spacing-500) calc(var(--spectrum-spacing-75) + var(--spectrum-spacing-300)); }
+}
+/* Short screens: a phone, and a screen with the list beside the thread (under 1100px) too short
+   to keep the thread's header and the lines over the reply box in view as well (a foldable
+   unfolded on its side, under 641px high once the status bar is off it). The thread's header
+   scrolls away with the thread and back (wireHeadAway in ui/inbox.js): over its top, which
+   leaves it room, moved up as far as the thread scrolled; the lines are a drawer (above).
+   SHORT_OR_PHONE in ui/inbox.js is this query. */
+@media (max-width: 699px), (max-width: 1099px) and (max-height: 640px) {
+  #pane > .ph { position: absolute; z-index: 5; top: 0; left: 0; right: 0; transform: translateY(calc(-1 * var(--ph-off, 0px))); }
+  #pane > .ph ~ .scroller { padding-top: var(--ph-h, 0px); }
+  /* The day stays under the header, which is that room, as far as the header is in view. */
+  .day { top: calc(-1 * var(--ph-off, 0px)); }
+}
+/* Beside the list (a short screen wider than a phone) the sheet rises under the thread, the
+   list's share of the screen (42%) left beside it, and keeps clear of the screen's side. */
+@media (min-width: 700px) and (max-width: 1099px) and (max-height: 640px) {
+  .linesdrawer { align-items: flex-end; }
+  .linesdrawer .sheet { width: 58%; padding-right: calc(var(--spectrum-spacing-200) + env(safe-area-inset-right)); }
 }
 @media (max-width: 1099px) and (prefers-reduced-motion: reduce) {
   #filters, main.filtering #filters, main::after, #threads, #pane, main.reading #pane, main.reading #threads { transition: none; }
