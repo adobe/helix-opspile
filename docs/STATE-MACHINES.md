@@ -246,7 +246,13 @@ is one of three bands: sure (`p` above `UNSURE_HIGH`, 0.65), unsure (`UNSURE_LOW
 `UNSURE_HIGH`), and below; with `LIKELY` (0.5) inside the unsure band (`standingOf` says which). A
 decided pair is not asked about and stays whatever its signals; one nobody decided is deleted by the
 first `sync` that does not find it a candidate (its signals fell under `CANDIDATE` or to one
-`kb` or `place` signal alone, a partner's mail domains changed, an org was retyped or merged). Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
+`kb`, `place` or `facts` signal alone, a partner's mail domains changed, an org was retyped or
+merged). A **hint** (`hintOnly`: nothing but a `facts` signal of values no other customer's or
+partner's threads name) is a candidate Clef is never asked about: each `sync` clears a verdict it
+has (`p`, `fingerprint` and `checked_at` null, given on what pairs them no more), so it is not
+linked, and files a `link` request on `facts:<digest of the values>` instead; a second signal makes
+it an ordinary candidate, asked as any (its fingerprint is Clef's then, not the hint's), and Clef
+withdraws the hint's request. Likely, for everyone at Adobe (`partnersOf`, `customersOf`), is confirmed, or not
 dismissed with `p` at least `LIKELY`. A merge copies the merged org's decided rows to the org kept
 (`merged_from`), not over a decision of its own: a row it adds is `merged_new`, and on a candidate
 the kept org had only the decision is written. Undoing it deletes the rows it added, clears the
@@ -298,8 +304,8 @@ withdraws Clef's open `end` too (`decided_by` `agent`), its evidence going to it
 since), and of a quiet pair nobody decided a `review` instead (`ended:<day>`: ending it would
 confirm it too), so
 its `end` requests filed on silence alone are withdrawn ("Clef does not judge it ended …"). A sync
-wants a `link` of a pair nobody decided only while Clef is unsure of it (its `p` in the band, on
-Clef's fingerprint) or sure of it while its signals conflict (`conflictOf`: of one kind alone that
+wants a `link` of a pair nobody decided only while it is a hint (`hintOnly`, on `facts:<digest of
+the values>`), or while Clef is unsure of it (its `p` in the band, on Clef's fingerprint) or sure of it while its signals conflict (`conflictOf`: of one kind alone that
 is no posting together, on Clef's fingerprint; a quiet pair is no conflict). So a pair Clef becomes sure of has its `link` withdrawn ("Clef is
 sure of it, …: it counts as a partner without a decision"), the ones the first syncs filed for
 likely pairs among them, and one it finds unlikely too ("Clef finds it unlikely now, …"); the
@@ -335,14 +341,29 @@ labelling, and a thread re-threaded into another keeps its rows under its old ke
 still reads (every member's key).
 
 **Thread link.** candidate → asked (`p`) → shown or not; dismissed ⇄ shown (`thread_links`,
-migration 0111). A pair of entries (`a` < `b`), written by the link job of either: a candidate's row
-with its `score` (the highest seen), Clef asked once (`checked_at`) for at most `RELATED_ASK` new
-ones a job, a failed ask leaving `p` null for the next; `owner` set once both threads' facts name
-the same rare owner, and kept. A row is never deleted: one no longer found (older than
-`RELATED_DAYS`, its vector changed) keeps its verdict. Shown is not dismissed and `owner`, or `p` at
-least `RELATED_P`, or `p` null and `score` at least `RELATED_SURE`. A link that becomes shown
+migrations 0111, 0120). A pair of entries (`a` < `b`), written by the link job of either: a
+candidate's row with its `score` (the highest seen), Clef asked once (`checked_at`) for at most
+`RELATED_ASK` new ones a job found by meaning and `FACTS_ASK` found by their facts alone, a failed
+ask leaving `p` null for the next; `owner` set once both threads' facts name the same rare owner
+(never between two customers), and kept. A candidate by its facts (src/factweights.js) is one whose
+specific facts in common weigh `FACTS_MIN` (`facts`, `shared`: written by each job that finds it
+by them, so a value a partner explains since, or that grew common, weighs less at the next) and
+whose vectors are `RELATED_MIN` alike; one whose vectors are not is no row, and the next job looks
+again. A row is never deleted: one no longer found (older than `RELATED_DAYS` or `FACTS_DAYS`, its
+vector changed, its facts explained by a partner now) keeps its verdict and the facts it was last
+found by. Shown is not dismissed and `owner`, or `p` at least `RELATED_P`, or `p` null and `score`
+at least `RELATED_SURE`: the facts make a candidate, never a shown link. A link that becomes shown
 tells the agents of both threads once (`relatedUpdate`); a dismissed one is not asked about again
 and tells nobody.
+
+**Fact index kept.** not kept → kept → stale (`factIndex`, src/factweights.js). Every channel
+thread's facts by inbox entry and org, with `factWeights`' tf-idf over the entries, kept per
+isolate by the D1 binding for `INDEX_MS` (ten minutes), as the owners are (src/threadlinks.js) and
+the partners' evidence (src/orgpartners.js `evidence`, which reads it, `fresh` with it). Nothing
+forgets it but `forgetFactIndex` (tests): a thread's new facts are read anew by its own link job
+(and count for the spread of their values at once), and in the weights and the others' jobs within
+the ten minutes; a pair a job missed so is found by the other thread's next job. A fact's weight is worked out from it each time, never stored but
+on a link (`thread_links.facts`) or a pair's signals (`org_partners.signals`).
 
 **Org merge request.** open → merged, declined or withdrawn (`org_merge_requests`, migration 0091).
 One open request per pair, either way round (checked before the insert). Every close is `WHERE status

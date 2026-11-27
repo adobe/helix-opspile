@@ -4129,7 +4129,11 @@ function linkedMenu(data, key) {
   };
   const relRow = (r) => {
     const where = [r.org_name || r.org, r.channel_name ? `#${r.channel_name}` : platform(r)].filter(Boolean).join(' · ');
-    const sure = [(r.via || []).includes('owner') && 'same repository owner',
+    // The specific facts both name (src/factweights.js): their values where the viewer sees it.
+    const n = (r.shared || []).length;
+    const facts = (r.via || []).includes('facts') && n
+      ? (n === 1 ? `both name ${r.shared[0].value || 'a specific fact'}` : `${n} specific facts in common`) : '';
+    const sure = [(r.via || []).includes('owner') && 'same repository owner', facts,
       r.p != null ? `Clef ${pct(r.p)}` : `${pct(r.score)} alike`].filter(Boolean).join(', ');
     const when = r.last_at ? ago(r.last_at) : '';
     const meta = `<small>${esc([where, when, sure].filter(Boolean).join(' · '))}</small>`;

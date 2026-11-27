@@ -14,11 +14,14 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { api } from '../src/api.js';
 import { render } from '../src/channels.js';
+import { forgetFactIndex } from '../src/factweights.js';
 import { forgetPartnerDomains } from '../src/partners.js';
 import {
   ABOUT_MIN, aboutOf, aboutScores, aboutThreads, dismissAbout, dismissLink, entryLinks,
-  FACT_OWNER_FEW, FACT_OWNER_ONLY, forgetOwners, linkedOrgsOf, linkThread, RELATED_SURE, shownLink,
+  explainFacts, FACT_OWNER_FEW, FACT_OWNER_ONLY, FACTS_ASK, FACTS_MIN, forgetOwners, linkedOrgsOf,
+  linkThread, RELATED_SURE, sharedFacts, shownLink,
 } from '../src/threadlinks.js';
+import { threadVectorId } from '../src/vectors.js';
 import { deliveryText } from '../src/agent/deliver.js';
 import { TOOLS } from '../src/mcp-tools.js';
 import { relatedNote, relatedThreads } from '../src/agent/related.js';
@@ -163,6 +166,7 @@ function env({ ai = true, content = true } = {}) {
 beforeEach(() => {
   forgetOwners();
   forgetPartnerDomains();
+  forgetFactIndex();
 });
 
 describe('which customer a partner\'s thread is about', () => {
@@ -397,6 +401,171 @@ describe('a public thread', () => {
     const res = await TOOLS.find((t) => t.name === 'get_thread').run(e, asMe(ADA), { thread: PUB });
     assert.deepEqual(res.data.with_partners, [{ partner: 'agency', name: 'Agency Co' }]);
     assert.deepEqual(res.data.with_customers, [{ customer: 'globex', name: 'Globex Corp' }]);
+  });
+});
+
+/**
+ * Threads of other orgs, each with a fact of its own, as the inbox has thousands: a value two
+ * threads of a few share is rare (src/factweights.js weighs it by tf-idf over all of them).
+ */
+function filler(sql, n = 30) {
+  for (let i = 0; i < n; i += 1) {
+    sql.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+        path, root_at, last_at, any_at, messages, updated_at)
+      VALUES (?, 'slack', 'E1', 'CF', ?, ?, 'helix', 'channel', 'x', ?, ?, ?, 1, ?)`)
+      .run(`slack:E1:CF:f.${i}`, `f.${i}`, `filler${i}`, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z');
+    sql.prepare('INSERT INTO facts (thread, source, field, value) VALUES (?, \'rule\', \'ticket\', ?)')
+      .run(`slack:E1:CF:f.${i}`, `FILL-${i}`);
+  }
+}
+
+describe('possibly the same issue across customers', () => {
+  const H1 = 'slack:E1:CH:5.1';
+  const U1 = 'slack:E1:CU:6.1';
+  const ENV = 'p1234-e5678';
+  /**
+   * Hooli's and Umbrella's threads (two customers, no partner of either yet, on two teams) both
+   * name the AEM Cloud Service environment `p1234-e5678`, and their vectors are alike.
+   */
+  async function world({ last = AT } = {}) {
+    const e = env();
+    const sql = e.DB.sqlite;
+    sql.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES
+      ('hooli', 'Hooli', 'customer', '${AT}'), ('umbrella', 'Umbrella', 'customer', '${AT}')`);
+    const thread = (key, org, team, title, at = AT) => {
+      const [, , id, root] = key.split(':');
+      sql.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+          channel_name, title, path, root_at, last_at, any_at, messages, updated_at, embedded)
+        VALUES (?, 'slack', 'E1', ?, ?, ?, ?, 'channel', ?, ?, ?, ?, ?, ?, 2, ?, 'h')`)
+        .run(key, id, root, org, team, `aem-${org}`, title, `channels/${org}/${team}/slack-${id}/${root}/`, at, at, at, at);
+    };
+    thread(H1, 'hooli', 'helix', 'Author instance returns 503');
+    thread(U1, 'umbrella', 'edge', 'Publishing fails on the author', last);
+    const fact = (key, field, value) => sql.prepare(`INSERT INTO facts (thread, source, field, value)
+      VALUES (?, 'rule', ?, ?)`).run(key, field, value);
+    fact(H1, 'aemcs_env', ENV);
+    fact(U1, 'aemcs_env', ENV);
+    // What every thread has says nothing: the documentation, a status.
+    fact(H1, 'url', 'https://www.aem.live/docs/limits');
+    fact(U1, 'url', 'https://www.aem.live/docs/limits');
+    fact(H1, 'http_status', '503');
+    fact(U1, 'http_status', '503');
+    filler(sql);
+    Object.assign(VECTORS, { [H1]: [0, 0.6, 0.8], [U1]: [0, 0.62, 0.78] });
+    const ids = new Map(await Promise.all(Object.keys(VECTORS)
+      .map(async (k) => [await threadVectorId(k), k])));
+    e.CONTENT.getByIds = async (list) => list.map((id) => ({ id, values: VECTORS[ids.get(id)] }));
+    return e;
+  }
+  const post = (e, thread, id, user) => {
+    const [, , channel] = thread.split(':');
+    e.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff,
+        counted, author_key) VALUES ('slack', 'E1', ?, ?, ?, ?, 0, 1, ?)`)
+      .run(channel, id, thread, AT, `slack:E1:${user}`);
+  };
+
+  it('links two customers\' threads that name the same rare fact, as Clef confirms', async () => {
+    const e = await world();
+    const r = await linkThread(e, H1);
+    assert.equal(r.result, 'linked');
+    assert.equal(r.facts, 1);
+    const [link] = e.DB.sqlite.prepare('SELECT * FROM thread_links').all();
+    assert.deepEqual([link.a, link.b].sort(), [H1, U1].sort());
+    assert.ok(link.facts >= FACTS_MIN && link.facts < 1, link.facts);
+    assert.equal(link.owner, 0);
+    assert.deepEqual(JSON.parse(link.shared).map((x) => [x.field, x.value]), [['aemcs_env', ENV]]);
+    // Clef is told that they are two customers', and what both name; not the documentation.
+    const { state } = e.asked.find((x) => x.questions && x.questions.same);
+    assert.match(state, /two of Adobe's customers/);
+    assert.match(state, /Both threads name these, which few other threads do: aemcs_env p1234-e5678\./);
+    assert.doesNotMatch(state, /which few other threads do:.*docs\/limits/);
+    // Both agents hear of it.
+    assert.deepEqual(e.told.map((t) => t.name).sort(), [H1, U1].sort());
+    // Who may see the other thread reads what both name; who may not, only that there is a fact.
+    const seen = (await entryLinks(e, [H1], async () => true)).related[0];
+    assert.deepEqual(seen.via, ['clef', 'facts']);
+    assert.deepEqual(seen.shared, [{ field: 'aemcs_env', value: ENV }]);
+    const unseen = (await entryLinks(e, [H1], async () => false)).related[0];
+    assert.deepEqual(unseen.shared, [{ field: 'aemcs_env' }]);
+    assert.equal(unseen.title, undefined);
+    // The agent that may not read it counts it, and is told never to name the other customer.
+    const note = await relatedNote(e, {
+      key: H1, threads: [H1], org: 'hooli', orgType: 'customer', team: 'helix', channelId: 'CH', kind: 'channel', source: 'slack',
+    });
+    assert.match(note, /1 more in channels you may not read/);
+    assert.doesNotMatch(note, /Publishing fails|p1234-e5678/);
+    assert.match(note, /another customer's name or words never/);
+  });
+
+  it('links nothing on a fact a partner of both explains', async () => {
+    const e = await world();
+    e.DB.sqlite.exec(`INSERT INTO org_partners (customer, partner, score, signals, confirmed_by, confirmed_at)
+      VALUES ('hooli', 'agency', 4, '[]', 'ada', '${AT}'), ('umbrella', 'agency', 2, '[]', 'ada', '${AT}')`);
+    const r = await linkThread(e, H1);
+    assert.equal(r.facts, 0);
+    assert.deepEqual(e.DB.sqlite.prepare('SELECT * FROM thread_links WHERE a = ? OR b = ?').all(H1, H1), []);
+  });
+
+  it('links nothing on a fact a partner\'s people brought to both threads', async () => {
+    const e = await world();
+    // Lee (agency.example, the agency's) posts in both; the agency works for neither yet.
+    post(e, H1, '5.2', 'U9');
+    post(e, U1, '6.2', 'U9');
+    assert.equal((await linkThread(e, H1)).facts, 0);
+    // The agency's own thread naming it, and the agency working for one, explain it too.
+    const m = {
+      key: U1, org: 'umbrella', score: 1, shared: [{ key: `aemcs_env:${ENV}`, w: 1 }],
+    };
+    const none = new Set();
+    const agency = new Set(['agency']);
+    const own = () => agency;
+    assert.equal(explainFacts(m, { mine: agency, theirs: none, keyPartners: own }).score, 0);
+    assert.equal(explainFacts(m, { mine: agency, theirs: agency }).explained[0].by[0], 'agency');
+    // A partner unrelated to either, whose threads name it, explains nothing alone.
+    assert.equal(explainFacts(m, { mine: none, theirs: none, keyPartners: own }).score, 1);
+    assert.equal(explainFacts(m, { mine: agency, theirs: none }).score, 1);
+  });
+
+  it('leaves out a thread no longer active, and a value too many orgs name', async () => {
+    const old = await world({ last: OLD });
+    assert.equal((await linkThread(old, H1)).facts, 0);
+    const index = {
+      n: 1000,
+      weights: new Map([['aemcs_env:x', { weight: 0.9 }]]),
+      keys: new Map([['aemcs_env:x', { entries: new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) }]]),
+      entries: new Map(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((k, i) => [k, { org: `o${i}`, last: AT }])),
+    };
+    const keys = new Map([['aemcs_env:x', { field: 'aemcs_env', value: 'x', base: 1 }]]);
+    assert.deepEqual(sharedFacts(index, { entry: 'z', org: 'oz', keys }), []);
+    index.keys.get('aemcs_env:x').entries = new Set(['a']);
+    assert.deepEqual(sharedFacts(index, { entry: 'z', org: 'oz', keys }).map((x) => x.key), ['a']);
+  });
+
+  it('asks Clef about FACTS_ASK threads found by their facts alone, a job', async () => {
+    const e = await world();
+    const sql = e.DB.sqlite;
+    // Three more customers, each with a thread that names one more environment Hooli's does.
+    for (const [i, org] of ['acme', 'stark', 'wayne'].entries()) {
+      const key = `slack:E1:CX${i}:7.${i}`;
+      sql.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('${org}', NULL, 'customer', '${AT}')`);
+      sql.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+          title, path, root_at, last_at, any_at, messages, updated_at, embedded)
+        VALUES (?, 'slack', 'E1', ?, ?, ?, 'edge', 'channel', 'x', ?, ?, ?, ?, 2, ?, 'h')`)
+        .run(key, `CX${i}`, `7.${i}`, org, `channels/${org}/edge/x/`, AT, AT, AT, AT);
+      sql.prepare('INSERT INTO facts (thread, source, field, value) VALUES (?, \'rule\', \'aemcs_env\', ?)')
+        .run(key, `p9-e${i}`);
+      sql.prepare('INSERT INTO facts (thread, source, field, value) VALUES (?, \'rule\', \'aemcs_env\', ?)')
+        .run(H1, `p9-e${i}`);
+      VECTORS[key] = [0, 0.61, 0.79];
+    }
+    const ids = new Map(await Promise.all(Object.keys(VECTORS)
+      .map(async (k) => [await threadVectorId(k), k])));
+    e.CONTENT.getByIds = async (list) => list.map((id) => ({ id, values: VECTORS[ids.get(id)] }));
+    const r = await linkThread(e, H1);
+    assert.equal(r.facts, 4);
+    assert.equal(e.asked.filter((x) => x.questions && x.questions.same).length, FACTS_ASK);
+    // The rest are kept as candidates, for the next job to ask.
+    assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM thread_links WHERE p IS NULL').get().n, 4 - FACTS_ASK);
   });
 });
 

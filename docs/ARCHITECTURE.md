@@ -327,7 +327,23 @@ alone (Clef found most such pairs unlikely):
   about it);
 - `place`: channels of both with the same Slack Connect or Teams team, one at most six orgs have
   (1 or 2);
-- `channel`: a channel named for both, `<partner>-<customer>` (3).
+- `channel`: a channel named for both, `<partner>-<customer>` (3);
+- `facts`: specific facts ("Thread links", "How much a shared fact says": of `SPECIFIC`, 0.6, or
+  more, an AEM Cloud Service environment, a pull request, a site few others' threads name) that the
+  threads of both name, and those of the customer's threads that another customer's threads name
+  too, where the partner's people (its mail domains) posted in both (1, 1.5 for several or a very
+  rare one); a value of a site or repository whose owner the `owners` signal counts is not counted
+  twice. It is a hint: beside another signal it adds up, alone it makes no candidate Clef is asked
+  about (a value two orgs share says nothing of who works for whom), with one exception below.
+
+A pair that nothing pairs but facts their threads name, some of them named by no other customer's or
+partner's threads (an environment of theirs alone: `hintOnly`), is a **hint** (`hint` on the pair):
+a candidate whose row is written with its signal, never asked of Clef (a verdict from before is
+cleared, as it was given on what pairs them no more), and so not linked (`partnersOf` and
+`customersOf` read none of Clef's), for which Clef files a `link` request for the admin team
+(`partnerWants`, on the values both name: declined, it is not asked again until they change). In
+production (late 2026) that is two pairs, an agency's threads and a customer's site's that its
+people never posted in; the signal is on six pairs, four of them linked already.
 
 Clef is asked about each candidate nobody decided, shown both orgs (names, type, channels, usual
 mail domains), the signals with their counts as one, a few or many, so a new thread does not
@@ -412,7 +428,8 @@ pair's open requests as the routes do; an undo opens none again. Three ask:
   `latestActive`), when and who added it to everyone who may see the pair, what it says and where
   to the admin team; the agents' link notes and MCP `get_thread` say "a thread's agent saw them
   working together on <day>" (`standingOf`'s `seen`, `partner_link_seen`);
-- Clef, from every load and cron run (`partnerWants`), only where it is unsure: a likely pair needs
+- Clef, from every load and cron run (`partnerWants`), only where it is unsure (and of a hint, which
+  it is not asked about, above): a likely pair needs
   nobody to decide it, and the admin team is not to decide every one each day. It asks of a pair
   nobody decided whose probability is in the unsure band, `UNSURE_LOW` (0.35) to `UNSURE_HIGH`
   (0.65), both included (`link`: linked from `LIKELY` on, and not below it, until someone
@@ -536,9 +553,68 @@ two. A minute after each labelling of a thread (the normalizer queues `{ link: t
   someone working thread A want to know about thread B, because both deal with the same problem
   or the same change?" A link is shown where both threads' facts name the same GitHub or aem.live
   owner that the threads of at most two orgs that are not partners name (`owner`: the customer's
-  own repositories, a repository move), where Clef said 0.5 or more (`RELATED_P`), or, without
-  Clef, where the vectors are 0.86 alike (`RELATED_SURE`); `via` says which. A link is kept once
-  found, with its score, and not asked about again.
+  own repositories, a repository move; between a partner and its customer only), where Clef said
+  0.5 or more (`RELATED_P`), or, without Clef, where the vectors are 0.86 alike (`RELATED_SURE`);
+  `via` says which. A link is kept once found, with its score, and not asked about again;
+- **possibly the same issue, by the facts they share** (`thread_links.facts`, `shared`, migration
+  0120): the threads of the last 30 days (`FACTS_DAYS`) that name the same specific facts as this
+  one (`sharedFacts`, each value weighed as below, together `combined` 0.6 or more, `FACTS_MIN`):
+  in the linked orgs' channels, and for a customer's thread in **every other customer's**, which
+  nothing linked before. Of those the 20 best are looked at (`FACTS_SCAN`) and the 5 best kept as
+  candidates (`FACTS_K`), those whose thread vectors are at least `RELATED_MIN` alike (compared
+  directly, a thread the vector search did not return too); Clef is asked about 2 of the new ones
+  found by their facts alone a job (`FACTS_ASK`), beside the `RELATED_ASK` found by meaning, told
+  that they are two customers' that do not work together, and what both name. The link is shown
+  as any other (Clef, or without Clef the vectors); the facts make a candidate, never a link by
+  themselves. Between two customers no `owner` counts: an owner only they name is a duplicate or a
+  partner's, not one issue.
+
+  **A partner explains what two of its customers share** (`explainFacts`): an AEM Cloud Service
+  environment, a boilerplate repository or a tool that the threads of two customers name is the
+  partner's (its sandbox, its starter, its tooling), not one issue of both, where a partner works
+  for both (`partnersOf`, confirmed or likely, a former one too), or its people posted in both
+  threads (their mail domain, `partnerDomains`), or it works for one or posted in its thread and
+  its own threads name the value. Such a value counts for nothing between those two threads: in
+  production, one environment that the threads of two customers named, posted by one agency's
+  people who called it their internal sandbox, the agency a confirmed partner of both. What a
+  partner explains, or a partner's threads share with a customer it does not work for yet, goes to
+  src/orgpartners.js as a hint instead ("Partners", the `facts` signal).
+
+**How much a shared fact says** (src/factweights.js, "Fact weights": the same keys and the same
+tf-idf as the topic map and the Trends). Most values two orgs' threads share are what nearly every
+thread has: aem.live's and Experience League's pages, a 404, `query-index.json`, the admin API's
+`config`, the user-admin tool. A value's weight in a link (`keyWeight`, 0 to 1) is its `factKey`'s
+tf-idf weight (`factWeights`, over the inbox entries as documents) times a base of its own
+(`linkFact`, `linkBase`):
+
+- its key's field's (`FIELD_WEIGHTS`): an environment, a repository or site, a URL, a ticket or case
+  1; a CVE 0.5; `error`, `header`, `doc`, `config_file`, `admin_api`, `tool`, `http_status` near
+  zero (0.05 to 0.1), so under `MIN_WEIGHT` whatever their rarity, and left out as they are of the
+  topics; a team's own rule's field 0.3 (Clairic's problem and dates have no key);
+- how specific a URL is (`urlSpecificity`): a GitHub pull request, issue, commit or discussion 1, a
+  host alone 0.2, one path segment 0.6, more 1; a repository, an Edge Delivery site or a product
+  endpoint of Adobe's own (`adobe`, `adobe-rnd`, `adobe-commerce`; the AEM MCP server) 0.3, a
+  product many build on, though a change to it is 1;
+- none for a value in the threads of more than six orgs (`COMMON_ORGS`), which is everyone's however
+  few threads name it;
+- and none for the deny list, beyond what `factKey` already names nothing (placeholders, generic
+  hosts, front pages): a placeholder or a cut value as written (`{org}`, `…`), Adobe's support,
+  status and sign-in pages, aem.live's and da.live's own pages, docs.adobecommerce.live, chat and
+  meeting links, the web's references, a host's sign-in and settings paths, the admin API's routes
+  without an org, and GitHub's own pages (`github.com/apps/…`, which `factKey` reads as a
+  repository).
+
+What a thread's facts share with another's says `combined`, 1 − Π(1 − wᵢ). The index is every
+channel thread's facts by inbox entry and org, of every org but Adobe's own and the unassigned
+channels (`factIndex`: `factWeights` over the entries, and the link keys with the entries that have
+each), kept ten minutes per isolate (`INDEX_MS`), as the owners are; the thread a job is for is
+read anew, and counts for the spread of its values (`COMMON_ORGS`). A GitHub repository link and a
+`repo` fact are one key (`repo:`); a `site` fact of the same name is another, as in the topics. On
+production (late 2026) the index has about 4,350 entries with a fact; of the 948 values that two
+orgs' threads share, the deny list and `factKey` take out 104 as no link's, and of the 510 keys
+left 103 weigh nothing, 309 less than 0.6, and 98 are specific: sites and repositories (57),
+environments (13), pull requests (6), an endpoint's or an admin API path.
+`npm run facts:links` (README, "Measure the thread links") counts it again, read-only.
 
 The inbox shows them: a row's tag, "About ACME" on a partner's thread, "With Agency Co" on a
 customer's (`linked` on `GET /api/inbox`'s entries; where a row or its heading shows the
@@ -546,16 +622,18 @@ customer's logo the partners are no tag but their logos, small on its corner: on
 work in its thread; on the list by customer's heading, those in the threads it shows),
 and in the open thread a dropdown of its
 header with both and the threads possibly about the same issue (`linked` and `related` on `GET
-/api/thread`), each with how sure the inbox is. A related thread the viewer may not see (`canSee`:
+/api/thread`), each with how sure the inbox is, and what specific facts both name (`shared`: "both
+name p1-e2", "2 specific facts in common"). A related thread the viewer may not see (`canSee`:
 not their teams', nor their personal view's) is named by its customer, team and channel only,
-never its title or link. Whoever may work the thread says a link is wrong there (`POST
+never its title or link, and of the facts both name only their fields. Whoever may work the thread says a link is wrong there (`POST
 /api/thread/about/dismiss`, `/related/dismiss`, with `undo`): a dismissed row stays, and the job
 leaves it so. The MCP server's `get_thread` has them (`about_customers`, `with_partners`, each with
 how the pair of that org and the thread's stands, `partner_link`, the word of `standingOf`, with
 `partner_link_p` where nobody decided and `partner_link_until` of a former partner; `with_customers`
 for a public thread's, whose orgs have no pair with it, a public org being nobody's customer or
 partner;
-`possibly_same_issue`, a title only where the person may see that thread), and its
+`possibly_same_issue`, a title and the facts both name, `shared_facts`, only where the person may
+see that thread), and its
 `search_threads`, `/api/search` (`org=`) and a knowledge-base chat's `search_threads` take a
 customer filter that includes its partners' threads about it (`aboutThreads`).
 
@@ -573,10 +651,18 @@ partner plainly works for someone else), it asks with `request_partner_link` for
 lacks or is unsure of), and with `send_feedback`, in general terms, where it cannot tell which. A linked thread is named, with its title and key,
 only where the agent may read it with its tools (`readable`, as for a watched thread: its channel,
 `org_threads` within its own org, `any_thread`); of the others it is told how many there are. The
-prompt keeps what a linked org's thread says out of its channel unless someone asks in the sidebar.
+prompt keeps what a linked org's thread says out of its channel unless someone asks in the sidebar,
+and another customer's name or words out of it always.
 
 `npm run partners:threads` (README, "Measure the thread links") counts on production, read-only,
-how many partner threads get a customer and how surely.
+how many partner threads get a customer and how surely, and `npm run facts:links` what the facts
+would link: in late 2026, of the customers' threads active within 30 days of each other, 16 pairs
+(13 pairs of customers) share specific facts; a partner of both explains 2, where its people posted
+in both threads (10 of 47 over all of the inbox's history, 8 so); 13 of the other 14 are alike
+enough by their vectors, and Clef finds 3 of those the same issue, each a pull request in one of
+Adobe's repositories that both threads deal with. Most of the rest are a tool or demo
+repository several customers name, an environment two customers' threads name about other things,
+and a vendor's API; Clef says no to them.
 
 **Public channels.** An org of type `public` (migration 0113) is where people of many orgs meet,
 and of none: a community's Discord server, an event's or a course's Slack channel. One org,
@@ -2081,8 +2167,10 @@ The facts say much of what a thread is about where they are rare, and nothing wh
 has them: a documentation page, a pull request, an error endpoint or an AEM Cloud Service
 environment a few customers' threads share marks a how-to topic or one incident across customers,
 while a 404, the admin API's `config`, `query-index.json` or the support portal's link in every
-other thread's signature mark none. `src/factweights.js` weighs them, for the topic map and the
-Trends (and anything else that needs it, through `factWeights`, its one function for the weights):
+other thread's signature mark none. `src/factweights.js` weighs them, for the topic map, the
+Trends and the thread links (and anything else that needs it, through `factWeights`, its one
+function for the weights; the links add a base of their own to it, "How much a shared fact says"
+under "Thread links"):
 
 - **One key per value** (`factKey`), whatever form a thread wrote it in: an aem.live page as the
   doc rule writes it (`doc:docs/limits`, from `https://www.aem.live/docs/limits#rate-limits` too),

@@ -11,8 +11,12 @@
  */
 
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { factKey, factOf, factWeights } from '../src/factweights.js';
+import { beforeEach, describe, it } from 'node:test';
+import {
+  ADOBE_OWNED, combined, COMMON_ORGS, factIndex, factKey, factOf, factWeights, FIELD_WEIGHTS,
+  forgetFactIndex, HOST_ONLY, keysOf, keyWeight, linkFact, ONE_SEGMENT, OTHER_FIELD, spreadOf,
+} from '../src/factweights.js';
+import { d1 } from './d1.js';
 
 // Made-up hosts, repositories and customers only.
 describe('fact weights: keys (src/factweights.js)', () => {
@@ -104,5 +108,112 @@ describe('fact weights: tf-idf (src/factweights.js)', () => {
     assert.equal(weights.get('doc:docs/limits').orgs, 8);
     assert.equal(weights.get('url:github.com/fake-org/edge/pull/5').orgs, 3);
     assert.equal(weights.get('url:shop.fake/one').orgs, 1);
+  });
+});
+
+// For thread links: the same keys and tf-idf, a base of their own.
+const base = (field, value) => (linkFact(field, value) || {}).base ?? null;
+
+describe('fact weights: for thread links (src/factweights.js)', () => {
+  it('weighs an environment, a site, a repository and a pull request high', () => {
+    assert.equal(base('aemcs_env', 'p1234-e5678'), 1);
+    assert.equal(base('site', 'acme-web/www'), 1);
+    assert.equal(base('repo', 'acme-web/www'), 1);
+    assert.equal(base('url', 'https://github.com/acme-web/www/pull/12'), 1);
+    assert.equal(base('url', 'https://api.vendor.fake/v3/mail/send'), 1);
+    // The keys are factKey's: one for every form of a value.
+    assert.equal(linkFact('url', 'https://github.com/acme-web/www/pull/12/files').key, factKey('url', 'https://github.com/acme-web/www/pull/12'));
+  });
+
+  it('weighs what nearly every thread has near zero, free text and dates not at all', () => {
+    for (const f of ['doc', 'config_file', 'admin_api', 'tool', 'header', 'error', 'http_status']) {
+      assert.ok(FIELD_WEIGHTS[f] > 0 && FIELD_WEIGHTS[f] <= 0.1, f);
+    }
+    assert.ok(base('error', '403 Forbidden') <= 0.05);
+    assert.ok(base('url', 'https://www.aem.live/docs/limits') <= 0.05);
+    assert.equal(linkFact('problem', 'The preview does not update'), null);
+    assert.equal(linkFact('deadline', '2026-11-01'), null);
+    // A team's own rule's field.
+    assert.equal(base('order_id', 'A-123'), OTHER_FIELD);
+  });
+
+  it('weighs a URL by how specific it is, and Adobe\'s own products less', () => {
+    assert.equal(base('url', 'https://shop.acme.fake/'), HOST_ONLY);
+    assert.equal(base('url', 'https://shop.acme.fake/en'), ONE_SEGMENT);
+    assert.equal(base('url', 'https://shop.acme.fake/en/cart'), 1);
+    assert.equal(base('url', 'https://github.com/adobe/some-boilerplate'), ADOBE_OWNED);
+    assert.equal(base('site', 'adobe-rnd/some-tool'), ADOBE_OWNED);
+    assert.equal(base('url', 'https://github.com/adobe/some-boilerplate/pull/7'), 1);
+    assert.equal(base('url', 'https://main--some-site--adobe.aem.live/drafts/a/b'), ADOBE_OWNED);
+    assert.equal(base('url', 'https://mcp.adobeaemcloud.com/adobe/mcp/content'), ADOBE_OWNED);
+    assert.equal(base('url', 'https://api.adobeaemcloud.com/adobe/meta/errors/not_found'), 1);
+  });
+
+  it('denies placeholders, support, sign-in and chat pages', () => {
+    for (const [f, v] of [
+      ['site', 'org/site'], ['site', 'test/foo'], ['url', 'https://admin.hlx.page/config/{org}/sites/{site}.json'],
+      ['url', 'https://main--'], ['url', 'https://business.adobe.com/support/main.html'],
+      ['url', 'https://admin.hlx.page/login'], ['url', 'https://shop.acme.fake/login'],
+      ['url', 'https://teams.microsoft.com/l/channel/x'], ['url', 'https://admin.hlx.page/config'],
+      ['url', 'https://da.live/apps/loc'], ['url', 'https://www.aem.live/blog/some-post'],
+      ['url', 'https://github.com/apps/some-app'], ['url', 'https://docs.adobecommerce.live/limits'],
+    ]) {
+      assert.equal(linkFact(f, v), null, `${f} ${v}`);
+    }
+    assert.ok(linkFact('url', 'https://main--www--acme-web.aem.live/en/cart'));
+  });
+
+  it('keeps the heaviest reading of each key, and adds a pair\'s up as 1 − Π(1 − w)', () => {
+    const keys = keysOf([
+      { field: 'url', value: 'https://github.com/acme-web/www' }, { field: 'repo', value: 'acme-web/www' },
+      { field: 'doc', value: 'docs/limits' }, { field: 'problem', value: 'It is slow' },
+    ]);
+    assert.deepEqual([...keys.keys()].sort(), ['doc:docs/limits', 'repo:acme-web/www']);
+    assert.equal(combined([]), 0);
+    assert.equal(combined([0.5, 0.5]), 0.75);
+  });
+});
+
+describe('fact weights: the index of thread links (src/factweights.js)', () => {
+  beforeEach(() => forgetFactIndex());
+
+  it('counts every channel thread\'s facts by inbox entry and org, of no internal org', async () => {
+    const DB = d1();
+    const sql = DB.sqlite;
+    const AT = '2026-10-22T00:00:00Z';
+    const thread = (key, org, { logical = null, kind = 'channel' } = {}) => {
+      const [, , id, root] = key.split(':');
+      sql.prepare(`INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind,
+          path, root_at, last_at, any_at, messages, updated_at, logical_thread)
+        VALUES (?, 'slack', 'E1', ?, ?, ?, 'helix', ?, '', ?, ?, ?, 1, ?, ?)`)
+        .run(key, id, root, org, kind, AT, AT, AT, AT, logical);
+    };
+    const fact = (k, field, value) => sql.prepare(`INSERT INTO facts (thread, source, field, value)
+      VALUES (?, 'rule', ?, ?)`).run(k, field, value);
+    thread('slack:E1:C1:1.1', 'acme');
+    thread('slack:E1:C1:1.2', 'acme', { logical: 'slack:E1:C1:1.1' });
+    thread('slack:E1:C2:2.1', 'globex');
+    thread('slack:E1:C3:3.1', '_adobe');
+    thread('slack:E1:C4:4.1', 'initech', { kind: 'alert' });
+    for (let i = 0; i < 8; i += 1) {
+      thread(`slack:E1:C9:9.${i}`, `other${i}`);
+      fact(`slack:E1:C9:9.${i}`, 'ticket', `T-${i}`);
+    }
+    for (const k of ['slack:E1:C1:1.1', 'slack:E1:C1:1.2', 'slack:E1:C2:2.1', 'slack:E1:C3:3.1', 'slack:E1:C4:4.1']) {
+      fact(k, 'aemcs_env', 'p1-e2');
+    }
+    fact('slack:E1:C2:2.1', 'problem', 'Something');
+    const index = await factIndex({ DB });
+    assert.equal(index.n, 10);
+    const s = spreadOf(index, 'aemcs_env:p1-e2');
+    assert.equal(s.df, 2);
+    assert.deepEqual([...s.orgs].sort(), ['acme', 'globex']);
+    assert.deepEqual([...index.entries.get('slack:E1:C1:1.1').threads].sort(), ['slack:E1:C1:1.1', 'slack:E1:C1:1.2']);
+    // Its weight is factWeights' over the entries, times its base.
+    assert.equal(keyWeight(index, 'aemcs_env:p1-e2', 1), index.weights.get('aemcs_env:p1-e2').weight);
+    assert.ok(keyWeight(index, 'aemcs_env:p1-e2', 1) > 0.6);
+    // A value of more orgs than COMMON_ORGS is everyone's.
+    const many = Array.from({ length: COMMON_ORGS }, (_, i) => ({ entry: `x${i}`, org: `x${i}` }));
+    assert.equal(keyWeight(index, 'aemcs_env:p1-e2', 1, many), 0);
   });
 });

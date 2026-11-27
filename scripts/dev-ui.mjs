@@ -164,7 +164,9 @@ const INBOX_PAGE = Number((process.argv.find((a) => a.startsWith('--page=')) || 
 const ORG_TYPES = {
   initech: 'vendor', opspile: 'internal', agency: 'partner', public: 'public',
 };
-const ORG_NAMES = { acme: 'ACME', agency: 'Agency Co', public: 'Public' };
+const ORG_NAMES = {
+  acme: 'ACME', agency: 'Agency Co', public: 'Public', umbrella: 'Umbrella', hooli: 'Hooli', globex: 'Globex',
+};
 const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
@@ -957,6 +959,9 @@ function relatedOf(keys) {
         score: l.score,
         p: l.p,
         via: l.via || [],
+        facts: l.facts ?? null,
+        // The facts both name: their values only to who may see the other thread.
+        shared: (l.shared || []).map((x) => (seen ? x : { field: x.field })),
         org: r.org,
         org_name: ORG_NAMES[r.org] || null,
         org_icon: { agency: 'agency.example', acme: 'acme.example' }[r.org] || null,
