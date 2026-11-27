@@ -5775,7 +5775,7 @@ async function openThread(key, { live = false, cached = false } = {}) {
   wireSide(key);
   renderDraftBar(key);
   renderBashBar(key);
-  if (searchEntry(key) && (switching || !live)) markRead(t);
+  readPane(scroller, key, data, switching || !live, wasNear);
   if (arrived) editArrived(key, arrived);
 }
 
@@ -9608,24 +9608,76 @@ function readHere(ev) {
   const at = memberLast(m);
   return Boolean(at) && ev.at >= at;
 }
-function markRead(t, { quiet = false } = {}) {
-  if (!t || !t.thread || state.data?.me?.readonly) return;
-  // A folded entry is several platform threads: each one is read up to its own end.
-  for (const m of t.members || [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }]) {
-    const at = memberLast(m);
-    if (!at) continue;
-    const msg = { type: 'read', thread: m.thread, at };
-    // A team's view sends it to the team's room; the personal view has a socket per team, and
-    // the API picks the room (one of the viewer's teams whose inbox has the thread).
-    const ws = !personal() && state.sockets.find((x) => x.team === state.team);
-    // Not over a socket being asked whether it is still there (probeSockets): it may be gone.
-    if (ws?.readyState === 1 && !ws.probe) ws.send(JSON.stringify(msg));
-    else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: personal() ? undefined : state.team }), credentials: 'same-origin' });
-    readsSent.set(m.thread, { at, until: Date.now() + READ_HOLD_MS });
+/** Read what this pane showed. The list and the pane can be a reply ahead of one another. */
+function readPane(scroller, key, data, opening, following) {
+  const read = () => {
+    if (state.open !== key || hidden() || data.can_work === false) return;
+    scroller.onscroll = null;
+    markRead(searchEntry(key), data);
+  };
+  // A reply received while scrolled up (or away) is read once the reader reaches it.
+  scroller.onscroll = () => { if (document.hasFocus() && nearBottom(scroller)) read(); };
+  if (opening || (following && document.hasFocus())) read();
+}
+
+function markRead(t, { quiet = false, messages = null, watermarks = [] } = {}) {
+  if (state.as || state.data?.me?.readonly) return;
+  const members = t?.members || (t ? [t] : []);
+  const through = new Map();
+  if (messages) {
+    for (const m of messages) {
+      if (m.at > (through.get(m.thread) || '')) through.set(m.thread, m.at);
+    }
+  } else {
+    // Reading a whole entry from the list, including a request's decision log.
+    for (const m of members) {
+      const at = memberLast(m);
+      if (at) through.set(m.thread, at);
+    }
   }
-  if (!state.as) globalThis.Header?.readHere?.([t.thread, ...(t.members || []).map((m) => m.thread)]);
+  const known = new Map(watermarks.filter((w) => w.person === state.me.id)
+    .map((w) => [w.thread, w.read_at]));
+  let sent = false;
+  for (const [thread, at] of through) {
+    const pending = readsSent.get(thread);
+    if (known.get(thread) >= at || (pending?.until > Date.now() && pending.at >= at)) continue;
+    const receipt = { at, until: Date.now() + READ_HOLD_MS };
+    readsSent.set(thread, receipt);
+    sendRead(thread, receipt);
+    sent = true;
+  }
+  // A cached pane can also be older than the list. Leave newer or omitted members unread.
+  if (!t || !through.size || !members.every((m) => !memberLast(m) || through.get(m.thread) >= memberLast(m))) return;
+  if (!sent && !t.unread) return;
+  globalThis.Header?.readHere?.([t.thread, ...through.keys()]);
   seeRead(t);
   if (!quiet) render();
+}
+
+function sendRead(thread, receipt) {
+  const msg = { type: 'read', thread, at: receipt.at };
+  const ws = !personal() && state.sockets.find((x) => x.team === state.team);
+  if (ws?.readyState === 1 && !ws.probe) {
+    try { ws.send(JSON.stringify(msg)); return; } catch { /* closed before the send */ }
+  }
+  const body = JSON.stringify({ ...msg, team: personal() ? undefined : state.team });
+  // Advancing a watermark is idempotent. Retry a transient failure once, unless a newer
+  // receipt took its place. A permanent failure lets the next open try immediately.
+  const post = async (retry) => {
+    try {
+      const res = await fetch('/api/read', { method: 'POST', body, credentials: 'same-origin', keepalive: true });
+      if (res.ok) return;
+      throw Object.assign(new Error('Read failed'), { status: res.status });
+    } catch (e) {
+      if (readsSent.get(thread) !== receipt) return;
+      if (retry && transient(e)) {
+        setTimeout(() => { if (readsSent.get(thread) === receipt && !state.as) post(false); }, 1000);
+      } else {
+        readsSent.delete(thread);
+      }
+    }
+  };
+  post(true);
 }
 /**
  * Your reads this page sent, by platform thread, until the inbox has them. The room writes a read
@@ -9763,6 +9815,8 @@ function cameBack() {
   const { since } = away;
   awayOrBack();
   if (hidden() || !state.data) return;
+  // A live reply could already be on screen in a tab that was in the background.
+  $('pane').querySelector(':scope > .scroller')?.onscroll?.();
   // What the sidebar showed while the tab was in the background: seen now.
   if (side.runs?.key === state.open) seeSide(state.open, side.runs.runs);
   const long = Boolean(since) && Date.now() - since >= AWAY_MS;

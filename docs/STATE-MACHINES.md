@@ -52,7 +52,9 @@ have arrived. The room announces a read twice: `read` when it is pending, `reads
 flushed. Until then the inbox has the thread unread, so the other pages reload on `reads`, not on
 `read` (`heardRead` in `ui/inbox.js`), and the page that sent a read holds it for 30 seconds
 (`readsSent`, `keepReads`): a reload meanwhile shows the thread read unless something came in after
-the read.
+the read. An open conversation advances each platform thread through the messages the pane
+actually showed, including bot replies. A live arrival advances it when the reader is following
+the conversation or reaches the bottom. An HTTP receipt that fails transiently is retried once.
 
 **Thread grouping.** undecided → new topic, or folded by burst, reply, Clef, vector or skeleton → (a
 conversation's root folded by Clef that gets a person's reply in its own platform thread, or a burst
