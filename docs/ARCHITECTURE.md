@@ -953,8 +953,15 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   with it, and the open inboxes reload the group (`split` in the room's `thread` event); until
   all of that is done, `split_from` names the group it left, so a retry finishes it. So the
   group's entry stops interleaving the two platform threads, and its replies go to its own
-  platform thread again (src/post.js `target`, the entry's latest). A burst member, an addressed
-  reply (`logical_via = 'reply'`, above) and alerts stay in their group.
+  platform thread again (src/post.js `target`, the entry's latest). An addressed reply
+  (`logical_via = 'reply'`, above) and alerts stay in their group, and so does a burst member,
+  unless somebody other than its author answered both it and the root of its group before it,
+  each in its own platform thread (`apart`): those were two requests, each answered where it
+  was asked (two feature requests a minute apart, a question and a second one). A reply to
+  either can be the one that shows it. Not after a greeting (its replies greet back) nor for a
+  root that only mentions (its replies answer the question it pinged for); the author adding to
+  their own root answers nothing. A replay does not make such a pair a burst again. Of
+  production's 296 burst members, 31 had replies of their own, and 11 of them were apart so.
 - **Replies the inbox routed:** a group's replies go to the platform thread it was last active
   in, which may be a folded root's. Once one does (a person's from the inbox, the app's, or a
   thread agent's), the group's conversation goes on there, where the channel sees it: that root

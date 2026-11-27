@@ -924,7 +924,8 @@ describe('de-threading', () => {
   it('leaves a burst member and alerts in their group', async () => {
     const { env, a, b } = await folded();
     env.DB.sqlite.prepare("UPDATE threads SET logical_via = 'burst' WHERE thread = ?").run(b);
-    post(env, b, '20.6', at(70), 'U3');
+    // Its author adding to it answers nothing (see 'bursts answered apart').
+    post(env, b, '20.6', at(70), 'U2');
     assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
     env.DB.sqlite.prepare("UPDATE threads SET kind = 'alert', logical_via = 'vector'").run();
     assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
@@ -1082,6 +1083,75 @@ describe('conversations held in threads', () => {
       assert.deepEqual(row(env, b), { logical_thread: null, logical_via: null });
       assert.equal(env.clefCalls.length, 0);
     }
+  });
+});
+
+describe('bursts answered apart', () => {
+  const post = (env, k, id, when, user) => env.DB.sqlite.prepare(`INSERT INTO messages (source, tenant,
+    channel_id, id, thread, at, author_key, counted) VALUES ('slack', 'E1', 'C1', ?, ?, ?, ?, 1)`)
+    .run(id, k, when, `slack:E1:${user}`);
+  const at = (minutes) => new Date(T0 + minutes * 60000).toISOString();
+  const row = (env, k) => env.DB.rows('SELECT logical_thread, logical_via FROM threads WHERE thread = ?', k)[0];
+
+  /** Three roots by one person, a minute apart: a burst. Made-up texts. */
+  async function burst(first = 'Can teams be excluded from the list?') {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes() };
+    const a = await seed(env, '50.0', first, at(0));
+    const b = await seed(env, '50.1', 'Also, search does not find people by their handle', at(1));
+    const c = await seed(env, '50.2', 'and the box is too small', at(2));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    [[a, '50.0', 0], [b, '50.1', 1], [c, '50.2', 2]].forEach(([k, id, m]) => post(env, k, id, at(m), 'U1'));
+    for (const k of [a, b, c]) {
+      // eslint-disable-next-line no-await-in-loop
+      await rethread(env, k);
+    }
+    assert.deepEqual([row(env, b), row(env, c)], [
+      { logical_thread: a, logical_via: 'burst' }, { logical_thread: a, logical_via: 'burst' }]);
+    return {
+      env, a, b, c,
+    };
+  }
+
+  it('splits a member out once somebody else answered it and the root before it, each in its thread', async () => {
+    const {
+      env, a, b, c,
+    } = await burst();
+    post(env, b, '50.5', at(5), 'U3');
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' }, 'the root before it is unanswered');
+    post(env, a, '50.6', at(6), 'U1');
+    assert.deepEqual(await dethread(env, a), { result: 'unchanged' }, 'its author adding answers nothing');
+    // The reply to the root before it shows it, and the burst after the member goes along.
+    post(env, a, '50.7', at(7), 'U3');
+    assert.deepEqual(await dethread(env, a), { result: 'split', group: a, split: [b, c] });
+    assert.deepEqual(row(env, b), { logical_thread: null, logical_via: SPLIT });
+    assert.deepEqual(row(env, c), { logical_thread: b, logical_via: 'burst' });
+    // For good.
+    await rethread(env, a, { force: true });
+    assert.deepEqual(row(env, b), { logical_thread: null, logical_via: SPLIT });
+  });
+
+  it('keeps a greeting\'s and a ping\'s together', async () => {
+    const { env, a, b } = await burst('Hi team');
+    post(env, a, '50.5', at(5), 'U3');
+    post(env, b, '50.6', at(6), 'U3');
+    assert.deepEqual(await dethread(env, b), { result: 'unchanged' });
+    assert.deepEqual(await dethread(env, a), { result: 'unchanged' });
+    assert.deepEqual(row(env, b), { logical_thread: a, logical_via: 'burst' });
+  });
+
+  it('does not fold them again when they are decided later, as on a replay', async () => {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes() };
+    const a = await seed(env, '51.0', 'Can teams be excluded from the list?', at(0));
+    const b = await seed(env, '51.1', 'Also, search does not find people by their handle', at(1));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    post(env, a, '51.0', at(0), 'U1');
+    post(env, b, '51.1', at(1), 'U1');
+    post(env, a, '51.5', at(5), 'U3');
+    post(env, b, '51.6', at(6), 'U4');
+    await rethread(env, a);
+    assert.deepEqual(row(env, b), { logical_thread: null, logical_via: null });
+    assert.equal((await rethread(env, b)).reason, 'has replies of its own');
+    assert.deepEqual(row(env, b), { logical_thread: null, logical_via: null });
   });
 });
 
