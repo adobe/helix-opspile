@@ -1647,13 +1647,16 @@ img.emoji { display: inline-block; height: 1.3em; vertical-align: -.3em; }
    to keep the thread's header and the lines over the reply box in view as well (a foldable
    unfolded on its side, under 641px high once the status bar is off it). The thread's header
    scrolls away with the thread and back (wireHeadAway in ui/inbox.js): over its top, which
-   leaves it room, moved up as far as the thread scrolled; the lines are a drawer (above).
+   leaves it room, moved up as far as the thread scrolled; the days' dividers scroll with the
+   thread; the lines are a drawer (above).
    SHORT_OR_PHONE in ui/inbox.js is this query. */
 @media (max-width: 699px), (max-width: 1099px) and (max-height: 640px) {
   #pane > .ph { position: absolute; z-index: 5; top: 0; left: 0; right: 0; transform: translateY(calc(-1 * var(--ph-off, 0px))); }
   #pane > .ph ~ .scroller { padding-top: var(--ph-h, 0px); }
-  /* The day stays under the header, which is that room, as far as the header is in view. */
-  .day { top: calc(-1 * var(--ph-off, 0px)); }
+  /* The day's divider scrolls away with its messages, as the header does: neither keeps a line
+     of the thread to itself. */
+  .day { position: relative; top: auto; }
+  .day::after { content: none; }
 }
 /* Beside the list (a short screen wider than a phone) the sheet rises under the thread, the
    list's share of the screen (42%) left beside it, and keeps clear of the screen's side. */
