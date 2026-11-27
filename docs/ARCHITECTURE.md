@@ -378,7 +378,13 @@ fingerprints: no mail domain, site owner, knowledge-base path or message text. T
 pair (no `pair`) stays the admin team's. The page reads its pair alone (`onePair`), never a whole
 sync: its signals and span from the evidence the isolate keeps, the verdict kept; Clef is asked
 only of a candidate nobody decided that has no verdict yet, that pair alone, and no request is
-filed or withdrawn, for the admin team either (the cron and the list load do that). The admin team decides there directly too: Not partners
+filed or withdrawn, for the admin team either (the cron and the list load do that). Under its
+"Why", once the page is drawn, the page lists the threads behind the signals, each linked at its
+message with its quote, and who could know (`GET /api/admin/org-partners/evidence?pair=`,
+`pairThreads`: the lists of `partnerEvidence`, as the pair's request shows them). A thread the
+viewer may not see is named by its org, team, channel and day only. Anyone but the admin team gets
+the thread lists only, under heads without mail domains, with no site owner beside them, and the
+people who could know from the threads they may see. The admin team decides there directly too: Not partners
 (`/dismiss`), and Undo of its last decision (an end with `/end` `undo`, which makes it a partner of
 now again; a confirmation with `/confirm` `undo`, which takes its dates with it; a dismissal with
 `/dismiss` `undo`), so a confirmation made by mistake needs no request. Not partners closes the

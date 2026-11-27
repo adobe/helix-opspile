@@ -668,6 +668,10 @@ body main.instant :is(#list, #detail) { transition: none; }
 .spectrum .pair .field { margin-top: var(--spectrum-spacing-200); }
 .spectrum .pair .side a { color: inherit; }
 .spectrum .asks li + li, .spectrum .dups li + li { margin-top: var(--spectrum-spacing-100); }
+/* A pair's threads, under its "Why": a small heading for each list, each thread's quote below it,
+   on one line at most two, in the subdued color. */
+.spectrum #lThreads h3 { margin: var(--spectrum-spacing-300) 0 0; color: var(--spectrum-heading-color); font-size: var(--spectrum-font-size-100); font-weight: var(--spectrum-bold-font-weight); }
+.spectrum .asks.threads .said { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; max-width: calc(var(--spectrum-spacing-1000) * 9); color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 .spectrum .movepop .newtype { padding: 0 var(--spectrum-component-edge-to-text-100); }
 .spectrum td.picks-cell .link + .link { margin-inline-start: var(--spectrum-spacing-100); }
 /* Following a customer: your Follow and Mute (ui/follow.js), then the teams that follow it. */

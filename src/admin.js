@@ -40,7 +40,9 @@ import {
   closeMergeRequest, dismissPair, forgetFacts, likelyPairCount, listMergeRequests, mailDomains,
   mergeOrgs, openMergeCount, orgDuplicates, requestMerge, unmergeOrg,
 } from './orgmerge.js';
-import { decidePartner, endPartner, orgPartners } from './orgpartners.js';
+import {
+  decidePartner, endPartner, orgPartners, pairThreads,
+} from './orgpartners.js';
 import { closePartnerRequest, openPartnerCount, requestPartner } from './partnerrequests.js';
 import { forgetOrgProfiles } from './orgprofile.js';
 import {
@@ -2206,7 +2208,8 @@ async function addMemberSettling(env, me, body) {
  * (whose channels, and who follows them). Deciding a pair stays the admin team's.
  */
 export const STAFF_ROUTES = ['GET org-duplicates', 'POST org-merge-requests', 'DELETE org-merge-requests',
-  'GET org-partners', 'POST org-partner-requests', 'DELETE org-partner-requests', 'GET orgs', 'GET org'];
+  'GET org-partners', 'GET org-partners/evidence', 'POST org-partner-requests',
+  'DELETE org-partner-requests', 'GET orgs', 'GET org'];
 
 async function adminRoute(request, env, url, me) {
   const p = url.pathname;
@@ -2304,6 +2307,7 @@ async function adminRoute(request, env, url, me) {
     case 'POST org-duplicates/dismiss': return dismissPair(env, me, body);
     // Which customers each partner works for (src/orgpartners.js).
     case 'GET org-partners': return orgPartners(env, me, { pair: q('pair'), fresh: Boolean(q('fresh')) });
+    case 'GET org-partners/evidence': return pairThreads(env, me, { pair: q('pair') });
     // Both orgs' pages say so at once, in this isolate (src/orgprofile.js).
     case 'POST org-partners/confirm':
     case 'POST org-partners/dismiss': {
