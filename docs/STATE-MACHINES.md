@@ -1120,6 +1120,13 @@ decline is conditional on `pending`, and a later call after 30 days makes the ro
 with the decision cleared. Decided rows and pending rows not seen for 180 days are pruned by the
 cron, a thousand at a time.
 
+**An integration channel's customer name.** none → recorded ⇄ named (`integration_customers`:
+`org_name`, the provider's name of the channel's own tenant, written only while it is null, at a
+request's reservation or approval or on an admitted member's call of that tenant, and seeded by
+portal migration 0010 from the requests; `audience_name`, the admin team's, with who and when,
+which wins while set and goes back to `org_name` when cleared). `GET /threads` sends it as
+`audienceName` for a shared channel only, never the channel's name or an org ID.
+
 **Auto-approval of an integration channel.** off ⇄ on (`integration_customers.auto_approve`,
 who and when in `auto_by`, `auto_at`; what else lands there in `integration_catches`, primary key
 `(host, kind, value)`, so an org ID or domain is one channel's per host, and triggers refuse a

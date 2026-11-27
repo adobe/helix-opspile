@@ -1389,6 +1389,29 @@ async function setIntegrationAudience(env, me, body) {
 }
 
 /**
+ * PUT /api/admin/portal/integration/audience-name `{ channel, name }`: the admin team names the
+ * customer of an integration channel as its members are told it (`GET /threads` `audienceName`,
+ * for a shared channel), instead of the identity provider's name of its organization; an empty
+ * `name` takes it back to that. Never the channel's own name, never an organization ID.
+ */
+async function setIntegrationAudienceName(env, me, body) {
+  if (!portalBound(env)) {
+    return json({ error: 'the customer portal is not connected to this inbox' }, 409);
+  }
+  const res = await portalCall(env, 'setAudienceName', {
+    channel: clean(body.channel, 20),
+    name: typeof body.name === 'string' ? body.name.slice(0, 500) : '',
+    by: { email: me.email || String(me.id), name: me.name || null },
+  });
+  if (res.error) {
+    return portalRefused(res);
+  }
+  console.log(JSON.stringify({ route: 'admin', integration: 'audience name', by: me.id }));
+  const channel = await getIntegrationChannel(env, res.channel.channel);
+  return json({ ok: true, channel: channel || res.channel });
+}
+
+/**
  * POST /api/admin/portal/integration/decline `{ id, reason? }`: the admin team declines access
  * request `id`, with a reason the person is told (the error body's `reason`). After 30 days their
  * next call asks again.
@@ -2292,6 +2315,7 @@ async function adminRoute(request, env, url, me) {
     });
     case 'PUT portal/integration/auto': return setIntegrationAuto(env, me, body);
     case 'PUT portal/integration/audience': return setIntegrationAudience(env, me, body);
+    case 'PUT portal/integration/audience-name': return setIntegrationAudienceName(env, me, body);
     case 'POST conflicts': return settleConflict(env, me, body);
     case 'POST rule-conflicts': return settleRuleConflict(env, me, body);
     // Channel threads labeled again though they did not change (src/label.js queueRelabel).
@@ -2362,7 +2386,7 @@ async function adminRoute(request, env, url, me) {
 const DECIDING = new Set(['DELETE requests', 'POST member-requests/confirm',
   'POST member-requests/decline', 'POST portal/open', 'POST portal/decline',
   'POST portal/integration/approve', 'POST portal/integration/decline',
-  'PUT portal/integration/auto', 'PUT portal/integration/audience', 'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
+  'PUT portal/integration/auto', 'PUT portal/integration/audience', 'PUT portal/integration/audience-name', 'DELETE org-merge-requests', 'POST org-merge-requests/decline', 'POST org-merge',
   'DELETE org-merge', 'POST members', 'POST assign', 'DELETE assign', 'POST rules', 'PUT rules',
   'DELETE rules', 'PUT bots', 'PUT accounts', 'POST accounts/decline', 'PUT account-pairs', 'POST conflicts',
   'POST rule-conflicts']);

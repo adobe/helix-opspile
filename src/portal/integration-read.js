@@ -22,6 +22,19 @@ import { theirs, titleOf } from './store.js';
  */
 const scope = (m) => (m.audience === 'individual' ? JSON.stringify(m.people || [m.actor]) : null);
 
+/**
+ * The customer's display name of a member's channel: the admin team's, else the provider's name
+ * of its tenant; never the channel's `<product>-<customer>` name or an organization ID.
+ */
+export function audienceName(m) {
+  const name = String(m.audienceNameSet || m.orgName || '').trim();
+  if (!name || name.length > 200 || name.toLowerCase() === String(m.channelName || '').toLowerCase()
+    || name === m.channelTenant || /^[A-Za-z0-9]{1,64}@AdobeOrg$/.test(name)) {
+    return null;
+  }
+  return name;
+}
+
 // Capture the list, its badge and its change watermark in one DB.batch snapshot. Head never
 // goes backwards when old rows expire. A continuation either uses that snapshot or must relist.
 const watermark = (db, m) => db.prepare(`SELECT pruned_seq AS floor, max(pruned_seq, coalesce(
@@ -99,6 +112,8 @@ export async function readThreads(db, m, root, params, now) {
     changeCursor: await changes.seal(head),
     // Who sees the member's threads, for the host to say before they write.
     audience: m.audience === 'individual' ? 'individual' : 'shared',
+    // And, for a shared channel, whom "shared" means: the customer, by name, when it is known.
+    ...(m.audience !== 'individual' && audienceName(m) ? { audienceName: audienceName(m) } : {}),
   };
 }
 

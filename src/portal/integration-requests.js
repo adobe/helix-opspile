@@ -311,8 +311,8 @@ export async function reserveAccess(env, args = {}, now = Date.now()) {
       // eslint-disable-next-line no-await-in-loop
       const [made] = await db.batch([
         db.prepare(`INSERT INTO integration_customers(host, tenant, customer, name,
-          approved_by, approved_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING channel`)
-          .bind(r.host, r.tenant, customer, name, by.email, sec),
+          approved_by, approved_at, org_name) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING channel`)
+          .bind(r.host, r.tenant, customer, name, by.email, sec, r.orgName || null),
         // With the mapping, before it is enabled: its first thread is already its author's alone.
         ...(individual ? [audienceOf(db, r, by, sec)] : []),
       ]);
@@ -361,6 +361,10 @@ function enrollBatch(db, {
     ...(enable ? [db.prepare(`UPDATE integration_customers SET enabled = 1 WHERE channel = ?3
         AND enabled = 0 AND enabled_at IS NULL AND approved_by IS NOT NULL AND ${mine}`)
       .bind(r.id, actor, m.channel)] : []),
+    // The provider's name of the channel's own tenant, when the channel has none yet.
+    ...(r.orgName && r.tenant && r.tenant === m.tenant ? [db.prepare(`UPDATE integration_customers
+        SET org_name = ?4 WHERE channel = ?3 AND org_name IS NULL AND ${mine}`)
+      .bind(r.id, actor, m.channel, r.orgName)] : []),
   ]);
 }
 

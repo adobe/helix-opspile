@@ -1303,6 +1303,10 @@ export function createAdmin(store, {
   const { channel: wonkaChannel } = portalDb.sqlite.prepare(`INSERT INTO integration_customers
       (host, tenant, customer, name, enabled) VALUES ('panel-prod', '0000000000000000000000B0@AdobeOrg',
       'agents-wonka', 'agents-wonka', 1) RETURNING channel`).get();
+  // Its members are told it is shared with everyone at Wonka (src/portal/integration-read.js):
+  // the name IMS gave its organization, which an admin may change on its thread.
+  portalDb.sqlite.prepare('UPDATE integration_customers SET org_name = ? WHERE channel = ?')
+    .run('Wonka Industries', wonkaChannel);
   // Wonka's channel auto-approves its people, and whoever has a verified wonka.example address;
   // two were auto-approved (src/portal/integration-auto.js), one by its domain.
   portalDb.sqlite.prepare(`UPDATE integration_customers SET auto_approve = 1, auto_by = 'priya@example.com',
