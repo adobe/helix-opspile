@@ -1039,7 +1039,7 @@ exists, and every event of an individual channel says so (`channel.audience`); o
 is of a shared channel. Switching moves no thread and rewrites nothing: who is in a thread decides.
 
 **What the inbox heard of a channel's audience.** none (shared) → individual ⇄ shared
-(`channel_audiences` in the inbox, migration 0114, src/individual.js `recordAudience`). Written
+(`channel_audiences` in the inbox, migration 0115, src/individual.js `recordAudience`). Written
 from the portal's events by their outbox number (`seq`): a `channel` event says it either way, a
 message's only that it is individual; an older number changes nothing, and a shared one is written
 only over a row there is, so the channels nobody set have none. The admin team's change writes it

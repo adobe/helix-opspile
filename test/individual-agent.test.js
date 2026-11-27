@@ -151,6 +151,15 @@ describe('the agents of an individual channel', () => {
     const kbs = reposA.filter((r) => r.kind === 'kb' && r.scope === 'own').map((r) => [r.id, r.artifact]);
     assert.deepEqual(kbs, [['kb-team', 'kb-team-agents'], ['kb-person', ada.individual.kb]]);
     assert.ok(!reposA.some((r) => r.id === 'kb-org' || r.artifact === bo.individual.kb));
+    // The same under an org of any type, public (#704) and internal too: the audience is the
+    // channel's, not its org's.
+    for (const type of ['public', 'internal']) {
+      w.inbox.DB.sqlite.prepare(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('mill', 'Mill', ?, '')
+        ON CONFLICT (slug) DO UPDATE SET type = excluded.type`).run(type);
+      // eslint-disable-next-line no-await-in-loop
+      const again = await accessibleRepos(w.inbox, await targetOf(w.inbox, keys.ada));
+      assert.deepEqual(again.filter((r) => r.kind === 'kb' && r.scope === 'own').map((r) => r.id), ['kb-team', 'kb-person']);
+    }
     // A shared channel's agent has the org's, as always.
     const shared = await accessibleRepos(w.inbox, { ...ada, individual: null });
     assert.ok(shared.some((r) => r.id === 'kb-org' && r.artifact === 'kb-org-mill'));

@@ -3849,7 +3849,7 @@ token) for what the Worker cannot see, about opspile's own resources only, by na
 - Artifacts operations per repository (`events.artifactsEventsByNamespaceAccount`, without token
   minting): a knowledge base's are its customer's or team's (`knowledge_bases`), an end user's
   (kind `person`) those of the channel's customer and owning team it was last worked from
-  (`owner_org`, `owner_team`, migration 0114; shared until an agent recorded them), the mirrors
+  (`owner_org`, `owner_team`, migration 0115; shared until an agent recorded them), the mirrors
   shared.
 - What the buckets (`states.r2CombinedStorage`) and indexes (`states.vectorizeStorage`, times 768
   dimensions) hold, per day.
@@ -4322,7 +4322,7 @@ internal org may be individual without that org becoming anything else (see "Par
 their own. Adobe's side is as in any channel: its teams see, label, search and work every thread
 in their inbox. The events of an individual channel say so (`channel.audience`), and setting it
 sends a `channel` event, which says it either way; the inbox keeps the latest by the event's number
-(`channel_audiences`, migration 0114) for the channel's **thread agents**, which work each end
+(`channel_audiences`, migration 0115) for the channel's **thread agents**, which work each end
 user's thread apart from the others' (src/individual.js): they learn into that person's own
 knowledge base, `kb-person` (see "An end user's knowledge base"), and not the org's; they read only
 that person's threads of the channel (`list_channel_threads`, `read_thread`, `raw_message`, the
