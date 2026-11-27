@@ -295,7 +295,7 @@ describe('message header styles', () => {
     assert.match(rule('.msg .who b[data-p]:hover'), /text-decoration: underline dotted;/);
   });
 
-  it('keeps the day on top while its messages scroll by, under the header on a phone', () => {
+  it('keeps the day on top while its messages scroll by, and lets it scroll away on a phone', () => {
     const day = rule('.day');
     assert.match(day, /position: sticky; top: 0; z-index: 2;/);
     // Opaque, so the day before is not seen behind it.
@@ -303,7 +303,8 @@ describe('message header styles', () => {
     // Under the quick reactions (3) and the picker (4).
     assert.match(rule('.msg .quick'), /z-index: 3;/);
     assert.match(rule('.picker'), /z-index: 4;/);
-    const phone = css.slice(css.indexOf('@media (max-width: 699px) {'));
-    assert.match(phone, /#pane > \.ph ~ \.scroller \{ padding-top: var\(--ph-h, 0px\); \}\s*(\/\*[\s\S]*?\*\/\s*)?\.day \{ top: calc\(-1 \* var\(--ph-off, 0px\)\); \}/);
+    // Where the header scrolls away (a phone, a short screen), the day does too: not stuck.
+    const short = css.slice(css.indexOf('@media (max-width: 699px), (max-width: 1099px) and (max-height: 640px) {\n  #pane > .ph'));
+    assert.match(short, /#pane > \.ph ~ \.scroller \{ padding-top: var\(--ph-h, 0px\); \}\s*(\/\*[\s\S]*?\*\/\s*)?\.day \{ position: relative; top: auto; \}\n {2}\.day::after \{ content: none; \}\n\}/);
   });
 });
