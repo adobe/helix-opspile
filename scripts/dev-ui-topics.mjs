@@ -12,8 +12,11 @@
 
 import { TITLER, topicNames } from '../src/label.js';
 import { EMBEDDING_MODEL } from '../src/rethread.js';
-import { centered, MIN_MESSAGES, productsOf } from '../src/topicmap.js';
+import {
+  centered, MIN_MESSAGES, productsOf, topicFacts,
+} from '../src/topicmap.js';
 import { topicPlaces } from '../src/topicspace.js';
+import { factOf, factWeights, MIN_WEIGHT } from '../src/factweights.js';
 
 /**
  * The Topics page's made-up map for `npm run ui:dev` (`/inbox/topics`): what src/topicmap.js
@@ -125,6 +128,35 @@ const PRODUCTS = {
   20: { 'Sites Optimizer': 0.8, 'Brand Visibility': 0.3 },
 };
 
+// The facts the threads of a topic have (src/factweights.js keys, `field:value`), and how often:
+// the aem.live docs and the links a topic's threads share, which name it (src/topicmap.js
+// topicFacts). Made-up repositories and hosts only.
+const FACTS = {
+  0: { 'doc:docs/setup-byo-cdn-push-invalidation': 0.4, 'config_file:cdn.yaml': 0.3, 'header:x-cache: miss': 0.3 },
+  1: { 'doc:docs/byo-cdn-akamai-setup': 0.35, 'doc:docs/byo-cdn-setup': 0.3, 'config_file:cdn.yaml': 0.3 },
+  2: { 'doc:docs/go-live-checklist': 0.3, 'doc:docs/custom-domain': 0.3 },
+  3: { 'doc:developer/byo-git': 0.45, 'url:github.com/fake-org/code-sync/issues/42': 0.25, 'repo:fake-org/storefront-boilerplate': 0.2 },
+  4: { 'doc:docs/authentication-setup-authoring': 0.4, 'tool:user-admin': 0.3 },
+  5: { 'doc:docs/authentication-setup-site': 0.35, 'doc:docs/admin-apikeys': 0.25, 'tool:user-admin': 0.2 },
+  6: { 'doc:developer/block-collection': 0.3 },
+  7: { 'doc:developer/json2html': 0.35 },
+  8: { 'doc:developer/keeping-it-100': 0.4, 'tool:optel': 0.2 },
+  12: { 'doc:developer/content-fragment-overlay': 0.35 },
+  13: { 'doc:docs/bulk-metadata': 0.2, 'admin_api:preview': 0.3 },
+  14: { 'config_file:redirects.json': 0.45, 'doc:docs/redirects': 0.3 },
+  15: { 'doc:developer/sitemap': 0.4, 'config_file:query-index.json': 0.3, 'doc:docs/seo-geo': 0.2 },
+  17: { 'doc:docs/limits': 0.55 },
+  18: { 'url:status.fake-cdn.net/incidents/7781': 0.25, 'http_status:503': 0.4 },
+};
+// What many threads of any topic have, which names none: a status code, the docs' front page.
+const COMMON_FACTS = { 'http_status:404': 0.12, 'http_status:403': 0.06, 'admin_api:config': 0.1 };
+
+/** A key of FACTS as the row of `facts` a rule would have written. */
+const factRow = (thread, key) => {
+  const i = key.indexOf(':');
+  return { thread, field: key.slice(0, i), value: key.slice(i + 1) };
+};
+
 // The customers' own people who post, a few per customer (ids from 300).
 const CUSTOMER_PEOPLE = {
   acme: ['Ana Ruiz', 'Bram Visser', 'Chen Wei'],
@@ -162,6 +194,7 @@ export function topicMapFixture(now = Date.now(), tech = []) {
     [anyTopic(), anyTopic(), anyTopic()]]));
   const threads = [];
   const facts = [];
+  const factRows = [];
   const topics = TOPICS.map(([label, theme, tags, titles, weight], id) => {
     const size = weight * 2 + Math.floor(rnd() * 5);
     for (let n = 0; n < size; n += 1) {
@@ -191,6 +224,11 @@ export function topicMapFixture(now = Date.now(), tech = []) {
       for (const [name, p] of Object.entries(PRODUCTS[id] || {})) {
         if (rnd() < p) {
           facts.push({ thread: key, value: name });
+        }
+      }
+      for (const [f, p] of Object.entries({ ...COMMON_FACTS, ...FACTS[id] })) {
+        if (rnd() < p) {
+          factRows.push({ ...factRow(key, f), org });
         }
       }
       const customers = {};
@@ -245,6 +283,12 @@ export function topicMapFixture(now = Date.now(), tech = []) {
     orgs: threads.map((t) => [t.org]),
   });
   topics.forEach((t, i) => Object.assign(t, { at: at[i] }));
+  // Their docs and links, as src/topicmap.js finds them.
+  const weighed = factWeights(factRows, { threads: threads.length });
+  topics.forEach((t) => Object.assign(t, {
+    facts: topicFacts(threads.filter((x) => x.topic === t.id)
+      .map((x) => ({ thread: x.key, org: x.org })), weighed, threads.length),
+  }));
   const order = topics.map((t) => t.id).sort((a, b) => topics[b].size - topics[a].size);
   const renumber = new Map(order.map((old, i) => [old, i]));
   const products = productsOf(facts, tech);
@@ -336,6 +380,7 @@ export function trendsFixture(now = Date.now(), weeks = [], { id: mapId = 1, map
   });
   const threads = [];
   const titles = new Map();
+  const factRows = [];
   let id = 1000;
   const profile = (t, into) => (PROFILES[t] ? PROFILES[t](into, TREND_WEEKS) : 1);
   const kinds = lists.kind.length;
@@ -366,10 +411,27 @@ export function trendsFixture(now = Date.now(), weeks = [], { id: mapId = 1, map
         }
         const areas = Object.entries(tags).filter(([, p]) => rnd() < p + 0.2);
         const tech = productsOfTopic[topic].filter(([, p]) => rnd() < p);
+        const into = w - start;
+        // Fewer than in the map's threads: these are all threads, not only the long ones.
+        const has = Object.entries({ ...COMMON_FACTS, ...FACTS[topic] })
+          .filter(([, p]) => rnd() < p / 2).map(([f]) => f);
+        // The limits doc comes up more and more of late (trending), and one pull request is in
+        // many customers' threads in the last full week (a spike), as a fix everyone waits for.
+        if (into > TREND_WEEKS - 9 && rnd() < 0.02 * (into - (TREND_WEEKS - 9))) {
+          has.push('doc:docs/limits');
+        }
+        if (w === n - 2 && c % 3 === 0 && rnd() < 0.7) {
+          has.push('url:github.com/fake-org/edge-worker/pull/57');
+        }
+        const theirs = [...new Set(has)];
+        for (const f of theirs) {
+          factRows.push({ ...factRow(id, f), org: ch.org });
+        }
         threads.push([
           id, w, c, lists.org.indexOf(ch.org), lists.team.indexOf(ch.team),
           lists.source.indexOf(ch.source), Math.floor(rnd() * kinds), topicId[topic],
           areas.map(([x]) => areaIds.indexOf(x)), tech.map(([x]) => techIds.indexOf(x)), msgs,
+          theirs,
         ]);
         titles.set(id, {
           id,
@@ -384,6 +446,13 @@ export function trendsFixture(now = Date.now(), weeks = [], { id: mapId = 1, map
         });
       }
     }
+  }
+  // The facts src/trends.js counts: of two customers or more, and weighing enough.
+  const { weights } = factWeights(factRows, { threads: threads.length });
+  const factKeys = [...weights.values()].filter((x) => x.threads >= 2 && x.orgs >= 2
+    && x.weight >= MIN_WEIGHT).map((x) => x.key).sort();
+  for (const t of threads) {
+    t[11] = t[11].filter((f) => factKeys.includes(f)).map((f) => factKeys.indexOf(f));
   }
   const data = {
     weeks,
@@ -403,6 +472,29 @@ export function trendsFixture(now = Date.now(), weeks = [], { id: mapId = 1, map
     tech: techIds.map((pid) => ({
       id: pid.slice(5), name: map.products[pid].name, product: map.products[pid].product || null,
     })),
+    fields: {
+      doc: 'Documentation',
+      url: 'URL',
+      repo: 'Repository',
+      config_file: 'Configuration file',
+      tool: 'Tool',
+      http_status: 'HTTP status',
+      admin_api: 'Admin API',
+      header: 'Header',
+    },
+    facts: factKeys.map((key) => {
+      const f = factOf(key);
+      const w = weights.get(key);
+      return {
+        key,
+        field: f.field,
+        label: f.label,
+        href: f.href,
+        weight: w.weight,
+        threads: w.threads,
+        orgs: w.orgs,
+      };
+    }),
     threads,
   };
   const words = (s) => String(s).toLowerCase().split(/[^a-z0-9]+/).filter((x) => x.length > 3);

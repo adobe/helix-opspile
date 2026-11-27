@@ -124,6 +124,13 @@ tr.pick { cursor: pointer; }
 .tip .row { display: flex; align-items: center; }
 .spark { display: block; width: calc(var(--spectrum-spacing-100) * 8); height: var(--spectrum-spacing-300); }
 p.trend { display: flex; align-items: center; }
+/* Docs and links (ui/trendview.js factRow): its name, a link to its page, its line and its
+   badge on one row, what it is under them. */
+.panel ol.docs { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; list-style: none; margin: 0; padding: 0; }
+.panel ol.docs li { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; }
+.panel ol.docs .badge { justify-self: end; }
+.panel ol.docs .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; justify-content: flex-start; }
+.panel ol.docs .sub { grid-column: 1 / -1; }
 
 @media (max-width: 999px) {
   /* One column: the toolbar, the map and its panel, then the sidebar under them. */
@@ -467,3 +474,10 @@ p.trend { display: flex; align-items: center; }
 .spectrum .spark .grid { stroke: var(--spectrum-gray-300); stroke-width: var(--spectrum-border-width-100); }
 .spectrum p.trend { gap: var(--spectrum-spacing-200); margin: var(--spectrum-spacing-200) 0 0; font-size: var(--spectrum-font-size-75); line-height: var(--spectrum-line-height-100); }
 .spectrum p.trend .spark { flex: none; width: calc(var(--spectrum-spacing-100) * 12); height: var(--spectrum-spacing-500); }
+.spectrum .panel ol.docs li { column-gap: var(--spectrum-spacing-100); padding: var(--spectrum-spacing-75) 0; border-bottom: var(--spectrum-border-width-100) solid var(--spectrum-gray-200); }
+.spectrum .panel ol.docs li:last-child { border-bottom: 0; }
+.spectrum .panel ol.docs .nm { min-width: 0; font-family: var(--spectrum-code-font-family-stack); font-size: var(--spectrum-font-size-75); }
+.spectrum .panel ol.docs .out { color: var(--spectrum-neutral-subdued-content-color-default); text-decoration: none; font-size: var(--spectrum-font-size-75); }
+.spectrum .panel ol.docs .out:hover { color: var(--spectrum-accent-content-color-hover); }
+.spectrum .panel ol.docs .sub { margin-top: var(--spectrum-spacing-50); }
+.spectrum .badge.spike { color: var(--spectrum-notice-color-1000); background: var(--spectrum-notice-subtle-background-color-default); }

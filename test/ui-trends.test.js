@@ -100,6 +100,32 @@ describe('trends (ui/trends.js)', () => {
     assert.deepEqual(keys(Trends.moving(d, { keysOf: topicKeys, now: NOW }).trending), []);
   });
 
+  it('finds a doc or a link in many customers\' threads in one week, never there before', () => {
+    const orgs = Array.from({ length: 40 }, (_, c) => ({ slug: `org${c}` }));
+    // 5 is in two channels a week; 6 is in none until the week before the last, in eight
+    // customers' at once; 7 is in eight channels of one week long ago; 8 in five, but of
+    // no customer.
+    const d = {
+      ...dataOf({
+        extra: (w, c) => [
+          ...(c < 2 ? [5] : []),
+          ...(w === WEEKS - 2 && c >= 10 && c < 18 ? [6] : []),
+          ...(w === 5 && c < 8 ? [7] : []),
+          ...(w === WEEKS - 1 && c >= 35 ? [8] : []),
+        ],
+        orgOf: (c) => (c >= 35 ? 40 : c),
+      }),
+      orgs: [...orgs, { slug: '' }],
+    };
+    const sp = Trends.spikes(d, { keysOf: topicKeys, now: NOW });
+    assert.deepEqual(keys(sp), [6]);
+    assert.equal(sp[0].week, WEEKS - 2);
+    assert.equal(sp[0].orgs, 8);
+    assert.equal(sp[0].usual, 0);
+    // Which `moving` does not call trending: it was never there before.
+    assert.deepEqual(keys(Trends.moving(d, { keysOf: topicKeys, now: NOW }).trending), []);
+  });
+
   it('starts where the channels began to be read, and leaves out the week under way', () => {
     const d = dataOf({ channels: 10 });
     // A thread from long before: a week that hardly counts.
@@ -118,12 +144,13 @@ describe('trends (ui/trends.js)', () => {
 
 describe('the trends chart (ui/trendview.js)', () => {
   // As the page runs it, with its globals: no DOM is needed before it has data.
-  const load = (search = '') => {
+  const load = (search = '', body = {}) => {
     const globals = {
       Trends,
-      TopicGraph: {},
+      TopicGraph: { standsFor: () => null },
       location: { search },
       document: { getElementById: () => null, activeElement: null },
+      fetch: async () => ({ ok: true, json: async () => body }),
     };
     // eslint-disable-next-line no-new-func
     return new Function(
@@ -132,6 +159,7 @@ describe('the trends chart (ui/trendview.js)', () => {
       'document',
       'Trends',
       'TopicGraph',
+      'fetch',
       `${SCRIPTS['trendview.js']}\nreturn globalThis.TrendView;`,
     )(
       globals,
@@ -139,8 +167,50 @@ describe('the trends chart (ui/trendview.js)', () => {
       globals.document,
       Trends,
       globals.TopicGraph,
+      globals.fetch,
     );
   };
+
+  it('lists the docs and links rising across customers, and puts one on the chart', async () => {
+    // Fact 0 in eight customers' threads in one week; fact 1 in one customer's every week.
+    const d = dataOf({ extra: () => [] });
+    for (const t of d.threads) {
+      const w = t[Trends.I.week];
+      const c = t[Trends.I.channel];
+      t.push([...(w === WEEKS - 2 && c < 8 ? [0] : []), ...(c === 39 ? [1] : [])]);
+    }
+    const body = {
+      ...d,
+      orgs: Array.from({ length: 40 }, (_, c) => ({ slug: `org${c}` })),
+      facts: [
+        {
+          key: 'url:github.com/fake-org/edge/pull/5', field: 'url', label: 'github.com/fake-org/edge/pull/5', href: 'https://github.com/fake-org/edge/pull/5', threads: 8, orgs: 8,
+        },
+        {
+          key: 'url:shop.fake/cart', field: 'url', label: 'shop.fake/cart', href: 'https://shop.fake/cart', threads: 30, orgs: 1,
+        },
+      ],
+      fields: { url: 'URL' },
+    };
+    // A chart that was cleared: what is added is all there is.
+    const view = load('?tq=', body);
+    view.fromUrl();
+    await view.load();
+    const ctx = {
+      team: '', graph: { all: new Map() }, toUrl: () => {}, sel: '',
+    };
+    const up = view.rising(ctx);
+    assert.deepEqual(up.map((x) => x.fact.key), ['url:github.com/fake-org/edge/pull/5']);
+    assert.equal(up[0].spike.orgs, 8);
+    const html = view.risingSection(ctx);
+    assert.match(html, /data-term="github.com\/fake-org\/edge\/pull\/5"/);
+    assert.match(html, /href="https:\/\/github.com\/fake-org\/edge\/pull\/5"/);
+    assert.match(html, /8 customers/);
+    assert.match(html, /URL · 8 threads, 8 customers/);
+    // Its label, or the URL it is, is that fact on the chart, counted from the data.
+    view.compare('https://www.github.com/fake-org/edge/pull/5/', { ...ctx, map: {}, onWeek: () => {} });
+    assert.deepEqual(view.params(), [['tq', 'github.com/fake-org/edge/pull/5']]);
+  });
 
   it('takes every line off on Clear, the pick\'s too, and keeps the chart empty', () => {
     const view = load('?tq=topic%3A1%2C+topic%3A2');

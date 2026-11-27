@@ -48,7 +48,9 @@
  * compared (ui/trendview.js, its global `TrendView`); in the sidebar on the left (ui/sidenav.js,
  * as Teams' and Customers'), the areas with their topics and the products with their features as
  * trees that fold and open as the graph's bubbles do (the same `open`), each with its share and
- * its trend: trending, declining or peaked. Its search field finds on the map too.
+ * its trend: trending, declining or peaked. Its search field finds on the map too. The panel lists
+ * the docs and links rising fastest across customers, and a topic's the docs and links its threads
+ * share (src/topicmap.js `topicFacts`); a click puts one on the chart.
  *
  * The graph's data is ui/topicgraph.js (its global `TopicGraph`), its places ui/topicspace.js
  * (`TopicSpace`), its drawing ui/topicview.js (`TopicView`).
@@ -460,6 +462,7 @@ function overview() {
   return `<h2>${plural(topics.length, 'topic')} <span class="sub">${plural(threads.length, 'thread')}</span></h2>
     <p class="hint">From threads with ${m.min_messages} or more messages. ${none} (${pct(none, threads.length)}) have no tag.</p>
     ${gaps()}
+    ${TrendView.risingSection(trendCtx())}
     ${areasSection()}`;
 }
 
@@ -970,6 +973,7 @@ function details(n) {
     <p class="sub facts">${facts.map(esc).join(', ')}</p>
     ${teamLink}
     ${TrendView.summary(TrendView.moving(trendCtx())?.items.get(n.id))}
+    ${topic ? TrendView.factsSection(topic.facts, trendCtx()) : ''}
 
     ${n.type === 'topic' && !tagged(n.threads) ? '<p class="hint gap">None of these threads has a tag.</p>' : ''}
     ${n.type === 'product' ? '' : childList(n)}
@@ -1299,6 +1303,9 @@ function wire() {
     const target = ev.target.closest('[data-sel]');
     if (target && !target.closest('svg')) pick(target.dataset.sel);
     if (ev.target.closest('#unpick')) pick('');
+    // A doc or a link of the panel's: on the chart, as a term (ui/trendview.js).
+    const term = ev.target.closest('.docs button[data-term]');
+    if (term) TrendView.compare(term.dataset.term, trendCtx());
     // The agent's sidebar, about what is picked: opened, or with a question in its box.
     if (ev.target.closest('#askAgent')) KbChat.open();
     const unfold = ev.target.closest('button[data-unfold]');

@@ -20,6 +20,9 @@ import { packVectors, saveAssignments, SAMPLE_VECTORS } from './trends.js';
 import { topicPlaces } from './topicspace.js';
 import { sameAccounts, sameLinks } from './accountpairs.js';
 import {
+  factOf, factWeights, MIN_WEIGHT, SKIP_FIELDS,
+} from './factweights.js';
+import {
   coveredBy, GENERIC, nameKey, productKey, techIndex,
 } from './products.js';
 
@@ -36,6 +39,11 @@ export {
  * Topics page (ui/topics.js) can draw people, topics, Clef's topics, products and customers as one
  * graph, and show what Clef's topics and the tech stack do not cover yet: topics that get no tag,
  * and products no tech stack entry names (the gaps).
+ *
+ * Each topic is named and described with the docs and links its threads share, too (`topicFacts`,
+ * by the facts' tf-idf, src/factweights.js). They are no feature of the clustering: measured on
+ * production threads, adding them to the vectors made the topics more alike only in the facts
+ * they were given, not in the others (half of the facts held out), and less alike in what was said.
  *
  * Only threads with something to say: at least MIN_MESSAGES messages, and not a meeting or a
  * people thread (Clef's kind), whose vectors say "let's meet" more than what about. The vectors
@@ -66,6 +74,15 @@ const RESTARTS = 4;
 const ITERATIONS = 40;
 const MAX_LABEL = 60;
 const MAX_THEME = 240;
+/** A topic's docs and links, at most: those its threads share more than the others' do. */
+export const TOPIC_FACTS = 5;
+/** A topic's fact is in this many times the share of its threads as of all the map's. */
+export const FACT_LIFT = 2;
+/**
+ * Facts the namer is not shown, which name a customer more than a subject: a site, an AEM Cloud
+ * Service environment, a ticket.
+ */
+const UNNAMED_FIELDS = new Set(['site', 'aemcs_env', 'ticket']);
 
 /** A seeded random number generator (Park and Miller's): the same threads make the same map. */
 export function random(seed) {
@@ -387,7 +404,13 @@ async function threadsOf(env) {
     WHERE ${WHERE}`).bind(MIN_MESSAGES).all();
   const { results: tech } = await env.DB.prepare(`SELECT tech, name, description, product,
     aliases FROM tech_stack WHERE enabled = 1 ORDER BY team = 'admin' DESC`).all();
+  // The facts the topics are named with (src/factweights.js), not those that say nothing.
+  const { results: facts } = await env.DB.prepare(`SELECT f.thread, f.field, f.value FROM facts f
+    JOIN threads t ON t.thread = f.thread LEFT JOIN labels l ON l.thread = t.thread
+    WHERE ${WHERE} AND f.field NOT IN (SELECT value FROM json_each(?))`)
+    .bind(MIN_MESSAGES, JSON.stringify([...SKIP_FIELDS])).all();
   return {
+    facts: facts || [],
     threads: threads || [],
     posts: [...merged.values()],
     memberships: memberships || [],
@@ -485,6 +508,50 @@ async function vectorsOf(env, keys) {
   return out;
 }
 
+/**
+ * The docs and links a topic's threads share (`members`: `[{ thread, org }]`), from the map's
+ * fact weights (`factWeights`: `{ of, weights }`, over its `total` threads): those of two threads
+ * and two customers or more, weighing MIN_WEIGHT or more, in FACT_LIFT times the share of its
+ * threads as of all, the most
+ * weighed by tf-idf first (the share of its threads that have it, times its weight). At most
+ * `max`, each `{ key, field, label, href, threads, orgs }`. A link of one customer's threads is
+ * its own site or pages, not what the topic is about.
+ */
+export function topicFacts(members, { of, weights }, total, { max = TOPIC_FACTS } = {}) {
+  const count = new Map();
+  for (const m of members) {
+    for (const key of of.get(m.thread) || []) {
+      const c = count.get(key) || { n: 0, orgs: new Set() };
+      c.n += 1;
+      if (m.org) {
+        c.orgs.add(m.org);
+      }
+      count.set(key, c);
+    }
+  }
+  const size = members.length || 1;
+  return [...count].map(([key, c]) => {
+    const w = weights.get(key);
+    const share = c.n / size;
+    return {
+      key,
+      n: c.n,
+      orgs: c.orgs.size,
+      weight: w.weight,
+      score: share * w.weight,
+      lift: share / (w.threads / total),
+    };
+  }).filter((x) => x.n >= 2 && x.orgs >= 2 && x.weight >= MIN_WEIGHT && x.lift >= FACT_LIFT)
+    .sort((a, b) => b.score - a.score || b.n - a.n || a.key.localeCompare(b.key))
+    .slice(0, max)
+    .map((x) => {
+      const f = factOf(x.key);
+      return {
+        key: x.key, field: f.field, label: f.label, href: f.href, threads: x.n, orgs: x.orgs,
+      };
+    });
+}
+
 export const NAMER = 'You name a topic: a group of support threads between Adobe and its'
   + ' customers about Adobe Experience Manager and Edge Delivery Services. Answer with two lines'
   + ' and nothing else. The first: a name of two to five words for what the threads have in'
@@ -532,7 +599,10 @@ export const NAMER_ALL = 'You name the topics of a support inbox: groups of thre
   + ' Adobe and its enterprise customers about Adobe Experience Manager (Edge Delivery Services,'
   + ' Document Authoring, Universal Editor, AEM as a Cloud Service) and the products around it.'
   + ' For each topic you get the titles of its most typical threads, the concerns a classifier'
-  + ' found in them and the products they name, with how many threads have each. Name what sets'
+  + ' found in them, the products they name and the documentation pages and links they share'
+  + ' more than other topics\' threads, with how many threads have each. A doc or a link most'
+  + ' of a topic\'s threads share says what it is about (a limit, a setup guide, one pull'
+  + ' request): name that, in words, not as a path or a URL. Name what sets'
   + ' each topic apart from the others: read all of them first, and give no two topics names that'
   + ' could be swapped. A name has two to five words, in sentence case (a capital first letter,'
   + ' and for names of products), and is as specific as the threads allow: name the product or'
@@ -543,7 +613,10 @@ export const NAMER_ALL = 'You name the topics of a support inbox: groups of thre
   + ' customer or person. With each name write one sentence on what its customers need. Answer'
   + ' with JSON only: [{"id": 0, "name": "…", "theme": "…"}, …], every topic once.';
 
-/** What NAMER_ALL reads: per topic, its threads' titles, concerns and products, with counts. */
+/**
+ * What NAMER_ALL reads: per topic, its threads' titles, concerns, products and docs and links
+ * (`facts`, topicFacts' but those of UNNAMED_FIELDS), with counts.
+ */
 export function namingInput(topics) {
   const counts = (list) => list.map(([name, n]) => `${name} (${n})`).join(', ') || 'none';
   return topics.map((t) => [
@@ -551,6 +624,8 @@ export function namingInput(topics) {
     ...t.titles.map((title) => `- ${title}`),
     `Concerns: ${counts(t.tags)}`,
     `Products: ${counts(t.products)}`,
+    `Docs and links: ${counts((t.facts || []).filter((f) => !UNNAMED_FIELDS.has(f.field))
+      .map((f) => [f.label, f.threads]))}`,
   ].join('\n')).join('\n\n');
 }
 
@@ -642,8 +717,9 @@ async function nameAll(env, user) {
 
 /**
  * Every topic's name and theme, in one call, so the names tell the topics apart; a topic that call
- * named badly is named on its own (nameTopic). `topics`: `{ id, titles, tags, products }`, the
- * last two `[name, threads]`, the most first. `{ names, model }`.
+ * named badly is named on its own (nameTopic). `topics`: `{ id, titles, tags, products, facts }`,
+ * tags and products `[name, threads]`, the most first, facts as topicFacts makes them.
+ * `{ names, model }`.
  */
 export async function nameTopics(env, topics) {
   const all = await nameAll(env, namingInput(topics));
@@ -666,9 +742,10 @@ const round = (x, digits = 3) => Math.round(x * 10 ** digits) / 10 ** digits;
  * Builds a topic map of the channel threads and keeps it (`topic_maps`): `{ id, built_at,
  * threads, k, map }`, or `{ error }` when there is nothing to build it from. The map:
  *
- * - `topics`: `{ id, label, theme, size, cohesion, at }`, the biggest first (`cohesion`: the mean
- *   cosine of its threads to its centre, in the centred space; `at` its place on the page,
- *   `[x, y, z]`, src/topicspace.js).
+ * - `topics`: `{ id, label, theme, size, cohesion, at, facts }`, the biggest first (`cohesion`:
+ *   the mean cosine of its threads to its centre, in the centred space; `at` its place on the
+ *   page, `[x, y, z]`, src/topicspace.js; `facts` the docs and links its threads share,
+ *   topicFacts).
  * - `threads`: `{ key, title, team, org, at, last, messages, kind, tags, topic, sim, staff }`, by
  *   topic, the most typical first; `tags` are Clef's topics (labels.topics), `staff` the Adobe
  *   people who posted, by id, with their messages.
@@ -682,7 +759,7 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
     return { error: 'a topic map needs the CONTENT index and Workers AI' };
   }
   const {
-    threads, posts, memberships, orgs, products: facts, tech,
+    threads, posts, memberships, orgs, products: facts, tech, facts: factRows,
   } = await threadsOf(env);
   const vectors = await vectorsOf(env, threads.map((t) => t.thread));
   const rows = threads.filter((t) => vectors.has(t.thread));
@@ -695,6 +772,10 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
   const raw = rows.map((t) => vectors.get(t.thread));
   const X = centered(raw);
   const products = techProductsOf(facts, tech);
+  // What the facts say of each thread, by tf-idf over the map's threads (src/factweights.js).
+  const orgOf = new Map(rows.map((t) => [t.thread, t.org]));
+  const weighed = factWeights(factRows.filter((f) => orgOf.has(f.thread))
+    .map((f) => ({ ...f, org: orgOf.get(f.thread) })), { threads: rows.length });
   const tagNames = await areaNamesOf(env);
   // Each thread in its likeliest area (labels.topics), or in none; the topics are found within
   // each area, and none is one customer's, team's or product's concern (areaTopics).
@@ -728,8 +809,10 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
     const p = products.products[id];
     return (p && (p.product && p.tech ? `${p.name} (${p.product})` : p.name)) || id;
   };
+  const factsOf = clusters.map((m) => topicFacts(m.map((i) => rows[i]), weighed, rows.length));
   const { names, model: namer } = await nameTopics(env, clusters.map((m, id) => ({
     id,
+    facts: factsOf[id],
     titles: m.slice(0, NEAREST).map((i) => rows[i].title).filter(Boolean),
     tags: top(m.flatMap((i) => topicList(rows[i].topics).map((g) => tagNames[g] || g))),
     products: top(m.flatMap((i) => [...new Set((products.of.get(rows[i].thread) || [])
@@ -751,6 +834,8 @@ export async function buildTopicMap(env, { now = new Date(), by = 'cron', seed =
       ...(found[id].concentrated ? { concentrated: found[id].concentrated } : {}),
       size: m.length,
       cohesion: round(m.reduce((s, i) => s + sims[i], 0) / m.length),
+      // The docs and links its threads share, the most weighed first (topicFacts).
+      facts: factsOf[id],
     };
   });
 

@@ -15,7 +15,7 @@ import { describe, it } from 'node:test';
 import { api } from '../src/api.js';
 import { buildTopicMap } from '../src/topicmap.js';
 import {
-  assignPending, assignTopic, mapVectors, matchTerm, mondayOf, packVectors,
+  assignPending, assignTopic, factTerms, mapVectors, matchTerm, mondayOf, packVectors,
   semanticFloor, sweepTrends, trendsData, trendThreads, unpackVectors, weeksTo,
 } from '../src/trends.js';
 import { threadVectorId } from '../src/vectors.js';
@@ -264,6 +264,56 @@ describe('trends: the topics, the threads and the matches (src/trends.js)', () =
     assert.equal(about.semantic, true);
     assert.ok(about.ids.length >= 30, about.ids.length);
     assert.ok(queries.length >= 12 && queries.every((q) => q.filter.type === 'thread' && q.filter.at.$gte));
+  });
+
+  it('counts docs and links as facts, and matches a doc path or a URL', async () => {
+    const { env } = await world(threads, { orgs: ORGS });
+    const fact = (thread, field, value, source = 'rule') => env.DB.sqlite.prepare(`INSERT INTO facts
+      (thread, source, field, value) VALUES (?, ?, ?, ?)`).run(thread, source, field, value);
+    for (let w = 0; w < 5; w += 1) {
+      // The limits doc, in Acme's and Beta's threads, as the doc rule and as a link.
+      fact(`slack:E1:C0:${w}.1`, 'doc', 'docs/limits');
+      fact(`slack:E1:C2:${w}.1`, 'url', 'https://www.aem.live/docs/limits#rate-limits');
+      // Acme's own shop, in Acme's threads only: no topic of anyone's.
+      fact(`slack:E1:C1:${w}.2`, 'url', 'https://shop.acme.example/cart');
+    }
+    // A doc two in three of the threads with a doc have weighs too little to count; a status
+    // every thread has weighs nothing; a problem in someone's words is no fact here.
+    for (let w = 0; w < 10; w += 1) {
+      fact(`slack:E1:C0:${w}.2`, 'doc', 'developer/byo-git');
+      fact(`slack:E1:C2:${w}.2`, 'doc', 'developer/byo-git');
+    }
+    for (const t of threads) {
+      fact(t.key, 'http_status', '404');
+    }
+    fact('slack:E1:C0:5.1', 'problem', 'Pages are slow', 'clairic');
+    // A pull request in a group's later member (its first's) and in a Beta thread.
+    fact('slack:E1:C0:3.9', 'url', 'https://github.com/fake-org/edge/pull/5/files');
+    fact('slack:E1:C2:6.3', 'url', 'https://github.com/fake-org/edge/pull/5');
+    const d = await trendsData(env, { now: NOW });
+    assert.deepEqual(d.facts.map((f) => f.key).sort(), ['doc:docs/limits', 'url:github.com/fake-org/edge/pull/5']);
+    const limits = d.facts.find((f) => f.key === 'doc:docs/limits');
+    assert.equal(limits.href, 'https://www.aem.live/docs/limits');
+    assert.equal(limits.threads, 10);
+    assert.equal(limits.orgs, 2);
+    const id = (key) => env.DB.rows('SELECT rowid AS id FROM threads WHERE thread = ?', key)[0].id;
+    const factsOf = (key) => d.threads.find((r) => r[0] === id(key))[11].map((i) => d.facts[i].key);
+    assert.deepEqual(factsOf('slack:E1:C2:0.1'), ['doc:docs/limits']);
+    assert.deepEqual(factsOf('slack:E1:C0:0.1'), ['doc:docs/limits', 'url:github.com/fake-org/edge/pull/5']);
+    assert.deepEqual(factsOf('slack:E1:C1:0.2'), []);
+    // A term that is a doc path or a URL is matched as a fact, whichever form it is written in.
+    const limitIds = (await matchTerm(env, 'docs/limits', { now: NOW })).ids.sort();
+    assert.equal(limitIds.length, 10);
+    assert.deepEqual((await matchTerm(env, 'https://aem.live/docs/limits/', { now: NOW })).ids.sort(), limitIds);
+    const pr = await matchTerm(env, 'github.com/fake-org/edge/pull/5', { now: NOW });
+    assert.deepEqual(pr.fact, ['url:github.com/fake-org/edge/pull/5']);
+    assert.deepEqual(pr.ids.sort(), [id('slack:E1:C0:0.1'), id('slack:E1:C2:6.3')].sort());
+    assert.equal((await matchTerm(env, 'http_status:404', { now: NOW })).ids.length, 90);
+    // A word with a dot that no thread has as a fact is looked for as a word.
+    assert.equal((await matchTerm(env, 'node.js', { now: NOW })).fact, undefined);
+    assert.deepEqual(factTerms('purge'), []);
+    assert.deepEqual(factTerms('404'), []);
+    assert.deepEqual(factTerms('cdn.yaml').sort(), ['config_file:cdn.yaml', 'url:cdn.yaml']);
   });
 
   it('is for every internal user', async () => {

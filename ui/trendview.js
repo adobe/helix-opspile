@@ -20,8 +20,10 @@
  * `product:group:…`, ui/topicgraph.js), its areas and products, its team filter. A week counts the
  * channels with a message in a matching thread, of the active channels (those with a message
  * that week, ui/trends.js), as a share, on a three-week mean. The chart under the map compares terms, separated by commas: what
- * the map has, by its name, words (in a title or a message) or `~a phrase` (the threads about
- * it), the last two asked of GET /api/topics/trends/match. What is picked on the map or in the
+ * the map has, by its name, a doc or a link the threads have (`docs/limits`, a URL: one of the
+ * data's `facts`, else asked of the server as the rest), words (in a title or a message) or
+ * `~a phrase` (the threads about it), the last two asked of GET /api/topics/trends/match. The
+ * docs and links rising fastest, or that spiked across customers, are `rising`. What is picked on the map or in the
  * panel joins them (`add`), so a line stays until it is taken off; with none, the chart shows the
  * most trending topics, and the first pick joins those. The terms are the page's address (`tq`).
  *
@@ -34,6 +36,8 @@
   const SHADES = 3;
   const MAX_TERMS = 8;
   const LISTED = 30;
+  /** The docs and links `rising` lists, at most. */
+  const RISING = 8;
   const SMOOTH = 1;
   const { I } = Trends;
 
@@ -103,6 +107,42 @@
     };
   }
 
+  /** A thread's docs and links, as series keys (`fact:<index>`). */
+  const factKeys = (r) => (r[I.facts] || []).map((i) => `fact:${i}`);
+
+  /** The docs' and links' trends (ui/trends.js `moving`), for the team on screen. */
+  function factMoving(ctx) {
+    const key = `facts|${ctx.team}`;
+    if (!st.cache.has(key)) st.cache.set(key, Trends.moving(st.data, { keep: keep(ctx), keysOf: factKeys }));
+    return st.cache.get(key);
+  }
+
+  /**
+   * The docs and links rising fastest, for the team on screen: trending (ui/trends.js `moving`)
+   * across customers, or a spike (`spikes`), each once, the strongest first. Each `{ fact, item,
+   * spike, score }`, `fact` the data's, `item` its trend, `spike` its week, if it had one.
+   */
+  function rising(ctx) {
+    if (!st.data || !st.data.facts?.length) return st.data ? [] : null;
+    const key = `rising|${ctx.team}`;
+    if (!st.cache.has(key)) {
+      const k = keep(ctx);
+      const m = factMoving(ctx);
+      const by = new Map();
+      for (const it of m.trending) {
+        // One customer's own page climbing is their project, not a trend.
+        if (it.orgs >= 2 && it.top <= Trends.MOSTLY_ONE) by.set(it.key, { item: it, score: it.score });
+      }
+      for (const sp of Trends.spikes(st.data, { keep: k, keysOf: factKeys })) {
+        const was = by.get(sp.key);
+        by.set(sp.key, { item: m.items.get(sp.key), spike: sp, score: Math.max(sp.score, was?.score || 0) });
+      }
+      st.cache.set(key, [...by].map(([k2, x]) => ({ ...x, fact: st.data.facts[Number(k2.slice(5))], i: Number(k2.slice(5)) }))
+        .sort((a, b) => b.score - a.score).slice(0, RISING));
+    }
+    return st.cache.get(key);
+  }
+
   /** Every node's trend (ui/trends.js `moving`), for the map and team on screen. */
   function moving(ctx) {
     if (!st.data) return null;
@@ -128,7 +168,8 @@
 
   /**
    * A term: `{ term, label, id }` for one of the map's nodes (a group of one as its one, as the
-   * graph draws it), `{ term, label, server }` else.
+   * graph draws it), `{ term, label, fact }` for a doc or a link of the data's (by its label or
+   * its key), `{ term, label, server }` else.
    */
   function termOf(raw, ctx) {
     const t = raw.trim();
@@ -137,6 +178,9 @@
         && n.label.toLowerCase() === t.toLowerCase());
     const node = named && TopicGraph.standsFor(ctx.graph, named.id);
     if (node) return { term: node.id, label: node.label, id: node.id };
+    const lower = t.toLowerCase().replace(/^https?:\/\/(?:www\.)?/, '').replace(/\/+$/, '');
+    const fact = (st.data?.facts || []).findIndex((f) => f.key === t || f.label.toLowerCase() === lower);
+    if (fact >= 0) return { term: st.data.facts[fact].label, label: st.data.facts[fact].label, fact };
     return { term: t, label: t, server: true };
   }
 
@@ -203,6 +247,8 @@
       let counts;
       if (t.id) {
         counts = m.items.get(t.id)?.counts || new Array(st.data.weeks.length).fill(0);
+      } else if (t.fact !== undefined) {
+        counts = Trends.weekly(st.data, (r) => k(r) && (r[I.facts] || []).includes(t.fact)).counts;
       } else {
         const match = st.matches.get(t.term);
         counts = Trends.weekly(st.data, (r) => k(r) && Boolean(match?.ids?.has(r[I.id]))).counts;
@@ -263,6 +309,62 @@
       peaked: `Peaked in the week of ${st.data.weeks[s.peak.week]}, now at ${Math.round((100 * s.now) / (s.peak.share || 1))}% of that`,
     }[item.list] || 'Steady';
     return `<p class="trend">${spark(item)}<span>${esc(what)}: ${pctOf(100 * s.share)} of the active channels in the last ${Trends.RECENT} weeks (${s.perWeek.toFixed(1)} a week), against ${pctOf(100 * s.baseShare)} in the ${Trends.BASE} before${item.list === 'trending' && s.accel > 0.05 ? ', speeding up' : ''}; ${item.orgs} customer${item.orgs === 1 ? '' : 's'}${item.top > Trends.MOSTLY_ONE ? ', mostly one' : ''}</span></p>`;
+  }
+
+  /** A spike's badge: how many customers had it in which week, against a usual one. */
+  function spikeBadge(sp) {
+    const week = st.data.weeks[sp.week];
+    const day = new Date(`${week}T00:00:00Z`).toLocaleString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    const title = `${sp.orgs} customers in the week of ${week}${sp.week === st.data.weeks.length - 1 ? ' (so far)' : ''}, against ${sp.usual.toFixed(1)} in a usual week of the ${Trends.BASE} before`;
+    return `<span class="badge spike" title="${esc(title)}">${esc(`${sp.orgs} customers, ${day}`)}</span>`;
+  }
+
+  /** What the inbox calls a fact's field (src/trends.js `fields`), else the field as it is. */
+  const fieldName = (f) => st.data?.fields?.[f.field] || f.field;
+
+  /**
+   * A doc or a link (`f`: `{ label, href, field }`): a button that puts it on the chart, a link to
+   * its page, its line and what it is doing, and `sub` under it.
+   */
+  function factRow(f, { item = null, spike = null, sub = '' } = {}) {
+    return `<li><button class="link nm" data-term="${esc(f.label)}" title="Put it on the chart">${esc(f.label)}</button>
+      ${f.href ? `<a class="out" href="${esc(f.href)}" target="_blank" rel="noopener" title="Open" aria-label="Open ${esc(f.label)}">↗</a>` : '<span></span>'}
+      ${item ? spark(item) : '<span></span>'}${(spike && item?.list !== 'trending' ? spikeBadge(spike) : badge(item)) || '<span></span>'}
+      <span class="sub">${esc([fieldName(f), sub].filter(Boolean).join(' · '))}</span></li>`;
+  }
+
+  /**
+   * The panel's docs and links rising fastest across customers (`rising`), each a row that puts it
+   * on the chart; nothing before the trends are in.
+   */
+  function risingSection(ctx) {
+    const list = rising(ctx);
+    if (!list) return '';
+    const rows = list.map((x) => factRow(x.fact, {
+      item: x.item,
+      spike: x.spike,
+      sub: `${x.fact.threads} threads, ${x.fact.orgs} customers`,
+    }));
+    return `<section class="rising"><h3>Rising docs and links</h3>
+      <p class="hint">Docs, pull requests, endpoints and other links more customers' threads have now than before, or many at once in one week.</p>
+      ${rows.length ? `<ol class="docs">${rows.join('')}</ol>` : '<p class="hint">None is rising across customers now.</p>'}</section>`;
+  }
+
+  /** A topic's docs and links (`topics[].facts`, src/topicmap.js `topicFacts`), for its details. */
+  function factsSection(facts, ctx) {
+    if (!facts || !facts.length) return '';
+    const up = st.data ? rising(ctx) : null;
+    const items = st.data?.facts?.length ? factMoving(ctx).items : null;
+    const rows = facts.map((f) => {
+      const i = (st.data?.facts || []).findIndex((x) => x.key === f.key);
+      const spike = up && up.find((x) => x.i === i)?.spike;
+      return factRow(f, {
+        item: i >= 0 && items ? items.get(`fact:${i}`) : null,
+        spike,
+        sub: `${f.threads} of its threads, ${f.orgs} customers`,
+      });
+    });
+    return `<section><h3>Docs and links</h3><ol class="docs">${rows.join('')}</ol></section>`;
   }
 
   function drawChart(ctx) {
@@ -355,7 +457,7 @@
     $('tlegend').innerHTML = `${series.map((s) => {
       const mt = s.match;
       const note = (mt && mt.pending && 'looking…') || (mt && mt.error) || (mt && mt.capped && 'some months have more than shown')
-        || (mt && mt.semantic && 'by meaning') || (s.picked && 'picked') || (s.hovered && 'pointed at') || '';
+        || (mt && mt.semantic && 'by meaning') || ((s.fact !== undefined || mt?.fact) && 'as a fact') || (s.picked && 'picked') || (s.hovered && 'pointed at') || '';
       return `<li${st.hidden.has(s.term) ? ' class="off"' : ''}><button class="term" data-term="${esc(s.term)}" title="Shift-click to hide">
         <span class="swatch ${s.paint}"></span>${esc(s.label)}${note ? ` <span class="sub">${esc(note)}</span>` : ''}</button>
         <button class="x" data-drop="${esc(s.term)}" aria-label="Take ${esc(s.label)} off the chart">×</button></li>`;
@@ -464,7 +566,12 @@
       for (let i = 0; i < w.length; i += 2) if (w[i] === week) return w[i + 1];
       return 0;
     };
-    const lists = series.map((s) => st.data.threads.filter((r) => k(r) && inWeek(r) && (s.id ? keys(r).includes(s.id) : Boolean(s.match?.ids?.has(r[I.id]))))
+    const has = (s, r) => {
+      if (s.id) return keys(r).includes(s.id);
+      if (s.fact !== undefined) return (r[I.facts] || []).includes(s.fact);
+      return Boolean(s.match?.ids?.has(r[I.id]));
+    };
+    const lists = series.map((s) => st.data.threads.filter((r) => k(r) && inWeek(r) && has(s, r))
       .sort((a, b) => inWeek(b) - inWeek(a)));
     const ids = [...new Set(lists.flatMap((l) => l.slice(0, LISTED).map((r) => r[I.id])))];
     const res = await fetch(`/api/topics/trends/threads?ids=${ids.join(',')}`, { credentials: 'same-origin', redirect: 'manual' });
@@ -487,6 +594,9 @@
     get error() { return st.error; },
     setEsc(fn) { esc = fn; },
     moving,
+    rising,
+    risingSection,
+    factsSection,
     spark,
     badge,
     summary,
