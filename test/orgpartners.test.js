@@ -364,6 +364,7 @@ describe('admin: partners', () => {
       since: '2026-10-22',
       until: null,
       last: AT,
+      quiet: null,
       p: 0.9,
       score: 4.5,
       signals: { posters: 3, owners: 1 },

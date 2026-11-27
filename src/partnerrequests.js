@@ -33,6 +33,18 @@ import { isAdmin } from './roles.js';
  * what it asked about.
  */
 
+/**
+ * What a request asks: that the partner works for the customer (`link`), no longer does (`end`),
+ * or that the admin team look at a pair that seems wrong or uncertain (`review`).
+ */
+export const ACTIONS = ['link', 'end', 'review'];
+/** Of each decision, the requests it settles (`settleRequests`). */
+export const SETTLES = {
+  confirm: ['link', 'review'], end: ['end', 'review'], dismiss: ['link', 'end', 'review'],
+};
+const MAX_EVIDENCE = 10;
+const MAX_WHY = 500;
+
 /** Who asked, when it was not a person: the requests' `requested_by`. */
 export const CLEF_BY = 'clef';
 export const AGENT_BY = 'agent';
@@ -92,6 +104,8 @@ export const requestOf = (r) => ({
   decidedBy: r.decided_by ? { email: r.decided_by } : null,
   decidedAt: r.decided_at || null,
   reason: r.reason || null,
+  // What says so (`org_partner_evidence`), where it was read with it.
+  ...(r.evidence ? { evidence: r.evidence } : {}),
   ...(r.pair_customer !== undefined ? {
     pair: r.pair_customer ? {
       confirmed: r.confirmed_at ? { by: r.confirmed_by, at: r.confirmed_at } : null,
@@ -100,6 +114,7 @@ export const requestOf = (r) => ({
       until: r.pair_until || null,
       first: r.first_at || null,
       last: r.last_at || null,
+      quiet: r.quiet_since || null,
       p: r.p ?? null,
       signals: (() => {
         try {
@@ -129,6 +144,11 @@ export function requestFor(me, r) {
   if (!mine) {
     rest.note = null;
   }
+  // Evidence quotes and links threads, in its adders' words: the admin team's, and its own.
+  if (rest.evidence) {
+    const me2 = String((me && me.email) || '').toLowerCase();
+    rest.evidence = rest.evidence.filter((e) => e.addedBy.email && e.addedBy.email === me2);
+  }
   if (rest.pair) {
     rest.pair = { ...rest.pair };
     delete rest.pair.signals;
@@ -139,10 +159,38 @@ export function requestFor(me, r) {
 /** The requests, with the pair as it is now and the team of the thread they were asked from. */
 const SELECT = `SELECT q.*, x.customer AS pair_customer, x.confirmed_by, x.confirmed_at,
     x.dismissed_by, x.dismissed_at, x.since AS pair_since, x.until AS pair_until, x.first_at,
-    x.last_at, x.p, x.signals, t.team AS thread_team
+    x.last_at, x.p, x.signals, x.quiet_since, t.team AS thread_team
   FROM org_partner_requests q
   LEFT JOIN org_partners x ON x.customer = q.customer AND x.partner = q.partner
   LEFT JOIN threads t ON t.thread = q.thread`;
+
+/** An item of evidence as the requests give it. */
+const evidenceOf = (e) => ({
+  id: e.id,
+  kind: e.kind,
+  thread: e.thread || null,
+  message: e.message || null,
+  link: e.link || null,
+  threadTeam: e.team || null,
+  title: e.title || null,
+  why: e.why,
+  addedBy: askerOf({ requested_by: e.added_by, requested_name: e.added_name }),
+  addedAt: e.added_at,
+});
+
+/** Rows of requests (`SELECT`'s), each `requestOf` with its evidence, oldest first. */
+async function withEvidence(env, list) {
+  const ids = list.map((r) => r.id);
+  const items = ids.length ? await rows(env, `SELECT e.*, t.team, COALESCE(l.title, t.title) AS title
+    FROM org_partner_evidence e LEFT JOIN threads t ON t.thread = e.thread
+    LEFT JOIN labels l ON l.thread = e.thread
+    WHERE e.request IN (SELECT value FROM json_each(?1)) ORDER BY e.added_at, e.id`, JSON.stringify(ids)) : [];
+  const by = new Map();
+  for (const e of items) {
+    by.set(e.request, [...(by.get(e.request) || []), evidenceOf(e)]);
+  }
+  return list.map((r) => requestOf({ ...r, evidence: by.get(r.id) || [] }));
+}
 
 /**
  * The partner requests, open ones first and then the latest decided (`limit`): every one for the
@@ -152,20 +200,20 @@ export async function listPartnerRequests(env, me, { limit = 50 } = {}) {
   const mine = isAdmin(me) ? null : String(me.email || '');
   const list = await rows(env, `${SELECT} WHERE (?1 IS NULL OR q.requested_by = ?1)
     ORDER BY q.status = 'open' DESC, COALESCE(q.decided_at, q.requested_at) DESC LIMIT ?2`, mine, limit);
-  return list.map(requestOf);
+  return withEvidence(env, list);
 }
 
 /** Partner request `id`, as the lists give it, or null. */
 export async function getPartnerRequest(env, id) {
   const r = await env.DB.prepare(`${SELECT} WHERE q.id = ?`).bind(Number(id) || 0).first();
-  return r ? requestOf(r) : null;
+  return r ? (await withEvidence(env, [r]))[0] : null;
 }
 
 /** The requests of one pair, the latest first (`limit`). */
 export async function pairRequests(env, customer, partner, { limit = 20 } = {}) {
   const list = await rows(env, `${SELECT} WHERE q.customer = ?1 AND q.partner = ?2
     ORDER BY q.status = 'open' DESC, q.requested_at DESC LIMIT ?3`, customer, partner, limit);
-  return list.map(requestOf);
+  return withEvidence(env, list);
 }
 
 /** The requests that wait, by pair (`customer\npartner`): `Map<key, [{ id, action }]>`. */
@@ -244,19 +292,68 @@ async function knownPair(env, customer, partner) {
 }
 
 /**
+ * The latest item of a pair's evidence that the two still work together (`kind` `active`, a thread
+ * agent's `markActive`), with or without a request, `evidenceOf`'s with `at`, or null.
+ */
+export async function latestActive(env, customer, partner) {
+  const e = await env.DB.prepare(`SELECT e.*, t.team, COALESCE(l.title, t.title) AS title
+    FROM org_partner_evidence e LEFT JOIN threads t ON t.thread = e.thread
+    LEFT JOIN labels l ON l.thread = e.thread
+    WHERE e.customer = ? AND e.partner = ? AND e.kind = 'active' ORDER BY e.added_at DESC, e.id DESC
+    LIMIT 1`).bind(customer, partner).first();
+  return e ? { ...evidenceOf(e), at: e.added_at } : null;
+}
+
+/**
+ * Adds `items` (`[{ thread, message?, link?, why }]`, resolved: src/agent/partnerrequest.js reads
+ * them) to request `request` of the pair, or to the pair alone (`request` null), as `kind`
+ * (`evidence`, or `active`: the two still work together), by `by` (as `createPartnerRequest`'s).
+ * How many it added.
+ */
+export async function addEvidence(env, { customer, partner, request = null }, items, by, { kind = 'evidence' } = {}) {
+  let who = by.email ? String(by.email).toLowerCase() : AGENT_BY;
+  if (by.clef) {
+    who = CLEF_BY;
+  } else if (by.agent) {
+    who = AGENT_BY;
+  }
+  const at = new Date().toISOString();
+  const list = items.slice(0, MAX_EVIDENCE).filter((x) => clean(x.why, MAX_WHY));
+  if (!list.length) {
+    return 0;
+  }
+  await env.DB.batch(list.map((x) => env.DB.prepare(`INSERT INTO org_partner_evidence (customer,
+      partner, request, kind, thread, message, link, why, added_by, added_name, added_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+    customer,
+    partner,
+    request,
+    kind,
+    x.thread || null,
+    x.message || null,
+    x.link || null,
+    clean(x.why, MAX_WHY),
+    who,
+    by.clef ? null : clean(by.name) || null,
+    at,
+  )));
+  return list.length;
+}
+
+/**
  * Files a request: `by` is a person (`{ email, name }`), an agent (`{ agent: true, name }`, its
  * own) or Clef (`{ clef: true }`); `body` `{ customer, partner, action, since?, until?, note? }`;
  * `thread`, the thread it was asked from (an agent's), and `fingerprint`, Clef's. `{ request }`,
  * or `{ error, status, request? }` (the open one that asks the same).
  */
 export async function createPartnerRequest(env, by, body, {
-  thread = null, fingerprint = null,
+  thread = null, fingerprint = null, evidence = [],
 } = {}) {
   const customer = clean(body.customer).toLowerCase();
   const partner = clean(body.partner).toLowerCase();
   const action = clean(body.action);
-  if (!['link', 'end'].includes(action)) {
-    return { error: 'give an action: link (works for them) or end (no longer does)', status: 400 };
+  if (!ACTIONS.includes(action)) {
+    return { error: 'give an action: link (works for them), end (no longer does) or review (look at the pair)', status: 400 };
   }
   const known = await knownPair(env, customer, partner);
   if (known.error) {
@@ -264,6 +361,7 @@ export async function createPartnerRequest(env, by, body, {
   }
   const since = action === 'link' ? dateOf(body.since) : null;
   const until = action === 'end' ? dateOf(body.until) : null;
+  // A review asks to look, and names no date.
   if (since === undefined || until === undefined) {
     return { error: 'give a date as 2026-10 or 2026-10-24', status: 400 };
   }
@@ -309,6 +407,9 @@ export async function createPartnerRequest(env, by, body, {
     // Asked at the same time by someone else.
     return { error: 'the same was asked for already', status: 409 };
   }
+  if (evidence.length) {
+    await addEvidence(env, { customer, partner, request: r.id }, evidence, by);
+  }
   console.log(JSON.stringify({
     route: 'partnerrequests', request: 'created', action, by: who === CLEF_BY || who === AGENT_BY ? who : 'person', id: r.id,
   }));
@@ -316,6 +417,72 @@ export async function createPartnerRequest(env, by, body, {
     await announceRequest(env, 'partner', r.id);
   }
   return { request: await getPartnerRequest(env, r.id) };
+}
+
+/**
+ * An agent's request with its `evidence`, or its evidence added to one that waits: of the same
+ * action; for a `review`, any of the pair's. `{ request, added: true }` where it was added (and
+ * the request announced again), else `createPartnerRequest`'s.
+ */
+export async function askOrAdd(env, by, body, { thread = null, evidence = [] } = {}) {
+  const customer = clean(body.customer).toLowerCase();
+  const partner = clean(body.partner).toLowerCase();
+  const action = clean(body.action);
+  const open = ACTIONS.includes(action) ? await rows(env, `SELECT id, action FROM org_partner_requests
+    WHERE status = 'open' AND customer = ?1 AND partner = ?2 ORDER BY action = ?3 DESC, id`, customer, partner, action) : [];
+  const into = open.find((r) => r.action === action) || (action === 'review' ? open[0] : null);
+  if (into) {
+    await addEvidence(env, { customer, partner, request: into.id }, evidence, by);
+    await announceRequest(env, 'partner', into.id);
+    return { request: await getPartnerRequest(env, into.id), added: true };
+  }
+  return createPartnerRequest(env, by, body, { thread, evidence });
+}
+
+/**
+ * A thread's agent saw `customer` and `partner` still working together (`items`, its evidence):
+ * the pair's last sign is now (`seen_at`, `seen_by`), so it is not quiet until it is quiet again
+ * after that (src/orgpartners.js `quietOf`); Clef's open `end` of the pair is withdrawn, the
+ * evidence added to it (else to the pair alone). Decides nothing of the admin team's: a pair the
+ * admin team dismissed or ended stays so (`{ error }`). `likely` is src/orgpartners.js `LIKELY`,
+ * from where Clef's word counts as partners (passed in: that module imports this one).
+ * `{ ok, withdrawn: [ids], quiet }`.
+ */
+export async function markActive(env, by, { customer, partner }, items, { likely }) {
+  const c = clean(customer).toLowerCase();
+  const p = clean(partner).toLowerCase();
+  const known = await knownPair(env, c, p);
+  if (known.error) {
+    return known;
+  }
+  const pair = await env.DB.prepare('SELECT * FROM org_partners WHERE customer = ? AND partner = ?')
+    .bind(c, p).first();
+  if (!pair || (!pair.confirmed_at && !(pair.p >= likely))) {
+    return { error: `the inbox does not count ${p} as a partner of ${c}: ask with link`, status: 409 };
+  }
+  if (pair.dismissed_at) {
+    return { error: `the admin team said ${p} is no partner of ${c}: ask with review`, status: 409 };
+  }
+  if (pair.until) {
+    return { error: `${p} is a former partner of ${c}, until ${pair.until}: ask with link`, status: 409 };
+  }
+  const at = new Date().toISOString();
+  const who = by.email ? String(by.email).toLowerCase() : AGENT_BY;
+  await env.DB.prepare(`UPDATE org_partners SET seen_at = ?, seen_by = ?, quiet_since = NULL
+    WHERE customer = ? AND partner = ?`).bind(at, who, c, p).run();
+  const ends = await rows(env, `UPDATE org_partner_requests SET status = 'withdrawn', decided_by = ?1,
+      decided_at = ?2, reason = ?3
+    WHERE status = 'open' AND requested_by = ?4 AND action = 'end' AND customer = ?5 AND partner = ?6
+    RETURNING id`, who, at, 'A thread\'s agent saw them still working together', CLEF_BY, c, p);
+  await addEvidence(env, { customer: c, partner: p, request: ends.length ? ends[0].id : null }, items, by, { kind: 'active' });
+  for (const { id } of ends) {
+    // eslint-disable-next-line no-await-in-loop
+    await announceRequest(env, 'partner', id);
+  }
+  console.log(JSON.stringify({
+    route: 'partnerrequests', active: true, withdrawn: ends.length,
+  }));
+  return { ok: true, withdrawn: ends.map((r) => r.id), quiet: pair.quiet_since || null };
 }
 
 /**
@@ -397,8 +564,8 @@ export async function settleRequests(env, by, customer, partner, actions, status
  * Clef's requests now (`wants`, `[{ customer, partner, action, since?, until?, note,
  * fingerprint }]`, from the pairs' sync): each filed unless the same waits, or the admin team
  * declined one of Clef's on the same `fingerprint` (or Clef took it back); and Clef's open ones of
- * the pairs it wants no more taken back (`withdrawn`, with why: `why`, `Map<customer\npartner,
- * reason>`, says it of a `link`, else Clef no longer finds it so). How many it filed and took back.
+ * the pairs it wants no more taken back (`withdrawn`, with why: `why`, `Map<customer\npartner\n
+ * action, reason>`, else Clef no longer finds it so). How many it filed and took back.
  * One announcement for all.
  */
 export async function clefRequests(env, wants, { why = new Map() } = {}) {
@@ -428,7 +595,7 @@ export async function clefRequests(env, wants, { why = new Map() } = {}) {
   let withdrawn = 0;
   for (const [key, r] of open) {
     if (!wanted.has(key)) {
-      const reason = (r.action === 'link' && why.get(`${r.customer}\n${r.partner}`))
+      const reason = why.get(`${r.customer}\n${r.partner}\n${r.action}`)
         || 'Clef no longer finds it so';
       // eslint-disable-next-line no-await-in-loop
       const { meta } = await env.DB.prepare(`UPDATE org_partner_requests SET status = 'withdrawn',

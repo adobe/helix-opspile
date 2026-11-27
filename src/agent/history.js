@@ -163,6 +163,8 @@ function parseLink(ref) {
   const ids = [param('thread_ts'), param('parentMessageId')];
   let channel = null;
   let guild = null;
+  // The message the link is to, of those ids (the others are its thread's root).
+  let message = null;
   // Slack: /archives/<channel>/p<ts without the dot>?thread_ts=<root>
   const slack = /\/archives\/([^/]+)\/p(\d{10})(\d{6})/.exec(url.pathname);
   // Teams: /l/message/<channel>/<message>?parentMessageId=<root>
@@ -171,15 +173,20 @@ function parseLink(ref) {
   const discord = /\/channels\/([^/]+)\/(\d+)(?:\/(\d+))?/.exec(url.pathname);
   if (slack) {
     [, channel] = slack;
-    ids.push(`${slack[2]}.${slack[3]}`);
+    message = `${slack[2]}.${slack[3]}`;
+    ids.push(message);
   } else if (teams) {
     channel = decodeURIComponent(teams[1]);
-    ids.push(teams[2]);
+    [, , message] = teams;
+    ids.push(message);
   } else if (discord) {
     [, guild] = discord;
+    message = discord[3] || null;
     ids.push(discord[3], discord[2]);
   }
-  return { ids: [...new Set(ids.filter(Boolean))], channel, guild };
+  return {
+    ids: [...new Set(ids.filter(Boolean))], channel, guild, message,
+  };
 }
 
 /**
@@ -234,8 +241,12 @@ export async function resolveThread(env, key, ref) {
   return { key: entry.key };
 }
 
-/** The thread of the first of a link's message ids that opspile has, or null. */
-async function linkedThread(env, link) {
+/**
+ * The message a parsed link (`parseLink`) names, `{ thread, id }` (`id` the message's, or null
+ * where only its thread was found), or null: by its channel (Discord: its server) and ids, by
+ * index, as `linkedThread` finds its thread; the linked message first, then its thread's root.
+ */
+async function linkedRow(env, link) {
   let scope;
   if (link.guild) {
     scope = { sql: 'source = \'discord\' AND tenant = ?', bind: [link.guild] };
@@ -250,15 +261,37 @@ async function linkedThread(env, link) {
       bind: [place.source, place.tenant, link.channel],
     };
   }
-  for (const id of link.ids) {
+  // The linked message first (a reply's link names its root too), then the roots.
+  const ids = link.message
+    ? [link.message, ...link.ids.filter((x) => x !== link.message)] : link.ids;
+  for (const id of ids) {
     // eslint-disable-next-line no-await-in-loop
-    const m = await env.DB.prepare(`SELECT thread FROM messages WHERE ${scope.sql} AND id = ?`)
+    const m = await env.DB.prepare(`SELECT thread, id FROM messages WHERE ${scope.sql} AND id = ?`)
       .bind(...scope.bind, id).first();
     if (m) {
-      return m.thread;
+      return { thread: m.thread, id: link.message && m.id === link.message ? m.id : null };
     }
   }
   return null;
+}
+
+/** The thread of the first of a link's message ids that opspile has, or null. */
+async function linkedThread(env, link) {
+  const found = await linkedRow(env, link);
+  return found ? found.thread : null;
+}
+
+/**
+ * The message a link names (a Slack, Teams or Discord message link, as people paste them):
+ * `{ thread, message }`, `message` null where the link names its thread only, or null.
+ */
+export async function linkedMessage(env, ref) {
+  const link = parseLink(String(ref || '').trim());
+  if (!link.ids.length) {
+    return null;
+  }
+  const found = await linkedRow(env, link);
+  return found ? { thread: found.thread, message: found.id } : null;
 }
 
 /**

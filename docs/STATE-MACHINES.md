@@ -258,6 +258,15 @@ or was slow) a `sync` writes, deletes and asks nothing and answers the rows as t
 (`skipped`): the partners' people would be nobody's, and every pair would drop and lose its
 verdict. What a look found before counts as found while the next one fails.
 
+A pair of partners of now (confirmed, or likely and not decided) is quiet ⇄ not (`quiet_since`,
+migration 0118, `quietOf`): every `sync` writes it, quiet once its last sign (its people's last post
+in the customer's threads, or `seen_at`, an agent's `active`) is `LAPSED_DAYS` old while the
+customer's threads went on `GOING_ON_DAYS` after; not quiet once its people post again, an agent
+records `active` (which clears it at once), or it is decided otherwise. Quiet is no end. Of a quiet
+pair, Clef's judgement whether it ended (`ended_p`) is kept with the day it was quiet since
+(`ended_fingerprint`) and when (`ended_checked_at`): asked again once that day changes, or after
+`ENDED_RECHECK_DAYS`; none it did not give is written.
+
 A pair's span (`first_at`, `last_at`, migration 0112) is what the threads show: every `sync` writes
 it where it changed, a decided pair's too. Over the decision: confirmed → ended (`until`, with
 `ended_by` and `ended_at`: a former partner; `POST /api/admin/org-partners/end`, which confirms
@@ -270,7 +279,10 @@ again), else a confirmation (`/confirm` `undo`: neither, its dates gone), else a
 **Partner request.** open → confirmed, ended or dismissed (the pair decided), declined (the pair
 left as it is) or withdrawn (`org_partner_requests`, migration 0112, src/partnerrequests.js), a
 thread of the admin team's inbox (`request:partner:<id>`) in either. One waits per pair and action
-(`link`, `end`: a partial unique index): asking again answers 409 with the one that waits. A
+(`link`, `end`, `review`: a partial unique index, migration 0118): asking again answers 409 with
+the one that waits, and an agent's evidence (`org_partner_evidence`) is added to it instead
+(`askOrAdd`; a `review`'s to any of the pair's that waits), which announces it again. A `review`
+is settled by any decision on the pair. A
 decision on the pair, from the thread or the pair's page, closes the requests it settles
 (`settleRequests`): a confirmation the `link` ones (`confirmed`), an end the `end` ones (`ended`), a
 dismissal both (`dismissed`); an `end` that waits stays open over a confirmation, and a `link` over
@@ -279,11 +291,15 @@ that wait, saying into which org (an undo does not bring them back). An undo of 
 pair's page opens no request again. Clef's (`requested_by` `clef`, filed by each `sync` from
 `partnerWants`) carry the `fingerprint` of what they were found on: one waits per pair and action as
 any; one declined or withdrawn is not filed again on the same fingerprint; and Clef withdraws its
-own that wait once the sync does not want them, with why in `reason`. A sync wants a `link` of a
-pair nobody decided only while Clef is unsure of it (its `p` in the band, on Clef's fingerprint) or
-sure of it while its signals conflict (`conflictOf`: of one kind alone that is no posting together,
-on Clef's fingerprint; the partner's people quiet for `LAPSED_DAYS` while the customer's threads go
-on, on `quiet:<last post's day>`). So a pair Clef becomes sure of has its `link` withdrawn ("Clef is
+own that wait once the sync does not want them, with why in `reason`; an agent's `active` on the pair
+withdraws Clef's open `end` too (`decided_by` `agent`), its evidence going to it. A sync wants an
+`end` of a quiet confirmed pair only where Clef judged it ended (`ENDED_P`, on the day it is quiet
+since), and of a quiet pair nobody decided a `review` instead (`ended:<day>`: ending it would
+confirm it too), so
+its `end` requests filed on silence alone are withdrawn ("Clef does not judge it ended …"). A sync
+wants a `link` of a pair nobody decided only while Clef is unsure of it (its `p` in the band, on
+Clef's fingerprint) or sure of it while its signals conflict (`conflictOf`: of one kind alone that
+is no posting together, on Clef's fingerprint; a quiet pair is no conflict). So a pair Clef becomes sure of has its `link` withdrawn ("Clef is
 sure of it, …: it counts as a partner without a decision"), the ones the first syncs filed for
 likely pairs among them, and one it finds unlikely too ("Clef finds it unlikely now, …"); the
 rest, a lapsed partner posting again and the like, say "Clef no longer finds it so". Without the partner domains, a
