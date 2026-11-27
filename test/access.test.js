@@ -317,6 +317,25 @@ describe('personal view', () => {
     assert.deepEqual((await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads, []);
   });
 
+  it('counts a reply for the header in a group whose member I posted in and read', async () => {
+    const DB = fresh();
+    const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
+    // I post in g1 and read it; another person replies in g2, a member of the same group.
+    await say(DB, {
+      thread: 'g1', channelId: 'Cgroup', team: 'helix', person: 1, at: at(1),
+    });
+    await say(DB, {
+      thread: 'g2', channelId: 'Cgroup', team: 'helix', person: 2, at: at(2),
+    });
+    DB.sqlite.prepare("UPDATE threads SET logical_thread = 'g1' WHERE thread IN ('g1', 'g2')").run();
+    await advanceWatermark(DB, 1, 'g1', at(1), 'open');
+    const [t] = (await inbox({ DB }, me, null, { personal: true })).threads;
+    assert.equal(t.unreadForYou, 1);
+    // The header on other pages counts it as the inbox does: the read member is asked along.
+    const { threads } = await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'));
+    assert.deepEqual(threads.map((x) => [x.thread, x.entry, x.n]), [['g2', 'g1', 1]]);
+  });
+
   it('shows a bot\'s reply after the last person\'s message on the row, not what it answers', async () => {
     const DB = fresh();
     const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;

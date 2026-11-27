@@ -41,7 +41,8 @@ export async function waitingThreads(db, me, now = new Date()) {
       UNION SELECT thread FROM mentions WHERE person = ?1 AND at > ?2),
     groups AS (SELECT COALESCE(t.logical_thread, t.thread) AS g FROM threads t
       WHERE t.thread IN (SELECT thread FROM mine))
-    SELECT t.thread, t.team, t.org, COALESCE(t.logical_thread, t.thread) AS entry FROM threads t
+    SELECT t.thread, t.team, t.org, COALESCE(t.logical_thread, t.thread) AS entry,
+      t.logical_thread IS NOT NULL AS grouped FROM threads t
       LEFT JOIN watermarks w ON w.thread = t.thread AND w.person = ?1
     WHERE (t.thread IN (SELECT thread FROM mine)
         OR COALESCE(t.logical_thread, t.thread) IN (SELECT g FROM groups))
@@ -50,7 +51,17 @@ export async function waitingThreads(db, me, now = new Date()) {
       AND COALESCE(t.org, '') NOT IN (${mutedOrgs('?1')})
     ORDER BY t.any_at DESC LIMIT ?3`).bind(me.id, since, WAITING_MAX).all();
   const rows = results || [];
-  const counts = await unreadInYours(db, rows.map((r) => r.thread), me.id);
+  // A re-threaded group is one thread to unreadInYours: you are in it from the first time you
+  // were in any member, a read one too. The read members are asked along for that, and counted
+  // for nothing (they have nothing after your read).
+  const multi = [...new Set(rows.filter((r) => r.grouped).map((r) => r.entry))];
+  const { results: siblings } = multi.length
+    ? await db.prepare(`SELECT thread FROM threads
+      WHERE COALESCE(logical_thread, thread) IN (SELECT value FROM json_each(?1))`)
+      .bind(JSON.stringify(multi)).all()
+    : { results: [] };
+  const counts = await unreadInYours(db, [...new Set([...rows.map((r) => r.thread),
+    ...(siblings || []).map((r) => r.thread)])], me.id);
   return rows.filter((r) => counts.get(r.thread))
     .map((r) => ({
       thread: r.thread,
