@@ -34,7 +34,8 @@ import { teamsOf } from './shares.js';
  * (`routed_at`), or it is a reply that landed top-level (REPLY): then it stays in the group for
  * good. A root that announces a thread (🧵, `:thread:`) stays on its own, too. A root that says
  * nothing but @-mentions (the bot, a colleague) continues its author's root before it, minutes
- * later, as a burst (`mentionsOnly`, GREETING_MS).
+ * later, as a burst (`mentionsOnly`, GREETING_MS). Before any root joins its author's previous
+ * one as a burst, Clef is asked whether it is a request of its own (`separate`, MIN_SEPARATE).
  *
  * People continue a chat with more top-level messages where the chat is top-level messages.
  * Where its people reply in platform threads, a new top-level message is nearly always a topic
@@ -637,6 +638,56 @@ async function apart(env, prev, prevBody, next, nextBody) {
     && await answeredByOthers(env, next) && answeredByOthers(env, prev);
 }
 
+/** What a root says besides its attachments (`separate`): an image's root has nothing to read. */
+const textOf = (body) => String(body || '')
+  .replace(/!?\[[^\]]*\]\([^)]*\)/g, ' ')
+  .replace(/^\s*Attachments:\s*$/gm, ' ')
+  .trim();
+
+/**
+ * Clef's question about a burst (`separate`). Asked the other way round, whether the new message
+ * continues the one before, Clef said no to most of the chat that bursts are ("apologies for
+ * that", "you did it"): measured on production's 296 burst members, the median of the ones
+ * nobody answered on their own was 0.73, and a fifth were below 0.2.
+ */
+export const SEPARATE_INSTRUCTIONS = 'Is the new message a separate, self-contained question or '
+  + 'request of its own, that would be answered on its own rather than together with the previous '
+  + 'message?';
+/**
+ * At or above this, a burst is two requests (`separate`). Of production's 296 burst members, it
+ * kept apart 10 of the 13 items of a numbered series, 5 of the 20 that were answered in their own
+ * thread (feature requests posted one after the other), and 5 of the 252 that nobody answered on
+ * their own, which were requests of their own as well ("could we please add …", a second access
+ * request). Clef was asked about 243 of them; the others follow a greeting or a picture, or ping.
+ */
+export const MIN_SEPARATE = 0.8;
+
+/**
+ * Whether `next`, its author's root right after `prev` and within a burst's minutes, is a request
+ * of its own after all, by Clef (SEPARATE_INSTRUCTIONS): people post several questions one by
+ * one, so that each is answered in its own platform thread, and timing alone made them one entry.
+ * Its probability when it is (at least MIN_SEPARATE), or null. Clef is not asked when `prev` has
+ * nothing to read (an image, whose explanation comes next) or only greets, nor when `next` only
+ * mentions (`mentionsOnly`): those are what bursts are for, and Clef, reading a greeting or a
+ * picture as nothing, takes what follows for a topic of its own.
+ */
+async function separate(env, prev, prevBody, next, nextBody) {
+  const before = textOf(prevBody);
+  const after = textOf(nextBody);
+  if (!before || !after || greets(prevBody) || mentionsOnly(nextBody)) {
+    return null;
+  }
+  const gap = Math.max(0, Math.round((Date.parse(next.root_at) - Date.parse(prev.root_at)) / 1000));
+  const res = await env.AI.run(CLEF, {
+    model: 'clef',
+    state: `Previous message, by the same person, ${gap} seconds before:\n${String(prevBody).slice(0, MAX_TEXT)}`
+      + `\n\nNew message:\n${String(nextBody).slice(0, MAX_TEXT)}`,
+    questions: { separate: { type: 'noul', instructions: SEPARATE_INSTRUCTIONS } },
+  });
+  const p = res && res.answers && res.answers.separate && res.answers.separate.noul;
+  return typeof p === 'number' && p >= MIN_SEPARATE ? Math.round(p * 1000) / 1000 : null;
+}
+
 /**
  * Whether a folded root is to be split out of its group (`dethread`): one of a conversation that
  * has replies of its own, or a burst member that is `apart` from the root of its group before it.
@@ -813,8 +864,12 @@ export async function rethread(env, key, { force = false } = {}) {
   const previousBody = previous && (await rootBody(env, previous))?.parsed.body;
   const soon = previous && previous.author_key === author
     && continues(previous, previousBody, thread, root.parsed.body);
-  const burst = soon && !await answered(env, previous, thread.root_at)
-    && !await apart(env, previous, previousBody, thread, root.parsed.body) ? previous : null;
+  const timed = soon && !await answered(env, previous, thread.root_at)
+    && !await apart(env, previous, previousBody, thread, root.parsed.body);
+  // Clef, last: a request of its own, posted minutes after the one before (`separate`).
+  const separated = timed ? await separate(env, previous, previousBody, thread, root.parsed.body)
+    : null;
+  const burst = timed && separated === null ? previous : null;
 
   const values = await embed(env, text);
   const found = await env.VECTORS.query(values, {
@@ -845,7 +900,9 @@ export async function rethread(env, key, { force = false } = {}) {
   const announcing = conversation && !quoting && announcesThread(root.parsed.body);
   const asking = Boolean(conversation && !quoting && !announcing && !burst);
   // The channel's latest conversations and the similar ones, read as a transcript.
-  const convs = asking ? await conversations(env, thread, earlier.slice(0, 4)) : [];
+  // Not the one it was just told apart from: Clef said it is no part of it.
+  const convs = (asking ? await conversations(env, thread, earlier.slice(0, 4)) : [])
+    .filter((c) => separated === null || c.group !== groupOf(previous));
   // A reply that landed top-level: it @-mentions somebody who spoke in one of them, minutes
   // after its latest message. It is that conversation's, whatever the channel's habit, and the
   // replies it gets in its own platform thread are the group's (REPLY, dethread()).
@@ -979,7 +1036,8 @@ export async function rethread(env, key, { force = false } = {}) {
   const nextBurst = nextRoot && continues(thread, root.parsed.body, next, nextBody)
     && !await answered(env, thread, next.root_at)
     && !await apart(env, thread, root.parsed.body, next, nextBody);
-  const nextOwn = nextBurst && (quotes(nextBody) || announcesThread(nextBody));
+  const nextOwn = nextBurst && (quotes(nextBody) || announcesThread(nextBody)
+    || await separate(env, thread, root.parsed.body, next, nextBody) !== null);
   if (nextBurst && !nextOwn) {
     await env.DB.prepare(`UPDATE threads SET logical_thread = ?, logical_via = 'burst', logical_p = 1,
         rethreaded_at = ? WHERE thread = ?`).bind(group, new Date().toISOString(), next.thread).run();
@@ -1022,6 +1080,8 @@ export async function rethread(env, key, { force = false } = {}) {
     ...(quoting ? { reason: 'quotes a message' } : {}),
     ...(announcing ? { reason: 'starts a thread' } : {}),
     ...(replied ? { reason: 'has replies of its own' } : {}),
+    // How sure Clef was that it is no burst of its author's root before it (MIN_SEPARATE).
+    ...(separated !== null ? { separate: separated } : {}),
     // What Clef thought of the best candidate when it said no (for tuning MIN_CLEF), and whether
     // that one was held in threads (MIN_CLEF_THREADED).
     ...(!match && asked ? { clef: Math.round(asked.p * 100) / 100 } : {}),
