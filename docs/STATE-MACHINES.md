@@ -211,7 +211,8 @@ merge.
 **Partner domain.** found ⇄ not found, and over either the admin team's row: set by hand
 (a name, a partner org) or excluded, ⇄ none (`partner_domains`, migrations 0013 and 0109;
 src/partners.js). Found is no row: an isolate derives the domains from every message and keeps
-them an hour (`DERIVED_MS`); the first request after the hour derives them again and waits for it
+them an hour (`DERIVED_MS`), and with them each customer's mail domains (`customerMail`, whose
+own domain `customerDomains` picks with the partner domains of the moment); the first request after the hour derives them again and waits for it
 (a refresh nobody awaits could be cancelled with the response, and the old domains trusted for
 another hour). A request shares only its own derivation (src/isolatecache.js: in Workers, one
 request may not await another's I/O); while another's is on its way, it answers what was found
@@ -283,8 +284,14 @@ decision after that; nothing else forgets them.
 **Thread org.** found → found again (its `p` and `via` move) or gone; dismissed ⇄ shown
 (`thread_orgs`, migration 0111, src/threadlinks.js). A row per inbox entry (its key at the time),
 org and role (`about`: the customer a partner's thread is about; `partner`: a partner whose people
-post in a customer's thread). Every link job (`{ link }`, a minute after a `labeled` result) writes
-what it finds for its role and deletes the rows of that role it no longer finds, unless dismissed;
+post in a customer's or a public thread; `customer`: a customer whose people post in a public
+thread, migration 0113, which puts the thread where the customer's followers have its threads).
+Every link job (`{ link }`, a minute after a `labeled` result) writes
+what it finds for its roles and deletes the rows of those roles it no longer finds, unless dismissed,
+and every row of a role the thread's org type has not (`ROLES`: an org retyped, a channel filed under
+another org; all of them for a vendor's or an internal org's thread). Until then a row of role
+`customer` counts only while the thread's org is public (`PUBLIC_NOW`, src/follows.js), so a retyped
+org's threads leave the customers' followers at once;
 `found_at` moves only when `p` or `via` changed. Shown is not dismissed, `p` at least `ABOUT_MIN`,
 and an org not merged. A dismissed row (`dismissed_at`, by whoever may work the thread) is kept
 through every job, so the org stays off the thread until `undo` clears it. Nothing else writes
@@ -1204,6 +1211,16 @@ the save, and asks only when it could not be made, once however many ways out we
 says which hash a path has, and is the watermark: a save relists (unless another save started while
 it was read), and so does showing the tab again after `RELIST_MS`. A failed batch leaves its hashes
 not here, and opening one reads it by its path.
+
+**Review row.** absent, or there → counted (`state.reviewHas`, `reviewCounts` in `ui/admin.js`,
+`ui/review.js`). Whether a list of Teams or Customers has its Review row is decided once, at its
+first paint, and holds until the page loads again: the admin team's always, an ops team member's in
+Customers when `review.duplicates` of `GET /api/admin/orgs` (what `org_pairs` and
+`org_merge_requests` keep) is above 0, nobody else's. Its count is the sum of its queues', shown
+once none of them is still unread (`total` null until then): the unassigned channels are read with
+the list, the duplicates, the partners and the suggested teams after it. A queue that fails to load
+counts 0. A later round of Clef's (`loadDups`, `loadLinks`) changes the count, and the open queue's
+note offers to show what it said; its rows stay where they are until then.
 
 **Teams and Customers read ahead.** not read → in flight → kept → forgotten (`ahead`, `cached`,
 `forget` in `ui/admin.js`). What a team's or a customer's overview and Manage section read (their

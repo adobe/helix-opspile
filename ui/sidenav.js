@@ -16,8 +16,8 @@
  * it in sections, and a footer with what filters them on its left and how they are sorted on
  * its right. Every row is one line, as tall as a control: a visual (an icon, a letter, a color),
  * the name, and one quiet number at its end; what else there is to say of it is its title, and
- * its page. What waits for someone (likely duplicates, suggested teams) is a row at the top
- * with a count, which opens to its rows.
+ * its page. What waits for someone is a row with a count (`todo`): in Teams and Customers one,
+ * Review, at the top from the first paint (ui/review.js), so nothing comes in above the rows.
  *
  * The rows are ranked by activity unless you ask for their names in order (the sort menu, kept
  * per list in the browser, `sortOf`). The pages draw the rows (`row`, `head`, `group`) and the

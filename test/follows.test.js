@@ -416,6 +416,40 @@ describe('following technologies', () => {
     assert.equal((await call(e, ew, 'PUT', '/api/follows', { kind: 'team', target: 'ew' })).status, 400);
   });
 
+  it('puts a public thread a followed customer\'s people posted in where the customer\'s threads go', async () => {
+    const e = env();
+    // C4 is a community's channel (an org of type public), where Globex's people posted in 6.1.
+    e.DB.sqlite.exec(`INSERT INTO orgs (slug, name, type, updated_at) VALUES ('community', 'Public', 'public', '${AT}');
+      INSERT INTO threads (thread, source, tenant, channel_id, root_id, org, team, kind, channel_name,
+        title, path, root_at, last_at, any_at, messages, updated_at)
+      VALUES ('${key('C4', '6.1')}', 'slack', 'E1', 'C4', '6.1', 'community', 'helix', 'channel',
+        'aem-community', 'about 6.1', 'channels/community/helix/slack-C4/6.1/', '${AT}', '${AT}',
+        '${AT}', 1, '${AT}');
+      INSERT INTO thread_orgs (thread, org, role, p, via, found_at)
+        VALUES ('${key('C4', '6.1')}', 'globex', 'customer', 1, 'posters', '${AT}')`);
+    const ew = asMe(EW);
+    const personal = async () => entries(await inbox(e, ew, null, { personal: true })).sort();
+    await call(e, ew, 'PUT', '/api/follows', { kind: 'org', target: 'globex' });
+    assert.deepEqual(await personal(), [key('C2', '3.1'), key('C4', '6.1')]);
+    assert.deepEqual([...await followersOf(e, [EW.id, ADA.id], key('C4', '6.1'))], [EW.id]);
+    await call(e, ew, 'PUT', '/api/follows', { kind: 'org', target: 'globex', follow: false });
+    assert.deepEqual(await personal(), []);
+    // A team that follows Globex (a follow rule of field org) has it in its inbox, and says why.
+    await call(e, asMe(MANAGER, 'manager'), 'PUT', '/api/follows', { kind: 'org', target: 'globex', team: 'ew' });
+    assert.deepEqual(await followingTeams(e, key('C4', '6.1')), ['ew']);
+    assert.deepEqual(await entryFollows(e, key('C4', '6.1')), [{ team: 'ew', org: 'globex' }]);
+    assert.ok(entries(await inbox(e, ew, 'ew')).includes(key('C4', '6.1')));
+    // Not while its org is no longer public (retyped, its link job yet to run).
+    e.DB.sqlite.exec("UPDATE orgs SET type = 'customer' WHERE slug = 'community'");
+    assert.deepEqual(await followingTeams(e, key('C4', '6.1')), []);
+    assert.equal(entries(await inbox(e, ew, 'ew')).includes(key('C4', '6.1')), false);
+    e.DB.sqlite.exec("UPDATE orgs SET type = 'public' WHERE slug = 'community'");
+    // Not once the customer is dismissed from it.
+    e.DB.sqlite.exec(`UPDATE thread_orgs SET dismissed_at = '${AT}', dismissed_by = 'ada'`);
+    assert.deepEqual(await followingTeams(e, key('C4', '6.1')), []);
+    assert.equal(entries(await inbox(e, ew, 'ew')).includes(key('C4', '6.1')), false);
+  });
+
   it('puts the threads a customer\'s account posted in, and a thread followed itself, in the personal view', async () => {
     const e = env();
     const ew = asMe(EW);

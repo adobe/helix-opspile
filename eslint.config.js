@@ -110,6 +110,8 @@ export default [
         Person: 'readonly',
         // The sidebar of Teams, Customers and Topics, ui/sidenav.js.
         SideNav: 'readonly',
+        // What waits in Teams and Customers: the sidebar's Review entry, ui/review.js.
+        Review: 'readonly',
         // Content swaps that fade in, ui/app.js.
         Swap: 'readonly',
         // Links to the app opened in it, installed, ui/app.js.

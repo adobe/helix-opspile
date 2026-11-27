@@ -138,8 +138,8 @@ export function assignmentText(a, t) {
   const following = [...new Set((a.follows || []).map((f) => f.team))];
   if (following.length) {
     const what = (slug) => a.follows.filter((f) => f.team === slug)
-      .map((f) => (f.tech ? f.tech : `the area ${f.area}`)).join(', ');
-    lines.push(`This thread is in the inboxes of ${following.map((s) => `${team(s)} (follows ${what(s)})`).join(', ')} too: they follow a technology Clef tagged the thread with, or an area Clef put it in. That is the thread's, not the channel's, and files nothing.`);
+      .map((f) => (f.tech || (f.area ? `the area ${f.area}` : `the customer ${f.org}, whose people posted in this public thread`))).join(', ');
+    lines.push(`This thread is in the inboxes of ${following.map((s) => `${team(s)} (follows ${what(s)})`).join(', ')} too: they follow a technology Clef tagged the thread with, an area Clef put it in, or a customer whose people posted in this public thread. That is the thread's, not the channel's, and files nothing.`);
   }
   if (a.clef) {
     const p = a.clef.team_p == null ? '' : ` (${Math.round(a.clef.team_p * 100)}%)`;

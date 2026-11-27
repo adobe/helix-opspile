@@ -15,6 +15,7 @@ import { linkedMessage, messageRef } from './messagelinks.js';
 import { notifyRoom } from './notify.js';
 import { cleanSources, lookAt, sourcesOf } from './sources.js';
 import { draftFileResponse, filesOf, savedFiles } from './draftfiles.js';
+import { PUBLIC_NOW } from './follows.js';
 import {
   AGENT_EMAIL, changeOf, keepForUndo, recordDraftEvent, textHash, undoneDiscard,
 } from './draftevents.js';
@@ -42,7 +43,8 @@ const PREVIEW = 140;
 /**
  * SQL, `?1` the thread: `WITH t AS (the thread, `k` its entry's key) SELECT t.*, shares, follows`
  * (the teams its channel is shared with, as JSON, in `sharesOf`'s order, and the teams that
- * follow a technology the entry shows or an area it is in, in `followingTeams`'), for
+ * follow a technology the entry shows, an area it is in, or a customer whose people posted in it
+ * when it is public, in `followingTeams`'), for
  * `entryFields`; more columns may follow, then `FROM t`.
  */
 export const ENTRY_ROW = `WITH t AS (SELECT thread, org, team, logical_thread, source, tenant,
@@ -55,6 +57,11 @@ export const ENTRY_ROW = `WITH t AS (SELECT thread, org, team, logical_thread, s
       UNION SELECT f.team FROM threads x
       JOIN thread_areas a ON a.thread = x.thread
       JOIN team_follows_by f ON f.kind = 'area' AND f.target = a.area
+      WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel'
+      UNION SELECT r.value FROM threads x
+      JOIN thread_orgs o ON o.thread = x.thread AND o.role = 'customer' AND o.dismissed_at IS NULL
+        AND ${PUBLIC_NOW('o')}
+      JOIN rules r ON r.target = 'follow' AND r.field = 'org' AND r.pattern = '^' || o.org || '$'
       WHERE (x.thread = t.k OR x.logical_thread = t.k) AND x.kind = 'channel' ORDER BY 1))
       AS follows`;
 

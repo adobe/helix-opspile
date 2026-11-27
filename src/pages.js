@@ -47,6 +47,7 @@ import customerJs from '../ui/customer.js' with { type: 'text' };
 import kbchatJs from '../ui/kbchat.js' with { type: 'text' };
 import personJs from '../ui/person.js' with { type: 'text' };
 import sideNavJs from '../ui/sidenav.js' with { type: 'text' };
+import reviewJs from '../ui/review.js' with { type: 'text' };
 // Spectrum 2's look of every page (README, "Spectrum 2").
 import spectrumFontsCss from '../ui/spectrum-fonts.css' with { type: 'text' };
 import spectrumCss from '../ui/spectrum.css' with { type: 'text' };
@@ -87,6 +88,7 @@ export const SCRIPTS = {
   'kbchat.js': kbchatJs,
   'person.js': personJs,
   'sidenav.js': sideNavJs,
+  'review.js': reviewJs,
   'spectrum-fonts.css': spectrumFontsCss,
   'spectrum.css': spectrumCss,
   'spectrum-inbox.css': spectrumInboxCss,

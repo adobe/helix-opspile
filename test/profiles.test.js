@@ -89,6 +89,7 @@ describe('profiles', () => {
       domain: 'staff.example',
       relation: 'adobe',
       partner: null,
+      customer: null,
       teams: ['Helix'],
     });
     assert.equal(cards['slack:E1:U2'].relation, 'partner');

@@ -159,8 +159,13 @@ function summary(t, me) {
   if (t.linked && t.linked.about.length) {
     out.about_customers = t.linked.about.map((o) => o.slug);
   }
-  if (t.linked && t.linked.with.length) {
-    out.with_partners = t.linked.with.map((o) => o.slug);
+  const withs = (t.linked && t.linked.with) || [];
+  if (withs.some((o) => o.role !== 'customer')) {
+    out.with_partners = withs.filter((o) => o.role !== 'customer').map((o) => o.slug);
+  }
+  // A public thread with a customer's people.
+  if (withs.some((o) => o.role === 'customer')) {
+    out.with_customers = withs.filter((o) => o.role === 'customer').map((o) => o.slug);
   }
   return out;
 }
@@ -395,8 +400,14 @@ function threadHead(key, data) {
     ...(data.linked && data.linked.about.length ? {
       about_customers: data.linked.about.map((o) => ({ customer: o.slug, name: o.name, p: o.p })),
     } : {}),
-    ...(data.linked && data.linked.with.length ? {
-      with_partners: data.linked.with.map((o) => ({ partner: o.slug, name: o.name })),
+    ...(data.linked && data.linked.with.some((o) => o.role !== 'customer') ? {
+      with_partners: data.linked.with.filter((o) => o.role !== 'customer')
+        .map((o) => ({ partner: o.slug, name: o.name })),
+    } : {}),
+    // A public thread's: the customers whose people posted in it.
+    ...(data.linked && data.linked.with.some((o) => o.role === 'customer') ? {
+      with_customers: data.linked.with.filter((o) => o.role === 'customer')
+        .map((o) => ({ customer: o.slug, name: o.name })),
     } : {}),
     ...(data.related && data.related.length ? {
       possibly_same_issue: data.related.map((r) => ({

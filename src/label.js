@@ -368,7 +368,8 @@ export const vocab = async (env, team = null) => {
 
 /**
  * Who posted `m`, for the models: Adobe staff, else the side of the thread they are on, the
- * customer, or (`side` 'vendor') the vendor.
+ * customer, (`side` 'vendor') the vendor, or (`side` 'community member', a public channel's)
+ * anyone.
  */
 function who(m, side = 'customer') {
   const a = m.author || {};
@@ -414,20 +415,30 @@ function reactionLine(list, side = 'customer') {
     + ` (${r.staff ? 'Adobe staff' : side})`).join(', ')}`;
 }
 
+/** The side of the thread its people outside Adobe are on, by org type, and its header. */
+const SIDE = { vendor: 'vendor', public: 'community member' };
+const HEADER = {
+  vendor: (t) => `Vendor: ${t.org} (Adobe is its customer here)`,
+  'community member': () => 'Public channel: anyone may join and post. The people outside Adobe'
+    + ' are of many organizations, or of none; whoever asks is the one Adobe answers, as a customer.',
+};
+
 /**
  * The thread as text for the models: a header, then one block per message, with the
  * reactions it got (`reactions`: message id → `{ emoji, name, staff }[]`). A vendor's thread
- * (`thread.org_type` 'vendor') says so: the people outside Adobe in it are the vendor's.
+ * (`thread.org_type` 'vendor') says so: the people outside Adobe in it are the vendor's. So does
+ * a public one (`public`: a community's or an event's channel), whose people are of many orgs
+ * and none: whoever asks there is the one Adobe answers, as a customer.
  */
 export function stateOf(thread, messages, reactions = new Map()) {
   const live = messages.filter((m) => !m.deletedAt);
   const shown = live.length > MAX_MESSAGES
     ? [live[0], ...live.slice(-(MAX_MESSAGES - 1))]
     : live;
-  const side = thread.org_type === 'vendor' ? 'vendor' : 'customer';
+  const side = SIDE[thread.org_type] || 'customer';
   const header = [
     `Channel: ${thread.channel_name || thread.channel_id} on ${platformName(thread.source)}`,
-    side === 'vendor' ? `Vendor: ${thread.org} (Adobe is its customer here)` : `Customer: ${thread.org}`,
+    HEADER[side] ? HEADER[side](thread) : `Customer: ${thread.org}`,
     thread.root_at ? null : 'The first message of this thread is missing.',
   ].filter(Boolean).join('\n');
   const body = shown.map((m) => {
