@@ -175,7 +175,8 @@ OR <shared channel> OR <followed>` stays a search by index (`teamsOf`, `mayWork`
 inbox's `inInbox`). A thread's agent writes the knowledge bases of the teams that follow it, as those
 of its channel's shares (`accessibleRepos`, `via: 'follow'`).
 A person also follows a **customer**, a **person** or an **area** (`person_follows_by`, migration
-0087; `PUT /api/follows { kind, target }`): the customer's conversations, the threads the person
+0087; `PUT /api/follows { kind, target }`): the customer's conversations (and the public threads
+its people posted in, "Public channels"), the threads the person
 posted in, and those Clef puts in the area (`thread_areas`, by index, written with the label, as
 `thread_tech` is) are in their personal view the same way, and in `followersOf` for live updates
 and notifications. And (migration 0107) an **account**, a customer's person known by their identity
@@ -189,7 +190,8 @@ Clef puts in it are in the team's inbox as those that show a technology it follo
 chevron or `PUT /api/admin/org-follows`): a follow rule of field `org` (migration 0098),
 which matches the org the other rules file a channel under, and the org's that were merged into it,
 so every channel of the customer is shared with the team, now and later, as any follow rule's
-channels are. On the customer's page everyone on a team follows or mutes it themselves, a manager gives a
+channels are. The public threads the customer's people posted in are in the team's inbox too, as
+those that show a technology it follows are (`followedByTeam`, `entryFollows`' `{ team, org }`). On the customer's page everyone on a team follows or mutes it themselves, a manager gives a
 channel of their team back to the admin team (`POST /api/admin/release`) or takes it out of their
 team's inbox where it is shared by hand, and asks for one of another team's (a request with `move`).
 
@@ -205,9 +207,10 @@ an empty personal view (where someone on no team starts), and in a dialog from t
 section of the menu on every page (`ui/followsuggest.js`), each with its Follow button.
 
 An org is a slug. What it is called, its icon (a domain, whose favicon is shown, or an image
-URL) and whether it is a customer, a partner or a vendor are a row in `orgs`; an org without
-one is a customer shown by its slug and the favicon of its usual mail domain. The inbox and
-the agents show the name and the type.
+URL) and whether it is a customer, a partner, a vendor, Adobe's own (`internal`) or public
+(`public`, "Public channels") are a row in `orgs`; an org without one is a customer shown by its
+slug and the favicon of its usual mail domain. The inbox and the agents show the name and the
+type.
 
 The org list in the admin pages shows each org with the icon the inbox resolves for it (its
 own, else the favicon of its usual mail domain: the most common one among the people outside
@@ -228,10 +231,28 @@ user agent (many answer a bot's with an error page); an `.ico` of bitmaps, which
 read, is decoded into a PNG for it (`src/ico.js`), and an SVG icon is offered without Clef's
 verdict.
 
+**Review.** What waits in Customers and in Teams is one row at the top of the sidebar, **Review**
+(`ui/review.js`), with one count: in Customers the unassigned channels, the likely duplicates and
+the partners to review; in Teams the unassigned channels and the suggested teams. Its page has a
+tab for each queue, each with its count and its address (`?tab=orgs&view=unassigned`,
+`view=duplicates`, `view=partners`, `view=domains`; `?tab=teams&view=unassigned`,
+`view=suggested`; `view=review` opens the first with something in it), and a queue's rows open
+their pages (a pair of duplicates, a partner and a customer, a suggested team), whose back button
+returns to the queue. The addresses the queues had as rows of the list (`org=_unassigned`,
+`team=_unassigned`, `org=domains:`) open their tabs. The row is drawn from the sidebar's first
+paint, before the duplicates and the partners are found (Clef is asked about them as they load),
+with its count once every queue is counted, so nothing is added above the rows of a list once it
+is drawn. The admin team has it always; a member of an ops team, whose only queue is the
+duplicates of the customers their teams own, only when some wait at the first paint, as far as
+what is kept says (`review` of `GET /api/admin/orgs`, `likelyPairCount` in `src/orgmerge.js`:
+Clef's likely pairs nobody dismissed, and those asked to be merged); it does not come or go until
+the page loads again. The merges asked for and the partners to decide are also requests in the
+admin team's inbox ("Requests as threads"): the queues are where their evidence is compared.
+
 **Unassigned channels.** A channel no rule files under an org (its name is not
-`<product>-<org>`, nobody assigned it) is in the org `_unassigned`, which Customers lists as
-Unassigned, with how many channels it has (`unassigned` of `GET /api/admin/orgs`; the ignored ones
-are not counted). Its page (`GET /api/admin/org?slug=_unassigned`) lists them, each with the orgs
+`<product>-<org>`, nobody assigned it) is in the org `_unassigned`, which Customers' review lists
+under Unassigned channels, with how many channels it has (`unassigned` of `GET /api/admin/orgs`;
+the ignored ones are not counted). Its tab (`GET /api/admin/org?slug=_unassigned`) lists them, each with the orgs
 it may belong to (`src/orgassign.js`): a Slack Connect team or Teams team it shares with the
 channels of an org and few others (the inbox's own Enterprise Grid is in every Connect channel), the
 usual mail domain of an org that the people outside Adobe in it or posting there write from, and an
@@ -243,8 +264,9 @@ assigns the channel there by hand (`POST /api/admin/assign`, target `org`).
 
 **Duplicate customers.** An org is a slug the rules give a channel (`aem-<slug>`,
 `<product>-<slug>`, a manual assignment), so one company can end up under two: a channel named
-`workfront-acmeco` and one named `aem-acme`. The admin pages' Customers list the pairs of orgs
-that may be one (`GET /api/admin/org-duplicates`, `src/orgmerge.js`), likeliest first. A pair is
+`workfront-acmeco` and one named `aem-acme`. The Duplicates of Customers' review list the pairs of
+orgs that may be one (`GET /api/admin/org-duplicates`, `src/orgmerge.js`), likeliest first, the
+less likely ones folded. A pair is
 a candidate when its signals add up: names (the same in letters and digits, one the start of the
 other, spelled alike, a word in common), the same icon (or one's icon the other's mail domain), the
 same usual mail domain of their people, channels with the same Slack Connect team, Teams team or
@@ -331,7 +353,7 @@ confirmation that was a mistake) and Still a partner (decline) for an `end`; eac
 open requests it settles: a confirmation the `link` ones, an end the `end` ones, a dismissal all.
 The thread shows the pair as it is now, its span, and the customer's other partners. Three ask:
 
-- the admin team, on a pair's page in Customers ("Likely partners", `GET
+- the admin team, on a pair's page in Customers (from the Likely partners of its review, `GET
   /api/admin/org-partners`, which shows both orgs, a customer's mail domains its own and none of a
   partner's, the evidence, Clef's verdict, the pair's dates and requests), and anyone on an ops team
   through `POST /api/admin/org-partner-requests`, whose answers to them leave the admin team's
@@ -390,8 +412,9 @@ customer's page lists its **partners** (`partners`): those that work for it (`pa
 those whose people posted in its threads of the window (as many, `UNLINKED_MIN`), each a link to
 the partner's page, with what links them (the signals' counts, in words), how many of its threads
 their people are in and whether it is confirmed or likely. Those nothing links yet come last: they
-are the evidence the review works from, and for the admin team each links to its pair's page in
-Likely partners, which shows the evidence of any two orgs (`?pair=`) and confirms or dismisses them,
+are the evidence the review works from, and for the admin team each links to its pair's page (of
+the review's Likely partners: to review, then those Clef is sure of, the less likely and the
+decided ones, folded), which shows the evidence of any two orgs (`?pair=`) and confirms or dismisses them,
 making their row where `org_partners` has none. The overviews are kept five minutes per isolate; a decision on a pair
 (`POST /api/admin/org-partners/confirm`, `/dismiss`, `/end`) forgets both orgs' in the isolate that made it
 (`forgetOrgProfiles`, src/orgprofile.js), and the other isolates show it within those five minutes,
@@ -419,6 +442,9 @@ two. A minute after each labelling of a thread (the normalizer queues `{ link: t
   for each;
 - **the partners in a customer's thread** (role `partner`, `p` 1, `via` `posters`): the partner
   orgs whose people posted in it, by their mail domain (`partnerDomains`, "Partner domains");
+- **who is in a public thread** (roles `partner` and `customer`, `p` 1, `via` `posters`; "Public
+  channels"): the partners and the customers whose people posted in it, by their mail domain, and
+  nothing more: a public thread is related to no other (no `thread_links`), and no agent is told;
 - **possibly the same issue** (`thread_links`): the threads of the linked orgs' channels active
   in the last 14 days (`RELATED_DAYS`) whose thread vectors (`CONTENT`, `type: thread`, by `org`)
   are at least 0.75 alike (`RELATED_MIN`, cosine), by inbox entry. The linked orgs are, for a
@@ -444,6 +470,7 @@ not their teams', nor their personal view's) is named by its customer, team and 
 never its title or link. Whoever may work the thread says a link is wrong there (`POST
 /api/thread/about/dismiss`, `/related/dismiss`, with `undo`): a dismissed row stays, and the job
 leaves it so. The MCP server's `get_thread` has them (`about_customers`, `with_partners`,
+`with_customers` for a public thread's,
 `possibly_same_issue`, a title only where the person may see that thread), and its
 `search_threads`, `/api/search` (`org=`) and a knowledge-base chat's `search_threads` take a
 customer filter that includes its partners' threads about it (`aboutThreads`).
@@ -458,6 +485,45 @@ prompt keeps what a linked org's thread says out of its channel unless someone a
 
 `npm run partners:threads` (README, "Measure the thread links") counts on production, read-only,
 how many partner threads get a customer and how surely.
+
+**Public channels.** An org of type `public` (migration 0113) is where people of many orgs meet,
+and of none: a community's Discord server, an event's or a course's Slack channel. One org,
+`public`, has them all; the rules file a channel there (the Discord servers by a rule, an event's
+channel by hand). Its threads are worked as any customer's: who asks is the one the team
+answers, and Adobe's people answer for Adobe, staff by their mail domain, their Discord role or
+their connected account, whether on an ops team or not. But a public org is no side of anything:
+
+- it is not a customer: not in a partner's candidates (`org_partners`) nor its customers, not in
+  the partner domains' "a customer's own domain" (`derive` reads customers' and partners'
+  threads only), never a duplicate (`candidates`, src/orgmerge.js), and not among a team's or a
+  person's customers on its overview; its Customers page is its own, with no partners;
+- Clef is told the thread is a public channel's, whose people are of many orgs or of none, and
+  calls them community members (`stateOf`, src/label.js); a thread agent is told everything it
+  posts there is public, and never to name a customer or partner of Adobe's there, nor anything
+  from another channel, a ticket or a customer's knowledge base (`PUBLIC_GUIDE`, src/agent/tools.js);
+- its people are told apart by their mail domain, where the platform has it (Slack, Teams; the
+  Discord servers share none): a partner's (`partnerDomains`) are the partner's, a customer's own
+  (`customerDomains`, src/partners.js) are the customer's, and the others are the community. A
+  customer's own domains are, of each customer, the one most of its people write from in its
+  own threads that is no partner's (a partner's people may be all who post in a customer's
+  channel), and the org part of its icon's; a domain the top one of two customers is the one's
+  with more of its people there. They are found with the partner domains, from the same rows,
+  and kept as long ("Partner domains"); free mail, tenant and staff domains are nobody's;
+- the link job ("Thread links") writes, for each public thread, the partners and customers whose
+  people posted in it (`thread_orgs`, roles `partner` and `customer`), which the inbox shows as
+  "With …" on its row and in its header, dismissed as the others are, and the profile cards
+  ("People") name the customer of each of its people, or say Community;
+- a public thread with a customer's people is where the customer's threads go: in the personal
+  view of whoever follows the customer and the inbox of a team that does (`followedByPerson`,
+  `followedByTeam`, src/follows.js, and so `followersOf`, `followingTeams` and `teamsOf`: live
+  updates, notifications, working it as a followed thread), in the search's customer filter
+  (`aboutThreads`), and on the customer's page, which lists the public channels its people posted
+  in, with how many threads (`public`, src/orgprofile.js; ui/customer.js "In public channels");
+- an agent of a public thread is told whose people post in it, for the team (`relatedNote`), and
+  `get_thread` says it (`with_customers`).
+
+After making an org public, `node scripts/replay.mjs --link --org <slug>` links its threads at
+once; the link job links each again at its next labelling anyway.
 
 **Adobe's bots.** Staff are told apart by mail domain, and a bot has none, so a bot of Adobe's
 (an agent that provisions access, say) would show on the customer's side of a thread. Every bot
@@ -498,7 +564,7 @@ customers' overviews and the topic map count them by account. The accounts of on
 are one person there (on Slack Connect, a guest account in Adobe's workspace and the one of their
 own workspace that takes over), and so are the embedded portal accounts of one address their
 identity provider verified (two IMS profiles of one end user: `identities.merge_email`, migration
-0113, [One person, several profiles](PORTAL-INTEGRATION.md#one-person-several-profiles)), which is
+0114, [One person, several profiles](PORTAL-INTEGRATION.md#one-person-several-profiles)), which is
 a merge key only: it is not their `email`, links them to no person of D1 and makes nobody staff
 by its domain. Two accounts outside Adobe of different mail addresses, named the
 same (without accents, case or punctuation), of which both posted, may be one person too: a new
@@ -560,7 +626,7 @@ looks again when the channel has new activity, the ops teams change, or the labe
 teams that do not exist yet. Channels are named by convention (`<product>-<customer>`), so a
 prefix that three or more of the admin team's channels share (up to the first or second `-` or
 `_` of a Slack or Discord channel's name, or of a Teams team's name, which is what is named so
-on Teams) is often a product without a rule. The list of teams has each such group under
+on Teams) is often a product without a rule. The review of Teams has each such group under
 **Suggested teams**, as they come up; its page lists its channels, the rules that would file them
 (channel name starts with the prefix, and the Teams team's name for its Teams channels), what a
 dry run of them moves, and the Adobe people present in them (members, posting or reacting; staff
@@ -3928,6 +3994,9 @@ domain, ops teams, the channel's org, and above all who they are to us:
   integrators; "Partner domains" below), and the card names the partner;
 - **Customer**: anyone else; the card notes when their domain is not the usual customer
   domain of the channel, which is how an unlisted partner shows up;
+- in a public channel ("Public channels"), **Customer: Acme** for someone of a customer's own
+  mail domain (`customer` on the card, `customerDomains`), and **Community** for anyone else
+  outside Adobe and its partners;
 - **Bot**.
 
 The cards travel with the inbox and thread payloads (`profiles`, keyed by
@@ -3965,7 +4034,8 @@ partner; this starts from the orgs said to be partners instead, and leaves out w
 customer. It reads every message, so an isolate keeps it an hour; what changes it (an org's
 name, type or icon, a merge, an edit of `partner_domains`) forgets it in its own isolate, and the
 others find it again within the hour (docs/STATE-MACHINES.md, "Partner domain"). The rows of `partner_domains` (migration 0109) are the admin team's over it,
-under **Partner domains** in Customers (`GET`, `PUT`, `DELETE /api/admin/partner-domains`): a
+under **Partner domains**, a tab of Customers' review (`GET`, `PUT`, `DELETE
+/api/admin/partner-domains`), which adds nothing to its count: a
 domain added by hand with a partner org or a name, a found one renamed or given to another partner,
 and one that is not a partner's (`excluded`), which its subdomains are not either unless one of
 them has a row of its own. The page also lists the domains left out as a customer's, each one
@@ -4033,7 +4103,7 @@ the admin team; its agent's sections follow. The overview is the team's last 26 
   key customers are those they posted the most for, and their profile on the team, their Contact in
   its knowledge base, is under their name (for whoever may read it). Those who did not post are
   listed after;
-- its **customers** (no internal org) and its **collaborators** (Adobe's people not on the team,
+- its **customers** (no internal or public org) and its **collaborators** (Adobe's people not on the team,
   a person's accounts as one, no workflow or bot account), ranked by what they said in its
   threads, each with their weeks;
 - its **technologies**, by the layer of a stack: those it follows, those of its catalog, and the

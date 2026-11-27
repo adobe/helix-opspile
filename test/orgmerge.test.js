@@ -185,6 +185,14 @@ describe('duplicate candidates', () => {
     orgs.set('agency', worker('agency', 'customer'));
     assert.deepEqual(candidates({ orgs, members: null }).map((c) => [c.a, c.b]), [['agency', 'globex']]);
   });
+
+  it('never lists a public org: people of every org meet there', () => {
+    const orgs = new Map([
+      ['globex', org('globex', { domains: ['globex.example'] })],
+      ['globex-community', org('globex-community', { type: 'public', domains: ['globex.example'] })],
+    ]);
+    assert.deepEqual(candidates({ orgs, members: null }), []);
+  });
 });
 
 describe('admin: duplicate customers', () => {
@@ -231,6 +239,20 @@ describe('admin: duplicate customers', () => {
     // One pair, whatever its signals.
     const one = await call(e, ADA, 'GET', '/api/admin/org-duplicates?pair=globex:acme');
     assert.deepEqual(one.body.pairs.map((p) => [p.a, p.b, p.p]), [['acme', 'globex', 0.1]]);
+  });
+
+  it('counts what waits in the Review row from what is kept, for whoever sees the orgs', async () => {
+    const e = env();
+    const waits = async (me) => (await call(e, me, 'GET', '/api/admin/orgs')).body.review.duplicates;
+    // Nothing kept yet: Clef has not been asked.
+    assert.deepEqual([await waits(ADA), await waits(BO), await waits(CY)], [0, 0, 0]);
+    await call(e, ADA, 'GET', '/api/admin/org-duplicates');
+    // Bo's team owns both; Cy's neither.
+    assert.deepEqual([await waits(ADA), await waits(BO), await waits(CY)], [1, 1, 0]);
+    await call(e, ADA, 'POST', '/api/admin/org-duplicates/dismiss', { a: 'acme', b: 'acmeco' });
+    assert.equal(await waits(BO), 0, 'dismissed');
+    await call(e, BO, 'POST', '/api/admin/org-merge-requests', { from: 'acmeco', into: 'acme' });
+    assert.equal(await waits(BO), 1, 'asked for');
   });
 
   it('lets a team member ask for a merge, and only the admin team merge', async () => {

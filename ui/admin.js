@@ -73,6 +73,9 @@ const state = {
   links: null,
   // The channels no rule files under an org (GET /api/admin/orgs `unassigned`): how many.
   orgsUnassigned: null,
+  // Whether each list has its Review entry (ui/review.js), decided at its first paint, and
+  // whether the team wizard's groups were read (they count in the Teams entry).
+  reviewHas: { teams: false, orgs: false }, groupsRead: false, groupsError: '',
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -324,7 +327,7 @@ const isGroup = (sel) => String(sel ?? '').startsWith(GROUP);
 /** Two orgs that may be one, picked in Customers (see "duplicate customers"). */
 const isPair = (sel) => String(sel ?? '').startsWith(PAIR);
 /** Whether `sel` on `tab` is a team or a customer, whose page has an agent's sections. */
-const agented = (tab, sel) => AGENTED.includes(tab) && !isGroup(sel) && !isPair(sel) && !isDomains(sel)
+const agented = (tab, sel) => AGENTED.includes(tab) && !isGroup(sel) && !isPair(sel) && !Review.is(sel)
   && !isLink(sel);
 
 /**
@@ -335,6 +338,11 @@ function address({
   tab = state.tab, sel = state.sel, section = state.section, path = state.path,
 } = {}) {
   const q = new URLSearchParams({ tab });
+  // The review (see "review"): its page, `view=review`, and each of its queues, `view=<queue>`.
+  if (Review.is(sel)) {
+    q.set('view', Review.queueOf(sel) || 'review');
+    return `/inbox/admin?${q}`;
+  }
   if (sel) q.set(PARAM[tab], sel);
   // A team's page and a customer's open at their overview; what changes them is `manage`.
   if (sel && agented(tab, sel) && section === 'own' && sel !== UNASSIGNED) q.set('view', 'manage');
@@ -372,6 +380,11 @@ function wanted(url) {
   if (tab !== 'orgs') tab = 'teams';
   sel = sel || q.get(PARAM[tab]);
   const view = q.get('view');
+  // The review's page and its queues (see "review"), and the addresses they had as rows of the
+  // list: Unassigned, and Partner domains.
+  if (!sel && (view === 'review' || Review.QUEUES[tab].some((x) => x.id === view))) sel = Review.sel(view === 'review' ? '' : view);
+  else if (sel === UNASSIGNED) sel = Review.sel('unassigned');
+  else if (tab === 'orgs' && sel === DOMAINS) sel = Review.sel('domains');
   const legacy = Boolean(q.get('repo') || q.get('path'));
   let section = SECTIONS.includes(view) ? view : null;
   if (view === 'manage') section = 'own';
@@ -472,6 +485,12 @@ async function load() {
   // What you and your teams follow and mute (ui/follow.js): every Follow button here.
   Follow.set(follows.ok ? follows.body : null);
   state.types = orgs.body.types || ['customer', 'partner', 'vendor'];
+  // Whether each list has its Review entry, from what is known now (see "review"): it does not
+  // come or go until the page is loaded again.
+  state.reviewHas = {
+    teams: Review.shown('teams', state.me),
+    orgs: Review.shown('orgs', state.me, onTeam ? orgs.body.review || {} : {}),
+  };
   if (state.me.admin) loadGroups();
   // The duplicate customers are for the ops teams, who ask for a merge.
   if (onTeam) loadDups();
@@ -486,12 +505,18 @@ async function load() {
  */
 async function loadGroups() {
   const r = await call('/api/admin/team-groups');
-  if (!r.ok) return;
+  state.groupsRead = true;
+  if (!r.ok) {
+    state.groupsError = r.body.error || `failed (${r.status})`;
+    if (state.tab === 'teams') { renderList(); redrawQueue('suggested'); }
+    return;
+  }
   state.groups = r.body.groups || [];
   state.dismissedGroups = r.body.dismissed || [];
   state.groupCoverage = r.body.coverage || null;
   if (state.tab === 'teams') {
     renderList();
+    redrawQueue('suggested');
     // A link to a group, opened before the groups were there.
     if (String(state.sel || '').startsWith(GROUP) && state.view?.target === 'group-pending') showGroup(state.sel.slice(GROUP.length));
   }
@@ -547,11 +572,12 @@ function listError(text) {
 // ---- the list on the left: the sidebar (ui/sidenav.js) ---------------------------------
 //
 // One line a row, ranked by activity (the threads with a person's message in the last 30
-// days, `recent`) unless the sort menu in its footer asks for names in order. What waits for the
-// admin team (the channels with no org or no team, the likely duplicates, the suggested teams)
-// is at the top; then yours (the teams you are on or manage, the customers you follow), then the
-// others. A customer's type and whether it has an icon are the footer's filter; the rest of what
-// a row has to say is its title, and its page.
+// days, `recent`) unless the sort menu in its footer asks for names in order. What waits (the
+// channels with no org or no team, the likely duplicates and partners, the suggested teams) is
+// one row at the top, Review, which opens its page (see "review"); then yours (the teams you are
+// on or manage, the customers you follow), then the others. Nothing is added above a row once the
+// list is drawn: what loads after it changes counts only. A customer's type and whether it has an
+// icon are the footer's filter; the rest of what a row has to say is its title, and its page.
 
 /** How busy a row is, as its title says it. */
 const activityTitle = (x) => (x.recent === undefined || x.recent === null ? ''
@@ -634,7 +660,7 @@ function listFrame() {
 }
 
 const ORG_TYPE_LABEL = {
-  customer: 'Customers', partner: 'Partners', vendor: 'Vendors', internal: 'Internal',
+  customer: 'Customers', partner: 'Partners', vendor: 'Vendors', internal: 'Internal', public: 'Public',
 };
 const orgTypeLabel = (t) => ORG_TYPE_LABEL[t] || `${t[0].toUpperCase()}${t.slice(1)}`;
 /** The org types there are, as the filter offers them. */
@@ -680,11 +706,7 @@ function drawList() {
     const mine = new Set([...(state.me.teams || []).map((t) => t.slug), ...(state.me.manages || [])]);
     const yours = ranked(all.filter((t) => mine.has(t.slug)), (t) => t.name);
     const others = ranked(all.filter((t) => !mine.has(t.slug)), (t) => t.name);
-    const un = state.unassigned && state.unassigned.channels && (!f || 'unassigned'.includes(f))
-      ? SideNav.todo({
-        sel: UNASSIGNED, on: state.sel === UNASSIGNED, label: 'Unassigned channels', count: state.unassigned.channels, title: 'Channels not filed under a team',
-      }) : '';
-    body = `${un}${state.me.admin ? groupList(f) : ''}
+    body = `${reviewEntry()}
       ${navSection('Your teams', yours.map(teamRow))}
       ${navSection(yours.length ? 'Other teams' : 'Teams', others.map(teamRow), { empty: f ? 'Nothing matches.' : (yours.length ? '' : 'No teams.') })}`;
     foot = SideNav.foot('teams');
@@ -705,12 +727,8 @@ function drawList() {
       middle = navSection('Your teams\' customers', ranked(ours, orgName).map(orgRow), {
       });
     }
-    const un = state.me.admin && state.orgsUnassigned && state.orgsUnassigned.channels && (!f || 'unassigned'.includes(f))
-      ? SideNav.todo({
-        sel: UNASSIGNED, on: state.sel === UNASSIGNED, label: 'Unassigned channels', count: state.orgsUnassigned.channels, title: 'Channels not filed under an org',
-      }) : '';
     const yours = followed.length || middle;
-    body = `${un}${domainsRow(f)}${onATeam() ? dupSection(f) : ''}${state.me.admin ? linkSection(f) : ''}
+    body = `${reviewEntry()}
       ${navSection('Following', followed.map(orgRow))}${middle}
       ${navSection(yours ? 'Other customers' : 'Customers', ranked(rest, orgName).map(orgRow), { empty: f || state.orgType || state.noIcon ? 'Nothing matches.' : (yours ? '' : 'No customer yet.') })}`;
     const label = [state.orgType ? orgTypeLabel(state.orgType) : 'All types', state.noIcon && 'no icon'].filter(Boolean).join(', ');
@@ -722,6 +740,8 @@ function drawList() {
   SideNav.wire($('list'), redraw);
   if ($('list').querySelector('[data-nav-filter]')) $('list').querySelector('[data-nav-filter]').onclick = (e) => orgFilter(e.currentTarget);
   for (const el of $('navList').querySelectorAll('[data-sel]')) el.onclick = () => pickRow(el.dataset.sel);
+  // The review's tabs count what its entry does.
+  if (Review.is(state.sel)) drawSections();
 }
 
 /**
@@ -787,7 +807,9 @@ function newForm(button) {
 function select(sel, {
   section = null, path = null, channel = null, flash = null,
 } = {}) {
-  state.sel = sel;
+  // The review's page opens at a queue of it: the first with something in it.
+  state.sel = Review.is(sel) && !Review.queueOf(sel)
+    ? Review.sel(Review.landing(state.tab, state.me, reviewCounts()) || '') : sel;
   if (agented(state.tab, sel)) {
     const shown = sectionsOf(state.tab, sel);
     state.section = shown.includes(section) ? section : shown[0] || 'own';
@@ -795,9 +817,9 @@ function select(sel, {
   }
   toUrl();
   renderList();
-  if (state.tab === 'teams' && isGroup(sel)) showGroup(String(sel).slice(GROUP.length));
+  if (Review.is(state.sel)) showQueue(Review.queueOf(state.sel));
+  else if (state.tab === 'teams' && isGroup(sel)) showGroup(String(sel).slice(GROUP.length));
   else if (state.tab === 'orgs' && isPair(sel)) showPair(...String(sel).slice(PAIR.length).split(':'));
-  else if (state.tab === 'orgs' && isDomains(sel)) showDomains();
   else if (state.tab === 'orgs' && isLink(sel)) showLink(...String(sel).slice(LINK.length).split(':'));
   else if (agented(state.tab, sel)) showPicked({ channel, flash, fresh: true });
 }
@@ -814,7 +836,15 @@ function unselect() {
     if (!state.sel) $('detail').innerHTML = `<div class="empty pick">Pick ${PICK[state.tab]}.</div>`;
   });
 }
-const backButton = () => `<button class="back" data-back title="Back to the list" aria-label="Back to the ${state.tab}"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg></button>`;
+/**
+ * The back button of a page's title: to the list (phones), or from a page of the review's to its
+ * queue (every screen, see "review").
+ */
+const backButton = () => {
+  const up = Review.queue(state.tab, state.me, queueAbove(state.tab, state.sel));
+  const to = up ? `Back to ${up.label}` : 'Back to the list';
+  return `<button class="back${up ? ' shown' : ''}" data-back title="${esc(to)}" aria-label="${esc(up ? to : `Back to the ${state.tab}`)}"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg></button>`;
+};
 
 function switchTab(tab) {
   state.tab = tab;
@@ -890,7 +920,7 @@ function tabInView() {
 /** The tabs again: another one is open, or the agent's counts changed. */
 function drawSections() {
   if (!$('sections')) return;
-  $('sections').innerHTML = sectionTabs();
+  $('sections').innerHTML = Review.is(state.sel) ? reviewTabs() : sectionTabs();
   tabInView();
 }
 
@@ -2082,7 +2112,8 @@ function loadingPage() {
   const ticket = ++loading;
   note = { kind: '', text: '' };
   const detail = $('detail');
-  const shown = `${state.tab}|${state.sel}`;
+  // The review's queues are the tabs of one page, as a team's sections are.
+  const shown = `${state.tab}|${Review.is(state.sel) ? Review.PREFIX : state.sel}`;
   const nav = $('sections');
   if (nav && detail.dataset.shown === shown && nav.parentElement === detail) {
     // Another section of what is shown: its title and tabs stay, the tab asked for current.
@@ -2225,16 +2256,14 @@ async function showTeam(slug) {
   const templates = rules.filter((x) => x.value !== slug);
   const real = slug !== UNASSIGNED;
   const admin = Boolean(state.me.admin);
-  let title = '<h1>Unassigned channels</h1>';
-  if (real) {
-    title = admin ? `<input class="big" id="tName" value="${esc(team.name)}" aria-label="Team name">`
-      : `<h1 class="fill">${esc(team.name)}</h1>`;
-  }
+  // Unassigned is a queue of the review's (see "review"), under its tabs.
+  const title = admin ? `<input class="big" id="tName" value="${esc(team.name)}" aria-label="Team name">`
+    : `<h1 class="fill">${esc(team.name)}</h1>`;
   $('detail').innerHTML = `
-    <div class="title">${backButton()}${title}
+    ${real ? `<div class="title">${backButton()}${title}
       <span class="sub mono">${esc(team.slug)}</span>
-      ${admin && real && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
-    ${sectionsNav()}
+      ${admin && team.slug !== 'admin' ? '<button class="danger" id="tDelete">Delete team</button>' : ''}</div>
+    ${sectionsNav()}` : reviewHead()}
     <div class="status" id="status"></div>
     ${real ? `<div class="card"><label class="inline">
       <input type="checkbox" id="tSelf"${team.self_managed ? ' checked' : ''}${admin ? '' : ' disabled'}>
@@ -2323,49 +2352,12 @@ async function showTeam(slug) {
 // ---- the team wizard ----------------------------------------------------------------------
 //
 // The admin team's channels, grouped by the prefix of their names (src/teamwizard.js), each a
-// team it might make: listed under the teams as they come up. A group's page makes it a team
-// (or gives an existing one its rules) with the people checked as members, in one go; or
-// dismisses it, until it has more channels.
+// team it might make: the review's Suggested teams, as they come up (see "review"). A group's
+// page makes it a team (or gives an existing one its rules) with the people checked as members,
+// in one go; or dismisses it, until it has more channels.
 
 const GROUP = 'group:';
 const peopleCount = (n) => `${n} ${n === 1 ? 'person' : 'people'}`;
-
-/** The groups in the list of teams: the ones offered, then the dismissed ones folded away. */
-function groupList(f) {
-  const match = (g) => !f || `${g.prefix} ${g.name}`.toLowerCase().includes(f);
-  const row = (g) => {
-    const checked = g.people.filter((p) => p.suggested).length;
-    const fits = g.team ? `likely ${teamLabel(g.team.slug)}` : '';
-    return SideNav.row({
-      sel: GROUP + g.prefix,
-      on: state.sel === `${GROUP}${g.prefix}`,
-      labelHtml: `<span class="mono">${esc(g.prefix)}</span>…`,
-      title: rowTitle(
-        `Channels starting with ${g.prefix}`,
-        channelCount(g.size),
-        checked ? peopleCount(checked) : 'nobody in most of them',
-        fits,
-      ),
-      count: g.size,
-      countTitle: channelCount(g.size),
-    });
-  };
-  const offered = state.groups.filter(match);
-  const dismissed = state.dismissedGroups.filter(match);
-  if (!offered.length && !dismissed.length) return '';
-  const holds = (list) => list.some((g) => state.sel === `${GROUP}${g.prefix}`);
-  const more = dismissed.length ? SideNav.group({
-    key: 'teams:groups:dismissed', label: `${dismissed.length} dismissed`, body: dismissed.map(row).join(''), holds: holds(dismissed),
-  }) : '';
-  return SideNav.group({
-    key: 'teams:groups',
-    label: 'Suggested teams',
-    count: offered.length,
-    title: 'Groups of the admin team\'s channels that look like a team of their own',
-    body: `${offered.map(row).join('') || '<div class="navempty">None now.</div>'}${more}`,
-    holds: Boolean(f) || holds(offered) || holds(dismissed),
-  });
-}
 
 const slugFrom = (name) => name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
@@ -2535,7 +2527,8 @@ function showGroup(prefix) {
       const order = (a, b2) => (b2.size - a.size) || a.prefix.localeCompare(b2.prefix);
       state.groups.sort(order);
       state.dismissedGroups.sort(order);
-      if (dismiss && state.sel === `${GROUP}${g.prefix}`) unselect();
+      // Dismissed, it is back to the suggested teams (see "review").
+      if (dismiss && state.sel === `${GROUP}${g.prefix}`) openUrl(address({ sel: Review.sel('suggested') }));
       else if (state.sel === `${GROUP}${g.prefix}`) {
         renderList();
         showGroup(g.prefix);
@@ -3330,10 +3323,230 @@ function renderOrgChannels() {
   }
 }
 
+// ---- review ----------------------------------------------------------------------------------
+//
+// What waits in a list is one row at the top of it, Review (ui/review.js), whose page has a tab
+// for each queue: in Customers the unassigned channels, the duplicates, the likely partners and
+// the partner domains; in Teams the unassigned channels and the suggested teams. The row is there
+// from the list's first paint (or not at all, `state.reviewHas`), with its count once every queue
+// is counted, so what loads later never moves the rows under it. A queue's rows open their pages
+// (a pair of duplicates, a partner and a customer, a suggested team), whose back button returns to
+// the queue. The addresses: `view=review` (the first queue with something in it), `view=<queue>`,
+// and each page's own (`org=pair:…`, `org=partner:…`, `team=group:…`).
+
+/** How many wait in each queue of the open list, null for one not counted yet. */
+function reviewCounts(tab = state.tab) {
+  if (tab === 'teams') {
+    return {
+      unassigned: state.unassigned?.channels || 0,
+      suggested: state.groupsRead ? state.groups.length : null,
+    };
+  }
+  const counted = (d, waits) => {
+    if (!d) return null;
+    return d.error ? 0 : d.pairs.filter(waits).length;
+  };
+  return {
+    unassigned: state.orgsUnassigned?.channels || 0,
+    duplicates: counted(state.dups, likelyPair),
+    partners: counted(state.links, reviewLink),
+  };
+}
+
+/** The queue a page of the review's belongs to: a pair's, a partner's, a suggested team's. */
+function queueAbove(tab, sel) {
+  if (tab === 'orgs' && isPair(sel)) return 'duplicates';
+  if (tab === 'orgs' && isLink(sel)) return 'partners';
+  if (tab === 'teams' && isGroup(sel)) return 'suggested';
+  return null;
+}
+
+/** The list's Review row, where it has one; current while its page or a page of its is open. */
+const reviewEntry = () => Review.entry({
+  tab: state.tab,
+  me: state.me,
+  has: state.reviewHas[state.tab],
+  counts: reviewCounts(),
+  on: Review.is(state.sel) || Boolean(queueAbove(state.tab, state.sel)),
+});
+
+const reviewTabs = () => Review.tabs({
+  tab: state.tab,
+  me: state.me,
+  counts: reviewCounts(),
+  open: Review.queueOf(state.sel),
+  href: (id) => address({ sel: Review.sel(id) }),
+});
+
+/** The review page's title and its tabs, a queue each. */
+const reviewHead = () => `<div class="title">${backButton()}<h1 class="fill">Review</h1></div>
+  <nav class="sections" id="sections" aria-label="Queues">${reviewTabs()}</nav>`;
+
+/** A queue of the review's, `id`: its own page where it has one, else drawn from the lists. */
+function showQueue(id) {
+  const { tab } = state;
+  if (!Review.queue(tab, state.me, id)) {
+    loadingPage();
+    state.view = null;
+    $('detail').innerHTML = `${reviewHead()}<div class="empty">${Review.queues(tab, state.me).length ? 'This queue is the admin team\'s.' : 'Nothing waits for you here.'}</div>`;
+    tabInView();
+    return;
+  }
+  if (id === 'unassigned') {
+    if (tab === 'teams') showTeam(UNASSIGNED); else showOrg(UNASSIGNED);
+    return;
+  }
+  if (id === 'domains') { showDomains(); return; }
+  loadingPage();
+  state.view = { target: 'queue', value: id, drawn: null };
+  drawQueue(state.view);
+}
+
+/** What a queue is drawn from: the pairs or the groups as they were read (null before). */
+function queueData(id) {
+  if (id === 'duplicates') return state.dups;
+  if (id === 'partners') return state.links;
+  return state.groupsRead ? { groups: state.groups, dismissed: state.dismissedGroups, error: state.groupsError } : null;
+}
+
+/**
+ * The note under a queue: Clef still at work on some of its pairs, or what it said since the
+ * queue was drawn, one click from being shown (the rows stay where they are until then).
+ */
+function queueNote(v) {
+  // The suggested teams are read once.
+  const d = v.value === 'suggested' ? null : queueData(v.value);
+  if (!d || d.error) return '';
+  if (v.drawn && d !== v.drawn) return '<p class="hint" id="qNote">Clef said more since this was drawn. <button type="button" id="qMore">Show it</button></p>';
+  if (d.skipped) return '<p class="hint" id="qNote">The partner domains could not be read: the pairs as they were found before.</p>';
+  return d.unchecked ? `<p class="hint" id="qNote">Clef is looking at ${d.unchecked} more…</p>` : '<p class="hint" id="qNote" hidden></p>';
+}
+
+/** A fold of a queue: a button that shows or hides the rows under it, kept as the sidebar's. */
+function queueFold(key, label, html) {
+  const open = SideNav.isOpen(key);
+  return `<p class="qfold"><button type="button" data-qfold="${esc(key)}" aria-expanded="${open}">${esc(open ? `Hide ${label}` : `Show ${label}`)}</button></p>${open ? html : ''}`;
+}
+
+/** A card of a queue: its title, how many, and its table (or what it says when it is empty). */
+const queueCard = (title, n, table, empty = '') => (n || empty
+  ? `<div class="card"><h2>${esc(title)}${n ? ` <span class="sub">${n}</span>` : ''}</h2>${n ? table : `<div class="empty">${esc(empty)}</div>`}</div>` : '');
+
+/** The two icons of a pair, and its names, as a link to its page. */
+const pairLink = (href, [x, y], label) => `<a class="qpair" href="${esc(href)}"><span class="qicons">${ico(x.icon, x.domain)}${ico(y.icon, y.domain)}</span><span>${label}</span></a>`;
+
+function dupTable(list) {
+  const { orgs } = state.dups;
+  const rows = list.map((p) => {
+    const asked = openAsks(p).length;
+    return `<tr><td>${pairLink(address({ tab: 'orgs', sel: pairSel(p.a, p.b) }), [orgs[p.a], orgs[p.b]], `${esc(dupName(p.a))} <span class="sep">and</span> ${esc(dupName(p.b))}`)}
+      <div class="sub mono">${esc(p.a)}, ${esc(p.b)}</div></td>
+      <td class="n">${p.p === null ? '<span class="sub">not checked yet</span>' : pct(p.p)}</td>
+      <td>${asked ? '<span class="tag">merge asked for</span>' : ''}${p.dismissed ? '<span class="tag declined">not the same</span>' : ''}</td></tr>`;
+  }).join('');
+  return `<table><tr><th>Orgs</th><th>Likely the same</th><th></th></tr>${rows}</table>`;
+}
+
+/** The duplicates: the likely ones (or asked for), then the less likely, folded. */
+function dupQueue() {
+  const d = state.dups;
+  if (!d) return '<div class="empty">Looking for duplicates…</div>';
+  if (d.error) return `<div class="empty">${esc(`Could not load: ${d.error}`)}</div>`;
+  const top = d.pairs.filter(likelyPair);
+  const rest = d.pairs.filter((p) => !likelyPair(p));
+  return `${queueCard('Likely the same', top.length, dupTable(top), 'None for now.')}
+    ${rest.length ? queueFold('orgs:dups:more', `${rest.length} less likely`, queueCard('Less likely', rest.length, dupTable(rest))) : ''}
+    <p class="hint">Each pair's page compares the two. ${state.me.admin ? 'Merge them there, or say they are not the same; the merges asked for are threads of the admin team\'s inbox too.' : 'Ask the admin team there to merge them.'}</p>`;
+}
+
+/**
+ * Whether Clef is sure of a pair nobody decided (above the probabilities it is unsure in): it
+ * counts as a partner, and waits for nobody.
+ */
+const sureLink = (x) => !x.confirmed && !x.dismissed && !reviewLink(x)
+  && (x.standing?.status === 'sure' || (x.p !== null && x.p > (state.links?.unsure?.[1] ?? 0.65)));
+
+function linkTable(list) {
+  const { orgs } = state.links;
+  const rows = list.map((x) => {
+    let said = x.p === null ? '<span class="sub">not asked yet</span>' : pct(x.p);
+    if (x.until) said = `<span class="tag">former, until ${esc(x.until)}</span>`;
+    else if (x.confirmed) said = '<span class="tag confirmed">confirmed</span>';
+    else if (x.dismissed) said = '<span class="tag declined">not partners</span>';
+    return `<tr title="${esc(linkSaid(x))}"><td>${pairLink(address({ tab: 'orgs', sel: linkSel(x.customer, x.partner) }), [orgs[x.partner], orgs[x.customer]], `${esc(linkName(x.partner))} <span class="sep">for</span> ${esc(linkName(x.customer))}`)}
+      <div class="sub mono">${esc(x.partner)}, ${esc(x.customer)}</div></td>
+      <td class="n">${said}</td><td>${(x.open || []).length ? '<span class="tag">asked in the admin inbox</span>' : ''}</td></tr>`;
+  }).join('');
+  return `<table><tr><th>Partner for customer</th><th>Clef</th><th></th></tr>${rows}</table>`;
+}
+
+/** The pairs of a partner and a customer: those to review, then the rest, folded. */
+function linkQueue() {
+  const d = state.links;
+  if (!d) return '<div class="empty">Looking for partners…</div>';
+  if (d.error) return `<div class="empty">${esc(`Could not load: ${d.error}`)}</div>`;
+  const top = d.pairs.filter(reviewLink);
+  const sure = d.pairs.filter(sureLink);
+  const open = d.pairs.filter((x) => !reviewLink(x) && !sureLink(x) && !x.confirmed && !x.dismissed);
+  const done = d.pairs.filter((x) => x.confirmed || x.dismissed);
+  const fold = (key, label, title, list) => (list.length ? queueFold(key, label, queueCard(title, list.length, linkTable(list))) : '');
+  return `${queueCard('To review', top.length, linkTable(top), 'None to review.')}
+    ${fold('orgs:partners:sure', `${sure.length} sure, says Clef`, 'Sure, says Clef', sure)}
+    ${fold('orgs:partners:less', `${open.length} less likely`, 'Less likely', open)}
+    ${fold('orgs:partners:done', `${done.length} decided`, 'Decided', done)}
+    <p class="hint">A partner that may work for a customer, as Clef sees it. The admin team decides each in its inbox, where Clef's and everyone's requests are threads; a pair's page shows its evidence.</p>`;
+}
+
+/** The team wizard's groups: those offered, then the dismissed ones, folded. */
+function groupQueue() {
+  const d = queueData('suggested');
+  if (!d) return '<div class="empty">Looking for teams in the admin team\'s channels…</div>';
+  if (d.error) return `<div class="empty">${esc(`Could not load: ${d.error}`)}</div>`;
+  const table = (list) => `<table><tr><th>Channels starting with</th><th>Channels</th><th>People</th><th>Team</th></tr>${list.map((g) => {
+    const checked = g.people.filter((p) => p.suggested).length;
+    return `<tr><td><a class="mono" href="${esc(address({ tab: 'teams', sel: `${GROUP}${g.prefix}` }))}">${esc(g.prefix)}…</a></td>
+      <td class="n">${g.size}</td><td class="n">${checked || '<span class="sub">nobody in most of them</span>'}</td>
+      <td>${g.team ? `likely ${esc(teamLabel(g.team.slug))}` : ''}${g.dismissed ? '<span class="tag declined">dismissed</span>' : ''}</td></tr>`;
+  }).join('')}</table>`;
+  return `${queueCard('Suggested teams', d.groups.length, table(d.groups), 'None now.')}
+    ${d.dismissed.length ? queueFold('teams:groups:dismissed', `${d.dismissed.length} dismissed`, queueCard('Dismissed', d.dismissed.length, table(d.dismissed))) : ''}
+    <p class="hint">Groups of the admin team's channels that look like a team of their own.</p>`;
+}
+
+/** A queue drawn from what is read now (`v`, the open view). */
+function drawQueue(v) {
+  const id = v.value;
+  v.drawn = queueData(id);
+  const body = { duplicates: dupQueue, partners: linkQueue, suggested: groupQueue }[id]();
+  $('detail').innerHTML = `${reviewHead()}<div class="status" id="status"></div>${body}${queueNote(v)}`;
+  showStatus();
+  tabInView();
+  for (const b of $('detail').querySelectorAll('[data-qfold]')) {
+    b.onclick = () => {
+      SideNav.setOpen(b.dataset.qfold, b.getAttribute('aria-expanded') !== 'true');
+      drawQueue(v);
+      $('detail').querySelector(`[data-qfold="${CSS.escape(b.dataset.qfold)}"]`)?.focus();
+    };
+  }
+  if ($('qMore')) $('qMore').onclick = () => drawQueue(v);
+}
+
+/**
+ * What a queue is drawn from was read again (Clef said more): drawn now if it was waiting for
+ * it, else its note says so, and the rows stay where they are.
+ */
+function redrawQueue(id) {
+  const v = state.view;
+  if (!v || v.target !== 'queue' || v.value !== id || state.sel !== Review.sel(id)) return;
+  if (!v.drawn || v.drawn.error) drawQueue(v);
+  else if ($('qNote')) $('qNote').outerHTML = queueNote(v);
+  if ($('qMore')) $('qMore').onclick = () => drawQueue(v);
+}
+
 // ---- unassigned channels ---------------------------------------------------------------------
 //
 // A channel no rule files under an org (its name is not `<product>-<org>`, nor is it assigned by
-// hand) is in the org `_unassigned`. Customers lists them under Unassigned, each with the orgs it
+// hand) is in the org `_unassigned`. Customers lists them in its review (see "review"), each with the orgs it
 // may belong to (src/orgassign.js: a Slack Connect or Teams team, its people's mail domain, a
 // word of its name) or the new org it may be. Picking one assigns the channel there by hand, as
 // the channel picker of an org's page does; a new org is made first, with the name and type given.
@@ -3343,11 +3556,12 @@ function showUnassigned(body) {
     target: 'org', value: UNASSIGNED, org: body.org, channels: body.channels, suggestions: body.suggestions || {},
   };
   state.view = v;
-  $('detail').innerHTML = `<div class="title">${backButton()}<span class="ico none"></span><h1 class="fill">Unassigned</h1></div>
+  $('detail').innerHTML = `${reviewHead()}
     <div class="status" id="status"></div>
     <div class="card"><h2>Channels without an org</h2><div id="unassignedTable"></div>
     <p class="hint">Pick an org for each channel.</p></div>`;
   showStatus();
+  tabInView();
   renderUnassigned(v);
 }
 
@@ -3491,23 +3705,17 @@ function orgMenu(button, v, c) {
 
 // ---- partner domains -------------------------------------------------------------------------
 //
-// The mail domains whose people are partners' (src/partners.js), the admin team's, in Customers:
+// The mail domains whose people are partners' (src/partners.js), the admin team's, a tab of the
+// Customers review (see "review"):
 // those found in the partners' threads, and its own over them. A domain is added by hand (with a
 // partner org, or a name), a found one given another name or partner, or said not to be a
 // partner's; removing a row of its own brings back what was found. Below, the domains a partner's
 // people write from that are left out as a customer's own, each one click from being a partner's.
 
 const DOMAINS = 'domains:';
-const isDomains = (sel) => sel === DOMAINS;
 const DOMAIN_STATE = {
   found: ['', 'Found'], manual: ['manual', 'Set by hand'], excluded: ['declined', 'Not a partner'],
 };
-
-/** The row in Customers that opens them, the admin team's. */
-const domainsRow = (f) => (state.me.admin && (!f || 'partner domains'.includes(f))
-  ? SideNav.todo({
-    sel: DOMAINS, on: isDomains(state.sel), label: 'Partner domains', title: 'Mail domains of partners\' people',
-  }) : '');
 
 async function showDomains({ fresh = false } = {}) {
   const current = loadingPage();
@@ -3515,7 +3723,8 @@ async function showDomains({ fresh = false } = {}) {
   const r = await call(`/api/admin/partner-domains${fresh ? '?fresh=1' : ''}`);
   if (!current()) return;
   if (!r.ok) {
-    $('detail').innerHTML = `<div class="title">${backButton()}<h1 class="fill">Partner domains</h1></div><div class="empty">${esc(r.body.error || `Could not load (${r.status}).`)}</div>`;
+    $('detail').innerHTML = `${reviewHead()}<div class="empty">${esc(r.body.error || `Could not load (${r.status}).`)}</div>`;
+    tabInView();
     return;
   }
   state.view = { target: 'domains', value: DOMAINS, ...r.body };
@@ -3553,15 +3762,15 @@ function drawDomains(v) {
   }).join('');
   const left = (v.left || []).map((d) => `<tr><td class="mono">${esc(d.domain)}</td><td>${partnerLink(d.org, d.name)}</td><td>${partnerLink(d.customer, orgLabel(d.customer))}</td>
     <td class="sub">${d.people} ${d.people === 1 ? 'person' : 'people'}</td><td><button class="link" data-pd-take="${esc(d.domain)}" data-org="${esc(d.org)}"${off(`pd:${d.domain}`)}>Partner's</button></td></tr>`).join('');
-  $('detail').innerHTML = `<div class="title">${backButton()}<span class="ico none"></span><h1 class="fill">Partner domains</h1>
-      <button id="pdFresh">Find again</button></div>
+  $('detail').innerHTML = `${reviewHead()}
     <div class="status" id="status"></div>
     <div class="card"><h2>Add or change one</h2><div id="pdSlot">${domainForm(v)}</div>
       <p class="hint">People from these domains and their subdomains show as the partner's.</p></div>
     <div class="card"><h2>Domains</h2>${rows ? `<table><tr><th>Domain</th><th>Partner</th><th>Source</th><th>Posters</th><th></th></tr>${rows}</table>` : '<div class="empty">None found, none set.</div>'}
-      <p class="hint">Found in partner orgs' threads${v.at ? ` ${esc(ago(v.at))}` : ''}.</p></div>
+      <p class="hint">Found in partner orgs' threads${v.at ? ` ${esc(ago(v.at))}` : ''}. <button type="button" id="pdFresh">Find again</button></p></div>
     ${left ? `<div class="card"><h2>Left out as a customer's</h2><table><tr><th>Domain</th><th>Seen at</th><th>Customer</th><th>Posters</th><th></th></tr>${left}</table></div>` : ''}`;
   showStatus();
+  tabInView();
   wireDomains(v);
 }
 
@@ -3615,8 +3824,8 @@ function wireDomains(v) {
 //
 // One company can end up under two slugs (a channel named workfront-acmeco and one named
 // aem-acme). The Worker lists the pairs of orgs that may be one, from their names, icons, mail
-// domains, Slack Connect teams and people, each with Clef's verdict (src/orgmerge.js); the list
-// on the left shows the likely ones first. A pair's page puts the two side by side: the admin
+// domains, Slack Connect teams and people, each with Clef's verdict (src/orgmerge.js); the
+// review's Duplicates shows the likely ones first (see "review"). A pair's page puts the two side by side: the admin
 // team merges one into the other (tried first: what would be re-filed) or says they are not the
 // same; anyone else who sees one of them asks the admin team for the merge, which waits in its
 // inbox, a thread there. A merge can be undone on the page of the org kept.
@@ -3642,56 +3851,21 @@ const likelyPair = (p) => openAsks(p).length > 0 || (!p.dismissed && p.p !== nul
 async function loadDups({ fresh = false, round = 0 } = {}) {
   const r = await call(`/api/admin/org-duplicates${fresh ? '?fresh=1' : ''}`);
   if (!r.ok) {
-    state.dups = {
-      error: r.body.error || `failed (${r.status})`, pairs: [], orgs: {}, unchecked: 0,
-    };
+    // A later round that fails leaves the pairs as they were.
+    if (!round || !state.dups || state.dups.error) {
+      state.dups = {
+        error: r.body.error || `failed (${r.status})`, pairs: [], orgs: {}, unchecked: 0,
+      };
+    }
+    if (state.tab === 'orgs') { renderList(); redrawQueue('duplicates'); }
     return;
   }
   const was = state.dups && !state.dups.error ? state.dups.unchecked : null;
   state.dups = r.body;
-  if (state.tab === 'orgs') renderList();
+  if (state.tab === 'orgs') { renderList(); redrawQueue('duplicates'); }
   if (r.body.unchecked && round < 10 && (was === null || round === 0 || r.body.unchecked < was)) {
     loadDups({ round: round + 1 });
   }
-}
-
-function dupRow(p) {
-  const { orgs } = state.dups;
-  const asked = openAsks(p).length;
-  const said = p.p === null ? 'not checked yet' : `${pct(p.p)} likely the same`;
-  const why = [`${p.a}, ${p.b}`, said, asked ? 'merge asked for' : '', p.dismissed ? 'not the same' : ''].filter(Boolean).join(', ');
-  return SideNav.row({
-    sel: pairSel(p.a, p.b),
-    on: state.sel === pairSel(p.a, p.b),
-    cls: 'dup',
-    lead: `${ico(orgs[p.a].icon, orgs[p.a].domain)}${ico(orgs[p.b].icon, orgs[p.b].domain)}`,
-    labelHtml: `${esc(dupName(p.a))} <span class="sep">and</span> ${esc(dupName(p.b))}`,
-    title: `${dupName(p.a)} (${p.a}) and ${dupName(p.b)} (${p.b}), ${why}`,
-    count: asked ? 'asked' : (p.p === null ? '' : pct(p.p)),
-    countTitle: said,
-  });
-}
-
-/** The pairs at the top of the list (filtered as the list is), the less likely ones folded. */
-function dupSection(f) {
-  const d = state.dups;
-  if (!d || d.error) return '';
-  const match = (p) => !f || `${dupName(p.a)} ${p.a} ${dupName(p.b)} ${p.b}`.toLowerCase().includes(f);
-  const top = d.pairs.filter((p) => likelyPair(p) && match(p));
-  const rest = d.pairs.filter((p) => !likelyPair(p) && match(p));
-  if (!top.length && !rest.length && !d.unchecked) return '';
-  const checking = d.unchecked ? `<div class="navnote">Checking ${d.unchecked} more…</div>` : '';
-  const holds = (list) => list.some((p) => state.sel === pairSel(p.a, p.b));
-  const more = rest.length ? SideNav.group({
-    key: 'orgs:dups:more', label: `${rest.length} less likely`, body: rest.map(dupRow).join(''), holds: holds(rest),
-  }) : '';
-  return SideNav.group({
-    key: 'orgs:dups',
-    label: 'Likely duplicates',
-    count: top.length,
-    body: `${top.map(dupRow).join('') || `<div class="navempty">${f ? 'Nothing matches.' : 'None for now.'}</div>`}${checking}${more}`,
-    holds: (Boolean(f) && (top.length + rest.length) > 0) || holds(top) || holds(rest),
-  });
 }
 
 /** The org a pair keeps when nobody said: the one asked for, else the busier, else the named. */
@@ -3704,7 +3878,7 @@ function keptOf(pair, orgs) {
   return a.slug.length <= b.slug.length ? a.slug : b.slug;
 }
 
-/** The pair as it is now, in the list on the left too. */
+/** The pair as it is now, in the review's queue too. */
 function updatePair(pair, orgs) {
   if (!state.dups || state.dups.error) return;
   const i = state.dups.pairs.findIndex((x) => x.a === pair.a && x.b === pair.b);
@@ -4022,14 +4196,18 @@ const reviewLink = (x) => !x.confirmed && !x.dismissed && x.p !== null && x.p >=
 async function loadLinks({ fresh = false, round = 0 } = {}) {
   const r = await call(`/api/admin/org-partners${fresh ? '?fresh=1' : ''}`);
   if (!r.ok) {
-    state.links = {
-      error: r.body.error || `failed (${r.status})`, pairs: [], orgs: {}, unchecked: 0,
-    };
+    // A later round that fails leaves the pairs as they were.
+    if (!round || !state.links || state.links.error) {
+      state.links = {
+        error: r.body.error || `failed (${r.status})`, pairs: [], orgs: {}, unchecked: 0,
+      };
+    }
+    if (state.tab === 'orgs') { renderList(); redrawQueue('partners'); }
     return;
   }
   const was = state.links && !state.links.error ? state.links.unchecked : null;
   state.links = r.body;
-  if (state.tab === 'orgs') renderList();
+  if (state.tab === 'orgs') { renderList(); redrawQueue('partners'); }
   if (r.body.unchecked && round < 10 && (was === null || round === 0 || r.body.unchecked < was)) {
     loadLinks({ round: round + 1 });
   }
@@ -4044,52 +4222,7 @@ function linkSaid(x) {
   return `${x.p === null ? 'Clef has not said yet' : `${pct(x.p)} likely, says Clef`}${asked}`;
 }
 
-function linkRow(x) {
-  const { orgs } = state.links;
-  let shown = x.p === null ? '' : pct(x.p);
-  if (x.until) shown = 'past';
-  else if (x.confirmed) shown = '✓';
-  else if (x.dismissed) shown = '–';
-  return SideNav.row({
-    sel: linkSel(x.customer, x.partner),
-    on: state.sel === linkSel(x.customer, x.partner),
-    cls: 'dup',
-    lead: `${ico(orgs[x.partner].icon, orgs[x.partner].domain)}${ico(orgs[x.customer].icon, orgs[x.customer].domain)}`,
-    labelHtml: `${esc(linkName(x.partner))} <span class="sep">for</span> ${esc(linkName(x.customer))}`,
-    title: `${linkName(x.partner)} (${x.partner}) for ${linkName(x.customer)} (${x.customer}) · ${linkSaid(x)}`,
-    count: shown,
-    countTitle: linkSaid(x),
-  });
-}
-
-/** The admin team's: the pairs to review at the top of the list, the rest folded. */
-function linkSection(f) {
-  const d = state.links;
-  if (!d || d.error) return '';
-  const match = (x) => !f || `${linkName(x.customer)} ${x.customer} ${linkName(x.partner)} ${x.partner}`.toLowerCase().includes(f);
-  const top = d.pairs.filter((x) => reviewLink(x) && match(x));
-  const open = d.pairs.filter((x) => !reviewLink(x) && !x.confirmed && !x.dismissed && match(x));
-  const done = d.pairs.filter((x) => (x.confirmed || x.dismissed) && match(x));
-  if (!top.length && !open.length && !done.length && !d.unchecked) return '';
-  let checking = d.unchecked ? `<div class="navnote">Clef is looking at ${d.unchecked} more…</div>` : '';
-  // The partner domains could not be read (src/orgpartners.js `sync`): the pairs as they were.
-  if (d.skipped) checking = '<div class="navnote">The partner domains could not be read: the pairs as they were found before.</div>';
-  const holds = (list) => list.some((x) => state.sel === linkSel(x.customer, x.partner));
-  const fold = (key, label, list) => (list.length ? SideNav.group({
-    key, label, body: list.map(linkRow).join(''), holds: holds(list),
-  }) : '');
-  return SideNav.group({
-    key: 'orgs:partners',
-    label: 'Likely partners',
-    count: top.length,
-    title: 'A partner that may work for a customer, as Clef sees it: the admin team decides each in its inbox',
-    body: `${top.map(linkRow).join('') || `<div class="navempty">${f ? 'Nothing matches.' : 'None to review.'}</div>`}${checking}
-      ${fold('orgs:partners:less', `${open.length} less likely`, open)}${fold('orgs:partners:done', `${done.length} decided`, done)}`,
-    holds: (Boolean(f) && (top.length + open.length + done.length) > 0) || holds(top) || holds(open) || holds(done),
-  });
-}
-
-/** The pair as it is now, in the list on the left too. */
+/** The pair as it is now, in the review's queue too. */
 function updateLink(x, orgs) {
   if (!state.links || state.links.error) return;
   const i = state.links.pairs.findIndex((y) => y.customer === x.customer && y.partner === x.partner);
@@ -4248,7 +4381,7 @@ function drawLink(v) {
     count: false, // renderCount, from the requests loaded here
     // The inbox, not opened yet in this browser tab (ui/header.js keeps it as it was left): the
     // team picked's.
-    fallback: { inbox: () => (state.tab === 'teams' && state.sel && state.sel !== UNASSIGNED ? `/inbox?team=${encodeURIComponent(state.sel)}` : null) },
+    fallback: { inbox: () => (state.tab === 'teams' && state.sel && agented('teams', state.sel) && state.sel !== UNASSIGNED ? `/inbox?team=${encodeURIComponent(state.sel)}` : null) },
     // Leaving saves what the agent has open, and asks, in the page, about edits that cannot be
     // saved; a new tab (⌘-click, middle click) leaves nothing.
     go: async (id, url) => {
@@ -4302,7 +4435,10 @@ function drawLink(v) {
   }, true);
   $('detail').addEventListener('click', (e) => {
     if (e.target.closest('[data-back]')) {
-      Agent.leave().then((left) => { if (left) unselect(); });
+      // A page of the review's goes back to its queue; the rest to the list (phones).
+      const up = queueAbove(state.tab, state.sel);
+      if (up && Review.queue(state.tab, state.me, up)) openUrl(address({ sel: Review.sel(up) }));
+      else Agent.leave().then((left) => { if (left) unselect(); });
       return;
     }
     // A link to another team or org here (a request's team) opens it as the header does.

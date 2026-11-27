@@ -161,8 +161,10 @@ const ARRIVE_MS = Number(process.argv.find((a) => a.startsWith('--arrive='))?.sl
 // Pages of the inbox, as the Worker serves them (`before` cursor, `page.next`).
 const INBOX_PAGE = Number((process.argv.find((a) => a.startsWith('--page=')) || '').slice(7)) || 100;
 // What the admin team would say about the fake orgs (src/api.js: customer unless set).
-const ORG_TYPES = { initech: 'vendor', opspile: 'internal', agency: 'partner' };
-const ORG_NAMES = { acme: 'ACME', agency: 'Agency Co' };
+const ORG_TYPES = {
+  initech: 'vendor', opspile: 'internal', agency: 'partner', public: 'public',
+};
+const ORG_NAMES = { acme: 'ACME', agency: 'Agency Co', public: 'Public' };
 const SESSION_FILE = join(root, '.dev-ui-session.json');
 const VALIDATE_MS = 60 * 1000;
 
@@ -667,6 +669,10 @@ function profiles(keys) {
     const p = [...store.people.values()].find((x) => x.key === who);
     const domain = p ? p.email.split('@').pop() : null;
     const partner = partnerOf(domain, store.partners);
+    const relation = p && relationOf({}, { kind: 'person', staff: p.staff, email: p.email }, store.partners);
+    // As src/partners.js `customerDomains`: a customer's person by their org's own domain.
+    const customer = relation === 'customer' && p.org && ORG_TYPES[p.org] === undefined
+      ? { org: p.org, name: ORG_NAMES[p.org] || p.org } : null;
     out[k] = p ? {
       name: p.name,
       avatar: faceOf(p),
@@ -675,8 +681,9 @@ function profiles(keys) {
       title: p.title || null,
       company: p.company || null,
       domain,
-      relation: relationOf({}, { kind: 'person', staff: p.staff, email: p.email }, store.partners),
+      relation,
       partner: partner ? partner.name : null,
+      customer,
       teams: store.teams.filter((t) => t.members.includes(p.id)).map((t) => t.name),
     } : {
       name: 'Alertmanager', avatar: null, platform: source, kind: 'bot', relation: 'bot', teams: [],
@@ -901,10 +908,10 @@ function standing() {
 function linkedOf(keys) {
   const rows = store.threadOrgs.filter((r) => keys.includes(r.thread) && !r.dismissed);
   const shape = (r) => ({
-    slug: r.org, name: r.name, icon: r.icon, p: r.p, via: r.via,
+    slug: r.org, name: r.name, icon: r.icon, role: r.role, p: r.p, via: r.via,
   });
   const about = rows.filter((r) => r.role === 'about').map(shape);
-  const withs = rows.filter((r) => r.role === 'partner').map(shape);
+  const withs = rows.filter((r) => r.role !== 'about').map(shape);
   return about.length || withs.length ? { about, with: withs } : null;
 }
 function relatedOf(keys) {

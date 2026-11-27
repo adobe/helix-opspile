@@ -206,7 +206,7 @@ export async function teamNumbers(env, slug, { now = new Date() } = {}) {
       UNION ALL SELECT mine.person, 'org', h.org, SUM(mine.n), COUNT(*) FROM mine
         JOIN threads h ON h.thread = mine.thread LEFT JOIN orgs o ON o.slug = h.org
         WHERE h.kind = 'channel' AND h.org != '${UNASSIGNED}'
-          AND COALESCE(o.type, 'customer') != 'internal' GROUP BY 1, 3`),
+          AND COALESCE(o.type, 'customer') NOT IN ('internal', 'public') GROUP BY 1, 3`),
     // The team's threads, week by week: what was said in each, and how much of it by Adobe.
     // The chart, the customers and the technologies are all counted from these (a thread by
     // its rowid, which is shorter than its key).
@@ -273,7 +273,7 @@ export async function teamNumbers(env, slug, { now = new Date() } = {}) {
     }
   }
   const customers = [...orgs].filter(([org]) => org !== UNASSIGNED
-      && (orgInfo.get(org)?.type || 'customer') !== 'internal')
+      && !['internal', 'public'].includes(orgInfo.get(org)?.type || 'customer'))
     .map(([org, o]) => ({
       slug: org,
       name: orgInfo.get(org)?.name || null,

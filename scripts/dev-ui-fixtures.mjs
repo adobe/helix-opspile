@@ -66,6 +66,10 @@ const PEOPLE = [
     key: 'ola', id: 9, name: 'Ola Hansen', email: 'ola@umbrella.example', org: 'umbrella', staff: false,
   },
   {
+    // Of no known org (free mail): in a public channel, the card says Community.
+    key: 'kai', id: 11, name: 'Kai Moreno', email: 'kai.moreno@freemail.example', org: null, staff: false,
+  },
+  {
     // A customer who can use neither Slack nor Teams with Adobe: in the customer portal.
     key: 'lucius', id: 10, name: 'Lucius Fox', email: 'lucius.fox@wayne.example', org: 'wayne', staff: false, title: 'Head of digital',
   },
@@ -328,6 +332,11 @@ const CHANNELS = {
   // its knowledge base and talks to its agent there, which changes nothing for her.
   massive: {
     source: 'slack', channelId: 'C0MASSIVE1', name: 'massive-forms', org: 'massive', team: 'forms',
+  },
+  // An event's channel, public (an org of type `public`, docs/ARCHITECTURE.md "Public
+  // channels"): people of ACME, of the agency and of no known org ask there.
+  workshop: {
+    source: 'slack', channelId: 'C0WORKSHOP1', name: 'aem-workshop-attendees', org: 'public', team: 'edge', tech: ['eds'],
   },
   // A community server: a forum where every post is a thread.
   forum: {
@@ -1972,7 +1981,25 @@ for (const t of threads.filter((x) => x.customer === 'globex')) {
     },
     facts: [['site', 'acme/acme-preview']],
   });
+  // A public channel's thread: Sam of ACME, Ravi of the agency and Kai of no known org.
+  const workshop = seed({
+    ch: CHANNELS.workshop,
+    messages: [
+      ['kai', 70, 'In the workshop exercise, my preview shows a 404 after I add the block. What did I miss?'],
+      ['sam', 55, 'Same for me. The block folder name and the class name have to match, I think?'],
+      ['ravi', 40, 'They do, and the block needs both a `.js` and a `.css` file of that name.'],
+    ],
+    label: {
+      kind: 'question', next_actor: 'us', urgency: 0.6, resolved_p: 0.2, tech: { eds: 1 },
+    },
+  });
   const threadOrgs = [
+    {
+      thread: workshop, org: 'acme', name: 'ACME', icon: 'acme.example', role: 'customer', p: 1, via: ['posters'],
+    },
+    {
+      thread: workshop, org: 'agency', name: 'Agency Co', icon: 'agency.example', role: 'partner', p: 1, via: ['posters'],
+    },
     {
       thread: agencyMove, org: 'acme', name: 'ACME', icon: 'acme.example', role: 'about', p: 0.92, via: ['facts', 'clef'],
     },

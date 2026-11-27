@@ -119,8 +119,16 @@ const MAX_INDEX = 8000;
 const MAX_OTHER = 100;
 
 const ORG_TYPE = {
-  customer: 'Customer', partner: 'Partner', vendor: 'Vendor', internal: 'Internal',
+  customer: 'Customer', partner: 'Partner', vendor: 'Vendor', internal: 'Internal', public: 'Public',
 };
+/** What an agent is told of a public channel, in its assignment. */
+export const PUBLIC_GUIDE = 'This is a public channel: anyone may join it and read everything'
+  + ' posted here, and the people outside Adobe are of many organizations, or of none. Whoever'
+  + ' asks is the one the team answers, as a customer. Never post here what is not public: no'
+  + ' customer\'s name, that someone works for a customer or partner of Adobe\'s, nor anything'
+  + ' from another channel, a ticket or a customer\'s knowledge base; say it in your note to the'
+  + ' team instead.';
+
 const SOURCE = Type.Object({
   url: Type.String({ description: 'The http(s) address of the page' }),
   title: Type.Optional(Type.String({ description: 'What it is, in a few words' })),
@@ -613,6 +621,10 @@ export function opspileExtension(ctx) {
         if (t.orgType === 'vendor') {
           // The other way round: Adobe asks, the vendor answers (src/label.js VENDOR_QUESTIONS).
           lines.push('In a vendor\'s channel Adobe is the customer: Adobe uses its products or services, the team asks, and the vendor answers, investigates and fixes. What you call the customer elsewhere is the vendor here, and waiting on it is `vendor`.');
+        }
+        if (t.orgType === 'public') {
+          // A community's or an event's channel (docs/ARCHITECTURE.md, "Public channels").
+          lines.push(PUBLIC_GUIDE);
         }
       }
       if (t.key) {
