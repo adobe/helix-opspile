@@ -56,7 +56,17 @@ window.Header = (() => {
   const questionsHref = (team) => `/inbox?team=${encodeURIComponent(team)}&filters=1&f.type=request&f.resolved=open`;
   // What waits: the admin team's requests (for its members), and your questions, with the team
   // of the first one.
-  const counts = { admin: 0, questions: 0, team: null };
+  const counts = {
+    admin: 0, questions: 0, team: null, you: 0,
+  };
+  // The threads with messages for you that you have not read (GET /api/waiting, src/waiting.js),
+  // by key: `{ n, team, org }`. The inbox tells what it knows better (`waiting`): the threads it
+  // has loaded, and those you read there, which the server may not have yet (`readHere`, held
+  // for HELD_MS: the room writes a read a few seconds after it).
+  const yours = new Map();
+  const held = new Map();
+  const HELD_MS = 30 * 1000;
+  const youTotal = () => [...yours].reduce((n, [k, x]) => n + ((held.get(k) || 0) > Date.now() ? 0 : x.n), 0);
   const BUBBLE = '<svg class="bubble-ico" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M3 2.5h10a1.5 1.5 0 0 1 1.5 1.5v5.5A1.5 1.5 0 0 1 13 11H8l-3.2 2.6V11H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5z"/></svg>';
   const CHEV = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#4d7c0f', '#a16207', '#0e7490'];
@@ -239,6 +249,7 @@ window.Header = (() => {
     menu.innerHTML = shown.map(item).join('');
     setCounts({});
     if (count && me.questions?.open) setCounts({ questions: me.questions.open, team: me.questions.team });
+    if (count && typeof fetch === 'function') loadWaiting();
     if (me.admin && count) {
       fetch('/api/admin/requests?count=1', { credentials: 'same-origin' })
         .then((r) => (r.ok ? r.json() : null))
@@ -270,6 +281,49 @@ window.Header = (() => {
       el.closest('a').title = said ? `${said}, in the inbox` : PAGES.find((p) => p.id === 'inbox').title;
     }
     sync();
+  }
+  /** What waits for you, asked again (GET /api/waiting): after a while, or when the inbox says. */
+  function loadWaiting() {
+    return fetch('/api/waiting', { credentials: 'same-origin', redirect: 'manual' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => {
+        if (!b) return;
+        yours.clear();
+        for (const t of b.threads || []) yours.set(t.thread, { n: Number(t.n) || 0, team: t.team, org: t.org });
+        setCounts({
+          you: youTotal(),
+          ...(b.questions ? { questions: b.questions.open || 0, team: b.questions.team || null } : {}),
+        });
+      })
+      .catch(() => {});
+  }
+  /**
+   * What the inbox knows of threads for you (`{ [key]: { n, team, org } }`, `n` 0 for none):
+   * fresher than the last GET /api/waiting for those it has loaded.
+   */
+  function waiting(known) {
+    for (const [k, x] of Object.entries(known || {})) {
+      if (x && x.n > 0) {
+        yours.set(k, { n: x.n, team: x.team ?? yours.get(k)?.team ?? null, org: x.org ?? null });
+        // Something came in since you read it here.
+        held.delete(k);
+      } else yours.delete(k);
+    }
+    setCounts({ you: youTotal() });
+  }
+  /** Threads you read here (their keys): none of theirs waits, whatever the server says for a while. */
+  function readHere(keys) {
+    for (const k of keys || []) held.set(k, Date.now() + HELD_MS);
+    setCounts({ you: youTotal() });
+  }
+  /** What waits for you, by team its thread is filed under: `{ [team]: n }`. */
+  function youByTeam() {
+    const out = {};
+    for (const [k, x] of yours) {
+      if ((held.get(k) || 0) > Date.now() || !x.n) continue;
+      out[x.team || ''] = (out[x.team || ''] || 0) + x.n;
+    }
+    return out;
   }
   /** The number of the admin team's requests that wait, on Inbox: they are threads of its inbox. */
   const setCount = (n) => setCounts({ admin: n });
@@ -368,5 +422,6 @@ window.Header = (() => {
 
   return {
     init, sync, setCount, setCounts, user, role, remember, href, pageOf, stats, scheme, REQUESTS,
+    loadWaiting, waiting, readHere, youByTeam, counts: () => ({ ...counts }),
   };
 })();

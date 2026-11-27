@@ -838,7 +838,8 @@ const channelTech = (entry) => (entry.ch.tech || [])
 /**
  * As src/threads.js's `unreadInYours`: what the red badge counts, per thread, for the viewer:
  * unread messages that mention them, and in a thread they posted or were mentioned in (a
- * re-threaded group being one), the people's messages from someone else since they first were.
+ * re-threaded group being one), the messages from someone else since they first were: people's
+ * and bots' (the opspile app's reply), not system notices, nor what they posted as the app.
  */
 function unreadInYours(rows) {
   const { name } = store.people.get(ME);
@@ -856,18 +857,33 @@ function unreadInYours(rows) {
       }
     }
   }
+  // Someone else's: a person's, or a bot's but what the viewer posted as the opspile app.
+  const fromOther = (r, m) => (m.author.kind === 'person' && m.author.name !== name)
+    || (m.author.kind === 'bot' && !store.appPosts.has(`${r.thread}|${m.id}`));
   const out = new Map();
   for (const r of rows) {
     const from = since.get(groupOf(r));
     const read = store.watermarks.get(`${ME}|${r.thread}`)?.read_at;
     const mine = new Set(mentioned(r));
     const n = from ? live(r).filter((m) => m.at >= from && (!read || m.at > read)
-      && (mine.has(m.at) || (m.author.kind === 'person' && m.author.name !== name))).length : 0;
+      && (mine.has(m.at) || fromOther(r, m))).length : 0;
     if (n) {
       out.set(r.thread, n);
     }
   }
   return out;
+}
+
+/** As src/waiting.js's `waitingThreads`: Dana's threads with messages for her, latest first. */
+function waitingThreads() {
+  const rows = [...store.threads.values()].map((e) => e.row)
+    .filter((r) => r.kind !== 'alert' && r.kind !== 'ignore' && !r.imported);
+  const counts = unreadInYours(rows);
+  return rows.filter((r) => counts.get(r.thread))
+    .sort((a, b) => String(b.any_at).localeCompare(String(a.any_at)))
+    .map((r) => ({
+      thread: r.thread, team: r.team, org: r.org, n: counts.get(r.thread),
+    }));
 }
 
 /**
@@ -1905,6 +1921,17 @@ async function api(req, res, url) {
       return true;
     }
     return json(res, await r.json(), r.status);
+  }
+  // What waits for Dana, on Inbox in the header (src/waiting.js): her threads with messages for
+  // her she has not read, and the questions thread agents asked her.
+  if (url.pathname === '/api/waiting') {
+    if (as || NO_TEAM) {
+      return json(res, { threads: [], questions: { open: 0, team: null } });
+    }
+    return json(res, {
+      threads: waitingThreads(),
+      questions: await openQuestions(adminApi.env, store.me.email),
+    });
   }
   if (url.pathname === '/api/me' && as) {
     return json(res, {

@@ -3290,7 +3290,25 @@ function threadRows() {
   list.__list = state.list;
   noteSeen();
 }
-function render() { syncRail(); inPass(() => { renderFilters(); renderThreads(); }); }
+function render() { syncRail(); inPass(() => { renderFilters(); renderThreads(); }); tellHeader(); }
+/**
+ * What waits for you in the threads this page has loaded, for Inbox in the header (ui/header.js
+ * `waiting`): fresher than its GET /api/waiting. Told when it changes only.
+ */
+let toldHeader = '';
+function tellHeader() {
+  if (state.as || !state.data?.threads || !window.Header?.waiting) return;
+  const known = {};
+  for (const t of state.data.threads) {
+    if (isRequestKey(t.thread)) continue;
+    for (const m of t.members || []) known[m.thread] = { n: 0 };
+    known[t.thread] = { n: youCount(t), team: t.team || null, org: t.org || null };
+  }
+  const said = JSON.stringify(known);
+  if (said === toldHeader) return;
+  toldHeader = said;
+  Header.waiting(known);
+}
 
 // ---------------------------------------------------------------- messages
 // Discord lets only bots react through its API: reactions there are made in Discord.
@@ -9412,7 +9430,11 @@ function openMessageMenu(button) {
 // ---------------------------------------------------------------- read state, live
 /** A thread as seen from the open team's inbox (a shared channel is in several). */
 const threadUrl = (key) => `/api/thread?thread=${encodeURIComponent(key)}${state.team && !personal() ? `&team=${encodeURIComponent(state.team)}` : ''}`;
-const memberLast = (m, kind) => (kind === 'alert' ? m.any_at : m.last_at) || m.any_at;
+/**
+ * How far a thread is read once you have seen it: its latest message, a bot's too (an agent's
+ * reply moves no `last_at`, which is people's only, but the red badge counts it for you).
+ */
+const memberLast = (m) => [m.last_at, m.any_at].filter(Boolean).sort().pop() || null;
 /**
  * Whether your read `ev` (`{ thread, at }`, from a room) changes what this page shows: the
  * entry it is of is unread here, and the read reaches that thread's last message. The tab that
@@ -9423,14 +9445,14 @@ function readHere(ev) {
     || x.members?.some((m) => m.thread === ev.thread));
   if (!t?.unread) return false;
   const m = t.members?.find((x) => x.thread === ev.thread) || t;
-  const at = memberLast(m, t.kind);
+  const at = memberLast(m);
   return Boolean(at) && ev.at >= at;
 }
 function markRead(t, { quiet = false } = {}) {
   if (!t || !t.thread || state.data?.me?.readonly) return;
   // A folded entry is several platform threads: each one is read up to its own end.
   for (const m of t.members || [{ thread: t.thread, last_at: t.last_at, any_at: t.any_at }]) {
-    const at = memberLast(m, t.kind);
+    const at = memberLast(m);
     if (!at) continue;
     const msg = { type: 'read', thread: m.thread, at };
     // A team's view sends it to the team's room; the personal view has a socket per team, and
@@ -9441,6 +9463,7 @@ function markRead(t, { quiet = false } = {}) {
     else fetch('/api/read', { method: 'POST', body: JSON.stringify({ ...msg, team: personal() ? undefined : state.team }), credentials: 'same-origin' });
     readsSent.set(m.thread, { at, until: Date.now() + READ_HOLD_MS });
   }
+  if (!state.as) window.Header?.readHere?.([t.thread, ...(t.members || []).map((m) => m.thread)]);
   seeRead(t);
   if (!quiet) render();
 }
@@ -9473,7 +9496,7 @@ function keepReads(threads) {
   for (const t of threads) {
     if (!t.unread) continue;
     const ms = t.members || [t];
-    const read = (m) => { const at = memberLast(m, t.kind); return !at || readsSent.get(m.thread)?.at >= at; };
+    const read = (m) => { const at = memberLast(m); return !at || readsSent.get(m.thread)?.at >= at; };
     if (ms.some((m) => readsSent.has(m.thread)) && ms.every(read)) seeRead(t);
   }
 }

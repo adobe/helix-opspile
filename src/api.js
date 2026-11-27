@@ -104,6 +104,7 @@ import {
 import { drawDiagram } from './diagrams.js';
 import { isRequestKey } from './requestkeys.js';
 import { openQuestions } from './questions.js';
+import { waitingFor } from './waiting.js';
 import {
   addNote, readRoom, requestEntries, requestThread, resolveRequest,
 } from './requestthreads.js';
@@ -1298,6 +1299,10 @@ async function route(request, env, url, {
       // The questions thread agents asked them that wait (src/questions.js): on Inbox.
       questions: await openQuestions(env, me.email),
     });
+  }
+  // What waits for them, on Inbox in every page's header (src/waiting.js).
+  if (url.pathname === '/api/waiting' && request.method === 'GET') {
+    return json(await waitingFor(env, me));
   }
   // Looking as someone else is read-only: no reads, replies or connections.
   const writes = request.method !== 'GET' || /^\/api\/auth\//.test(url.pathname);

@@ -17,6 +17,7 @@ import {
 import { accessEmail, resetKeyCache } from '../src/access.js';
 import { api, inbox, viewer } from '../src/api.js';
 import { advanceWatermark, indexMessage, recordMentions } from '../src/threads.js';
+import { waitingFor } from '../src/waiting.js';
 import { d1 } from './d1.js';
 
 // A throwaway key pair and made-up team domain, audience and people.
@@ -142,7 +143,7 @@ describe('personal view', () => {
   let n = 0;
   /** One message: `channelId` filed under `team`, as `person` (or a customer). */
   const say = (DB, {
-    thread, channelId, team, person = null, at, kind = 'channel',
+    thread, channelId, team, person = null, at, kind = 'channel', author = 'person',
   }) => {
     n += 1;
     return indexMessage(DB, {
@@ -152,7 +153,8 @@ describe('personal view', () => {
       org: 'acme',
       team,
       kind,
-      counted: true,
+      counted: author === 'person',
+      authorKind: author,
       staff: Boolean(person),
       person,
       rootId: thread,
@@ -281,6 +283,37 @@ describe('personal view', () => {
     assert.deepEqual(await count(), {
       posted: [true, 0, 1], mentioned: [false, 0, 0], other: [true, 0, 0],
     });
+  });
+
+  it('counts a bot\'s reply in my thread as a person\'s, not my own post as the app', async () => {
+    const DB = fresh();
+    const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', person: 1, at: at(1),
+    });
+    // The opspile app answers (a thread agent's post_message), and Teams says something.
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(2), author: 'bot',
+    });
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(3), author: 'system',
+    });
+    // What I posted as the app myself (app_posts) is mine: not for me to read.
+    const own = await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(4), author: 'bot',
+    });
+    await DB.prepare(`INSERT INTO app_posts (source, tenant, channel_id, id, thread, person, at)
+      VALUES ('slack', 'E1', 'C1', ?, 'asked', 1, ?)`).bind(own.split(':').pop(), at(4)).run();
+    const count = async () => Object.fromEntries((await inbox({ DB }, me, null, { personal: true }))
+      .threads.map((t) => [t.thread, [t.unread, t.unreadForYou]]));
+    // My message is the thread's last (a bot's moves no `last_at`), but the reply is mine to read.
+    assert.deepEqual(await count(), { asked: [true, 1] });
+    assert.deepEqual((await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads
+      .map((t) => [t.thread, t.n]), [['asked', 1]]);
+    // Read up to its latest message, as the inbox reads it.
+    await advanceWatermark(DB, 1, 'asked', at(4), 'open');
+    assert.deepEqual(await count(), { asked: [false, 0] });
+    assert.deepEqual((await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads, []);
   });
 
   it('counts unread threads the personal view does not show, for each of your teams', async () => {

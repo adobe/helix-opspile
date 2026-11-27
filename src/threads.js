@@ -308,6 +308,11 @@ export function readState(threads, marks, mentions, me, yours = new Map()) {
       unreadForYou: Math.max(unreadMentions, imported ? 0 : yours.get(t.thread) || 0),
       mentionedTeam,
     };
+    // A bot's reply for me (an agent's post_message in a thread of mine) moves no `last_at`, which
+    // counts people's messages only, but it is mine to read: the thread is unread until I do.
+    if (!state.unread && state.unreadForYou > 0) {
+      state.unread = true;
+    }
     const applies = {
       adobe: state.unseenByAdobe,
       'mentioned-me': mentionedMe,
@@ -323,8 +328,10 @@ export function readState(threads, marks, mentions, me, yours = new Map()) {
  * What the red badge counts of `threads` for person `me`, as Slack counts its badge: the
  * messages they have not read (after their watermark on the message's thread) that mention them,
  * and in a thread of theirs (one they posted or were mentioned in; a re-threaded group's members
- * among `threads` are one thread) the people's messages from someone else since they first were
- * in it. A message counts once. Bots' and deleted messages do not, but a bot's mention does.
+ * among `threads` are one thread) the messages from someone else since they first were in it:
+ * people's, and bots' as well (an agent's `post_message` answers them as a person's reply does),
+ * but not Teams' system notices, nor what they posted themselves as the opspile app
+ * (`app_posts`). A message counts once. Deleted ones do not.
  *
  * @returns {Promise<Map<string, number>>} thread to count, without the threads of none
  */
@@ -348,7 +355,11 @@ export async function unreadInYours(db, threads, me) {
       JOIN messages m ON m.thread = g.thread AND m.at >= s.at
       LEFT JOIN watermarks w ON w.thread = g.thread AND w.person = ?2
     WHERE m.deleted = 0 AND (w.read_at IS NULL OR m.at > w.read_at)
-      AND ((m.counted = 1 AND m.person IS NOT ?2) OR EXISTS (SELECT 1 FROM mentions n
+      AND ((m.person IS NOT ?2 AND (m.counted = 1 OR m.author_kind = 'bot')
+          AND NOT EXISTS (SELECT 1 FROM app_posts a WHERE a.source = m.source
+            AND a.tenant = m.tenant AND a.channel_id = m.channel_id AND a.id = m.id
+            AND a.person = ?2))
+        OR EXISTS (SELECT 1 FROM mentions n
         WHERE n.thread = m.thread AND n.person = ?2
           AND n.message = m.source || ':' || m.tenant || ':' || m.channel_id || ':' || m.id))
     GROUP BY m.thread`).bind(JSON.stringify(threads), me).all();
