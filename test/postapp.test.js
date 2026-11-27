@@ -121,6 +121,14 @@ describe('posting as the opspile app, with mentions', () => {
     });
   });
 
+  it('reads the thread up to the post for whoever posted it, as a post as themselves does', async () => {
+    const e = env();
+    assert.equal((await call(e, 'POST', '/api/post/app', { thread: SLACK, text: 'Hello' })).status, 200);
+    assert.deepEqual(e.DB.rows('SELECT id, person FROM app_posts'), [{ id: '1.9', person: 1 }]);
+    const [w] = e.DB.rows('SELECT person, thread, via FROM watermarks');
+    assert.deepEqual(w, { person: 1, thread: SLACK, via: 'post' });
+  });
+
   it('says so when a first try never finished', async () => {
     const e = env();
     globalThis.fetch = async () => {

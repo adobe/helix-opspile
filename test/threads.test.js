@@ -13,8 +13,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  advanceWatermark, indexMessage, latestMember, mentionedByName, PREVIEW_MAX, previewOf, readState,
-  titleOf, waitingOn,
+  advanceWatermark, indexMessage, latestMember, mentionedByName, ownPosts, PREVIEW_MAX, previewOf,
+  readState, titleOf, unreadInYours, waitingOn,
 } from '../src/threads.js';
 import { d1 } from './d1.js';
 
@@ -216,6 +216,82 @@ describe('readState', () => {
   it('uses any message for alert threads, and never asks Adobe to look at them', () => {
     const [alert] = readState([t('x', null, { kind: 'alert', any_at: LAST })], [], [], 1);
     assert.deepEqual([alert.unread, alert.unseenByAdobe, alert.attention], [true, false, 'team']);
+  });
+});
+
+describe('the red badge and your own posts', () => {
+  const U = 'slack:E1:C1:2.1';
+  const other = (m) => ({
+    ...m, thread: U, rootId: '2.1', path: 'channels/acme/helix/slack-C1/2.1/',
+  });
+  const me = { author: 'A', person: 1, staff: true };
+  const app = { author: 'opspile', authorKind: 'bot', counted: false };
+  const appPost = (D, id, key, at) => D.sqlite.prepare(`INSERT INTO app_posts
+    (source, tenant, channel_id, id, thread, person, at) VALUES ('slack', 'E1', 'C1', ?, ?, 1, ?)`)
+    .run(id, key, at);
+  const count = async (D, keys = [T]) => Object.fromEntries(await unreadInYours(D, keys, 1));
+
+  it('counts what came after your last reply, never the reply nor what it answered', async () => {
+    const D = db();
+    await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z'));
+    await indexMessage(D, msg('1.2', '2026-10-21T10:05:00Z', me));
+    await indexMessage(D, msg('1.3', '2026-10-21T10:06:00Z'));
+    await indexMessage(D, msg('1.4', '2026-10-21T10:07:00Z'));
+    assert.deepEqual(await count(D), { [T]: 2 });
+    // Your reply as the app moves no watermark of the message's own, yet it reads all before it.
+    await indexMessage(D, msg('1.5', '2026-10-21T10:08:00Z', app));
+    appPost(D, '1.5', T, '2026-10-21T10:08:01Z');
+    D.sqlite.exec('DELETE FROM watermarks');
+    assert.deepEqual(await count(D), {});
+    // And your own reply that mentions you is still yours.
+    await indexMessage(D, msg('1.6', '2026-10-21T10:09:00Z', me));
+    D.sqlite.exec(`INSERT INTO mentions (thread, message, person, at, via)
+      VALUES ('${T}', 'slack:E1:C1:1.6', 1, '2026-10-21T10:09:00Z', 'id')`);
+    D.sqlite.exec('DELETE FROM watermarks');
+    assert.deepEqual(await count(D), {});
+    // What comes after it counts again: a bot's reply as a person's.
+    await indexMessage(D, msg('1.7', '2026-10-21T10:10:00Z', { author: 'bot', authorKind: 'bot', counted: false }));
+    assert.deepEqual(await count(D), { [T]: 1 });
+  });
+
+  it('reads every thread of a conversation up to your last reply in any of them', async () => {
+    const D = db();
+    await indexMessage(D, msg('1.1', '2026-10-21T10:00:00Z'));
+    await indexMessage(D, msg('1.2', '2026-10-21T10:01:00Z', me));
+    // A thread folded into the conversation, never opened: its messages before your reply are read.
+    await indexMessage(D, other(msg('2.1', '2026-10-21T10:02:00Z')));
+    await indexMessage(D, other(msg('2.2', '2026-10-21T10:03:00Z')));
+    D.sqlite.prepare('UPDATE threads SET logical_thread = ? WHERE thread = ?').run(T, U);
+    assert.deepEqual(await count(D, [T, U]), { [U]: 2 });
+    await indexMessage(D, msg('1.3', '2026-10-21T10:04:00Z', me));
+    // Asked of the folded thread alone, too: the reply is in another thread of its entry.
+    assert.deepEqual(await count(D, [U]), {});
+    assert.deepEqual(await count(D, [T, U]), {});
+    const own = await ownPosts(D, [T, U], 1);
+    assert.deepEqual(Object.fromEntries(own), {
+      [T]: { at: '2026-10-21T10:04:00Z', staff: true },
+      [U]: { at: '2026-10-21T10:04:00Z', staff: true },
+    });
+    // The read state says the same: read by you, and not turned unread by the badge.
+    const rows = D.rows('SELECT * FROM threads ORDER BY thread');
+    const marks = D.rows('SELECT person, thread, read_at, 1 AS staff, 1 AS in_team FROM watermarks');
+    const before = readState(rows, marks, [], 1);
+    assert.deepEqual(before.map((x) => [x.thread, x.unread]), [[T, false], [U, true]]);
+    const after = readState(rows, marks, [], 1, await unreadInYours(D, [T, U], 1), own);
+    assert.deepEqual(after.map((x) => [x.thread, x.unread, x.unreadForYou, x.readers]), [
+      [T, false, 0, [1]], [U, false, 0, [1]]]);
+    // Something new in the folded thread after your reply: unread, and counted.
+    await indexMessage(D, other(msg('2.3', '2026-10-21T10:05:00Z')));
+    assert.deepEqual(await count(D, [T, U]), { [U]: 1 });
+  });
+
+  it('leaves the read state as it was where you never posted', () => {
+    const at = '2026-10-21T10:05:00Z';
+    const t = {
+      thread: 'x', kind: 'channel', last_at: at, any_at: at,
+    };
+    const [s] = readState([t], [], [], 1, new Map(), new Map());
+    assert.deepEqual([s.unread, s.readers], [true, []]);
   });
 });
 

@@ -1731,8 +1731,11 @@ repositories that exist and their git remotes. Internal slugs (`_unassigned`) ge
   have not read yet, as Slack's badge does: those that mention you, and in a thread you posted or
   were mentioned in (any member of a re-threaded group), the messages of others since you first
   were in it, a bot's as a person's (an agent's `post_message` answers you as a colleague
-  would; not your own posts as the app, `app_posts`, nor Teams' system notices), each message
-  once (`unreadForYou`, `unreadInYours` in `src/threads.js`). A bot's reply moves no `last_at`,
+  would; never your own posts, as you or as the app, `app_posts`, nor Teams' system notices),
+  each message once (`unreadForYou`, `unreadInYours` in `src/threads.js`). Nothing you have read
+  counts, and you have read a conversation up to your last post in it, in any of its threads and
+  from wherever you posted (`ownPosts`, the read state too): a reply never adds to the badge, and
+  a thread folded into the conversation later brings nothing from before it. A bot's reply moves no `last_at`,
   which is people's, so it makes the thread unread by itself, the row previews it (`bot_reply`),
   and opening a thread reads it up to its latest message (`any_at`). An open request that waits
   for you (a question an agent asked you; in the admin team's inbox, its requests) counts one,

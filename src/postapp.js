@@ -19,6 +19,7 @@ import { entryOf } from './drafts.js';
 import { json } from './http.js';
 import { isStaffDomain } from './lookup.js';
 import { platformName } from './platforms.js';
+import { advanceWatermark } from './threads.js';
 import { knownMentions, target as replyTarget } from './post.js';
 import { resolveShortcodes } from './shortcodes.js';
 
@@ -61,16 +62,19 @@ export async function appPostCheck(env, key) {
 
 /**
  * Records a message the person posted as the opspile app (`app_posts`), so that they may edit
- * it later. `t` is the platform thread it went to.
+ * it later. `t` is the platform thread it went to. Posting is having read the thread up to there,
+ * as the person's own posts are (src/threads.js indexMessage): their watermark moves to it.
  */
-export async function recordAppPost(env, me, t, id) {
+export async function recordAppPost(env, me, t, id, now = new Date()) {
   if (!t || !id) {
     return;
   }
+  const at = now.toISOString();
   await env.DB.prepare(`INSERT INTO app_posts (source, tenant, channel_id, id, thread, person, at)
     VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (source, tenant, channel_id, id) DO NOTHING`)
-    .bind(t.source, t.tenant, t.channel_id, String(id), t.thread, me.id, new Date().toISOString())
+    .bind(t.source, t.tenant, t.channel_id, String(id), t.thread, me.id, at)
     .run();
+  await advanceWatermark(env.DB, me.id, t.thread, at, 'post', now);
 }
 
 /**

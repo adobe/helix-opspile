@@ -286,7 +286,7 @@ describe('personal view', () => {
     });
   });
 
-  it('counts a bot\'s reply in my thread as a person\'s, not my own post as the app', async () => {
+  it('counts a bot\'s reply in my thread as a person\'s, until I reply, as myself or as the app', async () => {
     const DB = fresh();
     const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
     await say(DB, {
@@ -299,22 +299,31 @@ describe('personal view', () => {
     await say(DB, {
       thread: 'asked', channelId: 'C1', team: 'helix', at: at(3), author: 'system',
     });
-    // What I posted as the app myself (app_posts) is mine: not for me to read.
+    const count = async () => Object.fromEntries((await inbox({ DB }, me, null, { personal: true }))
+      .threads.map((t) => [t.thread, [t.unread, t.unreadForYou]]));
+    const waiting = async () => (await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads
+      .map((t) => [t.thread, t.n]);
+    // My message is the thread's last (a bot's moves no `last_at`), but the reply is mine to read.
+    assert.deepEqual(await count(), { asked: [true, 1] });
+    assert.deepEqual(await waiting(), [['asked', 1]]);
+    // I answer it as the app (app_posts), from wherever: no watermark of mine moved, yet I read
+    // the thread up to my answer, and my answer is mine, not for me to read.
     const own = await say(DB, {
       thread: 'asked', channelId: 'C1', team: 'helix', at: at(4), author: 'bot',
     });
     await DB.prepare(`INSERT INTO app_posts (source, tenant, channel_id, id, thread, person, at)
       VALUES ('slack', 'E1', 'C1', ?, 'asked', 1, ?)`).bind(own.split(':').pop(), at(4)).run();
-    const count = async () => Object.fromEntries((await inbox({ DB }, me, null, { personal: true }))
-      .threads.map((t) => [t.thread, [t.unread, t.unreadForYou]]));
-    // My message is the thread's last (a bot's moves no `last_at`), but the reply is mine to read.
-    assert.deepEqual(await count(), { asked: [true, 1] });
-    assert.deepEqual((await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads
-      .map((t) => [t.thread, t.n]), [['asked', 1]]);
-    // Read up to its latest message, as the inbox reads it.
-    await advanceWatermark(DB, 1, 'asked', at(4), 'open');
     assert.deepEqual(await count(), { asked: [false, 0] });
-    assert.deepEqual((await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads, []);
+    assert.deepEqual(await waiting(), []);
+    // The bot answers again: that is new, until it is read, as the inbox reads it.
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(5), author: 'bot', preview: 'Done.',
+    });
+    assert.deepEqual(await count(), { asked: [true, 1] });
+    assert.deepEqual(await waiting(), [['asked', 1]]);
+    await advanceWatermark(DB, 1, 'asked', at(5), 'open');
+    assert.deepEqual(await count(), { asked: [false, 0] });
+    assert.deepEqual(await waiting(), []);
   });
 
   it('counts a reply for the header in a group whose member I posted in and read', async () => {
