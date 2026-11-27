@@ -256,6 +256,27 @@ function group(rows) {
 }
 
 /**
+ * `marks` (one thread's watermarks) with mine at `own` at least, the time I last posted in the
+ * thread's entry (`{ at, staff }`, ownPosts): posting is having read up to there, in every
+ * thread of the entry, as myself or as the opspile app.
+ */
+function withOwnPost(marks, thread, me, own) {
+  if (!own || !own.at) {
+    return marks;
+  }
+  const mine = marks.find((w) => w.person === me);
+  if (mine && mine.read_at >= own.at) {
+    return marks;
+  }
+  return [
+    ...marks.filter((w) => w !== mine),
+    mine ? { ...mine, read_at: own.at } : {
+      person: me, thread, read_at: own.at, staff: own.staff ? 1 : 0, in_team: 1,
+    },
+  ];
+}
+
+/**
  * Read state and attention for a set of threads, as seen by one member of a team.
  *
  * @param {object[]} threads rows of `threads`
@@ -276,16 +297,19 @@ function group(rows) {
  *     mention me or are in a thread of mine (`yours`, see unreadInYours), at least the mentions
  *   - `attention`: the most pressing of ATTENTION that applies, or null
  *
+ * `own` is when I last posted in each thread's entry (ownPosts): what came before it is read by
+ * me, whatever my watermark says, as it is for the red badge (unreadInYours).
+ *
  * An imported thread (src/history.js) is read by everyone: it was over before the inbox began.
  */
-export function readState(threads, marks, mentions, me, yours = new Map()) {
+export function readState(threads, marks, mentions, me, yours = new Map(), own = new Map()) {
   const marksBy = group(marks);
   const mentionsBy = group(mentions);
   return threads.map((t) => {
     const alert = t.kind === 'alert';
     const imported = Boolean(Number(t.imported));
     const last = alert ? t.any_at : t.last_at;
-    const ws = marksBy.get(t.thread) || [];
+    const ws = withOwnPost(marksBy.get(t.thread) || [], t.thread, me, own.get(t.thread));
     const readAt = new Map(ws.map((w) => [w.person, w.read_at]));
     const caughtUp = (w) => imported || (Boolean(last) && w.read_at >= last);
     const readers = ws.filter((w) => w.in_team && caughtUp(w)).map((w) => w.person);
@@ -325,13 +349,56 @@ export function readState(threads, marks, mentions, me, yours = new Map()) {
 }
 
 /**
+ * SQL: the time person `?2` last posted in each inbox entry of `g` (`g AS (thread, g)`, `g` the
+ * entry's key, `COALESCE(logical_thread, thread)`), in any of its threads, those not asked for
+ * too: as themselves, or as the opspile app (`app_posts`, at its message's time once the message
+ * is in). `own(g, at)`. Everything of the entry up to then is read by them.
+ */
+const OWN_POSTS = `entries AS (SELECT DISTINCT g FROM g),
+    members AS (SELECT thread, g FROM g
+      UNION SELECT t.thread, t.logical_thread FROM threads t
+        WHERE t.logical_thread IN (SELECT g FROM entries)
+      UNION SELECT e.g, e.g FROM entries e),
+    own AS (SELECT g, MAX(at) AS at FROM (
+        SELECT p.g, m.at FROM members p JOIN messages m ON m.thread = p.thread
+        WHERE m.person = ?2 AND m.deleted = 0
+        UNION ALL SELECT p.g, COALESCE(m.at, a.at) FROM members p
+          JOIN app_posts a ON a.thread = p.thread AND a.person = ?2
+          LEFT JOIN messages m ON m.source = a.source AND m.tenant = a.tenant
+            AND m.channel_id = a.channel_id AND m.id = a.id
+        WHERE COALESCE(m.deleted, 0) = 0)
+      GROUP BY g)`;
+
+/**
+ * When person `me` last posted in the inbox entry of each of `threads` (see OWN_POSTS), for
+ * readState: `Map<thread, { at, staff }>`, without the threads of entries they never posted in.
+ */
+export async function ownPosts(db, threads, me) {
+  if (!threads.length || !me) {
+    return new Map();
+  }
+  const { results } = await db.prepare(`WITH k AS (SELECT value AS thread FROM json_each(?1)),
+    g AS (SELECT t.thread, COALESCE(t.logical_thread, t.thread) AS g FROM threads t
+      WHERE t.thread IN (SELECT thread FROM k)),
+    ${OWN_POSTS}
+    SELECT g.thread, o.at, (SELECT staff FROM people WHERE id = ?2) AS staff
+    FROM g JOIN own o ON o.g = g.g`).bind(JSON.stringify(threads), me).all();
+  return new Map((results || []).map((r) => [r.thread, { at: r.at, staff: Boolean(r.staff) }]));
+}
+
+/**
  * What the red badge counts of `threads` for person `me`, as Slack counts its badge: the
  * messages they have not read (after their watermark on the message's thread) that mention them,
  * and in a thread of theirs (one they posted or were mentioned in; a re-threaded group's members
  * among `threads` are one thread) the messages from someone else since they first were in it:
  * people's, and bots' as well (an agent's `post_message` answers them as a person's reply does),
- * but not Teams' system notices, nor what they posted themselves as the opspile app
- * (`app_posts`). A message counts once. Deleted ones do not.
+ * but not Teams' system notices, nor what they posted themselves (as themselves, or as the
+ * opspile app: `app_posts`). A message counts once. Deleted ones do not.
+ *
+ * Nothing they have read counts: what came before their watermark on the message's thread, nor
+ * what came before their own last post anywhere in the entry (OWN_POSTS). Replying is having
+ * read the conversation up to there, wherever it was replied from and in whichever of the
+ * entry's threads, and a thread folded into the entry later brings nothing from before it.
  *
  * @returns {Promise<Map<string, number>>} thread to count, without the threads of none
  */
@@ -343,6 +410,7 @@ export async function unreadInYours(db, threads, me) {
     -- An imported thread (src/history.js) has nothing unread.
     g AS (SELECT t.thread, COALESCE(t.logical_thread, t.thread) AS g FROM threads t
       WHERE t.thread IN (SELECT thread FROM k) AND t.imported = 0),
+    ${OWN_POSTS},
     -- When the viewer was first in each group: posted in it or mentioned ('~' sorts last: never).
     since AS (SELECT g.g, MIN(MIN(
         COALESCE((SELECT MIN(a.at) FROM messages a WHERE a.thread = g.thread AND a.person = ?2
@@ -354,11 +422,15 @@ export async function unreadInYours(db, threads, me) {
     FROM g JOIN since s ON s.g = g.g
       JOIN messages m ON m.thread = g.thread AND m.at >= s.at
       LEFT JOIN watermarks w ON w.thread = g.thread AND w.person = ?2
+      LEFT JOIN own o ON o.g = g.g
     WHERE m.deleted = 0 AND (w.read_at IS NULL OR m.at > w.read_at)
-      AND ((m.person IS NOT ?2 AND (m.counted = 1 OR m.author_kind = 'bot')
-          AND NOT EXISTS (SELECT 1 FROM app_posts a WHERE a.source = m.source
-            AND a.tenant = m.tenant AND a.channel_id = m.channel_id AND a.id = m.id
-            AND a.person = ?2))
+      AND (o.at IS NULL OR m.at > o.at)
+      -- Never their own, not even one that mentions them.
+      AND m.person IS NOT ?2
+      AND NOT EXISTS (SELECT 1 FROM app_posts a WHERE a.source = m.source
+        AND a.tenant = m.tenant AND a.channel_id = m.channel_id AND a.id = m.id
+        AND a.person = ?2)
+      AND (m.counted = 1 OR m.author_kind = 'bot'
         OR EXISTS (SELECT 1 FROM mentions n
         WHERE n.thread = m.thread AND n.person = ?2
           AND n.message = m.source || ':' || m.tenant || ':' || m.channel_id || ':' || m.id))

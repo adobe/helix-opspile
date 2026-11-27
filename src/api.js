@@ -74,7 +74,7 @@ import { DEFAULTS, readSettings, saveSettings } from './settings.js';
 import { claimPost, logPost, settlePost } from './postkeys.js';
 import { postingOffer } from './postoffer.js';
 import {
-  ATTENTION, botReplies, latestMember, readState, unreadInYours, waitingOn,
+  ATTENTION, botReplies, latestMember, ownPosts, readState, unreadInYours, waitingOn,
 } from './threads.js';
 import {
   cleanQuery, find, MAX_RESULTS, queryVector, terms, withSnippets,
@@ -611,7 +611,7 @@ export async function inbox(env, me, team, {
     { results: marks }, { results: mentions }, { results: labels }, people, { results: rx },
     { results: posted }, { results: named }, resolved, signals, { results: names },
     drafts, { results: teamRows }, teamMembers, orgs, partners,
-    { results: techRows }, stacks, techVocab, elsewhere, yours, unseen, agentLabels, standing,
+    { results: techRows }, stacks, techVocab, elsewhere, yours, own, unseen, agentLabels, standing,
   ] = await Promise.all([
     // Watermarks of every staff member (for "nobody at Adobe has seen it") and of the team
     // (the personal view: of the viewer's teams), the viewer's among them (someone on no team
@@ -674,6 +674,8 @@ export async function inbox(env, me, team, {
     personal && !only && !more ? unreadElsewhere(env, me) : null,
     // What the red badge counts: unread mentions, and what is new in the viewer's threads.
     unreadInYours(env.DB, threadKeys, me.id),
+    // When the viewer last posted in each entry: read by them up to there (src/threads.js).
+    ownPosts(env.DB, threadKeys, me.id),
     // The agent's answers to the viewer in a sidebar they have not seen: the purple badge.
     unseenAnswers(env, [...threadKeys, ...threads.map((t) => t.logical_thread)], me.id),
     // What the threads' agents said of them (src/agentlabels.js), in place of Clef's answers.
@@ -712,7 +714,7 @@ export async function inbox(env, me, team, {
   // Profile cards of everyone in the avatar stacks, once per person.
   const cards = await profiles(env, [...people.values()]
     .flatMap((t) => t.participants.map((p) => p.key)));
-  const states = readState(threads, marks || [], mentions || [], me.id, yours);
+  const states = readState(threads, marks || [], mentions || [], me.id, yours, own);
   const linkedBy = await linkedP;
   const botBy = await botRepliesP;
   return {

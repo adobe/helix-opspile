@@ -40,7 +40,11 @@ change notification itself, since Graph answers 404 for a deleted channel messag
 on the platform afterwards stays a tombstone.
 
 **Read watermark.** One moving position per person and thread (`watermarks`, `advanceWatermark` in
-`src/threads.js`). The write is conditional on being newer, so it never moves back.
+`src/threads.js`). The write is conditional on being newer, so it never moves back. Posting moves
+it: one's own message as it is indexed, a post as the opspile app as it is sent (`recordAppPost`).
+What the viewer sees as read is the later of it and their last post anywhere in the thread's inbox
+entry (`ownPosts`): a group's other threads, and a thread folded in after the post, are read up to
+there too. Nothing read (before either) counts toward the red badge, or makes a thread unread.
 
 **Room read flush.** idle → pending → flushed (`read:*` and the alarm, `src/room.js`). The flush
 deletes a key only if it still holds what was written: D1 lets other events in, and a newer read may
