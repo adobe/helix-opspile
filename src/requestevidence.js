@@ -175,6 +175,30 @@ export async function factThreads(env, {
 }
 
 /**
+ * The latest threads (since `since`, their latest message by a person) whose `repo` or `site` facts
+ * name GitHub account `owner` (`owner/…`), each with its messages and the facts it has of it
+ * (`facts`, the values).
+ */
+export async function ownerThreads(env, owner, { since, limit = SHOWN * 4 } = {}) {
+  const facts = await rows(env, `SELECT f.thread, LOWER(f.value) AS value FROM facts f
+      JOIN threads t ON t.thread = f.thread
+    WHERE f.field IN ('repo', 'site') AND LOWER(f.value) LIKE ?1 AND t.last_at >= ?2
+    ORDER BY t.last_at DESC LIMIT ${READ}`, `${String(owner).toLowerCase()}/%`, since);
+  const by = new Map();
+  for (const f of facts) {
+    if (by.size < limit || by.has(f.thread)) {
+      by.set(f.thread, [...new Set([...(by.get(f.thread) || []), f.value])]);
+    }
+  }
+  if (!by.size) {
+    return [];
+  }
+  const list = await rows(env, `${MESSAGE} WHERE m.thread IN (SELECT value FROM json_each(?1))
+    AND m.deleted = 0 AND m.counted = 1 ORDER BY m.at DESC LIMIT ${READ}`, JSON.stringify([...by.keys()]));
+  return list.map((m) => ({ ...m, facts: by.get(m.thread) }));
+}
+
+/**
  * Messages grouped by thread: `[{ thread: row, message, n }]`, the threads with the most of them
  * first, then those whose message says the most, then the latest. Each thread's message is the
  * one with the most to say (its longest preview); with `latest`, it is the latest, and the latest

@@ -30,8 +30,13 @@ import {
 } from './requestkeys.js';
 import {
   byThread, channelThreads, evidenceText, managersOf, markSeen, PEOPLE, postedBy, postedByPerson,
-  techThreads, threadSection, threadsOf, together, whoCouldKnow,
+  techThreads, threadSection, threadsOf, together, whoCouldKnow, ownerThreads,
 } from './requestevidence.js';
+import {
+  ORGS_VAR as GITHUB_ORGS_VAR, QUIET_CHOICES as GITHUB_QUIET_CHOICES,
+  QUIET_DAYS as GITHUB_QUIET_DAYS, WINDOW_DAYS as GITHUB_WINDOW_DAYS, allowGithubInstallation,
+  dismissGithubRequest, getGithubRequest, listGithubRequests,
+} from './githubrequests.js';
 import { getRequest, listRequests } from './requests.js';
 import {
   closeQuestion, createQuestion, getQuestion, listQuestions, markTold,
@@ -47,7 +52,8 @@ import { advanceWatermark, readState } from './threads.js';
  * The admin team's requests as threads of its inbox. What waits for the admin team (a channel a
  * team asked for, a person to add to a team, a customer in the portal, a merge of customers, a
  * bot nobody said whose it is, an account staff by itself nobody linked, two accounts of a
- * customer's that may be one person, a conflict between technologies or between team rules) is
+ * customer's that may be one person, a conflict between technologies or between team rules, one
+ * of Adobe's GitHub organizations that threads name and the GitHub App does not read) is
  * an inbox entry there, keyed `request:<kind>:<id>` (src/requestkeys.js), and decided ones stay as
  * resolved entries. Its thread is the request, as whoever asked said it, then what the admin team
  * writes about it (`note`s, its decision log, `request_log`, migration 0100), and what was
@@ -86,6 +92,7 @@ export const KIND_NAMES = {
   tech: 'Technology conflicts',
   rule: 'Rule conflicts',
   question: 'Questions for you',
+  github: 'GitHub App installations',
 };
 /** The kinds that are one person's, not the admin team's: every inbox of theirs has them. */
 export const PERSONAL = new Set(['question']);
@@ -1300,6 +1307,120 @@ const ruleKind = {
   },
 };
 
+/** Where the admin team allows the app's installations: its tools and MCP servers. */
+const GITHUB_TOOLS = `/inbox/admin?tab=teams&team=${ADMIN_TEAM}&view=mcp`;
+
+/** What a GitHub App request says of installing the app on `r.account`, as a line. */
+function installLine(r) {
+  const a = md(r.account);
+  const tools = `[the admin team's tools and MCP servers](${GITHUB_TOOLS})`;
+  const i = r.installation;
+  if (!r.app) {
+    return `- There is no opspile GitHub App yet: create it in ${tools}, then install it on **${a}**.`;
+  }
+  if (i && i.suspended) {
+    return `- ${md(r.app.slug)} is installed on **${a}** but suspended there${i.htmlUrl ? ` ([on GitHub](${i.htmlUrl}))` : ''}: an owner of ${a} lifts the suspension, then it is allowed in ${tools}.`;
+  }
+  if (i && !i.approved) {
+    return `- ${md(r.app.slug)} is installed on **${a}** (${i.selection === 'all' ? 'all its repositories' : 'a selection of its repositories'}) and waits to be allowed: **Allow** below, or in ${tools}.`;
+  }
+  const unknown = r.installation === undefined ? ' (GitHub did not say just now where the app is installed)' : '';
+  return `- [Install ${md(r.app.slug)}](${r.app.installUrl}) on **${a}**, on all its repositories or a selection${unknown}: an owner of the organization installs it, or approves the request GitHub sends them when someone else asks. Then allow the installation in ${tools}.`;
+}
+
+/**
+ * A request to install the opspile GitHub App on one of Adobe's GitHub organizations
+ * (src/githubrequests.js): how many recent threads name its repositories and sites, which, and
+ * how it is installed; it closes itself once an installation on the account is allowed.
+ */
+const githubKind = {
+  list: (env) => listGithubRequests(env, { limit: LIMIT }),
+  get: (env, id) => getGithubRequest(env, id),
+  id: (r) => r.id,
+  /** The latest threads that name the organization's repositories, and who of Adobe works them. */
+  async evidence(env, r) {
+    const since = new Date(Date.now() - GITHUB_WINDOW_DAYS * 86400_000).toISOString();
+    const threads = byThread(await ownerThreads(env, r.account, { since }), { latest: true });
+    const sections = [threadSection(
+      `The latest threads that name ${md(poss(r.account))} repositories`,
+      threads,
+      { note: (x) => (x.message.facts || []).slice(0, 3).map(code).join(', ') },
+    )];
+    return { sections, people: await whoCouldKnow(env, threadsOf({ sections })) };
+  },
+  describe(r) {
+    const a = md(r.account);
+    const open = r.status === 'open';
+    const shown = r.repos.map((x) => `${code(x.repo)} (${plural(x.threads, 'thread')})`).join(', ');
+    const more = r.repoCount > r.repos.length ? `, and ${r.repoCount - r.repos.length} more` : '';
+    const i = r.installation;
+    let reads = 'The opspile GitHub App did not read it then, so the thread agents could not read them.';
+    if (open) {
+      const why = i && !i.approved && !i.suspended ? 'installed there, but not allowed yet' : 'not installed there';
+      reads = `The opspile GitHub App is ${why}, so the thread agents cannot read them.`;
+    }
+    const facts = [
+      `- Named most: ${shown}${more}`,
+      r.last ? `- The latest of those threads: ${dayOf(r.last)} (counted ${dayOf(r.countedAt)})` : '',
+      open ? installLine(r) : '',
+    ].filter(Boolean).join('\n');
+    let decision = null;
+    if (r.status === 'installed') {
+      decision = `**Installed**: an installation on ${a} is allowed${r.decidedBy ? ` (by ${md(r.decidedBy.email)})` : ''}, and the agents read its repositories where the github server is on.`;
+    } else if (r.status === 'dismissed') {
+      decision = `**Dismissed** by ${md(who(r.decidedBy))}: not asked again before ${dayOf(r.quietUntil)}${r.reason ? `: ${md(r.reason)}` : ''}`;
+    } else if (r.status === 'withdrawn') {
+      decision = `**Withdrawn**: ${md(r.reason || 'no longer asked')}`;
+    }
+    const actions = [];
+    if (open && i && !i.approved && !i.suspended) {
+      actions.push({
+        id: 'allow',
+        label: 'Allow',
+        tone: 'accent',
+        hint: `Allows the installation on ${a}, as the admin team's tools and MCP servers do: the agents read the repositories it is installed on, where the github server is on. It closes this request.`,
+        act: (env, me) => allowGithubInstallation(env, me, r.id, i.id),
+        done: () => `Allowed: the agents read ${a}'s repositories where the github server is on.`,
+      });
+    }
+    if (open) {
+      actions.push({
+        id: 'dismiss',
+        label: 'Dismiss',
+        tone: 'negative',
+        hint: `Not installed: the inbox does not ask about ${a} again for a while, however many threads name it.`,
+        fields: [
+          {
+            name: 'days',
+            label: 'Not asked again for',
+            type: 'select',
+            value: String(GITHUB_QUIET_DAYS),
+            options: GITHUB_QUIET_CHOICES.map((d) => ({ value: String(d), label: d === 365 ? 'a year' : `${d} days` })),
+          },
+          reasonField('Why (optional)'),
+        ],
+        act: (env, me, v) => dismissGithubRequest(env, me, r.id, {
+          days: v.days, reason: v.reason,
+        }),
+        done: (x) => `Dismissed: ${a} is not asked about again before ${dayOf(x.until)}.`,
+      });
+    }
+    return {
+      title: `Install the GitHub App on ${r.account}`,
+      question: `Who at Adobe owns the GitHub organization ${r.account}, and can they install the opspile GitHub App there?`,
+      open,
+      status: open ? 'waiting' : r.status,
+      askedAt: r.requestedAt,
+      askedBy: null,
+      body: `**${a}** is one of Adobe's GitHub organizations (${code(GITHUB_ORGS_VAR)}), and ${plural(r.threads, 'thread')} of the last ${GITHUB_WINDOW_DAYS} days name ${plural(r.repoCount, 'repository or site', 'repositories and sites')} of it. ${reads}\n\n${facts}${open ? `\n\nThis request closes itself once an installation on ${a} is allowed.` : ''}`,
+      decidedAt: open ? null : r.decidedAt,
+      decidedBy: r.decidedBy,
+      decision,
+      actions,
+    };
+  },
+};
+
 const PURPOSE = {
   runbook: 'a runbook it is writing', reply: 'a reply to the customer', fact: 'a fact for the knowledge base',
 };
@@ -1518,6 +1639,7 @@ const KIND = {
   tech: techKind,
   rule: ruleKind,
   question: questionKind,
+  github: githubKind,
 };
 
 // ---- the log and the times ---------------------------------------------------------------------

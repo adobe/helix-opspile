@@ -115,6 +115,11 @@ const AGENT_VARS = [
 // MEMBERSHIP_SLACK_BOT (the relay's bot user id, which the post mentions).
 const MEMBERSHIP_VARS = ['MEMBERSHIP_SLACK_CHANNEL', 'MEMBERSHIP_SLACK_BOT'] as const;
 
+// ADOBE_GITHUB_ORGS, optional: comma-separated GitHub logins of Adobe's own organizations. The
+// admin team is asked to install the opspile GitHub App on one once enough threads name its
+// repositories (src/githubrequests.js); never a customer's or a partner's. Off while empty.
+const GITHUB_VARS = ['ADOBE_GITHUB_ORGS'] as const;
+
 // The global fluffyjaws MCP server, optional (src/agent/fluffyjaws.js): FLUFFYJAWS_ISSUER, its
 // Okta authorization server; FLUFFYJAWS_CLIENT_ID, opspile's public Okta client there, which a
 // member of the admin team signs in with; or FLUFFYJAWS_SERVICE_CLIENT_ID and the secret
@@ -263,7 +268,7 @@ function vars(deployed: boolean) {
   return Object.fromEntries(
     [...VARS, ...AGENT_VARS, ...ACCESS_SYNC_VARS, ...SIGNIN_VARS, ...MOVE_VARS, ...SLACK_VARS,
       ...DISCORD_VARS, ...CLICKHOUSE_VARS, ...STATS_VARS, ...MEMBERSHIP_VARS, ...FLUFFYJAWS_VARS,
-      ...D1_VARS]
+      ...D1_VARS, ...GITHUB_VARS]
       .filter((name) => values[name])
       .map((name) => [name, bindings.text(values[name] as string)]),
   );
