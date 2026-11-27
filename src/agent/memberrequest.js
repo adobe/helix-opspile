@@ -26,7 +26,8 @@ const MAX_NAMES = 5;
 /**
  * Who is meant: `{ email, name }`, or `{ error }`. With an `email`, that address; without one,
  * the person who asked (`asker`) when `name` is left out or is theirs, else the one person the
- * inbox knows by exactly that name (several, or nobody: the agent asks for the address).
+ * inbox knows by exactly that name, theirs or an account's linked to them (a handle an admin
+ * linked, src/accountlinks.js; several, or nobody: the agent asks for the address).
  */
 export async function personOf(env, asker, { email, name }) {
   const mail = String(email || '').trim().toLowerCase();
@@ -40,7 +41,10 @@ export async function personOf(env, asker, { email, name }) {
   const { results } = await env.DB.prepare(`SELECT LOWER(email) AS email, MAX(name) AS name FROM (
       SELECT email, name FROM people WHERE email IS NOT NULL AND LOWER(name) = LOWER(?1)
       UNION SELECT email, name FROM identities WHERE kind = 'person' AND email IS NOT NULL
-        AND LOWER(name) = LOWER(?1))
+        AND LOWER(name) = LOWER(?1)
+      UNION SELECT p.email, p.name FROM identities i JOIN people p ON p.id = i.person
+        WHERE i.kind = 'person' AND p.email IS NOT NULL
+          AND (LOWER(i.name) = LOWER(?1) OR LOWER(i.handle) = LOWER(?1)))
     GROUP BY LOWER(email) ORDER BY 1 LIMIT ?2`).bind(asked, MAX_NAMES + 1).all();
   const found = results || [];
   if (found.length === 1) {
@@ -48,6 +52,14 @@ export async function personOf(env, asker, { email, name }) {
   }
   if (found.length) {
     return { error: `several people are called ${asked} (${found.slice(0, MAX_NAMES).map((p) => p.email).join(', ')}): give the email address of the one meant` };
+  }
+  // An account of Adobe's that says nothing of whose it is (src/accountlinks.js): the admin team
+  // links it, which an agent may propose.
+  const unlinked = await env.DB.prepare(`SELECT 1 FROM identities WHERE kind = 'person'
+      AND staff = 1 AND person IS NULL AND (LOWER(name) = LOWER(?1) OR LOWER(handle) = LOWER(?1))
+    LIMIT 1`).bind(asked).first();
+  if (unlinked) {
+    return { error: `${asked} is an account of Adobe's that nobody linked to a colleague yet, so the inbox has no email address for it: give theirs, or, if the thread says who it is, propose it with request_account_link` };
   }
   return { error: `the inbox knows nobody called ${asked} with an email address: give theirs, as the person who asked writes it` };
 }

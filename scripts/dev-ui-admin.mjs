@@ -854,9 +854,12 @@ function seedBots(DB, store) {
 }
 
 /**
- * The Teams tenant's own admin accounts under the admin page's Requests (src/accountlinks.js):
- * two that nobody said whose they are yet, one with messages in a Teams thread, and one an admin
- * linked to a colleague. Made up, as their tenant's domain.
+ * The accounts that are staff by themselves under the admin team's Staff accounts
+ * (src/accountlinks.js): the Teams tenant's own admin accounts, two that nobody said whose they
+ * are yet, one with messages in a Teams thread, and one an admin linked to a colleague; and two
+ * Discord accounts with a staff role that nobody connected, which wrote in a Discord thread: LB,
+ * whose initials and a colleague's Contact alias suggest Lena, and TO, which a thread agent
+ * proposed is Tom's. Made up, as their tenant's domain and their guild.
  */
 /**
  * Partners: Agency Co, a partner org whose threads Ravi and a colleague post in, so the inbox
@@ -938,6 +941,39 @@ function seedAccounts(DB, store) {
   }
 }
 
+function seedDiscordAccounts(DB, store) {
+  const db = DB.sqlite;
+  const staff = [...store.people.values()].filter((p) => p.staff);
+  const discord = [...store.threads.values()].find(({ row }) => row.source === 'discord');
+  const lena = staff.find((p) => p.name === 'Lena Berg');
+  const tom = staff.find((p) => p.name === 'Tom Okafor');
+  if (!discord || !lena || !tom) {
+    return;
+  }
+  const { row } = discord;
+  const at = (h) => new Date(Date.now() - h * 3600000).toISOString();
+  for (const [id, name, aliases, posts] of [['D-LB', 'LB', ['lb_ops'], 3], ['D-TO', 'TO', ['tokafor'], 1]]) {
+    db.prepare(`INSERT OR IGNORE INTO identities (source, tenant, user_id, kind, name, fetched_at,
+        avatar, staff, aliases) VALUES ('discord', ?, ?, 'person', ?, ?, '', 1, ?)`)
+      .run(row.tenant, id, name, new Date().toISOString(), JSON.stringify(aliases));
+    for (let i = 0; i < posts; i += 1) {
+      db.prepare(`INSERT OR IGNORE INTO messages (source, tenant, channel_id, id, thread, at, staff,
+          counted, deleted, author_key, author_kind, author)
+        VALUES ('discord', ?, ?, ?, ?, ?, 1, 1, 0, ?, 'person', ?)`)
+        .run(row.tenant, row.channel_id, `${id}-${i}`, discord.key, at(i + 2), `discord:${row.tenant}:${id}`, name);
+    }
+  }
+  // Lena's Contact in Platform ops' knowledge base goes by LB's Discord name (dev-ui-kb.mjs).
+  // A thread agent's proposal that TO is Tom's, with its note in the account's thread.
+  const key = `discord:${row.tenant}:D-TO`;
+  const note = 'Tom signed the message "TO, platform on-call" and replied to a mention of Tom.';
+  db.prepare(`INSERT OR IGNORE INTO account_proposals (account, person, note, thread, by_name, at)
+    VALUES (?, ?, ?, ?, 'The agent of a thread in #community-forum', ?)`).run(key, tom.id, note, discord.key, at(1));
+  db.prepare(`INSERT INTO request_log (request, type, body, author_name, at)
+    VALUES (?, 'note', ?, 'The agent of a thread in #community-forum', ?)`)
+    .run(`request:account:${key}`, `Proposes that it is **Tom Okafor**'s (${tom.email}): ${note}`, at(1));
+}
+
 /** The thread agents the answers to their questions go to: they take them, and do nothing. */
 const DEV_AGENTS = {
   idFromName: (name) => name,
@@ -1016,6 +1052,7 @@ export function createAdmin(store, {
   seedRuleConflicts(DB);
   seedBots(DB, store);
   seedAccounts(DB, store);
+  seedDiscordAccounts(DB, store);
   // What the preview costs: the COGS dashboard's made-up usage (dev-ui-cogs.mjs).
   seedCogs(DB);
   // The Topics page's map (dev-ui-topics.mjs).

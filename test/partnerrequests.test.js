@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { api } from '../src/api.js';
-import { requestPartnerLink } from '../src/agent/partnerrequest.js';
+import { evidenceItem, requestPartnerLink } from '../src/agent/partnerrequest.js';
 import { forgetFacts } from '../src/orgmerge.js';
 import {
   AGAIN_DAYS, conflictOf, customersOf, ENDED_P, forgetEvidence, GOING_ON_DAYS, LAPSED_DAYS,
@@ -466,6 +466,17 @@ describe('partner requests', () => {
     assert.match((await requestPartnerLink(e, t, null, {
       action: 'link', partner: 'studio', note: 'x', evidence: [{ ref: 'slack:E1:C1:1.1|nope', why: 'x' }],
     })).error, /no message nope/);
+    // A message link resolves by its channel and ids, as the agents' links do.
+    e.DB.sqlite.exec(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, author_key)
+      VALUES ('slack', 'E1', 'C1', '1761000000.000100', 'slack:E1:C1:1.3', '${AT}', 0, 1, 'slack:E1:U3')`);
+    const link = await evidenceItem(e, t, {
+      ref: 'https://acme.slack.com/archives/C1/p1761000000000100?thread_ts=1.3', why: 'Hank says so',
+    });
+    assert.deepEqual([link.thread, link.message], ['slack:E1:C1:1.3', '1761000000.000100']);
+    const elsewhere = await evidenceItem(e, t, {
+      ref: 'https://acme.slack.com/archives/C9/p1761000000000100', why: 'x',
+    });
+    assert.match(elsewhere.error, /no thread has/);
     const own = await quiet(() => requestPartnerLink(e, t, null, {
       action: 'link',
       partner: 'studio',

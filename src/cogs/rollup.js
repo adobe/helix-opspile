@@ -23,7 +23,8 @@ import { DIMENSIONS, DO_GB, isStock } from './prices.js';
  *   SQL binding (`ANALYTICS`): Durable Objects' requests and duration per object (an agent's is
  *   its thread's customer's; a team room's its team's; WebSocket connections hibernate, so a
  *   room's connections count as requests, not duration), the Worker's CPU time and log events,
- *   Artifacts operations per repository (a knowledge base's are its customer's or team's), and
+ *   Artifacts operations per repository (a knowledge base's are its customer's or team's, an end
+ *   user's those of the channel it was worked from, `owner_org` and `owner_team`), and
  *   what the buckets and indexes hold.
  * - `d1`: the day's messages and new threads per customer and team (`volume`), and, once a day,
  *   what is kept that only D1 knows: its own size, the agents' storage (`cogs_objects`), the
@@ -219,11 +220,16 @@ export async function accountRows(env, day, { hourly = false } = {}) {
           AND eventType != 'token_create'
         GROUP BY ${h.by}repo
         LIMIT ${LIMIT}`);
-      const { results: kbs } = await env.DB.prepare('SELECT repo, kind, slug FROM knowledge_bases').all();
+      const { results: kbs } = await env.DB.prepare(`SELECT repo, kind, slug, owner_org, owner_team
+        FROM knowledge_bases`).all();
       const bases = new Map((kbs || []).map((k) => [k.repo, k]));
       const owner = (kb) => {
         if (!kb) {
           return {};
+        }
+        if (kb.kind === 'person') {
+          // An end user's (src/individual.js) is no team: its channel's customer's and team's.
+          return { org: kb.owner_org || '', team: kb.owner_team || '' };
         }
         return kb.kind === 'org' ? { org: kb.slug } : { team: kb.slug };
       };

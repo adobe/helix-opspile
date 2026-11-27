@@ -168,6 +168,8 @@ dialog.confirm { max-width: calc(var(--spectrum-spacing-1000) * 5); }
 }
 .spectrum .sub { color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 .spectrum .hint { margin: var(--spectrum-spacing-200) 0 0; color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
+/* An individual channel says whose its threads are, under the channel's bar. */
+.spectrum #threads .hint.own { margin: 0; padding: 0 var(--spectrum-component-edge-to-text-100) var(--spectrum-spacing-200); }
 .spectrum .status { min-height: var(--spectrum-line-height-100); color: var(--spectrum-neutral-subdued-content-color-default); font-size: var(--spectrum-font-size-75); }
 .spectrum .status.err { color: var(--spectrum-negative-content-color-default); }
 .spectrum h2, .spectrum h3 { margin: 0; line-height: var(--spectrum-heading-line-height); font-weight: var(--spectrum-bold-font-weight); }

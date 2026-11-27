@@ -50,7 +50,8 @@ flushed. Until then the inbox has the thread unread, so the other pages reload o
 the read.
 
 **Thread grouping.** undecided → new topic, or folded by burst, reply, Clef, vector or skeleton → (a
-conversation's root folded by Clef that gets a person's reply in its own platform thread) splitting
+conversation's root folded by Clef that gets a person's reply in its own platform thread, or a burst
+member that somebody else answered in its own, as the root of its group before it) splitting
 → split (`threads.logical_*` and `split_from`, `src/rethread.js`). `skeleton_hash` is written
 before the work that can fail, and `rethreaded_at` after all of it. So a retry starts from the top, and hash without decision means
 the job died, which `sweepRethreads` picks up. A root skipped on purpose (a system notice) has no
@@ -65,8 +66,9 @@ reply's retry, a later reply, or re-threading (which `sweepRethreads` sends out 
 after `rethreaded_at`) finishes it; each step can be done again, a burst root that moved already is
 moved again, and `split_from` is cleared last. A fold as an addressed reply
 (`logical_via = 'reply'`: the root @-mentions somebody of the conversation, minutes after its latest
-message) is never split either, like a burst member's: the conversation went on in that platform
-thread, so the replies there are the group's. Routed is final the other way:
+message) is never split: the conversation went on in that platform thread, so the replies there are
+the group's. A burst member is split only as above (`apart` in `src/rethread.js`), by a reply to it
+or to the root before it, whichever comes second. Routed is final the other way:
 a folded root whose platform thread got one of its group's replies (the entry's latest, `target` in
 `src/post.js`) gets `routed_at`, set once (`routed_at IS NULL`) and before the post goes out, so the
 reply cannot arrive first and split it. It is never cleared, also not when the post fails: a root
@@ -257,7 +259,7 @@ or was slow) a `sync` writes, deletes and asks nothing and answers the rows as t
 verdict. What a look found before counts as found while the next one fails.
 
 A pair of partners of now (confirmed, or likely and not decided) is quiet ⇄ not (`quiet_since`,
-migration 0114, `quietOf`): every `sync` writes it, quiet once its last sign (its people's last post
+migration 0118, `quietOf`): every `sync` writes it, quiet once its last sign (its people's last post
 in the customer's threads, or `seen_at`, an agent's `active`) is `LAPSED_DAYS` old while the
 customer's threads went on `GOING_ON_DAYS` after; not quiet once its people post again, an agent
 records `active` (which clears it at once), or it is decided otherwise. Quiet is no end. Of a quiet
@@ -277,7 +279,7 @@ again), else a confirmation (`/confirm` `undo`: neither, its dates gone), else a
 **Partner request.** open → confirmed, ended or dismissed (the pair decided), declined (the pair
 left as it is) or withdrawn (`org_partner_requests`, migration 0112, src/partnerrequests.js), a
 thread of the admin team's inbox (`request:partner:<id>`) in either. One waits per pair and action
-(`link`, `end`, `review`: a partial unique index, migration 0114): asking again answers 409 with
+(`link`, `end`, `review`: a partial unique index, migration 0118): asking again answers 409 with
 the one that waits, and an agent's evidence (`org_partner_evidence`) is added to it instead
 (`askOrAdd`; a `review`'s to any of the pair's that waits), which announces it again. A `review`
 is settled by any decision on the pair. A
@@ -401,19 +403,37 @@ identity's refresh leaves them out of its upsert. Setting or clearing the name r
 name); their frontmatter keeps the name they were written with, which `accountAuthor` replaces in
 the thread view.
 
-**A host tenant's admin account.** a customer's (before migration 0097) → staff → linked ⇄
-unlinked (`identities.staff`, `person`, `linked_by`, `linked_at`; `src/lookup.js`,
-`src/accountlinks.js`). The Teams lookup says it is staff (`isHostAdmin`: a member, not a guest,
-of the host tenant, its user name `owner_…`) on every refresh; the migration said so of the ones
-seen before. Linking is the admin team's, in the account's thread of its inbox, and only of an
-account that is staff by itself and that no mail address links, to a staff person; the refresh
-keeps a link (`linked_at` set: `person` is not looked up by mail address) and only the admin team
-takes it back (all three NULL). A change of side or person rewrites `messages.person`, `staff` and, from
-the admin page, `author` of its messages, and `last_staff` and `last_author` of the threads they
-are in (`relabelAccount`); their frontmatter keeps what they were written with, which
-`accountAuthor` replaces in the thread view, until a replay writes them again: there its name is
-the one `toAuthor` gives the account now (its person's while linked, its own once unlinked), the
-messages written while it was linked too.
+**An account that is staff by itself.** a customer's (a host tenant's admin account, before
+migration 0097) → staff → linked ⇄ unlinked (`identities.staff`, `person`, `linked_by`,
+`linked_at`; `src/lookup.js`, `src/accountlinks.js`). Two kinds: a host tenant's admin account,
+which the Teams lookup says is staff (`isHostAdmin`: a member, not a guest, of the host tenant,
+its user name `owner_…`) on every refresh, as the migration said of the ones seen before; and a
+Discord account with one of the `DISCORD_STAFF_ROLES`, which the Discord lookup says on every
+refresh. Unlinked, it waits in the admin team's inbox (`unlinkedCount`): a Teams one always, a
+Discord one once it wrote a message. Linking is the admin team's, in the account's thread of its
+inbox, and only of an account that is staff by itself and that no mail address links (on
+Discord: that its person did not connect, `person` set with `linked_at` NULL, which stays
+theirs), to a staff person; on Discord the link is of the user's rows in every guild that are staff
+by themselves and nobody connected, or that the admin team linked. The refresh keeps a link
+(`linked_at` set: `person` is not looked up by mail address), whatever the role says later, and
+the person's disconnecting Discord leaves it (`disconnect` in `src/post.js` takes back only what
+connecting made); only the admin team takes it back (all three NULL), which it can as long as the
+link is there, staff or not. Nothing else links one: not a candidate the thread offers, not an
+agent's proposal (below), not a mail address or a merge key. A change of side or person rewrites
+`messages.person`, `staff` and, from the admin page, `author` of its messages, and `last_staff`
+and `last_author` of the threads they are in (`relabelAccount`); their frontmatter keeps what
+they were written with, which `accountAuthor` replaces in the thread view, until a replay writes
+them again: there its name is the one `toAuthor` gives the account now (its person's while
+linked, its own once unlinked), the messages written while it was linked too.
+
+**A proposal of whose a staff account is.** none → proposed → answered (deleted) | declined
+(`account_proposals`, migration 0116; `proposeAccountLink` in `src/accountlinks.js`). A thread
+agent's `request_account_link` files one, of an account that waits to be linked (above) and a
+staff person in D1, once per account and person, with a note in the account's thread
+(`request_log`); it links nothing. Linking the account, to whomever, deletes its open proposals
+(the decision is in the log). Declining one sets `declined_at` and `declined_by` and keeps the row:
+the same person is neither proposed for the account again nor suggested. A person's row deleted
+takes theirs with it. Unlinking the account later brings no proposal back.
 
 ## Drafts and replies
 
@@ -1059,6 +1079,60 @@ their request approved only if that member exists. Anything that stops it (off, 
 uniqueness conflict) leaves a pending request instead. Off stops new ones; members stay. A
 provider host's subject is one member per host (trigger `integration_member_host`), resolved by
 subject; a domain-caught member (`via` `domain:…`) is bound to its verified address.
+
+**Channel audience.** shared ⇄ individual (`channel_audiences` in the portal, portal migration
+0008, `src/portal/store.js`). No row is shared, as every channel was before, so the migration
+changes no channel; a row says who set it and when (`set_by`, `set_at`), and setting writes it
+again whatever it was. It is keyed by the channel's id, which an integration mapping reserves
+before its channel exists, so an approval that makes a new organization's channel individual
+writes the row in the batch that reserves the mapping, before it is enabled: its first thread is
+already its author's alone. Setting it tells the inbox with a `channel` event when the channel
+exists, and every event of an individual channel says so (`channel.audience`); one that does not
+is of a shared channel. Switching moves no thread and rewrites nothing: who is in a thread decides.
+
+**What the inbox heard of a channel's audience.** none (shared) → individual ⇄ shared
+(`channel_audiences` in the inbox, migration 0115, src/individual.js `recordAudience`). Written
+from the portal's events by their outbox number (`seq`): a `channel` event says it either way, a
+message's only that it is individual; an older number changes nothing, and a shared one is written
+only over a row there is, so the channels nobody set have none. The admin team's change writes it
+at once too, with the number of the event the portal answered. The thread agents read it every
+turn (their target, src/agent/agent.js), so a switch changes the next turn's knowledge base and
+what it may read; what an agent filed before stays where it was.
+
+The agent's "their threads" are those one of the end user's accounts wrote in: narrower than the
+portal's `thread_members`, which also has the threads Adobe added them to and the inbox never hears
+of, so a thread they were added to joins their agent's reach once they write in it.
+
+**An end user's knowledge base.** absent → made (`knowledge_bases`, kind `person`): by the first
+turn of a thread of an individual channel with a customer author, keyed by who they are
+(`personSlug`). An end user whose address their provider verifies only later starts a second one
+(the key moves from the account to the address); nothing merges the two yet. Its owner for the
+COGS rollup (`owner_org`, `owner_team`) is the channel's customer and team it was last worked from,
+written by the agent's turn when it changed. Its key is the address, so an address given to someone
+new after its owner left keys their knowledge base to the former owner's: the reads are kept apart
+(accounts are joined by an embedded account's merge key only while it was verified in the last 30
+days, `identities.merge_at`, as the portal joins them), the knowledge base is not; there is no
+identity more stable than the address to key it by.
+
+**Thread member.** absent → in (`thread_members` in the portal). A customer is in a thread from
+their first message in it (a trigger on `messages`, `INSERT OR IGNORE`), and the migration put
+everyone who wrote before in theirs, so a channel switched to individual later keeps each person
+their threads and those they took part in; Adobe adds one with `addToThread` (`added_by`), which
+writes a viewer-only `added` change for an integration member. Nothing takes a member out: a
+person revoked from the channel reads nothing anyway. In an individual channel every customer read
+asks it (`theirs`): the lists, a thread, its status, typing, files, reactions, replies, whom one
+mentions, the badge, the unread counts and the feed with its watermark; in a shared one nothing
+does. Staff and the app are never rows, and read everything.
+
+**Embedded account's merge key.** none → an address → another address (`users.verified_email` in
+the portal, portal migration 0009; `identities.merge_email` in the inbox, migration 0114). Written
+on an admitted call whose provider (or signed assertion) verified the address, when it differs
+from the one kept; a call without one keeps it, so a profile that stops saying it is not split
+off. The inbox takes it from the account's next message, and a reference that names none keeps
+the row's. The portal keeps when it was last presented (`verified_at`, written again at most
+daily), and joins two profiles in an individual channel only while both presented it in the last
+30 days. It is read for "is this one person" only (an individual channel's `people`, the
+inbox's `sameAccounts`), never for admission, a person of D1 or staff.
 
 **Managed channel and member.** Reserved → enabled ⇄ suspended (`integration_customers`).
 Reserve the channel ID, pre-file it by that ID in the inbox, then enable the tenant. The first

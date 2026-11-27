@@ -10,8 +10,9 @@
  * governing permissions and limitations under the License.
  */
 
+import { LIKELY } from '../orgpartners.js';
 import { askOrAdd, markActive } from '../partnerrequests.js';
-import { resolveAnyThread } from './history.js';
+import { linkedMessage } from './history.js';
 import { readable } from './watches.js';
 
 /**
@@ -57,13 +58,9 @@ export async function evidenceItem(env, t, item) {
   } else if (ref.includes('|') && !/^https?:/.test(ref)) {
     [thread, message] = [ref.slice(0, ref.indexOf('|')), ref.slice(ref.indexOf('|') + 1)];
   } else if (/^https?:/.test(ref)) {
-    const m = await env.DB.prepare('SELECT thread, id FROM messages WHERE permalink = ?').bind(ref).first();
-    if (m) {
-      [thread, message] = [m.thread, m.id];
-    } else {
-      const found = await resolveAnyThread(env, ref);
-      thread = found.key || null;
-    }
+    // By its channel and ids, as resolveAnyThread reads a link (by index: no scan of permalinks).
+    const m = await linkedMessage(env, ref);
+    [thread, message] = m ? [m.thread, m.message] : [null, null];
   } else {
     thread = ref;
   }
@@ -123,7 +120,7 @@ export async function requestPartnerLink(env, t, asker, args) {
   const by = asker && asker.email ? { email: asker.email, name: asker.name || null }
     : { agent: true, name: agentName(t) };
   if (args.action === 'active') {
-    const res = await markActive(env, by, { customer, partner }, evidence);
+    const res = await markActive(env, by, { customer, partner }, evidence, { likely: LIKELY });
     return res.error ? { error: res.error } : {
       active: {
         customer, partner, withdrawn: res.withdrawn, quiet: res.quiet, evidence: evidence.length,

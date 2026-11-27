@@ -118,7 +118,7 @@ describe('integration access requests', () => {
     assert.ok(entries.some((e) => e.thread === key && e.request.open));
     const thread = (await w.staff(w.admin, 'GET', `/api/thread?thread=${encodeURIComponent(key)}`)).body;
     const approve = thread.request.actions.find((a) => a.id === 'approve');
-    assert.deepEqual(approve.fields.map((f) => f.name), ['name', 'org', 'team', 'person', 'auto']);
+    assert.deepEqual(approve.fields.map((f) => f.name), ['name', 'org', 'team', 'person', 'auto', 'individual']);
     const done = await quiet(() => w.staff(w.admin, 'POST', '/api/requests/resolve', {
       key,
       action: 'approve',
@@ -169,7 +169,7 @@ describe('integration access requests', () => {
     assert.equal((await w.list({ host: 'desk' })).body.error.request, 'pending');
     const [r] = (await w.staff(w.admin, 'GET', '/api/admin/requests')).body.integration;
     assert.deepEqual(r.mapping, {
-      channel, name: 'agents-mill', customer: 'agents-mill', tenant: ORG, enabled: true, resumable: false, autoApprove: false, via: null, route: { team: 'agents', org: 'mill' },
+      channel, name: 'agents-mill', customer: 'agents-mill', tenant: ORG, enabled: true, resumable: false, autoApprove: false, audience: 'shared', via: null, route: { team: 'agents', org: 'mill' },
     });
     const thread = (await w.staff(w.admin, 'GET', '/api/thread?thread=request%3Aintegration%3A1')).body;
     const approve = thread.request.actions.find((a) => a.id === 'approve');

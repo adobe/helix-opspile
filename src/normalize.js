@@ -733,11 +733,17 @@ export function normalizePortal(key, event) {
   }
   const ch = e.channel || {};
   const channelHint = { name: ch.name, topic: ch.topic || null, company: ch.company || null };
+  // Who sees the channel's threads (portal migration 0008), by the event's number in the portal's
+  // outbox: a channel event either way (but the one a channel is made with, which says nothing),
+  // a message only of an individual channel. A shared channel's messages say nothing, so they
+  // write nothing: the channel event that made it shared again did (src/individual.js).
+  const audience = (e.type === 'channel' || ch.audience === 'individual') ? ch.audience || null : null;
+  const heard = audience ? { audience: { audience, seq: Number(e.seq) || 0 } } : {};
   if (e.type === 'channel') {
     return {
       op: 'channel',
       channel: {
-        source: 'portal', tenant, channelId: ch.id, name: ch.name, at: e.at,
+        source: 'portal', tenant, channelId: ch.id, name: ch.name, at: e.at, ...heard,
       },
     };
   }
@@ -753,6 +759,12 @@ export function normalizePortal(key, event) {
       name: a.name || null,
       email: a.email || null,
       avatar: portalAvatar(a),
+      // An embedded account's verified address: one person's accounts are one by it, and only
+      // that (src/lookup.js keeps it apart from `email`).
+      ...(!a.email && a.verifiedEmail ? {
+        mergeEmail: String(a.verifiedEmail).toLowerCase(),
+        ...(a.verifiedAt ? { mergeAt: String(a.verifiedAt) } : {}),
+      } : {}),
     };
   if (e.type === 'reaction') {
     const r = e.reaction || {};
@@ -793,6 +805,7 @@ export function normalizePortal(key, event) {
     version: String(Number(m.rev) || 0).padStart(9, '0'),
     authorRef,
     format: 'portal',
+    ...heard,
     text: m.text || '',
     files: files ? `Attachments:\n${files}` : undefined,
     // No link to it: the portal is its customers', and nobody of the inbox can open it there.

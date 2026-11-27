@@ -444,9 +444,11 @@ export async function askOrAdd(env, by, body, { thread = null, evidence = [] } =
  * the pair's last sign is now (`seen_at`, `seen_by`), so it is not quiet until it is quiet again
  * after that (src/orgpartners.js `quietOf`); Clef's open `end` of the pair is withdrawn, the
  * evidence added to it (else to the pair alone). Decides nothing of the admin team's: a pair the
- * admin team dismissed or ended stays so (`{ error }`). `{ ok, withdrawn: [ids], pair }`.
+ * admin team dismissed or ended stays so (`{ error }`). `likely` is src/orgpartners.js `LIKELY`,
+ * from where Clef's word counts as partners (passed in: that module imports this one).
+ * `{ ok, withdrawn: [ids], quiet }`.
  */
-export async function markActive(env, by, { customer, partner }, items) {
+export async function markActive(env, by, { customer, partner }, items, { likely }) {
   const c = clean(customer).toLowerCase();
   const p = clean(partner).toLowerCase();
   const known = await knownPair(env, c, p);
@@ -455,7 +457,7 @@ export async function markActive(env, by, { customer, partner }, items) {
   }
   const pair = await env.DB.prepare('SELECT * FROM org_partners WHERE customer = ? AND partner = ?')
     .bind(c, p).first();
-  if (!pair || (!pair.confirmed_at && !(pair.p >= 0.5))) {
+  if (!pair || (!pair.confirmed_at && !(pair.p >= likely))) {
     return { error: `the inbox does not count ${p} as a partner of ${c}: ask with link`, status: 409 };
   }
   if (pair.dismissed_at) {

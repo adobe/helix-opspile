@@ -73,8 +73,12 @@ export function d1({
         const results = prepared.all(...args).map((r) => ({ ...r }));
         return { results, success: true, meta: { changes: 0, rows_read: results.length } };
       }
-      const { changes } = prepared.run(...args);
-      return { results: [], success: true, meta: { changes: Number(changes) } };
+      const { changes, lastInsertRowid } = prepared.run(...args);
+      return {
+        results: [],
+        success: true,
+        meta: { changes: Number(changes), last_row_id: Number(lastInsertRowid) },
+      };
     },
   });
   return {

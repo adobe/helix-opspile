@@ -170,8 +170,9 @@ async function listBases(env, me) {
         t.name AS team_name, o.name AS org_name
       FROM knowledge_bases k LEFT JOIN teams t ON k.kind = 'team' AND t.slug = k.slug
       LEFT JOIN orgs o ON k.kind = 'org' AND o.slug = k.slug
-      -- A merged customer's is the one it was merged into now (src/orgmerge.js).
-      WHERE NOT (k.kind = 'org' AND k.slug IN (SELECT slug FROM org_merges))
+      -- A merged customer's is the one it was merged into now (src/orgmerge.js). An end user's
+      -- (kind person, src/individual.js) is no team's or customer's page.
+      WHERE k.kind IN ('team', 'org') AND NOT (k.kind = 'org' AND k.slug IN (SELECT slug FROM org_merges))
       ORDER BY CASE k.kind WHEN 'team' THEN 0 ELSE 1 END, k.slug`).all(),
   ]);
   return json({

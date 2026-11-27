@@ -354,7 +354,7 @@ async function threadsOf(env) {
       AND (m.person IS NOT NULL OR (m.author_kind = 'person' AND m.author_key IS NOT NULL))
     GROUP BY m.thread, 2`).bind(MIN_MESSAGES).all();
   const { results: accounts } = await env.DB.prepare(`SELECT source || ':' || tenant || ':' ||
-      user_id AS author, name, LOWER(email) AS mail FROM identities
+      user_id AS author, name, LOWER(COALESCE(email, merge_email)) AS mail FROM identities
     WHERE kind = 'person' AND person IS NULL`).all();
   const named = new Map((accounts || []).map((a) => [`a:${a.author}`, a.name]));
   // The accounts of one mail address (a customer's, as a guest and again from their own

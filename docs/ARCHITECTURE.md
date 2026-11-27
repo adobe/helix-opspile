@@ -101,7 +101,8 @@ channels/<org>/<team>/<source>-<channelId>/<rootId>/<messageId>.md
 ```
 
 Every channel belongs to one **org** (a customer, a partner or a vendor) and one **team** (the
-ops team that owns it). The mapping is a small rules engine over rows in D1: each rule matches the
+ops team that owns it). A customer portal channel may be **individual** (see "Individual
+channels" under "Customer portal"): each of its customers is their own, under the one org. The mapping is a small rules engine over rows in D1: each rule matches the
 channel id, the channel name, the Teams team name or a Slack Connect team id with a regular
 expression, and sets the team, the org or the kind (`channel`, `alert`, `ignore`); the lowest
 priority wins. Naming conventions (`aem-<customer>` exists on both platforms) are rules, and
@@ -379,7 +380,7 @@ pair's open requests as the routes do; an undo opens none again. Three ask:
   `end`, or `review` (a pair the inbox names looks wrong or uncertain: the admin team looks, and
   decides as it would a `link` or an `end`, or leaves it), always with evidence: threads and
   messages it may read (`readable`; a thread key, `<thread>|<message id>` or a message link), each
-  with why in its words (`org_partner_evidence`, migration 0114). Where a request of the pair waits
+  with why in its words (`org_partner_evidence`, migration 0118). Where a request of the pair waits
   (of the same action; for a `review`, any), the evidence is added to it instead, and the tool says
   so (`askOrAdd`). The request names the thread. Unlike a channel's move or a team's member, it
   needs no person to ask: nothing changes until the admin team decides. Its fourth action,
@@ -521,7 +522,9 @@ two. A minute after each labelling of a thread (the normalizer queues `{ link: t
   found, with its score, and not asked about again.
 
 The inbox shows them: a row's tag, "About ACME" on a partner's thread, "With Agency Co" on a
-customer's (`linked` on `GET /api/inbox`'s entries), and in the open thread a dropdown of its
+customer's (`linked` on `GET /api/inbox`'s entries; in the list by customer the partners are no
+tag but their logos, small on the customer's heading's, of those at work in the threads it shows),
+and in the open thread a dropdown of its
 header with both and the threads possibly about the same issue (`linked` and `related` on `GET
 /api/thread`), each with how sure the inbox is. A related thread the viewer may not see (`canSee`:
 not their teams', nor their personal view's) is named by its customer, team and channel only,
@@ -611,18 +614,42 @@ account up again keeps the say. Its messages stay a bot's: they are not counted 
 answer the customer, `last_staff`), and the agents fence them as every bot's
 (`untrusted` in `src/agent/deliver.js`, which trusts staff people only).
 
-**Adobe's admin accounts.** The Teams tenant that hosts the teams has admin accounts of its own
-(`owner_` and initials, "People", below), staff by themselves, but nothing in Graph says who uses
-one: their name is the initials. Each is a thread of the admin team's inbox too, with the bots
+**Adobe's accounts that say nothing of whose they are.** Some accounts are staff by themselves
+(`identities.staff`), but nothing their platform says tells who uses one:
+
+- the Teams tenant that hosts the teams has admin accounts of its own (`owner_` and initials,
+  "People", below): their name is the initials, their mail address the tenant's own;
+- a Discord account with one of the `DISCORD_STAFF_ROLES` that its person did not connect in the
+  inbox: Discord shares no mail address, so the inbox knows it only by its name (often initials),
+  `ask_teammate` finds nobody by it, and its work counts towards nobody's profile, expertise or
+  expert finder. Only one that wrote a message waits.
+
+Each is a thread of the admin team's inbox too, with the bots, under **Staff accounts**
 (`GET /api/admin/accounts`, `src/accountlinks.js`), and the admin team gives each the mail address
 of the Adobe person whose it is (`PUT /api/admin/accounts`): the account is linked to that person
 (`identities.person`, with `linked_by` and `linked_at`, migration 0097), and so shows with their
 name and picture, on their profile card, and counts as one of their accounts ("One account a
-person"). Its messages in D1 follow at once (`relabelAccount`: `messages.person`, `staff`,
+person"). A Discord account is one user in every guild the inbox reads: the link is of each of its
+rows that is staff by itself and that nobody connected, though only the rows that wrote are
+threads. Its messages in D1 follow at once (`relabelAccount`: `messages.person`, `staff`,
 `author`, and the threads' `last_staff` and `last_author`), and so do the ones written before in
 the thread view (`accountAuthor`). Only an account that is staff by itself and that no mail
-address links is linked, and only to a staff person, so no customer's account becomes Adobe's.
-Looking the account up again keeps the link; giving no address takes it back. The thread view
+address links (or, on Discord, that its person did not connect) is linked, and only to a staff
+person, so no customer's account becomes Adobe's. Looking the account up again keeps the link;
+its person disconnecting Discord does not take it back, and giving no address does.
+
+The thread says who it may be (`linkCandidates`): a staff person whose Contact in a knowledge base
+(`kb_concepts`, found by its file name or title, as the profile cards find people) lists one of the
+account's names among its `aliases`, who has its name, or whose name it is the initials of (`AB`,
+`a.b.`: every word's first letter, or the first and the last name's). A thread agent may propose
+one too (`request_account_link`, `account_proposals`, migration 0116), from what its thread or
+its sidebar says, on its own or for the person there: a note in the account's thread, by the
+agent, with the thread's link. Each is an action of the thread, a proposal first, which asks before
+it links; a suggestion or a proposal never links by itself, and nothing is inferred from a mail
+address or a merge key (`identities.merge_email`: it links no person of D1 and makes nobody
+staff). Linking answers the account's proposals; declining one (`POST
+/api/admin/accounts/decline`) keeps it, so neither an agent nor the suggestions name that person
+for the account again. The thread view
 names every account that is staff by itself (these, and a Discord account with a staff role) as
 `toAuthor` does now, whatever its frontmatter says: its person's name while it has one (linked
 here, or connected by them on Discord), else its own, so what it wrote while linked goes by the
@@ -631,7 +658,11 @@ account's name again once the link is taken back.
 **A customer's people with two accounts.** The customers' people are no person of D1, so the
 customers' overviews and the topic map count them by account. The accounts of one mail address
 are one person there (on Slack Connect, a guest account in Adobe's workspace and the one of their
-own workspace that takes over). Two accounts outside Adobe of different mail addresses, named the
+own workspace that takes over), and so are the embedded portal accounts of one address their
+identity provider verified (two IMS profiles of one end user: `identities.merge_email`, migration
+0114, [One person, several profiles](PORTAL-INTEGRATION.md#one-person-several-profiles)), which is
+a merge key only: it is not their `email`, links them to no person of D1 and makes nobody staff
+by its domain. Two accounts outside Adobe of different mail addresses, named the
 same (without accents, case or punctuation), of which both posted, may be one person too: a new
 job, the agency's address and the customer's, a second address. A name alone merges nobody, so
 each such pair is a thread of the admin team's inbox ("Requests as threads", below; kind
@@ -806,7 +837,7 @@ portal](#customer-portal).
 
 **Requests as threads.** What waits for the admin team is a thread of its inbox
 (`src/requestthreads.js`, `GET /api/requests`), not a page of the admin pages: a channel request,
-a membership request, a customer in the portal, a merge of customers, a bot or an admin account
+a membership request, a customer in the portal, a merge of customers, a bot or a staff account
 nobody said whose it is, two accounts of a customer's that may be one person, a conflict between the teams' technologies or their rules. Its key is
 `request:<kind>:<id>` (`src/requestkeys.js`: the row's id, a bot's or an account's identity key,
 a conflict's key), and the inbox lists it in the admin team's view only, with the team's own
@@ -1008,6 +1039,13 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   `> <author> wrote:` and its text.
 - **Thread marks:** a root that announces a thread (🧵, `:thread:`) stays on its own too, and
   out of a burst: nearly all of them are answered in their thread.
+- **Numbered items:** a root that starts with an item number of a series ("2/14 Forms: …",
+  "(3/3)", `numbersItem`) stays on its own too, out of a burst and not Clef's to fold: its author
+  posts a list of questions one by one, so that each is answered in its thread. The case that
+  showed it was an RFP's fourteen questions, posted in under three minutes: a burst made them one
+  entry, interleaving the fourteen platform threads, and the inbox's replies would have gone to the
+  last item's (src/post.js `target`). A date ("1/14/2027"), a ratio ("3/40", "50/50") or a time
+  ("24/7") is no item number. Of production's 296 burst members, only that series had one.
 - **Replies of its own (de-threading):** a conversation's root that people answer in its own
   platform thread holds a conversation of its own, however much it reads like a follow-up (a
   different customer raising a related problem by @-mentioning whoever was active last). One
@@ -1018,8 +1056,15 @@ earlier roots in the same channel, within 14 days, are found by vector search.
   with it, and the open inboxes reload the group (`split` in the room's `thread` event); until
   all of that is done, `split_from` names the group it left, so a retry finishes it. So the
   group's entry stops interleaving the two platform threads, and its replies go to its own
-  platform thread again (src/post.js `target`, the entry's latest). A burst member, an addressed
-  reply (`logical_via = 'reply'`, above) and alerts stay in their group.
+  platform thread again (src/post.js `target`, the entry's latest). An addressed reply
+  (`logical_via = 'reply'`, above) and alerts stay in their group, and so does a burst member,
+  unless somebody other than its author answered both it and the root of its group before it,
+  each in its own platform thread (`apart`): those were two requests, each answered where it
+  was asked (two feature requests a minute apart, a question and a second one). A reply to
+  either can be the one that shows it. Not after a greeting (its replies greet back) nor for a
+  root that only mentions (its replies answer the question it pinged for); the author adding to
+  their own root answers nothing. A replay does not make such a pair a burst again. Of
+  production's 296 burst members, 31 had replies of their own, and 11 of them were apart so.
 - **Replies the inbox routed:** a group's replies go to the platform thread it was last active
   in, which may be a folded root's. Once one does (a person's from the inbox, the app's, or a
   thread agent's), the group's conversation goes on there, where the channel sees it: that root
@@ -1091,7 +1136,24 @@ and one per team: a pile of markdown files with git history.
 ```
 kb-org-<slug>    what we know about this customer or vendor, across all teams
 kb-team-<slug>   product and process knowledge for this team, across all customers
+kb-person-<key>  what we know about one end user of an individual channel (below)
 ```
+
+**An end user's knowledge base.** In an individual portal channel (see "Individual channels" under
+"Customer portal") each customer is their own, so its thread agents do not learn into the org's
+knowledge base, which every other end user's thread would read: each end user has one of their
+own, `kb-person-p<24 hex>` (kind `person` in `knowledge_bases`, made by the first turn of their
+first thread, src/individual.js). Its key is a hash of who they are: the address their accounts
+are one person by (an embedded account's merge key, `identities.merge_email`, or a standalone
+portal account's mail address), so two IMS profiles of one person have one knowledge base, and
+without an address the account's identity key. An embedded account counts as theirs only while it
+verified the address in the last 30 days (`identities.merge_at`), as the portal counts it. The end user of a thread is its first customer
+author. It is laid out as a customer's (`LAYOUT`: Customer, Contact, Site, Project, …, no catalog
+type and no stack drawing), and indexed for the search under its own key (`person` in the
+concepts' vectors), which no team's or customer's search asks for. The team's knowledge base and
+its `systemprompt.md` are as in any channel; the org's is neither read nor written there, nor its
+`systemprompt.md` appended. Adobe's people read it as any knowledge base (`mayRead`); it is not
+listed on the Teams or Customers pages yet.
 
 The repositories follow the [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
 (OKF v0.2), the formalised [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
@@ -1102,7 +1164,8 @@ frontmatter with a required `type`, links between concepts, an `index.md` per di
 to them; `generated` says which agent wrote it and when, and `verified` will record staff
 review. Every change is a commit, so a bad memory is a `git revert`.
 
-[Thread agents](#thread-agents) are the writers. A thread's agent writes its team's and its
+[Thread agents](#thread-agents) are the writers (and in an individual channel, the end user's
+own, above). A thread's agent writes its team's and its
 customer's knowledge base, those of the teams its channel is shared with (`channel_teams`), and
 those of the teams that follow a technology its thread shows (`team_follows`, see "Following
 technologies"); every other team's it reads but cannot write (src/agent/repos.js, `accessibleRepos`). Code, not the agent, writes `index.md` and `log.md`
@@ -3027,7 +3090,8 @@ written by people outside its control.
 | `list_experts`, `list_topics`, `suggest_expert` | colleagues not in the thread yet who could help, with the similar threads they worked on and the topics those are in (`about`: what the thread is about, in the agent's words), the topic map's topics and who works each, and a suggestion to the team to pull one in (see "Expert finder"). It tells nobody: a person decides |
 | `channel_assignment`, `list_teams`, `request_channel_reassignment`, `request_team_membership` | where the channel is filed and why (every rule that matches it, in the order they are tried, the shares, Clef's pick and the open requests), the ops teams with their rules and members, and, only while it answers a sidebar message, a channel request for its author: move the channel to another team, or add it to that team's inbox (see "Channel requests"), which the admin team decides; or a membership request: add its author, or someone they name, to an ops team (see "Membership requests"), which an admin or that team's managers decide |
 | `request_partner_link` | asks the admin team, with evidence (threads and messages it may read, each with why), that a partner works for a customer (`link`, since when), no longer does (`end`, until when), or that it look at a pair that seems wrong or uncertain (`review`), from what its thread says or the person in its sidebar tells it, on its own or for them; or records that a quiet pair still works together (`active`: Clef's request to end it withdrawn, the pair not quiet until it is again; no decision). A request of the pair that waits takes the evidence instead of a second one, and the answer says so; the customer and the partner default to the thread's org, by its type (see "Partners"). The knowledge base's agent has it too, for the person in its conversation |
-| `ask_teammate` | a question to one colleague on the thread's teams, with its best guess at each of up to three questions, for a runbook, a reply or a fact; they answer it in their inbox, and the agent is told in an input of its own (see "Questions") |
+| `request_account_link` | proposes to the admin team that an account of its thread that is staff by itself and that nobody linked (a Discord account with a staff role, the Teams tenant's admin accounts) is a colleague's, by their mail address, from what its thread or the person in its sidebar says, or a colleague's knowledge-base Contact whose `aliases` name it; on its own or for them. It links nothing: the admin team confirms or declines it in the account's thread (see "Adobe's accounts that say nothing of whose they are") |
+| `ask_teammate` | a question to one colleague on the thread's teams (by mail address, or by a name the inbox knows them by: theirs, or an account's linked to them, as a Discord handle the admin team linked; an account of Adobe's nobody linked yet it says so of, and points to `request_account_link`), with its best guess at each of up to three questions, for a runbook, a reply or a fact; they answer it in their inbox, and the agent is told in an input of its own (see "Questions") |
 | `request_tool` | only while it answers a sidebar message: the tools and MCP servers its channel does not have that it could ask for, and a request for one, which anyone on the team grants to the thread for a day or denies, in the sidebar (see "Tool requests") |
 | `sidebar_followup` | tells the person who asked something in the sidebar (`message`, its `sb_…` id) what has happened since, from a later turn on the thread's messages (`addSidebarFollowup` in `src/sidebar.js`): a new answer of the agent's to them, under their question; refused while it answers a sidebar message, for a message it did not answer yet, over a week old, or followed up three times |
 | `find_member` | whether someone is in the agent's channel (on Teams, its Teams team), by name or mail address (`src/mention-match.js`), from the platform's list of members in `channel_members`, listed again when over an hour old; two accounts of one mail address are one match. With no complete list to go by (a failed listing, a Teams shared channel, over 2000 members) it says it cannot tell |
@@ -3894,7 +3958,10 @@ token) for what the Worker cannot see, about opspile's own resources only, by na
 - The Worker's CPU time and log events (`logs.workersLogs`): CPU from the invocations' own
   events (fetch, queue, scheduled), shared.
 - Artifacts operations per repository (`events.artifactsEventsByNamespaceAccount`, without token
-  minting): a knowledge base's are its customer's or team's (`knowledge_bases`), the mirrors shared.
+  minting): a knowledge base's are its customer's or team's (`knowledge_bases`), an end user's
+  (kind `person`) those of the channel's customer and owning team it was last worked from
+  (`owner_org`, `owner_team`, migration 0115; shared until an agent recorded them), the mirrors
+  shared.
 - What the buckets (`states.r2CombinedStorage`) and indexes (`states.vectorizeStorage`, times 768
   dimensions) hold, per day.
 
@@ -3982,14 +4049,17 @@ Authors are normalized to `{ kind: person | bot | system, org, staff }`.
 - On **Discord**, bots carry `author.bot`, webhooks `webhook_id`. Discord shares no email
   with bots, so a member is staff when they have one of the `DISCORD_STAFF_ROLES`
   (`identities.staff`), or when they connected the account in the inbox (OAuth `identify`),
-  which links it to their person: their posts move their watermark and count as theirs.
+  which links it to their person: their posts move their watermark and count as theirs. One
+  with a staff role that they did not connect the admin team links to them ("Adobe's accounts
+  that say nothing of whose they are", below).
 - On **Teams**, the support tenant invites everyone as a guest, staff included, so
   `userType` and `tenantId` do not distinguish staff from customers. The organization is
   derived from the person's **mail domain** instead. The one exception is the tenant's own
   admin accounts: members, not guests, whose user name begins `owner_` (`owner_` and the
   initials of the Adobe person who uses one, mailed at the tenant's own domain). They are
   staff by themselves (`isHostAdmin` in `src/lookup.js`, `identities.staff`), and the admin
-  team says whose each is ("Adobe's admin accounts", below), so it shows as that person. Bot posts carry `from.application`; a
+  team says whose each is ("Adobe's accounts that say nothing of whose they are", below), so
+  it shows as that person. Bot posts carry `from.application`; a
   bot (`applicationIdentityType: bot`) keeps its id as its identity, webhooks and connectors
   stay anonymous.
 
@@ -4013,7 +4083,8 @@ person's, the first by:
    channel, and the inbox can add a colleague of its own workspace to it (an account of another
    workspace it cannot);
 3. their own account before one the admin team linked to them (`identities.linked_at`: a host
-   tenant's admin account, which they use only to run the tenant), then a full member before a
+   tenant's admin account, which they use only to run the tenant, or a Discord account with a
+   staff role they never connected), then a full member before a
    guest (`identities.guest`, migration 0061: Slack's `is_restricted` or
    `is_ultra_restricted`, Graph's `userType`; NULL until the account is looked up again);
 4. the one that posted in the last 90 days, then the one with the most messages in the last 180,
@@ -4349,6 +4420,31 @@ edited and deleted. Reactions are emoji; Adobe's ✅ on a thread's first message
 the channel's threads every 15 seconds while it is on screen, and for the open thread's
 status every four (see [Listening and the next answer](#listening-and-the-next-answer)),
 which says when the thread changed: only then is it loaded again.
+
+**Individual channels.** A channel's customers see each other's threads: a company's people work
+together. Where each end user is their own customer (a product's users, of one organization or of
+none, who ask each for themselves), the admin team makes the channel **individual** (portal
+migration 0008, `channel_audiences`; [Individual channels](PORTAL-INTEGRATION.md#individual-channels)):
+each customer sees only the threads they are in (`thread_members`: they started it, wrote in it, or
+Adobe added them), and hears nothing of another's, neither its title nor that it is there. Every
+customer read of the portal asks it (`theirs` in `src/portal/store.js`): a channel's list, a thread,
+its status and who writes in it, its files, reactions and replies, whom one can mention, and the
+integration's list, thread, badge, unread counts and feed with its watermark
+(`src/portal/integration-read.js`). It is the channel's, not its org's: who sees what is the
+portal's to enforce, which never reads the inbox's orgs, and a channel filed under Adobe's own,
+internal org may be individual without that org becoming anything else (see "Partners" and
+"Vendors" for what an org's type is). One org holds the whole channel, as any: nobody is an org of
+their own. Adobe's side is as in any channel: its teams see, label, search and work every thread
+in their inbox. The events of an individual channel say so (`channel.audience`), and setting it
+sends a `channel` event, which says it either way; the inbox keeps the latest by the event's number
+(`channel_audiences`, migration 0115) for the channel's **thread agents**, which work each end
+user's thread apart from the others' (src/individual.js): they learn into that person's own
+knowledge base, `kb-person` (see "An end user's knowledge base"), and not the org's; they read only
+that person's threads of the channel (`list_channel_threads`, `read_thread`, `raw_message`, the
+watches and the related threads, which find no other end user's) and no other channel
+(`org_threads` and `any_thread` are off); and they are told to file in the team's knowledge base,
+which every end user's agent reads, only what is true for everyone, and never to name another end
+user or thread. The team's knowledge base, its instructions and its tools are as in any channel.
 
 **Writing** there is **rich text** (`ui/richtext.js`): what is bold is bold in the box, a list
 is a list, and nobody types markdown's marks, though a line that starts with `- `, `1. `, `> `

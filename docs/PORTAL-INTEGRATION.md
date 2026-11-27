@@ -1,8 +1,9 @@
 # Embed Enterprise Support in another host (v1)
 
 A signed-in member of a registered host can start and follow support conversations inside that
-host. The audience is **all approved members of this host's customer and its support staff**.
-Show that audience before accepting a message. Only send the title, optional public topic and
+host. The audience is **all approved members of this host's customer and its support staff**, or,
+in an [individual channel](#individual-channels), **the member, whoever support adds, and its
+support staff** (`audience` on `GET /threads`). Show that audience before accepting a message. Only send the title, optional public topic and
 customer-written body. Don't send private diagnostics, session links, prompts or staff notes.
 
 The host renders its own list, conversation and composer. Its browser calls its **own backend**;
@@ -353,6 +354,83 @@ INSERT INTO integration_catches(host, channel, kind, value, added_by, added_at)
   VALUES (:host, :channel, 'domain', :lowercase_domain, :admin_email, unixepoch());
 ```
 
+## Individual channels
+
+A channel is **shared** by default: every member sees every thread. A product whose every end user
+is their own customer (people of one organization who don't work together on what they ask, a
+consumer product, an organization's people using a tool each for themselves) makes it
+**individual**: each member sees only the threads they started, wrote in, or were added to by
+support, and hears of no other member's. Support sees every thread of the channel in the inbox,
+as in any channel.
+
+What it changes, for a member of an individual channel:
+
+- `GET /threads`, `GET /threads/{root}`, `PUT /threads/{root}/read`, `POST /threads/{root}/replies`:
+  only their threads; another's is `404 not_found`, as a foreign object is.
+- `unread`, `unreadThreads` and `GET /changes` count and list only their threads, and the feed's
+  watermark moves only with them: a colleague's thread changes no cursor, page or count of theirs.
+- `POST /threads` starts a thread that is theirs; nobody else of the channel sees it.
+- `GET /threads` says `audience: "individual"` (otherwise `"shared"`), for the host to show.
+- Only a member starts a thread: support answers in theirs, and a thread support would start
+  there (from the inbox, or the app) is refused with `409`, since no member would see it.
+- Support may add a member of the same channel to a thread (`addToThread` of the portal's
+  platform binding); they then see it, and their feed says `added` (theirs only).
+
+Support's side: the thread agent of an individual channel learns about each end user into a
+knowledge base of their own, not the organization's, and reads only that person's threads
+(docs/ARCHITECTURE.md, "An end user's knowledge base").
+
+The standalone portal's channels can be individual too: each person sees their threads only (the
+list, a thread, its status and who writes there, its files, reactions, replies, and whom they can
+mention). Its lobby (who is in it, invitations, its logo) stays the company's.
+
+The admin team sets it in the inbox, on the channel's thread (*Integration channels*, *Set
+audience*), on an [access request](#access-requests) that makes a new organization's channel
+(*Individual customers*), or with `PUT /api/admin/portal/integration/audience` (README). A new
+channel is individual from before its first message. Switching an existing channel moves no
+thread and rewrites nothing: each thread stays its writers', so after switching to individual a
+member keeps the threads they started or wrote in, and loses the others'; switching back shows
+every thread to every member again. The host's next list says the new `audience`; a host showing
+the audience refreshes it from there.
+
+An operator can set the same with SQL (bound parameters; no row is shared):
+
+```sql
+INSERT INTO channel_audiences(channel, audience, set_by, set_at)
+  VALUES (:channel, 'individual', :admin_email, unixepoch())
+  ON CONFLICT (channel) DO UPDATE SET audience = excluded.audience, set_by = excluded.set_by,
+    set_at = excluded.set_at;
+INSERT OR IGNORE INTO thread_members(root, user, added_by, at)  -- add a member to a thread
+  VALUES (:root, :actor, :admin_email, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+```
+
+### One person, several profiles
+
+An IMS user often has several profiles (an Enterprise ID of their employer, a personal Adobe ID),
+each with its own user ID and so its own subject and member. When the provider (or a host's signed
+assertion, `email` with `email_verified: true`) verifies the same address for two of them, they are
+one person:
+
+- The portal keeps the address on each member's account as a **merge key** (`users.verified_email`,
+  portal migration 0009), written on an admitted call that presents it verified, and kept until
+  another is. It is never the account's mail address: nothing signs in with it, it enrolls and
+  admits nobody (enrollment, and the alias binding of a domain-caught member, are as before), and
+  an unverified address is never kept.
+- In an individual channel, a member reads the threads of every active member of the same channel
+  with the same merge key: their threads from either profile. Never across channels or hosts, and
+  only while both profiles verified the address in the last 30 days (`users.verified_at`): an
+  address given to someone new after its owner left stops joining them to the former owner's
+  profile. Revoke a member who leaves (`integration_members.active = 0`) to end it at once.
+- The inbox hears it with each message (`author.verifiedEmail`, only for an account without a mail
+  address, and `author.verifiedAt`, when it was last verified) and keeps it apart from the account's mail address (`identities.merge_email`): the
+  accounts of one address are one person in the customers' overviews and the topic map, and the
+  admin team is not asked whether they are ("one person?"). It never links them to a person of the
+  inbox nor makes them staff, whatever its domain: an embedded account is the customer's side.
+
+A channel's audience is not its organization's type: a channel filed under an internal
+organization, whose end users are each their own customer, is individual, and its organization
+stays internal in the inbox.
+
 ## HTTPS/JSON contract
 
 All paths below are relative to `/integrations/portal/v1`. Write bodies accept only the fields
@@ -361,11 +439,11 @@ listed. Strings are text, not HTML. Render public message bodies as text or sani
 | Request | Scope | Response |
 | --- | --- | --- |
 | `POST /threads` `{title,body,topic?}` | `threads:create` | `201 {threadId,channelId,channelName,requestId}`, `Location` for the thread. An enrollment with no channel gets one. |
-| `GET /threads` | `threads:read` | `{items:[{id,title,lastActivity,resolved,unread}],next,unreadThreads,changeCursor}`. Before the first thread: empty list, zero unread and a usable cursor. |
+| `GET /threads` | `threads:read` | `{items:[{id,title,lastActivity,resolved,unread}],next,unreadThreads,changeCursor,audience}`. Before the first thread: empty list, zero unread and a usable cursor. `audience`: `shared` or `individual` ([Individual channels](#individual-channels)). |
 | `GET /threads/{root}` | `threads:read` | `{id,title,resolved,messages:[{id,at,kind,name,body,rev,deleted}],next}`. No implicit read acknowledgement. |
-| `POST /threads/{root}/replies` `{body}` | `threads:reply` | `201 {id,threadId}`. Only a root of the caller's channel is a valid target. |
+| `POST /threads/{root}/replies` `{body}` | `threads:reply` | `201 {id,threadId}`. Only a root of the caller's channel is a valid target, and in an individual channel one of the caller's threads. |
 | `PUT /threads/{root}/read` `{through}` | `threads:read` | `{unreadThreads}`. Acknowledge up to that displayed message ID, never a later reply. |
-| `GET /changes?after={cursor}` | `changes:read` | `{events:[{id,type:"thread.updated",threadId,reason}],next,hasMore,unreadThreads}`. Reasons: `created`, `reply`, `edited`, `deleted`, `resolution`, `read`. Read changes are viewer-only. |
+| `GET /changes?after={cursor}` | `changes:read` | `{events:[{id,type:"thread.updated",threadId,reason}],next,hasMore,unreadThreads}`. Reasons: `created`, `reply`, `edited`, `deleted`, `resolution`, `read`, `added`. Read and added changes are viewer-only; refetch the thread on a reason you don't know. |
 
 - Title: one nonblank line, at most 120 characters; body: nonblank, at most 2,000 (UTF-16 code
   units). A host can register public topic keys (`integration_hosts.topics`, a JSON array); no
