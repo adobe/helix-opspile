@@ -1721,11 +1721,14 @@ function partnersIn(ts) {
   }
   return [...by.values()];
 }
-/** The partners' logos, small on a customer's lower corner: two at most, the rest in its title. */
-function partnerMarks(partners) {
+/**
+ * The partners' logos, small on a customer's lower corner: two at most, the rest in its title.
+ * `where`: the threads they post in, a heading's or a row's.
+ */
+function partnerMarks(partners, where = 'these threads') {
   if (!partners.length) return '';
   const name = (o) => o.name || o.slug;
-  const say = `With ${partners.map(name).join(', ')}: ${partners.length === 1 ? 'the partner\'s' : 'partners\''} people post in these threads`;
+  const say = `With ${partners.map(name).join(', ')}: ${partners.length === 1 ? 'the partner\'s' : 'partners\''} people post in ${where}`;
   const marks = partners.slice(0, 2).map((o) => `<span class="pm">${favImg(o.icon, { fallback: tile(name(o)) }) || tile(name(o))}</span>`).join('');
   return `<span class="pms" role="img" aria-label="${esc(say)}" title="${esc(say)}">${marks}</span>`;
 }
@@ -2197,17 +2200,28 @@ function linkedLabel(linked, { partners = true } = {}) {
   return null;
 }
 /**
- * A row's tag of what its thread is linked with: "About Acme", "With Agency". Under a customer's
- * heading the partners are not named: their logos are on the heading's (`partnersIn`).
+ * A row's tag of what its thread is linked with: "About Acme", "With Agency". Where the row or
+ * its heading shows the customer's logo the partners are not named: their logos are on it
+ * (`partnersIn`, `custIcon`).
  */
 const linkedTag = (t, { partners = true } = {}) => {
   const l = linkedLabel(t.linked, { partners });
   return l ? `<span class="lkd" title="${esc(l.title)}">${esc(l.label)}</span>` : '';
 };
 
+/**
+ * A row's customer's icon, with the logos of the partners whose people post in its thread on
+ * its corner (partnerMarks); without them, its favicon alone, or nothing where it has none.
+ */
+function custIcon(t) {
+  const partners = partnersIn([t]);
+  if (!partners.length) return favImg(orgIcon(t));
+  const own = tile(orgName(t) || '?');
+  return `<span class="logo cl">${favImg(orgIcon(t), { fallback: own }) || own}${partnerMarks(partners, 'this thread')}</span>`;
+}
 /** A row's customer, which shows its card (by keyboard too); a click opens the thread. */
 const custChip = (t, inner) => (cardOrg(t.org)
-  ? `<span class="cust" data-org="${esc(t.org)}" role="button" tabindex="0" aria-label="${esc(orgName(t))}">${inner}</span>`
+  ? `<span class="cust" data-org="${esc(t.org)}" role="button" tabindex="0" aria-label="${esc([orgName(t), ...partnersIn([t]).map((o) => `with ${o.name || o.slug}`)].join(', '))}">${inner}</span>`
   : `<span class="cust">${inner}</span>`);
 /**
  * A thread's row: unread rows are white and read ones tinted. The customer is left out when
@@ -2237,12 +2251,12 @@ function row(t, hit = null) {
   // latest message is its title) or a search result (it shows the message that matched).
   const p = replies && !hit ? preview(t) : null;
   const said = p?.text ? `<span class="snip" title="${esc(`${p.who}: ${p.text}`)}">${p.who ? `${esc(p.who.split(' ')[0])}: ` : ''}${emojify(p.text)}</span>` : '';
-  const cust = oneCustomer() ? '' : custChip(t, `${favImg(orgIcon(t))}${esc(orgName(t))}`);
+  const cust = oneCustomer() ? '' : custChip(t, `${custIcon(t)}${esc(orgName(t))}`);
   return `${rowOpen(t, hit, oneCustomer() ? ' nocust' : '')}
     <div class="l1">${statusMark(t, status)}
       <span class="title">${titleHtml(t, hit)}</span>
       <span class="when" title="${esc(activityOf(t))}">${ago(activityOf(t))}</span></div>
-    <div class="l2">${cust}${linkedTag(t)}
+    <div class="l2">${cust}${linkedTag(t, { partners: !cust })}
       <span class="faces">${faces}</span>
       ${count || mentions ? `<span class="replies${replies && n <= 1 ? ' re' : ''}">${count}${mentions}</span>` : ''}${said}
       <span class="tags">${sideMark(t)}${moods(t)}</span>
