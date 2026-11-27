@@ -11,6 +11,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   before, beforeEach, describe, it,
 } from 'node:test';
@@ -324,6 +325,75 @@ describe('personal view', () => {
     await advanceWatermark(DB, 1, 'asked', at(5), 'open');
     assert.deepEqual(await count(), { asked: [false, 0] });
     assert.deepEqual(await waiting(), []);
+  });
+
+  it('counts a bot\'s reply for me only when it answers me, not someone else in my thread', async () => {
+    const DB = fresh();
+    const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
+    // I asked the admins' bot long ago, and it answered me; I read the thread up to there.
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', person: 1, at: at(1),
+    });
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(2), author: 'bot',
+    });
+    await advanceWatermark(DB, 1, 'asked', at(2), 'open');
+    // Someone else asks it now, and I read what they asked before its answer came in.
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(3),
+    });
+    await advanceWatermark(DB, 1, 'asked', at(3), 'open');
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(4), author: 'bot',
+    });
+    // Its answer is theirs: the thread stays read for me, on the row and in the header.
+    const count = async () => Object.fromEntries((await inbox({ DB }, me, null, { personal: true }))
+      .threads.map((t) => [t.thread, [t.unread, t.unreadForYou]]));
+    const waiting = async () => (await waitingFor({ DB }, { id: 1, email: 'a@adobe.com' }, new Date('2026-10-22T00:00:00Z'))).threads
+      .map((t) => [t.thread, t.n]);
+    assert.deepEqual(await count(), { asked: [false, 0] });
+    assert.deepEqual(await waiting(), []);
+    // I ask again: the bot's next answer is mine to read, also after a system notice.
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', person: 1, at: at(5),
+    });
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(6), author: 'system',
+    });
+    await say(DB, {
+      thread: 'asked', channelId: 'C1', team: 'helix', at: at(7), author: 'bot',
+    });
+    assert.deepEqual(await count(), { asked: [true, 1] });
+    assert.deepEqual(await waiting(), [['asked', 1]]);
+  });
+
+  it('reads what was read before bots\' replies counted up to the replies after it (0121)', async () => {
+    const DB = fresh();
+    const at = (m) => `2026-10-21T10:${String(m).padStart(2, '0')}:00Z`;
+    // The old inbox read 'old' up to my question, people's last; the bot answered after it.
+    await say(DB, {
+      thread: 'old', channelId: 'C1', team: 'helix', person: 1, at: at(1),
+    });
+    await say(DB, {
+      thread: 'old', channelId: 'C1', team: 'helix', at: at(2), author: 'bot',
+    });
+    // In 'behind', someone else's message after my read is unread whatever the bots say.
+    await say(DB, {
+      thread: 'behind', channelId: 'C1', team: 'helix', person: 1, at: at(3),
+    });
+    await say(DB, {
+      thread: 'behind', channelId: 'C1', team: 'helix', at: at(4),
+    });
+    await say(DB, {
+      thread: 'behind', channelId: 'C1', team: 'helix', at: at(5), author: 'bot',
+    });
+    const count = async () => Object.fromEntries((await inbox({ DB }, me, null, { personal: true }))
+      .threads.map((t) => [t.thread, [t.unread, t.unreadForYou]]));
+    assert.deepEqual(await count(), { old: [true, 1], behind: [true, 1] });
+    DB.sqlite.exec(readFileSync(new URL('../migrations/0121_read_past_bot_replies.sql', import.meta.url), 'utf8'));
+    assert.deepEqual(await count(), { old: [false, 0], behind: [true, 1] });
+    const marks = DB.sqlite.prepare('SELECT thread, read_at FROM watermarks WHERE person = 1 ORDER BY thread').all();
+    assert.deepEqual(marks.map((w) => [w.thread, w.read_at]), [['behind', at(3)], ['old', at(2)]]);
   });
 
   it('counts a reply for the header in a group whose member I posted in and read', async () => {
