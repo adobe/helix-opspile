@@ -473,6 +473,16 @@ describe('partner requests', () => {
       ref: 'https://acme.slack.com/archives/C1/p1761000000000100?thread_ts=1.3', why: 'Hank says so',
     });
     assert.deepEqual([link.thread, link.message], ['slack:E1:C1:1.3', '1761000000.000100']);
+    // A reply's link whose root the inbox has too: the reply, not its root.
+    e.DB.sqlite.exec(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, staff, counted, author_key)
+      VALUES ('slack', 'E1', 'C1', '1761000000.000050', 'slack:E1:C1:1.3', '${AT}', 0, 1, 'slack:E1:U3')`);
+    const reply = await evidenceItem(e, t, {
+      ref: 'https://acme.slack.com/archives/C1/p1761000000000100?thread_ts=1761000000.000050', why: 'Hank replies',
+    });
+    assert.deepEqual([reply.thread, reply.message], ['slack:E1:C1:1.3', '1761000000.000100']);
+    // A link to the root alone is the root.
+    const root = await evidenceItem(e, t, { ref: 'https://acme.slack.com/archives/C1/p1761000000000050', why: 'x' });
+    assert.equal(root.message, '1761000000.000050');
     const elsewhere = await evidenceItem(e, t, {
       ref: 'https://acme.slack.com/archives/C9/p1761000000000100', why: 'x',
     });

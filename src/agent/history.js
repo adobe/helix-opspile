@@ -244,7 +244,7 @@ export async function resolveThread(env, key, ref) {
 /**
  * The message a parsed link (`parseLink`) names, `{ thread, id }` (`id` the message's, or null
  * where only its thread was found), or null: by its channel (Discord: its server) and ids, by
- * index, as `linkedThread` finds its thread.
+ * index, as `linkedThread` finds its thread; the linked message first, then its thread's root.
  */
 async function linkedRow(env, link) {
   let scope;
@@ -261,7 +261,10 @@ async function linkedRow(env, link) {
       bind: [place.source, place.tenant, link.channel],
     };
   }
-  for (const id of link.ids) {
+  // The linked message first (a reply's link names its root too), then the roots.
+  const ids = link.message
+    ? [link.message, ...link.ids.filter((x) => x !== link.message)] : link.ids;
+  for (const id of ids) {
     // eslint-disable-next-line no-await-in-loop
     const m = await env.DB.prepare(`SELECT thread, id FROM messages WHERE ${scope.sql} AND id = ?`)
       .bind(...scope.bind, id).first();
