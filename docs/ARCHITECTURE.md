@@ -1347,7 +1347,10 @@ only the order within a row may reduce; flows within a row run left to right, th
 bottom; the corridors are as wide as each other unless one needs more, so edges are as far from
 their nodes everywhere, at the cost of some being longer than they need. The renderer takes any
 FMC block diagram as DOT (`fmc` on the nodes and clusters); `npm run ui:dev` shows the
-guidelines' figures drawn by it at `/__dev/fmc`.
+guidelines' figures drawn by it at `/__dev/fmc`, and Helix 6's architecture
+(`scripts/fmc-helix6.dot`, written from the OmniGraffle canvas of adobe/helix-home's
+docs/architecture.md). A cluster's `class` of `fmc-zone-<edge|pipe|author|dev|oversight>` tints
+an architecture's zones, faintly, as that drawing does.
 
 **Editor.** A team's page in **Teams** and a customer's in **Customers** (`/inbox/admin`,
 ui/admin.js) have their agent's sections (ui/agent.js) after their own: **Thread agents**,

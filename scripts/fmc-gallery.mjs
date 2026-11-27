@@ -18,6 +18,7 @@
  * but what the figures show, written again as DOT.
  */
 
+import { readFileSync } from 'node:fs';
 import { parseStack, stackFile, stackView } from '../src/stack.js';
 import { ACME_STACK } from './dev-ui-kb.mjs';
 
@@ -359,6 +360,19 @@ export const FIGURES = [{
 }`],
 }].map((f) => ({ ...f, gif: FIG(f.n) }));
 
+/**
+ * Architecture drawings drawn by hand in FMC, each as it is published and written again as DOT:
+ * Helix 6 from adobe/helix-home (docs/architecture.md, its OmniGraffle file's "Helix 6 Stack
+ * (AWS)" canvas), its structure read out of the .graffle (shapes, nesting, lines and channels).
+ */
+export const ARCHITECTURES = [{
+  id: 'helix6',
+  title: 'Helix 6 Stack (AWS), from adobe/helix-home',
+  href: 'https://github.com/adobe/helix-home/blob/main/docs/architecture.md',
+  img: 'https://raw.githubusercontent.com/adobe/helix-home/main/docs/Helix%20Architecture/Helix%206%20Stack%20(AWS).png',
+  dot: readFileSync(new URL('./fmc-helix6.dot', import.meta.url), 'utf8'),
+}];
+
 /** The stack drawings of the fake data: ACME's, one written before Kind, and what Clef saw. */
 export function stacks() {
   const legacy = {
@@ -406,10 +420,15 @@ export function galleryPage(page, scripts) {
 <div class="pair"><figure><img src="${esc(f.gif)}" alt="Figure ${f.n} of the FMC visualization guidelines"><figcaption>The original; the ${esc(f.good === 'both' ? 'whole figure is the good example' : `${f.good} one is the good one`)}</figcaption></figure>
 <figure><div class="draws">${f.dots.map((d, i) => `<div class="draw" data-dot="${f.n}:${i}"></div>`).join('')}</div><figcaption class="ms"></figcaption></figure></div>
 ${f.note ? `<p class="note">${esc(f.note)}</p>` : ''}<details><summary>DOT</summary>${f.dots.map((d) => `<pre>${esc(d)}</pre>`).join('')}</details></section>`).join('\n');
+  const archHtml = ARCHITECTURES.map((a) => `<section class="fig arch" id="${esc(a.id)}"><h2>${esc(a.title)}</h2>
+<figure><img src="${esc(a.img)}" alt="${esc(a.title)}, as published"><figcaption>As <a href="${esc(a.href)}">published</a>, drawn in OmniGraffle</figcaption></figure>
+<figure><div class="draws"><div class="draw" data-dot="arch:${esc(a.id)}"></div></div><figcaption class="ms"></figcaption></figure>
+<details><summary>DOT</summary><pre>${esc(a.dot)}</pre></details></section>`).join('\n');
   const views = stacks();
   const stackHtml = views.map((s, i) => `<section class="fig"><h2>${esc(s.title)}</h2><div class="stk-draw"><div class="draw" data-stack="${i}"></div></div><p class="ms"></p><details><summary>DOT</summary><pre data-stack-dot="${i}"></pre></details></section>`).join('\n');
   const data = JSON.stringify({
-    dots: Object.fromEntries(FIGURES.flatMap((f) => f.dots.map((d, i) => [`${f.n}:${i}`, d]))),
+    dots: Object.fromEntries([...FIGURES.flatMap((f) => f.dots.map((d, i) => [`${f.n}:${i}`, d])),
+      ...ARCHITECTURES.map((a) => [`arch:${a.id}`, a.dot])]),
     stacks: views,
   }).replace(/</g, '\\u003c');
   const html = `<!doctype html>
@@ -435,6 +454,8 @@ main.gallery { display: block; max-width: 1400px; margin: 0px auto; padding: var
 .gallery .draws { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-400); align-items: flex-start; }
 .gallery pre { font-size: var(--spectrum-font-size-75); overflow: auto; }
 .gallery .fmc { margin: 0px; }
+.gallery .arch figure { margin-bottom: var(--spectrum-spacing-300); }
+.gallery .arch img { max-width: 900px; }
 </style>
 </head>
 <body>
@@ -442,6 +463,8 @@ main.gallery { display: block; max-width: 1400px; margin: 0px auto; padding: var
 <h1>FMC block diagrams, drawn by src/fmc.js</h1>
 <p>Left, each figure of the <a href="https://www.fmc-modeling.org/visualization_guidelines">FMC visualization guidelines</a> as it is there; right, the same structure written as DOT, laid out by Graphviz (<code>@viz-js/viz</code>) and drawn by the inbox's renderer. Below, the stack drawings of the fake data. Hover a part to light its flows.</p>
 ${figures}
+<h1>Architectures</h1>
+${archHtml}
 <h1>Stack drawings</h1>
 ${stackHtml}
 </main>
@@ -454,8 +477,9 @@ for (const el of document.querySelectorAll('[data-dot]')) {
     el.innerHTML = r.svg;
     // As large as the originals are, about.
     const svg = el.querySelector('svg');
-    svg.setAttribute('width', String(r.width * 1.35));
-    svg.setAttribute('height', String(r.height * 1.35));
+    const k = el.dataset.dot.startsWith('arch:') ? 1 : 1.35;
+    svg.setAttribute('width', String(r.width * k));
+    svg.setAttribute('height', String(r.height * k));
     const ms = el.closest('figure').querySelector('.ms');
     ms.textContent = (ms.textContent ? ms.textContent + ', ' : 'Drawn in ') + r.ms.toFixed(1) + ' ms';
   } catch (e) { el.textContent = String(e.message || e); }
