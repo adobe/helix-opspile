@@ -27,6 +27,9 @@ let state;
 let page;
 let clock;
 let posted;
+let respond;
+let retries;
+let focused;
 
 /** An inbox entry as the server sends it: unread, up to `at`. */
 const entry = (thread, at, more = {}) => ({
@@ -47,22 +50,32 @@ const entry = (thread, at, more = {}) => ({
 beforeEach(() => {
   clock = 1_000_000;
   posted = [];
+  respond = () => ({ ok: true });
+  retries = [];
+  focused = true;
   state = {
     me: { id: ME }, sockets: [], team: 'ops', as: null, data: { me: {}, threads: [] },
   };
-  const a = js.indexOf('function markRead(t');
+  const a = js.indexOf('const memberLast =');
   const b = js.indexOf('// Live updates reload the inbox', a);
   assert.ok(a >= 0 && b > a);
-  const memberLast = (m, kind) => (kind === 'alert' ? m.any_at : m.last_at) || m.any_at;
   // eslint-disable-next-line no-new-func
-  page = new Function('state', 'memberLast', 'personal', 'fetch', 'lastOf', 'render', 'Date', `${js.slice(a, b)}\nreturn { markRead, keepReads };`)(
+  page = new Function('state', 'personal', 'fetch', 'lastOf', 'render', 'Date', 'transient', 'setTimeout', 'document', 'hidden', 'nearBottom', 'searchEntry', `${js.slice(a, b)}\nreturn { markRead, keepReads, readPane };`)(
     state,
-    memberLast,
     () => true,
-    (url, init) => posted.push(JSON.parse(init.body)),
+    async (url, init) => {
+      posted.push(JSON.parse(init.body));
+      return respond();
+    },
     () => true,
     () => {},
     { now: () => clock },
+    (e) => e instanceof TypeError || e.status >= 500,
+    (fn) => retries.push(fn),
+    { hasFocus: () => focused },
+    () => !focused,
+    (scroller) => scroller.atEnd,
+    (key) => state.data.threads.find((t) => t.thread === key),
   );
 });
 
@@ -80,6 +93,54 @@ describe('reads in flight', () => {
     assert.equal(again.unseen, false);
     assert.equal(again.attention, null);
     assert.deepEqual(again.readers, [ME]);
+  });
+
+  it('reads a live reply only once the active pane follows it or scrolls to the end', () => {
+    state.open = 'a';
+    const scroller = { atEnd: false };
+    const data = { messages: [{ thread: 'a', at: '2' }] };
+    page.readPane(scroller, 'a', data, false, false);
+    scroller.onscroll();
+    assert.equal(posted.length, 0);
+    scroller.atEnd = true;
+    focused = false;
+    scroller.onscroll();
+    assert.equal(posted.length, 0);
+    focused = true;
+    scroller.onscroll();
+    assert.deepEqual(posted.map((m) => m.at), ['2']);
+    page.readPane(scroller, 'a', { messages: [{ thread: 'a', at: '3' }] }, false, true);
+    assert.deepEqual(posted.map((m) => m.at), ['2', '3']);
+  });
+
+  it('reads a deep link without a list row, through each member actually shown', () => {
+    const messages = [{ thread: 'a', at: '2' }, { thread: 'b', at: '3' }, { thread: 'a', at: '1' }];
+    const watermarks = [{ person: ME, thread: 'b', read_at: '3' }];
+    page.markRead(null, { messages, watermarks });
+    page.markRead(null, { messages, watermarks });
+    assert.deepEqual(posted.map((m) => [m.thread, m.at]), [['a', '2']]);
+  });
+
+  it('leaves a newer list row unread when the pane showed an older message', () => {
+    const t = entry('a', '3');
+    page.markRead(t, { messages: [{ thread: 'a', at: '2' }] });
+    assert.equal(t.unread, true);
+    assert.deepEqual(posted.map((m) => m.at), ['2']);
+  });
+
+  it('retries a transient failure once and lets another open retry after a refusal', async () => {
+    respond = () => ({ ok: false, status: 503 });
+    const t = entry('a', '2');
+    page.markRead(t);
+    await Promise.resolve();
+    assert.equal(retries.length, 1);
+    respond = () => ({ ok: false, status: 403 });
+    retries.shift()();
+    await Promise.resolve();
+    assert.equal(retries.length, 0);
+    respond = () => ({ ok: true });
+    page.markRead(t);
+    assert.deepEqual(posted.map((m) => m.at), ['2', '2', '2']);
   });
 
   it('shows what came in after the read', () => {

@@ -42,6 +42,7 @@ let room;
 let state;
 let page;
 let reloads;
+let latest;
 
 /** Runs what is due in the next `ms`, in order, waiting for what each started. */
 async function later(ms) {
@@ -77,11 +78,11 @@ const DB = {
 
 /** `/api/inbox` for ME: thread `a`, unread up to what D1 has, and who read it to its end. */
 function inbox() {
-  const read = (p) => (watermarks.get(`${p}:a`) || '') >= AT;
+  const read = (p) => (watermarks.get(`${p}:a`) || '') >= latest;
   return [{
     thread: 'a',
     last_at: AT,
-    any_at: AT,
+    any_at: latest,
     unread: !read(ME),
     unseen: !read(ME),
     unseenByAdobe: true,
@@ -104,6 +105,7 @@ beforeEach(() => {
   busy = [];
   watermarks = new Map();
   reloads = 0;
+  latest = AT;
   const kept = new Map();
   let alarm = null;
   const sockets = [];
@@ -154,14 +156,12 @@ beforeEach(() => {
     timers.push(reload);
   };
   const js = SCRIPTS['inbox.js'];
-  const a = js.indexOf('function readHere(ev)');
+  const a = js.indexOf('const memberLast =');
   const b = js.indexOf('// Live updates reload the inbox', a);
   assert.ok(a >= 0 && b > a);
-  const memberLast = (m, kind) => (kind === 'alert' ? m.any_at : m.last_at) || m.any_at;
   // eslint-disable-next-line no-new-func
-  page = new Function('state', 'memberLast', 'personal', 'fetch', 'lastOf', 'render', 'Date', 'reloadSoon', `${js.slice(a, b)}\nreturn { markRead, keepReads, heardRead };`)(
+  page = new Function('state', 'personal', 'fetch', 'lastOf', 'render', 'Date', 'reloadSoon', `${js.slice(a, b)}\nreturn { markRead, keepReads, heardRead };`)(
     state,
-    memberLast,
     () => false,
     () => assert.fail('the page has a socket'),
     () => true,
@@ -206,6 +206,21 @@ describe('a read, from the room\'s announcement to its flush', () => {
     }
     assert.equal(watermarks.get(`${ME}:a`), AT);
     assert.equal(reloads, 0);
+  });
+
+  it('persists the bot reply shown after an already-read post, even with a stale list', async () => {
+    watermarks.set(`${ME}:a`, AT);
+    const [stale] = inbox();
+    latest = '2026-11-05T10:02Z';
+    // The pane fetched the conversation after the list was loaded.
+    page.markRead(stale, {
+      messages: [
+        { thread: 'a', at: AT }, { thread: 'a', at: latest, author: { kind: 'bot' } },
+      ],
+    });
+    await later(31_000);
+    assert.equal(watermarks.get(`${ME}:a`), latest);
+    assert.equal(inbox()[0].unread, false, 'still read on a fresh page');
   });
 
   it('does not reload for a read that leaves a newer message unread', async () => {
