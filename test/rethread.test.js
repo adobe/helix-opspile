@@ -31,7 +31,9 @@ const T0 = Date.UTC(2026, 9, 20, 10, 0, 0);
  * A Vectorize stand-in with real cosine similarity, and an embedding model that maps a
  * text to a bag-of-words vector, so near-identical texts score near 1.
  */
-function fakes({ clefChoice = 'new', clefP = 0.9, clefProbabilities = null } = {}) {
+function fakes({
+  clefChoice = 'new', clefP = 0.9, clefProbabilities = null, separateP = 0.05,
+} = {}) {
   const vocab = new Map();
   const vec = (text) => {
     const v = new Array(64).fill(0);
@@ -50,8 +52,10 @@ function fakes({ clefChoice = 'new', clefP = 0.9, clefProbabilities = null } = {
   };
   const stored = new Map();
   const clefCalls = [];
+  const separateCalls = [];
   return {
     clefCalls,
+    separateCalls,
     VECTORS: {
       async upsert(items) {
         items.forEach((i) => stored.set(i.id, i));
@@ -70,6 +74,11 @@ function fakes({ clefChoice = 'new', clefP = 0.9, clefProbabilities = null } = {
       async run(model, input) {
         if (model.includes('bge')) {
           return { data: input.text.map(vec) };
+        }
+        if (input.questions.separate) {
+          separateCalls.push(input);
+          const p = typeof separateP === 'function' ? separateP(input.state) : separateP;
+          return { answers: { separate: { type: 'noul', noul: p } } };
         }
         clefCalls.push(input);
         return {
@@ -310,6 +319,77 @@ describe('bursts', () => {
       }
       const rows = env.DB.rows('SELECT logical_thread, logical_via FROM threads ORDER BY root_at');
       assert.deepEqual(rows.map((r) => r.logical_via), [null, null], `order ${order}`);
+    }
+  });
+});
+
+describe('bursts Clef tells apart', () => {
+  const at = (seconds) => new Date(T0 + seconds * 1000).toISOString();
+  const row = (env, k) => env.DB.rows('SELECT logical_thread, logical_via FROM threads WHERE thread = ?', k)[0];
+
+  /** Two roots by one person, `gap` seconds apart, decided in `order`. Made-up texts. */
+  async function two(first, second, { gap = 40, order = [0, 1], ...opts } = {}) {
+    const env = { DB: d1(), CHANNELS: fakeBucket(), ...fakes({ clefChoice: 'c0', clefP: 0.999, ...opts }) };
+    const a = await seed(env, '60.0', first, at(0));
+    const b = await seed(env, '60.1', second, at(gap));
+    env.DB.sqlite.prepare("UPDATE threads SET kind = 'channel'").run();
+    for (const [k, when, id] of [[a, at(0), '60.0'], [b, at(gap), '60.1']]) {
+      env.DB.sqlite.prepare(`INSERT INTO messages (source, tenant, channel_id, id, thread, at, author_key,
+        counted) VALUES ('slack', 'E1', 'C1', ?, ?, ?, 'slack:E1:U7', 1)`).run(id, k, when);
+    }
+    const results = {};
+    for (const i of order) {
+      // eslint-disable-next-line no-await-in-loop
+      results[i] = await rethread(env, [a, b][i]);
+    }
+    return {
+      env, a, b, results,
+    };
+  }
+
+  const ACCESS = 'Can we get access to the staging author for two of our developers?';
+  const REVIEW = 'Also, the review page of staging does not load for me, is that known?';
+
+  it('keeps a request of its own apart, in any order, and out of the conversation it follows', async () => {
+    for (const order of [[0, 1], [1, 0]]) {
+      // eslint-disable-next-line no-await-in-loop
+      const { env, b, results } = await two(ACCESS, REVIEW, { order, separateP: 0.9 });
+      assert.deepEqual(row(env, b), { logical_thread: null, logical_via: null }, `order ${order}`);
+      if (order[1] === 1) {
+        // Clef, sure that it continues the conversation before, is not asked about that one.
+        assert.deepEqual(results[1], {
+          result: 'new-topic', via: null, p: null, separate: 0.9,
+        });
+        assert.equal(env.clefCalls.length, 0);
+      }
+      const { state, questions } = env.separateCalls[0];
+      assert.equal(questions.separate.type, 'noul');
+      assert.match(state, /by the same person, 40 seconds before:\nCan we get access/);
+      assert.match(state, /New message:\nAlso, the review page/);
+    }
+  });
+
+  it('leaves the burst when Clef is not sure', async () => {
+    const { env, a, b } = await two(ACCESS, REVIEW, { separateP: 0.7 });
+    assert.deepEqual(row(env, b), { logical_thread: a, logical_via: 'burst' });
+    assert.equal(env.separateCalls.length, 1);
+    // Decided again, the root before it does not ask about the burst it holds already.
+    await rethread(env, a, { force: true });
+    assert.deepEqual(row(env, b), { logical_thread: a, logical_via: 'burst' });
+    assert.equal(env.separateCalls.length, 1);
+  });
+
+  it('does not ask after a greeting or a picture, nor about a ping', async () => {
+    const cases = [
+      ['Hi team :wave:', ACCESS],
+      ['Attachments:\n![screen.png](https://files.example.com/screen.png)', REVIEW],
+      [ACCESS, '@Ada Lovelace'],
+    ];
+    for (const [first, second] of cases) {
+      // eslint-disable-next-line no-await-in-loop
+      const { env, a, b } = await two(first, second, { separateP: 0.99 });
+      assert.deepEqual(row(env, b), { logical_thread: a, logical_via: 'burst' }, second);
+      assert.equal(env.separateCalls.length, 0, second);
     }
   });
 });

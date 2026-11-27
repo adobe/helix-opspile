@@ -1003,7 +1003,19 @@ theirs to continue: one of a conversation's people, @-mentioned by name, is an a
 (below), and the same mention by its own asker, after somebody else's root, or later than 15
 minutes, is Clef's. In the case that showed it, a customer asked whether a tool had an issue,
 then pinged the bot three and a half minutes later, 30 seconds past BURST_MS, and the ping's own
-entry got an agent that asked the customer what he needed. When a
+entry got an agent that asked the customer what he needed. Timing alone does not make a burst, though: people also post several
+questions one by one, seconds apart, so that each is answered in its own thread. So before a root
+joins its author's previous one as a burst, Clef reads the two and is asked whether the new one is
+a separate, self-contained question or request (`separate`, SEPARATE_INSTRUCTIONS); at 0.8 or more
+(`MIN_SEPARATE`) it is no burst, and Clef's conversation question below is asked without the
+conversation it was just told apart from. Clef is not asked after a greeting or a root with
+nothing to read but attachments (the explanation of a picture comes next), nor about a root that
+only mentions: those are what bursts are for, and Clef takes what follows a greeting or a picture
+for a topic of its own. Asked the other way round, whether the new root continues the one before,
+Clef said no to most of the chat that bursts are ("apologies for that", "you did it"). Of
+production's 296 burst members, the question kept apart 10 of the 13 items of an RFP's numbered
+series, 5 of the 20 that were answered in their own thread, and 5 of the 252 nobody answered on
+their own, which were requests of their own as well. When a
 root message
 arrives, its *skeleton* (the text without timestamps, long numbers, hex and UUID ids, query
 strings and user agents; short numbers like status codes stay) is embedded and the most similar
