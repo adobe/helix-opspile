@@ -632,6 +632,10 @@ kbd { line-height: normal; padding: 0 var(--spectrum-spacing-75); }
 .feed .rq-checks { display: flex; flex-wrap: wrap; gap: var(--spectrum-spacing-75) var(--spectrum-spacing-300); margin: 0; padding: 0; border: 0; }
 .feed .rq-checks legend { flex-basis: 100%; padding: 0; margin-bottom: var(--spectrum-spacing-75); }
 .feed .rq-check { display: inline-flex; align-items: center; gap: var(--spectrum-spacing-75); cursor: pointer; }
+.feed .rq-date { display: flex; align-items: flex-end; gap: var(--spectrum-spacing-200); }
+.feed .rq-date > .fld { flex: 1; }
+.feed .rq-date > button { min-height: var(--spectrum-component-height-100); }
+.feed .rq-date > button:disabled { color: var(--spectrum-disabled-content-color); text-decoration: none; }
 .feed .rq-go { display: flex; justify-content: flex-end; align-items: center; gap: var(--spectrum-spacing-200); }
 .composer.rqbox { flex-wrap: wrap; gap: var(--spectrum-spacing-75) 0; }
 .composer.rqbox .rq-lbl { flex-basis: 100%; }
