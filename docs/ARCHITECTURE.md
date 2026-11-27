@@ -463,7 +463,9 @@ two. A minute after each labelling of a thread (the normalizer queues `{ link: t
   found, with its score, and not asked about again.
 
 The inbox shows them: a row's tag, "About ACME" on a partner's thread, "With Agency Co" on a
-customer's (`linked` on `GET /api/inbox`'s entries), and in the open thread a dropdown of its
+customer's (`linked` on `GET /api/inbox`'s entries; in the list by customer the partners are no
+tag but their logos, small on the customer's heading's, of those at work in the threads it shows),
+and in the open thread a dropdown of its
 header with both and the threads possibly about the same issue (`linked` and `related` on `GET
 /api/thread`), each with how sure the inbox is. A related thread the viewer may not see (`canSee`:
 not their teams', nor their personal view's) is named by its customer, team and channel only,
