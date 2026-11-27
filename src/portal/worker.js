@@ -35,8 +35,9 @@ import { BASE, pruneIntegration } from './integration-auth.js';
 import { deliver, pruneEvents } from './events.js';
 import { pruneFiles } from './files.js';
 import {
-  accessChannels, accessRequests, again, autoApprove, avatar, decline, declineRequest, edit, enroll,
-  file, logo, open, post, react, reserve, typing, upload,
+  accessChannels, accessRequests, addThreadMember, again, autoApprove, avatar, decline,
+  declineRequest, edit, enroll, file, logo, open, post, react, reserve, setChannelAudience, typing,
+  upload,
 } from './platform.js';
 import { refreshTech, techStale } from './tech.js';
 
@@ -204,5 +205,15 @@ export class PortalPlatform extends WorkerEntrypoint {
   /** `{ channel, on?, tenants?, domains?, by }`: a channel's auto-approval. */
   setAutoApprove(args) {
     return autoApprove(this.env, args);
+  }
+
+  /** `{ channel, audience, by }`: who sees a channel's threads, `shared` or `individual`. */
+  setAudience(args) {
+    return this.#told(setChannelAudience(this.env, args));
+  }
+
+  /** `{ domain, channel, root, account, by }`: adds a customer of the channel to a thread. */
+  addToThread(args) {
+    return addThreadMember(this.env, args);
   }
 }

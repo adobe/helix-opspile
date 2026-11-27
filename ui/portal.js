@@ -490,8 +490,11 @@ function renderThreads() {
   const picker = channels.length > 1
     ? `<label class="fld grow"><span>Channel</span><select id="chPick">${channels.map((c) => `<option value="${esc(c.id)}"${c.id === state.channel.id ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`
     : `<h2 class="chan" title="${esc(state.channel.topic || '')}">${esc(state.channel.name)}</h2>`;
+  // An individual channel: each person's threads are their own (and Adobe's), never a colleague's.
+  const own = state.channel.audience === 'individual'
+    ? '<p class="hint own">Your threads here are between you and Adobe: a colleague sees one only when Adobe adds them.</p>' : '';
   $('threads').innerHTML = `<div class="bar">${logo}${picker}<button type="button" class="primary" id="newThread">New thread</button></div>
-    ${state.error ? `<div class="status err" role="alert">${esc(state.error)}</div>` : ''}
+    ${own}${state.error ? `<div class="status err" role="alert">${esc(state.error)}</div>` : ''}
     <div class="rows">${state.threads.map(threadRow).join('') || '<div class="empty">No threads yet. Start one: somebody at Adobe will answer here.</div>'}</div>`;
   if ($('chPick')) {
     $('chPick').onchange = (e) => openChannel(channels.find((c) => c.id === e.target.value));

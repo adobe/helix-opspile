@@ -16,7 +16,7 @@ import {
 } from './integration-auth.js';
 import { markRead, readChanges, readThreads } from './integration-read.js';
 import { deliver } from './events.js';
-import { writeMessage } from './store.js';
+import { theirs, writeMessage } from './store.js';
 
 const respond = (body, status = 200, headers = {}) => Response.json(body, {
   status, headers: { 'cache-control': 'private, no-store', ...headers },
@@ -84,8 +84,10 @@ async function post(request, env, m, root, now, waitUntil) {
     invalid();
   }
   const db = env.DB;
-  if (root && !await db.prepare('SELECT 1 FROM messages WHERE channel = ? AND id = ? AND id = root')
-    .bind(m.channel, root).first()) {
+  // A reply goes to a thread of the channel, and in an individual one to one of the member's.
+  if (root && !await db.prepare(`SELECT 1 FROM messages WHERE channel = ?1 AND id = ?2
+    AND id = root AND ${theirs('?2', 3)}`)
+    .bind(m.channel, root, m.audience === 'individual' ? JSON.stringify(m.people) : null).first()) {
     notFound();
   }
   const operation = root ? 'reply' : 'create';
@@ -112,7 +114,7 @@ async function post(request, env, m, root, now, waitUntil) {
   }
   const lobby = `${m.channel}.embed.invalid`;
   const channel = {
-    id: m.channel, name: m.channelName, company: m.channelName, lobby,
+    id: m.channel, name: m.channelName, company: m.channelName, lobby, audience: m.audience,
   };
   let wrote;
   try {
@@ -124,6 +126,7 @@ async function post(request, env, m, root, now, waitUntil) {
     }, {
       root,
       text: content,
+      people: m.people,
       beforeWrite: (id) => [
         db.prepare(`INSERT INTO integration_receipts(channel, actor, operation, key, digest,
           message, channel_name) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(...scope, digest, id, m.channelName),

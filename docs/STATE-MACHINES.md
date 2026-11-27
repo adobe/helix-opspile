@@ -1028,6 +1028,26 @@ uniqueness conflict) leaves a pending request instead. Off stops new ones; membe
 provider host's subject is one member per host (trigger `integration_member_host`), resolved by
 subject; a domain-caught member (`via` `domain:…`) is bound to its verified address.
 
+**Channel audience.** shared ⇄ individual (`channel_audiences` in the portal, portal migration
+0008, `src/portal/store.js`). No row is shared, as every channel was before, so the migration
+changes no channel; a row says who set it and when (`set_by`, `set_at`), and setting writes it
+again whatever it was. It is keyed by the channel's id, which an integration mapping reserves
+before its channel exists, so an approval that makes a new organization's channel individual
+writes the row in the batch that reserves the mapping, before it is enabled: its first thread is
+already its author's alone. Setting it tells the inbox with a `channel` event when the channel
+exists, and every event of an individual channel says so (`channel.audience`); one that does not
+is of a shared channel. Switching moves no thread and rewrites nothing: who is in a thread decides.
+
+**Thread member.** absent → in (`thread_members` in the portal). A customer is in a thread from
+their first message in it (a trigger on `messages`, `INSERT OR IGNORE`), and the migration put
+everyone who wrote before in theirs, so a channel switched to individual later keeps each person
+their threads and those they took part in; Adobe adds one with `addToThread` (`added_by`), which
+writes a viewer-only `added` change for an integration member. Nothing takes a member out: a
+person revoked from the channel reads nothing anyway. In an individual channel every customer read
+asks it (`theirs`): the lists, a thread, its status, typing, files, reactions, replies, whom one
+mentions, the badge, the unread counts and the feed with its watermark; in a shared one nothing
+does. Staff and the app are never rows, and read everything.
+
 **Managed channel and member.** Reserved → enabled ⇄ suspended (`integration_customers`).
 Reserve the channel ID, pre-file it by that ID in the inbox, then enable the tenant. The first
 create materializes its lobby and channel with the root and its events; racing creates reuse
